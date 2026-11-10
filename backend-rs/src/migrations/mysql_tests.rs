@@ -61,6 +61,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     check(mysql).await?;
     verify_initialization(mysql).await?;
     verify_permission_data(mysql).await?;
+    crate::background_jobs::robot::verify_issue_activity_projection(mysql).await?;
     Ok(())
 }
 

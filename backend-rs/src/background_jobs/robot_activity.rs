@@ -1,10 +1,11 @@
 //! Project-chat terminal state preserves newer runs and existing Issue content.
 
-use brz_mysql::{Json, MysqlResult, MysqlTransaction};
+use brz_mysql::{Json, Mysql, MysqlResult, MysqlTransaction};
 use chrono::{NaiveDateTime, Utc};
 use serde_json::{Value, json};
 
 use super::super::project::{
+    assignments,
     completion::Message,
     issues, notifications,
     store::{self, LIVE, Node, iso},
@@ -50,10 +51,11 @@ pub(crate) async fn finish(
         &format!("activity:{}", message.message_id),
         &message.content,
     );
-    let review = can_review(&task, &metadata, message);
-    if review {
-        append_review_history(tx, &task, &mut metadata, now).await?;
-    }
+    let review = if can_review(&task, &metadata, message) {
+        append_review_history(tx, &task, &mut metadata, now).await?
+    } else {
+        false
+    };
     if applied || review || metadata != task.metadata.0 {
         tx.execute("UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+?,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='task'",(Json(metadata),if review{"in_review"}else{task.status.as_str()},review,review,i64::from(applied)+i64::from(review),task.id.as_str())).await?;
     }
@@ -61,13 +63,14 @@ pub(crate) async fn finish(
 }
 
 pub(crate) async fn project_runtime_completion(
-    state: &crate::state::AppState,
+    mysql: &impl Mysql,
     message: &Message,
+    allow_review: bool,
 ) -> MysqlResult<bool> {
     if message.task_id.is_empty() {
         return Ok(false);
     }
-    state.mysql.with_transaction(async |tx| {
+    mysql.with_transaction(async |tx| {
         let task: Option<Node> = tx.fetch_optional(
             format!("SELECT {} FROM loop_items WHERE id=? AND resource_type='task' AND {LIVE} FOR UPDATE", store::COLUMNS),
             (message.task_id.as_str(),),
@@ -87,7 +90,9 @@ pub(crate) async fn project_runtime_completion(
             &format!("activity:{}", message.message_id),
             &message.content,
         );
-        if superseded || !can_review(&task, &metadata, message) {
+        let review = allow_review && !superseded && can_review(&task, &metadata, message)
+            && append_review_history(tx, &task, &mut metadata, message.updated_at).await?;
+        if !review {
             if metadata == task.metadata.0 {
                 return Ok(false);
             }
@@ -102,7 +107,6 @@ pub(crate) async fn project_runtime_completion(
         }
         metadata["ai_state"]["project_chat_message_id"] = json!(message.message_id);
         let now = Utc::now().naive_utc();
-        append_review_history(tx, &task, &mut metadata, message.updated_at).await?;
         tx.execute(
             "UPDATE loop_items SET metadata=?, status='in_review', completed_at='1970-01-01 00:00:01', sort_order=0, version=version+1, updated_at=? WHERE id=? AND resource_type='task'",
             (Json(metadata), now, task.id.as_str()),
@@ -117,7 +121,7 @@ async fn append_review_history(
     task: &Node,
     metadata: &mut Value,
     now: NaiveDateTime,
-) -> MysqlResult<()> {
+) -> MysqlResult<bool> {
     let project: Option<Node> = tx
         .fetch_optional(
             format!(
@@ -127,20 +131,19 @@ async fn append_review_history(
             (task.cloud_project_id.as_str(),),
         )
         .await?;
+    let Some(project) = project.filter(|project| assignments::has_status(project, "in_review"))
+    else {
+        return Ok(false);
+    };
     let mut history = metadata["status_history"]
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let from = project.as_ref().map_or_else(
-        || task.status.clone(),
-        |project| issues::status_name(project, &task.status),
-    );
-    let to = project.as_ref().map_or("in_review".to_owned(), |project| {
-        issues::status_name(project, "in_review")
-    });
+    let from = issues::status_name(&project, &task.status);
+    let to = issues::status_name(&project, "in_review");
     history.push(json!({"from_status":task.status,"to_status":"in_review","from_status_name":from,"to_status_name":to,"trigger":"ai_completed","by_user_id":null,"at":iso(now)}));
     metadata["status_history"] = json!(history);
-    Ok(())
+    Ok(true)
 }
 
 fn project_ai_state(
@@ -332,7 +335,7 @@ pub(crate) async fn start_runtime_activity(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     fn message() -> Message {
@@ -359,6 +362,53 @@ mod tests {
             created_at: at,
             updated_at: at,
         }
+    }
+
+    pub(crate) async fn verify_issue_activity_projection(mysql: &impl Mysql) -> anyhow::Result<()> {
+        mysql.execute(
+            "INSERT INTO loop_items(id, resource_type, description, metadata, created_at, updated_at) VALUES ('review-fixture-project', 'project', '', ?, NOW(), NOW())",
+            (Json(json!({"board_config":{"statuses":[{"id":"doing","name":"Doing"}]}})),),
+        ).await?;
+        mysql.execute(
+            "INSERT INTO loop_items(id, resource_type, cloud_project_id, description, metadata, status, assignee_agent_id, created_at, updated_at) VALUES ('review-fixture-issue', 'task', 'review-fixture-project', '', JSON_OBJECT(), 'doing', 'a', NOW(), NOW())",
+            (),
+        ).await?;
+        let mut completed = message();
+        completed.project_id = "review-fixture-project".into();
+        completed.task_id = "review-fixture-issue".into();
+        completed.status = "completed".into();
+        completed.content = "https://github.com/example/project/pull/1".into();
+        assert!(project_runtime_completion(mysql, &completed, true).await?);
+        let issue = store::get(mysql, "task", &completed.task_id)
+            .await?
+            .unwrap();
+        assert_eq!(issue.status, "doing");
+        assert!(issue.metadata.0.get("status_history").is_none());
+
+        // A repaired completion can change the badge while a newer run owns the Issue.
+        mysql
+            .execute(
+                "UPDATE loop_items SET metadata=JSON_SET(metadata, '$.ai_state', ?) WHERE id=?",
+                (
+                    Json(json!({"project_chat_message_id":"newer","status":"running"})),
+                    completed.task_id.as_str(),
+                ),
+            )
+            .await?;
+        completed.content = "https://github.com/example/project/pull/2".into();
+        assert!(project_runtime_completion(mysql, &completed, false).await?);
+        let issue = store::get(mysql, "task", &completed.task_id)
+            .await?
+            .unwrap();
+        assert_eq!(issue.status, "doing");
+        assert_eq!(
+            issue.metadata.0["ai_state"]["project_chat_message_id"],
+            "newer"
+        );
+        assert_eq!(issue.metadata.0["badges"][0]["url"], completed.content);
+        assert_eq!(issue.metadata.0["badges"].as_array().unwrap().len(), 1);
+        assert!(!project_runtime_completion(mysql, &completed, false).await?);
+        Ok(())
     }
 
     #[test]

@@ -1630,14 +1630,18 @@ pub async fn handle(
                 let memory_ids =
                     memory_reload_ids(turn.user_subtask_id, &turn.existing_subtask_ids);
                 for subtask_id in memory_ids {
-                    let mut handle = &state.mysql;
-                    match fetch_optional_as::<brz_mysql::MysqlRow>(
-                        &mut handle,
-                        RouteKey::None,
-                        &memory_statement,
-                        vec![StatementArg::Int(subtask_id)],
-                    )
-                    .await
+                    match state
+                        .mysql
+                        .with_transaction(async |tx| {
+                            fetch_optional_as::<brz_mysql::MysqlRow>(
+                                tx,
+                                RouteKey::None,
+                                &memory_statement,
+                                vec![StatementArg::Int(subtask_id)],
+                            )
+                            .await
+                        })
+                        .await
                     {
                         Ok(Some(_)) => {}
                         Ok(None) => {

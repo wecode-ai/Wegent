@@ -12,7 +12,7 @@
 //! task's ready attachments), `build_execution_request`'s `current_contexts`
 //! (`unified.py:306`) and `_process_contexts`' attachment payload
 //! (`unified.py:464`).
-use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
+use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlTransaction};
 use serde_json::{Map, Value};
 
 use crate::task_store_listing::subtask_context_columns;
@@ -207,6 +207,19 @@ pub fn attachments_by_subtask_statement() -> String {
     )
 }
 
+/// Current-turn contexts must be visible immediately after the writer commits.
+pub(super) async fn current_contexts_by_subtask<M: Mysql>(
+    mysql: &M,
+    subtask_id: i64,
+) -> MysqlResult<Vec<SubtaskContextRow>> {
+    mysql
+        .with_transaction(async |tx| {
+            tx.fetch_all(contexts_by_subtask_statement(), (subtask_id,))
+                .await
+        })
+        .await
+}
+
 /// `context_service.get_by_subtask`: every context of one subtask in creation
 /// order.
 pub fn contexts_by_subtask_statement() -> String {
@@ -291,7 +304,10 @@ pub async fn attachments_by_subtask<M: Mysql>(
     subtask_id: i64,
 ) -> MysqlResult<Vec<SubtaskContextRow>> {
     mysql
-        .fetch_all(attachments_by_subtask_statement(), (subtask_id,))
+        .with_transaction(async |tx| {
+            tx.fetch_all(attachments_by_subtask_statement(), (subtask_id,))
+                .await
+        })
         .await
 }
 
@@ -348,10 +364,13 @@ pub async fn attachments_by_task<M: Mysql>(
         return Ok(Vec::new());
     }
     mysql
-        .fetch_all(
-            attachments_by_task_statement(subtask_ids.len()),
-            subtask_ids.to_vec(),
-        )
+        .with_transaction(async |tx| {
+            tx.fetch_all(
+                attachments_by_task_statement(subtask_ids.len()),
+                subtask_ids.to_vec(),
+            )
+            .await
+        })
         .await
 }
 

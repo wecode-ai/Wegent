@@ -388,7 +388,7 @@ pub(super) fn history(metadata: &mut Value, user: i64, kind: &str, id: &str, nam
     history.push(json!({"by_user_id":user,"to_type":kind,"to_id":id,"to_name":name,"action":if history.is_empty(){"assign"}else{"reassign"},"at":iso(Utc::now().naive_utc())}));
     metadata["assignment_history"] = json!(history);
 }
-pub(super) fn has_status(project: &Node, status: &str) -> bool {
+pub(crate) fn has_status(project: &Node, status: &str) -> bool {
     project.metadata.0["board_config"]["statuses"]
         .as_array()
         .map_or(

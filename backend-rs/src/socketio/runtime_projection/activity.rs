@@ -12,9 +12,7 @@
 //! The recorded Source sequence for one event is: the `runtime_turn_id`
 //! discovery, its `trigger_message_id` fallback, the reconciled-activity
 //! fallback (`loop_item_executions/service.py:2029`), and only then the
-//! streaming read. Only the supplementary change-request badge indexing
-//! (`project_chat/service.py:1367`) remains unported; it writes the loop item
-//! and its own change event without changing the recovered activity.
+//! streaming read. Restored text also refreshes the loop item’s change-request index.
 
 use brz_mysql::{FromMysqlRow, MysqlResult, MysqlTransaction};
 use chrono::{NaiveDateTime, Utc};
@@ -559,17 +557,6 @@ async fn restore_discovered_activity<T: MysqlTransaction>(
             metadata.insert("runtime_turn_id".into(), json!(turn_id));
             activity.metadata = brz_mysql::Json(Value::Object(metadata));
         }
-        // `_index_activity_change_requests` only writes the *loop item's*
-        // change-request badges and queues its own change event; it never
-        // changes this activity's content, metadata, sequence, or the returned
-        // view. The same index is already unported on the equivalent streaming
-        // terminal path (`project_chat/service.py:1744`) and on message
-        // creation (`:1933`), so it is a separate chat-domain port rather than
-        // part of this restore's observable result.
-        tracing::warn!(
-            activity = activity.id,
-            "activity change-request indexing is not ported"
-        );
     } else if execution.is_some() && !accepted_terminal {
         return Ok(None);
     }
@@ -607,7 +594,8 @@ async fn restore_discovered_activity<T: MysqlTransaction>(
     Ok(Some(Projected {
         message: projected_view(&activity),
         delta: false,
-        terminal_activity: accepted_terminal.then(|| Box::new(activity)),
+        terminal_activity: (accepted_terminal || content.is_some())
+            .then(|| (Box::new(activity), accepted_terminal)),
     }))
 }
 

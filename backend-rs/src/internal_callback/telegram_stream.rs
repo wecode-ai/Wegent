@@ -15,6 +15,8 @@ use super::ExecutionEvent;
 struct Reply {
     message_id: Option<i64>,
     content: String,
+    #[serde(default)]
+    reasoning: String,
     finished: bool,
     last_edit_at: i64,
 }
@@ -118,34 +120,8 @@ async fn deliver_reply(
         return Ok(());
     }
     let now = chrono::Utc::now().timestamp_millis();
-    let mut terminal = false;
-    let content = match update {
-        Update::Progress(text, thinking) => {
-            if !thinking {
-                reply.content.extend(
-                    text.chars()
-                        .take(4096_usize.saturating_sub(reply.content.chars().count())),
-                );
-            }
-            if thinking && reply.content.is_empty() {
-                "💭 思考中...".to_owned()
-            } else if reply.content.is_empty() {
-                "⏳ 处理中...".to_owned()
-            } else {
-                reply.content.clone()
-            }
-        }
-        Update::Terminal(text, status) => {
-            terminal = true;
-            if reply.content.is_empty() || (status == "COMPLETED" && !text.is_empty()) {
-                text.to_owned()
-            } else if text.is_empty() {
-                reply.content.clone()
-            } else {
-                format!("{}\n\n{text}", reply.content)
-            }
-        }
-    };
+    let terminal = matches!(update, Update::Terminal(..));
+    let content = reply.render(update);
     if !content.is_empty()
         && (terminal || reply.message_id.is_none() || now - reply.last_edit_at >= 1000)
     {
@@ -164,6 +140,39 @@ async fn deliver_reply(
     Ok(())
 }
 
+impl Reply {
+    fn render(&mut self, update: Update<'_>) -> String {
+        let answer = match update {
+            Update::Progress(text, true) => {
+                self.reasoning.extend(
+                    text.chars()
+                        .take(2048_usize.saturating_sub(self.reasoning.chars().count())),
+                );
+                self.content.clone()
+            }
+            Update::Progress(text, false) => {
+                self.content.extend(
+                    text.chars()
+                        .take(4096_usize.saturating_sub(self.content.chars().count())),
+                );
+                self.content.clone()
+            }
+            Update::Terminal(text, "COMPLETED") if !text.trim().is_empty() => text.to_owned(),
+            Update::Terminal(text, _) if text.trim().is_empty() => self.content.clone(),
+            Update::Terminal(text, _) if self.content.is_empty() => text.to_owned(),
+            Update::Terminal(text, _) => format!("{}\n\n{text}", self.content),
+        };
+        let reasoning = self.reasoning.trim();
+        match (reasoning.is_empty(), answer.trim().is_empty(), update) {
+            (false, false, _) => format!("💭 思考摘要\n{reasoning}\n\n回复\n{answer}"),
+            (false, true, _) => format!("💭 思考摘要\n{reasoning}"),
+            (true, false, _) => answer,
+            (true, true, Update::Progress(..)) => "⏳ 处理中...".to_owned(),
+            (true, true, Update::Terminal(..)) => "✅ 已完成".to_owned(),
+        }
+    }
+}
+
 pub(super) fn terminal_text(status: &str, result: Option<&Value>, error: Option<&str>) -> String {
     match status {
         "FAILED" => format!("❌ 错误: {}", error.unwrap_or("Unknown error")),
@@ -177,5 +186,35 @@ pub(super) fn terminal_text(status: &str, result: Option<&Value>, error: Option<
             })
             .map(crate::json_compat::python_str)
             .unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thinking_is_retained_in_both_terminal_renderings() {
+        let mut reply: Reply = serde_json::from_value(serde_json::json!({
+            "message_id": 7, "content": "", "finished": false, "last_edit_at": 0
+        }))
+        .unwrap();
+        assert_eq!(
+            reply.render(Update::Progress("先检查", true)),
+            "💭 思考摘要\n先检查"
+        );
+        assert_eq!(
+            reply.render(Update::Terminal("", "COMPLETED")),
+            "💭 思考摘要\n先检查"
+        );
+        reply.render(Update::Progress("draft", false));
+        assert_eq!(
+            reply.render(Update::Terminal("final", "COMPLETED")),
+            "💭 思考摘要\n先检查\n\n回复\nfinal"
+        );
+        assert_eq!(
+            Reply::default().render(Update::Terminal("", "COMPLETED")),
+            "✅ 已完成"
+        );
     }
 }

@@ -15,6 +15,9 @@ mod state;
 #[path = "robot_wake.rs"]
 mod wake;
 
+#[cfg(test)]
+pub(crate) use activity::tests::verify_issue_activity_projection;
+
 pub(crate) use activity::{
     finish as finish_runtime_activity, project_runtime_completion, start_runtime_activity,
 };

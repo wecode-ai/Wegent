@@ -725,6 +725,11 @@ pub(super) fn enqueue_executor_dispatch(
     state
         .responses_dispatch
         .submit(crate::responses::dispatch::DefaultDispatchJob::Executor {
+            consumer: Box::new(crate::responses::dispatch::ConsumerState::from_app(state)),
+            task_id: request.task_id,
+            subtask_id: request.subtask_id,
+            user_id: request.user_id,
+            message_id: request.message_id,
             url,
             body,
             start: state

@@ -658,7 +658,7 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
 pub(super) struct Projected {
     pub(super) message: Value,
     pub(super) delta: bool,
-    pub(super) terminal_activity: Option<Box<Message>>,
+    pub(super) terminal_activity: Option<(Box<Message>, bool)>,
 }
 
 /// `project_runtime_event`: the streaming chat projection.
@@ -913,7 +913,7 @@ async fn project_runtime_event<T: MysqlTransaction>(
     Ok(Some(Projected {
         message: projected_view(&message),
         delta: false,
-        terminal_activity: (terminal == Some("completed")).then(|| Box::new(message)),
+        terminal_activity: (terminal == Some("completed")).then(|| (Box::new(message), true)),
     }))
 }
 

@@ -131,8 +131,14 @@ pub async fn forward(
         && let Some(projected) =
             runtime_projection::project(state, runtime, user_id, device_id, &identity).await?
     {
-        if let Some(activity) = &projected.terminal_activity {
-            match crate::background_jobs::robot::project_runtime_completion(state, activity).await {
+        if let Some((activity, allow_review)) = &projected.terminal_activity {
+            match crate::background_jobs::robot::project_runtime_completion(
+                &state.mysql,
+                activity,
+                *allow_review,
+            )
+            .await
+            {
                 Ok(true) => {
                     super::project_chat_snapshot::publish_item_change(
                         state,

@@ -451,6 +451,7 @@ async fn build_request_with_runtime(
     // `prepare_execution_request`'s generation-context enrichment
     // (`request_preparation.py:868-878`) runs before `builder.build`, so its
     // attachment reads stay ahead of the bot and model lookups.
+    let selected_generation = generation;
     let generation = preflight::generation_context(
         &state.mysql,
         state.task_store.as_ref(),
@@ -632,6 +633,10 @@ async fn build_request_with_runtime(
     // `reasoning` selection overrides the Model's default, and the Model's
     // `think_config` is the fallback only when nothing is selected.
     super::reasoning::merge_model_reasoning(&mut model_config, input.reasoning);
+
+    super::model_config::apply_generation_params(&mut model_config, selected_generation).map_err(
+        |message| FastApiError::detail(brz_http_server::StatusCode::BAD_REQUEST, message),
+    )?;
 
     // The ghost chain reads through the deployment's cached kind reader.
     let ghost_ref = bot_spec.get("ghostRef");
@@ -856,9 +861,10 @@ async fn build_request_with_runtime(
 
     // Knowledge (default KBs + inherited selected-knowledge refs). The current
     // subtask's contexts are the explicit-ref input (`unified.py:306`).
-    let current_contexts = contexts::contexts_by_subtask(&state.mysql, input.user_subtask_id)
-        .await
-        .map_err(dependency)?;
+    let current_contexts =
+        contexts::current_contexts_by_subtask(&state.mysql, input.user_subtask_id)
+            .await
+            .map_err(dependency)?;
     let knowledge = resolve_knowledge(
         state,
         input,

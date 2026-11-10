@@ -149,6 +149,11 @@ pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
         url: String,
         body: Value,
         start: Option<ExecutorStart<R>>,
+        consumer: Box<ConsumerState<M, R>>,
+        task_id: i64,
+        subtask_id: i64,
+        user_id: i64,
+        message_id: Option<i64>,
     },
     /// `_dispatch_sse`: the chat-shell SSE consumer. Boxed because the job is
     /// far larger than the executor arm and every dispatch is already an owned
@@ -173,9 +178,14 @@ struct JobContext {
 impl<M: Mysql, R: Redis> DispatchJob<M, R> {
     fn context(&self) -> JobContext {
         match self {
-            Self::Executor { url, start, .. } => JobContext {
-                task_id: start.as_ref().map_or(0, |start| start.task_id),
-                subtask_id: start.as_ref().map_or(0, |start| start.subtask_id),
+            Self::Executor {
+                url,
+                task_id,
+                subtask_id,
+                ..
+            } => JobContext {
+                task_id: *task_id,
+                subtask_id: *subtask_id,
                 request_id: String::new(),
                 target: url.clone(),
             },
@@ -366,56 +376,127 @@ where
     R: Redis + Clone + 'static,
 {
     match job {
-        DispatchJob::Executor { url, body, start } => {
-            let Some(request) = executor_request(http, &url, &body) else {
-                tracing::warn!(%url, "failed to build an executor dispatch request");
-                return;
-            };
-            match request.timeout(DISPATCH_TIMEOUT).send().await {
-                Ok(response) => {
-                    tracing::info!(%url, status = %response.status(), "executor dispatch acknowledged");
-                    // `dispatcher.py:747`: the acknowledgement is followed by
-                    // the START emit; a rejected dispatch raises before it. The
-                    // same `WebSocketResultEmitter` emits `chat:start` and then
-                    // `task:created` (for a task this handler created).
-                    if response.status().is_success()
-                        && let Some(start) = start
-                    {
-                        if let Err(error) = crate::internal_callback::publish_chat_start(
-                            &start.redis,
-                            start.task_id,
-                            start.subtask_id,
-                            start.bot_name,
-                            &start.shell_type,
-                            start.message_id,
-                        )
-                        .await
-                        {
-                            tracing::warn!(%error, "chat:start emit failed (fire-and-forget)");
-                        }
-                        if let Some(created) = &start.created_task
-                            && let Err(error) = crate::internal_callback::publish_task_created(
-                                &start.redis,
-                                start.task_id,
-                                created,
-                            )
-                            .await
-                        {
-                            tracing::warn!(%error, "task:created emit failed (fire-and-forget)");
-                        }
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(%url, %error, "executor dispatch failed (fire-and-forget)")
+        DispatchJob::Executor {
+            url,
+            body,
+            start,
+            consumer,
+            task_id,
+            subtask_id,
+            user_id,
+            message_id,
+        } => match send_executor(http, &url, &body).await {
+            Ok(()) => {
+                if let Some(start) = start {
+                    emit_executor_start(start).await;
                 }
             }
-        }
+            Err(error) => {
+                tracing::warn!(task_id, subtask_id, %error, "executor dispatch failed");
+                finalize_executor_failure(&consumer, task_id, subtask_id, user_id, message_id)
+                    .await;
+            }
+        },
         DispatchJob::ChatShell(job) => {
             let _ = run_chat_shell(*job).await;
         }
         DispatchJob::MemorySave(save) => {
             crate::responses::create::memory_context::post_save(http, save).await;
         }
+    }
+}
+
+async fn send_executor(http: &HttpClient, url: &str, body: &Value) -> Result<(), String> {
+    let request = executor_request(http, url, body)
+        .ok_or_else(|| "Could not build executor dispatch request".to_owned())?;
+    let response = request
+        .timeout(DISPATCH_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Executor returned HTTP {}", response.status()));
+    }
+    Ok(())
+}
+
+async fn emit_executor_start<R: Redis>(start: ExecutorStart<R>) {
+    if let Err(error) = crate::internal_callback::publish_chat_start(
+        &start.redis,
+        start.task_id,
+        start.subtask_id,
+        start.bot_name,
+        &start.shell_type,
+        start.message_id,
+    )
+    .await
+    {
+        tracing::warn!(%error, "chat:start emit failed (fire-and-forget)");
+    }
+    if let Some(created) = &start.created_task
+        && let Err(error) =
+            crate::internal_callback::publish_task_created(&start.redis, start.task_id, created)
+                .await
+    {
+        tracing::warn!(%error, "task:created emit failed (fire-and-forget)");
+    }
+}
+
+async fn finalize_executor_failure<M: Mysql, R: Redis>(
+    consumer: &ConsumerState<M, R>,
+    task_id: i64,
+    subtask_id: i64,
+    user_id: i64,
+    message_id: Option<i64>,
+) {
+    use crate::internal_callback::{
+        completion, emitter,
+        event::{EventType, ExecutionEvent},
+    };
+    let Some(redis) = consumer.redis.as_ref() else {
+        tracing::error!(
+            task_id,
+            subtask_id,
+            "executor failure cannot be finalized without Redis"
+        );
+        return;
+    };
+    let app = consumer.app.upgrade();
+    let ctx = completion::Completion {
+        app: app.as_deref(),
+        mysql: &consumer.mysql,
+        redis,
+        tables: consumer.tables,
+        executor_manager: &consumer.executor_manager,
+    };
+    let message = "Could not dispatch execution to the executor";
+    let code = "EXECUTOR_DISPATCH_FAILED";
+    let result = completion::complete_terminal_event(
+        &ctx,
+        task_id,
+        subtask_id,
+        "FAILED",
+        None,
+        Some(message),
+        Some(code),
+        None,
+        None,
+    )
+    .await;
+    let mut event = ExecutionEvent::new(EventType::Error, task_id, subtask_id);
+    event.message_id = message_id;
+    event.error = Some(message.to_owned());
+    event.error_code = Some(code.to_owned());
+    if let Err(error) = emitter::emit_terminal_frames(
+        redis,
+        &event,
+        Some(user_id),
+        result.as_ref().unwrap_or(&Value::Null),
+        None,
+    )
+    .await
+    {
+        tracing::warn!(%error, task_id, subtask_id, "executor failure notification failed");
     }
 }
 

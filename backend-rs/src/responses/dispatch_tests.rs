@@ -314,12 +314,16 @@ impl brz_redis::Redis for RecordingRedis {
         Ok(())
     }
 
-    async fn publish<C, M>(&self, channel: C, _: M) -> RedisResult<i64>
+    async fn publish<C, M>(&self, channel: C, payload: M) -> RedisResult<i64>
     where
         C: EncodeRedisArg + Send,
         M: EncodeRedisArg + Send,
     {
-        self.record(format!("PUBLISH {}", Self::key(&channel)));
+        self.record(format!(
+            "PUBLISH {} {}",
+            Self::key(&channel),
+            Self::key(&payload)
+        ));
         Ok(1)
     }
 
@@ -751,4 +755,52 @@ async fn mid_stream_error_is_observable() {
             .any(|message| message.contains("chat-shell background consumer failed")),
         "{messages:?}"
     );
+}
+
+#[tokio::test]
+async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() {
+    let server = spawn_server(503, vec![], vec![]).await;
+    let refused = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let refused_url = format!("http://{}", refused.local_addr().unwrap());
+    drop(refused);
+    let http = HttpClient::builder().build().unwrap();
+    for url in [server.url, refused_url] {
+        let mysql = RecordingMysql::default();
+        let redis = RecordingRedis::default();
+        run(
+            &http,
+            DispatchJob::Executor {
+                url,
+                body: json!({}),
+                start: Some(start_event(redis.clone(), &execution_request(), None)),
+                consumer: Box::new(consumer(mysql.clone(), redis.clone())),
+                task_id: TASK_ID,
+                subtask_id: SUBTASK_ID,
+                user_id: 7,
+                message_id: Some(2),
+            },
+        )
+        .await;
+        assert!(
+            mysql
+                .statements()
+                .iter()
+                .any(|sql| sql.contains("subtasks_0424"))
+        );
+        let frames: Vec<Value> = redis
+            .calls()
+            .iter()
+            .filter_map(|call| {
+                let payload = call.splitn(3, ' ').nth(2)?;
+                serde_json::from_str(payload).ok()
+            })
+            .collect();
+        let error = frames
+            .iter()
+            .find(|frame| frame["event"] == "chat:error")
+            .unwrap_or_else(|| panic!("missing chat:error in {:?}", redis.calls()));
+        assert_eq!(error["data"][0]["subtask_id"], SUBTASK_ID);
+        assert_eq!(error["data"][0]["type"], "EXECUTOR_DISPATCH_FAILED");
+        assert!(!frames.iter().any(|frame| frame["event"] == "chat:start"));
+    }
 }

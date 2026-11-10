@@ -133,7 +133,7 @@ pub(super) async fn project(
         delta: false,
         terminal_activity: TERMINAL_RUN_STATUSES
             .contains(&row.status.as_str())
-            .then(|| Box::new(row)),
+            .then(|| (Box::new(row), true)),
     }))
 }
 
