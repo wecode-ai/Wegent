@@ -170,7 +170,7 @@ export function createDesktopScenario({
             'Establish the first draft before releasing further questions'
           )
           assert.equal(firstState.inputAttribute, 'STAFF', 'React must retain the first draft')
-          await draftWindow.verifyMerge('STAFF')
+          await draftWindow.verifyMerge()
           releaseSecond()
           await control.command('waitFor', CARD, { text: THIRD, visible: true })
           await writeFile(

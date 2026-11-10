@@ -6,7 +6,11 @@ import { pendingFixture } from './native-reply-recovery.mjs'
 
 const PENDING_TAB = '[data-testid="workspace-tab-select-pending-interactions"]'
 const PENDING_PAGE = '[data-testid="runtime-interactions-page"]'
+const NOTICE = '[data-testid="runtime-interaction-notice"]'
+const NOTICE_REPLY = '[data-testid="interaction-notice-reply"]'
+const NOTICE_INPUT = '[data-testid="interaction-reply-input"]'
 const SECONDARY_DRAFT_ID = 'e2e:interaction-draft-window:secondary'
+const MAIN_DRAFT_TEXT = 'MAIN_WINDOW_DRAFT'
 const SECONDARY_DRAFT_TEXT = 'SECOND_WINDOW_DRAFT'
 
 function draftText(value) {
@@ -68,13 +72,19 @@ export async function openInteractionDraftWindow({ control, electronUserDataDire
 
   return {
     fixture,
-    // The main draft comes from the real UI. The second window writes a distinct synthetic draft
-    // because this fixture exposes only one single-question request; both share the production map.
-    async verifyMerge(mainDraft) {
+    // The main draft is typed through the real notification reply UI. The second window writes a
+    // distinct synthetic draft because this fixture exposes only one single-question request.
+    async verifyMerge() {
+      await main.command('waitFor', NOTICE, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+      if (Number(await main.command('getElementCount', NOTICE_REPLY))) {
+        await main.command('click', NOTICE_REPLY)
+      }
+      await main.command('waitFor', NOTICE_INPUT, { visible: true })
+      await main.command('fill', NOTICE_INPUT, { value: MAIN_DRAFT_TEXT })
       await main.command('flushRendererStorage', 'body')
       await waitFor(
         async () => draftText((await readDrafts())[fixture.interactionId]),
-        text => text === mainDraft,
+        text => text === MAIN_DRAFT_TEXT,
         'The main window draft was not persisted before the second-window write'
       )
 
@@ -89,7 +99,7 @@ export async function openInteractionDraftWindow({ control, electronUserDataDire
       const merged = await readDrafts()
       assert.equal(
         draftText(merged[fixture.interactionId]),
-        mainDraft,
+        MAIN_DRAFT_TEXT,
         'A stale second window overwrote the main-window draft'
       )
       assert.equal(draftText(merged[SECONDARY_DRAFT_ID]), SECONDARY_DRAFT_TEXT)
@@ -101,7 +111,7 @@ export async function openInteractionDraftWindow({ control, electronUserDataDire
             })
           ),
         snapshot =>
-          draftText(snapshot[fixture.interactionId]) === mainDraft &&
+          draftText(snapshot[fixture.interactionId]) === MAIN_DRAFT_TEXT &&
           draftText(snapshot[SECONDARY_DRAFT_ID]) === SECONDARY_DRAFT_TEXT,
         'The main window did not observe the merged draft state'
       )
@@ -118,6 +128,7 @@ export async function openInteractionDraftWindow({ control, electronUserDataDire
         undefined,
         'The temporary second-window draft was not cleared'
       )
+      await main.command('fill', NOTICE_INPUT, { value: '' })
     },
     async close() {
       try {
