@@ -29,7 +29,7 @@ use crate::auth::SessionUser;
 use crate::device_commands::{
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_BYTES, DeviceCommandRequest,
     DeviceCommandResponse, MAX_COMMAND_TIMEOUT_SECONDS, MAX_OUTPUT_BYTES, SOCKET_ACK_GRACE_SECONDS,
-    apply_command_post_processor, build_local_device_command_argv, executor_payload_carries_key,
+    add_executor_command_key, apply_command_post_processor, build_local_device_command_argv,
     is_internal_command_key, python_str, python_truthy, registered_scope, remote_command_allowed,
     resolve_local_device_command, response_from_result, unhandled,
 };
@@ -486,12 +486,7 @@ fn command_payload(
         "max_output_bytes".to_string(),
         Value::Number(max_output_bytes.into()),
     );
-    if executor_payload_carries_key(&request.command_key) {
-        payload.insert(
-            "command_key".to_string(),
-            Value::String(request.command_key.clone()),
-        );
-    }
+    add_executor_command_key(&mut payload, &request.command_key);
     Value::Object(payload)
 }
 

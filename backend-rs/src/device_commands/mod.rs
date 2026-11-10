@@ -25,7 +25,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 mod defaults_codex;
 mod defaults_git;
@@ -114,7 +114,7 @@ const REMOTE_MUTATING_COMMAND_KEYS: [&str; 10] = [
 const RUNTIME_AUTH_COMMAND_KEYS: [&str; 2] = ["read_runtime_auth_file", "sync_runtime_auth_file"];
 
 /// `command_service.execute_configured_device_command`'s payload keys that
-/// carry `command_key` to the executor.
+/// carry `command_key` to the executor independently of native Git selection.
 const EXECUTOR_COMMAND_KEY_KEYS: [&str; 6] = [
     "task_artifact",
     "environment_prepare",
@@ -224,9 +224,18 @@ pub(crate) fn remote_command_allowed(key: &str, device_type: &str) -> bool {
         || registered_scope(key).is_some_and(|types| types.contains(&device_type))
 }
 
-/// Whether the executor payload carries `command_key` for this spelling.
-pub(crate) fn executor_payload_carries_key(key: &str) -> bool {
-    EXECUTOR_COMMAND_KEY_KEYS.contains(&key)
+/// Preserve native command dispatch while respecting explicit Git overrides.
+/// Callers resolve the command first, which validates the startup configuration.
+pub(crate) fn add_executor_command_key(payload: &mut Map<String, Value>, key: &str) {
+    let native_git = configured_commands()
+        .is_ok_and(|configured| is_builtin_native_git_command(key, configured));
+    if EXECUTOR_COMMAND_KEY_KEYS.contains(&key) || native_git {
+        payload.insert("command_key".into(), Value::String(key.to_owned()));
+    }
+}
+
+fn is_builtin_native_git_command(key: &str, configured: &BTreeMap<String, Value>) -> bool {
+    matches!(key, "git_branch" | "git_branch_list" | "git_clone") && !configured.contains_key(key)
 }
 
 /// Parse `LOCAL_DEVICE_COMMANDS` once, at startup.
@@ -465,6 +474,23 @@ fn python_repr_string(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_git_dispatch_preserves_explicit_command_overrides() {
+        let mut configured = BTreeMap::new();
+        for key in ["git_clone", "git_branch", "git_branch_list"] {
+            assert!(is_builtin_native_git_command(key, &configured));
+            configured.insert(key.to_owned(), Value::String("custom-git-command".into()));
+            assert!(!is_builtin_native_git_command(key, &configured));
+        }
+        assert!(!is_builtin_native_git_command(
+            "git_status_porcelain",
+            &configured
+        ));
+        let mut payload = Map::new();
+        add_executor_command_key(&mut payload, "workspace_read_text_file");
+        assert_eq!(payload["command_key"], "workspace_read_text_file");
+    }
 
     #[test]
     fn every_default_command_resolves_and_splits() {
