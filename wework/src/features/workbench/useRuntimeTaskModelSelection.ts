@@ -3,6 +3,7 @@ import { localModelIdFromModelName } from '@/features/model-settings/localModelS
 import type {
   ModelOptions,
   ModelSelectionConfig,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskSummary,
   UnifiedModel,
@@ -41,7 +42,19 @@ interface UseRuntimeTaskModelSelectionOptions {
 
 interface AcceptedActiveModel {
   model: UnifiedModel
+  selection: ModelSelectionConfig
   previousSelectionKey: string
+}
+
+function selectionFromAcceptedSwitch(
+  model: UnifiedModel,
+  execution: Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'>
+): ModelSelectionConfig {
+  return {
+    modelName: execution.modelId ?? model.name,
+    modelType: execution.modelType ?? model.type,
+    options: execution.modelOptions ?? {},
+  }
 }
 
 function runtimeTaskModelScopeKey(userId: number, address: RuntimeTaskAddress): string {
@@ -115,6 +128,11 @@ export function useRuntimeTaskModelSelection({
         acceptedActiveModel.previousSelectionKey === modelSelectionKey(taskSelection)
           ? acceptedActiveModel.model
           : taskModel
+      const activeModelSelection =
+        acceptedActiveModel &&
+        acceptedActiveModel.previousSelectionKey === modelSelectionKey(taskSelection)
+          ? acceptedActiveModel.selection
+          : taskSelection
       const hasScopedSelection = Object.prototype.hasOwnProperty.call(
         selectedModelByScope,
         scopeKey
@@ -122,6 +140,7 @@ export function useRuntimeTaskModelSelection({
       return {
         taskSelection,
         activeModel,
+        activeModelSelection,
         selectedModel: hasScopedSelection ? (selectedModelByScope[scopeKey] ?? null) : taskModel,
         selectedModelOptions: hasScopedSelection
           ? (selectedModelOptionsByScope[scopeKey] ?? {})
@@ -138,12 +157,20 @@ export function useRuntimeTaskModelSelection({
     ]
   )
   const confirmRuntimeTaskActiveModel = useCallback(
-    (address: RuntimeTaskAddress, model: UnifiedModel) => {
+    (
+      address: RuntimeTaskAddress,
+      model: UnifiedModel,
+      execution: Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'>
+    ) => {
       const scopeKey = runtimeTaskModelScopeKey(userId, address)
       const previousSelectionKey = modelSelectionKey(taskSelectionConfig(address))
       setAcceptedActiveModelByScope(current => ({
         ...current,
-        [scopeKey]: { model, previousSelectionKey },
+        [scopeKey]: {
+          model,
+          selection: selectionFromAcceptedSwitch(model, execution),
+          previousSelectionKey,
+        },
       }))
     },
     [taskSelectionConfig, userId]

@@ -64,6 +64,43 @@ describe('runtime continuation model routing', () => {
     expect(result.modelOptions).toEqual(selection.options)
   })
 
+  it('continues a switched session with its confirmed model instead of a stale task cache', async () => {
+    const activeSelection: ModelSelectionConfig = {
+      modelName: 'gpt-6.1-sol',
+      modelType: 'runtime',
+      options: { collaborationMode: 'default', reasoning: 'high' },
+    }
+    const result = await prepareRuntimeContinuationModel(
+      request,
+      workList(selection),
+      vi.fn(),
+      () => activeSelection
+    )
+
+    expect(result.modelId).toBe('gpt-6.1-sol')
+    expect(result.modelType).toBe('runtime')
+    expect(result.modelOptions).toEqual(activeSelection.options)
+    expect(result.modelSelection).toEqual(activeSelection)
+  })
+
+  it('keeps an explicitly supplied model ahead of the active session selection', async () => {
+    const explicitSelection: ModelSelectionConfig = {
+      modelName: 'deepseek',
+      modelType: 'public',
+      options: { reasoning: 'low' },
+    }
+    const resolveActiveSelection = vi.fn()
+    const result = await prepareRuntimeContinuationModel(
+      { ...request, modelSelection: explicitSelection },
+      workList(),
+      vi.fn(),
+      resolveActiveSelection
+    )
+
+    expect(result.modelSelection).toEqual(explicitSelection)
+    expect(resolveActiveSelection).not.toHaveBeenCalled()
+  })
+
   it('rejects an unknown task instead of routing to the native default', async () => {
     await expect(
       prepareRuntimeContinuationModel(

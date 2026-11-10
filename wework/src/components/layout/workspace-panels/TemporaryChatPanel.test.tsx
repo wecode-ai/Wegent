@@ -428,6 +428,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
           taskSelection: selection,
           selectedModel: mocks.selectedTaskModel ?? model,
           activeModel: mocks.activeTaskModel ?? model,
+          activeModelSelection: selection,
           selectedModelOptions: selection?.options ?? {},
         }
       },
@@ -1799,7 +1800,8 @@ describe('TemporaryChatPanel', () => {
       expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
       expect(mocks.confirmRuntimeTaskActiveModel).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: address.taskId }),
-        expect.objectContaining({ name: 'gpt-6.1-sol' })
+        expect.objectContaining({ name: 'gpt-6.1-sol' }),
+        expect.objectContaining({ modelId: 'gpt-6.1-sol', modelType: 'runtime' })
       )
     }
   )
@@ -1891,7 +1893,8 @@ describe('TemporaryChatPanel', () => {
     )
     expect(mocks.confirmRuntimeTaskActiveModel).toHaveBeenCalledWith(
       expect.objectContaining({ taskId: address.taskId }),
-      expect.objectContaining({ name: 'gpt-6.1-sol' })
+      expect.objectContaining({ name: 'gpt-6.1-sol' }),
+      expect.objectContaining({ modelId: 'gpt-6.1-sol', modelType: 'runtime' })
     )
   })
   it('answers an async question in its owning session without carrying a newly selected provider', async () => {

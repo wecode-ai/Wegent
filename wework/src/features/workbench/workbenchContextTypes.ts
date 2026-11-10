@@ -202,6 +202,8 @@ export interface RuntimeTaskModelSelectionControls {
   taskSelection: ModelSelectionConfig | null
   selectedModel: UnifiedModel | null
   activeModel: UnifiedModel | null
+  /** Full selection of the model that owns the task's current execution session. */
+  activeModelSelection: ModelSelectionConfig | null
   selectedModelOptions: ModelOptions
 }
 
@@ -260,7 +262,11 @@ export interface WorkbenchContextValue {
     resolveRuntimeTaskModelSelection: (
       address: RuntimeTaskAddress
     ) => RuntimeTaskModelSelectionControls
-    confirmRuntimeTaskActiveModel: (address: RuntimeTaskAddress, model: UnifiedModel) => void
+    confirmRuntimeTaskActiveModel: (
+      address: RuntimeTaskAddress,
+      model: UnifiedModel,
+      execution: Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'>
+    ) => void
     setRuntimeTaskSelectedModel: (address: RuntimeTaskAddress, model: UnifiedModel | null) => void
     setRuntimeTaskSelectedModelAndOptions: (
       address: RuntimeTaskAddress,

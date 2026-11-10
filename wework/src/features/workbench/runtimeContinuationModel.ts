@@ -1,5 +1,10 @@
 import i18n from '@/i18n'
-import type { RuntimeSendRequest, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  ModelSelectionConfig,
+  RuntimeSendRequest,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { findRuntimeTask } from './workbenchRuntimeHelpers'
 
@@ -7,7 +12,8 @@ import { findRuntimeTask } from './workbenchRuntimeHelpers'
 export async function prepareRuntimeContinuationModel(
   request: RuntimeSendRequest,
   runtimeWork: RuntimeWorkListResponse | null | undefined,
-  listRuntimeWork: () => Promise<RuntimeWorkListResponse>
+  listRuntimeWork: () => Promise<RuntimeWorkListResponse>,
+  resolveActiveSelection?: (address: RuntimeTaskAddress) => ModelSelectionConfig | null | undefined
 ): Promise<RuntimeSendRequest> {
   if (request.requestUserInputResponse || request.request_user_input_response) return request
 
@@ -22,7 +28,13 @@ export async function prepareRuntimeContinuationModel(
     }
   }
 
+  // The caller knows when an accepted cross-provider switch moved the native
+  // session before the work list reflects it. Prefer that session selection
+  // over a stale task cache; the cache remains the fallback for other callers.
   let selection = request.modelSelection
+  if (!selection?.modelName) {
+    selection = resolveActiveSelection?.(request.address) ?? null
+  }
   if (!selection?.modelName) {
     let task = findRuntimeTask(runtimeWork, request.address)
     selection =

@@ -108,6 +108,7 @@ describe('bound remote task model selection', () => {
 
     expect(result.current.resolveRuntimeTaskModelSelection(address)).toMatchObject({
       taskSelection: selection,
+      activeModelSelection: selection,
       selectedModelOptions: selection.options,
       activeModel: {
         name: selection.modelName,
@@ -142,12 +143,17 @@ describe('bound remote task model selection', () => {
     )
   })
 
-  it('keeps the accepted switch model active before the task list refreshes', () => {
+  it('keeps the accepted switch session before the task list refreshes', () => {
     const target: UnifiedModel = {
       name: 'gpt-6.1-sol',
       type: 'runtime',
       provider: 'local',
       config: { weworkModelKind: 'codex-official' },
+    }
+    const targetSelection: ModelSelectionConfig = {
+      modelName: 'gpt-6.1-sol',
+      modelType: 'runtime',
+      options: { collaborationMode: 'default', reasoning: 'high' },
     }
     const store = modelStore([target])
     const scopeKey = `user:7:${getRuntimeTaskChatScopeKey(address)}`
@@ -174,12 +180,26 @@ describe('bound remote task model selection', () => {
       )
     ).toBe(true)
 
-    act(() => result.current.confirmRuntimeTaskActiveModel(address, target))
+    act(() =>
+      result.current.confirmRuntimeTaskActiveModel(address, target, {
+        modelId: targetSelection.modelName,
+        modelType: targetSelection.modelType,
+        modelOptions: targetSelection.options,
+      })
+    )
     rerender()
 
     const afterSwitch = result.current.resolveRuntimeTaskModelSelection(address)
     expect(afterSwitch.activeModel).toEqual(target)
+    expect(afterSwitch.activeModelSelection).toEqual(targetSelection)
     expect(requiresNewSessionForModelSwitch(afterSwitch.activeModel, target)).toBe(false)
+
+    resolvedTask.modelSelection = targetSelection
+    rerender()
+
+    expect(result.current.resolveRuntimeTaskModelSelection(address).activeModelSelection).toEqual(
+      targetSelection
+    )
 
     const nextModel: UnifiedModel = { name: 'deepseek', type: 'public', provider: 'cloud' }
     store.selectedModelByScope[scopeKey] = nextModel

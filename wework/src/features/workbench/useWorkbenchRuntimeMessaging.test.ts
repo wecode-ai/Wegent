@@ -1,5 +1,11 @@
 import i18n from '@/i18n'
-import type { Attachment, DeviceInfo, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  DeviceInfo,
+  ModelSelectionConfig,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import { renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import {
@@ -25,7 +31,11 @@ import {
 import { initialWorkbenchState } from './workbenchReducer'
 
 function messagingFixture(
-  modelState: { isSelectionReady?: boolean; isConfiguredModelUnavailable?: boolean } = {}
+  modelState: { isSelectionReady?: boolean; isConfiguredModelUnavailable?: boolean } = {},
+  taskState: {
+    runtimeWork?: RuntimeWorkListResponse | null
+    activeModelSelection?: ModelSelectionConfig | null
+  } = {}
 ) {
   const address = { deviceId: 'cancel-device', taskId: 'cancel-task' }
   const store = new RuntimeTaskLifecycleStore('messaging-cancellation-test')
@@ -42,7 +52,11 @@ function messagingFixture(
   const refresh = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
   type Options = Parameters<typeof useWorkbenchRuntimeMessaging>[0]
   const options: Options = {
-    state: { ...initialWorkbenchState, currentRuntimeTask: address },
+    state: {
+      ...initialWorkbenchState,
+      currentRuntimeTask: address,
+      runtimeWork: taskState.runtimeWork,
+    },
     dispatch: vi.fn(),
     executorClient: {
       runtime: { cancelRuntimeTask: cancel, sendRuntimeMessage: send, compactRuntimeTask: compact },
@@ -55,6 +69,13 @@ function messagingFixture(
     isOptionsLocked: false,
     attachmentSelection: { attachments: [], resetAttachments: vi.fn() },
     modelSelection: { models: [], selectedModel: null, selectedModelOptions: {}, ...modelState },
+    resolveRuntimeTaskModelSelection: () => ({
+      taskSelection: taskState.activeModelSelection ?? null,
+      activeModelSelection: taskState.activeModelSelection ?? null,
+      activeModel: null,
+      selectedModel: null,
+      selectedModelOptions: taskState.activeModelSelection?.options ?? {},
+    }),
     skillSelection: { selectedSkills: [] },
     refreshWorkLists: refresh,
   }
@@ -322,6 +343,55 @@ describe.each([{ isSelectionReady: false }, { isConfiguredModelUnavailable: true
     })
   }
 )
+
+describe('runtime continuation model', () => {
+  test('continues a switched session with its active model instead of a stale task cache', async () => {
+    const staleSelection: ModelSelectionConfig = {
+      modelName: 'deepseek',
+      modelType: 'public',
+      options: {},
+    }
+    const activeSelection: ModelSelectionConfig = {
+      modelName: 'gpt-6.1-sol',
+      modelType: 'runtime',
+      options: { collaborationMode: 'default', reasoning: 'high' },
+    }
+    const address: RuntimeTaskAddress = { deviceId: 'cancel-device', taskId: 'cancel-task' }
+    const { store, send, messaging } = messagingFixture(
+      {},
+      {
+        runtimeWork: {
+          projects: [],
+          chats: [
+            {
+              deviceId: address.deviceId,
+              workspacePath: '/workspace',
+              tasks: [{ taskId: address.taskId, runtime: 'codex', modelSelection: staleSelection }],
+            },
+          ],
+          totalTasks: 1,
+        } as RuntimeWorkListResponse,
+        activeModelSelection: activeSelection,
+      }
+    )
+    try {
+      await expect(messaging.sendRuntimePaneMessage({ address, message: 'answer' })).resolves.toBe(
+        true
+      )
+      expect(send).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          address,
+          message: 'answer',
+          modelId: 'gpt-6.1-sol',
+          modelType: 'runtime',
+          modelSelection: activeSelection,
+        })
+      )
+    } finally {
+      store.remove(address)
+    }
+  })
+})
 
 describe('runtimeSendError', () => {
   test('localizes an unsupported remote Team backend', () => {

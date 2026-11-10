@@ -374,8 +374,8 @@ export function TemporaryChatPanel({
   const confirmSessionSwitchModel = useCallback(() => {
     const model = taskModelSelection?.selectedModel
     if (!address || !model) return
-    projectChat.confirmRuntimeTaskActiveModel(address, model)
-  }, [address, projectChat, taskModelSelection?.selectedModel])
+    projectChat.confirmRuntimeTaskActiveModel(address, model, selectedModelFields)
+  }, [address, projectChat, selectedModelFields, taskModelSelection?.selectedModel])
   const createdAddressKeyRef = useRef<string | null>(null)
   const autoSubmittedInitialInputRef = useRef(false)
   const draftEditVersionRef = useRef(0)

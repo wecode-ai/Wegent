@@ -95,6 +95,7 @@ import { findFileChangesBySubtaskId } from './runtimePaneMessages'
 import { isRuntimeTaskBusyError } from './runtimePaneStatus'
 import { prepareRuntimeContinuationModel } from './runtimeContinuationModel'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
+import type { RuntimeTaskModelSelectionControls } from './workbenchContextTypes'
 import {
   inferRuntimeName,
   resolveAutomaticModel,
@@ -220,6 +221,9 @@ interface UseWorkbenchRuntimeMessagingOptions {
   isOptionsLocked: boolean
   attachmentSelection: RuntimeMessagingAttachmentSelection
   modelSelection: RuntimeMessagingModelSelection
+  resolveRuntimeTaskModelSelection: (
+    address: RuntimeTaskAddress
+  ) => RuntimeTaskModelSelectionControls
   skillSelection: RuntimeMessagingSkillSelection
   refreshWorkLists: () => Promise<void>
 }
@@ -348,6 +352,7 @@ export function useWorkbenchRuntimeMessaging({
   isOptionsLocked,
   attachmentSelection,
   modelSelection,
+  resolveRuntimeTaskModelSelection,
   skillSelection,
   refreshWorkLists,
 }: UseWorkbenchRuntimeMessagingOptions) {
@@ -374,8 +379,11 @@ export function useWorkbenchRuntimeMessaging({
 
   const prepareRuntimeSendRequest = useCallback(
     async (input: RuntimeSendRequest): Promise<RuntimeSendRequest> => {
-      const request = await prepareRuntimeContinuationModel(input, state.runtimeWork, () =>
-        executorClient.runtime.listRuntimeWork()
+      const request = await prepareRuntimeContinuationModel(
+        input,
+        state.runtimeWork,
+        () => executorClient.runtime.listRuntimeWork(),
+        address => resolveRuntimeTaskModelSelection(address).activeModelSelection
       )
       if (!request.attachments?.length) return request
       const prepared = await prepareRuntimeAttachmentsForDevice(
@@ -391,7 +399,13 @@ export function useWorkbenchRuntimeMessaging({
         attachments: prepared.attachments,
       }
     },
-    [executorClient, services.attachmentApi, state.devices, state.runtimeWork]
+    [
+      executorClient,
+      resolveRuntimeTaskModelSelection,
+      services.attachmentApi,
+      state.devices,
+      state.runtimeWork,
+    ]
   )
 
   const blockRuntimeSendForUnavailableModel = useCallback(
