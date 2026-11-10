@@ -665,7 +665,7 @@ if __name__ == "__main__":
         "errors": len(result.errors),
         "skipped": len(result.skipped),
         "success": result.wasSuccessful()
-        and result.testsRun == 4
+        and result.testsRun == 5
         and not result.skipped,
     }
     (report_dir / "result.json").write_text(json.dumps(report, indent=2) + "\n")
