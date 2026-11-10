@@ -4,13 +4,39 @@ use super::*;
 use sha2::{Digest, Sha256};
 
 fn issue_reply_role<'a>(roles: &'a [Value], origin: &Value) -> Option<&'a Value> {
-    roles.iter().find(|role| {
-        role["id"] == origin["standInId"]
-            && (role["enabled"] == true || origin["trigger"] == "manual")
-    })
+    roles.iter().find(|role| role["id"] == origin["standInId"])
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn read_stand_in_issue(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        origin: &Value,
+    ) -> Result<Value, AppIpcError> {
+        let project = origin["cloudProjectId"].as_str().unwrap_or_default();
+        let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
+        let issue = if origin["projectStore"] == "local" {
+            serde_json::to_value(store.get_task(project, issue_id).map_err(settings_error)?)
+                .unwrap()
+        } else {
+            self.verify_runtime_user(&json!({"userId":user})).await?;
+            self.runtime_http(
+                reqwest::Method::GET,
+                &format!("/v1/loop-items/{issue_id}"),
+                None,
+            )
+            .await?
+        };
+        if issue["cloud_project_id"] != project {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Issue does not belong to this project",
+            ));
+        }
+        Ok(issue)
+    }
+
     pub(super) async fn validate_stand_in_issue_request(
         &self,
         request: &ExecutionRequest,
@@ -34,7 +60,7 @@ impl RuntimeWorkRpcHandler {
             .personal_stand_in(user, &self.device_id)
             .map_err(|error| error.to_string())?;
         let roles = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
-        let mut link = self
+        let link = self
             .local_task_link(task)
             .ok_or("Issue conversation is unavailable")?;
         if [
@@ -54,17 +80,11 @@ impl RuntimeWorkRpcHandler {
         {
             return Err("Issue conversation owner does not match".into());
         }
-        let role = issue_reply_role(&roles, origin).ok_or("Issue stand-in is unavailable")?;
-        link.runtime_handle["origin"] = origin.clone();
-        self.validate_stand_in_work_authority(
-            &store,
-            user,
-            role,
-            &link,
-            origin["trigger"] == "manual",
-        )
-        .await
-        .map_err(|error| error.message)
+        issue_reply_role(&roles, origin).ok_or("Issue stand-in is unavailable")?;
+        self.read_stand_in_issue(&store, user, origin)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.message)
     }
 
     pub(super) fn persist_stand_in_issue_reply(&self, task: &str, message: &CodexNotification) {
@@ -254,20 +274,11 @@ impl RuntimeWorkRpcHandler {
             .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
         let roles = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
-        let role = issue_reply_role(&roles, origin)
+        issue_reply_role(&roles, origin)
             .ok_or_else(|| AppIpcError::new("source_removed", "Stand-in is no longer available"))?;
-        let mut link = self
-            .local_task_link(task)
+        self.local_task_link(task)
             .ok_or_else(|| AppIpcError::new("source_removed", "Conversation no longer exists"))?;
-        link.runtime_handle["origin"] = origin.clone();
-        self.validate_stand_in_work_authority(
-            &store,
-            user,
-            role,
-            &link,
-            origin["trigger"] == "manual",
-        )
-        .await?;
+        self.read_stand_in_issue(&store, user, origin).await?;
         if origin["projectStore"] == "local" {
             store
                 .publish_stand_in_reply(
@@ -310,7 +321,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn paused_issue_intake_allows_only_trusted_manual_requests() {
+    async fn issue_conversations_do_not_depend_on_intake_or_current_assignment() {
         let root = tempfile::tempdir().unwrap();
         let (handler, store, origin, mut settings) = paused_issue_fixture(root.path());
         let mut request = ExecutionRequest::default();
@@ -339,14 +350,11 @@ mod tests {
             link.runtime_handle["origin"] = automatic.clone()
         });
         request.extra.insert("origin".into(), automatic.clone());
-        assert!(issue_reply_role(&roles, &automatic).is_none());
-        assert_eq!(
-            handler
-                .validate_stand_in_issue_request(&request)
-                .await
-                .unwrap_err(),
-            "Issue stand-in is unavailable"
-        );
+        assert!(issue_reply_role(&roles, &automatic).is_some());
+        handler
+            .validate_stand_in_issue_request(&request)
+            .await
+            .unwrap();
         assert!(issue_reply_role(&[], &origin).is_none());
         handler.store.update_task("issue-chat", |link| {
             link.runtime_handle["origin"] = origin.clone()
@@ -384,13 +392,23 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(
-            handler
-                .validate_stand_in_issue_request(&request)
-                .await
-                .unwrap_err(),
-            "Issue is no longer assigned to you"
-        );
+        handler
+            .validate_stand_in_issue_request(&request)
+            .await
+            .unwrap();
+        let issue = store.get_task(project, issue_id).unwrap();
+        store
+            .update_task(
+                project,
+                issue_id,
+                serde_json::from_value(json!({"version":issue.version,"assignee_user_id":null}))
+                    .unwrap(),
+            )
+            .unwrap();
+        handler
+            .validate_stand_in_issue_request(&request)
+            .await
+            .unwrap();
     }
 
     fn paused_issue_fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value, Value) {

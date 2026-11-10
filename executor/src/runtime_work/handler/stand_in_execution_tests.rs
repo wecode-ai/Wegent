@@ -139,7 +139,7 @@ async fn deleted_stand_in_is_not_replayed_during_or_after_background_cleanup() {
 }
 
 #[tokio::test]
-async fn manual_delegation_does_not_report_a_deleted_task_as_running() {
+async fn manual_delegation_waits_for_deleted_conversation_cleanup() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
@@ -165,6 +165,7 @@ async fn manual_delegation_does_not_report_a_deleted_task_as_running() {
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: task_id.clone(),
         status: "archived".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"local","cloudProjectId":project.id,"loopItemId":issue.id,"humanAssignmentId":format!("{}-1",issue.id)}}),
         ..RuntimeTaskLink::default()
     });
     handler
@@ -172,7 +173,8 @@ async fn manual_delegation_does_not_report_a_deleted_task_as_running() {
         .mark_deleted_archived_task_ids([task_id])
         .unwrap();
     let error = handler.run_stand_in(json!({"projectId":project.id,"issueId":issue.id,"userId":7,"projectStore":"local","standInId":"review"})).await.unwrap_err();
-    assert_eq!(error.code, "assignment_already_handled");
+    assert_eq!(error.code, "stand_in_busy");
+    assert_eq!(error.message, "Issue conversation cleanup is still running");
 }
 
 #[tokio::test]

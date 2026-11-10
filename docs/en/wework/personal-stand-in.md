@@ -9,6 +9,8 @@ sidebar_position: 12
 Assigning an Issue or mentioning a member wakes their enabled, project-connected stand-ins that match its tags and allow automatic handling.
 You can mention yourself: eligible stand-ins receive the event without a human self-reminder.
 The same stand-in reuses its conversation for the same Issue. Reassignment retains history but still requires fresh authorization.
+Reassignment, unassignment, deletion of the original mention or pausing automatic intake still allows continuing and retrying the conversation, including synchronizing public replies.
+Manually starting a stand-in does not require assigning the Issue to yourself and never changes its assignee. Automatic intake settings select new work without restricting explicit user actions. Current project and Issue access and execution permissions still apply.
 Acknowledgment and result appear as separate comments. You can keep writing and sending while subagents work; follow-up wakeups are handled in order.
 Reply directly to a stand-in comment without another mention to continue with that role. Private chats, reasoning and tool activity are not published.
 

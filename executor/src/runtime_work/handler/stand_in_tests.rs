@@ -135,7 +135,7 @@ async fn stand_in_entry_futures_leave_room_on_windows_worker_stacks() {
 }
 
 #[tokio::test]
-async fn omitted_manual_identity_uses_a_connected_role_and_rejects_no_connection() {
+async fn manual_issue_work_needs_no_assignment_or_intake_subscription() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
@@ -144,7 +144,7 @@ async fn omitted_manual_identity_uses_a_connected_role_and_rejects_no_connection
     let project = store
         .create_project(serde_json::from_value(json!({"name":"Manual identity"})).unwrap())
         .unwrap();
-    let issue = store
+    let mut issue = store
         .create_task(
             &project.id,
             serde_json::from_value(json!({"title":"Work","assignee_user_id":7})).unwrap(),
@@ -152,20 +152,43 @@ async fn omitted_manual_identity_uses_a_connected_role_and_rejects_no_connection
         .unwrap();
     let payload =
         json!({"projectId":project.id,"issueId":issue.id,"userId":7,"projectStore":"local"});
-    assert_eq!(
-        handler
-            .run_stand_in(payload.clone())
-            .await
-            .unwrap_err()
-            .code,
-        "stand_in_unavailable"
-    );
-    store.save_stand_in_settings(&project.id, 7, json!({"id":"review","projectStore":"local","executionDeviceId":"mac","version":0,"enabled":true,"prompt":"Review carefully"})).unwrap();
-    let task_id = format!("stand-in-{}-1-review", issue.id);
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"][0]["enabled"] = json!(false);
+    settings["roles"][0]["collaboration"]["enabled"] = json!(false);
+    settings["roles"][0]["workspace"] = json!({"projectKey":"unregistered-manual-project","workspacePath":root.path(),"executionMode":"current_workspace"});
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    for assignee in [Value::Null, json!(8), json!(7)] {
+        issue = store
+            .update_task(
+                &project.id,
+                &issue.id,
+                serde_json::from_value(
+                    json!({"version":issue.version,"assignee_user_id":assignee}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            handler
+                .run_stand_in(payload.clone())
+                .await
+                .unwrap_err()
+                .code,
+            "workspace_unavailable",
+            "Manual work must reach execution preparation regardless of assignment"
+        );
+        assert_eq!(
+            serde_json::to_value(store.get_task(&project.id, &issue.id).unwrap()).unwrap()
+                ["assignee_user_id"],
+            assignee,
+            "Starting a conversation must not reassign the Issue"
+        );
+    }
+    let task_id = format!("stand-in-{}-1-default", issue.id);
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: task_id.clone(),
         status: "done".into(),
-        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"local","cloudProjectId":project.id,"loopItemId":issue.id,"humanAssignmentId":format!("{}-1",issue.id)}}),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"default","userId":7,"projectStore":"local","cloudProjectId":project.id,"loopItemId":issue.id,"humanAssignmentId":format!("{}-1",issue.id)}}),
         ..RuntimeTaskLink::default()
     });
     assert_eq!(
@@ -261,7 +284,7 @@ fn assignment_tasks_are_owned_by_each_role_and_reuse_existing_execution_identity
 }
 
 #[tokio::test]
-async fn cloud_stand_in_ignores_issue_status_but_checks_current_assignment() {
+async fn manual_cloud_conversations_ignore_status_and_assignment_but_keep_project_scope() {
     let issue = Arc::new(Mutex::new(json!({})));
     let current = issue.clone();
     let reads = Arc::new(AtomicUsize::new(0));
@@ -315,7 +338,7 @@ async fn cloud_stand_in_ignores_issue_status_but_checks_current_assignment() {
         let before = reads.load(Ordering::SeqCst);
         let result = handler.run_stand_in(payload.clone()).await.unwrap();
         assert_eq!(result["taskId"], "stand-in-human-default", "{status}");
-        assert_eq!(reads.load(Ordering::SeqCst), before + 1, "{status}");
+        assert_eq!(reads.load(Ordering::SeqCst), before, "{status}");
         // Automatic handling must also reach current assignment validation.
         let error = automatic
             .start_cloud_stand_in(&config, &value)
@@ -325,7 +348,7 @@ async fn cloud_stand_in_ignores_issue_status_but_checks_current_assignment() {
             error.code, "workspace_unavailable",
             "An orphan reservation must reach execution preparation"
         );
-        assert_eq!(reads.load(Ordering::SeqCst), before + 2, "{status}");
+        assert_eq!(reads.load(Ordering::SeqCst), before + 1, "{status}");
     }
     for (field, value) in [
         ("cloud_project_id", json!("other")),
@@ -334,8 +357,12 @@ async fn cloud_stand_in_ignores_issue_status_but_checks_current_assignment() {
         let original = issue.lock().unwrap().clone();
         issue.lock().unwrap()[field] = value;
         let before = reads.load(Ordering::SeqCst);
-        let error = handler.run_stand_in(payload.clone()).await.unwrap_err();
-        assert_eq!(error.code, "invalid_assignment");
+        let result = handler.run_stand_in(payload.clone()).await;
+        if field == "cloud_project_id" {
+            assert_eq!(result.unwrap_err().code, "permission_denied");
+        } else {
+            assert_eq!(result.unwrap()["taskId"], "stand-in-human-default");
+        }
         assert_eq!(reads.load(Ordering::SeqCst), before);
         *issue.lock().unwrap() = original;
     }

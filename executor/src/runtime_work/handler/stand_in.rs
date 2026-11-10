@@ -185,7 +185,7 @@ impl RuntimeWorkRpcHandler {
         }
         let gate = self.task_send_gate(&format!("stand-in-issue:{project}:{issue_id}"));
         let _guard = gate.lock().await;
-        let mut issue = if local {
+        let issue = if local {
             serde_json::to_value(
                 store
                     .get_task(&project, &issue_id)
@@ -200,54 +200,11 @@ impl RuntimeWorkRpcHandler {
             )
             .await?
         };
-        if issue["cloud_project_id"] == project
-            && issue["assignee_user_id"].is_null()
-            && issue["assignee_agent_id"].is_null()
-            && issue["assignee_group_id"].is_null()
-            && issue["assignee_team_id"].is_null()
-        {
-            issue = if local {
-                serde_json::to_value(
-                    store
-                        .update_task(
-                            &project,
-                            &issue_id,
-                            serde_json::from_value(
-                                json!({"version":issue["version"],"assignee_user_id":user}),
-                            )
-                            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?,
-                        )
-                        .map_err(settings_error)?,
-                )
-                .unwrap()
-            } else {
-                self.runtime_http(reqwest::Method::POST, &format!("/v1/cloud-projects/{project}/loop-items/{issue_id}/assign"), Some(&json!({"version":issue["version"],"assigneeType":"user","assigneeId":user.to_string(),"notifyAssignee":false}))).await?
-            };
-        }
-        if issue["cloud_project_id"] != project || issue["assignee_user_id"] != user {
+        if issue["cloud_project_id"] != project {
             return Err(AppIpcError::new(
-                "invalid_assignment",
-                "Choose an Issue assigned to yourself in this project",
+                "permission_denied",
+                "Issue does not belong to this project",
             ));
-        }
-        if payload["standInId"].as_str().is_none() {
-            config = self
-                .stand_in_project_configs(
-                    &[store
-                        .personal_stand_in(user, &self.device_id)
-                        .map_err(settings_error)?],
-                    &project,
-                    if local { "local" } else { "cloud" },
-                )
-                .into_iter()
-                .next()
-                .ok_or_else(|| {
-                    AppIpcError::new(
-                        "stand_in_unavailable",
-                        "Connect a stand-in to this project first",
-                    )
-                })?;
-            config["manual"] = json!(true);
         }
         self.log_stand_in_decision(
             &config,
@@ -257,34 +214,30 @@ impl RuntimeWorkRpcHandler {
                 "requestedRoleId":payload["standInId"],"enabled":config["enabled"]
             }),
         );
-        if local {
-            let history = issue["metadata"]["assignment_history"]
-                .as_array()
-                .ok_or_else(|| {
-                    AppIpcError::new("invalid_assignment", "Issue assignment is unavailable")
-                })?;
-            let assignment = history.last().ok_or_else(|| {
-                AppIpcError::new("invalid_assignment", "Issue assignment is unavailable")
-            })?;
-            if assignment["to_type"] != "user"
-                || assignment["to_id"].as_str() != Some(&user.to_string())
-            {
+        if !local {
+            let existing = self
+                .runtime_http(
+                    reqwest::Method::GET,
+                    &format!("/v1/loop-items/{issue_id}/tasks"),
+                    None,
+                )
+                .await?;
+            if !self.use_stand_in_issue_reservation(&config, &issue, &existing)? {
                 return Err(AppIpcError::new(
-                    "invalid_assignment",
-                    "Issue is no longer assigned to yourself",
+                    "wrong_device",
+                    "Open the existing Issue conversation on its owning device",
                 ));
             }
-            let human = format!("{issue_id}-{}", history.len());
-            self.start_local_stand_in(&config, &issue, &json!({"humanAssignmentId":human}))
-                .await?;
-        } else {
-            issue["human_task_binding"]["humanAssignmentId"]
-                .as_str()
-                .ok_or_else(|| {
-                    AppIpcError::new("invalid_assignment", "Issue assignment is unavailable")
-                })?;
-            self.start_cloud_stand_in(&config, &issue).await?;
-        };
+        }
+        let task_id = self.stand_in_task_id(&config, &issue);
+        if self.local_task_link(&task_id).is_some_and(|task| {
+            !self.archived_link_is_deleted(&task)
+                && !matches!(task.status.as_str(), "failed" | "archived")
+        }) {
+            return Ok(json!({"deviceId":self.device_id,"taskId":task_id}));
+        }
+        self.execute_stand_in_task(&config, &issue, &json!({}))
+            .await?;
         let task_id = self.stand_in_task_id(&config, &issue);
         let task = self
             .local_task_link(&task_id)

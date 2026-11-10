@@ -27,7 +27,7 @@ impl RuntimeWorkRpcHandler {
         binding["standInConversationId"] =
             json!(super::stand_in::stand_in_issue_identity(config, issue));
         let issue_id = issue["id"].as_str().unwrap_or_default();
-        if binding["triggerCommentId"].is_string() {
+        if !local && (config["manual"] == true || binding["triggerCommentId"].is_string()) {
             self.runtime_http(
                 reqwest::Method::POST,
                 &format!("/v1/loop-items/{issue_id}/tasks"),
@@ -57,6 +57,9 @@ impl RuntimeWorkRpcHandler {
                 Some(&binding),
             )
             .await?;
+        }
+        if config["manual"] == true {
+            return Ok(binding);
         }
         // Receipt authority still comes from the recipient-owned binding. Model
         // preparation and execution are independent of accepting the assignment.
