@@ -24,7 +24,7 @@ const provider = {
 
 describe('Provider configuration runtime adapter', () => {
   test.each(['custom', 'function', undefined] as const)(
-    'normalizes saved DeepSeek %s tools without changing model identity or credentials',
+    'preserves saved %s tools independently of provider identity',
     toolProfile => {
       const resolved = resolveProviderModel({
         provider,
@@ -37,7 +37,7 @@ describe('Provider configuration runtime adapter', () => {
       })
       expect(resolved).toMatchObject({
         id: 'saved-deepseek',
-        toolProfile: 'function',
+        toolProfile: toolProfile ?? 'function',
         apiFormat: 'openai-responses',
         apiKey: provider.api_key,
         baseUrl: provider.base_url,

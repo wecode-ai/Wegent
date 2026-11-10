@@ -1111,6 +1111,12 @@ describe('Electron desktop E2E automation', () => {
       ])
     )
     expect(listLegacyLocalModelConfigs()).toEqual([])
+    expect(
+      listLocalModelConfigs().find(model => model.id === 'desktop-e2e-vision-main')
+    ).toMatchObject({
+      toolProfile: 'function',
+      codexToolCompatibility: 'standard',
+    })
     expect(owner).toHaveBeenCalledWith('modelConfiguration.save', expect.any(Object))
   })
 
