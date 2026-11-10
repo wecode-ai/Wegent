@@ -212,7 +212,6 @@ impl RuntimeWorkRpcHandler {
         config["projectId"] = json!(project);
         config["projectStore"] = payload["projectStore"].clone();
         config["userId"] = json!(user);
-        config["executionDeviceId"] = json!(self.device_id);
         config["manual"] = json!(true);
         if !local {
             self.verify_runtime_user(&config).await?;
@@ -402,10 +401,7 @@ impl RuntimeWorkRpcHandler {
         let settings = self.local_stand_in_projects()?;
         let mut projects = std::collections::HashMap::<(String, String, i64), Vec<Value>>::new();
         for config in settings {
-            if config["executionDeviceId"] != self.device_id
-                || config["enabled"] != true
-                || config["handlingPolicy"]["automatic"] == false
-            {
+            if config["enabled"] != true || config["handlingPolicy"]["automatic"] == false {
                 continue;
             }
             projects
@@ -457,7 +453,8 @@ impl RuntimeWorkRpcHandler {
             let eligible: Vec<Value> = configs
                 .iter()
                 .filter(|config| {
-                    assignment_after_enable(&json!({"created_at":assignment["at"]}), config)
+                    self.stand_in_issue_runs_here(config, &issue_value)
+                        && assignment_after_enable(&json!({"created_at":assignment["at"]}), config)
                 })
                 .cloned()
                 .collect();
@@ -719,7 +716,10 @@ impl RuntimeWorkRpcHandler {
                         })
                 })
             });
-        if bound.is_some_and(|row| row["device_id"] != self.device_id) {
+        let cloud_device = self.cloud_device_id()?;
+        if bound.is_some_and(|row| {
+            row["device_id"] != cloud_device && row["device_id"] != self.device_id
+        }) {
             let row = bound.unwrap();
             self.log_stand_in_decision(
                 config,

@@ -37,11 +37,13 @@ impl RuntimeWorkRpcHandler {
             let user = settings["userId"].as_i64().unwrap_or_default();
             self.reconcile_git_disconnects(&store, user).await?;
             let identities = stand_in_identities(&settings);
-            let sources = collection_sources(&identities);
-            if sources.is_empty() {
-                continue;
-            }
-            if self.backend_connection_snapshot()?.is_some() {
+            let receiving: Vec<Value> = identities
+                .iter()
+                .filter(|role| self.stand_in_role_runs_here(role))
+                .cloned()
+                .collect();
+            let sources = collection_sources(&receiving);
+            if !sources.is_empty() && self.backend_connection_snapshot()?.is_some() {
                 self.verify_runtime_user(&json!({"userId":user})).await?;
             }
             for (source, roles) in sources.values() {
