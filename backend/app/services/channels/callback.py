@@ -574,10 +574,28 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         last = self._callback_ttl_refreshed_at.get(task_id)
         if last is not None and now - last < CHANNEL_TASK_CALLBACK_REFRESH_INTERVAL:
             return
+        key = f"{self.redis_key_prefix}{task_id}"
+        try:
+            refreshed = await cache_manager.expire_or_raise(
+                key, CHANNEL_TASK_CALLBACK_TTL
+            )
+        except Exception:
+            self._callback_ttl_refreshed_at.pop(task_id, None)
+            logger.exception(
+                "[%sCallback] Failed to refresh callback TTL for task %s",
+                self._channel_type.value,
+                task_id,
+            )
+            return
+        if not refreshed:
+            self._callback_ttl_refreshed_at.pop(task_id, None)
+            logger.warning(
+                "[%sCallback] Callback info expired before TTL refresh: task=%s",
+                self._channel_type.value,
+                task_id,
+            )
+            return
         self._callback_ttl_refreshed_at[task_id] = now
-        await cache_manager.expire(
-            f"{self.redis_key_prefix}{task_id}", CHANNEL_TASK_CALLBACK_TTL
-        )
 
     async def delete_callback_info(self, task_id: int) -> None:
         """Delete callback info for a task.

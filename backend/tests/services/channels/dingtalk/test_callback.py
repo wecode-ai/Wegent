@@ -278,7 +278,9 @@ async def test_emit_event_refreshes_callback_ttl_at_most_once_per_interval(
     monkeypatch.setattr(
         service, "_get_or_create_emitter", AsyncMock(return_value=emitter)
     )
-    monkeypatch.setattr("app.services.channels.callback.cache_manager.expire", expire)
+    monkeypatch.setattr(
+        "app.services.channels.callback.cache_manager.expire_or_raise", expire
+    )
 
     event = SimpleNamespace(type="CHUNK", content="delta")
     await service.emit_event(101, 1, event)
@@ -288,4 +290,25 @@ async def test_emit_event_refreshes_callback_ttl_at_most_once_per_interval(
 
     service._callback_ttl_refreshed_at.clear()
     await service.emit_event(101, 1, event)
+    assert expire.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_callback_ttl_refresh_retries_on_next_event(monkeypatch):
+    """A transient Redis failure must not disable TTL refresh for 5 minutes."""
+    service = DingTalkCallbackService()
+    emitter = SimpleNamespace(emit=AsyncMock())
+    expire = AsyncMock(side_effect=[RuntimeError("redis down"), True])
+    monkeypatch.setattr(service, "has_callback_info", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        service, "_get_or_create_emitter", AsyncMock(return_value=emitter)
+    )
+    monkeypatch.setattr(
+        "app.services.channels.callback.cache_manager.expire_or_raise", expire
+    )
+
+    event = SimpleNamespace(type="CHUNK", content="delta")
+    await service.emit_event(101, 1, event)
+    await service.emit_event(101, 1, event)
+
     assert expire.await_count == 2
