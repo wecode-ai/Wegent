@@ -141,8 +141,11 @@ test(
     const { stdout } = await execute('rustc', ['-vV'])
     const target = /^host: (.+)$/m.exec(stdout)[1]
     for (const [index, flags] of [
-      { RUSTFLAGS: '-C debuginfo=1' },
-      { CARGO_ENCODED_RUSTFLAGS: ['-C', 'debuginfo=1'].join('\x1f') },
+      { CARGO_ENCODED_RUSTFLAGS: undefined, RUSTFLAGS: '-C debuginfo=1' },
+      {
+        CARGO_ENCODED_RUSTFLAGS: ['-C', 'debuginfo=1'].join('\x1f'),
+        RUSTFLAGS: undefined,
+      },
     ].entries()) {
       const targetDirectory = join(root, `target-${index}`)
       await execute('cargo', ['build', '--quiet'], {
