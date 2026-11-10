@@ -174,7 +174,7 @@ Open **titlebar bell → Notification center**, not the obsolete account-area aw
 
 System notification permission also applies. The center differs from **Needs your input**, which retains business questions and their handling state.
 
-Wegent chat mode remains available. In stand-in mode, connect IM private conversations to a primary stand-in or scenario role under [stand-in settings → IM conversations](./personal-stand-in.md#im-conversations). Task notification subscriptions remain independent; replies quoting a notification in stand-in mode enter the currently connected stand-in.
+Wegent chat mode remains available. In stand-in mode, connect IM private conversations to a primary stand-in or scenario role under [stand-in details popover → IM channel](./personal-stand-in.md#im-conversations). Task notification subscriptions remain independent; replies quoting a notification in stand-in mode enter the currently connected stand-in.
 
 ## Split tasks by dragging
 

@@ -1,4 +1,3 @@
-import { StandInImConnections } from './StandInImConnections'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import {
@@ -228,12 +227,6 @@ export function StandInPrimaryProfile({
               {t('standIn.workspace.profile_instructions_help')}
             </span>
           </label>
-          <StandInImConnections
-            services={services}
-            devices={devices}
-            deviceId={settings.executionDeviceId}
-            disabled={saving}
-          />
           <div className="mt-6">
             <StandInSettingsEntry
               label={t('standIn.workspace.connections')}

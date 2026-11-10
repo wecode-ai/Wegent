@@ -17,8 +17,7 @@ from shared.telemetry.decorators import trace_async
 
 GUIDANCE = (
     "当前为 Wework 分身模式。发送 /chat 返回 Wegent 聊天。"
-    "连接或切换分身，请打开 Wework“我的分身”的分身设置"
-    "（分身详情 → 管理分身 → IM 对话）。"
+    "连接或切换分身，请打开 Wework“我的分身”的“分身详情”浮层，点击对应的 IM 渠道。"
 )
 RETIRED_TASK_GUIDANCE = (
     "任务模式已移除。发送 /standin 进入 Wework 分身模式，或 /chat 返回 Wegent 聊天。"

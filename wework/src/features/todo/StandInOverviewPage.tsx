@@ -518,6 +518,16 @@ export function StandInOverviewPage({
             userId={props.userId}
             roleId={roleId}
             automationApi={props.services.automationApi}
+            imConnections={
+              deviceId
+                ? {
+                    services: props.services,
+                    devices: props.devices,
+                    deviceId,
+                    roleId,
+                  }
+                : undefined
+            }
             suspended={!!selectedScheduleId}
             onSchedule={(schedule, trigger) => {
               scheduleTrigger.current = trigger

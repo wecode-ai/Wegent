@@ -108,7 +108,7 @@ async def test_missing_default_does_not_pick_an_arbitrary_device(setup, target):
     s.user.preferences = {"default_execution_target": target}
     await service.send_stand_in_message(s.db, s.user, s.session, s.context, s.port)
     s.rpc.assert_not_awaited()
-    assert "分身设置" in s.port.send_text_reply.await_args.args[1]
+    assert "分身详情" in s.port.send_text_reply.await_args.args[1]
 
 
 async def test_unowned_device_does_not_dispatch(setup):
@@ -130,7 +130,7 @@ async def test_offline_or_deleted_role_keeps_binding_and_reports_recovery(setup)
     assert await cache_manager.get(service.binding_key(7, "session")) == binding
     s.port._delete_private_im_runtime_callback.assert_awaited_once()
     assert (
-        "分身设置"
+        "分身详情"
         in s.port._emit_private_im_runtime_stream_error.await_args.kwargs["error"]
     )
 

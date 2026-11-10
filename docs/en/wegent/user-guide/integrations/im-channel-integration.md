@@ -183,7 +183,7 @@ Private IM defaults to the existing Wegent chat flow, retaining Agent, model, de
 | `/bind` | Register this private conversation for Wework selection without changing modes |
 | `/notify on\|off\|status` | Manage task notifications independently of conversation mode |
 
-In Wework, select **My stand-in → Stand-in details → Manage stand-in → IM conversations → Connect to this stand-in** to save the identity and enter stand-in mode. Rebind from another role’s settings. Without an explicit identity, stand-in mode uses the primary stand-in on the account’s default execution device. Missing devices, offline devices and unavailable roles produce configuration guidance.
+In Wework, open **My stand-in → Stand-in details**, click the IM channel directly in the popover, then select a private conversation and confirm in its dialog. This saves the identity and enters stand-in mode. Switch roles and use the destination role’s details popover to rebind. Without an explicit identity, stand-in mode uses the primary stand-in on the account’s default execution device. Missing devices, offline devices and unavailable roles produce configuration guidance.
 
 Existing Task mode migrates to stand-in mode; old task bindings are removed while task history is preserved. Quoted notifications and card follow-ups in stand-in mode provide task context without switching back to the original task or overriding the stand-in model. `/task`, `/switch` and task-selection flows are retired. Weibo DMs use the same `/standin` command or stand-in settings entry.
 

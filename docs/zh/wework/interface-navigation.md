@@ -44,7 +44,7 @@ sidebar_position: 2
 | 分身聊天与桌面通知              | 我的分身 → 输入框上方“打开通知设置”；或顶部铃铛 → 通知设置         | 异步聊天、气泡和未读数字，见[分身聊天与桌面通知](./personal-stand-in.md#分身聊天与桌面通知)                                                                            |
 | 恢复已归档的分身来源工作 | 我的分身 → 分身详情 → 近期活动旁箭头 → 对应工作 → 取消归档 | 仅在工作已归档时显示；恢复不自动执行，见[来源会话策略](./personal-stand-in.md#stand-in-source-session-policy) |
 | 停止分身 / 更换绑定 | 左侧栏 → 我的分身 → 分身详情 → 管理分身 → 设置面板左下角“停止分身” | 整体停止并取消任务后才显示换绑选择；见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping) |
-| 连接 IM / 改绑分身 | 左侧栏 → 我的分身 → 选择主分身或角色 → 分身详情 → 管理分身 → IM 对话 | 需登录云端账号，点击连接立即保存；见[连接 IM 对话](./personal-stand-in.md#im-conversations) |
+| 连接 IM / 改绑分身 | 左侧栏 → 我的分身 → 选择主分身或角色 → 分身详情浮层 → 钉钉 / Telegram / Discord / 微博 | 需登录云端账号，点击连接立即保存；见[连接 IM 对话](./personal-stand-in.md#im-conversations) |
 | 换模型 / 调推理等级             | 任务输入区 → 模型选择器                     | 没有可用模型时去设置添加，见[模型设置](./user-guide/model-settings.md)                                                                                                 |
 | 添加附件、选择 Skill / 插件     | 任务输入区 → + 或能力选择入口               | 见[与 AI 协作](./tasks.md)和[插件与 Skills](./plugins-and-skills.md)                                                                                                   |
 | 切换只读、工作区、完整访问权限  | 输入框左侧工具区 → 快捷短语右边的权限图标   | 悬停查看当前模式；切换权限不等于授权外部应用                                                                                                                           |

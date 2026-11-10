@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Private IM session task-continuation endpoints."""
+"""Owned private IM conversation endpoints."""
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session

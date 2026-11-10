@@ -22,7 +22,7 @@ from shared.telemetry.decorators import trace_async
 logger = logging.getLogger(__name__)
 
 BINDING_PREFIX = "channel:stand_in_binding:"
-SETUP_GUIDANCE = "请在 Wework“我的分身”中打开“分身详情 → 管理分身”，在分身设置的“IM 对话”中连接，并确认执行设备在线。"
+SETUP_GUIDANCE = "请在 Wework“我的分身”中打开“分身详情”浮层，点击对应的 IM 渠道连接，并确认执行设备在线。"
 
 
 def binding_key(user_id: int, session_key: str) -> str:

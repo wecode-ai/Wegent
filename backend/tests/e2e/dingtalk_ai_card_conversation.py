@@ -438,7 +438,8 @@ async def run() -> None:
         assert await handler.handle_message(
             _message("/new", conversation_id, sender_id)
         )
-        assert "分身设置" in handler.replies[-1]
+        assert "分身详情" in handler.replies[-1]
+        assert "点击对应的 IM 渠道" in handler.replies[-1]
         assert await handler.handle_message(_message("1", conversation_id, sender_id))
         assert runtime_requests[-1]["message"] == "1"
         session = await im_session_service.get_session(session_key)
