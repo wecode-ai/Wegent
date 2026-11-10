@@ -86,7 +86,16 @@ export async function verifyOrphanStandInRecovery({
   try {
     await assert.rejects(
       rpc('runtime.stand_in.run', { ...params, issueId: interrupted.issue.id }),
-      /Cloud request returned 500/,
+      error => {
+        assert.ok(error instanceof Error)
+        assert.ok(
+          error.message.includes(
+            `Cloud request POST /v1/loop-items/${interrupted.issue.id}/tasks returned 500 `
+          ),
+          `The injected transaction must fail its exact bind request: ${error.message}`
+        )
+        return true
+      },
       'The real backend fault must be observable instead of being reported as handled work'
     )
     assert.equal(
