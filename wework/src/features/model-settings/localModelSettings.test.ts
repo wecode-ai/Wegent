@@ -27,7 +27,7 @@ describe('localModelSettings', () => {
     saveLocalModelConfig({ ...input, maxOutputTokens: '' })
     expect(listLocalModelConfigs()[0].maxOutputTokens).toBeUndefined()
   })
-  test('defaults tool profiles by API format and rejects incompatible combinations', () => {
+  test('defaults to function tools and rejects incompatible explicit native settings', () => {
     const responses = saveLocalModelConfig({
       modelId: 'responses-model',
       baseUrl: 'https://responses.example/v1',
@@ -39,8 +39,8 @@ describe('localModelSettings', () => {
       apiFormat: 'openai-chat-completions',
     })
 
-    expect(responses.toolProfile).toBe('custom')
-    expect(responses.codexToolCompatibility).toBe('native')
+    expect(responses.toolProfile).toBe('function')
+    expect(responses.codexToolCompatibility).toBe('standard')
     expect(chat.toolProfile).toBe('function')
     expect(chat.codexToolCompatibility).toBe('standard')
     expect(() =>
@@ -70,6 +70,21 @@ describe('localModelSettings', () => {
 
     expect(model.codexToolCompatibility).toBe('standard')
     expect(listLocalModelConfigs()[0].codexToolCompatibility).toBe('standard')
+  })
+
+  test('preserves explicitly enabled native Responses capabilities for any provider', () => {
+    const model = saveLocalModelConfig({
+      modelId: 'my-native-model',
+      baseUrl: 'https://native.example/v1',
+      apiFormat: 'openai-responses',
+      toolProfile: 'custom',
+      codexToolCompatibility: 'native',
+    })
+    expect(listLocalModelConfigs()[0]).toMatchObject({
+      id: model.id,
+      toolProfile: 'custom',
+      codexToolCompatibility: 'native',
+    })
   })
 
   beforeEach(() => {
@@ -459,7 +474,7 @@ describe('localModelSettings', () => {
       expect.objectContaining({
         id: 'stored-catalog',
         codexCatalogModelId: 'operator-selected-catalog',
-        toolProfile: 'function',
+        toolProfile: 'custom',
       }),
     ])
   })

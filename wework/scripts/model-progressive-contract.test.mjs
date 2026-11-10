@@ -6,6 +6,7 @@ import {
 } from '../e2e/desktop/modules/model-native-catalog.mjs'
 import {
   assertProgressiveHi,
+  assertCodeModeMatrixRequest,
   assertRequiredToolInventory,
   MATRIX_REQUIRED_TOOLS,
   INITIAL_CONTEXT_TOKEN_LIMIT,
@@ -28,6 +29,28 @@ const wrapper = {
   name: 'exec',
   parameters: { type: 'object', properties: { input: { type: 'string' } }, required: ['input'] },
 }
+
+test('configured Codex matrix providers require portable Responses declarations', () => {
+  const model = { protocol: 'responses', source: 'codex' }
+  const body = { tools: [{ ...wrapper, type: 'function', name: 'functions__exec' }] }
+  expect(() => assertCodeModeMatrixRequest(body, model)).not.toThrow()
+  expect(() => assertCodeModeMatrixRequest({ tools: [exec] }, model)).toThrow(
+    'must default to function tools'
+  )
+  expect(() =>
+    assertCodeModeMatrixRequest(
+      {
+        input: [
+          {
+            type: 'additional_tools',
+            tools: [{ type: 'namespace', name: 'functions', tools: [exec] }],
+          },
+        ],
+      },
+      model
+    )
+  ).toThrow('current tool declarations')
+})
 
 function request(protocol, instructions = baseInstructions) {
   if (protocol === 'chat')

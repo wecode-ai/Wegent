@@ -4835,21 +4835,17 @@ def _apply_runtime_cloud_model_options(
     model_options: dict[str, Any],
 ) -> None:
     config["wework_model_kind"] = "cloud"
-    config["tool_profile"] = "custom"
+    config["tool_profile"] = "function"
     config["codex_responses_compat_proxy"] = True
-    upstream_api_format = str(
-        config.get("upstream_api_format") or "openai-responses"
-    ).strip()
-    native_by_default = upstream_api_format == "openai-responses"
     config["native_tool_search"] = _boolean_model_option(
         model_options,
         CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
-        default=config.get("native_tool_search", native_by_default),
+        default=config.get("native_tool_search", False),
     )
     config["native_namespace_tools"] = _boolean_model_option(
         model_options,
         CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
-        default=config.get("native_namespace_tools", native_by_default),
+        default=config.get("native_namespace_tools", False),
     )
     mode = config.get("codex_request_mode")
     if mode in {"standard", "passthrough"}:

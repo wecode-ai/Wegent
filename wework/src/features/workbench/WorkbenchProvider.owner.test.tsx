@@ -1,5 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
+import { createCollaborationTranslator } from '@wegent/collaboration'
+import { GitAccountConfigurationButton } from '@wegent/collaboration/controls'
+import { useToolInteractionServices } from '@wegent/collaboration/conversation'
 import { LOCAL_USER } from '@/api/local/localSession'
 import {
   CloudConnectionContext,
@@ -91,12 +94,25 @@ function setup() {
   let currentStore: RuntimeTaskLifecycleStore | undefined
   function Probe() {
     const { state } = useWorkbench()
+    const toolServices = useToolInteractionServices()
     currentStore = useRuntimeTaskLifecycleStore()
     const resolveTask = useRuntimeTaskSummaryResolver(state.runtimeWork)
     return (
       <>
         <output data-testid="owner-ready">{`${state.user?.id}:${state.runtimeWorkLoad.phase}:${state.runtimeWork?.totalTasks}`}</output>
         <output data-testid="owner-summary">{resolveTask(ADDRESS)?.title ?? 'none'}</output>
+        <output data-testid="owner-question-renderer">
+          {String(Boolean(toolServices.renderRequestUserInput))}
+        </output>
+        <GitAccountConfigurationButton
+          failure={{
+            code: 'credentials-required',
+            domain: 'git.example',
+            message: 'Git credentials are missing',
+          }}
+          translate={createCollaborationTranslator('en')}
+          testId="owner-configure-git"
+        />
       </>
     )
   }
@@ -123,6 +139,30 @@ function setup() {
 }
 
 describe('workbench lifecycle ownership', () => {
+  test('keeps Git recovery and question discussion scoped to the owned workbench', async () => {
+    const fixture = setup()
+    const active = {
+      ...connection(7, 'https://backend-a.example/api'),
+      webUrl: 'https://cloud-a.example',
+    }
+    const view = render(fixture.tree(active, fixture.firstServices))
+    await waitFor(() => expect(screen.getByTestId('owner-ready')).toHaveTextContent('7:ready:1'))
+    expect(screen.getByTestId('owner-configure-git')).toBeInTheDocument()
+    expect(screen.getByTestId('owner-question-renderer')).toHaveTextContent('true')
+
+    view.rerender(
+      fixture.tree(
+        { ...active, status: 'expired', isConnected: false, token: null, serviceKey: 'expired' },
+        fixture.nextServices
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('owner-ready')).toHaveTextContent(`${LOCAL_USER.id}:ready:0`)
+    )
+    expect(screen.queryByTestId('owner-configure-git')).not.toBeInTheDocument()
+    expect(screen.getByTestId('owner-question-renderer')).toHaveTextContent('true')
+  })
+
   test('rebuilds the local workbench when cloud credentials expire with reconnect metadata retained', async () => {
     const fixture = setup()
     const active = connection(7, 'https://backend-a.example/api')

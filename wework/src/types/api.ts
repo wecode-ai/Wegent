@@ -1104,16 +1104,6 @@ export interface CloneGitRepositoryInput {
   targetPath: string
 }
 
-export interface GitCloneProjectOperation extends CloneGitRepositoryInput {
-  id: string
-  deviceId: string
-  name: string
-  status: 'cloning' | 'opening' | 'failed'
-  failureStage?: 'clone' | 'open'
-  failureReason?: 'executor-offline' | 'executor-not-found' | 'clone-failed' | 'open-failed'
-  error?: string
-}
-
 export interface TaskContextData {
   id: number
   context_type: 'attachment' | 'knowledge_base'

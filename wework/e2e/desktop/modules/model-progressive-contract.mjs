@@ -352,8 +352,13 @@ export function assertCodeModeMatrixPatch(body, model) {
 }
 
 export function assertCodeModeMatrixRequest(body, model) {
-  const lite = model.protocol === 'responses' && model.source === 'codex'
-  assertCodeModeRequest(body, { protocol: model.protocol, lite })
+  // Matrix Codex providers have custom endpoints and use the portable defaults.
+  const exec = assertCodeModeRequest(body, { protocol: model.protocol, lite: false })
+  if (model.protocol === 'responses' && model.source === 'codex') {
+    assert.equal(exec.type, 'function', 'Configured Codex providers must default to function tools')
+    assert.equal(exec.name, 'functions__exec')
+    assert.equal(exec.namespace, undefined)
+  }
 }
 
 export function assertRequiredToolInventory(output) {

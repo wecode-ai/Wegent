@@ -454,7 +454,10 @@ const workbenchValue: WorkbenchContextValue = {
   markRuntimeTaskStarted: vi.fn(),
   markRuntimeTaskSettled: vi.fn(),
   listImPrivateSessions: vi.fn(),
-  getImNotificationSettings: vi.fn(),
+  getImNotificationSettings: vi.fn().mockResolvedValue({
+    global: { enabled: false, sessionKey: null, session: null },
+    runtimeTaskSubscriptions: [],
+  }),
   updateGlobalImNotification: vi.fn(),
   subscribeRuntimeTaskNotifications: vi.fn(),
   unsubscribeRuntimeTaskNotifications: vi.fn(),
