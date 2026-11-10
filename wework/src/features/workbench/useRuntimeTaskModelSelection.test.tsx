@@ -1,9 +1,10 @@
-import { renderHook } from '@testing-library/react'
+import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { ModelOptions, ModelSelectionConfig, UnifiedModel } from '@/types/api'
 import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
 import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 import { requiresNewSessionForModelSwitch } from './modelSwitch'
+import { getRuntimeTaskChatScopeKey } from './workbenchProviderHelpers'
 
 const selection: ModelSelectionConfig = {
   modelName: 'deepseek-v4-pro-responses(公网)',
@@ -139,5 +140,53 @@ describe('bound remote task model selection', () => {
       'reasoning',
       'high'
     )
+  })
+
+  it('keeps the accepted switch model active before the task list refreshes', () => {
+    const target: UnifiedModel = {
+      name: 'gpt-6.1-sol',
+      type: 'runtime',
+      provider: 'local',
+      config: { weworkModelKind: 'codex-official' },
+    }
+    const store = modelStore([target])
+    const scopeKey = `user:7:${getRuntimeTaskChatScopeKey(address)}`
+    store.selectedModelByScope[scopeKey] = target
+    const resolvedTask = {
+      taskId: address.taskId,
+      workspacePath: '/tmp/workspace',
+      title: 'Stand-in',
+      runtime: 'codex',
+      modelSelection: selection,
+    }
+    const { result, rerender } = renderHook(() =>
+      useRuntimeTaskModelSelection({
+        userId: 7,
+        resolveTask: () => resolvedTask,
+        modelStore: store,
+      })
+    )
+
+    expect(
+      requiresNewSessionForModelSwitch(
+        result.current.resolveRuntimeTaskModelSelection(address).activeModel,
+        target
+      )
+    ).toBe(true)
+
+    act(() => result.current.confirmRuntimeTaskActiveModel(address, target))
+    rerender()
+
+    const afterSwitch = result.current.resolveRuntimeTaskModelSelection(address)
+    expect(afterSwitch.activeModel).toEqual(target)
+    expect(requiresNewSessionForModelSwitch(afterSwitch.activeModel, target)).toBe(false)
+
+    const nextModel: UnifiedModel = { name: 'deepseek', type: 'public', provider: 'cloud' }
+    store.selectedModelByScope[scopeKey] = nextModel
+    rerender()
+
+    const afterNextSelection = result.current.resolveRuntimeTaskModelSelection(address)
+    expect(afterNextSelection.selectedModel).toEqual(nextModel)
+    expect(requiresNewSessionForModelSwitch(afterNextSelection.activeModel, nextModel)).toBe(true)
   })
 })

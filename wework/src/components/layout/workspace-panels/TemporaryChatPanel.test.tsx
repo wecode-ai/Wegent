@@ -101,6 +101,7 @@ const mocks = vi.hoisted(() => ({
   activeModelSelection: null as ModelSelectionConfig | null,
   activeTaskModel: undefined as UnifiedModel | undefined,
   selectedTaskModel: undefined as UnifiedModel | undefined,
+  confirmRuntimeTaskActiveModel: vi.fn(),
   isBootstrapping: false,
   runtimeWork: null as {
     projects: unknown[]
@@ -433,6 +434,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       setRuntimeTaskSelectedModel: vi.fn(),
       setRuntimeTaskSelectedModelAndOptions: vi.fn(),
       setRuntimeTaskSelectedModelOption: vi.fn(),
+      confirmRuntimeTaskActiveModel: mocks.confirmRuntimeTaskActiveModel,
     },
     createTemporaryRuntimeTask: vi.fn(),
     sendRuntimePaneMessage: mocks.sendRuntimePaneMessage,
@@ -658,6 +660,7 @@ describe('TemporaryChatPanel', () => {
     mocks.sendRuntimePaneMessage.mockReset()
     mocks.sendRuntimePaneMessage.mockResolvedValue(true)
     mocks.sendRuntimePaneGuidance.mockReset()
+    mocks.confirmRuntimeTaskActiveModel.mockClear()
     mocks.createTask.mockReset()
     mocks.loadRuntimeTranscriptForPane.mockReset()
     mocks.loadRuntimeTranscriptForPane.mockResolvedValue({
@@ -1794,6 +1797,10 @@ describe('TemporaryChatPanel', () => {
       )
       expect(mocks.resetAttachments).toHaveBeenCalledOnce()
       expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
+      expect(mocks.confirmRuntimeTaskActiveModel).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: address.taskId }),
+        expect.objectContaining({ name: 'gpt-6.1-sol' })
+      )
     }
   )
   it.each([false, true])(
@@ -1840,6 +1847,106 @@ describe('TemporaryChatPanel', () => {
       expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
     }
   )
+  it('starts a cross-provider session when retrying a failed stand-in message', async () => {
+    mocks.activeModelSelection = { modelName: 'deepseek', modelType: 'public', options: {} }
+    mocks.activeTaskModel = { name: 'deepseek', type: 'public', provider: 'cloud' }
+    mocks.selectedTaskModel = {
+      name: 'gpt-6.1-sol',
+      type: 'runtime',
+      provider: 'local',
+      config: { weworkModelKind: 'codex-official' },
+    }
+    mocks.conversationMessages = [
+      {
+        id: 'failed-assistant',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        createdAt: '2026-09-10T00:00:00Z',
+      },
+    ]
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="stand-in-retry-switch"
+        initialAddress={{ ...address, threadId: 'old-thread' }}
+        sendEphemeral={false}
+        crossProviderSwitchBehavior="new-session"
+        nativeConversation
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-retry'))
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: expect.objectContaining({ taskId: address.taskId }),
+        message: RUNTIME_RETRY_CONTINUATION_PROMPT,
+        modelId: 'gpt-6.1-sol',
+        startNewSession: true,
+        expectedThreadId: 'old-thread',
+      }),
+      expect.any(Object)
+    )
+    expect(mocks.confirmRuntimeTaskActiveModel).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: address.taskId }),
+      expect.objectContaining({ name: 'gpt-6.1-sol' })
+    )
+  })
+  it('answers an async question in its owning session without carrying a newly selected provider', async () => {
+    mocks.activeModelSelection = { modelName: 'deepseek', modelType: 'public', options: {} }
+    mocks.activeTaskModel = { name: 'deepseek', type: 'public', provider: 'cloud' }
+    mocks.selectedTaskModel = {
+      name: 'gpt-6.1-sol',
+      type: 'runtime',
+      provider: 'local',
+      config: { weworkModelKind: 'codex-official' },
+    }
+    mocks.conversationMessages = [
+      {
+        id: 'async-question',
+        role: 'assistant',
+        content: 'Waiting for an answer',
+        status: 'done',
+        createdAt: '2026-09-10T00:00:00Z',
+        blocks: [
+          {
+            id: 'question-block',
+            type: 'tool',
+            toolName: 'request_user_input_async',
+            status: 'done',
+            renderPayload: {
+              kind: 'request_user_input',
+              requestId: 'request-1',
+              delivery: 'async',
+              questions: [{ id: 'choice', question: '继续?', is_other: true }],
+            },
+          },
+        ],
+      },
+    ] as typeof mocks.conversationMessages
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="stand-in-async-answer"
+        initialAddress={{ ...address, threadId: 'old-thread' }}
+        sendEphemeral={false}
+        crossProviderSwitchBehavior="new-session"
+        nativeConversation
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-submit-input'))
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+    const request = mocks.sendRuntimePaneMessage.mock.calls[0]?.[0]
+    expect(request).toMatchObject({ address, message: '继续' })
+    expect(request.clientUserMessageId).toMatch(/^queued-side-chat-/)
+    expect(request.requestUserInputResponse).toBeUndefined()
+    expect(request.modelId).toBeUndefined()
+    expect(request.startNewSession).toBeUndefined()
+  })
   it.each([false, true])(
     'does not interrupt or queue a cross-provider stand-in transition while busy (native: %s)',
     async nativeConversation => {

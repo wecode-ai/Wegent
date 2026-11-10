@@ -42,6 +42,9 @@ import {
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { retryRuntimeConversation } from '@wegent/collaboration/execution/retryRuntimeConversation'
+import { requiresNewSessionForModelSwitch } from '@/features/workbench/modelSwitch'
+import { prepareModelSessionSwitch } from './prepareModelSessionSwitch'
+import type { PreparedModelSessionSwitch } from './prepareModelSessionSwitch'
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
@@ -72,6 +75,7 @@ import type {
   RequestUserInputResponse,
   RuntimeSendRequest,
   RuntimeTaskAddress,
+  UnifiedModel,
 } from '@/types/api'
 import type {
   RuntimeConversationTurn,
@@ -128,6 +132,22 @@ interface TemporaryChatPanelProps {
   focusedRequest?: RequestUserInputPayload | null
   sourceMessageIds?: string[]
   focusRequestKey?: string
+}
+
+// Keep provider comparison behind a hook boundary so the compiler treats it as opaque.
+function useModelSessionSwitchRequired(
+  address: RuntimeTaskAddress | null,
+  sendEphemeral: boolean,
+  behavior: 'new-session' | undefined,
+  activeModel: UnifiedModel | null | undefined,
+  selectedModel: UnifiedModel | null
+): boolean {
+  return Boolean(
+    address &&
+    !sendEphemeral &&
+    behavior === 'new-session' &&
+    requiresNewSessionForModelSwitch(activeModel, selectedModel)
+  )
 }
 
 export function TemporaryChatPanel({
@@ -319,6 +339,43 @@ export function TemporaryChatPanel({
     [address, messages, taskLifecycle]
   )
   const busy = sending || paneStatus.isBusy
+  const requiresSessionSwitch = useModelSessionSwitchRequired(
+    address,
+    sendEphemeral,
+    crossProviderSwitchBehavior,
+    taskModelSelection?.activeModel,
+    taskModelSelection?.selectedModel ?? null
+  )
+  const prepareSessionSwitch = useCallback(async (): Promise<PreparedModelSessionSwitch | null> => {
+    if (!address) return null
+    return prepareModelSessionSwitch({
+      address,
+      lifecycle: lifecycleStore.getTask(address),
+      activeModel: taskModelSelection?.activeModel,
+      selectedModel: taskModelSelection?.selectedModel ?? null,
+      busy: busy || queuedMessages.length > 0 || Boolean(pendingRequestUserInputPayload(messages)),
+      blockedMessage: t('workbench.model_switch_new_session_blocked'),
+      unresolvedMessage: t('workbench.model_switch_new_session_unresolved'),
+      additionalContext: runtimeContext?.additionalContext,
+      loadTranscript: loadRuntimeTranscriptForPane,
+    })
+  }, [
+    address,
+    busy,
+    lifecycleStore,
+    loadRuntimeTranscriptForPane,
+    messages,
+    queuedMessages.length,
+    runtimeContext?.additionalContext,
+    t,
+    taskModelSelection?.activeModel,
+    taskModelSelection?.selectedModel,
+  ])
+  const confirmSessionSwitchModel = useCallback(() => {
+    const model = taskModelSelection?.selectedModel
+    if (!address || !model) return
+    projectChat.confirmRuntimeTaskActiveModel(address, model)
+  }, [address, projectChat, taskModelSelection?.selectedModel])
   const createdAddressKeyRef = useRef<string | null>(null)
   const autoSubmittedInitialInputRef = useRef(false)
   const draftEditVersionRef = useRef(0)
@@ -550,10 +607,9 @@ export function TemporaryChatPanel({
     paneBusy: paneStatus.isBusy,
     queuePort,
     sendRuntimePaneGuidance,
-    crossProviderSwitchBehavior,
-    taskModelSelection,
-    messages,
-    loadRuntimeTranscriptForPane,
+    requiresSessionSwitch,
+    prepareSessionSwitch,
+    onSessionSwitchAccepted: confirmSessionSwitchModel,
     t,
     goalDraftActive,
     createTask,
@@ -562,7 +618,6 @@ export function TemporaryChatPanel({
     currentProject,
     input,
     busy,
-    queuedMessages,
     conversationQueue,
     sideChatProjectChat,
     selectedModelFields,
@@ -676,11 +731,20 @@ export function TemporaryChatPanel({
       retryInFlightRef.current = true
       setError(null)
       try {
+        let sessionSwitch: Awaited<ReturnType<typeof prepareSessionSwitch>> = null
+        if (requiresSessionSwitch) {
+          sessionSwitch = await prepareSessionSwitch()
+        }
         const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
         await retryRuntimeConversation({
           messageId: message.id,
           messages,
-          request: { address, ...selectedModelFields, ...runtimeContext },
+          request: {
+            address,
+            ...selectedModelFields,
+            ...runtimeContext,
+            ...(sessionSwitch ?? {}),
+          },
           labels: {
             continue: t('workbench.retry_continue_message'),
             missing: t('workbench.retry_message_missing'),
@@ -705,6 +769,7 @@ export function TemporaryChatPanel({
             return { accepted, queued }
           },
         })
+        if (sessionSwitch) confirmSessionSwitchModel()
         return true
       } catch (caughtError) {
         setError(caughtError instanceof Error ? caughtError.message : t('workbench.retry_failed'))
@@ -715,7 +780,10 @@ export function TemporaryChatPanel({
     },
     [
       address,
+      confirmSessionSwitchModel,
       messages,
+      prepareSessionSwitch,
+      requiresSessionSwitch,
       runtimeContext,
       selectedModelFields,
       sendRuntimePaneMessage,
@@ -740,8 +808,9 @@ export function TemporaryChatPanel({
           content: requestUserInputResponseText(response),
           status: 'queued',
           createdAt: new Date().toISOString(),
-          ...selectedModelFields,
         }
+        // Answering a pending question continues its owning session; a newly
+        // selected provider takes effect only on the next switch-eligible send.
         conversationQueue.enqueue(answerMessage)
         return sendQueuedMessageAsGuidance(answerMessage)
       }
@@ -758,7 +827,6 @@ export function TemporaryChatPanel({
       messages,
       queuedMessages.length,
       runtimeContext,
-      selectedModelFields,
       sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
       requestUserInputHost,

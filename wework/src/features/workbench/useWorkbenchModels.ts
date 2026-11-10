@@ -15,6 +15,7 @@ import {
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 import { findModelForSelection } from './runtimeContextUsage'
 import { modelSelectionIdentityOptions } from './runtimeModelSelection'
+import { modelSelectionKey } from './modelSelectionKey'
 import {
   modelSelectionIdentityDiagnostics,
   modelSelectionScopeFingerprint,
@@ -74,15 +75,6 @@ function areModelOptionsEqual(left: ModelOptions, right: ModelOptions): boolean 
   return leftKeys.every(key => left[key] === right[key])
 }
 
-function getSelectionKey(selectionConfig?: ModelSelectionConfig | null): string {
-  const options = selectionConfig?.options ?? {}
-  const optionsKey = Object.keys(options)
-    .sort()
-    .map(key => `${key}:${options[key]}`)
-    .join('|')
-  return [selectionConfig?.modelType ?? '', selectionConfig?.modelName ?? '', optionsKey].join('::')
-}
-
 /** Restore and manage independent model choices for each conversation or new-chat scope. */
 export function useWorkbenchModels({
   api,
@@ -137,7 +129,7 @@ export function useWorkbenchModels({
     return defaultSelectionConfig?.(models) ?? selectionConfig ?? null
   }, [defaultSelectionConfig, fallbackWhenConfiguredModelUnavailable, models, selectionConfig])
   const selectionKey = useMemo(
-    () => getSelectionKey(effectiveSelectionConfig),
+    () => modelSelectionKey(effectiveSelectionConfig),
     [effectiveSelectionConfig]
   )
   const configuredModelAvailable = Boolean(
@@ -547,9 +539,9 @@ export function useWorkbenchModels({
       const restoredSelectionKey =
         restoredSelectionConfig === undefined
           ? persistedSelection
-            ? getSelectionKey(persistedSelection)
+            ? modelSelectionKey(persistedSelection)
             : selectionKey
-          : getSelectionKey(restoredSelectionConfig)
+          : modelSelectionKey(restoredSelectionConfig)
       setRestoredSelectionKeyByScope(current => ({
         ...current,
         [targetScopeKey]: restoredSelectionKey,

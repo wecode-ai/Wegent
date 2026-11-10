@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { localModelIdFromModelName } from '@/features/model-settings/localModelSettings'
 import type {
   ModelOptions,
@@ -10,6 +10,7 @@ import type {
 import type { RuntimeTaskModelSelectionControls } from './workbenchContextTypes'
 import { findModelForSelection, modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { getRuntimeTaskChatScopeKey } from './workbenchProviderHelpers'
+import { modelSelectionKey } from './modelSelectionKey'
 
 interface RuntimeTaskModelStore {
   models: UnifiedModel[]
@@ -36,6 +37,11 @@ interface UseRuntimeTaskModelSelectionOptions {
   userId: number
   resolveTask: (address: RuntimeTaskAddress) => RuntimeTaskSummary | null
   modelStore: RuntimeTaskModelStore
+}
+
+interface AcceptedActiveModel {
+  model: UnifiedModel
+  previousSelectionKey: string
 }
 
 function runtimeTaskModelScopeKey(userId: number, address: RuntimeTaskAddress): string {
@@ -87,6 +93,9 @@ export function useRuntimeTaskModelSelection({
     setSelectedModelOptionForScope,
     setSelectionForScope,
   } = modelStore
+  const [acceptedActiveModelByScope, setAcceptedActiveModelByScope] = useState<
+    Record<string, AcceptedActiveModel>
+  >({})
   const taskSelectionConfig = useCallback(
     (address: RuntimeTaskAddress) =>
       resolveTask(address)?.modelSelection ??
@@ -100,20 +109,44 @@ export function useRuntimeTaskModelSelection({
       const taskModel =
         findModelForSelection(models, taskSelection) ?? modelFromTaskSnapshot(taskSelection)
       const scopeKey = runtimeTaskModelScopeKey(userId, address)
+      const acceptedActiveModel = acceptedActiveModelByScope[scopeKey]
+      const activeModel =
+        acceptedActiveModel &&
+        acceptedActiveModel.previousSelectionKey === modelSelectionKey(taskSelection)
+          ? acceptedActiveModel.model
+          : taskModel
       const hasScopedSelection = Object.prototype.hasOwnProperty.call(
         selectedModelByScope,
         scopeKey
       )
       return {
         taskSelection,
-        activeModel: taskModel,
+        activeModel,
         selectedModel: hasScopedSelection ? (selectedModelByScope[scopeKey] ?? null) : taskModel,
         selectedModelOptions: hasScopedSelection
           ? (selectedModelOptionsByScope[scopeKey] ?? {})
           : (taskSelection?.options ?? {}),
       }
     },
-    [models, selectedModelByScope, selectedModelOptionsByScope, taskSelectionConfig, userId]
+    [
+      acceptedActiveModelByScope,
+      models,
+      selectedModelByScope,
+      selectedModelOptionsByScope,
+      taskSelectionConfig,
+      userId,
+    ]
+  )
+  const confirmRuntimeTaskActiveModel = useCallback(
+    (address: RuntimeTaskAddress, model: UnifiedModel) => {
+      const scopeKey = runtimeTaskModelScopeKey(userId, address)
+      const previousSelectionKey = modelSelectionKey(taskSelectionConfig(address))
+      setAcceptedActiveModelByScope(current => ({
+        ...current,
+        [scopeKey]: { model, previousSelectionKey },
+      }))
+    },
+    [taskSelectionConfig, userId]
   )
   const ensureTaskSelection = useCallback(
     (address: RuntimeTaskAddress) => {
@@ -158,6 +191,7 @@ export function useRuntimeTaskModelSelection({
 
   return {
     resolveRuntimeTaskModelSelection,
+    confirmRuntimeTaskActiveModel,
     setRuntimeTaskSelectedModel,
     setRuntimeTaskSelectedModelAndOptions,
     setRuntimeTaskSelectedModelOption,

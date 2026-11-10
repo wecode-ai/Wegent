@@ -39,6 +39,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
         selectedModel: null,
         selectedModelOptions: {},
       }),
+      confirmRuntimeTaskActiveModel: vi.fn(),
     },
     subscribeRuntimeTaskStream: () => () => undefined,
     loadRuntimeTranscriptForPane: mocks.loadTranscript,

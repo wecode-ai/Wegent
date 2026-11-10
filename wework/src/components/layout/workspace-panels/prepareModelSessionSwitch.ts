@@ -12,6 +12,11 @@ import type {
 } from '@/types/api'
 import type { RuntimeTranscriptLoader } from '@/types/workbench'
 
+export type PreparedModelSessionSwitch = Pick<
+  RuntimeSendRequest,
+  'startNewSession' | 'expectedThreadId' | 'additionalContext'
+>
+
 export async function prepareModelSessionSwitch({
   address,
   lifecycle,
@@ -32,10 +37,7 @@ export async function prepareModelSessionSwitch({
   unresolvedMessage: string
   additionalContext?: RuntimeAdditionalContext
   loadTranscript: RuntimeTranscriptLoader
-}): Promise<Pick<
-  RuntimeSendRequest,
-  'startNewSession' | 'expectedThreadId' | 'additionalContext'
-> | null> {
+}): Promise<PreparedModelSessionSwitch | null> {
   if (!requiresNewSessionForModelSwitch(activeModel, selectedModel)) return null
   if (busy || lifecycle?.interactionStatus || lifecycle?.goalStatus === 'active') {
     throw new Error(blockedMessage)

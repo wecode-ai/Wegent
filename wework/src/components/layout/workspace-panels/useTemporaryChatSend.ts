@@ -2,12 +2,8 @@ import { useCallback, useRef, type Dispatch, type SetStateAction, type RefObject
 import type { ChatSubmitOptions } from '@/components/chat/ChatInput'
 import type { RuntimeConversationQueuePort } from '@wegent/collaboration/execution/runtimeConversationQueue'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
-import type {
-  WorkbenchContextValue,
-  RuntimeTaskModelSelectionControls,
-} from '@/features/workbench/workbenchContextTypes'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
-import { requiresNewSessionForModelSwitch } from '@/features/workbench/modelSwitch'
 import { isRuntimeTaskBusyError } from '@/features/workbench/runtimePaneStatus'
 import {
   appendAcceptedRuntimeConversationMessage,
@@ -35,8 +31,8 @@ import type {
   WorkbenchMessage,
 } from '@/types/workbench'
 import type { runtimePaneQueue } from './runtimePaneQueues'
-import { prepareModelSessionSwitch } from './prepareModelSessionSwitch'
 import { deliverNativeConversationMessage } from './nativeConversationDelivery'
+import type { PreparedModelSessionSwitch } from './prepareModelSessionSwitch'
 
 type StateSetter<T> = Dispatch<SetStateAction<T>>
 type SendContext = Pick<
@@ -45,7 +41,6 @@ type SendContext = Pick<
   | 'sendRuntimePaneMessage'
   | 'sendRuntimePaneGuidance'
   | 'interruptAndSendRuntimePaneMessage'
-  | 'loadRuntimeTranscriptForPane'
 >
 interface TemporaryChatSendOptions extends SendContext {
   address: RuntimeTaskAddress | null
@@ -57,12 +52,11 @@ interface TemporaryChatSendOptions extends SendContext {
   nativeConversation?: boolean
   queuePort: RuntimeConversationQueuePort<number>
   sendEphemeral: boolean
-  crossProviderSwitchBehavior?: 'new-session'
+  requiresSessionSwitch: boolean
+  prepareSessionSwitch: () => Promise<PreparedModelSessionSwitch | null>
+  onSessionSwitchAccepted(): void
   taskModelIdentityPending: boolean
-  taskModelSelection: RuntimeTaskModelSelectionControls | null
   selectedModelFields: RuntimeTaskComposerCreateOptions['executionModel']
-  messages: WorkbenchMessage[]
-  queuedMessages: readonly RuntimePaneQueuedMessage[]
   conversationQueue: ReturnType<typeof runtimePaneQueue>
   lifecycleStore: RuntimeTaskLifecycleStore
   runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
@@ -95,10 +89,9 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
     async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
       const {
         address,
-        crossProviderSwitchBehavior,
-        taskModelSelection,
-        messages,
-        loadRuntimeTranscriptForPane,
+        requiresSessionSwitch,
+        prepareSessionSwitch,
+        onSessionSwitchAccepted,
         t,
         goalDraftActive,
         createTask,
@@ -110,7 +103,6 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
         paneBusy,
         nativeConversation,
         queuePort,
-        queuedMessages,
         conversationQueue,
         sideChatProjectChat,
         selectedModelFields,
@@ -144,33 +136,12 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
         setError('正在同步任务模型配置，请稍后重试')
         return false
       }
-      let sessionSwitch: Awaited<ReturnType<typeof prepareModelSessionSwitch>> = null
-      if (
-        crossProviderSwitchBehavior === 'new-session' &&
-        address &&
-        !sendEphemeral &&
-        requiresNewSessionForModelSwitch(
-          taskModelSelection?.activeModel,
-          taskModelSelection?.selectedModel ?? null
-        )
-      ) {
+      let sessionSwitch: PreparedModelSessionSwitch | null = null
+      if (requiresSessionSwitch && address) {
         submissionInFlight.current = true
         setSending(true)
         try {
-          sessionSwitch = await prepareModelSessionSwitch({
-            address,
-            lifecycle: lifecycleStore.getTask(address),
-            activeModel: taskModelSelection?.activeModel,
-            selectedModel: taskModelSelection?.selectedModel ?? null,
-            busy:
-              busy ||
-              queuedMessages.length > 0 ||
-              Boolean(pendingRequestUserInputPayload(messages)),
-            blockedMessage: t('workbench.model_switch_new_session_blocked'),
-            unresolvedMessage: t('workbench.model_switch_new_session_unresolved'),
-            additionalContext: runtimeContext?.additionalContext,
-            loadTranscript: loadRuntimeTranscriptForPane,
-          })
+          sessionSwitch = await prepareSessionSwitch()
         } catch (cause) {
           submissionInFlight.current = false
           setSending(false)
@@ -333,28 +304,34 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
           ? interruptAndSendRuntimePaneMessage
           : sendRuntimePaneMessage
       const lifecycleBeforeSend = lifecycleStore.getTaskRevision(targetAddress)
-      const sent = await sendMessage(
-        {
-          address: targetAddress,
-          message,
-          clientUserMessageId: queuedMessage.id,
-          ...(sendEphemeral ? { ephemeral: true } : {}),
-          ...selectedModelFields,
-          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-          ...(attachments.length > 0 ? { attachments } : {}),
-          ...runtimeContext,
-          ...sessionSwitch,
-        },
-        {
-          onError: errorMessage => {
-            sendError = errorMessage
+      let sent = false
+      try {
+        sent = await sendMessage(
+          {
+            address: targetAddress,
+            message,
+            clientUserMessageId: queuedMessage.id,
+            ...(sendEphemeral ? { ephemeral: true } : {}),
+            ...selectedModelFields,
+            ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+            ...(attachments.length > 0 ? { attachments } : {}),
+            ...runtimeContext,
+            ...sessionSwitch,
           },
-          onQueued: () => {
-            queued = true
-          },
-        }
-      )
-      submissionInFlight.current = false
+          {
+            onError: errorMessage => {
+              sendError = errorMessage
+            },
+            onQueued: () => {
+              queued = true
+            },
+          }
+        )
+      } catch (cause) {
+        sendError = getErrorMessage(cause, t('workbench.project_chat_send_failed'))
+      } finally {
+        submissionInFlight.current = false
+      }
       if (sent) {
         if (deferLocalMessage && !queued) {
           setMessages(
@@ -366,6 +343,7 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
             )
           )
         }
+        if (sessionSwitch) onSessionSwitchAccepted()
         sideChatProjectChat.resetAttachments()
         setSending(false)
         return true

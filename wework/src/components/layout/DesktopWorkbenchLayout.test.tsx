@@ -1517,6 +1517,7 @@ describe('DesktopWorkbenchLayout', () => {
           }
         }),
       setRuntimeTaskSelectedModel: projectChatBase.setRuntimeTaskSelectedModel ?? vi.fn(),
+      confirmRuntimeTaskActiveModel: projectChatBase.confirmRuntimeTaskActiveModel ?? vi.fn(),
       setRuntimeTaskSelectedModelAndOptions:
         projectChatBase.setRuntimeTaskSelectedModelAndOptions ?? vi.fn(),
       setRuntimeTaskSelectedModelOption:

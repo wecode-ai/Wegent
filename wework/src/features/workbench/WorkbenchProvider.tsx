@@ -1070,6 +1070,7 @@ function OwnedWorkbenchProvider({
   )
   const {
     resolveRuntimeTaskModelSelection,
+    confirmRuntimeTaskActiveModel,
     setRuntimeTaskSelectedModel,
     setRuntimeTaskSelectedModelAndOptions,
     setRuntimeTaskSelectedModelOption,
@@ -2785,6 +2786,7 @@ function OwnedWorkbenchProvider({
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       resolveRuntimeTaskModelSelection,
+      confirmRuntimeTaskActiveModel,
       setRuntimeTaskSelectedModel,
       setRuntimeTaskSelectedModelAndOptions,
       setRuntimeTaskSelectedModelOption,
@@ -2861,6 +2863,7 @@ function OwnedWorkbenchProvider({
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
       resolveRuntimeTaskModelSelection,
+      confirmRuntimeTaskActiveModel,
       setRuntimeTaskSelectedModel,
       setRuntimeTaskSelectedModelAndOptions,
       setRuntimeTaskSelectedModelOption,

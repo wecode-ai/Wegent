@@ -260,6 +260,7 @@ export interface WorkbenchContextValue {
     resolveRuntimeTaskModelSelection: (
       address: RuntimeTaskAddress
     ) => RuntimeTaskModelSelectionControls
+    confirmRuntimeTaskActiveModel: (address: RuntimeTaskAddress, model: UnifiedModel) => void
     setRuntimeTaskSelectedModel: (address: RuntimeTaskAddress, model: UnifiedModel | null) => void
     setRuntimeTaskSelectedModelAndOptions: (
       address: RuntimeTaskAddress,
