@@ -897,6 +897,51 @@ async fn lite_namespaced_custom_exec_preserves_raw_input_in_all_adapters() {
         responses_to_responses(&body, CustomToolConversion::None, true, true).unwrap();
     assert_eq!(native["input"], body["input"]);
     assert!(native.get("tools").is_none());
+    let (retained_namespace, _) =
+        responses_to_responses(&body, CustomToolConversion::All, true, true).unwrap();
+    assert_eq!(retained_namespace["tools"][0]["type"], "namespace");
+    assert_eq!(
+        retained_namespace["tools"][0]["tools"][0]["type"], "function",
+        "Native namespaces must still convert their custom members"
+    );
+    assert_eq!(retained_namespace["tools"][0]["tools"][0]["name"], "exec");
+    assert_eq!(
+        retained_namespace["tools"][0]["tools"][0]["parameters"]["required"],
+        json!(["input"])
+    );
+    let mut mixed_body = body.clone();
+    mixed_body["input"][0]["tools"][0]["tools"] = json!([
+        {"type": "custom", "name": "exec"},
+        {"type": "custom", "name": "apply_patch"}
+    ]);
+    let (mixed, _) = responses_to_responses(
+        &mixed_body,
+        CustomToolConversion::ExceptApplyPatch,
+        true,
+        true,
+    )
+    .unwrap();
+    let members = mixed["tools"][0]["tools"].as_array().unwrap();
+    assert_eq!(members[0]["type"], "function");
+    assert_eq!(members[0]["name"], "exec");
+    assert_eq!(members[1]["type"], "custom");
+    assert_eq!(members[1]["name"], "apply_patch");
+    let (flattened, _) = responses_to_responses(
+        &mixed_body,
+        CustomToolConversion::ExceptApplyPatch,
+        true,
+        false,
+    )
+    .unwrap();
+    let flattened_tools = flattened["tools"].as_array().unwrap();
+    assert_eq!(flattened_tools[0]["type"], "function");
+    assert_eq!(flattened_tools[0]["name"], "functions__exec");
+    assert_eq!(
+        flattened_tools[1],
+        json!({"type": "custom", "name": "apply_patch"}),
+        "Flattening a namespace must keep native custom tools native"
+    );
+    assert!(flattened_tools[1].get("namespace").is_none());
     let (anthropic, _) =
         crate::local_model_proxy::anthropic::responses_to_anthropic(&body).unwrap();
     assert_eq!(

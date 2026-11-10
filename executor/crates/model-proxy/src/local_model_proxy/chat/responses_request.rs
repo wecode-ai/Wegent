@@ -33,13 +33,34 @@ pub(super) fn responses_tools(
                 continue;
             }
             Some("namespace") => {
-                if !bridge_namespace_tools {
-                    converted.push(tool.clone());
-                    continue;
-                }
                 let Some(namespace) = tool.get("name").and_then(Value::as_str) else {
                     continue;
                 };
+                if !bridge_namespace_tools {
+                    let mut namespaced = tool.clone();
+                    if let Some(inner_tools) =
+                        namespaced.get_mut("tools").and_then(Value::as_array_mut)
+                    {
+                        for inner_tool in inner_tools.iter_mut() {
+                            let Some(name) = inner_tool
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                            else {
+                                continue;
+                            };
+                            if inner_tool.get("type").and_then(Value::as_str) == Some("custom")
+                                && custom_tool_conversion.converts(&name)
+                            {
+                                let converted_tool =
+                                    converted_custom_function(&name, &name, inner_tool);
+                                *inner_tool = converted_tool;
+                            }
+                        }
+                    }
+                    converted.push(namespaced);
+                    continue;
+                }
                 for inner_tool in tool
                     .get("tools")
                     .and_then(Value::as_array)
@@ -52,17 +73,23 @@ pub(super) fn responses_tools(
                     let Some(wire_name) = context.wire_name(Some(namespace), name) else {
                         continue;
                     };
-                    let flattened = if inner_tool.get("type").and_then(Value::as_str)
-                        == Some("custom")
-                        && custom_tool_conversion.converts(name)
-                    {
-                        converted_custom_function(name, wire_name, inner_tool)
-                    } else {
-                        let mut flattened = inner_tool.clone();
-                        flattened["type"] = Value::String("function".to_owned());
-                        flattened["name"] = Value::String(wire_name.to_owned());
-                        flattened
-                    };
+                    let flattened =
+                        if inner_tool.get("type").and_then(Value::as_str) == Some("custom") {
+                            if custom_tool_conversion.converts(name) {
+                                converted_custom_function(name, wire_name, inner_tool)
+                            } else {
+                                // Preserve the native custom declaration while leaving
+                                // the flattened namespace; only its namespace is dropped.
+                                let mut flattened = inner_tool.clone();
+                                flattened["name"] = Value::String(name.to_owned());
+                                flattened
+                            }
+                        } else {
+                            let mut flattened = inner_tool.clone();
+                            flattened["type"] = Value::String("function".to_owned());
+                            flattened["name"] = Value::String(wire_name.to_owned());
+                            flattened
+                        };
                     converted.push(flattened);
                 }
                 continue;
