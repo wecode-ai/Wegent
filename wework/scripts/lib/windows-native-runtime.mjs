@@ -3,14 +3,22 @@ import { join, relative } from 'node:path'
 
 const VC_RUNTIME = /^(?:vcruntime|msvcp|concrt)\d+(?:_[a-z0-9_]+)?\.dll$/i
 
-/** Add static CRT linking for a Windows Rust target without dropping existing flags. */
+/**
+ * Add static CRT linking for a Windows Rust target.
+ * Encoded flags take precedence over RUSTFLAGS and target-specific flags, so
+ * writing the effective flags back as CARGO_ENCODED_RUSTFLAGS cannot be
+ * overridden by an existing environment variable.
+ */
 export function windowsStaticCrtEnvironment(environment, target) {
   if (!target?.includes('windows')) return environment
-  const key = `CARGO_TARGET_${target.toUpperCase().replaceAll('-', '_')}_RUSTFLAGS`
-  const flags = [environment.RUSTFLAGS, environment[key], '-C target-feature=+crt-static']
-    .filter(Boolean)
-    .join(' ')
-  return { ...environment, [key]: flags }
+  const targetKey = `CARGO_TARGET_${target.toUpperCase().replaceAll('-', '_')}_RUSTFLAGS`
+  const encoded = environment.CARGO_ENCODED_RUSTFLAGS
+  const effective = encoded
+    ? encoded.split('\x1f')
+    : (environment.RUSTFLAGS || environment[targetKey] || '').split(/\s+/)
+  const flags = effective.filter(Boolean)
+  flags.push('-C', 'target-feature=+crt-static')
+  return { ...environment, CARGO_ENCODED_RUSTFLAGS: flags.join('\x1f') }
 }
 
 /** Read normal and delay imports without executing an unprepared Windows binary. */

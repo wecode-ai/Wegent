@@ -90,6 +90,9 @@ Security fixes for the statically linked runtime arrive by rebuilding these
 components with an updated MSVC toolchain; there is no separate redistributable
 to install, service, or remove.
 
+The build passes the static flag through `CARGO_ENCODED_RUSTFLAGS`, preserving
+existing flags while preventing `RUSTFLAGS` from overriding the target setting.
+
 Clean Windows sandbox acceptance must still cover first installation and
 startup without a machine-wide VC++ runtime, one cloud-model text conversation,
 and component upgrade and rollback. A hosted runner with the runtime installed

@@ -81,19 +81,31 @@ test('rejects malformed PE input rather than overlooking a runtime dependency', 
   assert.throws(() => windowsPeImports(bytes), /Invalid PE RVA/)
 })
 
-test('adds static CRT linking without dropping existing target flags', () => {
+test('adds static CRT linking through encoded flags that existing flags cannot override', () => {
+  const target = 'x86_64-pc-windows-msvc'
+  const encoded = flags => flags.join('\x1f')
   const environment = { RUSTFLAGS: '-C debuginfo=1', CARGO_TARGET_DIR: 'target' }
   assert.equal(windowsStaticCrtEnvironment(environment, 'aarch64-apple-darwin'), environment)
-  assert.deepEqual(windowsStaticCrtEnvironment(environment, 'x86_64-pc-windows-msvc'), {
-    ...environment,
-    CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C debuginfo=1 -C target-feature=+crt-static',
-  })
+  assert.equal(
+    windowsStaticCrtEnvironment(environment, target).CARGO_ENCODED_RUSTFLAGS,
+    encoded(['-C', 'debuginfo=1', '-C', 'target-feature=+crt-static'])
+  )
+  assert.equal(
+    windowsStaticCrtEnvironment(
+      {
+        CARGO_ENCODED_RUSTFLAGS: encoded(['-C', 'opt-level=2']),
+        RUSTFLAGS: '-C debuginfo=1',
+      },
+      target
+    ).CARGO_ENCODED_RUSTFLAGS,
+    encoded(['-C', 'opt-level=2', '-C', 'target-feature=+crt-static'])
+  )
   assert.equal(
     windowsStaticCrtEnvironment(
       { CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C opt-level=2' },
-      'x86_64-pc-windows-msvc'
-    ).CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS,
-    '-C opt-level=2 -C target-feature=+crt-static'
+      target
+    ).CARGO_ENCODED_RUSTFLAGS,
+    encoded(['-C', 'opt-level=2', '-C', 'target-feature=+crt-static'])
   )
 })
 
@@ -111,5 +123,42 @@ test(
       imports.filter(name => /^(?:vcruntime|msvcp|concrt)\d+/.test(name)),
       []
     )
+  }
+)
+
+test(
+  'forces static CRT when RUSTFLAGS or encoded flags are already set',
+  { skip: process.platform !== 'win32' ? 'Requires the Windows MSVC toolchain' : false },
+  async t => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-static-crt-probe-'))
+    t.after(() => rm(root, { recursive: true, force: true }))
+    await mkdir(join(root, 'src'))
+    await writeFile(
+      join(root, 'Cargo.toml'),
+      '[package]\nname = "static-crt-probe"\nversion = "0.1.0"\nedition = "2021"\n'
+    )
+    await writeFile(join(root, 'src', 'main.rs'), 'fn main() {}\n')
+    const { stdout } = await execute('rustc', ['-vV'])
+    const target = /^host: (.+)$/m.exec(stdout)[1]
+    for (const [index, flags] of [
+      { RUSTFLAGS: '-C debuginfo=1' },
+      { CARGO_ENCODED_RUSTFLAGS: ['-C', 'debuginfo=1'].join('\x1f') },
+    ].entries()) {
+      const targetDirectory = join(root, `target-${index}`)
+      await execute('cargo', ['build', '--quiet'], {
+        cwd: root,
+        env: windowsStaticCrtEnvironment(
+          { ...process.env, ...flags, CARGO_TARGET_DIR: targetDirectory },
+          target
+        ),
+      })
+      const imports = windowsPeImports(
+        await readFile(join(targetDirectory, 'debug', 'static-crt-probe.exe'))
+      )
+      assert.deepEqual(
+        imports.filter(name => /^(?:vcruntime|msvcp|concrt)\d+/.test(name)),
+        []
+      )
+    }
   }
 )
