@@ -1,4 +1,4 @@
-"""Revoke legacy share tokens and add token-hash storage.
+"""Backfill share-token hashes for persisted links.
 
 Revision ID: b1c2d3e4f5a6
 Revises: a4c8e2f6b901
@@ -31,27 +31,14 @@ def upgrade() -> None:
     # MySQL fills NOT NULL columns without a default with an empty value for
     # existing rows. Backfill before tightening the constraint so multiple
     # legacy rows do not violate the unique index.
+    # Legacy links stored AES ciphertext URL-quoted with `safe="/"`. The API
+    # receives the decoded query value, so hash the decoded form.
     op.execute(
-        "UPDATE share_links SET token_hash = SHA2(share_token, 256) "
-        "WHERE token_hash IS NULL"
+        "UPDATE share_links SET token_hash = SHA2(REPLACE(REPLACE(share_token, "
+        "'%2B', '+'), '%3D', '='), 256) WHERE token_hash IS NULL"
     )
     op.alter_column(
         "share_links", "token_hash", existing_type=sa.String(64), nullable=False
-    )
-
-    # Legacy tokens are deterministic AES ciphertext that may have been computed
-    # from public identifiers and known defaults. Revoke them and require owners
-    # to issue new opaque links.
-    share_links = sa.table(
-        "share_links",
-        sa.column("id", sa.Integer),
-        sa.column("is_active", sa.Boolean),
-        sa.column("updated_at", sa.DateTime),
-    )
-    op.execute(
-        share_links.update()
-        .where(share_links.c.is_active == True)  # noqa: E712
-        .values(is_active=False, updated_at=sa.func.now())
     )
 
     op.create_unique_constraint(

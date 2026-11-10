@@ -12,13 +12,12 @@
     },
     {
       "sql": [
-        "UPDATE share_links SET token_hash = SHA2(share_token, 256) WHERE token_hash IS NULL"
+        "UPDATE share_links SET token_hash = SHA2(REPLACE(REPLACE(share_token, '%2B', '+'), '%3D', '='), 256) WHERE token_hash IS NULL"
       ]
     },
     {
       "sql": [
         "ALTER TABLE share_links MODIFY COLUMN token_hash VARCHAR(64) NOT NULL COMMENT 'SHA-256 hash of the share token'",
-        "UPDATE share_links SET is_active = FALSE, updated_at = NOW() WHERE is_active = TRUE",
         "CREATE UNIQUE INDEX uniq_share_links_token_hash ON share_links (token_hash)"
       ]
     }

@@ -228,7 +228,7 @@ async fn historical_integer_ids_and_member_constraints_preserve_rows() -> Result
 
 #[tokio::test]
 #[ignore = "requires WEGENT_TEST_MYSQL_ADDRESS; uses an isolated schema"]
-async fn historical_secure_share_tokens_backfill_and_revoke_existing_rows() -> Result<()> {
+async fn historical_secure_share_tokens_backfill_existing_rows() -> Result<()> {
     isolated(async |mysql| {
         sql(
             mysql,
@@ -236,19 +236,19 @@ async fn historical_secure_share_tokens_backfill_and_revoke_existing_rows() -> R
                 "CREATE TABLE share_links (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,resource_type VARCHAR(50) NOT NULL,resource_id BIGINT NOT NULL,share_token VARCHAR(512) NOT NULL,require_approval BOOL NOT NULL,default_role VARCHAR(20) NOT NULL,expires_at DATETIME NOT NULL,created_by_user_id INT NOT NULL,is_active BOOL NOT NULL,created_at DATETIME NOT NULL,updated_at DATETIME NOT NULL,UNIQUE KEY uniq_share_links_share_token (share_token))",
                 VERSION_TABLE,
                 "INSERT INTO alembic_version VALUES ('f3a7c9e1b2d4')",
-                "INSERT INTO share_links (resource_type,resource_id,share_token,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) VALUES ('Task',1,'legacy-a',0,'Reporter','9999-12-31',7,1,NOW(),NOW()),('Task',2,'legacy-b',0,'Reporter','9999-12-31',7,1,NOW(),NOW()),('Team',3,'inactive-c',0,'Reporter','9999-12-31',7,0,NOW(),NOW())",
+                "INSERT INTO share_links (resource_type,resource_id,share_token,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) VALUES ('Task',1,'legacy-a',0,'Reporter','9999-12-31',7,1,NOW(),NOW()),('Task',2,'legacy-b%2B%3D',0,'Reporter','9999-12-31',7,1,NOW(),NOW()),('Team',3,'inactive-c',0,'Reporter','9999-12-31',7,0,NOW(),NOW())",
             ],
         )
         .await?;
         target(mysql, "b1c2d3e4f5a6").await?;
         let rows = data(
             mysql,
-            "SELECT JSON_OBJECT('hash',token_hash,'expected',SHA2(share_token,256),'active',is_active) AS data FROM share_links ORDER BY id",
+            "SELECT JSON_OBJECT('hash',token_hash,'expected',SHA2(REPLACE(REPLACE(share_token,'%2B','+'),'%3D','='),256),'active',is_active) AS data FROM share_links ORDER BY id",
         )
         .await?;
         assert_eq!(rows.len(), 3);
         for row in rows {
-            assert_eq!(row["active"], json!(0));
+            assert_eq!(row["active"], json!(1));
             assert_eq!(row["hash"], row["expected"]);
         }
         assert!(mysql.execute("INSERT INTO share_links(resource_type,resource_id,share_token,token_hash,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) SELECT resource_type,resource_id,share_token,token_hash,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at FROM share_links WHERE id=1",()).await.is_err());

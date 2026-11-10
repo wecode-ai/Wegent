@@ -205,6 +205,30 @@ def test_team_share_token_is_random_and_persisted(test_db: Session):
 
 
 @pytest.mark.unit
+def test_persisted_legacy_task_link_remains_usable(test_db: Session):
+    owner = _add_user(test_db, "legacy-task-owner")
+    task = _add_task(test_db, owner, "legacy-task")
+    raw_token = "legacy-aes+token="
+    link = ShareLink(
+        resource_type=ResourceType.TASK.value,
+        resource_id=task.id,
+        share_token="legacy-aes%2Btoken%3D",
+        token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+        require_approval=False,
+        default_role="Reporter",
+        expires_at=datetime.utcnow() + timedelta(days=365),
+        created_by_user_id=owner.id,
+        is_active=True,
+    )
+    test_db.add(link)
+    test_db.commit()
+
+    response = shared_task_service.get_public_shared_task(test_db, raw_token)
+
+    assert response.task_title == "legacy-task"
+
+
+@pytest.mark.unit
 def test_forged_team_token_cannot_read_team_info(test_db: Session):
     owner = _add_user(test_db, "forged-team-owner")
     _add_team(test_db, owner, "forged-team")
