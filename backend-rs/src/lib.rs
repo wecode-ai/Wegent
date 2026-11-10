@@ -144,6 +144,7 @@ pub(crate) use wegent_identity::headers;
 pub use wegent_network_policy::http_trust;
 mod hybrid;
 mod im_private_sessions;
+mod im_stand_in_bindings;
 mod incoming_hooks;
 mod internal_api_keys;
 mod internal_attachments_download;

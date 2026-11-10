@@ -5,6 +5,14 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  /* A transparent native auto outline can mask a focused field's border.
+     Disable that outline for pointer input; component/error outlines still win. */
+  :where(html[data-input-modality='pointer']) :where(input, textarea, select):focus-visible {
+    outline-style: none;
+  }
+}
+
 /* DSH paints text-field outlines too; pointer focus uses its dedicated token. */
 html[data-input-modality='pointer'] body :focus-visible {
   --dsw-focus-ring-color: transparent;

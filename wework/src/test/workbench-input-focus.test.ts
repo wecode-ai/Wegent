@@ -16,6 +16,7 @@ const sources = {
   browser: readSource('src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx'),
   standInProject: readSource('src/features/todo/StandInProjectSetup.tsx'),
   projectSpace: readSource('src/features/todo/ProjectSpacePickerMenu.tsx'),
+  email: readSource('src/features/todo/StandInEmailConnections.tsx'),
 }
 const variants = `
   border border-[#737373]/[.37] keyboard:focus:border-[#339cff]/70
@@ -25,6 +26,7 @@ const variants = `
   focus:ring-2 focus:ring-red-500/15 focus:border-red-500
   focus:ring-border/60 group group-focus-within:opacity-100 opacity-0
   focus-visible:outline-2 focus-visible:outline-red-500 bg-[#ffffff] focus:bg-[#eeeeee]
+  focus-visible:outline focus-visible:outline-offset-2
 `
 let css = ''
 type Modality = 'pointer' | 'keyboard' | undefined
@@ -72,6 +74,7 @@ function computed(markup: string, modality: Modality, { focus = true, theme = 'l
       background: result.backgroundColor,
       opacity: result.opacity,
       outlineColor: result.outlineColor,
+      outlineStyle: result.outlineStyle,
       outlineWidth: result.outlineWidth,
       shadow: result.boxShadow,
       ring: property('--tw-ring-shadow'),
@@ -152,6 +155,11 @@ beforeAll(async () => {
     }
     .dark { --color-border: 90 95 100; --color-bg-base: 20 20 20; }
     .focus-token-baseline { --dsw-focus-ring-color: rgb(51, 156, 255); }
+    /* Model the lower-priority UA outline without adding author specificity. */
+    :where(input, textarea, select):focus-visible {
+      outline-style: auto;
+      outline-offset: -2px;
+    }
     /* The DSH runtime's focus CSS, including its existing non-editable rule. */
     :root { --dsw-focus-ring-width: 2px; }
     :focus-visible {
@@ -167,6 +175,30 @@ beforeAll(async () => {
 })
 
 afterEach(() => document.body.replaceChildren())
+
+test.each(['light', 'dark'])('%s native form fields keep their pointer border', theme => {
+  const classes = sourceClass(sources.email, /className="([^"]*border border-border[^"]*)"/)
+  for (const tag of ['input', 'textarea', 'select']) {
+    const markup = field(classes, tag)
+    const { pointer } = expectPointerBaseline(markup, theme)
+    expect(pointer.borderWidth).toBe('1px')
+    expect(pointer.outlineStyle).toBe('none')
+    for (const modality of ['keyboard', undefined] as const) {
+      expect(computed(markup, modality, { theme }).outlineStyle).toBe('auto')
+    }
+  }
+})
+
+test('pointer focus preserves explicit validation outlines', () => {
+  const style = computed(
+    field(
+      'border focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500 focus-visible:outline-offset-2'
+    ),
+    'pointer'
+  )
+  expect(style.outlineStyle).toBe('solid')
+  expect(style.outlineColor).toBe('rgb(239, 68, 68)')
+})
 
 test.each([
   {

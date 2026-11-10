@@ -39,8 +39,6 @@ from app.schemas.runtime_work import (
     ArchivedConversationProjectGroup,
     ArchivedConversationsListRequest,
     ArchivedConversationsListResponse,
-    BindRuntimeTaskIMSessionsRequest,
-    BindRuntimeTaskIMSessionsResponse,
     DeviceWorkspacePrepareRequest,
     DeviceWorkspacePrepareResponse,
     DeviceWorkspaceResponse,
@@ -103,7 +101,6 @@ from app.services.device.runtime_rpc_service import (
     runtime_rpc_service,
 )
 from app.services.device_service import device_service
-from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import (
     im_session_service,
 )
@@ -960,51 +957,6 @@ async def send_runtime_guidance(
             detail=str(exc),
         ) from exc
     return _runtime_guidance_response(result, address.local_task_id)
-
-
-async def bind_runtime_task_to_im_sessions(
-    *,
-    db: Session,
-    user_id: int,
-    request: BindRuntimeTaskIMSessionsRequest,
-) -> BindRuntimeTaskIMSessionsResponse:
-    """Bind private IM sessions to a device-local runtime task address."""
-
-    address = _normalized_address(request.address)
-    _ensure_owned_device(db, user_id, address.device_id)
-    _touch_workspace_mapping(db, user_id, address)
-    sessions = await im_session_service.load_user_sessions_by_keys(
-        db,
-        user_id=user_id,
-        session_keys=request.session_keys,
-    )
-    runtime_task = _runtime_task_address_payload(
-        canonical_runtime_event_address(
-            db,
-            user_id=user_id,
-            address=address,
-        )
-    )
-    if request.model_selection:
-        runtime_task["modelSelection"] = request.model_selection.model_dump(
-            by_alias=True,
-        )
-    for session in sessions:
-        await im_session_service.bind_active_runtime_task(
-            db,
-            session=session,
-            runtime_task=runtime_task,
-        )
-    notification = await im_notification_dispatcher.send_task_switched(
-        db,
-        sessions,
-        request.task_title,
-    )
-    return BindRuntimeTaskIMSessionsResponse(
-        address=address,
-        boundSessionKeys=[str(session_key) for session_key in request.session_keys],
-        notifiedCount=int(notification.get("sent") or 0),
-    )
 
 
 async def get_im_notification_settings(
