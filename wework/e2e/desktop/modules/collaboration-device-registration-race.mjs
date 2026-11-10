@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { CLOUD_DEVICE_ID, commandOutput, stopProcessGroup } from './shared.mjs'
+import { CLOUD_DEVICE_ID, commandOutput, redisCliBinary, stopProcessGroup } from './shared.mjs'
 import { until } from './plugin-regression-fixture.mjs'
 import { holdDeviceRegistrationRow } from './plugin-write-lease.mjs'
 
@@ -18,7 +18,7 @@ export async function verifyCloudRegistrationDeletionRace(cloud, ownerId) {
   await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
 
   const identityLocked = () =>
-    commandOutput('redis-cli', [
+    commandOutput(redisCliBinary(), [
       '-h',
       '127.0.0.1',
       '-p',
