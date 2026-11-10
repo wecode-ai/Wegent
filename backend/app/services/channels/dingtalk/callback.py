@@ -22,6 +22,7 @@ from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
     ChannelType,
+    TaskCallbackKey,
     get_callback_registry,
 )
 
@@ -123,7 +124,7 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         return self._is_current_card_round(info, subtask_id)
 
     async def accepts_runtime_source(
-        self, task_id: int | str, source: Dict[str, Any]
+        self, task_id: TaskCallbackKey, source: Dict[str, Any]
     ) -> bool:
         info = await self.get_callback_info(task_id)
         if not info or not info.chat_card:
@@ -152,7 +153,7 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
 
     async def send_task_result(
         self,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         subtask_id: int,
         content: str,
         status: str = "COMPLETED",
@@ -279,7 +280,10 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         return "处理中..."
 
     async def _create_emitter(
-        self, task_id: int, subtask_id: int, callback_info: DingTalkCallbackInfo
+        self,
+        task_id: TaskCallbackKey,
+        subtask_id: int,
+        callback_info: DingTalkCallbackInfo,
     ) -> Optional["ResultEmitter"]:
         """Create a streaming emitter for DingTalk.
 

@@ -36,6 +36,7 @@ from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
     ChannelType,
+    TaskCallbackKey,
     runtime_local_task_callback_key,
 )
 from app.services.channels.commands import (
@@ -299,7 +300,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _register_streaming_emitter(
         self,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         streaming_emitter: Any,
         message_context: MessageContext,
         *,
@@ -338,7 +339,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     def _prepare_streaming_emitter(
         self,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         streaming_emitter: Any,
     ) -> None:
         """Configure cross-worker content sharing before the first chunk."""
@@ -386,7 +387,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         self,
         streaming_emitter: Any,
         *,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         subtask_id: int,
         content: Optional[str],
     ) -> None:

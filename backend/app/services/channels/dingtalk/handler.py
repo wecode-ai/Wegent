@@ -30,7 +30,11 @@ from app.core.cache import cache_manager
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.dingtalk_card import DingTalkChatCardConfig
-from app.services.channels.callback import BaseChannelCallbackService, ChannelType
+from app.services.channels.callback import (
+    BaseChannelCallbackService,
+    ChannelType,
+    TaskCallbackKey,
+)
 from app.services.channels.dingtalk.callback import (
     DingTalkCallbackInfo,
     dingtalk_callback_service,
@@ -411,7 +415,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
 
     async def _register_streaming_emitter(
         self,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         streaming_emitter: Optional[ResultEmitter],
         message_context: MessageContext,
         *,
@@ -466,7 +470,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
     async def _fail_unstarted_card_streaming_emitter(
         self,
         *,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         streaming_emitter: ResultEmitter,
         message_context: MessageContext,
     ) -> None:
@@ -492,7 +496,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
 
     async def _bind_chat_card(
         self,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         emitter: StreamingResponseEmitter,
         context: MessageContext,
     ) -> None:
@@ -515,7 +519,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
 
     async def _fail_unstarted_card_task(
         self,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         subtask_id: int,
         context: MessageContext,
     ) -> None:
