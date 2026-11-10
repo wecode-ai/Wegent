@@ -8,7 +8,7 @@ const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resour
 const startup = vi.hoisted(() => ({
   roots: [] as string[],
   metadata: {} as { weworkExecutorNamespace?: string; version?: string },
-  activeRelease: { id: 'pending-target' } as Partial<DesktopRelease>,
+  activeRelease: { id: 'pending-target' } as Partial<DesktopRelease> | null,
   activation: null as Partial<ReleaseActivation> | null,
   bridgeHandoff: vi.fn(),
   showErrorBox: vi.fn(),
@@ -173,6 +173,7 @@ test('startup ownership failure cannot open application data', async () => {
 
 test('ordinary startup releases transaction ownership before entering the main application', async () => {
   startup.activation = null
+  startup.activeRelease = null
   startup.main.mockImplementationOnce(() => {
     expect(startup.releaseStartup).toHaveBeenCalledOnce()
   })
@@ -185,6 +186,7 @@ test('ordinary startup releases transaction ownership before entering the main a
 
 test('failed ownership release cannot enter the main application', async () => {
   startup.activation = null
+  startup.activeRelease = null
   startup.releaseStartup.mockRejectedValue(new Error('Native startup lock was lost'))
 
   await import('./bootstrap.js')

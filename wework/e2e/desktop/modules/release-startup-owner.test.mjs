@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,7 +15,7 @@ import { buildLauncher } from '../../../electron/scripts/build-launcher.mjs'
 test(
   'native bootstrap transactions serialize aliases and release after an Electron crash',
   { timeout: 60_000 },
-  async () => {
+  async context => {
     const root = await mkdtemp(join(tmpdir(), 'wework-native-release-startup-'))
     const alias = `${root}-alias`
     const entry = join(root, 'main.cjs')
@@ -24,7 +24,7 @@ test(
     )
     const { stdout } = await promisify(execFile)('rustc', ['-vV'])
     const target = /^host: (.+)$/m.exec(stdout)[1]
-    const launcher = await buildLauncher(join(root, 'resources'), target)
+    const launcher = await phase('build launcher', buildLauncher(join(root, 'resources'), target))
     const hosts = []
     const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
     const electron = require('electron')
@@ -33,20 +33,35 @@ test(
       entry,
       `
     const {app} = require('electron')
-    const {readFileSync,mkdirSync} = require('node:fs')
+    const {appendFileSync,readFileSync,mkdirSync} = require('node:fs')
+    const trace = phase => {
+      const event = JSON.stringify({phase,pid:process.pid})
+      appendFileSync(require('node:path').join(${JSON.stringify(root)}, 'trace-' + process.pid + '.jsonl'), event + '\\n')
+      console.error(event)
+    }
+    trace('entry')
     const profile = require('node:path').join(${JSON.stringify(root)}, 'profile-' + process.pid)
     mkdirSync(profile, {recursive:true,mode:0o700})
     app.setPath('userData', profile)
     const {stripTypeScriptTypes} = require('node:module')
     const code = stripTypeScriptTypes(readFileSync(${JSON.stringify(source)}, 'utf8'))
     import('data:text/javascript;base64,' + Buffer.from(code).toString('base64')).then(async ({acquireReleaseStartup}) => {
+      trace('acquiring')
       const release = await acquireReleaseStartup(process.argv.at(-1), ${JSON.stringify(launcher)}, error => {
         console.error(error.message)
         app.exit(1)
       })
+      trace('acquired')
       await app.whenReady()
+      trace('ready')
       console.log(JSON.stringify({owned:true,pid:process.pid}))
-      process.stdin.once('data', async () => {await release();app.exit(0)})
+      process.stdin.on('end', () => trace('stdin-ended'))
+      process.stdin.once('data', async () => {
+        trace('releasing')
+        await release()
+        trace('released')
+        app.exit(0)
+      })
       setInterval(() => {}, 1000)
     }).catch(error => {console.error(error);app.exit(1)})
   `
@@ -62,11 +77,15 @@ test(
       child.stderr.on('data', chunk => {
         host.stderr += chunk
       })
+      child.stdin.on('error', error => {
+        host.stderr += `stdin: ${error.message}\n`
+      })
       const lines = createInterface({ input: child.stdout, signal: AbortSignal.timeout(15_000) })
       const reported = (async () => {
         for await (const line of lines) {
           if (!line.trim()) continue
           assert.equal(JSON.parse(line).owned, true)
+          assert.equal(JSON.parse(line).pid, child.pid)
           host.owned = true
           return
         }
@@ -78,31 +97,73 @@ test(
           throw new Error(`Native startup exited before reporting: ${host.stderr}`)
         }),
       ])
+      void host.ready.catch(() => {})
       return host
+    }
+    async function phase(name, operation, host, signal = context.signal) {
+      console.log(`[native-startup] ${name}: start${host ? ` pid=${host.child.pid}` : ''}`)
+      let timer
+      let cancel
+      try {
+        return await Promise.race([
+          operation,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`${name} exceeded 15 seconds`)), 15_000)
+            cancel = () => reject(signal.reason)
+            signal.addEventListener('abort', cancel, { once: true })
+            if (signal.aborted) cancel()
+          }),
+        ])
+      } catch (error) {
+        console.error(`[native-startup] ${name}: failed`, {
+          pid: host?.child.pid,
+          exitCode: host?.child.exitCode,
+          signalCode: host?.child.signalCode,
+          stderr: host?.stderr,
+          trace: host
+            ? await readFile(join(root, `trace-${host.child.pid}.jsonl`), 'utf8').catch(
+                error => error.message
+              )
+            : undefined,
+        })
+        throw error
+      } finally {
+        clearTimeout(timer)
+        signal.removeEventListener('abort', cancel)
+      }
     }
     try {
       const first = launch(root)
-      await first.ready
+      await phase('first ownership', first.ready, first)
       const next = launch(alias)
       // A negative observation window proves the waiting process cannot enter the transaction.
       await new Promise(resolve => setTimeout(resolve, 500))
       assert.equal(next.owned, false)
       assert.equal(next.child.exitCode, null)
       first.child.kill('SIGKILL')
-      await first.exited
-      await next.ready
+      await phase('crashed owner exit', first.exited, first)
+      await phase('ownership after crash', next.ready, next)
       next.child.stdin.end('release')
-      assert.deepEqual(await next.exited, [0, null], next.stderr)
+      assert.deepEqual(await phase('normal owner exit', next.exited, next), [0, null], next.stderr)
       const afterRelease = launch(root)
-      await afterRelease.ready
+      await phase('ownership after release', afterRelease.ready, afterRelease)
       afterRelease.child.stdin.end('release')
-      assert.deepEqual(await afterRelease.exited, [0, null], afterRelease.stderr)
+      assert.deepEqual(
+        await phase('final owner exit', afterRelease.exited, afterRelease),
+        [0, null],
+        afterRelease.stderr
+      )
     } finally {
       for (const host of hosts) {
         if (host.child.exitCode === null && host.child.signalCode === null)
           host.child.kill('SIGKILL')
-        await host.exited
-        await host.ready.catch(() => {})
+        try {
+          await phase('cleanup owner', host.exited, host, new AbortController().signal)
+        } finally {
+          host.child.stdin.destroy()
+          host.child.stdout.destroy()
+          host.child.stderr.destroy()
+        }
       }
       await rm(alias, { recursive: true, force: true })
       await rm(root, { recursive: true, force: true })
