@@ -2,6 +2,15 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { getRuntimeConfig } from './runtime'
 
 describe('getRuntimeConfig', () => {
+  test('keeps project surfaces disabled by default and accepts runtime rollback', () => {
+    vi.stubEnv('VITE_COLLAB_PROJECT_SURFACES_V1', '')
+    expect(getRuntimeConfig().featureFlags['collab.projectSurfaces.v1']).toBe(false)
+    vi.stubEnv('VITE_COLLAB_PROJECT_SURFACES_V1', 'true')
+    expect(getRuntimeConfig().featureFlags['collab.projectSurfaces.v1']).toBe(true)
+    window.__WEWORK_RUNTIME_CONFIG__ = { featureFlags: { 'collab.projectSurfaces.v1': false } }
+    expect(getRuntimeConfig().featureFlags['collab.projectSurfaces.v1']).toBe(false)
+  })
+
   afterEach(() => {
     delete window.__WEWORK_RUNTIME_CONFIG__
     vi.unstubAllEnvs()

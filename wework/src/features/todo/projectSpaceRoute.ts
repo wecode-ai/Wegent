@@ -1,6 +1,24 @@
 import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import type { RuntimeProjectSpaceRef } from '@/types/api'
 import { sameProjectSpace } from './projectSpaceSelection'
+import {
+  projectSurfacesFeatureFlag,
+  type ProjectSurfaceFeatureFlags,
+} from '@wegent/collaboration/project-shell/projectSurfaceRouting'
+
+export function projectSpaceNavigationRoute(
+  project: RuntimeProjectSpaceRef,
+  currentRoute: string,
+  flags: ProjectSurfaceFeatureFlags
+): string {
+  if (flags[projectSurfacesFeatureFlag] !== true) return projectSpaceContentRoute(project)
+  const hasSurfaceQuery = ['view', 'surface', 'mode'].some(
+    key => projectSpaceRouteParam(currentRoute, key) !== null
+  )
+  return hasSurfaceQuery && projectSpaceRouteMatchesProject(currentRoute, project)
+    ? currentRoute
+    : projectSpaceContentRoute(project)
+}
 
 export function projectSpaceRouteParam(contentRoute: string, name: string): string | null {
   const searchIndex = contentRoute.indexOf('?')

@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest'
 import {
   defaultProjectSpaceContentRoute,
   projectSpaceContentRoute,
+  projectSpaceNavigationRoute,
   projectSpaceRefFromRoute,
   projectSpaceRouteMatchesProject,
   projectSpaceRouteParam,
@@ -12,6 +13,20 @@ import {
 } from './projectSpaceRoute'
 
 describe('projectSpaceRoute', () => {
+  test('preserves the exact enabled surface query only for the same project', () => {
+    const project = { projectStore: 'backend', projectId: '42' } as const
+    const route = '/todo?view=gantt&surface=plan&mode=timeline&projectId=42&projectStore=backend'
+    expect(projectSpaceNavigationRoute(project, route, { 'collab.projectSurfaces.v1': true })).toBe(
+      route
+    )
+    expect(projectSpaceNavigationRoute(project, route, {})).toBe(projectSpaceContentRoute(project))
+    expect(
+      projectSpaceNavigationRoute({ ...project, projectId: '43' }, route, {
+        'collab.projectSurfaces.v1': true,
+      })
+    ).toBe('/todo?projectStore=backend&projectId=43')
+  })
+
   test('builds a route focused on one project-space item', () => {
     const route = projectSpaceContentRoute(
       { projectStore: 'backend', projectId: 'project-1' },

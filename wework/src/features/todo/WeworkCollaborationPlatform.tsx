@@ -19,6 +19,10 @@ import {
 } from '@wegent/collaboration/templates'
 import { createHttpClient } from '@/api/http'
 import { getRuntimeConfig } from '@/config/runtime'
+import {
+  resolveEnabledProjectSurface,
+  type ProjectSurfaceFeatureFlags,
+} from '@wegent/collaboration/project-shell/projectSurfaceRouting'
 // eslint-disable-next-line react-refresh/only-export-components
 export { createLocalWorkspaceApi, createWeworkPlatformApi }
 import {
@@ -163,7 +167,8 @@ const initialLocation: CollaborationPlatformLocation = {
  */
 function routeProjectLocation(
   projectRef: RuntimeProjectSpaceRef | null,
-  focusedItemId: string | null
+  focusedItemId: string | null,
+  projectView: CollaborationPlatformLocation['projectView'] = 'board'
 ): CollaborationPlatformLocation | null {
   if (!projectRef) return null
   return {
@@ -172,7 +177,7 @@ function routeProjectLocation(
     workspaceId: null,
     workspaceView: 'projects',
     projectId: String(projectRef.projectId),
-    projectView: 'board',
+    projectView,
     issueId: focusedItemId,
   }
 }
@@ -306,6 +311,8 @@ function workspaceExecutionAddress(
 }
 
 export interface WeworkCollaborationPlatformProps {
+  projectSurfaceQuery?: string
+  featureFlags?: ProjectSurfaceFeatureFlags
   user: User
   devices?: DeviceInfo[]
   localProjects: ProjectWithTasks[]
@@ -1551,9 +1558,27 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       : (props.activeProjectRef ?? null)
   const routedProjectId = activeProject ? String(activeProject.projectId) : null
   const routedProjectStore = activeProject?.projectStore
+  const surfaceFlags = props.featureFlags ?? getRuntimeConfig().featureFlags
+  const resolvedSurface = activeProject
+    ? resolveEnabledProjectSurface(props.projectSurfaceQuery ?? '', surfaceFlags)
+    : null
+  const routedProjectView = resolvedSurface?.legacyView ?? 'board'
   const [location, setLocation] = useState<CollaborationPlatformLocation>(() => ({
-    ...(routeProjectLocation(activeProject, props.focusedItemId ?? null) ?? initialLocation),
+    ...(routeProjectLocation(activeProject, props.focusedItemId ?? null, routedProjectView) ??
+      initialLocation),
   }))
+  const surfaceWasEnabled = useRef(false)
+  const surfaceEnabled = resolvedSurface !== null
+  useLayoutEffect(() => {
+    const shouldApply = surfaceEnabled || surfaceWasEnabled.current
+    surfaceWasEnabled.current = surfaceEnabled
+    if (!shouldApply || !routedProjectId) return
+    setLocation(current =>
+      current.projectId === routedProjectId && current.projectView !== routedProjectView
+        ? { ...current, projectView: routedProjectView, projectSettingsSection: null }
+        : current
+    )
+  }, [routedProjectId, routedProjectView, surfaceEnabled])
   const [navigationSyncRevision, setNavigationSyncRevision] = useState(0)
   const startupReadySent = useRef(false)
   const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
@@ -1590,7 +1615,8 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     let cancelled = false
     const target = routeProjectLocation(
       { projectId: activeProjectId, projectStore: routedProjectStore },
-      props.focusedItemId ?? null
+      props.focusedItemId ?? null,
+      routedProjectView
     )
     if (target) {
       const routedFocus = props.focusedItemId ?? null
@@ -1649,6 +1675,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   }, [
     routedProjectId,
     routedProjectStore,
+    routedProjectView,
     navigationSyncRevision,
     platformApi,
     props.focusedCommentId,

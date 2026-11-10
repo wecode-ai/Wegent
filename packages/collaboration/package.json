@@ -33,6 +33,14 @@
       "types": "./src/project-shell/index.ts",
       "import": "./src/project-shell/index.ts"
     },
+    "./project-shell/projectSurfaceRouting": {
+      "types": "./src/project-shell/projectSurfaceRouting.ts",
+      "import": "./src/project-shell/projectSurfaceRouting.ts"
+    },
+    "./project-shell/projectSurfaces": {
+      "types": "./src/project-shell/projectSurfaces.ts",
+      "import": "./src/project-shell/projectSurfaces.ts"
+    },
     "./platform": {
       "types": "./src/platform/index.ts",
       "import": "./src/platform/index.ts"
@@ -449,6 +457,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
   "peerDependencies": {

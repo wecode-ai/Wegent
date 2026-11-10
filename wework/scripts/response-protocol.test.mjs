@@ -430,6 +430,25 @@ describe('delegated task completion model routing', () => {
     expect(JSON.parse(nextCall.arguments)).toEqual({ taskId: 'child-1' })
   })
 
+  test('reports the newest child answer after the same task is continued', () => {
+    const body = callback('latest')
+    const call = toolCall(delegatedTaskResultEvents(body))
+    body.input.push(
+      output(call.call_id, {
+        taskId: 'child-1',
+        messages: [
+          { role: 'assistant', content: 'DIRECT_RECOVERY_DONE_1' },
+          { role: 'user', content: 'Continue the existing task' },
+          { role: 'assistant', content: 'DIRECT_RECOVERY_DONE_3' },
+        ],
+      })
+    )
+    const report = JSON.stringify(delegatedTaskResultEvents(body))
+    expect(report).toContain('child-1')
+    expect(report).toContain('DIRECT_RECOVERY_DONE_3')
+    expect(report).not.toContain('DIRECT_RECOVERY_DONE_1')
+  })
+
   test('rejects an incorrect child transcript or a completed task without an answer', () => {
     for (const history of [
       { taskId: 'other-child', messages: [] },
