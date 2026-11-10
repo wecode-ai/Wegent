@@ -20,6 +20,8 @@ export async function verifyOrphanStandInRecovery({
 }) {
   const role = settings.roles.find(role => role.id === 'recovery-reviewer')
   assert.ok(role)
+  const identity = await rpc('runtime.stand_in.device_identity', {})
+  assert.ok(identity.backendDeviceId, 'A new reservation must identify its exact App registration')
   const params = { projectId: String(project.id), userId: user.id, projectStore: 'cloud' }
   const reserve = async title => {
     const created = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
@@ -31,15 +33,15 @@ export async function verifyOrphanStandInRecovery({
     const taskId = `stand-in-${issue.human_task_binding.humanAssignmentId}-${role.id}`
     const binding = await request(`/v1/loop-items/${issue.id}/tasks`, {
       ...issue.human_task_binding,
-      deviceId: settings.executionDeviceId,
+      deviceId: identity.backendDeviceId,
       taskId,
       taskTitle: 'Reserved before a failed start',
     })
     assert.equal(binding.task_id, taskId)
     assert.equal((await rpc('runtime.tasks.get', { taskId })).code, 'task_not_found')
-    return { issue, taskId }
+    return { issue, taskId, bindingId: binding.id }
   }
-  const completed = async ({ issue, taskId }) => {
+  const completed = async ({ issue, taskId, bindingId }) => {
     await until(
       () => rpc('runtime.tasks.get', { taskId }),
       value => {
@@ -50,6 +52,8 @@ export async function verifyOrphanStandInRecovery({
     )
     const bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
     assert.equal(bindings.length, 1, 'Recovery must reuse the reservation')
+    assert.equal(bindings[0].id, bindingId, 'Recovery must preserve the original binding identity')
+    assert.equal(bindings[0].device_id, identity.backendDeviceId)
     assert.equal(bindings[0].task_id, taskId)
     await until(
       () => request(`/v1/loop-items/${issue.id}/assignments`),
