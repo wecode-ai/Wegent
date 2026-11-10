@@ -1629,16 +1629,57 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_goal_missing_session(&existing_link));
         };
 
+        let requested_source_turn_id = retry_source_turn_id(&payload).ok_or_else(|| {
+            AppIpcError::new(
+                "bad_request",
+                "retrySourceTurnId is required to edit the last message",
+            )
+        })?;
+        let source_turn_id = resolve_codex_turn_id(&existing_link, &requested_source_turn_id)
+            .unwrap_or(requested_source_turn_id);
+        let old_client_message_id =
+            string_field(&payload, "messageId").or_else(|| string_field(&payload, "message_id"));
+
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("requested_task_id", requested_task_id));
         fields.push(("local_task_id", local_task_id.clone()));
         fields.push(("thread_id", thread_id.clone()));
+        fields.push(("retry_source_turn_id", source_turn_id.clone()));
         fields.push(("workspace_path", workspace_path.clone()));
         fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
         if let Some(cwd) = request.cwd() {
             fields.push(("cwd", cwd.to_owned()));
         }
         log_executor_event("runtime work message edit prepared", &fields);
+
+        let ephemeral = existing_link.ephemeral || request.ephemeral;
+        let paginated_history = if ephemeral {
+            false
+        } else {
+            self.codex_thread_uses_paginated_history(&thread_id).await?
+        };
+
+        let reverted = if paginated_history {
+            Some(
+                self.revert_codex_thread_for_prompt_edit(&thread_id, &source_turn_id)
+                    .await?,
+            )
+        } else {
+            let reason = if ephemeral {
+                "ephemeral"
+            } else {
+                "legacy_history"
+            };
+            log_executor_event(
+                "runtime work message edit using replacement turn",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("thread_id", thread_id.clone()),
+                    ("reason", reason.to_owned()),
+                ],
+            );
+            None
+        };
 
         self.mark_task_running_for_send(
             &local_task_id,
@@ -1647,19 +1688,32 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
-        if let Some(turn_id) = retry_source_turn_id(&payload) {
-            self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
+        if let Some(reverted) = reverted {
+            self.apply_reverted_thread_state(
+                &local_task_id,
+                &source_turn_id,
+                old_client_message_id.as_deref(),
+                reverted,
+            )?;
+        } else {
+            self.record_superseded_runtime_transcript_turn(&local_task_id, &source_turn_id);
         }
+
+        let (direct_thread_id, resume_thread_id) = if paginated_history {
+            (Some(thread_id), None)
+        } else {
+            (None, Some(thread_id))
+        };
         self.spawn_turn(SpawnTurnRequest {
             task_kind: None,
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
             send_payload: None,
-            direct_thread_id: None,
+            direct_thread_id,
             fork_thread_id: None,
             fork_thread_path: None,
-            resume_thread_id: Some(thread_id),
+            resume_thread_id,
             initial_thread_goal: None,
         })
         .await?;
@@ -1671,6 +1725,150 @@ impl RuntimeWorkRpcHandler {
             "taskId": local_task_id,
             "runtime": "codex",
         }))
+    }
+
+    async fn codex_thread_uses_paginated_history(
+        &self,
+        thread_id: &str,
+    ) -> Result<bool, AppIpcError> {
+        let response = self
+            .codex_app_server
+            .request(
+                "thread/read",
+                json!({"threadId": thread_id, "includeTurns": false}),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let thread = response.get("thread").unwrap_or(&response);
+        Ok(thread.get("historyMode").and_then(Value::as_str) == Some("paginated"))
+    }
+
+    async fn revert_codex_thread_for_prompt_edit(
+        &self,
+        thread_id: &str,
+        before_turn_id: &str,
+    ) -> Result<CodexThreadRevertResult, AppIpcError> {
+        let response = self
+            .codex_app_server
+            .request(
+                "thread/revert",
+                json!({"threadId": thread_id, "beforeTurnId": before_turn_id}),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("thread_revert_failed", error))?;
+        let thread_path = response
+            .pointer("/thread/path")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let previous_turn_id = self
+            .latest_retained_turn_id(
+                thread_id,
+                response.get("turnsBackwardsCursor").and_then(Value::as_str),
+            )
+            .await;
+        log_executor_event(
+            "runtime work message edit reverted",
+            &[
+                ("thread_id", thread_id.to_owned()),
+                ("before_turn_id", before_turn_id.to_owned()),
+                ("thread_path_updated", thread_path.is_some().to_string()),
+            ],
+        );
+        Ok(CodexThreadRevertResult {
+            thread_path,
+            previous_turn_id,
+        })
+    }
+
+    fn apply_reverted_thread_state(
+        &self,
+        local_task_id: &str,
+        before_turn_id: &str,
+        old_client_message_id: Option<&str>,
+        reverted: CodexThreadRevertResult,
+    ) -> Result<(), AppIpcError> {
+        let updated = self
+            .store
+            .update_task_without_snapshot(local_task_id, |link| {
+                prune_reverted_turn_handle(
+                    &mut link.runtime_handle,
+                    before_turn_id,
+                    old_client_message_id,
+                );
+                if !link.runtime_handle.is_object() {
+                    link.runtime_handle = json!({});
+                }
+                if let Some(handle) = link.runtime_handle.as_object_mut() {
+                    handle.remove("cloudTranscript");
+                    match reverted.thread_path.as_deref() {
+                        Some(path) => {
+                            handle.insert("threadPath".to_owned(), json!(path));
+                        }
+                        None => {
+                            handle.remove("threadPath");
+                        }
+                    }
+                    match reverted.previous_turn_id.as_deref() {
+                        Some(turn_id) => {
+                            handle.insert("lastTurnId".to_owned(), json!(turn_id));
+                        }
+                        None => {
+                            handle.remove("lastTurnId");
+                        }
+                    }
+                }
+                clear_transcript_snapshot_messages(&mut link.runtime_handle);
+                clear_completed_transcript_messages(&mut link.runtime_handle);
+                if let Some(state) = link.execution_state.as_mut() {
+                    state.latest_turn_id = reverted.previous_turn_id.clone();
+                    state.turn_id = None;
+                    state.request_turn_id = None;
+                }
+            });
+        if updated.is_none() {
+            return Err(AppIpcError::new(
+                "task_not_found",
+                "Runtime task disappeared after reverting history",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn latest_retained_turn_id(
+        &self,
+        thread_id: &str,
+        cursor: Option<&str>,
+    ) -> Option<String> {
+        let cursor = cursor?;
+        match self
+            .codex_app_server
+            .request(
+                "thread/turns/list",
+                json!({
+                    "threadId": thread_id,
+                    "cursor": cursor,
+                    "limit": 1,
+                    "sortDirection": "desc",
+                    "itemsView": "summary",
+                }),
+            )
+            .await
+        {
+            Ok(response) => response
+                .get("data")
+                .and_then(Value::as_array)
+                .and_then(|turns| turns.first())
+                .and_then(|turn| turn.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            Err(error) => {
+                log_executor_event(
+                    "runtime work message edit retained turn lookup failed",
+                    &[("thread_id", thread_id.to_owned()), ("error", error)],
+                );
+                None
+            }
+        }
     }
 
     pub(super) async fn send_guidance(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -2696,6 +2894,58 @@ fn superseded_turn_identities(link: &RuntimeTaskLink, turn_id: &str) -> Vec<Stri
     identities
 }
 
+struct CodexThreadRevertResult {
+    thread_path: Option<String>,
+    previous_turn_id: Option<String>,
+}
+
+fn prune_reverted_turn_handle(
+    runtime_handle: &mut Value,
+    turn_id: &str,
+    old_client_message_id: Option<&str>,
+) {
+    let Some(handle) = runtime_handle.as_object_mut() else {
+        return;
+    };
+    if let Some(mappings) = handle
+        .get_mut("turnIdsBySubtask")
+        .and_then(Value::as_object_mut)
+    {
+        mappings.retain(|_, value| value.as_str() != Some(turn_id));
+    }
+    if let Some(presentations) = handle
+        .get_mut("userMessagePresentations")
+        .and_then(Value::as_array_mut)
+    {
+        presentations.retain(|presentation| {
+            let matches_turn = presentation.get("turnId").and_then(Value::as_str) == Some(turn_id);
+            let matches_client = old_client_message_id.is_some_and(|client_user_message_id| {
+                presentation
+                    .get("clientUserMessageId")
+                    .and_then(Value::as_str)
+                    == Some(client_user_message_id)
+                    || presentation
+                        .get("client_user_message_id")
+                        .and_then(Value::as_str)
+                        == Some(client_user_message_id)
+            });
+            !matches_turn && !matches_client
+        });
+    }
+    if let Some(turns) = handle
+        .get_mut("overloadRecoveryTurnIds")
+        .and_then(Value::as_array_mut)
+    {
+        turns.retain(|value| value.as_str() != Some(turn_id));
+    }
+    if let Some(turns) = handle
+        .get_mut("supersededTranscriptTurnIds")
+        .and_then(Value::as_array_mut)
+    {
+        turns.retain(|value| value.as_str() != Some(turn_id));
+    }
+}
+
 pub(super) fn retry_source_turn_id(payload: &Value) -> Option<String> {
     string_field(payload, "retrySourceTurnId")
         .or_else(|| string_field(payload, "retry_source_turn_id"))
@@ -2710,7 +2960,36 @@ mod tests {
 
     use super::{
         apply_runtime_task_start_failure, context_compaction_outcome, normalize_friendly_title,
+        prune_reverted_turn_handle,
     };
+
+    #[test]
+    fn pruning_a_reverted_turn_removes_its_runtime_handle_bindings() {
+        let mut handle = json!({
+            "turnIdsBySubtask": {"subtask-old": "turn-old", "subtask-live": "turn-live"},
+            "userMessagePresentations": [
+                {"clientUserMessageId": "message-old", "turnId": "turn-old"},
+                {"clientUserMessageId": "message-live", "turnId": "turn-live"}
+            ],
+            "overloadRecoveryTurnIds": ["turn-old", "turn-live"],
+            "supersededTranscriptTurnIds": ["turn-old", "turn-live"]
+        });
+
+        prune_reverted_turn_handle(&mut handle, "turn-old", Some("message-old"));
+
+        assert_eq!(handle["turnIdsBySubtask"]["subtask-live"], "turn-live");
+        assert!(handle["turnIdsBySubtask"].get("subtask-old").is_none());
+        assert_eq!(
+            handle["userMessagePresentations"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(
+            handle["userMessagePresentations"][0]["clientUserMessageId"],
+            "message-live"
+        );
+        assert_eq!(handle["overloadRecoveryTurnIds"], json!(["turn-live"]));
+        assert_eq!(handle["supersededTranscriptTurnIds"], json!(["turn-live"]));
+    }
 
     #[test]
     fn normalizes_model_title_to_one_short_line() {

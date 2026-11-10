@@ -4578,7 +4578,7 @@ async fn runtime_tasks_send_recovers_thread_from_unique_workspace_when_visible_t
 }
 
 #[tokio::test]
-async fn runtime_tasks_rollback_replaces_the_source_turn_without_provider_rollback() {
+async fn runtime_tasks_rollback_reverts_the_source_turn_before_the_replacement_turn() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -4594,6 +4594,7 @@ async fn runtime_tasks_rollback_replaces_the_source_turn_without_provider_rollba
     );
     let log_path = temp_path("runtime-rollback-address-handle-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
+    std::fs::write(format!("{}.paginated-thread", log_path.display()), "").unwrap();
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     let rollback = handler
@@ -4629,16 +4630,133 @@ async fn runtime_tasks_rollback_replaces_the_source_turn_without_provider_rollba
         calls.iter().all(|call| call["method"] != "thread/rollback"),
         "message editing must not use the deprecated provider rollback"
     );
-    let resume = calls
+    let revert = calls
         .iter()
-        .find(|call| call["method"] == "thread/resume")
-        .expect("editing should resume and subscribe to the persistent thread");
-    assert_eq!(resume["params"]["threadId"], "thread-1");
+        .find(|call| call["method"] == "thread/revert")
+        .expect("editing should revert the provider thread before the source turn");
+    assert_eq!(revert["params"]["threadId"], "thread-1");
+    assert_eq!(revert["params"]["beforeTurnId"], "turn-1");
+    assert!(
+        calls.iter().all(|call| call["method"] != "thread/resume"),
+        "revert keeps the thread loaded; editing must not append to a stale resumed history"
+    );
     let turn_start = calls
         .iter()
         .find(|call| call["method"] == "turn/start")
         .expect("editing should start a replacement turn");
     assert_eq!(turn_start["params"]["threadId"], "thread-1");
+}
+
+#[tokio::test]
+async fn runtime_tasks_rollback_keeps_replacement_turn_for_legacy_threads() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-rollback-legacy-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-rollback-legacy-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-rollback-legacy-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let rollback = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.rollback",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "taskId": "local-visible-task",
+                    "runtimeHandle": {
+                        "threadId": "thread-1"
+                    }
+                },
+                "message": "edited legacy thread",
+                "messageId": "user-last",
+                "retrySourceTurnId": "turn-1",
+                "executionRequest": codex_execution_request(
+                    "edited legacy thread",
+                    "/tmp/project",
+                    "gpt-4.1"
+                )
+            }
+        }))
+        .await
+        .expect("legacy rollback should be accepted");
+    assert_eq!(rollback["accepted"], true);
+
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+    let calls = read_json_lines(&log_path);
+    assert!(
+        calls.iter().all(|call| call["method"] != "thread/revert"),
+        "legacy threads must not call thread/revert"
+    );
+    let resume = calls
+        .iter()
+        .find(|call| call["method"] == "thread/resume")
+        .expect("legacy editing should resume the thread");
+    assert_eq!(resume["params"]["threadId"], "thread-1");
+}
+
+#[tokio::test]
+async fn runtime_tasks_rollback_does_not_send_after_a_failed_revert() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-rollback-failure-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-rollback-failure-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-rollback-failure-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    std::fs::write(format!("{}.paginated-thread", log_path.display()), "").unwrap();
+    std::fs::write(format!("{}.fail-revert", log_path.display()), "").unwrap();
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let error = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.rollback",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "taskId": "local-visible-task",
+                    "runtimeHandle": {
+                        "threadId": "thread-1"
+                    }
+                },
+                "message": "edited after revert failure",
+                "messageId": "user-last",
+                "retrySourceTurnId": "turn-1",
+                "executionRequest": codex_execution_request(
+                    "edited after revert failure",
+                    "/tmp/project",
+                    "gpt-4.1"
+                )
+            }
+        }))
+        .await
+        .expect_err("failed revert must not be reported as accepted");
+
+    assert_eq!(error.code, "thread_revert_failed");
+    let calls = read_json_lines(&log_path);
+    assert!(
+        calls.iter().all(|call| call["method"] != "turn/start"),
+        "a failed revert must not start the replacement turn"
+    );
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {
@@ -4649,6 +4767,7 @@ fn write_fake_codex(log_path: &Path) -> PathBuf {
 LOG_PATH='{}'
 turn_count=0
 active_thread_id=thread-1
+reverted=0
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -4670,10 +4789,18 @@ while IFS= read -r line; do
           fi
           ;;
       esac
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
+      history_mode=legacy
+      if [ -f "$LOG_PATH.paginated-thread" ]; then
+        history_mode=paginated
+      fi
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","historyMode":"'"$history_mode"'","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
       ;;
     *'"method":"thread/turns/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"itemsView":"notLoaded"}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      if [ "$reverted" = 1 ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      else
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"itemsView":"notLoaded"}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      fi
       ;;
     *'"method":"thread/items/list"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"first turn"}}]}}}},{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":null}}}}'
@@ -4726,6 +4853,14 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/rollback"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/revert"'*)
+      if [ -f "$LOG_PATH.fail-revert" ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32603,"message":"revert failed"}}}}'
+        continue
+      fi
+      reverted=1
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","historyMode":"paginated","path":"/tmp/codex/thread-1-reverted.jsonl"}},"turnsBackwardsCursor":"revert-turns","itemsBackwardsCursor":"revert-items"}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
