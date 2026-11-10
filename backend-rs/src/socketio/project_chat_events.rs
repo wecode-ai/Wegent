@@ -15,6 +15,8 @@
 //! targets a missing project task, and the AI comment-execution pipeline
 //! (loop item assignments, robot queue) remains a documented remainder.
 //!
+//! Mention delivery and durable stand-in wakeups share the comment transaction.
+
 use std::sync::Arc;
 
 use brz_mysql::MysqlTransaction;
@@ -392,6 +394,12 @@ async fn send_message(
     let (saved, pending) = state
         .mysql
         .with_transaction(async |tx| {
+            let item = match request.task_id.as_deref() {
+                Some(item) => {
+                    crate::background_jobs::project::store::locked(tx, "task", item).await?
+                }
+                None => None,
+            };
             let row = tx
                 .execute(
                     super::project_chat_messages::INSERT_MESSAGE_SQL,
@@ -418,33 +426,38 @@ async fn send_message(
                     .await?,
                 );
             }
+            if let Some(item) = item
+                .as_ref()
+                .filter(|item| item.cloud_project_id == request.project_id)
+            {
+                let item_id = item.id.as_str();
+                let mut metadata = item.meta();
+                crate::background_jobs::project::issues::update_change_request_source(
+                    &mut metadata,
+                    &format!("activity:{message_id}"),
+                    &request.content,
+                );
+                super::project_chat_snapshot::advance_content_revision(
+                    metadata
+                        .as_object_mut()
+                        .expect("issue metadata is an object"),
+                    user_id,
+                );
+                tx.execute(
+                    "UPDATE loop_items SET metadata=?, version=version+1 WHERE id=?",
+                    (brz_mysql::Json(metadata), item_id),
+                )
+                .await?;
+            }
             if let Some(item_id) = request.task_id.as_deref() {
-                if let Some(item) =
-                    crate::background_jobs::project::store::locked(tx, "task", item_id).await?
-                    && item.cloud_project_id == request.project_id
-                {
-                    let mut metadata = item.meta();
-                    crate::background_jobs::project::issues::update_change_request_source(
-                        &mut metadata,
-                        &format!("activity:{message_id}"),
-                        &request.content,
-                    );
-                    super::project_chat_snapshot::advance_content_revision(
-                        metadata
-                            .as_object_mut()
-                            .expect("issue metadata is an object"),
-                        user_id,
-                    );
-                    tx.execute(
-                        "UPDATE loop_items SET metadata=?, version=version+1 WHERE id=?",
-                        (brz_mysql::Json(metadata), item_id),
-                    )
-                    .await?;
-                }
-                for recipient in &recipients {
+                let users = mentions
+                    .iter()
+                    .filter_map(Mention::user_id)
+                    .collect::<std::collections::BTreeSet<_>>();
+                for recipient in users {
                     crate::stand_in_issue_events::enqueue_mention_on(
                         tx,
-                        *recipient,
+                        recipient,
                         &request.project_id,
                         item_id,
                         &message_id,

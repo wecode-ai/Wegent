@@ -38,6 +38,12 @@ impl Mention {
         }
     }
 
+    pub(super) fn user_id(&self) -> Option<i64> {
+        self.is_user()
+            .then(|| self.id.trim().parse().ok())
+            .flatten()
+    }
+
     pub(super) fn parse(value: Option<&Value>) -> Result<Vec<Self>, String> {
         let Some(value) = value else {
             return Ok(Vec::new());

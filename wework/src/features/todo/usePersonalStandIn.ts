@@ -15,6 +15,7 @@ export function usePersonalStandIn(
   const [draft, setDraft] = useState<PersonalStandInSettings | null>(null)
   const [currentDeviceId, setCurrentDeviceId] = useState('')
   const [deviceId, setDeviceId] = useState(initialDeviceId ?? '')
+  const [loadedDeviceId, setLoadedDeviceId] = useState(initialDeviceId)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -38,6 +39,7 @@ export function usePersonalStandIn(
       const key = JSON.stringify([userId, target, reload])
       const previous = loaded.current
       loaded.current = { key, deviceId: target, settings }
+      setLoadedDeviceId(target)
       setCurrentDeviceId(identity.deviceId)
       setSaved(settings)
       setDraft(current =>
@@ -98,6 +100,7 @@ export function usePersonalStandIn(
     saving,
     save,
     currentDeviceId,
+    loadedDeviceId,
     setDeviceId: (value: string) => {
       setLoading(true)
       setDeviceId(value)

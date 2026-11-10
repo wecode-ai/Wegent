@@ -388,12 +388,15 @@ export function RuntimeTaskLifecycleStreamCoordinator({
               })
           })
       }
-      // Complete live content and an authoritative task snapshot need no history repair.
+      // A cached terminal snapshot can predate the native completion. Only skip
+      // history repair when its outcome agrees with the authoritative event.
       const terminal = getRuntimeConversationTurns(address).find(turn => turn.id === terminalTurnId)
       if (
         hasAuthoritativeTask &&
         terminal &&
-        ['done', 'completed', 'failed', 'cancelled'].includes(terminal.status)
+        (outcome === 'succeeded'
+          ? ['done', 'completed'].includes(terminal.status)
+          : terminal.status === outcome)
       )
         return
       try {

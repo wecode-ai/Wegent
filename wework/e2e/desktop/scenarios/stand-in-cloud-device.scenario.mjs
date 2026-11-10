@@ -64,14 +64,17 @@ export function createDesktopScenario({
   const binding = control => readStandInBinding(control, uiTimeoutMs)
   const stop = control => stopBoundStandIn(control, uiTimeoutMs)
   const bind = (control, user, device) => bindStoppedStandIn(control, user, device, uiTimeoutMs)
-  async function createRole(control, name) {
+  async function createRole(control, name, deviceId) {
     await control.command('clickWhenEnabled', testId('stand-in-create-role'))
     await control.command('waitFor', testId('stand-in-role-name'))
     assert.equal(
       await control.command('getElementCount', testId('stand-in-device')),
       '0',
-      'Role creation must stay on the bound Executor'
+      'Role creation must not expose a primary binding switch'
     )
+    await control.command('waitFor', testId('stand-in-role-device'))
+    if (deviceId)
+      await control.command('select', testId('stand-in-role-device'), { value: deviceId })
     await control.command('fill', testId('stand-in-role-name'), { value: name })
     await control.command('clickWhenEnabled', testId('stand-in-save'))
     await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
@@ -248,7 +251,7 @@ export function createDesktopScenario({
       )
       await control.command('clickWhenEnabled', testId('stand-in-close'))
       await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
-      await createRole(control, CLOUD_NAME)
+      await createRole(control, CLOUD_NAME, CLOUD_DEVICE_ID)
       const role = readProfile(remoteHome).roles.find(row => row.name === CLOUD_NAME)
       assert.ok(role, 'The bound real cloud Executor must persist the role')
       assert.equal(role.executionDeviceId, CLOUD_DEVICE_ID)

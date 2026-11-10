@@ -21,7 +21,11 @@ impl RuntimeWorkRpcHandler {
                 .backend_url
         };
         let mut binding = binding.clone();
-        binding["deviceId"] = json!(self.device_id);
+        binding["deviceId"] = json!(if local {
+            self.device_id.clone()
+        } else {
+            self.cloud_device_id()?
+        });
         binding["taskId"] = json!(self.stand_in_task_id(config, issue));
         binding["taskTitle"] = issue["title"].clone();
         binding["standInConversationId"] =
@@ -32,13 +36,11 @@ impl RuntimeWorkRpcHandler {
                 reqwest::Method::POST,
                 &format!("/v1/loop-items/{issue_id}/tasks"),
                 Some(&json!({
-                    "deviceId":self.device_id,"taskId":binding["taskId"],"taskTitle":issue["title"],"standInConversationId":binding["standInConversationId"]
+                    "deviceId":binding["deviceId"],"taskId":binding["taskId"],"taskTitle":issue["title"],"standInConversationId":binding["standInConversationId"]
                 })),
             )
             .await?;
-            return Ok(binding);
-        }
-        if local {
+        } else if local {
             LocalTaskStore::open(self.task_store_path.as_ref())
                 .map_err(settings_error)?
                 .bind_task(
@@ -58,9 +60,16 @@ impl RuntimeWorkRpcHandler {
             )
             .await?;
         }
-        if config["manual"] == true
-            && (issue["assignee_user_id"] != config["userId"]
-                || !binding["humanAssignmentId"].is_string())
+        self.store
+            .bind_issue_conversation(
+                &super::stand_in::stand_in_issue_identity(config, issue),
+                binding["taskId"].as_str().unwrap(),
+            )
+            .map_err(|error| AppIpcError::new("stand_in_settings", error.to_string()))?;
+        if binding["triggerCommentId"].is_string()
+            || (config["manual"] == true
+                && (issue["assignee_user_id"] != config["userId"]
+                    || !binding["humanAssignmentId"].is_string()))
         {
             return Ok(binding);
         }
@@ -105,11 +114,15 @@ impl RuntimeWorkRpcHandler {
                 )
                 .map_err(settings_error);
         }
+        let device_id = match binding["deviceId"].as_str() {
+            Some(device) => device.to_owned(),
+            None => self.cloud_device_id()?,
+        };
         store
             .queue_assignment_receipt(&json!({
                 "projectId": project, "issueId": issue_id, "backendUrl": backend_url,
                 "assignmentId": super::stand_in::issue_assignment_event_id(binding)?, "userId": config["userId"],
-                "deviceId": self.device_id, "taskId": binding["taskId"],
+                "deviceId": device_id, "taskId": binding["taskId"],
             }))
             .map_err(settings_error)?;
         self.log_stand_in_decision(config, issue, "receipt_queued", json!({"taskId":binding["taskId"],"issueAssignmentId":super::stand_in::issue_assignment_event_id(binding)?}));

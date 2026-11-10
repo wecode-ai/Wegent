@@ -22,6 +22,20 @@ function fixture() {
 }
 
 describe('personal stand-in Executor routing', () => {
+  it('retries failed local identity discovery before loading any profile', async () => {
+    const { personalGet, services } = fixture()
+    vi.mocked(services.getLocalRuntimeSidebarIdentity!)
+      .mockRejectedValueOnce(new Error('Identity unavailable'))
+      .mockResolvedValue({ deviceId: 'mac' })
+    const { result } = renderHook(() => usePersonalStandIn(services, 7))
+    await waitFor(() => expect(result.current.error).toBeTruthy())
+    expect(personalGet).not.toHaveBeenCalled()
+    act(() => result.current.reload())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.error).toBeNull()
+    expect(personalGet).toHaveBeenCalledExactlyOnceWith(7, 'mac')
+  })
+
   it('reuses the instance identity without waiting for another runtime discovery', async () => {
     const { personalGet, services } = fixture()
     vi.mocked(services.getLocalRuntimeSidebarIdentity!).mockImplementation(

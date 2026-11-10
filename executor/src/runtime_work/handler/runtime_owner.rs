@@ -2,6 +2,24 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    /// Desktop identity routes local IPC; cloud writes use the registered Runtime.
+    pub(super) fn cloud_device_id(&self) -> Result<String, AppIpcError> {
+        let Some(slot) = &self.backend_device_route else {
+            // Standalone Executors register with their own device id.
+            return Ok(self.device_id.clone());
+        };
+        slot.lock()
+            .ok()
+            .and_then(|route| route.clone())
+            .filter(|route| !route.trim().is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "cloud_unavailable",
+                    "Wait for this Runtime to register with the backend",
+                )
+            })
+    }
+
     pub(super) async fn runtime_request(
         &self,
         method: reqwest::Method,
@@ -50,11 +68,36 @@ impl RuntimeWorkRpcHandler {
         path: &str,
         body: Option<&Value>,
     ) -> Result<Value, AppIpcError> {
-        let response = self.runtime_request(method, path, body).await?;
+        let response = self.runtime_request(method.clone(), path, body).await?;
         if !response.status().is_success() {
+            let status = response.status();
+            let reason = response.json::<Value>().await.ok();
+            // Only known server messages are safe to include in diagnostics.
+            let reason = match reason.as_ref().and_then(|body| body["detail"].as_str()) {
+                Some("Stand-in conversations require an active owned device") => {
+                    "active_owned_device_required"
+                }
+                Some("Insufficient permission") => "insufficient_permission",
+                _ => "unknown",
+            };
+            log_executor_event(
+                "runtime cloud request failed",
+                &[
+                    ("method", method.to_string()),
+                    (
+                        "path",
+                        path.split('?').next().unwrap_or_default().to_owned(),
+                    ),
+                    ("status", status.as_u16().to_string()),
+                    ("reason", reason.to_owned()),
+                ],
+            );
             return Err(AppIpcError::new(
                 "cloud_request_failed",
-                format!("Cloud request returned {}", response.status()),
+                format!(
+                    "Cloud request {method} {} returned {status} ({reason})",
+                    path.split('?').next().unwrap_or_default()
+                ),
             ));
         }
         if response.status() == reqwest::StatusCode::NO_CONTENT {
@@ -86,3 +129,7 @@ pub(super) fn runtime_user(payload: &Value) -> Result<i64, AppIpcError> {
         .filter(|user| *user >= 0)
         .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))
 }
+
+#[cfg(test)]
+#[path = "runtime_owner_tests.rs"]
+mod tests;
