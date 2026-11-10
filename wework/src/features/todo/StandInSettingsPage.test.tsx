@@ -251,7 +251,7 @@ describe('Personal stand-in settings', () => {
     expect(screen.getByTestId('stand-in-role-name')).toHaveValue(' changed')
   })
 
-  it('does not request cloud agents or show login warnings when disconnected', async () => {
+  it('keeps local role settings usable and scopes cloud sign-in guidance to IM', async () => {
     const { props, personalAgents } = fixture()
     render(
       <CloudConnectionContext.Provider
@@ -263,7 +263,12 @@ describe('Personal stand-in settings', () => {
     expect(await screen.findByTestId('stand-in-role-name')).toBeEnabled()
     expect(screen.queryByTestId('stand-in-agent')).not.toBeInTheDocument()
     expect(personalAgents).not.toHaveBeenCalled()
-    expect(screen.queryByText(/登录|加载个人智能体/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/加载个人智能体/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getAllByText(/登录/)).toHaveLength(1)
+    expect(screen.getByTestId('stand-in-im-connections')).toHaveTextContent(
+      '请先关闭设置，点击左侧“连接云端”登录，再连接 IM。'
+    )
   })
 
   it('keeps secondary settings scoped to the selected stand-in without another picker', async () => {

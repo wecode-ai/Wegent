@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { delimiter } from 'node:path'
 import { commandOutputAsync, fetchJson, join, repoDir } from './shared.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
@@ -26,7 +27,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
         cwd: join(repoDir, 'backend'),
         env: {
           ...backendEnv,
-          PYTHONPATH: '..:.',
+          PYTHONPATH: [repoDir, join(repoDir, 'backend')].join(delimiter),
           WEWORK_IM_STORY_REQUEST: JSON.stringify({ userId, ...payload }),
         },
       }
