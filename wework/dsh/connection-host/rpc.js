@@ -43,6 +43,10 @@ export async function handleConnectionRpc(req, res, token, request) {
       error: {
         code: error.code ?? 'connection_failed',
         message: error.message,
+        ...(typeof error.providerCode === 'string' &&
+        /^[A-Za-z0-9_.:-]{1,64}$/.test(error.providerCode)
+          ? { providerCode: error.providerCode }
+          : {}),
         ...(collection &&
         !PERMANENT_ERRORS.has(error.code) &&
         Number.isSafeInteger(error.retryAfterMs) &&

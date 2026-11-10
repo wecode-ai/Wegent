@@ -3712,6 +3712,9 @@ fn error_message(request_id: Option<&str>, error: &AppIpcError) -> Value {
     if let Some(delay) = error.retry_after_ms {
         response["error"]["retryAfterMs"] = json!(delay);
     }
+    if let Some(code) = &error.provider_code {
+        response["error"]["providerCode"] = json!(code);
+    }
     if error.code == "runtime_read_busy" {
         response["error"]["retryable"] = json!(true);
     }
@@ -3881,6 +3884,18 @@ mod tests {
         local_app_command, AppIpcServer, BlockingSingleFlight, APP_IPC_REQUEST_TIMEOUT_SECONDS,
     };
     use crate::runtime_work::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
+
+    #[test]
+    fn connection_cli_error_response_preserves_structured_cause_and_read_delay() {
+        let mut error =
+            super::AppIpcError::new("connection_cli_request_unavailable", "Read failed")
+                .with_retry_after_ms(30_000);
+        error.provider_code = Some("request_failed".to_owned());
+        let response = super::error_message(Some("read"), &error);
+        assert_eq!(response["error"]["providerCode"], "request_failed");
+        assert_eq!(response["error"]["retryAfterMs"], 30_000);
+        assert!(response["error"]["retryable"].is_null());
+    }
 
     #[test]
     fn transcript_export_allows_large_snapshot_packaging() {

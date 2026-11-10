@@ -362,6 +362,14 @@ fn collection_error_latched(state: &Value, version: &Value) -> bool {
     {
         return false;
     }
+    // The old CLI boundary serialized this exact synthetic envelope for generic
+    // request failures. Do not infer recovery from arbitrary provider messages.
+    if state["error"]["code"] == "connection_cli_request_failed"
+        && state["error"]["providerCode"].is_null()
+        && state["error"]["message"] == "Plugin tool request failed (request_failed)"
+    {
+        return false;
+    }
     true
 }
 
@@ -384,6 +392,9 @@ fn save_collection_result(
                 json!({})
             };
             next["error"] = json!({"code":error.code,"message":error.message});
+            if let Some(code) = &error.provider_code {
+                next["error"]["providerCode"] = json!(code);
+            }
             if let Some(delay) = error.retry_after_ms.or_else(|| {
                 super::super::connection_host::collection_runtime_retry_after_ms(&error.code)
             }) {
