@@ -252,6 +252,16 @@ When upgrade tests quit an installed host, they first confirm command execution 
 
 When diagnostics need new packages, `build_only=true` produces immutable inputs for a subsequent non-publishing `verification_run_id` replay. This mode cannot publish, start the upgrade matrix, or generate compatibility evidence. Ordinary releases and default dry runs still require the complete upgrade gate.
 
+`Wework App` accepts `verification_writer_wait_seconds`, an integer from 0 to 600, to observe
+an independently owned native writer during stopped preparation. The default is 0 and adds no
+ordinary CI wait. Setting 65 adds one 65-second observation to `app-rollback` for each package
+pair, without repeating it in the two recovery checkpoints. While the writer remains alive,
+the rollout header must stay unchanged and neither the migration receipt nor the trial health
+timer may admit activation. Releasing the writer must automatically complete upgrade, task
+continuation, and rollback. Nonzero values require a target declaring `afterStopPreparation=1`;
+they do not extend product health budgets or weaken assertions. Locally, run the same scenario
+with `WEWORK_E2E_UPGRADE_WRITER_WAIT_SECONDS=65`.
+
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 
 Isolated E2E startup diagnostics also monitor the main-thread heartbeat. A five-second stall

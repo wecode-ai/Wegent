@@ -20,6 +20,27 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
+test("native writer observation is opt-in and reaches the shared package runner", () => {
+  const input =
+    workflow.true.workflow_dispatch.inputs.verification_writer_wait_seconds;
+  assert.equal(input.type, "number");
+  assert.equal(input.default, 0);
+  assert.equal(input.required, false);
+  const verification = jobs["verify-upgrades"].steps.find(
+    (step) =>
+      step.name ===
+      "Verify declared upgrade and rollback edges on real release packages",
+  );
+  assert.equal(
+    verification.env.WEWORK_E2E_UPGRADE_WRITER_WAIT_SECONDS,
+    "${{ inputs.verification_writer_wait_seconds || 0 }}",
+  );
+  assert.match(
+    verification.run,
+    /wework\/scripts\/verify-release-upgrades\.mjs/,
+  );
+});
+
 test("non-publishing artifact builds cannot be cancelled by another release branch queue", () => {
   assert.match(
     workflow.concurrency.group,

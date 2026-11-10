@@ -26,6 +26,7 @@ import { prepareInstalledSourceSnapshot } from './lib/installed-source-snapshot-
 import { waitForUpgradeSourcePrefetch } from './lib/upgrade-source-prefetch.mjs'
 import { upgradeCheckpointPassed } from './lib/upgrade-checkpoint-result.mjs'
 import { usesLegacyReleaseLayout } from '../electron/src/runtime/legacy-release-layout.mjs'
+import { upgradeWriterWaitSeconds } from '../e2e/desktop/modules/upgrade-writer-wait.mjs'
 import {
   upgradeVerificationCheckpoint,
   upgradeIncludesFaultRecovery,
@@ -41,6 +42,7 @@ if (!assetsDirectory || !platform || !arch || !channel || !repository || !releas
   throw new Error('Expected assets, platform, architecture, channel, repository, and release tag')
 if (!['macos', 'windows'].includes(platform))
   throw new Error('Upgrade verification requires macOS or Windows')
+upgradeWriterWaitSeconds(process.env.WEWORK_E2E_UPGRADE_WRITER_WAIT_SECONDS)
 const verificationStarted = performance.now()
 const publishedTarget = process.env.WEWORK_UPGRADE_PUBLISHED_TARGET_TAG || ''
 if (publishedTarget && publishedTarget !== releaseTag)
