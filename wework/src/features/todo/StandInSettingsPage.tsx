@@ -1,3 +1,4 @@
+import { StandInImConnections } from './StandInImConnections'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
@@ -610,6 +611,15 @@ function StandInSettingsEditor({
                     )}
                   </div>
                 </>
+              )}
+              {view === 'main' && (
+                <StandInImConnections
+                  services={services}
+                  devices={devices}
+                  deviceId={draft.executionDeviceId}
+                  roleId={role.id}
+                  disabled={saving}
+                />
               )}
               {(view === 'main' || view === 'create') && (
                 <>

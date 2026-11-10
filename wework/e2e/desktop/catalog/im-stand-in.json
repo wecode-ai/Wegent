@@ -1,0 +1,9 @@
+{
+  "order": 56100,
+  "scenario": "./scenarios/im-stand-in.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/e2e/desktop/modules/stand-in-im-connections.mjs",
+    "backend/tests/e2e/im_stand_in_fixture.py"
+  ]
+}

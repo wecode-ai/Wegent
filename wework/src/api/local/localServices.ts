@@ -3259,9 +3259,6 @@ export function createRuntimeWorkApiFromIpc(
     restoreWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
       return requestWithLocalDevice('runtime.worktrees.restore', data)
     },
-    bindRuntimeTaskImSessions() {
-      return cloudConnectionRequired('bindRuntimeTaskImSessions')
-    },
     async getImNotificationSettings() {
       return {
         global: { enabled: false, sessionKey: null, session: null },

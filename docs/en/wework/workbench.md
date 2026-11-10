@@ -174,7 +174,7 @@ Open **titlebar bell → Notification center**, not the obsolete account-area aw
 
 System notification permission also applies. The center differs from **Needs your input**, which retains business questions and their handling state.
 
-**Continue in private chat** in a runtime task's titlebar binds it to an available IM conversation after target review. Successful switch notices show the task title, and subsequent replies follow that binding. Channel preferences and per-task private-chat binding are separate.
+Wegent chat mode remains available. In stand-in mode, connect IM private conversations to a primary stand-in or scenario role under [stand-in settings → IM conversations](./personal-stand-in.md#im-conversations). Task notification subscriptions remain independent; replies quoting a notification in stand-in mode enter the currently connected stand-in.
 
 ## Split tasks by dragging
 

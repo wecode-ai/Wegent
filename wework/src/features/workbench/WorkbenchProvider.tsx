@@ -200,7 +200,7 @@ import {
   readProjectWorkPreference,
   resolveProjectWorkPreferenceScope,
 } from './projectWorkPreferences'
-import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
+import { defaultNewChatModelSelection } from './runtimeModelSelection'
 import { resolveWorkbenchOwnership } from './workbenchOwnership'
 import {
   createDefaultWorkbenchServices,
@@ -1849,40 +1849,6 @@ function OwnedWorkbenchProvider({
     [resolvedServices]
   )
 
-  const bindRuntimeTaskToImSessions = useCallback(
-    (address: RuntimeTaskAddress, sessionKeys: string[]) => {
-      if (!resolvedServices.runtimeWorkApi) {
-        return Promise.reject(new Error('Runtime work API is unavailable'))
-      }
-      const task = resolveRuntimeTaskSummary(address)
-      const taskTitle = task?.title.trim()
-      if (!taskTitle) {
-        return Promise.reject(new Error('Runtime task title is unavailable'))
-      }
-      let taskModelSelection =
-        task?.modelSelection ?? modelSelectionFromRuntimeHandle(address.runtimeHandle) ?? null
-      const taskModel = findModelForSelection(modelSelection.models, taskModelSelection)
-      if (taskModelSelection && taskModel) {
-        const executionModel = selectedModelExecutionFields(
-          taskModel,
-          taskModelSelection.options ?? {}
-        )
-        taskModelSelection = {
-          modelName: executionModel.modelId ?? taskModelSelection.modelName,
-          modelType: executionModel.modelType ?? taskModelSelection.modelType,
-          options: executionModel.modelOptions ?? {},
-        }
-      }
-      return resolvedServices.runtimeWorkApi.bindRuntimeTaskImSessions({
-        address,
-        taskTitle,
-        sessionKeys,
-        ...(taskModelSelection ? { modelSelection: taskModelSelection } : {}),
-      })
-    },
-    [modelSelection.models, resolveRuntimeTaskSummary, resolvedServices]
-  )
-
   const getImNotificationSettings = useCallback(() => {
     if (!resolvedServices.runtimeWorkApi) {
       return Promise.reject(new Error('Runtime work API is unavailable'))
@@ -2368,7 +2334,6 @@ function OwnedWorkbenchProvider({
   const stableSetRuntimeGoal = useStableEvent(runtimeTasks.setRuntimeGoal)
   const stableClearRuntimeGoal = useStableEvent(runtimeTasks.clearRuntimeGoal)
   const stableListImPrivateSessions = useStableEvent(listImPrivateSessions)
-  const stableBindRuntimeTaskToImSessions = useStableEvent(bindRuntimeTaskToImSessions)
   const stableGetImNotificationSettings = useStableEvent(getImNotificationSettings)
   const stableUpdateGlobalImNotification = useStableEvent(updateGlobalImNotification)
   const stableSubscribeRuntimeTaskNotifications = useStableEvent(subscribeRuntimeTaskNotifications)
@@ -2919,7 +2884,6 @@ function OwnedWorkbenchProvider({
       setRuntimeGoal: stableSetRuntimeGoal,
       clearRuntimeGoal: stableClearRuntimeGoal,
       listImPrivateSessions: stableListImPrivateSessions,
-      bindRuntimeTaskToImSessions: stableBindRuntimeTaskToImSessions,
       getImNotificationSettings: stableGetImNotificationSettings,
       updateGlobalImNotification: stableUpdateGlobalImNotification,
       subscribeRuntimeTaskNotifications: stableSubscribeRuntimeTaskNotifications,
@@ -2981,7 +2945,6 @@ function OwnedWorkbenchProvider({
       stableArchiveProjectConversations,
       stableArchiveProjectsConversations,
       stableArchiveRuntimeTask,
-      stableBindRuntimeTaskToImSessions,
       stableCancelRuntimeTask,
       stableCancelRuntimePaneTask,
       stableCompactRuntimePaneTask,

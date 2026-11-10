@@ -26,7 +26,7 @@ import {
   type StandaloneWorkspaceDialogMode,
 } from '@/components/projects/StandaloneProjectDialogs'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
-import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
+import { ImSessionPickerDialog } from '@/components/chat/ImSessionPickerDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import {
   getArchivedCleanupError,
@@ -1579,7 +1579,7 @@ export function DesktopWorkbenchLayout({
         onListGitRepositories={onListGitRepositories}
         onListGitBranches={onListGitBranches}
       />
-      <ContinueInImDialog
+      <ImSessionPickerDialog
         key={
           imNotificationDialogMode
             ? `im-notification-${imNotificationDialogMode.type}`

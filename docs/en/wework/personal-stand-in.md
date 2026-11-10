@@ -69,6 +69,18 @@ Click **Board** in the Tasks sidebar, or select **Board** from its task view men
 
 The **My stand-in** button in collaboration project headers also carries a **Beta** badge. Both entries are available without enabling experimental features.
 
+<a id="im-conversations"></a>
+
+## Connect IM conversations
+
+Open **My stand-in** in the sidebar, select the primary identity or a scenario role, then choose **Stand-in details → Manage stand-in** at the top right. Under **IM conversations**, select **Connect to this stand-in** beside a private conversation. This immediately enters stand-in mode. The binding saves immediately and remains after reopening settings; the profile Save button is not required. Sign in to a cloud account to use this entry.
+
+If the list is empty, send **`/bind`** in a private chat with your configured IM bot to register the conversation, then select **Refresh conversations**. Retry a failed list request by refreshing, or retry a failed connection with its connect button. A failed refresh preserves conversations already loaded.
+
+Private IM conversations default to the existing **Wegent chat mode**, retaining its Agent, model, device and new-conversation commands. Send **`/standin`** (or **`/mode standin`**) to enter **Wework stand-in mode**; send **`/chat`** (or **`/mode chat`**) to return to Wegent. **`/mode`** shows the current mode. Without an explicit identity binding, stand-in mode uses the primary stand-in on your account’s default execution device. If no default is configured, the device is offline, or the selected role has been deleted, IM explains how to check the connection in stand-in settings. It never chooses another device or role automatically. To rebind a conversation, open the destination role’s settings and select **Connect to this stand-in** again.
+
+New messages enter the selected stand-in’s existing persistent conversation. Old task mode migrates to stand-in mode. Its task bindings are removed while tasks and their history are preserved; task titlebars no longer offer Continue in private chat. In stand-in mode, quoted task notifications and task-card follow-ups provide context to the current stand-in without changing its binding or model. Task notification subscriptions and notification channels remain separate settings.
+
 <a id="conversational-configuration"></a>
 
 ## Manual and conversational configuration

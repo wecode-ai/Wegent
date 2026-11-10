@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""CI E2E coverage for DingTalk private-chat runtime conversations.
+"""Protocol integration coverage for DingTalk private-chat stand-in conversations.
 
 The test uses the migrated CI database and real Redis-backed session/callback
 state. DingTalk transport and the local runtime are the only substituted
@@ -24,25 +24,22 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
 from app.db.session import SessionLocal
-from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
+from app.models.im_session import IMPrivateSession
 from app.models.user import User
-from app.schemas.runtime_work import RuntimeSendResponse
 from app.services import runtime_work_service
 from app.services.channels import manager as channel_manager_module
 from app.services.channels.callback import (
     forward_event_to_channel_callbacks,
     runtime_local_task_callback_key,
 )
-from app.services.channels.device_selection import (
-    CHANNEL_USER_DEVICE_PREFIX,
-    DeviceType,
-    device_selection_manager,
-)
+from app.services.channels.device_selection import CHANNEL_USER_DEVICE_PREFIX
 from app.services.channels.dingtalk import card as card_module
 from app.services.channels.dingtalk.callback import dingtalk_callback_service
 from app.services.channels.dingtalk.handler import DingTalkChannelHandler
 from app.services.channels.handler import CHANNEL_CONV_TASK_PREFIX, MessageContext
+from app.services.device.runtime_rpc_service import runtime_rpc_service
 from app.services.execution.response_parser import ResponsesAPIEventParser
+from app.services.im import stand_in_service
 from app.services.im.notification_dispatcher import IMNotificationDispatcher
 from app.services.im.session_service import (
     PRIVATE_SESSION_KEY_PREFIX,
@@ -146,29 +143,20 @@ class DingTalkConversationHarness(DingTalkChannelHandler):
         self.replies.append(text)
         return True
 
-    async def _process_chat_message(
-        self,
-        user: User,
-        message_context: MessageContext,
-    ) -> None:
-        selection = await device_selection_manager.get_selection(user.id)
-        assert selection.device_type == DeviceType.CHAT
+    async def accept_stand_in_turn(self, payload: dict[str, Any]) -> None:
         assert self._turns, "Received an unexpected DingTalk chat turn"
         turn = self._turns.pop(0)
-        assert message_context.content == turn.prompt
+        assert payload["message"] == turn.prompt
 
-        local_task_id = f"turn-{uuid.uuid4().hex}"
-        callback_key = runtime_local_task_callback_key(DEVICE_ID, local_task_id)
-        emitter = await self.create_streaming_emitter(message_context)
-        assert emitter is not None
-        self._prepare_streaming_emitter(callback_key, emitter)
-        await emitter.emit_start(task_id=callback_key, subtask_id=0)
-        await self._register_streaming_emitter(
-            task_id=callback_key,
-            streaming_emitter=emitter,
-            message_context=message_context,
+        role_id = payload.get("roleId")
+        local_task_id = f"stand-in-chat-{self._user_id}-" + (
+            f"role-{role_id}" if role_id else "primary"
         )
-
+        self._current_source = payload["options"]["source"]
+        callback_key = runtime_local_task_callback_key(
+            DEVICE_ID, local_task_id, self._current_source["callback_id"]
+        )
+        emitter = dingtalk_callback_service._active_emitters[callback_key]
         card_id = emitter.card_instance_id
         assert card_id is not None
         self.card_ids.append(card_id)
@@ -225,11 +213,7 @@ class DingTalkConversationHarness(DingTalkChannelHandler):
                 "event_type": event_type,
                 "taskId": local_task_id,
                 "data": data,
-                "source": {
-                    "source": "im",
-                    "channel_type": "dingtalk",
-                    "external_id": "dingtalk-ci-e2e",
-                },
+                "source": self._current_source,
             },
         )
 
@@ -408,15 +392,25 @@ async def run() -> None:
     original_card_class = card_module.DingTalkMarkdownCard
     original_get_channel_manager = channel_manager_module.get_channel_manager
     original_send_runtime_message = runtime_work_service.send_runtime_message
+    original_rpc = runtime_rpc_service.call
+    original_identity = stand_in_service.resolve_runtime_route_identity
+    binding_cache_key = stand_in_service.binding_key(user_id, session_key)
     runtime_requests: list[Any] = []
 
-    async def fake_send_runtime_message(**kwargs: Any) -> RuntimeSendResponse:
-        request = kwargs["request"]
-        runtime_requests.append(request)
-        return RuntimeSendResponse(
-            accepted=True,
-            taskId=request.address.local_task_id,
+    async def fake_stand_in_rpc(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["method"] == "runtime.stand_in.conversation"
+        assert kwargs["payload"]["userId"] == user_id
+        payload = kwargs["payload"]
+        runtime_requests.append(payload)
+        source = payload["options"]["source"]
+        role = payload.get("roleId")
+        task_id = f"stand-in-chat-{user_id}-" + (f"role-{role}" if role else "primary")
+        handler.callback_keys.append(
+            runtime_local_task_callback_key(DEVICE_ID, task_id, source["callback_id"])
         )
+        if handler._turns and payload["message"] == handler._turns[0].prompt:
+            await handler.accept_stand_in_turn(payload)
+        return {"deviceId": DEVICE_ID, "taskId": task_id}
 
     card_module.DingTalkMarkdownCard = FakeAICardInstance
     channel_manager_module.get_channel_manager = lambda: SimpleNamespace(
@@ -426,30 +420,31 @@ async def run() -> None:
             else None
         )
     )
-    runtime_work_service.send_runtime_message = fake_send_runtime_message
+    runtime_rpc_service.call = fake_stand_in_rpc
+    stand_in_service.resolve_runtime_route_identity = (
+        lambda *args, **kwargs: SimpleNamespace(
+            logical_device_id=DEVICE_ID, runtime_device_id=DEVICE_ID
+        )
+    )
 
     try:
-        await device_selection_manager.set_cloud_executor(user_id)
-        assert (
-            await device_selection_manager.get_selection(user_id)
-        ).device_type == DeviceType.CLOUD
-        await cache_manager.set(conversation_cache_key, 999999, expire=60)
+        await cache_manager.set(
+            binding_cache_key, {"deviceId": DEVICE_ID, "roleId": None}, expire=None
+        )
+        assert await handler.handle_message(
+            _message("/standin", conversation_id, sender_id)
+        )
+        assert "已进入 Wework 分身模式" in handler.replies[-1]
         assert await handler.handle_message(
             _message("/new", conversation_id, sender_id)
         )
+        assert "分身设置" in handler.replies[-1]
         assert await handler.handle_message(_message("1", conversation_id, sender_id))
-        assert await cache_manager.get(conversation_cache_key) is None
-        assert (
-            await device_selection_manager.get_selection(user_id)
-        ).device_type == DeviceType.CHAT
-
+        assert runtime_requests[-1]["message"] == "1"
         session = await im_session_service.get_session(session_key)
         assert session is not None
-        assert session.mode == IMSessionMode.CHAT
-        assert session.state == IMSessionState.IDLE
-        assert session.pending_payload == {}
-        assert any("1. 新建 Chat" in reply for reply in handler.replies)
-        assert any("已开始新 Chat" in reply for reply in handler.replies)
+        assert "mode" not in session.to_dict()
+        assert "active_runtime_task" not in session.to_dict()
 
         for turn in turns:
             assert await handler.handle_message(
@@ -478,20 +473,11 @@ async def run() -> None:
                 "options": {"reasoning": "medium"},
             },
         }
-        previous_runtime_task = {
-            "deviceId": "dingtalk-ci-e2e-previous-device",
-            "workspacePath": "/workspace/previous",
-            "localTaskId": "dingtalk-ci-e2e-previous-task",
-        }
+        runtime_requests.clear()
         db = SessionLocal()
         try:
             session = await im_session_service.get_session(session_key)
             assert session is not None
-            await im_session_service.bind_active_runtime_task(
-                db,
-                session=session,
-                runtime_task=previous_runtime_task,
-            )
             await im_session_service.enable_global_notification(db, session=session)
             await im_session_service.subscribe_runtime_task_notification(
                 db,
@@ -519,7 +505,7 @@ async def run() -> None:
                 "任务标题：CI notification task\n\n"
                 "任务状态：有新的 AI 回复\n\n"
                 "最新回复：CI runtime update\n\n"
-                "引用本通知回复，即可继续该任务。",
+                "在分身模式下引用本通知回复，可交给当前分身处理。发送 /standin 可进入。",
             )
         ]
         assert (
@@ -530,16 +516,6 @@ async def run() -> None:
             == notified_runtime_task
         )
 
-        callback_key = runtime_local_task_callback_key(
-            NOTIFIED_DEVICE_ID,
-            NOTIFIED_LOCAL_TASK_ID,
-        )
-        handler.callback_keys.append(callback_key)
-        previous_callback_key = runtime_local_task_callback_key(
-            previous_runtime_task["deviceId"],
-            previous_runtime_task["localTaskId"],
-        )
-        handler.callback_keys.append(previous_callback_key)
         unquoted_reply = "没有引用通知"
         first_reply = "根据通知继续处理"
         second_reply = "继续补充验证"
@@ -558,42 +534,42 @@ async def run() -> None:
             _message(second_reply, conversation_id, sender_id)
         )
 
-        assert [request.message for request in runtime_requests] == [
+        assert [request["message"] for request in runtime_requests] == [
             unquoted_reply,
             first_reply,
             second_reply,
         ]
-        assert (
-            runtime_requests[0].address.device_id == previous_runtime_task["deviceId"]
-        )
-        assert (
-            runtime_requests[0].address.local_task_id
-            == previous_runtime_task["localTaskId"]
-        )
-        for request in runtime_requests[1:]:
-            assert request.address.device_id == NOTIFIED_DEVICE_ID
-            assert request.address.local_task_id == NOTIFIED_LOCAL_TASK_ID
-            assert request.source is not None
-            assert request.source.channel_type == "dingtalk"
-            assert request.source.external_id == session_key
-            assert request.model_selection is not None
-            assert request.model_selection.model_name == (
-                notified_runtime_task["modelSelection"]["modelName"]
-            )
-            assert request.model_selection.model_type == "public"
-            assert request.model_selection.options == {"reasoning": "medium"}
-            assert request.client_user_message_id.startswith(
+        for request in runtime_requests:
+            assert request["roleId"] is None
+            source = request["options"]["source"]
+            assert source["channel_type"] == "dingtalk"
+            assert source["external_id"] == session_key
+            assert "modelSelection" not in request["options"]
+            assert request["options"]["clientUserMessageId"].startswith(
                 f"im:dingtalk:{CHANNEL_ID}:msg-"
             )
-
+        await cache_manager.set(
+            binding_cache_key,
+            {"deviceId": DEVICE_ID, "roleId": "reviewer"},
+            expire=None,
+        )
+        assert await handler.handle_message(
+            _message("改绑后的消息", conversation_id, sender_id)
+        )
+        assert runtime_requests[-1]["roleId"] == "reviewer"
         session = await im_session_service.get_session(session_key)
         assert session is not None
-        assert session.mode == IMSessionMode.TASK
-        assert session.active_runtime_task == notified_runtime_task
+        assert "active_runtime_task" not in session.to_dict()
     finally:
         card_module.DingTalkMarkdownCard = original_card_class
         channel_manager_module.get_channel_manager = original_get_channel_manager
         runtime_work_service.send_runtime_message = original_send_runtime_message
+        runtime_rpc_service.call = original_rpc
+        stand_in_service.resolve_runtime_route_identity = original_identity
+        await cache_manager.delete(binding_cache_key)
+        await cache_manager.delete(
+            f"channel:private_session_mode:{user_id}:{session_key}"
+        )
         await _cleanup(
             user_id=user_id,
             session_key=session_key,
@@ -605,4 +581,4 @@ async def run() -> None:
 
 if __name__ == "__main__":
     asyncio.run(run())
-    print("DingTalk private-chat runtime conversation E2E passed")
+    print("DingTalk private-chat stand-in protocol integration passed")

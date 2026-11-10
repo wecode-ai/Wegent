@@ -41,8 +41,8 @@ IM Channel Integration connects Wegent agents to instant messaging platforms, al
 | Platform | Status | Features |
 |----------|--------|----------|
 | **DingTalk** | ✅ Available | Stream mode, AI Card streaming, multi-turn conversations |
-| **Telegram** | ✅ Available | Private chat, command flow, Chat/Task modes, streaming message updates |
-| **Discord** | ✅ Available | Private chat, command flow, Chat/Task modes |
+| **Telegram** | ✅ Available | Private chat, command flow, chat/stand-in modes, streaming message updates |
+| **Discord** | ✅ Available | Private chat, command flow, chat/stand-in modes |
 | **Weibo DM** | ✅ Available | Private chat, WebSocket connection, streaming message accumulation, Wework local task continuation |
 | **Feishu/Lark** | 🔜 Planned | Coming soon |
 | **WeChat Work** | 🔜 Planned | Coming soon |
@@ -171,21 +171,21 @@ DingTalk uses AI Card updates for streaming content. Telegram uses message updat
 
 Weibo DM uses one stable message for streaming accumulation: the backend creates a stable Weibo `messageId`, then later content chunks and completion events update the same DM message. Runtime status events, such as "analyzing the issue", provide progress context, so the Weibo channel does not add an extra "thinking" placeholder.
 
-### Private Chat Task Mode
+### Private chat and stand-in modes
 
-In IM channels that support private chats, use commands to choose chat or task mode:
+Private IM defaults to the existing Wegent chat flow, retaining Agent, model, device and `/new` behavior. Wework Task mode is replaced by stand-in mode: messages in that mode enter the selected stand-in’s persistent conversation.
 
 | Command | Description |
 |---------|-------------|
-| `/new` | Create a Chat, create a Task, or continue a recent Task |
-| `/chat` | Switch to Chat mode |
-| `/task` | Switch to Task mode and select a recent task |
-| `/switch` | Select a different current task |
-| `/bind` | Bind the current private chat to a task |
-| `/status` | View current private chat status |
-| `/cancel` | Cancel the current selection flow |
+| `/mode` | Show the current chat/stand-in mode |
+| `/chat` or `/mode chat` | Return to Wegent chat |
+| `/standin` or `/mode standin` | Enter Wework stand-in mode |
+| `/bind` | Register this private conversation for Wework selection without changing modes |
+| `/notify on\|off\|status` | Manage task notifications independently of conversation mode |
 
-Weibo DM Task mode only supports local runtime tasks bound from Wework. First click **Continue in private chat** from the Wework local task, choose the Weibo private chat, and then continue sending messages in Weibo. If you use `/task` or `/switch` directly in Weibo without a bound local task, Wegent prompts you to return to Wework and choose a target private chat.
+In Wework, select **My stand-in → Stand-in details → Manage stand-in → IM conversations → Connect to this stand-in** to save the identity and enter stand-in mode. Rebind from another role’s settings. Without an explicit identity, stand-in mode uses the primary stand-in on the account’s default execution device. Missing devices, offline devices and unavailable roles produce configuration guidance.
+
+Existing Task mode migrates to stand-in mode; old task bindings are removed while task history is preserved. Quoted notifications and card follow-ups in stand-in mode provide task context without switching back to the original task or overriding the stand-in model. `/task`, `/switch` and task-selection flows are retired. Weibo DMs use the same `/standin` command or stand-in settings entry.
 
 ---
 

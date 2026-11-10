@@ -1,231 +1,144 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
-#
 # SPDX-License-Identifier: Apache-2.0
 
-"""Provider-neutral private IM interaction orchestration."""
+"""Keep Wegent chat intact and route Wework stand-in mode independently."""
 
-from typing import Protocol
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.user import User
-from app.services.channels.commands import parse_command
+from app.services.channels.commands import CommandType, ParsedCommand, parse_command
 from app.services.channels.device_selection import device_selection_manager
-from app.services.channels.handler import MessageContext
-from app.services.im import task_continuation_service as im_task_continuation_service
-from app.services.im.command_router import IMCommandAction, im_command_router
 from app.services.im.session_service import im_session_service
+from app.services.im.stand_in_service import send_stand_in_message
+from shared.telemetry.decorators import trace_async
 
-
-class PrivateIMInteractionPort(Protocol):
-    """Provider operations required by the private IM interaction layer."""
-
-    async def send_text_reply(
-        self,
-        message_context: MessageContext,
-        text: str,
-    ) -> bool: ...
-
-    async def delete_conversation_task_id(
-        self,
-        conversation_id: str,
-        user_id: int,
-    ) -> None: ...
-
-    async def execute_private_im_bind_task(
-        self,
-        db: Session,
-        user: User,
-        im_session: IMPrivateSession,
-        task_id: int | None,
-        message_context: MessageContext,
-    ) -> None: ...
-
-    async def execute_private_im_continue_task(
-        self,
-        db: Session,
-        user: User,
-        im_session: IMPrivateSession,
-        task_id: int | None,
-        message: str,
-        message_context: MessageContext,
-        runtime_task: dict | None = None,
-    ) -> None: ...
-
-    async def execute_private_im_create_task(
-        self,
-        db: Session,
-        user: User,
-        im_session: IMPrivateSession,
-        project_id: int | None,
-        message: str,
-        message_context: MessageContext,
-    ) -> None: ...
+GUIDANCE = (
+    "当前为 Wework 分身模式。发送 /chat 返回 Wegent 聊天。"
+    "连接或切换分身，请打开 Wework“我的分身”的分身设置"
+    "（分身详情 → 管理分身 → IM 对话）。"
+)
+RETIRED_TASK_GUIDANCE = (
+    "任务模式已移除。发送 /standin 进入 Wework 分身模式，或 /chat 返回 Wegent 聊天。"
+)
+NOTIFY_ON_ARGS = {"on", "open", "enable", "enabled", "true", "1", "开", "开启", "打开"}
+NOTIFY_OFF_ARGS = {"off", "close", "disable", "disabled", "false", "0", "关", "关闭"}
+NOTIFY_STATUS_ARGS = {"", "status", "状态", "state"}
 
 
 class IMInteractionService:
-    """Route private IM messages through shared session and task logic."""
+    """A routing mode never changes the other mode's task or device identity."""
 
+    @trace_async("im.private.route", "im")
     async def route_private_message(
         self,
         *,
         db: Session,
         user: User,
         im_session: IMPrivateSession,
-        message_context: MessageContext,
-        port: PrivateIMInteractionPort,
+        message_context: Any,
+        port: Any,
     ) -> bool:
-        if self._should_continue_task_media_message(im_session, message_context):
-            await port.execute_private_im_continue_task(
-                db=db,
-                user=user,
-                im_session=im_session,
-                task_id=im_session.active_task_id,
-                message="",
-                message_context=message_context,
-            )
-            return True
-
-        runtime_reply_target = await self._runtime_reply_target(
-            im_session,
-            message_context,
-        )
-        if (
-            runtime_reply_target is not None
-            and (message_context.content or "").strip()
-            and parse_command(message_context.content) is None
-        ):
-            runtime_task = runtime_reply_target
-            if im_session.channel_type == "dingtalk":
-                await im_session_service.bind_active_runtime_task(
-                    db,
-                    session=im_session,
-                    runtime_task=runtime_reply_target,
+        command = parse_command(message_context.content)
+        if command:
+            if command.command == CommandType.NOTIFY:
+                reply = await self._notification_command(
+                    db, im_session, command.argument
                 )
-                runtime_task = None
-            await port.execute_private_im_continue_task(
-                db=db,
-                user=user,
-                im_session=im_session,
-                task_id=None,
-                message=message_context.content,
-                message_context=message_context,
-                runtime_task=runtime_task,
-            )
+            elif command.command in {
+                CommandType.CHAT,
+                CommandType.STAND_IN,
+                CommandType.MODE,
+            }:
+                reply = await self._mode_command(
+                    im_session, command, user, message_context, port
+                )
+            elif command.command in {
+                CommandType.TASK,
+                CommandType.SWITCH,
+                CommandType.CANCEL,
+            }:
+                reply = RETIRED_TASK_GUIDANCE
+            elif command.command == CommandType.BIND:
+                reply = "已绑定当前私聊会话。"
+            elif (
+                await im_session_service.get_mode(im_session) == IMSessionMode.STAND_IN
+            ):
+                reply = GUIDANCE
+            else:
+                return False
+            await port.send_text_reply(message_context, reply)
             return True
-
-        recent_tasks = im_task_continuation_service.list_recent_wework_tasks(
-            db, user.id, limit=5
-        )
-        projects = im_task_continuation_service.list_wework_projects(
-            db, user.id, limit=8
-        )
-        result = await im_command_router.route(
-            db=db,
-            session=im_session,
-            content=message_context.content,
-            recent_tasks=recent_tasks,
-            projects=projects,
-        )
-
-        if not result.handled:
+        if await im_session_service.get_mode(im_session) == IMSessionMode.CHAT:
             return False
+        await send_stand_in_message(db, user, im_session, message_context, port)
+        return True
 
-        if result.action == IMCommandAction.NONE:
-            if result.reply:
-                await port.send_text_reply(message_context, result.reply)
-            return True
-
-        if result.action == IMCommandAction.START_CHAT:
+    async def _mode_command(
+        self,
+        session: IMPrivateSession,
+        command: ParsedCommand,
+        user: User,
+        context: Any,
+        port: Any,
+    ) -> str:
+        argument = (command.argument or "").strip().lower()
+        if (
+            command.command == CommandType.CHAT
+            or command.command == CommandType.MODE
+            and argument in {"chat", "聊天"}
+        ):
+            await im_session_service.set_mode(session, IMSessionMode.CHAT)
             await device_selection_manager.set_chat_mode(user.id)
-            await port.delete_conversation_task_id(
-                message_context.conversation_id,
-                user.id,
+            await port.delete_conversation_task_id(context.conversation_id, user.id)
+            return "已返回 Wegent 聊天模式。发送 /standin 可进入 Wework 分身模式。"
+        if (
+            command.command == CommandType.STAND_IN
+            or command.command == CommandType.MODE
+            and argument in {"standin", "stand_in", "分身"}
+        ):
+            await im_session_service.set_mode(session, IMSessionMode.STAND_IN)
+            return (
+                "已进入 Wework 分身模式。未指定分身时，将连接账号默认执行设备的主分身。"
+                + GUIDANCE
             )
-            if result.reply:
-                await port.send_text_reply(message_context, result.reply)
-            return True
-
-        if result.action == IMCommandAction.BIND_TASK:
-            await port.execute_private_im_bind_task(
-                db=db,
-                user=user,
-                im_session=im_session,
-                task_id=result.task_id,
-                message_context=message_context,
-            )
-            return True
-
-        if result.action == IMCommandAction.CONTINUE_TASK:
-            await port.execute_private_im_continue_task(
-                db=db,
-                user=user,
-                im_session=im_session,
-                task_id=result.task_id,
-                message=result.message or message_context.content,
-                message_context=message_context,
-                runtime_task=runtime_reply_target,
-            )
-            return True
-
-        if result.action == IMCommandAction.CREATE_TASK:
-            await port.execute_private_im_create_task(
-                db=db,
-                user=user,
-                im_session=im_session,
-                project_id=result.project_id,
-                message=result.message or "",
-                message_context=message_context,
-            )
-            return True
-
-        return False
-
-    async def _runtime_reply_target(
-        self,
-        im_session: IMPrivateSession,
-        message_context: MessageContext,
-    ) -> dict | None:
-        reply_to_message_id = message_context.extra_data.get("reply_to_message_id")
-        reply_target = await im_session_service.get_runtime_task_reply_target(
-            session=im_session,
-            message_id=reply_to_message_id,
-        )
-        return self._merge_active_runtime_task_context(
-            im_session.active_runtime_task,
-            reply_target,
-        )
-
-    def _merge_active_runtime_task_context(
-        self,
-        active_runtime_task: dict | None,
-        reply_target: dict | None,
-    ) -> dict | None:
-        if reply_target is None or not isinstance(active_runtime_task, dict):
-            return reply_target
-        try:
-            reply_key = im_session_service.runtime_task_notification_key(reply_target)
-            active_key = im_session_service.runtime_task_notification_key(
-                active_runtime_task
-            )
-        except ValueError:
-            return reply_target
-        if reply_key != active_key:
-            return reply_target
-        return {**active_runtime_task, **reply_target}
-
-    def _should_continue_task_media_message(
-        self,
-        im_session: IMPrivateSession,
-        message_context: MessageContext,
-    ) -> bool:
+        if argument:
+            return "用法：/mode chat、/mode standin；也可以发送 /chat 或 /standin。"
+        mode = await im_session_service.get_mode(session)
         return (
-            im_session.mode == IMSessionMode.TASK
-            and im_session.active_task_id is not None
-            and not (message_context.content or "").strip()
-            and bool(message_context.images or message_context.files)
+            GUIDANCE
+            if mode == IMSessionMode.STAND_IN
+            else "当前为 Wegent 聊天模式。发送 /standin 可进入 Wework 分身模式。"
         )
+
+    async def _notification_command(
+        self, db: Session | None, session: IMPrivateSession, argument: str | None
+    ) -> str:
+        normalized = (argument or "").strip().lower()
+        if normalized in NOTIFY_ON_ARGS:
+            await im_session_service.enable_global_notification(db, session=session)
+            return "已开启全局 IM 通知，后续任务输出会通知到当前会话。"
+        if normalized in NOTIFY_OFF_ARGS:
+            await im_session_service.disable_global_notification(session.user_id)
+            return "已关闭全局 IM 通知。"
+        if normalized in NOTIFY_STATUS_ARGS:
+            settings = await im_session_service.get_global_notification_settings(
+                session.user_id
+            )
+            if not settings.enabled:
+                return "全局 IM 通知：已关闭。"
+            target = (
+                await im_session_service.get_session(settings.session_key)
+                if settings.session_key
+                else None
+            )
+            if target is None:
+                return "全局 IM 通知：已开启，但默认 IM 会话不可用。请重新发送 /notify on。"
+            label = im_session_service.get_channel_label(target.channel_type)
+            return f"全局 IM 通知：已开启，默认会话：{label} / {target.display_name or target.sender_id}。"
+        return "用法：/notify on、/notify off、/notify status。"
 
 
 im_interaction_service = IMInteractionService()

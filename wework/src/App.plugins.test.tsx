@@ -454,7 +454,6 @@ const workbenchValue: WorkbenchContextValue = {
   markRuntimeTaskStarted: vi.fn(),
   markRuntimeTaskSettled: vi.fn(),
   listImPrivateSessions: vi.fn(),
-  bindRuntimeTaskToImSessions: vi.fn(),
   getImNotificationSettings: vi.fn(),
   updateGlobalImNotification: vi.fn(),
   subscribeRuntimeTaskNotifications: vi.fn(),
