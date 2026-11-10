@@ -62,6 +62,7 @@ export function createDesktopScenario({
   let followUpResponse
   let userId
   return {
+    appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
     requiresCloudEnvironment: true,
     async prepareCloud(environment) {
       await imStory.prepareCloud(environment)
