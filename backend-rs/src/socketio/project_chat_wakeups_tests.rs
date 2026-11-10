@@ -1,5 +1,5 @@
 //! Real migration-schema transactions cover cursor allocation, idempotence and rollback.
-use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlError};
+use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlError, MysqlTransaction};
 use serde_json::{Value, json};
 
 use super::enqueue;
@@ -62,5 +62,60 @@ pub(crate) async fn verify(mysql: &impl Mysql) -> anyhow::Result<()> {
         events[2].metadata.0,
         json!({"projectId":"mention-project","itemId":"provider-owned-issue","commentId":"third"})
     );
+    verify_missing_provider_scope_does_not_lock_other_indexes(mysql).await?;
+    Ok(())
+}
+
+async fn verify_missing_provider_scope_does_not_lock_other_indexes(
+    mysql: &impl Mysql,
+) -> anyhow::Result<()> {
+    #[derive(FromMysqlRow)]
+    struct Schema {
+        name: String,
+    }
+    let schema: Schema = mysql.fetch_one("SELECT DATABASE() AS name", ()).await?;
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")?;
+    anyhow::ensure!(
+        address.starts_with("127.0.0.1:") && schema.name.starts_with("migration_test_")
+    );
+    // Migration clients have one connection; use another client to the same schema.
+    let peer = crate::migrations::connect(&format!(
+        "mysql://root@{address}/{}?ssl-mode=disabled",
+        schema.name
+    ))?;
+    mysql.execute("INSERT INTO users(id,user_name,password_hash,`role`,auth_source,preferences) VALUES (7003,'mention-owner-c','','user','password','{}')",()).await?;
+    let (entered, admitted) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let pending = mysql.with_transaction(async |tx| {
+        enqueue(
+            tx,
+            &[7003],
+            "mention-project",
+            "provider-missing-scope",
+            "held-comment",
+        )
+        .await?;
+        let _ = entered.send(());
+        let _ = released.await;
+        Ok(())
+    });
+    let unrelated = async {
+        admitted
+            .await
+            .expect("provider wakeup reached its transaction boundary");
+        let result = peer.with_transaction(async |tx| {
+            tx.execute("SET SESSION innodb_lock_wait_timeout=1", ()).await?;
+            let inserted = tx.execute("INSERT INTO loop_items(id,resource_type,description,created_at,updated_at) VALUES ('provider-missing-scope:unrelated','task','',NOW(),NOW())",()).await;
+            tx.execute("SET SESSION innodb_lock_wait_timeout=50", ()).await?;
+            inserted?;
+            Ok(())
+        }).await;
+        let _ = release.send(());
+        result
+    };
+    let (wakeup, index) = tokio::join!(pending, unrelated);
+    peer.close().await;
+    wakeup?;
+    index?;
     Ok(())
 }

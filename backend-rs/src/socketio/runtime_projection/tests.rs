@@ -879,6 +879,26 @@ fn reconciled_message(metadata: Value) -> Message {
     row
 }
 
+#[test]
+fn streaming_chunks_preserve_execution_identity_without_a_prior_client_snapshot() {
+    let row = completed_message(
+        json!({"kind":"task_ai_response","execution_id":42,"runtime_turn_id":"reply-turn","run_status":"running","runtime_event_seq":9}),
+        "streaming",
+        "",
+        "project-1",
+        "issue-1",
+    );
+    let view = projected_delta_view(&row, "Live progress");
+    assert_eq!(view["content"], "Live progress");
+    assert_eq!(view["metadata"]["kind"], "task_ai_response");
+    assert_eq!(view["metadata"]["execution_id"], 42);
+    assert_eq!(view["metadata"]["runtime_turn_id"], "reply-turn");
+    assert_eq!(view["metadata"]["run_status"], "running");
+    assert_eq!(view["metadata"]["runtime_event_seq"], 9);
+    assert_eq!(view["metadata"]["contentMode"], "delta");
+    assert_eq!(projected_view(&row)["metadata"], row.metadata.0);
+}
+
 /// `reconciled_activity_for_runtime` returns the genuinely linked activity
 /// when the activity's bound turn matches, or when an unbound activity's
 /// execution turn matches; every other shape is refused.
