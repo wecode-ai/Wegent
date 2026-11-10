@@ -19,7 +19,9 @@ from tests.services.chat.operations.test_cancel_stuck import _task_json
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("task_status", ["RUNNING", "CANCELLING"])
-@pytest.mark.parametrize("outcome", ["idle", "new_attempt", "commit_failure"])
+@pytest.mark.parametrize(
+    "outcome", ["idle", "new_attempt", "late_attempt", "commit_failure"]
+)
 async def test_empty_cancel_repairs_only_an_idle_task_projection(
     monkeypatch, task_status, outcome
 ):
@@ -33,7 +35,13 @@ async def test_empty_cancel_repairs_only_an_idle_task_projection(
     service._is_chat_shell_task = MagicMock(return_value=True)
     task = SimpleNamespace(id=1, user_id=7, json=_task_json(task_status))
     active = SimpleNamespace(role=SubtaskRole.ASSISTANT)
-    reads = MagicMock(side_effect=[[], [active] if outcome == "new_attempt" else []])
+    reads = MagicMock(
+        side_effect=[
+            [],
+            [active] if outcome == "new_attempt" else [],
+            [active] if outcome == "late_attempt" else [],
+        ]
+    )
     monkeypatch.setattr(task_stores.subtask_store, "list_by_task_statuses", reads)
     monkeypatch.setattr(
         task_stores.subtask_store,
@@ -58,7 +66,7 @@ async def test_empty_cancel_repairs_only_an_idle_task_projection(
             503 if outcome == "commit_failure" else 409
         )
         db.rollback.assert_called()
-        if outcome == "new_attempt":
+        if outcome in {"new_attempt", "late_attempt"}:
             write.assert_not_called()
             db.commit.assert_not_called()
     else:
@@ -70,6 +78,8 @@ async def test_empty_cancel_repairs_only_an_idle_task_projection(
         db.refresh.assert_called_once_with(task, with_for_update=True)
         db.commit.assert_called_once()
     assert reads.call_args.kwargs["for_update"] is True
+    if outcome != "new_attempt":
+        assert reads.call_args.kwargs["nowait"] is True
     runner.assert_not_called()
 
 

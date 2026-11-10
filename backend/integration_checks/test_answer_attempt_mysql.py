@@ -158,7 +158,77 @@ def test_python_startup_upgrade_rollback_reupgrade_preserves_old_data(database):
         )
 
 
+@pytest.mark.parametrize("committed_retry", [True, False])
+def test_read_committed_rechecks_attempts_around_the_task_lock(
+    database, monkeypatch, committed_retry
+):
+    """RC retries must survive the scan/Task-lock gap without reverse waiting."""
+    from fastapi import HTTPException
+
+    from app.models.task import TaskResource
+    from app.services.chat.operations.cancel import finalize_empty_cancellation
+    from tests.services.chat.operations.test_cancel_stuck import _task_json
+
+    engine, _ = database
+    with Session(engine) as db:
+        db.add(
+            TaskResource(
+                id=9,
+                user_id=7,
+                kind="Task",
+                name="rc-cancel",
+                namespace="default",
+                json=_task_json("RUNNING"),
+            )
+        )
+        answer_id = answer(db, status=SubtaskStatus.CANCELLED)
+    rc_engine = engine.execution_options(isolation_level="READ COMMITTED")
+    failures = []
+
+    def capture_failure(context):
+        failures.append(context.original_exception.args[0])
+
+    sa.event.listen(engine, "handle_error", capture_failure)
+    with Session(rc_engine) as reader, Session(engine) as writer:
+        refresh = reader.refresh
+        reader.execute(sa.text("SET SESSION innodb_lock_wait_timeout=1"))
+
+        def commit_retry_before_lock(task, **kwargs):
+            if committed_retry:
+                reset_subtask_for_retry(
+                    writer, writer.get(Subtask, answer_id), writer.get(TaskResource, 9)
+                )
+            refresh(task, **kwargs)
+            if not committed_retry:
+                # Retry owns the answer lock but has not acquired the Task lock.
+                writer.execute(
+                    sa.update(Subtask)
+                    .where(Subtask.id == answer_id)
+                    .values(status=SubtaskStatus.PENDING, answer_generation_id="b" * 32)
+                )
+
+        monkeypatch.setattr(reader, "refresh", commit_retry_before_lock)
+        if committed_retry:
+            assert not finalize_empty_cancellation(reader, task_id=9, user_id=7)
+        else:
+            with pytest.raises(HTTPException) as rejected:
+                finalize_empty_cancellation(reader, task_id=9, user_id=7)
+            assert rejected.value.status_code == 503
+            assert failures == [3572]  # ER_LOCK_NOWAIT, not the lock-wait timeout.
+            writer.rollback()
+    sa.event.remove(engine, "handle_error", capture_failure)
+    with Session(engine) as db:
+        if committed_retry:
+            assert db.get(Subtask, answer_id).status == SubtaskStatus.PENDING
+            assert db.get(Subtask, answer_id).answer_generation_id != "a" * 32
+            assert db.get(TaskResource, 9).json["status"]["status"] == "PENDING"
+        else:
+            assert db.get(Subtask, answer_id).status == SubtaskStatus.CANCELLED
+            assert db.get(TaskResource, 9).json["status"]["status"] == "RUNNING"
+
+
 def test_task_locking_read_does_not_block_other_existing_tasks(database):
+    """An empty task-range lock must leave another task's existing row writable."""
     engine, _ = database
     with Session(engine) as db:
         answer(db, status=SubtaskStatus.CANCELLED)

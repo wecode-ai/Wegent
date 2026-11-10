@@ -932,6 +932,7 @@ class SubtaskStore(Protocol):
         statuses: Sequence[SubtaskStatus],
         owner_user_id: Optional[int] = None,
         for_update: bool = False,
+        nowait: bool = False,
     ) -> list[Subtask]: ...
 
     def list_not_executor_deleted_by_task(

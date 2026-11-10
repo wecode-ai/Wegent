@@ -18,12 +18,15 @@ active_evidence: ContextVar["EvidenceRegistry | None"] = ContextVar(
 
 
 class EvidenceRegistry:
+    """Track trusted snippets actually sent within one answer generation."""
+
     def __init__(self) -> None:
         self._offered: dict[str, dict] = {}
         self._sent: dict[str, dict] = {}
         self._tool_names: dict[str, str] = {}
 
     def offer(self, chunk: dict, tool_name: str = "knowledge_base_search") -> dict:
+        """Assign a local identity only to admissible native text snippets."""
         unit = dict(chunk)
         if (
             chunk.get("source_type") not in (None, "", "internal")
@@ -42,6 +45,7 @@ class EvidenceRegistry:
         return unit
 
     def observe(self, state: dict) -> dict:
+        """Confirm complete offered units in final model-visible tool messages."""
         messages = state.get("llm_input_messages", state.get("messages", []))
         for message in messages:
             if not isinstance(message, ToolMessage):
@@ -79,6 +83,7 @@ class EvidenceRegistry:
         return {}
 
     def confirmed(self) -> list[dict]:
+        """Export sent units without returning the registry's mutable entries."""
         return [dict(unit) for unit in self._sent.values()]
 
 

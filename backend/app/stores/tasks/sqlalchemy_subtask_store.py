@@ -927,6 +927,7 @@ class SqlAlchemySubtaskStore:
         statuses: Sequence[SubtaskStatus],
         owner_user_id: Optional[int] = None,
         for_update: bool = False,
+        nowait: bool = False,
     ) -> list[Subtask]:
         if not statuses:
             return []
@@ -942,7 +943,7 @@ class SqlAlchemySubtaskStore:
                     Subtask, "FORCE INDEX (ix_subtasks_task_id)", dialect_name="mysql"
                 )
                 .populate_existing()
-                .with_for_update()
+                .with_for_update(nowait=nowait)
             )
         return query.all()
 

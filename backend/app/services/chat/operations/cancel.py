@@ -175,6 +175,18 @@ def capture_cancellation_attempts(
     }
 
 
+def _has_active_assistant(db: Session, task_id: int, *, nowait: bool = False) -> bool:
+    """Read current attempts within the indexed task range."""
+    active = subtask_store.list_by_task_statuses(
+        db,
+        task_id=task_id,
+        statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+        for_update=True,
+        nowait=nowait,
+    )
+    return any(row.role == SubtaskRole.ASSISTANT for row in active)
+
+
 def finalize_empty_cancellation(db: Session, *, task_id: int, user_id: int) -> bool:
     """Repair an idle task projection without adopting any answer attempt."""
     from fastapi import HTTPException
@@ -184,18 +196,16 @@ def finalize_empty_cancellation(db: Session, *, task_id: int, user_id: int) -> b
         if not task:
             return False
         # A current locking read fences retries and new rows under InnoDB RR.
-        active = subtask_store.list_by_task_statuses(
-            db,
-            task_id=task_id,
-            statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
-            for_update=True,
-        )
-        if any(row.role == SubtaskRole.ASSISTANT for row in active):
+        if _has_active_assistant(db, task_id):
             db.rollback()
             return False
         db.refresh(task, with_for_update=True)
         task_crd = Task.model_validate(task.json)
         if not task_crd.status or task_crd.status.status in _TASK_FINAL_STATES:
+            db.rollback()
+            return False
+        # RC has no gap fence. Recheck without waiting in the reverse retry order.
+        if _has_active_assistant(db, task_id, nowait=True):
             db.rollback()
             return False
         update_task_on_cancel(db, task)
