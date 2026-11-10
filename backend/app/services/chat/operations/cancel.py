@@ -77,7 +77,8 @@ def update_subtask_on_cancel(
     subtask: Subtask,
     partial_content: Optional[str] = None,
     result: Optional[dict[str, Any]] = None,
-) -> None:
+    generation_id: str | None = None,
+) -> bool:
     """
     Update subtask status and result on cancellation.
 
@@ -89,9 +90,11 @@ def update_subtask_on_cancel(
     """
     now = datetime.now()
     result_payload = result if result is not None else {"value": partial_content or ""}
-    subtask_store.update_fields(
+    return subtask_store.update_fields_if_attempt(
         db,
         subtask=subtask,
+        generation_id=generation_id,
+        from_statuses=(SubtaskStatus.PENDING, SubtaskStatus.RUNNING),
         status=SubtaskStatus.CANCELLED,
         progress=100,
         completed_at=now,
@@ -157,7 +160,9 @@ async def is_stream_alive(task_id: int, subtask_id: Optional[int] = None) -> boo
     return idle_seconds <= settings.CANCELLING_STUCK_TIMEOUT_SECONDS
 
 
-def finalize_stuck_cancellation(db: Session, *, task_id: int) -> List[int]:
+def finalize_stuck_cancellation(
+    db: Session, *, task_id: int, attempts: dict[int, str | None] | None = None
+) -> List[int]:
     """
     Finalize cancellation locally when no runtime callback will arrive.
 
@@ -190,10 +195,18 @@ def finalize_stuck_cancellation(db: Session, *, task_id: int) -> List[int]:
     for subtask in stuck_subtasks:
         if subtask.role != SubtaskRole.ASSISTANT:
             continue
-        update_subtask_on_cancel(db, subtask)
-        finalized.append(subtask.id)
+        if attempts is not None and subtask.id not in attempts:
+            continue
+        generation_id = (
+            attempts[subtask.id]
+            if attempts is not None
+            else subtask.answer_generation_id
+        )
+        if update_subtask_on_cancel(db, subtask, generation_id=generation_id):
+            finalized.append(subtask.id)
 
-    update_task_on_cancel(db, task)
+    if finalized:
+        update_task_on_cancel(db, task)
     db.commit()
 
     logger.warning(

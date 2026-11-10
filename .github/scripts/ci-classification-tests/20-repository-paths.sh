@@ -32,7 +32,11 @@ for path in backend-rs/src/cloud_projects.rs \
   backend-rs/src/cloud_projects/environment_authorization.rs \
   backend-rs/src/cloud_projects/normalization.rs \
   backend-rs/src/loop_item_executions/device.rs \
-  backend-rs/config/routes.toml; do
+  backend-rs/config/routes.toml \
+  backend-rs/migrations/revisions/a91e7c42d803.json \
+  backend-rs/migrations/reference/versions/20261110_a91e7c42d803_add_answer_attempt_and_citations.py \
+  backend-rs/migrations/schema.json \
+  backend-rs/src/migrations/assets.rs; do
   assert_case "Rust permission changes run Rust, backend, and E2E guards: $path" \
     "$rust_permission_expected" "$path"
 done

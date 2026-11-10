@@ -68,6 +68,7 @@ class ExecutionRequest:
     # === Task Identification ===
     task_id: int = 0
     subtask_id: int = 0
+    answer_generation_id: Optional[str] = None
     subtask_next_id: Optional[int] = None  # From Task
     team_id: int = 0
     team_name: str = ""

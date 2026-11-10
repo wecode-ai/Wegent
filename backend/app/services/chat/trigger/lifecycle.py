@@ -21,6 +21,7 @@ from app.models.subtask import Subtask, SubtaskRole
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
+from app.services.chat.storage.answer_attempt import AnswerSaveResult
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
     build_user_subtask_result,
@@ -463,19 +464,29 @@ async def _get_existing_subtask_result(subtask_id: int) -> Dict[str, Any]:
 async def persist_result_without_status(
     subtask_id: int,
     result: Dict[str, Any],
-) -> None:
+    generation_id: Optional[str] = None,
+) -> bool:
     """Persist result data while leaving the current subtask status unchanged."""
     db = SessionLocal()
     try:
         subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
         if not subtask:
             raise ValueError(f"Subtask {subtask_id} not found")
-        task_stores.subtask_store.update_result(
+        from app.models.subtask import SubtaskStatus
+
+        changed = task_stores.subtask_store.update_fields_if_attempt(
             db,
             subtask=subtask,
+            generation_id=generation_id,
+            from_statuses=(
+                tuple(SubtaskStatus)
+                if generation_id is None
+                else (SubtaskStatus.PENDING, SubtaskStatus.RUNNING)
+            ),
             result=result,
         )
         db.commit()
+        return changed
     except Exception:
         db.rollback()
         raise
@@ -610,12 +621,12 @@ async def persist_completed_result(
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
     expected_status: Optional[str] = None,
-) -> bool:
+    generation_id: Optional[str] = None,
+) -> AnswerSaveResult:
     """Persist a terminal result and clean up streaming state.
 
-    When ``expected_status`` is given the database update is conditional and
-    ``False`` is returned if the subtask already left that status, so callers
-    can drop a stale terminal event instead of overwriting a newer one.
+    Return the explicit commit outcome. Only a confirmed commit can trigger
+    completion side effects or streaming-state cleanup.
     """
     import app.services.chat.storage as chat_storage
     import app.services.chat.storage.db as chat_db
@@ -634,9 +645,10 @@ async def persist_completed_result(
         normalized_status,
         **update_kwargs,
         expected_status=expected_status,
+        generation_id=generation_id,
     )
-    if expected_status is not None and not persisted:
-        return False
+    if not persisted:
+        return persisted
     if normalized_status == "COMPLETED":
         await _persist_standalone_workspace_path(task_id, result)
     try:
@@ -651,7 +663,7 @@ async def persist_completed_result(
             exc,
             exc_info=True,
         )
-    return True
+    return persisted
 
 
 async def _persist_standalone_workspace_path(

@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask
+from app.services.chat.storage.answer_attempt import AnswerSaveResult
 from app.services.task_status import extract_task_error
 from app.stores.tasks import subtask_store, task_store
 from shared.models import (
@@ -113,7 +114,17 @@ class ExecutionDispatcher:
             emitter: Optional custom emitter, defaults to WebSocketResultEmitter
         """
         wrapped_emitter = None
+        target = None
         try:
+            if request.answer_generation_id:
+                wrapped_emitter = self._status_emitter(request, emitter)
+                saved = await self._update_subtask_to_running(
+                    request.subtask_id, request.answer_generation_id
+                )
+                if not saved:
+                    if saved is AnswerSaveResult.UNCONFIRMED:
+                        await wrapped_emitter.report_unconfirmed_save()
+                    return
             if device_id:
                 user_id = request.user.get("id") if request.user else None
                 if not isinstance(user_id, int):
@@ -129,27 +140,8 @@ class ExecutionDispatcher:
                 f"[ExecutionDispatcher] Routed: task_id={request.task_id}, "
                 f"subtask_id={request.subtask_id}, device_id={device_id} -> {target}"
             )
-            # Create default emitter if not provided
-            if emitter is None:
-                emitter = WebSocketResultEmitter(
-                    task_id=request.task_id,
-                    subtask_id=request.subtask_id,
-                    user_id=request.user.get("id") if request.user else None,
-                    team_id=request.team_id,
-                    team_name=request.team_name,
-                    task_title=request.task_title,
-                    is_group_chat=request.is_group_chat,
-                    project_id=request.project_id,
-                )
-
-            # Wrap emitter with StatusUpdatingEmitter for unified status updates
-            # This ensures task status is updated to COMPLETED/FAILED/CANCELLED
-            # when terminal events are received, regardless of execution mode
-            wrapped_emitter = StatusUpdatingEmitter(
-                wrapped=emitter,
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
-            )
+            if wrapped_emitter is None:
+                wrapped_emitter = self._status_emitter(request, emitter)
 
             logger.info(
                 f"[ExecutionDispatcher] Dispatching: task_id={request.task_id}, "
@@ -158,7 +150,8 @@ class ExecutionDispatcher:
 
             # Update subtask status to RUNNING before dispatching
             # This applies to all execution modes (SSE, WebSocket, HTTP+Callback)
-            await self._update_subtask_to_running(request.subtask_id)
+            if not request.answer_generation_id:
+                await self._update_subtask_to_running(request.subtask_id)
 
             if target.mode == CommunicationMode.SSE:
                 await self._dispatch_sse(request, target, wrapped_emitter)
@@ -174,7 +167,10 @@ class ExecutionDispatcher:
             # A cancelled SSE owner has already closed its stream. Persist the
             # terminal state before closing the emitter, including lease loss.
             # Remote dispatch modes retain their executor-owned lifecycle.
-            if wrapped_emitter is not None and target.mode == CommunicationMode.SSE:
+            if wrapped_emitter is not None and (
+                (target is not None and target.mode == CommunicationMode.SSE)
+                or (target is None and request.answer_generation_id)
+            ):
                 logger.info(
                     "[ExecutionDispatcher] SSE dispatch task cancelled: "
                     "task_id=%s, subtask_id=%s",
@@ -229,6 +225,33 @@ class ExecutionDispatcher:
                     logger.error(
                         f"[ExecutionDispatcher] Failed to close emitter: {close_error}"
                     )
+
+    def _status_emitter(
+        self, request: ExecutionRequest, emitter: Optional[ResultEmitter]
+    ) -> StatusUpdatingEmitter:
+        # Create default emitter if not provided
+        if emitter is None:
+            emitter = WebSocketResultEmitter(
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+                user_id=request.user.get("id") if request.user else None,
+                team_id=request.team_id,
+                team_name=request.team_name,
+                task_title=request.task_title,
+                is_group_chat=request.is_group_chat,
+                project_id=request.project_id,
+            )
+
+        # Wrap emitter with StatusUpdatingEmitter for unified status updates
+        # This ensures task status is updated to COMPLETED/FAILED/CANCELLED
+        # when terminal events are received, regardless of execution mode
+        return StatusUpdatingEmitter(
+            wrapped=emitter,
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            generation_id=request.answer_generation_id,
+            expected_status="RUNNING" if request.answer_generation_id else None,
+        )
 
     async def _recover_executor_if_needed(
         self,
@@ -367,7 +390,9 @@ class ExecutionDispatcher:
         storage_key = workspace_archive.get("storageKey")
         return isinstance(storage_key, str) and bool(storage_key.strip())
 
-    async def _update_subtask_to_running(self, subtask_id: int) -> None:
+    async def _update_subtask_to_running(
+        self, subtask_id: int, generation_id: str | None = None
+    ) -> AnswerSaveResult:
         """Update subtask status to RUNNING in database.
 
         This is called before dispatching to any executor type to ensure
@@ -379,14 +404,19 @@ class ExecutionDispatcher:
         from app.services.chat.storage.db import db_handler
 
         try:
-            await db_handler.update_subtask_status(subtask_id, "RUNNING")
-            logger.info(
-                f"[ExecutionDispatcher] Updated subtask {subtask_id} status to RUNNING"
+            return await db_handler.update_subtask_status(
+                subtask_id,
+                "RUNNING",
+                expected_status="PENDING",
+                generation_id=generation_id,
             )
-        except Exception as e:
+        except Exception as exc:
             logger.error(
-                f"[ExecutionDispatcher] Failed to update subtask {subtask_id} to RUNNING: {e}"
+                "Dispatch claim unconfirmed: id=%s error_type=%s",
+                subtask_id,
+                type(exc).__name__,
             )
+            return AnswerSaveResult.UNCONFIRMED
 
     async def _resolve_device_route_id(
         self, request: ExecutionRequest, device_id: Optional[str]
@@ -987,6 +1017,8 @@ class ExecutionDispatcher:
                 wrapped=emitter,
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
+                generation_id=request.answer_generation_id,
+                expected_status="RUNNING" if request.answer_generation_id else None,
             )
             try:
                 await wrapped_emitter.emit_error(

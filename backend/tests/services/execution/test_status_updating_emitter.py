@@ -47,7 +47,7 @@ async def test_done_defers_terminal_status_to_async_card_poll() -> None:
         result = await emitter._update_status_completed({"value": ""})
 
     assert result == card_result
-    persist_result.assert_awaited_once_with(202, card_result)
+    persist_result.assert_awaited_once_with(202, card_result, generation_id=None)
     persist_completed.assert_not_awaited()
     publish.assert_not_awaited()
     assert emitter._terminal_event_deferred is True
@@ -89,7 +89,7 @@ async def test_runtime_error_does_not_override_terminal_async_card_poll() -> Non
         result = await emitter._update_status_failed("runtime failed")
 
     assert result == card_result
-    persist_result.assert_awaited_once_with(202, card_result)
+    persist_result.assert_awaited_once_with(202, card_result, generation_id=None)
     persist_completed.assert_not_awaited()
     publish.assert_not_awaited()
     assert emitter._terminal_event_deferred is True
@@ -350,6 +350,7 @@ async def test_emit_error_persists_partial_result_and_blocks():
         executor_name=None,
         executor_namespace=None,
         expected_status=None,
+        generation_id=None,
     )
     mock_session_manager.cleanup_streaming_state.assert_awaited_once_with(
         202, task_id=101
@@ -401,6 +402,7 @@ async def test_emit_error_merges_persisted_and_new_blocks():
         executor_name=None,
         executor_namespace=None,
         expected_status=None,
+        generation_id=None,
     )
 
 

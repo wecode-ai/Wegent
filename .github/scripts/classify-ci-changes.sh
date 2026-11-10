@@ -160,6 +160,7 @@ classify_path() {
     docs/*/wegent/developer-guide/collaboration-permissions.md)
       changed[backend]=true
       ;;
+    backend-rs/migrations/* | backend-rs/src/migrations/* | \
     backend-rs/src/cloud_projects* | backend-rs/src/loop_item_executions/device.rs | backend-rs/config/routes.toml)
       changed[backend]=true
       changed[backend_rs]=true

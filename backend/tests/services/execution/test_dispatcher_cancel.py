@@ -269,6 +269,8 @@ async def test_cancelled_sse_owner_persists_terminal_state(
         result={},
         executor_name=None,
         executor_namespace=None,
+        generation_id=None,
+        expected_status=None,
     )
     emitter.emit_cancelled.assert_awaited_once_with(request.task_id, request.subtask_id)
     emitter.close.assert_awaited_once()

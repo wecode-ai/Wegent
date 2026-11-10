@@ -381,6 +381,11 @@ jobs:
       - name: Install dependencies
         working-directory: backend
         run: uv sync --dev
+      - name: Verify answer attempts and Python startup migrations on isolated MySQL
+        working-directory: backend
+        env:
+          ANSWER_ATTEMPT_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+        run: uv run pytest integration_checks/test_answer_attempt_mysql.py -n 0
       - name: Verify real Redis and InnoDB plugin write races
         working-directory: backend
         env:

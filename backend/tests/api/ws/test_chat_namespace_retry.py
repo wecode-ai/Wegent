@@ -237,7 +237,7 @@ async def test_chat_retry_persists_failed_state_when_dispatch_raises():
     namespace._check_token_expiry = AsyncMock(return_value=False)
 
     db = _RetryDbMock(user=SimpleNamespace(id=1))
-    assistant_subtask = SimpleNamespace(id=42)
+    assistant_subtask = SimpleNamespace(id=42, answer_generation_id="a" * 32)
     dispatch_args = {
         "task": SimpleNamespace(id=100),
         "assistant_subtask": assistant_subtask,

@@ -39,6 +39,7 @@ class Subtask(Base):
         SQLEnum(SubtaskStatus), nullable=False, default=SubtaskStatus.PENDING
     )
     progress = Column(Integer, nullable=False, default=0)
+    answer_generation_id = Column(String(32), nullable=True)
     result = Column(JSON)
     error_message = Column(Text)
     created_at = Column(DateTime, default=func.now())

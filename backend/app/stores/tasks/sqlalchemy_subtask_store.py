@@ -1078,6 +1078,7 @@ class SqlAlchemySubtaskStore:
                 Subtask.executor_name,
                 Subtask.executor_namespace,
                 Subtask.updated_at,
+                Subtask.answer_generation_id,
             )
             .join(TaskResource, TaskResource.id == Subtask.task_id)
             .filter(
@@ -1109,6 +1110,7 @@ class SqlAlchemySubtaskStore:
                 executor_name=(row[3] or "").strip(),
                 executor_namespace=(row[4] or "").strip(),
                 updated_at=row[5],
+                answer_generation_id=row[6],
             )
             for row in rows
         ]
@@ -1288,6 +1290,34 @@ class SqlAlchemySubtaskStore:
         if "result" in fields:
             flag_modified(subtask, "result")
         return subtask
+
+    def update_fields_if_attempt(
+        self,
+        db: Session,
+        *,
+        subtask: Subtask,
+        generation_id: str | None,
+        from_statuses: tuple[SubtaskStatus, ...],
+        **fields: Any,
+    ) -> bool:
+        """Compare the captured attempt and state in the same database UPDATE."""
+        values = {getattr(Subtask, key): value for key, value in fields.items()}
+        values[Subtask.updated_at] = datetime.now()
+        changed = (
+            db.query(Subtask)
+            .filter(
+                Subtask.id == subtask.id,
+                Subtask.answer_generation_id == generation_id,
+                Subtask.status.in_(from_statuses),
+            )
+            .update(values, synchronize_session=False)
+        )
+        if changed == 1:
+            from sqlalchemy.orm.attributes import set_committed_value
+
+            for key, value in fields.items():
+                set_committed_value(subtask, key, value)
+        return changed == 1
 
     def update_fields_if_status(
         self,

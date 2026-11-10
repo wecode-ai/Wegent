@@ -11,6 +11,7 @@ including context fetching and subtask reset.
 import logging
 from datetime import datetime
 from typing import Optional, Tuple
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -90,8 +91,12 @@ def fetch_retry_context(
 
 
 def reset_subtask_for_retry(
-    db: Session, subtask: Subtask, task: Optional[TaskResource] = None
-) -> None:
+    db: Session,
+    subtask: Subtask,
+    task: Optional[TaskResource] = None,
+    *,
+    protect_attempt: bool = True,
+) -> str | None:
     """
     Reset a failed subtask to PENDING status for retry.
 
@@ -106,15 +111,23 @@ def reset_subtask_for_retry(
     Raises:
         Exception: If database commit fails
     """
-    subtask_store.update_fields(
+    generation_id = uuid4().hex if protect_attempt else None
+    changed = subtask_store.update_fields_if_attempt(
         db,
         subtask=subtask,
+        generation_id=subtask.answer_generation_id,
+        from_statuses=(SubtaskStatus.FAILED, SubtaskStatus.CANCELLED),
+        answer_generation_id=generation_id,
         status=SubtaskStatus.PENDING,
         progress=0,
         error_message="",
         result=None,
         updated_at=datetime.now(),
     )
+
+    if not changed:
+        db.rollback()
+        raise ValueError("Answer attempt already retried or no longer retryable")
 
     # Also reset Task status to PENDING so executor_manager can fetch it
     # This is critical: executor_manager queries by Task.json.status.status = PENDING
@@ -129,6 +142,9 @@ def reset_subtask_for_retry(
     try:
         db.commit()
         db.refresh(subtask)
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        set_committed_value(subtask, "answer_generation_id", generation_id)
         if task:
             db.refresh(task)
     except Exception as e:
@@ -139,6 +155,7 @@ def reset_subtask_for_retry(
     logger.info(
         f"Reset subtask to PENDING: id={subtask.id}, message_id={subtask.message_id}"
     )
+    return generation_id
 
 
 def extract_model_override_info(task: TaskResource) -> Tuple[Optional[str], bool]:
