@@ -8,6 +8,7 @@
     {
       "sql": [
         "ALTER TABLE subtasks ADD COLUMN answer_generation_id VARCHAR(32) NULL",
+        "CREATE INDEX ix_subtasks_task_id ON subtasks (task_id)",
         "CREATE TABLE knowledge_citations (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tknowledge_base_id INTEGER NOT NULL, \n\tdocument_id INTEGER NOT NULL, \n\ttitle VARCHAR(1024) NOT NULL, \n\tcontent VARCHAR(5000) NOT NULL, \n\tuser_id INTEGER NOT NULL, \n\tcaller_context JSON NOT NULL, \n\tsource_chunk_id VARCHAR(255) NOT NULL DEFAULT '', \n\tcreated_at DATETIME NOT NULL DEFAULT now(), \n\tPRIMARY KEY (id)\n)ENGINE=InnoDB CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci"
       ]
     }
@@ -16,6 +17,7 @@
     {
       "sql": [
         "DROP TABLE knowledge_citations",
+        "DROP INDEX ix_subtasks_task_id ON subtasks",
         "ALTER TABLE subtasks DROP COLUMN answer_generation_id"
       ]
     }

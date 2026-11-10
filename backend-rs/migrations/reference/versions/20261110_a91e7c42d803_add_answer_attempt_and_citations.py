@@ -20,6 +20,7 @@ def upgrade() -> None:
     op.add_column(
         "subtasks", sa.Column("answer_generation_id", sa.String(32), nullable=True)
     )
+    op.create_index("ix_subtasks_task_id", "subtasks", ["task_id"])
     op.create_table(
         "knowledge_citations",
         sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
@@ -42,4 +43,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Snapshots and attempt identities are intentionally discarded on rollback.
     op.drop_table("knowledge_citations")
+    op.drop_index("ix_subtasks_task_id", table_name="subtasks")
     op.drop_column("subtasks", "answer_generation_id")

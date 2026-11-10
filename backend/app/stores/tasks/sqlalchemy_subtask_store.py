@@ -936,7 +936,14 @@ class SqlAlchemySubtaskStore:
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         if for_update:
-            query = query.populate_existing().with_for_update()
+            # Bound InnoDB next-key locks to this task even for small tables.
+            query = (
+                query.with_hint(
+                    Subtask, "FORCE INDEX (ix_subtasks_task_id)", dialect_name="mysql"
+                )
+                .populate_existing()
+                .with_for_update()
+            )
         return query.all()
 
     def list_not_executor_deleted_by_task(

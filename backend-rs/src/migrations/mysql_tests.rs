@@ -200,6 +200,8 @@ async fn answer_attempt_upgrade_and_destructive_rollback_preserve_old_answers() 
         downgrade(mysql, "f3a7c9e1b2d4").await?;
         let missing: Vec<Name> = mysql.fetch_all("SELECT CAST(COLUMN_NAME AS CHAR) AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='subtasks' AND COLUMN_NAME='answer_generation_id'", ()).await?;
         assert!(missing.is_empty());
+        let indexes: Vec<Name> = mysql.fetch_all("SELECT CAST(INDEX_NAME AS CHAR) AS name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='subtasks' AND INDEX_NAME='ix_subtasks_task_id'", ()).await?;
+        assert!(indexes.is_empty());
         let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='knowledge_citations'", ()).await?;
         assert!(tables.is_empty());
         let answer: Name = mysql.fetch_one("SELECT title AS name FROM subtasks WHERE id=987", ()).await?;

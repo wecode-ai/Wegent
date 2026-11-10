@@ -127,6 +127,9 @@ def test_python_startup_upgrade_rollback_reupgrade_preserves_old_data(database):
         db.commit()
         document_id = document.id
     command.downgrade(config, PREVIOUS)
+    assert "ix_subtasks_task_id" not in {
+        index["name"] for index in sa.inspect(engine).get_indexes("subtasks")
+    }
     assert "knowledge_citations" not in sa.inspect(engine).get_table_names()
     assert "answer_generation_id" not in {
         c["name"] for c in sa.inspect(engine).get_columns("subtasks")
@@ -140,6 +143,9 @@ def test_python_startup_upgrade_rollback_reupgrade_preserves_old_data(database):
         )
     command.upgrade(config, "head")
     command.upgrade(config, "head")
+    assert "ix_subtasks_task_id" in {
+        index["name"] for index in sa.inspect(engine).get_indexes("subtasks")
+    }
     with Session(engine) as db:
         assert db.get(Subtask, answer_id).answer_generation_id is None
         assert db.get(KnowledgeDocument, document_id).chunks == [
@@ -150,6 +156,48 @@ def test_python_startup_upgrade_rollback_reupgrade_preserves_old_data(database):
             db.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one()
             == HEAD
         )
+
+
+def test_task_locking_read_does_not_block_other_existing_tasks(database):
+    engine, _ = database
+    with Session(engine) as db:
+        answer(db, status=SubtaskStatus.CANCELLED)
+        other_id = answer(db)
+        db.get(Subtask, other_id).task_id = 10
+        db.commit()
+
+    with Session(engine) as first, Session(engine) as other:
+        captured = []
+        connection = first.connection()
+
+        def capture(_connection, _cursor, statement, parameters, _context, _many):
+            captured.append((statement, parameters))
+
+        sa.event.listen(connection, "before_cursor_execute", capture)
+        active = subtask_store.list_by_task_statuses(
+            first,
+            task_id=9,
+            statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+            for_update=True,
+        )
+        sa.event.remove(connection, "before_cursor_execute", capture)
+        assert active == []
+        statement, parameters = captured[-1]
+        plan = (
+            connection.exec_driver_sql("EXPLAIN " + statement, parameters)
+            .mappings()
+            .one()
+        )
+        assert plan["key"] == "ix_subtasks_task_id"
+        assert plan["type"] != "ALL"
+        other.execute(sa.text("SET SESSION innodb_lock_wait_timeout=1"))
+        other.execute(
+            sa.update(Subtask).where(Subtask.id == other_id).values(progress=42)
+        )
+        other.commit()
+        first.rollback()
+    with Session(engine) as db:
+        assert db.get(Subtask, other_id).progress == 42
 
 
 @pytest.mark.asyncio
