@@ -15,9 +15,13 @@ pub(super) fn accepted_stand_in_result(result: Value) -> Result<Value, AppIpcErr
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn stand_in_role_runs_here(&self, role: &Value) -> bool {
-        role["executionDeviceId"].as_str().map_or(true, |device| {
-            device == self.device_id || self.cloud_device_id().is_ok_and(|route| route == device)
-        })
+        role["executionDeviceId"]
+            .as_str()
+            .filter(|device| !device.is_empty())
+            .map_or(true, |device| {
+                device == self.device_id
+                    || self.cloud_device_id().is_ok_and(|route| route == device)
+            })
     }
 
     pub(super) fn stand_in_issue_runs_here(&self, config: &Value, issue: &Value) -> bool {

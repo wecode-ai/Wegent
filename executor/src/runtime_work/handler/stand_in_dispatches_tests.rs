@@ -2,6 +2,143 @@ use super::*;
 use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
+#[tokio::test]
+async fn automatic_intent_keeps_its_device_before_cloud_reservation_exists() {
+    let root = tempfile::tempdir().unwrap();
+    let issue = json!({"id":"issue","cloud_project_id":"project","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
+    let current_issue = issue.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route("/api/v1/loop-items/issue", get(move || { let issue = current_issue.clone(); async { Json(issue) } }))
+        .route("/api/v1/loop-items/issue/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2099-01-01T00:00:00Z"}]})) }))
+        .route("/api/v1/loop-items/issue/tasks", get(|| async { Json(json!([])) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store.save_stand_in_settings("project", 7, json!({"id":"review","projectStore":"cloud","executionDeviceId":"mac","version":0,"enabled":true,"prompt":"Review","workspace":{"projectKey":"not-registered","workspacePath":root.path(),"executionMode":"current_workspace"}})).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    let config = handler
+        .stand_in_project_configs(&[settings.clone()], "project", "cloud")
+        .into_iter()
+        .find(|config| config["id"] == "review")
+        .unwrap();
+    handler
+        .queue_stand_in_dispatches(&[config], &issue)
+        .unwrap();
+    let intent = store.pending_stand_in_dispatches().unwrap().remove(0).1;
+    let role = settings["roles"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|role| role["id"] == "review")
+        .unwrap();
+    role["executionDeviceId"] = json!("remote");
+    let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let moved = handler
+        .stand_in_project_configs(&[saved], "project", "cloud")
+        .into_iter()
+        .find(|config| config["id"] == "review")
+        .unwrap();
+    assert!(handler
+        .queue_stand_in_dispatches(&[moved], &issue)
+        .unwrap()
+        .is_empty());
+    let error = handler
+        .reconcile_stand_in_dispatch(&store, &intent)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.code, "workspace_unavailable",
+        "Accepted work must reach preparation on its original device"
+    );
+    assert!(handler.local_task_links(true).is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn manual_wrong_device_rejection_cannot_be_recovered_as_accepted_work() {
+    let root = tempfile::tempdir().unwrap();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let count = reads.clone();
+    let router = Router::new().route(
+        "/api/v1/loop-items/issue/tasks",
+        get(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!([])) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let config = json!({"id":"default","userId":7,"projectId":"project","projectStore":"cloud","executionDeviceId":"remote","manual":true});
+    let issue = json!({"id":"issue","cloud_project_id":"project"});
+    let task_id = handler.stand_in_task_id(&config, &issue);
+    let error = handler
+        .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &issue)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "wrong_device");
+    assert!(store.pending_stand_in_dispatches().unwrap().is_empty());
+
+    // An older process may have persisted the same rejection before shutdown.
+    let mut accepted = config.clone();
+    accepted["executionDeviceId"] = json!("mac");
+    let ids = handler
+        .queue_stand_in_dispatches(std::slice::from_ref(&accepted), &issue)
+        .unwrap();
+    store
+        .defer_stand_in_dispatch(&ids[0], "wrong_device")
+        .unwrap();
+    handler
+        .flush_stand_in_dispatches_at(chrono::Utc::now().timestamp() + 10)
+        .await
+        .unwrap();
+    assert!(store.pending_stand_in_dispatches().unwrap().is_empty());
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        1,
+        "Rejected work must not reach recovery execution"
+    );
+    assert!(handler.local_task_link(&task_id).is_none());
+    let ids = handler
+        .queue_stand_in_dispatches(&[accepted], &issue)
+        .unwrap();
+    store
+        .defer_stand_in_dispatch(&ids[0], "cloud_request_failed")
+        .unwrap();
+    assert_eq!(
+        handler
+            .start_cloud_stand_in_with_roles(&[config], &issue)
+            .await
+            .unwrap_err()
+            .code,
+        "wrong_device"
+    );
+    let pending = store.pending_stand_in_dispatches().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].1["errorCode"], "cloud_request_failed");
+    assert_eq!(pending[0].1["retryCount"], 1);
+    server.abort();
+}
+
 #[test]
 fn initial_fanout_failure_does_not_discard_other_roles_dispatch_intents() {
     let root = tempfile::tempdir().unwrap();
@@ -254,6 +391,9 @@ async fn manual_issue_startup_intent_survives_restart_without_assignment_or_inta
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].1["manual"], true);
     assert_eq!(pending[0].1["retryCount"], 1);
+    let mut moved = store.personal_stand_in(7, "mac").unwrap();
+    moved["roles"][0]["executionDeviceId"] = json!("remote");
+    store.save_personal_stand_in(7, "mac", moved).unwrap();
     drop(handler);
     let restarted = make_handler();
     restarted

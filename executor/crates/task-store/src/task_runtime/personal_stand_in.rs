@@ -251,6 +251,10 @@ pub(super) fn read_personal(
     }
     if !roles.is_empty() {
         personal["executionDeviceId"] = roles[0]["executionDeviceId"].clone();
+        // Project-era device IDs were local aliases, not per-role routing choices.
+        for role in &mut roles {
+            role["executionDeviceId"] = personal["executionDeviceId"].clone();
+        }
         personal["roles"] = json!(roles);
     }
     migrate_personal_settings(&mut personal)?;

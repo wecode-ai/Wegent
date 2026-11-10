@@ -38,6 +38,9 @@ impl RuntimeWorkRpcHandler {
         };
         let pending: Vec<&Value> = matching
             .into_iter()
+            // Admit new work only on its selected device. Existing reservations
+            // remain eligible; a rejected repeat cannot replace an older intent.
+            .filter(|config| self.stand_in_issue_runs_here(config, issue))
             .filter(|config| {
                 let task_id = self.stand_in_task_id(config, issue);
                 !self.stand_in_assignment_is_handled(config, &task_id, binding)
@@ -155,6 +158,9 @@ impl RuntimeWorkRpcHandler {
         if intent["deviceId"] != self.device_id {
             return Ok(());
         }
+        if intent["manual"] == true && intent["errorCode"] == "wrong_device" {
+            return Ok(());
+        }
         let connection = self.backend_connection_snapshot()?;
         if connection
             .as_ref()
@@ -249,6 +255,9 @@ impl RuntimeWorkRpcHandler {
         // Recheck inside the normal task gate as well: another dispatcher may
         // accept and fail a task between the observation above and gate acquisition.
         config["recoveringDispatch"] = json!(true);
+        // The durable intent was admitted here before the role moved. Current
+        // ownership and execution permissions are still revalidated above/below.
+        config["executionDeviceId"] = json!(self.device_id);
         self.start_cloud_assignment_attempt(&[config], &issue).await
     }
 }

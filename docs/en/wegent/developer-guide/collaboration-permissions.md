@@ -337,6 +337,13 @@ The CI stand-in conversation scenario covers self-mentions, durable events and
 direct replies; focused Rust tests cover reply identity and cross-implementation
 event deduplication.
 
+A manual request rejected for the wrong device must never recover as accepted
+work. Repeating that request must also preserve work accepted durably before a
+role move. Project-addressed role saves preserve the primary device. Only imports
+from the old project format normalize stale device aliases; saved independent
+role choices remain intact. Executor regressions cover these persistence and
+recovery boundaries.
+
 ## Verification record
 
 Final verification is rerun against the no-DDL implementation. Counts from the withdrawn migration implementation are historical. The full backend suite already includes the focused permission tests.

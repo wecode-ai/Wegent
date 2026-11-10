@@ -122,7 +122,6 @@ impl LocalTaskStore {
         } else {
             roles.push(value.clone());
         }
-        personal["executionDeviceId"] = json!(device);
         personal["userId"] = json!(user_id);
         personal["version"] = json!(personal["version"].as_i64().unwrap_or(0) + 1);
         super::stand_in_processing::update_processing_configuration(
