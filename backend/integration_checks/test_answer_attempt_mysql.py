@@ -368,3 +368,203 @@ async def test_preparation_failure_can_finish_pending_but_not_retried_attempt(da
         current = db.get(Subtask, answer_id)
         assert current.status == SubtaskStatus.PENDING
         assert current.answer_generation_id == generation
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_status", ["RUNNING", "CANCELLING"])
+@pytest.mark.parametrize("retry_after_capture", [False, True])
+async def test_rest_cancel_keeps_request_attempt_on_real_mysql(
+    database, monkeypatch, task_status, retry_after_capture
+):
+    from copy import deepcopy
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from app.api.dependencies import get_db
+    from app.api.endpoints.adapter import tasks as task_api
+    from app.core import security
+    from app.models.task import TaskResource
+    from app.models.user import User
+    from app.services.chat.operations import cancel as cancel_ops
+
+    engine, _ = database
+    payload = {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Task",
+        "metadata": {
+            "name": "cancel-test",
+            "namespace": "default",
+            "labels": {"source": "chat_shell"},
+        },
+        "spec": {
+            "title": "cancel test",
+            "prompt": "p",
+            "teamRef": {"name": "team", "namespace": "default"},
+            "workspaceRef": {"name": "ws", "namespace": "default"},
+        },
+        "status": {
+            "status": task_status,
+            "progress": 0,
+            "updatedAt": (datetime.now() - timedelta(hours=1)).isoformat(),
+        },
+    }
+    with Session(engine) as db:
+        db.add(User(id=7, user_name="cancel-owner", password_hash="unused-test-hash"))
+        db.add(
+            TaskResource(
+                id=9,
+                user_id=7,
+                kind="Task",
+                name="cancel-test",
+                namespace="default",
+                json=payload,
+            )
+        )
+        answer_id = answer(db)
+        subtask = db.get(Subtask, answer_id)
+        subtask.result = {"value": "A"}
+        subtask.bot_ids = []
+        db.commit()
+
+    capture = cancel_ops.capture_cancellation_attempts
+    observed = {}
+
+    def capture_then_retry(db, *, task_id):
+        attempts = capture(db, task_id=task_id)
+        observed["attempts"] = dict(attempts)
+        if retry_after_capture:
+            # Independent RR sessions establish A -> terminal -> B before the
+            # original HTTP request attempts its conditional cancellation.
+            with Session(engine) as retry_db:
+                old = retry_db.get(Subtask, answer_id)
+                assert subtask_store.update_fields_if_attempt(
+                    retry_db,
+                    subtask=old,
+                    generation_id="a" * 32,
+                    from_statuses=(SubtaskStatus.RUNNING,),
+                    status=SubtaskStatus.FAILED,
+                )
+                retry_db.commit()
+                generation = reset_subtask_for_retry(
+                    retry_db, old, retry_db.get(TaskResource, task_id)
+                )
+                assert subtask_store.update_fields_if_attempt(
+                    retry_db,
+                    subtask=old,
+                    generation_id=generation,
+                    from_statuses=(SubtaskStatus.PENDING,),
+                    status=SubtaskStatus.RUNNING,
+                    result={"value": "B"},
+                )
+                task = retry_db.get(TaskResource, task_id)
+                current_payload = deepcopy(task.json)
+                current_payload["status"]["status"] = "RUNNING"
+                task.json = current_payload
+                retry_db.commit()
+                observed["new_identity"] = generation
+        return attempts
+
+    monkeypatch.setattr(cancel_ops, "capture_cancellation_attempts", capture_then_retry)
+    signal = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        "app.services.chat.storage.session_manager.cancel_stream_from_sync", signal
+    )
+    publish = AsyncMock()
+    monkeypatch.setattr(cancel_ops, "publish_task_cancelled_events", publish)
+    app = FastAPI()
+    app.include_router(task_api.router, prefix="/tasks")
+
+    async def request_database():
+        with Session(engine) as db:
+            yield db
+
+    app.dependency_overrides[get_db] = request_database
+    app.dependency_overrides[security.get_current_user] = lambda: SimpleNamespace(id=7)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post("/tasks/9/cancel")
+
+    assert observed["attempts"] == {answer_id: "a" * 32}
+    with Session(engine) as db:
+        current = db.get(Subtask, answer_id)
+        task = db.get(TaskResource, 9)
+        if retry_after_capture:
+            assert response.status_code == 409
+            assert current.status == SubtaskStatus.RUNNING
+            assert current.answer_generation_id == observed["new_identity"]
+            assert current.result == {"value": "B"}
+            assert task.json["status"]["status"] == "RUNNING"
+            signal.assert_not_called()
+            publish.assert_not_awaited()
+        else:
+            assert response.status_code == 200, response.text
+            assert response.json()["status"] == "CANCELLED"
+            assert current.status == SubtaskStatus.CANCELLED
+            assert current.answer_generation_id == "a" * 32
+            assert task.json["status"]["status"] == "CANCELLED"
+            if task_status == "RUNNING":
+                assert current.result == {"value": "A"}
+                assert signal.call_count == 1
+                assert signal.call_args.args[0] == answer_id
+                publish.assert_not_awaited()
+            else:
+                signal.assert_not_called()
+                publish.assert_awaited_once_with(9, [answer_id], 7)
+
+
+@pytest.mark.asyncio
+async def test_rest_cancel_row_lock_excludes_retry_until_signal_publication(
+    database, monkeypatch
+):
+    import asyncio
+    from threading import Event
+
+    from app.services.adapters.task_kinds.operations import TaskOperationsMixin
+    from app.services.chat.storage import session_manager
+
+    engine, _ = database
+    with Session(engine) as db:
+        answer_id = answer(db, status=SubtaskStatus.CANCELLED)
+    signal_entered = Event()
+    release_signal = Event()
+    order = []
+
+    def publish(key, value, *, expire):
+        assert key == f"chat:cancel:{answer_id}"
+        assert value is True and expire == 300
+        signal_entered.set()
+        assert release_signal.wait(10), "test did not release cancellation publication"
+        order.append("signal")
+        return True
+
+    monkeypatch.setattr(session_manager._cache, "set_from_sync", publish)
+    service = object.__new__(TaskOperationsMixin)
+    callback = asyncio.create_task(service._call_chat_shell_cancel(answer_id, "a" * 32))
+
+    def retry_while_signal_is_pending():
+        with Session(engine) as db:
+            db.execute(sa.text("SET SESSION innodb_lock_wait_timeout=1"))
+            return reset_subtask_for_retry(db, db.get(Subtask, answer_id))
+
+    try:
+        assert await asyncio.to_thread(signal_entered.wait, 10)
+        # Exercise the real retry UPDATE after the callback's identity check,
+        # before publication. It cannot change identity while that row is locked.
+        with pytest.raises(sa.exc.OperationalError) as blocked:
+            await asyncio.to_thread(retry_while_signal_is_pending)
+        assert blocked.value.orig.args[0] == 1205
+        with Session(engine) as db:
+            assert db.get(Subtask, answer_id).answer_generation_id == "a" * 32
+    finally:
+        release_signal.set()
+        await callback
+    with Session(engine) as db:
+        generation = reset_subtask_for_retry(db, db.get(Subtask, answer_id))
+        order.append("retry")
+        assert generation != "a" * 32
+    assert order == ["signal", "retry"]

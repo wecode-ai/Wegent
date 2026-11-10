@@ -160,8 +160,23 @@ async def is_stream_alive(task_id: int, subtask_id: Optional[int] = None) -> boo
     return idle_seconds <= settings.CANCELLING_STUCK_TIMEOUT_SECONDS
 
 
+def capture_cancellation_attempts(
+    db: Session, *, task_id: int
+) -> dict[int, str | None]:
+    """Capture server-owned identities once when accepting a cancel request."""
+    return {
+        subtask.id: subtask.answer_generation_id
+        for subtask in subtask_store.list_by_task_statuses(
+            db,
+            task_id=task_id,
+            statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+        )
+        if subtask.role == SubtaskRole.ASSISTANT
+    }
+
+
 def finalize_stuck_cancellation(
-    db: Session, *, task_id: int, attempts: dict[int, str | None] | None = None
+    db: Session, *, task_id: int, attempts: dict[int, str | None]
 ) -> List[int]:
     """
     Finalize cancellation locally when no runtime callback will arrive.
@@ -173,10 +188,11 @@ def finalize_stuck_cancellation(
     Args:
         db: Database session
         task_id: Task ID to finalize
+        attempts: Identities captured when accepting cancellation; never adopted here
 
     Returns:
         IDs of subtasks marked CANCELLED. Empty when the task was already in
-        a final state.
+        a final state or any active attempt changed.
     """
     task = task_store.get_regular_active_task(db, task_id=task_id)
     if not task or not task.json:
@@ -195,18 +211,17 @@ def finalize_stuck_cancellation(
     for subtask in stuck_subtasks:
         if subtask.role != SubtaskRole.ASSISTANT:
             continue
-        if attempts is not None and subtask.id not in attempts:
-            continue
-        generation_id = (
-            attempts[subtask.id]
-            if attempts is not None
-            else subtask.answer_generation_id
-        )
-        if update_subtask_on_cancel(db, subtask, generation_id=generation_id):
-            finalized.append(subtask.id)
+        if subtask.id not in attempts or not update_subtask_on_cancel(
+            db, subtask, generation_id=attempts[subtask.id]
+        ):
+            db.rollback()
+            return []
+        finalized.append(subtask.id)
 
-    if finalized:
-        update_task_on_cancel(db, task)
+    if not finalized:
+        db.rollback()
+        return []
+    update_task_on_cancel(db, task)
     db.commit()
 
     logger.warning(

@@ -1727,9 +1727,10 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
             return {"error": "Access denied"}
 
-        db = SessionLocal()
         try:
-            dispatch_args_or_error = _prepare_chat_retry_dispatch(db, payload, user_id)
+            dispatch_args_or_error = await run_sync_in_executor(
+                _prepare_chat_retry_with_session, payload, user_id
+            )
         except ValueError as e:
             # Validation errors, data parsing errors
             logger.error(f"[WS] chat:retry validation error: {e}", exc_info=True)
@@ -1758,9 +1759,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                 else f"Internal server error: {str(e)}"
             )
             return {"error": error_msg}
-        finally:
-            db.rollback()
-            db.close()
 
         if "error" in dispatch_args_or_error:
             return dispatch_args_or_error
@@ -2001,6 +1999,18 @@ def _is_code_wiki_task(task: TaskResource) -> bool:
     metadata = task_json.get("metadata") or {}
     labels = metadata.get("labels") if isinstance(metadata, dict) else {}
     return isinstance(labels, dict) and labels.get("source") == "code_wiki"
+
+
+def _prepare_chat_retry_with_session(
+    payload: ChatRetryPayload, user_id: int
+) -> dict[str, Any]:
+    """Own the retry session entirely in the existing database worker pool."""
+    db = SessionLocal()
+    try:
+        return _prepare_chat_retry_dispatch(db, payload, user_id)
+    finally:
+        db.rollback()
+        db.close()
 
 
 def _prepare_chat_retry_dispatch(

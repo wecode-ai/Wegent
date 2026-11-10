@@ -535,3 +535,42 @@ async def test_chat_retry_rejects_running_subtask_without_dispatching():
     assert result == {"error": "Cannot retry subtask in RUNNING state"}
     mock_reset.assert_not_called()
     mock_trigger.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_retry_preparation_and_session_lifecycle_do_not_block_loop(
+    monkeypatch,
+):
+    import asyncio
+    import threading
+
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    release = threading.Event()
+    threads = {}
+    db = Mock()
+    db.rollback.side_effect = lambda: threads.update(rollback=threading.get_ident())
+    db.close.side_effect = lambda: threads.update(close=threading.get_ident())
+
+    def create_session():
+        threads["create"] = threading.get_ident()
+        return db
+
+    def prepare(*args):
+        threads["prepare"] = threading.get_ident()
+        loop.call_soon_threadsafe(release.set)
+        assert release.wait(1), "retry preparation blocked the event loop"
+        return {"error": "prepared without blocking"}
+
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+    monkeypatch.setattr(chat_namespace, "SessionLocal", create_session)
+    monkeypatch.setattr(chat_namespace, "_prepare_chat_retry_dispatch", prepare)
+    monkeypatch.setattr(chat_namespace, "can_access_task", AsyncMock(return_value=True))
+
+    result = await namespace.on_chat_retry("sid", {"task_id": 100, "subtask_id": 42})
+
+    assert result == {"error": "prepared without blocking"}
+    assert threads["prepare"] != loop_thread
+    assert set(threads.values()) == {threads["prepare"]}

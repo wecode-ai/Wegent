@@ -327,6 +327,22 @@ class SessionManager:
 
         return success
 
+    def cancel_stream_from_sync(
+        self, subtask_id: int, loop: asyncio.AbstractEventLoop
+    ) -> bool:
+        """Publish from a row-locked worker using the existing bounded sync cache.
+
+        Capture the local event before publication so a deferred loop callback
+        cannot resolve a replacement stream's event by subtask ID.
+        """
+        local_event = self._local_events.get(subtask_id)
+        success = self._cache.set_from_sync(
+            self._get_cancel_key(subtask_id), True, expire=CANCEL_FLAG_TTL
+        )
+        if local_event:
+            loop.call_soon_threadsafe(local_event.set)
+        return success
+
     async def unregister_stream(self, subtask_id: int):
         """
         Unregister a streaming request (cleanup after completion or cancellation).
