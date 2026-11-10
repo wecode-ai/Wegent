@@ -3,6 +3,7 @@ import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
+import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
 import { createPluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
 import {
   isWegentManagedStorePlugin,
@@ -2998,7 +2999,9 @@ function OwnedWorkbenchProvider({
                 services={resolvedServices}
               />
               <RunnerSelectionHost />
-              <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+              <DesktopGitAccountConfigurationProvider>
+                <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+              </DesktopGitAccountConfigurationProvider>
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>
         </WorkspaceFileReaderProvider>

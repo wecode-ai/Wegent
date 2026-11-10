@@ -11,6 +11,7 @@ pub mod codex_provider_migration;
 pub mod command;
 pub mod environment_prepare;
 mod event_stream;
+pub(crate) mod git_access;
 pub mod git_commands;
 pub mod harnesses;
 mod linked_change_requests;
