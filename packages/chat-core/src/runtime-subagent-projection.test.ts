@@ -154,3 +154,39 @@ test("keeps unrelated root blocks scoped to their original turns", () => {
     { content: "second" },
   ]);
 });
+
+test("preserves root output attached to a loaded non-subagent tool", () => {
+  const messages = projectRuntimeConversationTurns([
+    turn("root", [
+      {
+        id: "root-tool",
+        type: "block",
+        block: {
+          id: "root-tool",
+          type: "tool",
+          toolName: "shell",
+          createdAt: 1,
+          status: "done",
+          subtaskId: "root",
+        },
+      },
+      {
+        id: "tool-text",
+        type: "block",
+        block: {
+          id: "tool-text",
+          type: "text",
+          parentToolUseId: "root-tool",
+          content: "Tool explanation",
+          createdAt: 2,
+          status: "done",
+          subtaskId: "root",
+        },
+      },
+    ]),
+  ]);
+  expect(messages[0].blocks?.map((block) => block.id)).toEqual([
+    "root-tool",
+    "tool-text",
+  ]);
+});

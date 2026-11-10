@@ -16,24 +16,32 @@ export function projectRuntimeConversationTurn(
   return projectRuntimeConversationTurns([turn]);
 }
 
+/** Resolve child ownership before guidance or turn boundaries split assistant views. */
 export function projectRuntimeConversationTurns(
   turns: RuntimeConversationTurn[],
 ): WorkbenchMessage[] {
   // A child can keep streaming after guidance splits its parent's display
   // message, or after the root starts another turn. Resolve ownership first.
+  const blocks = turns.flatMap((turn) => processingBlocks(turn.items));
+  const nonSubagentParentIds = new Set(
+    blocks
+      .filter((block) => block.type !== "subagent")
+      .map((block) => block.id),
+  );
   const blocksById = new Map(
-    nestWorkbenchProcessingBlocks(
-      turns.flatMap((turn) => processingBlocks(turn.items)),
-    )
+    nestWorkbenchProcessingBlocks(blocks)
       .filter((block) => block.type === "subagent")
       .map((block) => [block.id, block]),
   );
-  return turns.flatMap((turn) => projectTurn(turn, blocksById));
+  return turns.flatMap((turn) =>
+    projectTurn(turn, blocksById, nonSubagentParentIds),
+  );
 }
 
 function projectTurn(
   turn: RuntimeConversationTurn,
   blocksById: ReadonlyMap<string, ProcessingBlock>,
+  nonSubagentParentIds: ReadonlySet<string>,
 ): WorkbenchMessage[] {
   const messages: WorkbenchMessage[] = [];
   let assistantItems: RuntimeConversationItem[] = [];
@@ -136,7 +144,11 @@ function projectTurn(
     if (item.type === "block") {
       // An unloaded parent does not turn a child into root output. The flat
       // canonical items retain it until its parent is available.
-      if (item.block.parentToolUseId) continue;
+      if (
+        item.block.parentToolUseId &&
+        !nonSubagentParentIds.has(item.block.parentToolUseId)
+      )
+        continue;
       assistantItems.push({
         ...item,
         block: blocksById.get(item.block.id) ?? item.block,
