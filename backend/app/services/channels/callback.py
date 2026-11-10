@@ -603,6 +603,18 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 f"[{self._channel_type.value}Callback] Sent result for task {task_id}"
             )
 
+            if callback_info and getattr(callback_info, "delivered", False):
+                # The callback belongs to an earlier delivered card. Do not
+                # let stale state overwrite its terminal result metadata.
+                logger.warning(
+                    "[%sCallback] Terminal result arrived after delivery: task=%s",
+                    self._channel_type.value,
+                    task_id,
+                )
+                await self._remove_emitter(task_id)
+                await self.delete_callback_info(task_id)
+                return True
+
             # Clean up
             await self._remove_emitter(task_id)
             await self.delete_callback_info(task_id)

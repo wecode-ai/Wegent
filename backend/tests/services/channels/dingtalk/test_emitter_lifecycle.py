@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.channels.dingtalk import emitter as emitter_module
+from app.services.channels.dingtalk.callback import DingTalkCallbackInfo
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from shared.models import EventType, ExecutionEvent
 from tests.services.channels.dingtalk.test_emitter import FakeCache, card_factory
@@ -95,7 +96,9 @@ async def test_terminal_delivery_removes_callback_when_marker_persistence_fails(
     await emitter.emit_start(1, 2)
     service = FakeCallbackService(emitter)
     service._active_emitters[1] = emitter
-    service.get_callback_info = AsyncMock(return_value=object())
+    service.get_callback_info = AsyncMock(
+        return_value=DingTalkCallbackInfo(channel_id=77, conversation_id="group-a")
+    )
     service.delete_callback_info = AsyncMock()
 
     async def fail_terminal_marker(**_kwargs):
@@ -108,6 +111,33 @@ async def test_terminal_delivery_removes_callback_when_marker_persistence_fails(
     assert sent is True
     service.delete_callback_info.assert_awaited_once_with(1)
     assert emitter.terminal_delivery_succeeded is True
+
+
+@pytest.mark.asyncio
+async def test_delivered_callback_does_not_receive_late_terminal_result(
+    monkeypatch, card_factory
+):
+    cache = FakeCache()
+    monkeypatch.setattr(emitter_module, "cache_manager", cache)
+    monkeypatch.setattr("app.services.channels.callback.cache_manager", cache)
+    emitter = StreamingResponseEmitter(object(), object(), "card-1")
+    service = FakeCallbackService(emitter)
+    service._active_emitters[1] = emitter
+    service.get_callback_info = AsyncMock(
+        return_value=DingTalkCallbackInfo(
+            channel_id=77,
+            conversation_id="group-a",
+            card_instance_id="card-1",
+            delivered=True,
+        )
+    )
+    service.delete_callback_info = AsyncMock()
+
+    sent = await service.send_task_result(1, 2, content="")
+
+    assert sent is True
+    card_factory[0].finished.clear()
+    service.delete_callback_info.assert_awaited_once_with(1)
 
 
 @pytest.mark.asyncio

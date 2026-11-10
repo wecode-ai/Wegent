@@ -394,9 +394,15 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         if not isinstance(replied, dict) or replied.get("msgType") != "interactiveCard":
             return False
         callback_service = self.get_callback_service()
-        if not callback_service or not await callback_service.has_callback_info(
-            callback_key
-        ):
+        if not callback_service:
+            return False
+        callback_info = await callback_service.get_callback_info(callback_key)
+        if callback_info is None:
+            return False
+        if getattr(callback_info, "delivered", False):
+            # A terminal card update was accepted, so this address no longer
+            # represents work waiting for delivery. Drop the stale record.
+            await callback_service.delete_callback_info(callback_key)
             return False
         log_dingtalk_message(
             self.logger,

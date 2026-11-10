@@ -651,6 +651,66 @@ async def test_private_quote_while_runtime_turn_runs_keeps_callback(
 
 
 @pytest.mark.asyncio
+async def test_private_quote_after_delivered_result_clears_stale_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import runtime_work_service
+
+    delivered = DingTalkCallbackInfo(
+        channel_id=77,
+        conversation_id="conv-private",
+        card_instance_id="old-card",
+        incoming_message_data={"msgId": "old-message"},
+        delivered=True,
+    )
+    service = _CallbackService(delivered)
+    handler = DingTalkChannelHandler(channel_id=77)
+    handler.send_text_reply = AsyncMock(return_value=True)
+    handler.get_callback_service = Mock(return_value=service)
+    create_emitter = AsyncMock(
+        return_value=SimpleNamespace(
+            chat_card=None,
+            card_instance_id="new-card",
+            subtask_id=0,
+            close=AsyncMock(),
+        )
+    )
+    handler._create_private_im_runtime_streaming_emitter = create_emitter
+    send = AsyncMock(
+        return_value=SimpleNamespace(
+            accepted=True,
+            local_task_id="task-a",
+            error=None,
+        )
+    )
+    monkeypatch.setattr(runtime_work_service, "send_runtime_message", send)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "canonical_runtime_event_address",
+        Mock(side_effect=lambda db, *, user_id, address: address),
+    )
+
+    handled = await handler._execute_private_im_continue_runtime_task(
+        db=Mock(),
+        user=SimpleNamespace(id=9),
+        im_session=_runtime_session(),
+        message="分析一下失败原因",
+        message_context=_private_runtime_quote_context(),
+        runtime_task={"deviceId": "device-a", "localTaskId": "task-a"},
+    )
+
+    assert handled is True
+    handler.send_text_reply.assert_not_awaited()
+    create_emitter.assert_awaited_once()
+    send.assert_awaited_once()
+    assert service.deleted == ["runtime:device-a:task-a"]
+    assert service.saved[0][0] == "runtime:device-a:task-a"
+    assert service.registered == [
+        ("runtime:device-a:task-a", create_emitter.return_value)
+    ]
+
+
+@pytest.mark.asyncio
 async def test_rejected_runtime_continuation_leaves_previous_callback_untouched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

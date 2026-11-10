@@ -43,6 +43,8 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
     incoming_message_data: Optional[Dict[str, Any]] = None
     # AI Card instance ID for cross-worker emitter reconstruction
     card_instance_id: Optional[str] = None
+    # Terminal delivery state survives marker-write failures across workers.
+    delivered: bool = False
 
     def __init__(
         self,
@@ -53,6 +55,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
         card_instance_id: Optional[str] = None,
         chat_card: Optional[Dict[str, Any]] = None,
         card_subtask_id: Optional[int] = None,
+        delivered: bool = False,
     ):
         """Initialize DingTalkCallbackInfo.
 
@@ -73,6 +76,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
         self.card_instance_id = card_instance_id
         self.chat_card = chat_card
         self.card_subtask_id = card_subtask_id
+        self.delivered = delivered
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for Redis storage."""
@@ -84,6 +88,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
                 "card_instance_id": self.card_instance_id,
                 "chat_card": self.chat_card,
                 "card_subtask_id": self.card_subtask_id,
+                "delivered": self.delivered,
             }
         )
         return data
@@ -99,6 +104,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
             card_instance_id=data.get("card_instance_id"),
             chat_card=data.get("chat_card"),
             card_subtask_id=data.get("card_subtask_id"),
+            delivered=bool(data.get("delivered", False)),
         )
 
 
