@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
 import { readFile, readdir } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
-import { createInterface } from 'node:readline'
-import { stopProcessGroup } from '../process-lifecycle.mjs'
+import { startNativeAppServer } from './native-app-server.mjs'
 
 export function upgradeWriterWaitSeconds(value = '0') {
   if (!/^(?:0|[1-9]\d*)$/.test(String(value)) || Number(value) > 600)
@@ -76,71 +74,24 @@ export async function startUpgradeWriter({ binary, home, workspace, timeoutMs })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const provider = 'upgrade-writer-fixture'
   const definition = `{name="${provider}",base_url="http://127.0.0.1:${server.address().port}/v1",wire_api="responses",experimental_bearer_token="synthetic-key"}`
-  const child = spawn(
-    binary,
-    [
-      '-c',
-      `model_provider="${provider}"`,
-      '-c',
-      `model_providers.${provider}=${definition}`,
-      'app-server',
-    ],
-    {
-      cwd: workspace,
-      env: {
-        PATH: process.env.PATH,
-        SystemRoot: process.env.SystemRoot,
-        WINDIR: process.env.WINDIR,
-        HOME: home,
-        USERPROFILE: home,
-        CODEX_HOME: home,
-        TMPDIR: process.env.TMPDIR,
-        TEMP: process.env.TEMP,
-      },
-      detached: process.platform !== 'win32',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }
-  )
-  child.stderr.resume()
-  const lines = createInterface({ input: child.stdout })
-  let sequence = 0
-  const pending = new Map()
-  lines.on('line', line => {
-    const message = JSON.parse(line)
-    pending.get(message.id)?.(message)
-    pending.delete(message.id)
-  })
-  async function rpc(method, params) {
-    const id = ++sequence
-    let timer
-    try {
-      return await new Promise((resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`Native upgrade writer ${method} timed out`)),
-          timeoutMs
-        )
-        pending.set(id, message =>
-          message.error ? reject(new Error(message.error.message)) : resolve(message.result)
-        )
-        child.stdin.write(JSON.stringify({ id, method, params }) + '\n')
-      })
-    } finally {
-      clearTimeout(timer)
-      pending.delete(id)
-    }
-  }
+  let native
   const stop = async () => {
-    await stopProcessGroup(child)
-    lines.close()
-    server.closeAllConnections()
-    await new Promise(resolve => server.close(resolve))
+    try {
+      await native?.stop()
+    } finally {
+      server.closeAllConnections()
+      await new Promise(resolve => server.close(resolve))
+    }
   }
   try {
-    await rpc('initialize', {
-      clientInfo: { name: 'upgrade_writer_fixture', version: '1' },
-      capabilities: { experimentalApi: true },
+    native = await startNativeAppServer({
+      binary,
+      home,
+      workspace,
+      timeoutMs,
+      config: [`model_provider="${provider}"`, `model_providers.${provider}=${definition}`],
     })
-    child.stdin.write('{"method":"initialized","params":{}}\n')
+    const { child, rpc } = native
     const { thread } = await rpc('thread/start', {
       modelProvider: provider,
       model: 'gpt-5.5',

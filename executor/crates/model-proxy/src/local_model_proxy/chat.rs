@@ -204,7 +204,8 @@ impl ResponsesToolState {
         }
         let name = item.get("name").and_then(Value::as_str)?;
         let identity = if let Some(namespace) = item.get("namespace").and_then(Value::as_str) {
-            self.context.identity(self.context.wire_name(Some(namespace), name)?)?
+            self.context
+                .identity(self.context.wire_name(Some(namespace), name)?)?
         } else {
             self.context.identity(name)?
         };

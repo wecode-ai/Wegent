@@ -393,9 +393,9 @@ async function verifySource(source, targetChannel, previous) {
 
 async function run(environment) {
   const checkpoint =
-    diagnosticCheckpoint && diagnosticCheckpoint !== UPGRADE_CHECKPOINT_GROUP
-      ? diagnosticCheckpoint
-      : upgradeVerificationCheckpoint(platform)
+    diagnosticCheckpoint === UPGRADE_CHECKPOINT_GROUP
+      ? upgradeVerificationCheckpoint(platform)
+      : diagnosticCheckpoint || upgradeVerificationCheckpoint(platform)
   return new Promise((accept, reject) => {
     const child = spawn(
       process.execPath,

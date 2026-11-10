@@ -46,3 +46,11 @@ History must remain unchanged, the trial timer must remain unstarted, and no com
 receipt may appear while held. Releasing the writer must automatically resume preparation.
 Local macOS runs should set an isolated `CFFIXED_USER_HOME`. Fixture paths follow the same
 native Home as Foundation, avoiding the everyday application's singleton and legacy data.
+
+Suite 19 adds real tool history, active Goals, native forks, compaction, and archived compressed
+history for targets declaring stopped preparation. Tools must successfully write workspace
+artifacts, and later inference must retain call identity. After upgrade and rollback, observe
+automatic Goal inference before reading its state, retaining identity and nonzero accounting.
+Create forks through Codex's own fork, compaction, archive, and cold-compression operations.
+History bodies must remain byte-identical across transitions, with the same fork ID and ancestry,
+and must support additional native turns.

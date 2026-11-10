@@ -20,6 +20,15 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
+test("non-publishing artifact builds cannot be cancelled by another release branch queue", () => {
+  assert.match(
+    workflow.concurrency.group,
+    /inputs.build_only && !inputs.publish_release/,
+  );
+  assert.match(workflow.concurrency.group, /github.ref/);
+  assert.equal(workflow.concurrency["cancel-in-progress"], false);
+});
+
 function sparseCheckout(t, checkout, trackedOnly = false) {
   const root = mkdtempSync(join(tmpdir(), "wework-upgrade-resolver-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -341,7 +350,7 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
   assert.match(
     workflow.concurrency.group,
-    /all.*app-update-refresh.*app-update-retry.*!inputs.publish_release/,
+    /app-update-refresh.*app-update-retry.*!inputs.publish_release/,
   );
   const sourceGuard = jobs["prepare-release"].steps.find(
     (step) => step.name === "Reject publishing an unpublished source pair",

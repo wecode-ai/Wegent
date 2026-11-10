@@ -589,20 +589,35 @@ async fn native_namespaces_keep_custom_declarations_history_choice_and_stream_co
             {"type":"custom_tool_call_output","call_id":"call-1","output":"result"}],
         "tool_choice":{"type":"custom","namespace":"functions","name":"exec"}
     });
-    for policy in [CustomToolConversion::All, CustomToolConversion::ExceptApplyPatch] {
+    for policy in [
+        CustomToolConversion::All,
+        CustomToolConversion::ExceptApplyPatch,
+    ] {
         let (converted, context) = responses_to_responses(&input, policy, true, true).unwrap();
         assert_eq!(converted["tools"][0]["type"], "namespace");
         assert_eq!(converted["tools"][0]["name"], "functions");
         assert_eq!(converted["tools"][0]["description"], "Native namespace");
         assert_eq!(converted["tools"][0]["tools"][0]["type"], "function");
-        assert_eq!(converted["tools"][0]["tools"][1]["type"],
-            if policy == CustomToolConversion::All { "function" } else { "custom" });
+        assert_eq!(
+            converted["tools"][0]["tools"][1]["type"],
+            if policy == CustomToolConversion::All {
+                "function"
+            } else {
+                "custom"
+            }
+        );
         assert_eq!(converted["input"][0]["type"], "function_call");
         assert_eq!(converted["input"][0]["namespace"], "functions");
         assert_eq!(converted["input"][0]["name"], "exec");
-        assert_eq!(converted["input"][0]["arguments"], r#"{"input":"raw tool input"}"#);
+        assert_eq!(
+            converted["input"][0]["arguments"],
+            r#"{"input":"raw tool input"}"#
+        );
         assert_eq!(converted["input"][1]["type"], "function_call_output");
-        assert_eq!(converted["tool_choice"], json!({"type":"function","namespace":"functions","name":"exec"}));
+        assert_eq!(
+            converted["tool_choice"],
+            json!({"type":"function","namespace":"functions","name":"exec"})
+        );
         let item = json!({"id":"fc-1","type":"function_call","namespace":"functions",
             "name":"exec","call_id":"call-2","arguments":r#"{"input":"new raw input"}"#});
         let stream = [
@@ -616,7 +631,8 @@ async fn native_namespaces_keep_custom_declarations_history_choice_and_stream_co
         assert!(output.contains("\"input\":\"new raw input\""), "{output}");
         assert!(!output.contains("\"type\":\"function_call\""), "{output}");
     }
-    let (native, context) = responses_to_responses(&input, CustomToolConversion::None, true, true).unwrap();
+    let (native, context) =
+        responses_to_responses(&input, CustomToolConversion::None, true, true).unwrap();
     assert_eq!(native, input);
     assert!(context.is_empty());
 }

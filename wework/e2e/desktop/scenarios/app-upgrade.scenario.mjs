@@ -17,6 +17,9 @@ import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
 import { createUpgradeConversationContinuity } from '../modules/upgrade-conversation-continuity.mjs'
+import { createUpgradeGoalContinuity } from '../modules/upgrade-goal-continuity.mjs'
+import { createUpgradeAuxiliaryHistory } from '../modules/upgrade-auxiliary-history.mjs'
+import { assertUpgradeComposition } from '../modules/upgrade-selected-composition.mjs'
 import { createUpgradeWriterWait } from '../modules/upgrade-writer-wait.mjs'
 import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
@@ -44,13 +47,11 @@ import {
   restoreInstalledSourceSnapshot,
   saveInstalledSourceSnapshot,
 } from '../modules/installed-source-snapshot.mjs'
-import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
 import {
   linkBundledRuntimeCache,
   prepareBundledRuntimeCache,
 } from '../modules/bundled-runtime-cache.mjs'
 import {
-  assertMacosUpgradeIdentity,
   macosUpgradeIdentity,
   pruneWithRolledBackSource,
   useVersionedMacosRecoveryBridge,
@@ -129,6 +130,8 @@ export async function createDesktopScenario(options) {
   let origin
   let modelRequests = 0
   const continuity = createUpgradeConversationContinuity(() => control, workbenchReadyTimeoutMs)
+  const goalContinuity = createUpgradeGoalContinuity(pair, () => control, workbenchReadyTimeoutMs)
+  const auxiliaryHistory = createUpgradeAuxiliaryHistory(pair, () => control, options)
   const requests = []
   // Observe asynchronous acceptance before releasing real package bytes. A fixed
   // six-second server delay charged every checkpoint without establishing state.
@@ -233,34 +236,8 @@ export async function createDesktopScenario(options) {
     JSON.parse(await control.command('getInstalledAppVersion', 'body')).version
   const compositions = []
   let macosIdentity
-  const assertSelectedComposition = async version => {
-    const id = (await readFile(join(root, 'active'), 'utf8')).trim()
-    const slot = join(root, 'slots', id)
-    const release = JSON.parse(await readFile(join(slot, 'release.json'), 'utf8'))
-    const { components } = JSON.parse(await readFile(join(slot, 'prepared.json'), 'utf8'))
-    const { release: actual } = JSON.parse(
-      await control.command('getDesktopRuntimeDiagnostics', 'body')
-    )
-    assert.equal(release.version, version)
-    assert.equal(actual.id, id)
-    for (const [key, expected] of Object.entries({
-      hostExecutable: release.executable,
-      runtimeRoot: release.runtimeRoot,
-      coreDshPath: components.coreDsh,
-      corePluginsPath: components.weworkCorePlugins,
-      executorPath: components.executor,
-      codexPath: components.codex,
-      dwsPath: components.dws,
-    })) {
-      assert.equal(resolve(actual[key]), resolve(expected), `Selected release ${key} differs`)
-    }
-    compositions.push({ version, ...actual, coreDsh: components.coreDsh })
-    await assertMacosUpgradeIdentity(macosIdentity, root, resultDir, version)
-    if (process.platform === 'darwin') {
-      const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
-      await assertMacosStatusItem(control, pid, resultDir, version)
-    }
-  }
+  const assertSelectedComposition = version =>
+    assertUpgradeComposition({ control, root, version, compositions, macosIdentity, resultDir })
   const about = async () => {
     await control.command('clickWhenEnabled', '[data-testid="settings-button"]')
     await control.command('clickWhenEnabled', '[data-testid="about-menu-button"]')
@@ -424,6 +401,8 @@ export async function createDesktopScenario(options) {
       if (handleEmptyReplyPrediction(body, response)) return true
       if (!JSON.stringify(body).includes(PROMPT)) return false
       continuity.observeModel(body)
+      if (goalContinuity.handleModel(body, response)) return true
+      if (continuity.toolResponse(body, response)) return true
       modelRequests++
       const id = `upgrade-model-${modelRequests}`
       response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -455,8 +434,11 @@ export async function createDesktopScenario(options) {
       await mkdir(workspace, { recursive: true })
       await control.command('click', '[data-testid="new-chat-button"]')
       await createSingleRootLocalProject(control, workspace, 'upgrade-source-project')
+      if (pair.to.afterStopPreparation === 1) continuity.seedTool(workspace)
       await send(PROMPT)
       await continuity.assertThread()
+      await auxiliaryHistory.seed(continuity.nativeThread())
+      await goalContinuity.arm()
       await control.command('setLocalStorageItem', 'body', {
         value: JSON.stringify({ key: STORAGE_KEY, value: 'before-update' }),
       })
@@ -596,6 +578,7 @@ export async function createDesktopScenario(options) {
       if (verifiesFailedActivation) await useVersionedMacosRecoveryBridge(root, pair.to.version)
       const readyCount = control.readyCount
       await writerWait.beforeRestart(workspace)
+      goalContinuity.beforeRestart()
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
       await writerWait.afterRestart(root)
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)
@@ -622,6 +605,8 @@ export async function createDesktopScenario(options) {
           0
         )
           await control.command('click', '[data-testid="settings-back-button"]')
+        await goalContinuity.verifyResumed('failed-activation-recovery')
+        await auxiliaryHistory.verify('failed-activation-recovery')
         await send(`${PROMPT} continue after failed activation`)
         await assertSelectedComposition(pair.from.version)
         console.log('[upgrade-e2e] Automatic recovery preserved a usable task')
@@ -683,6 +668,8 @@ export async function createDesktopScenario(options) {
         timeoutMs: workbenchReadyTimeoutMs,
       })
       const beforeRequests = modelRequests
+      await goalContinuity.verifyResumed('upgrade')
+      await auxiliaryHistory.verify('upgrade')
       await send(`${PROMPT} continue after upgrade`)
       await continuity.assertThread()
       await assertSelectedComposition(pair.to.version)
@@ -727,6 +714,7 @@ export async function createDesktopScenario(options) {
         await control.command('clickWhenEnabled', '[data-testid="about-rollback-button"]')
         await control.command('waitFor', '[data-testid="app-update-rollback-confirm"]')
         const beforeRollback = control.readyCount
+        await goalContinuity.arm()
         await control.command('click', '[data-testid="app-update-rollback-confirm"]')
         if (checkpoint === 'app-rollback-recovery') {
           await waitForInterruptedRollback(root)
@@ -791,6 +779,8 @@ export async function createDesktopScenario(options) {
           })
         }
         await pruneWithRolledBackSource(root, resultDir, options.homePath)
+        await goalContinuity.verifyResumed('rollback')
+        await auxiliaryHistory.verify('rollback')
         await send(`${PROMPT} continue after rollback`)
         await continuity.assertThread()
         await assertSelectedComposition(pair.from.version)
@@ -835,6 +825,8 @@ export async function createDesktopScenario(options) {
         requests,
         compositions,
         conversationContinuity: continuity.evidence(),
+        goalContinuity: goalContinuity.evidence(),
+        auxiliaryHistory: auxiliaryHistory.evidence(),
       })
       await writeFile(join(resultDir, 'upgrade-edge-result.json'), evidence)
       if (
@@ -847,6 +839,12 @@ export async function createDesktopScenario(options) {
     },
     async cleanup() {
       const errors = []
+      goalContinuity.cleanup()
+      try {
+        await auxiliaryHistory.cleanup()
+      } catch (error) {
+        errors.push(error)
+      }
       try {
         await writerWait.cleanup()
       } catch (error) {
