@@ -273,7 +273,7 @@ impl RuntimeWorkRpcHandler {
             );
             return Err(AppIpcError::new(
                 "assignment_already_handled",
-                "This conversation was already handled or removed",
+                "This assignment has already been handled or is no longer active",
             ));
         }
         Ok(json!({"deviceId":self.device_id,"taskId":task_id}))

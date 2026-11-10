@@ -173,6 +173,10 @@ async fn manual_delegation_does_not_report_a_deleted_task_as_running() {
         .unwrap();
     let error = handler.run_stand_in(json!({"projectId":project.id,"issueId":issue.id,"userId":7,"projectStore":"local","standInId":"review"})).await.unwrap_err();
     assert_eq!(error.code, "assignment_already_handled");
+    assert_eq!(
+        error.message,
+        "This assignment has already been handled or is no longer active"
+    );
 }
 
 #[tokio::test]
