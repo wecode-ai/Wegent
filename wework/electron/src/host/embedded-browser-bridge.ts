@@ -412,9 +412,13 @@ export class EmbeddedBrowserBridge {
     return { ok: true }
   }
 
-  private async evaluate(label: string, expression: string): Promise<unknown> {
+  private async evaluate(
+    label: string,
+    expression: string,
+    options?: { awaitPromise?: boolean }
+  ): Promise<unknown> {
     return withTimeout(
-      this.browser.evaluate(label, expression),
+      this.browser.evaluate(label, expression, options),
       DEFAULT_EVAL_TIMEOUT_MS,
       'Timed out waiting for embedded browser evaluation'
     )
@@ -458,7 +462,10 @@ export class EmbeddedBrowserBridge {
       (await this.loadScript('embedded_browser_action.js')).replace(
         '__WEWORK_ACTION_INPUT__',
         JSON.stringify(input)
-      )
+      ),
+      // This script returns synchronously. A Promise callback can be destroyed by
+      // the navigation that the action itself dispatched.
+      { awaitPromise: false }
     )
   }
 

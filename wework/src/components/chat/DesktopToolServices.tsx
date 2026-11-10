@@ -20,6 +20,7 @@ import { track } from '@/telemetry/client'
 import { DesktopConversationTranslation } from './DesktopConversationTranslation'
 import { useDesktopMarkdownServices } from './useDesktopMarkdownServices'
 import { useWorkspaceFileReader } from './WorkspaceFileReaderContext'
+import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
 
 interface ToolImageTarget {
   deviceId: string
@@ -140,7 +141,9 @@ export function DesktopToolServices({
     <DesktopConversationTranslation>
       <MarkdownServicesProvider value={markdown}>
         <ToolInteractionServicesProvider value={toolServices}>
-          {content}
+          <DesktopGitAccountConfigurationProvider deviceId={imageTarget?.deviceId} conversation>
+            {content}
+          </DesktopGitAccountConfigurationProvider>
         </ToolInteractionServicesProvider>
       </MarkdownServicesProvider>
     </DesktopConversationTranslation>

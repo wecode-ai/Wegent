@@ -33,7 +33,7 @@ from app.services.device.command_registry import (
 )
 from app.services.device.command_service import (
     DeviceCommandError,
-    is_builtin_branch_query,
+    is_builtin_native_git_command,
     local_device_command_service,
 )
 from app.services.device.remote_control_policy import (
@@ -552,7 +552,7 @@ async def relay_ipc_request(
             raise DeviceCommandError(str(exc)) from exc
         if command is None:
             raise DeviceCommandError("Device command key is not configured")
-        uses_builtin_branch_query = is_builtin_branch_query(
+        uses_native_git_command = is_builtin_native_git_command(
             command_key, configured_commands
         )
         try:
@@ -578,7 +578,7 @@ async def relay_ipc_request(
             user_id=user_id,
             device_id=route.runtime_device_id,
             command=command.command,
-            command_key=command_key if uses_builtin_branch_query else None,
+            command_key=command_key if uses_native_git_command else None,
             path=params.get("path") if isinstance(params.get("path"), str) else None,
             cwd=params.get("cwd") if isinstance(params.get("cwd"), str) else None,
             args=params.get("args") if isinstance(params.get("args"), list) else [],

@@ -643,14 +643,18 @@ export class EmbeddedBrowserManager {
     await this.required(label).deviceMetrics.set(metrics)
   }
 
-  async evaluate(label: string, expression: string): Promise<unknown> {
+  async evaluate(
+    label: string,
+    expression: string,
+    options: { awaitPromise?: boolean } = {}
+  ): Promise<unknown> {
     // Hidden guests can execute Electron's script while leaving its isolated-world
     // reply Promise pending. Return the main-world result through Chromium instead.
     return withDebuggerSession(this.required(label).contents, async target => {
       const { result, exceptionDetails } = await target.sendCommand('Runtime.evaluate', {
         expression,
         returnByValue: true,
-        awaitPromise: true,
+        awaitPromise: options.awaitPromise ?? true,
         userGesture: true,
       })
       if (exceptionDetails) {

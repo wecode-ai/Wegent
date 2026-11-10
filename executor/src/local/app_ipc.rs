@@ -1529,6 +1529,16 @@ impl AppIpcServer {
         .round() as usize;
         let native_args = string_list(params.get("args")).unwrap_or_default();
         let native_result = match command_key {
+            "git_clone" => Some(
+                super::git_access::execute_clone(
+                    &native_args,
+                    native_path.as_deref().map(Path::new),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
             "environment_prepare" => {
                 Some(execute_environment_prepare(&native_args, native_timeout).await)
             }

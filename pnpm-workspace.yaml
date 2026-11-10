@@ -17,7 +17,7 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 packageExtensions:
-  # Streamdown exposes HAST 3 types but declares them only as a development dependency.
+  # Streamdown's public declarations import HAST 3 types directly.
   "streamdown@2.5.0":
     dependencies:
       "@types/hast": 3.0.5

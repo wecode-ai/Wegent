@@ -366,6 +366,9 @@ describe('EmbeddedBrowserBridge', () => {
       data: { ok: true, action: 'click' },
     })
     expect(browser.evaluate).toHaveBeenCalledTimes(2)
+    for (const call of browser.evaluate.mock.calls) {
+      expect(call[2]).toEqual({ awaitPromise: false })
+    }
     expect(browser.hideAgentCursor).not.toHaveBeenCalled()
   })
 

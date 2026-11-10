@@ -204,10 +204,10 @@ vi.mock('./AiChatModal', () => ({
       localProject: { id: number; name: string; tasks: [] } | null,
       deviceWorkspaceId: number | null
     ) => void | Promise<void>
-    prepareTask?: (address: {
-      deviceId: string
-      taskId: string
-    }) => void | Promise<void | (() => void | Promise<void>)>
+    prepareTask?: (
+      address: { deviceId: string; taskId: string },
+      localProject: { id: number; name: string; tasks: [] } | null
+    ) => void | Promise<void | (() => void | Promise<void>)>
     initialTaskRequest?: {
       projectId?: number
       modelId?: string
@@ -241,7 +241,7 @@ vi.mock('./AiChatModal', () => ({
         onClick={() => {
           const address = { deviceId: 'local-device', taskId: 'runtime-created' }
           const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
-          void Promise.resolve(prepareTask?.(address)).then(() => {
+          void Promise.resolve(prepareTask?.(address, localProject)).then(() => {
             onAddressChange?.(address)
             return onTaskCreated?.(address, localProject, 201)
           })
@@ -265,7 +265,7 @@ vi.mock('./AiChatModal', () => ({
             },
           }
           const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
-          void Promise.resolve(prepareTask?.(address)).then(() => {
+          void Promise.resolve(prepareTask?.(address, localProject)).then(() => {
             onAddressChange?.(address)
             return onTaskCreated?.(address, localProject, 201)
           })
@@ -2024,6 +2024,50 @@ describe('CloudTodoWorkspace', () => {
       'data-conversation-open',
       'true'
     )
+  })
+
+  it('finishes the Issue start before creating its runtime task without a later Issue write', async () => {
+    const workbenchServices = services()
+    const pendingItem = { ...item, tags: [], status: 'pending' as const }
+    const startedItem = { ...item, tags: [], version: item.version + 1 }
+    let finishUpdate!: (value: typeof startedItem) => void
+    const update = new Promise<typeof startedItem>(resolve => {
+      finishUpdate = resolve
+    })
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => pendingItem)
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [pendingItem] }))
+    workbenchServices.deliveryApi!.updateLoopItem = vi.fn(() => update)
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
+      />
+    )
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith(item.id, {
+        version: item.version,
+        status: 'in_progress',
+      })
+    )
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-runtime-task-id')
+    await act(async () => {
+      finishUpdate(startedItem)
+      await update
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+        'data-runtime-task-id',
+        'runtime-created'
+      )
+    )
+    expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledOnce()
   })
 
   it('preserves the selected model when a new runtime task becomes the task conversation', async () => {

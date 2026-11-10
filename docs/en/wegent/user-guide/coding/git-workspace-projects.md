@@ -20,45 +20,53 @@ The project owns this policy, not a robot or model runtime profile. Changes affe
 ## Prerequisites
 
 - A local or cloud execution device is online.
-- A Git token with access to the target repository is configured in Settings.
-- The target repository and default branch are visible to the current account.
+- Public repositories do not require a cloud Git account; private repositories need working credentials on the target device.
+- Local devices use native Git, SSH, or credential managers. ClaudeCode cloud and remote devices can use accounts in **Settings → Integrations → Git accounts**.
+- The repository and selected branch are accessible to the Git identity in use.
 - The execution device can reach the Git service endpoint.
 
 ## Clone a Project from Git
 
 1. In the Wework sidebar, click the create button next to “Projects”.
-2. Select “Clone from Git”.
-3. Choose the execution device in the dialog.
-4. Select a Git repository.
-5. Select the default branch.
-6. Click “Create project”.
+2. Select the remote-project option and choose the target device.
+3. Select **Clone from Git repository** and enter the repository URL.
+4. Choose a parent directory on that device. Expand advanced options to specify a branch; leave it empty to use the repository default.
+5. Select **Clone and add**.
 
-The dialog opens immediately, then loads repositories and branches asynchronously. While repositories are loading, the repository selector shows “Loading repositories...”.
+Wework checks access on the target device before cloning and opening the project. Progress and errors remain in the dialog, without extra sidebar clone notices. Failures retain the URL, branch, and directory. If cloning succeeds but project registration fails, retry registers the existing checkout rather than cloning again.
+
+<a id="configuration-and-recovery"></a>
+
+### Configuration and recovery
+
+The quiet **Configure Git account** action beside the URL label opens **Settings → Integrations → Git accounts** for the current cloud connection, targeting the repository domain, including its port. Execution environments and conversation error cards offer the same entry when credentials are needed.
+
+Navigation is unavailable until the Web address is resolved; the Backend URL is never used to guess the page. Once the current user's accounts load, a matching account opens for editing, otherwise a new account is prefilled. See [Repository access configuration and device sync](../../../wework/git-connections.md#device-git-configuration) for manual synchronization and independent clearing.
+
+On authentication failure, ClaudeCode cloud or remote devices attempt to sync configured accounts and recheck once. When the matching account is missing, configure it and return to resume. Successful synchronization does not prove repository access: expired credentials still produce an error. An empty account list never clears device credentials; removing managed configuration requires separate confirmation.
+
+Local devices do not show an unusable cloud configuration action. Repair their native Git or SSH credentials, then recheck. Network, certificate, URL, and permission failures are not treated as expired login. Offline devices refresh before retry. If a device was removed, the dialog retains inputs and requires explicit replacement-device selection and confirmation of that device's destination directory.
+
+Cloning and task checkout preserve Git's SSH precedence, including `core.sshCommand`, `GIT_SSH` and `GIT_SSH_COMMAND`.
 
 ## Directory Rules
 
-Git projects are cloned under the execution device project root:
+The URL-based clone flow creates `<parent>/<repository-name>` under the selected parent directory and previews the full path in the dialog. For example, parent `/home/ubuntu/projects` and repository `pluto` produce:
 
 ```bash
-~/.wecode/wegent-executor/workspace/projects/<repoName>
-```
-
-For example, when the repository name is `pluto`, the final directory is:
-
-```bash
-~/.wecode/wegent-executor/workspace/projects/pluto
+/home/ubuntu/projects/pluto
 ```
 
 Task execution enters the same directory. In other words, the `git clone` location used during project creation and the workspace directory used by later tasks stay aligned.
 
-After a successful clone, Wegent uses the current user's Git account that matches the repository domain to set the repository-local commit identity:
+Commit identity is separate from repository access credentials. If Git reports a missing identity when committing, set it inside the repository:
 
 ```bash
 git config user.name <git_login>
 git config user.email <git_email>
 ```
 
-This only updates the project repository's `.git/config`; it does not change global Git configuration on the execution device. If the current user does not have a complete Git login and email, Wegent leaves the repository config unchanged, and later commits still need the user or agent to provide a commit identity.
+These commands only update that repository's `.git/config`, not the device's global Git configuration. Successful access checks or credential synchronization do not prove that commit identity is configured.
 
 ## Execution Modes
 
