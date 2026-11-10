@@ -101,6 +101,7 @@ describe('Personal stand-in settings', () => {
     const user = userSetup()
     render(<StandInSettingsPage {...props} initialProfileId="review" onSaved={onSaved} />)
     await user.type(await screen.findByTestId('stand-in-role-name'), ' revised')
+    expect(screen.getByTestId('stand-in-role-device')).toHaveAccessibleName('执行设备')
     await user.selectOptions(screen.getByTestId('stand-in-role-device'), 'remote')
     expect(screen.getByTestId('stand-in-role-name')).toHaveValue('Review revised')
     await user.click(screen.getByTestId('stand-in-save'))

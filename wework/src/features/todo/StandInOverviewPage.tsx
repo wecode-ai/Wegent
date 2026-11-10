@@ -840,6 +840,7 @@ export function StandInOverviewPage({
                     saving={state.saving || state.loading}
                     services={props.services}
                     devices={props.devices}
+                    deviceReadOnly={!!primaryDeviceId}
                     onSelectDevice={device => {
                       if (onSelectLocation) onSelectLocation(device, '@primary', true)
                       else state.setDeviceId(device)
@@ -880,7 +881,9 @@ export function StandInOverviewPage({
                     onDeleted={() => {
                       setRoleId(undefined)
                       setDetailsAnchor(null)
-                      reload()
+                      if (primaryDeviceId && primaryDeviceId !== deviceId && onSelectLocation)
+                        onSelectLocation(primaryDeviceId)
+                      else reload()
                       setProfile(null)
                     }}
                     onCancel={() => setProfile(null)}
@@ -914,10 +917,12 @@ export function StandInOverviewPage({
         projects: props.projects,
         localDeviceId: state.currentDeviceId,
         devices: props.devices,
-        onSelectDevice: device => {
-          if (onSelectLocation) onSelectLocation(device)
-          else state.setDeviceId(device)
-        },
+        onSelectDevice: primaryDeviceId
+          ? undefined
+          : device => {
+              if (onSelectLocation) onSelectLocation(device)
+              else state.setDeviceId(device)
+            },
         onSave: state.save,
         onReload: state.reload,
       }}

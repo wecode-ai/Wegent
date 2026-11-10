@@ -8,6 +8,8 @@ export function StandInDeviceSelect({
   disabled,
   onChange,
   testId = 'stand-in-device',
+  ariaLabel,
+  readOnly = false,
 }: {
   value: string
   currentDeviceId: string
@@ -15,12 +17,22 @@ export function StandInDeviceSelect({
   disabled: boolean
   onChange(value: string): void
   testId?: string
+  ariaLabel?: string
+  readOnly?: boolean
 }) {
   const { t } = useTranslation('common')
+  if (readOnly) {
+    return (
+      <span className="px-2 text-sm text-text-secondary">
+        {devices.find(device => device.device_id === value)?.name ??
+          (value === currentDeviceId ? t('standIn.current_device') : value)}
+      </span>
+    )
+  }
   return (
     <select
       data-testid={testId}
-      aria-label={t('standIn.device')}
+      aria-label={ariaLabel ?? t('standIn.device')}
       value={value}
       disabled={disabled}
       onChange={event => onChange(event.target.value)}

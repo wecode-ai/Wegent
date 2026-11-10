@@ -620,6 +620,7 @@ function StandInSettingsEditor({
                   </span>
                   <StandInDeviceSelect
                     testId="stand-in-role-device"
+                    ariaLabel={t('standIn.personal.execution_device')}
                     value={role.executionDeviceId}
                     currentDeviceId={state.currentDeviceId}
                     devices={userId === 0 ? [] : devices}
