@@ -11,6 +11,16 @@ while IFS= read -r line; do
     printf '{"id":%s,"result":{}}\n' "$id"
     exit 0
   fi
+  case "$method" in
+    marketplace_add|marketplace_remove|marketplace_upgrade)
+      if [ -f "$directory/hold-config-rewrite" ]; then
+        cp "$directory/native-home/config.toml" "$directory/config-before-rewrite"
+        : > "$directory/native-home/config.toml"
+        : > "$directory/config-rewrite-started"
+        while [ ! -f "$directory/config-rewrite-release" ]; do sleep 0.01; done
+        cat "$directory/config-before-rewrite" > "$directory/native-home/config.toml"
+      fi ;;
+  esac
   error_file="$directory/$method.error-once.json"
   if [ -f "$error_file" ]; then
     printf '{"id":%s,"error":' "$id"

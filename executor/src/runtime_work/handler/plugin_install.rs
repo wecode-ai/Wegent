@@ -62,6 +62,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         target: LocalPluginInstallTarget,
     ) -> Result<Value, AppIpcError> {
+        let activation = crate::services::capability_activation::activate().await;
         // Unchanged plugins remain usable while unrelated work or RPCs are active.
         let check_target = target.clone();
         let current = tokio::task::spawn_blocking(move || {
@@ -93,9 +94,12 @@ impl RuntimeWorkRpcHandler {
         let result = self
             .codex_app_server
             .mutate_configuration_if_idle(|| async move {
-                tokio::task::spawn_blocking(move || sync_bundled_plugin_files(&target))
-                    .await
-                    .map_err(|error| error.to_string())?
+                tokio::task::spawn_blocking(move || {
+                    let _activation = activation;
+                    sync_bundled_plugin_files(&target)
+                })
+                .await
+                .map_err(|error| error.to_string())?
             })
             .await;
         match result {
@@ -123,15 +127,19 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("invalid_local_plugin_install", error))?;
         let plugin_key = target.plugin_key.clone();
         let started_at = Instant::now();
-        tokio::task::spawn_blocking(move || install_local_plugin_files(&target))
-            .await
-            .map_err(|error| {
-                AppIpcError::new(
-                    "local_plugin_install_failed",
-                    format!("failed to join local plugin installation: {error}"),
-                )
-            })?
-            .map_err(|error| AppIpcError::new("local_plugin_install_failed", error))?;
+        let activation = crate::services::capability_activation::activate().await;
+        tokio::task::spawn_blocking(move || {
+            let _activation = activation;
+            install_local_plugin_files(&target)
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "local_plugin_install_failed",
+                format!("failed to join local plugin installation: {error}"),
+            )
+        })?
+        .map_err(|error| AppIpcError::new("local_plugin_install_failed", error))?;
         crate::services::capability_activation::notify_changed();
         log_executor_event(
             "local plugin install committed",
@@ -158,15 +166,19 @@ impl RuntimeWorkRpcHandler {
         ))?;
         let plugin_key = target.plugin_key.clone();
         let started_at = Instant::now();
-        tokio::task::spawn_blocking(move || uninstall_local_plugin_files(&target))
-            .await
-            .map_err(|error| {
-                AppIpcError::new(
-                    "local_plugin_uninstall_failed",
-                    format!("failed to join local plugin uninstall: {error}"),
-                )
-            })?
-            .map_err(|error| AppIpcError::new("local_plugin_uninstall_failed", error))?;
+        let activation = crate::services::capability_activation::activate().await;
+        tokio::task::spawn_blocking(move || {
+            let _activation = activation;
+            uninstall_local_plugin_files(&target)
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "local_plugin_uninstall_failed",
+                format!("failed to join local plugin uninstall: {error}"),
+            )
+        })?
+        .map_err(|error| AppIpcError::new("local_plugin_uninstall_failed", error))?;
         log_executor_event(
             "local plugin uninstall committed",
             &[
