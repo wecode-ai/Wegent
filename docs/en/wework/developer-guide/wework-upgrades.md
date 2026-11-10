@@ -55,6 +55,13 @@ The local router serves the merged catalog using a non-secret catalog credential
 token or task API key. Threads must not inherit that credential or another route's bearer command.
 Local catalog discovery has process-owned settings. Native threads retain an explicit Home
 `features.api_key_model_discovery` value; local discovery must not enable external API-key discovery.
+Paused Goals must remain paused across ordinary restarts. Reactivation uses the original task's
+persisted execution configuration and existing admission flow. Repeated activation cannot enqueue
+duplicate recovery or change queued recovery to running. Native `goal/set` on an unloaded thread
+only updates persisted metadata and emits a notification. Activity tracking must account for thread
+loading so that this notification cannot block the same thread's recovery. Loaded native Goal
+continuations retain their existing concurrency protection.
+
 Bind model routes and notification subscriptions before `thread/resume`, since native Goals can continue
 before that RPC returns. Never resubmit original user input or settle an active Goal from a
 previous turn's completed outcome.

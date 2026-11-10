@@ -197,6 +197,14 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                     .unwrap();
                 assert_eq!(repeated["resumed"], false);
                 assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 1);
+                assert_eq!(
+                    handler
+                        .local_task_link("task-1")
+                        .unwrap()
+                        .goal_execution_status
+                        .as_deref(),
+                    Some("recovering")
+                );
                 assert!(turns::read_runtime_turn_state(&handler.turn_queue_path)
                     .unwrap()
                     .active_goal_turns

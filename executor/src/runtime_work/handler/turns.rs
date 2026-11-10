@@ -679,12 +679,18 @@ impl RuntimeWorkRpcHandler {
         };
         // Native metadata may arrive through a passive or compaction content route.
         // Only admission owns replacement of an existing recovery request.
+        let mut inserted = false;
         self.active_goal_turns
             .lock()
             .expect("active Goal turn map lock should not be poisoned")
             .entry(local_task_id.to_owned())
-            .or_insert(persisted_turn);
-        self.set_goal_execution_status(local_task_id, Some("running"));
+            .or_insert_with(|| {
+                inserted = true;
+                persisted_turn
+            });
+        if inserted {
+            self.set_goal_execution_status(local_task_id, Some("running"));
+        }
         let handler = self.clone();
         let local_task_id = local_task_id.to_owned();
         tokio::spawn(async move {

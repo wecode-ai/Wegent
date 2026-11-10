@@ -34,7 +34,10 @@ import {
   routeUpgradeRequests,
   routeRunningUpgradeRequests,
 } from '../modules/upgrade-request-route.mjs'
-import { assertInstalledStartupWithStaleHistory } from '../modules/installed-startup-history.mjs'
+import {
+  assertInstalledStartupWithStaleHistory,
+  quitInstalledHost,
+} from '../modules/installed-startup-history.mjs'
 import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-handoff.mjs'
 import {
   installPreparedSource,
@@ -708,7 +711,10 @@ export async function createDesktopScenario(options) {
         checkpoint === 'app-rollback-recovery'
       ) {
         if (checkpoint === 'app-rollback-recovery')
-          await goalContinuity.restartPaused(restartDesktopApp)
+          await goalContinuity.restartPaused(async () => {
+            await quitInstalledHost(root, control)
+            await restartDesktopApp()
+          })
         await control.command('setLocalStorageItem', 'body', {
           value: JSON.stringify({ key: STORAGE_KEY, value: 'after-update' }),
         })

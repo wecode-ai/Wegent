@@ -11,6 +11,61 @@ struct Fixture {
 }
 
 #[tokio::test]
+async fn cold_goal_activation_can_admit_its_native_resume() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/goal/set"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$id"
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"cold-goal","goal":{"status":"active"}}}' ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id" ;;
+    *'"method":"thread/resume"'*)
+      printf '{"id":%s,"result":{"thread":{"id":"cold-goal","modelProvider":"~"}}}\n' "$id"
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"cold-goal","turn":{"id":"resumed"}}}'
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"cold-goal","goal":{"status":"complete"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"cold-goal","turn":{"id":"resumed","status":"completed"}}}' ;;
+    *'"method":"thread/goal/get"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"complete"}}}\n' "$id" ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    );
+    fixture
+        .client
+        .mutate_thread_goal(
+            "thread/goal/set",
+            json!({
+                "threadId":"cold-goal", "status":"active"
+            }),
+        )
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(5), fixture.client.run_turn_with_cancel(
+        ExecutionRequest {
+            task_id: "cold-goal-owner".into(),
+            bot: json!([{"shell_type":"Codex"}]),
+            model_config: json!({"model_id":"gpt-test","base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"}),
+            ..ExecutionRequest::default()
+        },
+        CodexAppServerTurnOptions {
+            resume_thread_id: Some("cold-goal".into()),
+            resume_goal_only: true,
+            ..CodexAppServerTurnOptions::default()
+        }
+    )).await;
+    fixture.client.restart().await;
+    assert!(
+        result.as_ref().is_ok_and(|result| result.is_ok()),
+        "Cold Goal recovery failed: {result:?}"
+    );
+}
+
+#[tokio::test]
 async fn recovered_goal_route_is_bound_before_native_resume_can_start_model_work() {
     let fixture = Fixture::with_script(
         r#"#!/bin/sh
