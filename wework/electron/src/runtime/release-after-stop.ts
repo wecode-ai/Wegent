@@ -116,7 +116,7 @@ export async function prepareReleaseAfterStop(
     windowsHide: true,
   }
   const execution = execute(
-    release.executable,
+    release.macosInstallation?.payloadExecutable ?? release.executable,
     [join(release.resources, 'app.asar', 'dist', 'runtime', 'release-after-stop-cli.js'), request],
     executionOptions
   )

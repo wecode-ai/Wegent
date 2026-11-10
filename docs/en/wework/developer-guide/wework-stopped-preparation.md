@@ -29,3 +29,20 @@ proof: verify both legacy-to-bridge and bridge-to-target upgrade/rollback agains
 package hashes, source revisions and CI evidence. Native API-key/account ownership, history,
 Goals and user repositories remain unchanged. Diagnostic builds and verification neither
 publish a release nor automatically promote upgrade edges.
+
+The target's offline entry waits for existing execution leases and native writers before
+migrating, without starting model processes or recovering Goals. Waiting for a thread-file
+lock must release coordination: native writer teardown also acquires coordination first.
+After acquiring the file lock, recheck current inodes to handle unlinked lock files.
+Ordinary model requests remain concurrent; this wait is restricted to stopped preparation.
+
+Unpublished bridge and target packages can run complete diagnostics using two independent,
+immutable build artifacts. Select the source build and all upgrade checks with publication
+disabled. macOS runs the complete upgrade/rollback group and Windows runs the core round
+trip. Diagnostics cannot produce promotable release edges.
+Locally, `WEWORK_E2E_UPGRADE_WRITER_WAIT_SECONDS=65` holds a real native Codex writer beyond
+the old launcher's 60-second budget. The default is 0; only integers from 0 to 600 are valid.
+History must remain unchanged, the trial timer must remain unstarted, and no completion
+receipt may appear while held. Releasing the writer must automatically resume preparation.
+Local macOS runs should set an isolated `CFFIXED_USER_HOME`. Fixture paths follow the same
+native Home as Foundation, avoiding the everyday application's singleton and legacy data.

@@ -8,6 +8,52 @@ const ID: &str = "00000000-0000-4000-8000-000000000001";
 const CHILD: &str = "00000000-0000-4000-8000-000000000002";
 
 #[test]
+fn stopped_migration_releases_coordination_while_waiting_for_native_writer_cleanup() {
+    use std::{sync::mpsc, thread, time::Duration};
+    let home = tempfile::tempdir().unwrap();
+    let (path, tail) = fixture(home.path(), ID, false);
+    let directory = home.path().join("thread-writer-locks");
+    fs::create_dir_all(&directory).unwrap();
+    let writer_path = directory.join(format!("{ID}.lock"));
+    let writer = lock(&writer_path, false).unwrap();
+    let (waiting_tx, waiting_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    let root = home.path().to_owned();
+    let migration = thread::spawn(move || {
+        let result = migrate_owned(
+            &root,
+            &mut |phase| {
+                if phase == Phase::WaitingForWriter {
+                    waiting_tx.send(()).unwrap();
+                }
+                Ok(())
+            },
+            true,
+        );
+        done_tx.send(result).unwrap();
+    });
+    waiting_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    // Match native Drop: coordination -> close writer -> unlink -> release.
+    let coordination = lock(&directory.join(".coordination.lock"), false).unwrap();
+    assert!(done_rx.try_recv().is_err());
+    drop(writer);
+    fs::remove_file(writer_path).unwrap();
+    drop(coordination);
+    done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    migration.join().unwrap();
+    let actual = content(&path);
+    assert_eq!(actual.split_once('\n').unwrap().1, tail);
+    assert_eq!(
+        serde_json::from_str::<Value>(actual.lines().next().unwrap()).unwrap()["payload"]
+            ["model_provider"],
+        ROUTER
+    );
+}
+
+#[test]
 fn unpublished_empty_rollouts_keep_native_readiness_recovery_and_are_migrated_once_ready() {
     let home = tempfile::tempdir().unwrap();
     let (path, tail) = fixture(home.path(), ID, false);
@@ -332,7 +378,7 @@ fn active_native_writer_blocks_migration_without_changing_any_data() {
     let (path, _) = fixture(home.path(), ID, false);
     let locks = home.path().join("thread-writer-locks");
     fs::create_dir_all(&locks).unwrap();
-    let _writer = lock(&locks.join(format!("{ID}.lock"))).unwrap();
+    let _writer = lock(&locks.join(format!("{ID}.lock")), false).unwrap();
     let before = fs::read(&path).unwrap();
     assert!(migrate(home.path()).unwrap_err().contains("live writer"));
     assert_eq!(fs::read(&path).unwrap(), before);

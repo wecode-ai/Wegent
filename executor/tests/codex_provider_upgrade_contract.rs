@@ -4,7 +4,8 @@
 use std::{
     fs,
     path::Path,
-    process::{Command, Output},
+    process::{Child, Command, Output},
+    time::{Duration, Instant},
 };
 
 use fs2::FileExt;
@@ -35,10 +36,15 @@ fn seed(home: &Path) -> (std::path::PathBuf, String) {
 }
 
 fn invoke(root: &Path, stopped: bool) -> Output {
+    command(root, stopped, false).output().unwrap()
+}
+
+fn command(root: &Path, stopped: bool, wait_for_writers: bool) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_wegent-executor"));
     command.arg("--workbench-codex-providers-migrate").arg(
         json!({
-            "codex_home":root.join("codex"),"agents_root":root.join("agents")
+            "codex_home":root.join("codex"),"agents_root":root.join("agents"),
+            "wait_for_writers":wait_for_writers
         })
         .to_string(),
     );
@@ -52,7 +58,72 @@ fn invoke(root: &Path, stopped: bool) -> Output {
             command.env(key, value);
         }
     }
-    command.output().unwrap()
+    command
+}
+
+struct OwnedPreparation(Child);
+
+impl Drop for OwnedPreparation {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn stopped_wait_entry_resumes_after_native_writer_releases_coordination_and_unlinks_lease() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("codex");
+    let (path, tail) = seed(&home);
+    let locks = home.join("thread-writer-locks");
+    fs::create_dir(&locks).unwrap();
+    let lease_path = locks.join(format!("{ID}.lock"));
+    let writer = fs::File::create(&lease_path).unwrap();
+    writer.lock_exclusive().unwrap();
+    let before = fs::read(&path).unwrap();
+    let mut preparation = OwnedPreparation(
+        command(root.path(), true, true)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let observed = Instant::now();
+    while observed.elapsed() < Duration::from_millis(100) {
+        assert!(preparation.0.try_wait().unwrap().is_none());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Match native WriterLockGuard::drop: coordinate before closing/unlinking.
+    let coordination = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(locks.join(".coordination.lock"))
+        .unwrap();
+    coordination.try_lock_exclusive().unwrap();
+    drop(writer);
+    fs::remove_file(lease_path).unwrap();
+    drop(coordination);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = preparation.0.try_wait().unwrap() {
+            assert!(status.success(), "Stopped migration failed: {status}");
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Stopped migration did not resume"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let content = fs::read_to_string(path).unwrap();
+    let (metadata, remaining) = content.split_once('\n').unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(metadata).unwrap()["payload"]["model_provider"],
+        "~"
+    );
+    assert_eq!(remaining, tail);
 }
 
 #[test]

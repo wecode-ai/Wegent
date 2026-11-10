@@ -17,6 +17,7 @@ import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
 import { createUpgradeConversationContinuity } from '../modules/upgrade-conversation-continuity.mjs'
+import { createUpgradeWriterWait } from '../modules/upgrade-writer-wait.mjs'
 import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
 import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
@@ -25,6 +26,7 @@ import { finishFailedUpgradeRetry } from '../modules/failed-upgrade-retry.mjs'
 import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
 import { stopProcessGroup, waitForOwnedProcessExit } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
+import { waitForInterruptedRollback } from '../modules/interrupted-rollback.mjs'
 import {
   routeUpgradeRequests,
   routeRunningUpgradeRequests,
@@ -66,30 +68,6 @@ const PROMPT = 'WEWORK_UPGRADE_PERSISTENCE'
 const ANSWER = 'WEWORK_UPGRADE_REAL_RUNTIME_OK'
 const STORAGE_KEY = 'wework:upgrade-regression-marker'
 
-async function waitForInterruptedRollback(root) {
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    let marker
-    try {
-      marker = await readFile(join(root, 'rollback-interrupted'), 'utf8')
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error
-    }
-    if (marker) {
-      const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
-      assert.ok(pid > 0)
-      try {
-        process.kill(pid, 0)
-      } catch (error) {
-        if (error.code === 'ESRCH') return
-        throw error
-      }
-    }
-    await new Promise(accept => setTimeout(accept, 50))
-  }
-  assert.fail('The real target did not terminate after recording manual rollback')
-}
-
 /** One reusable flow for fixed A -> B pairs. Version numbers never select assertions. */
 export async function createDesktopScenario(options) {
   const {
@@ -104,6 +82,7 @@ export async function createDesktopScenario(options) {
   const pairFile = process.env.WEWORK_E2E_UPGRADE_PAIR
   assert.ok(pairFile, 'Upgrade checkpoints require an independently built source/target pair')
   const pair = JSON.parse(await readFile(pairFile, 'utf8'))
+  const writerWait = createUpgradeWriterWait(pair, checkpoint, options)
   const usesDefaultUserData = options.usesDefaultUserData === true
   assert.equal(pair.transport, 'default-update-route')
   assert.ok(usesDefaultUserData, 'Upgrade verification must use the product default layout')
@@ -616,7 +595,9 @@ export async function createDesktopScenario(options) {
       )
       if (verifiesFailedActivation) await useVersionedMacosRecoveryBridge(root, pair.to.version)
       const readyCount = control.readyCount
+      await writerWait.beforeRestart(workspace)
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
+      await writerWait.afterRestart(root)
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
@@ -866,6 +847,11 @@ export async function createDesktopScenario(options) {
     },
     async cleanup() {
       const errors = []
+      try {
+        await writerWait.cleanup()
+      } catch (error) {
+        errors.push(error)
+      }
       try {
         const shutdownSnapshot =
           control && process.platform === 'win32' && checkpoint === 'app-rollback-recovery'

@@ -13,7 +13,8 @@ const execute = promisify(execFile)
 /** Target-owned upgrade/recovery step. Run before any executor or Goal recovery starts. */
 export async function migrateCodexProviderState(
   options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  waitForWriters = false
 ): Promise<void> {
   const { environment } = options
   const command = environment.WEWORK_EXECUTOR_PATH?.trim()
@@ -27,7 +28,11 @@ export async function migrateCodexProviderState(
       command,
       [
         '--workbench-codex-providers-migrate',
-        JSON.stringify({ codex_home: home, agents_root: agents }),
+        JSON.stringify({
+          codex_home: home,
+          agents_root: agents,
+          ...(waitForWriters ? { wait_for_writers: true } : {}),
+        }),
         '--executor-stopped',
         // An older binary must exit without initializing or opening any Home.
         '--version',

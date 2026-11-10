@@ -93,11 +93,34 @@ mod journal;
 
 /// Must be held until publication completes. This is Codex's own coordination
 /// namespace, so both native writers and its compression publisher are excluded.
-fn acquire_writers(home: &Path) -> Result<FileLease, String> {
+fn acquire_writers(
+    home: &Path,
+    wait_for_writers: bool,
+    checkpoint: &mut impl FnMut(Phase) -> Result<(), String>,
+) -> Result<FileLease, String> {
     let directory = home.join("thread-writer-locks");
     reject_link(&directory)?;
     fs::create_dir_all(&directory).map_err(error)?;
-    let coordination = lock(&directory.join(".coordination.lock"))?;
+    loop {
+        let coordination = lock(&directory.join(".coordination.lock"), wait_for_writers)?;
+        let Some(writer) = busy_writer(&directory)? else {
+            return Ok(coordination);
+        };
+        if !wait_for_writers {
+            return Err("Codex provider migration is blocked by a live writer".into());
+        }
+        // Native WriterLockGuard::drop needs coordination before closing its
+        // thread file. Never wait for that file while retaining coordination.
+        drop(coordination);
+        checkpoint(Phase::WaitingForWriter)?;
+        FileExt::lock_exclusive(&writer).map_err(error)?;
+        drop(writer);
+        // The old lock may have been unlinked. Recheck all current inodes under
+        // coordination before admitting publication, not just the waited file.
+    }
+}
+
+fn busy_writer(directory: &Path) -> Result<Option<File>, String> {
     for entry in fs::read_dir(&directory).map_err(error)? {
         let path = entry.map_err(error)?.path();
         if path.file_name().and_then(|s| s.to_str()) == Some(".coordination.lock") {
@@ -105,24 +128,39 @@ fn acquire_writers(home: &Path) -> Result<FileLease, String> {
         }
         if path.extension().and_then(|s| s.to_str()) == Some("lock") {
             // Coordination prevents new owners while existing owners are probed.
-            let _probe = lock(&path)?;
+            let file = open_writer_lock(&path)?;
+            match file.try_lock_exclusive() {
+                Ok(()) => {}
+                Err(e) if e.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
+                    return Ok(Some(file))
+                }
+                Err(e) => return Err(error(e)),
+            }
         }
     }
-    Ok(coordination)
+    Ok(None)
 }
 
-fn lock(path: &Path) -> Result<FileLease, String> {
+fn lock(path: &Path, wait_for_writers: bool) -> Result<FileLease, String> {
+    let file = open_writer_lock(path)?;
+    (if wait_for_writers {
+        FileExt::lock_exclusive(&file)
+    } else {
+        file.try_lock_exclusive()
+    })
+    .map_err(|_| "Codex provider migration is blocked by a live writer".to_owned())?;
+    Ok(FileLease(file))
+}
+
+fn open_writer_lock(path: &Path) -> Result<File, String> {
     reject_link(path)?;
-    let file = OpenOptions::new()
+    OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(path)
-        .map_err(error)?;
-    file.try_lock_exclusive()
-        .map_err(|_| "Codex provider migration is blocked by a live writer".to_owned())?;
-    Ok(FileLease(file))
+        .map_err(error)
 }
 
 /// Called only under the Home's exclusive process lease, before app-server is
@@ -131,8 +169,13 @@ pub(super) fn migrate(home: &Path) -> Result<(), String> {
     migrate_with_checkpoint(home, &mut |_| Ok(()))
 }
 
+pub(super) fn migrate_stopped(home: &Path, wait_for_writers: bool) -> Result<(), String> {
+    migrate_owned(home, &mut |_| Ok(()), wait_for_writers)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
+    WaitingForWriter,
     JournalPublished,
     RolloutPublished(usize),
     DatabaseCommitted(usize),
@@ -142,7 +185,15 @@ fn migrate_with_checkpoint(
     home: &Path,
     checkpoint: &mut impl FnMut(Phase) -> Result<(), String>,
 ) -> Result<(), String> {
-    let _writers = acquire_writers(home)?;
+    migrate_owned(home, checkpoint, false)
+}
+
+fn migrate_owned(
+    home: &Path,
+    checkpoint: &mut impl FnMut(Phase) -> Result<(), String>,
+    wait_for_writers: bool,
+) -> Result<(), String> {
+    let _writers = acquire_writers(home, wait_for_writers, checkpoint)?;
     let journal_path = home.join(JOURNAL);
     reject_link(&journal_path)?;
     let (mut journal, compacted) = journal::load(&journal_path)?;

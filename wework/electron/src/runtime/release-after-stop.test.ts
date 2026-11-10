@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, test, vi } from 'vitest'
 import { assertReleaseAfterStopReady, prepareReleaseAfterStop } from './release-after-stop.js'
@@ -106,6 +106,27 @@ test('a stopped hook can restart after failure without confirming or replacing i
     code: 'ENOENT',
   })
   await writeFile(target.executable, valid)
+  await prepareReleaseAfterStop(store, target, root, homes)
+  await expect(
+    assertReleaseAfterStopReady(store, target, { weworkAfterStopPreparation: 1 })
+  ).resolves.toBeUndefined()
+})
+
+test('macOS preparation executes the target payload before the installed application is replaced', async () => {
+  const { root, store, target, homes, valid } = await fixture()
+  const payloadExecutable = join(
+    store.slot(target.id),
+    'host',
+    'WeWork.app',
+    'Contents',
+    'MacOS',
+    'WeWork'
+  )
+  await mkdir(dirname(payloadExecutable), { recursive: true })
+  await writeFile(payloadExecutable, valid)
+  await writeFile(target.executable, 'process.exit(42)')
+  target.macosInstallation = { payloadExecutable, bootstrapFromPayload: true }
+  await store.save(target)
   await prepareReleaseAfterStop(store, target, root, homes)
   await expect(
     assertReleaseAfterStopReady(store, target, { weworkAfterStopPreparation: 1 })

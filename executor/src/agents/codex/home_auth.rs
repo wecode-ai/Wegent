@@ -14,18 +14,26 @@ use crate::file_lease::FileLease;
 
 /// Prepare durable state without launching a native process or changing auth.
 /// The same Home-wide leases exclude older Wework executors during migration.
-pub(crate) fn prepare_provider_migration(home: &Path) -> Result<(), String> {
+pub(crate) fn prepare_provider_migration(
+    home: &Path,
+    wait_for_writers: bool,
+) -> Result<(), String> {
     fs::create_dir_all(home).map_err(|error| format!("create Codex Home: {error}"))?;
     let gate = FileLease(open_lock(&home.join(".wework-auth-start.lock"))?);
-    gate.0
-        .try_lock_exclusive()
-        .map_err(|error| lock_error(error, None))?;
+    (if wait_for_writers {
+        FileExt::lock_exclusive(&gate.0)
+    } else {
+        gate.0.try_lock_exclusive()
+    })
+    .map_err(|error| lock_error(error, None))?;
     let users = FileLease(open_lock(&home.join(".wework-auth-processes.lock"))?);
-    users
-        .0
-        .try_lock_exclusive()
-        .map_err(|error| lock_error(error, None))?;
-    super::super::provider_migration::migrate(home)
+    (if wait_for_writers {
+        FileExt::lock_exclusive(&users.0)
+    } else {
+        users.0.try_lock_exclusive()
+    })
+    .map_err(|error| lock_error(error, None))?;
+    super::super::provider_migration::migrate_stopped(home, wait_for_writers)
 }
 
 /// The startup gate keeps mode selection atomic while lifetime readers protect

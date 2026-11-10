@@ -20,6 +20,8 @@ use crate::file_lease::FileLease;
 struct Request {
     codex_home: PathBuf,
     agents_root: PathBuf,
+    #[serde(default)]
+    wait_for_writers: bool,
 }
 
 pub fn run(input: &str) -> Result<Value, String> {
@@ -60,8 +62,8 @@ pub fn run(input: &str) -> Result<Value, String> {
         if !has_codex_history(&home)? {
             continue;
         }
-        let _execution = acquire_execution(&home)?;
-        crate::agents::prepare_provider_migration(&home)?;
+        let _execution = acquire_execution(&home, request.wait_for_writers)?;
+        crate::agents::prepare_provider_migration(&home, request.wait_for_writers)?;
         checked += 1;
     }
     Ok(json!({"codex_provider_migration":1, "complete":true, "checked_homes":checked}))
@@ -93,7 +95,7 @@ fn has_codex_history(home: &Path) -> Result<bool, String> {
     Ok(false)
 }
 
-fn acquire_execution(home: &Path) -> Result<FileLease, String> {
+fn acquire_execution(home: &Path, wait_for_writers: bool) -> Result<FileLease, String> {
     let path = home.join(".execution.lock");
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => Some(metadata),
@@ -110,8 +112,12 @@ fn acquire_execution(home: &Path) -> Result<FileLease, String> {
         .truncate(false)
         .open(path)
         .map_err(|e| e.to_string())?;
-    file.try_lock_exclusive()
-        .map_err(|_| "Codex migration is waiting for an active Agent execution")?;
+    (if wait_for_writers {
+        FileExt::lock_exclusive(&file)
+    } else {
+        file.try_lock_exclusive()
+    })
+    .map_err(|_| "Codex migration is waiting for an active Agent execution")?;
     Ok(FileLease(file))
 }
 
@@ -120,13 +126,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stopped_wait_mode_waits_for_the_existing_execution_lease_without_rewriting_early() {
+        use std::{sync::mpsc, thread, time::Duration};
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("codex");
+        fs::create_dir_all(home.join("sessions")).unwrap();
+        let writer = acquire_execution(&home, false).unwrap();
+        let path = home.join("sessions/rollout-00000000-0000-4000-8000-000000000001.jsonl");
+        let before = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"00000000-0000-4000-8000-000000000001\",\"model_provider\":\"old\"}}\n";
+        fs::write(&path, before).unwrap();
+        let input = json!({"codex_home":home,"agents_root":root.path().join("agents"),"wait_for_writers":true}).to_string();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let preparation = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            done_tx.send(run(&input)).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(done_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        drop(writer);
+        assert_eq!(
+            done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap()["complete"],
+            true
+        );
+        preparation.join().unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(fs::read_to_string(path).unwrap().trim()).unwrap()
+                ["payload"]["model_provider"],
+            "~"
+        );
+    }
+
+    #[test]
     fn absent_execution_lock_is_created_and_held_until_migration_exits() {
         let root = tempfile::tempdir().unwrap();
-        let lease = acquire_execution(root.path()).unwrap();
+        let lease = acquire_execution(root.path(), false).unwrap();
         assert!(root.path().join(".execution.lock").is_file());
-        assert!(acquire_execution(root.path()).is_err());
+        assert!(acquire_execution(root.path(), false).is_err());
         drop(lease);
-        acquire_execution(root.path()).unwrap();
+        acquire_execution(root.path(), false).unwrap();
     }
 
     #[test]

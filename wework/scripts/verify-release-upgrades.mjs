@@ -30,7 +30,8 @@ import {
   upgradeVerificationCheckpoint,
   upgradeIncludesFaultRecovery,
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
-  UPGRADE_SOURCE_DIAGNOSTICS,
+  UPGRADE_CHECKPOINT_GROUP,
+  isUpgradeSourceDiagnostic,
   UPGRADE_SUITE_VERSION,
 } from '../e2e/desktop/upgrade-suite.mjs'
 
@@ -56,14 +57,18 @@ if (publishedTarget)
     directory: assets,
   })
 const diagnosticCheckpoint = process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT || ''
-if (diagnosticCheckpoint && !UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(diagnosticCheckpoint))
+if (
+  diagnosticCheckpoint &&
+  diagnosticCheckpoint !== UPGRADE_CHECKPOINT_GROUP &&
+  !UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(diagnosticCheckpoint)
+)
   throw new Error('Invalid upgrade diagnostic checkpoint')
 const sourceAssets = process.env.WEWORK_UPGRADE_SOURCE_ASSETS || ''
 const sourceVersion = process.env.WEWORK_UPGRADE_SOURCE_VERSION || ''
 if (
   Boolean(sourceAssets) !== Boolean(sourceVersion) ||
-  (sourceAssets && !UPGRADE_SOURCE_DIAGNOSTICS.includes(diagnosticCheckpoint)) ||
-  (UPGRADE_SOURCE_DIAGNOSTICS.includes(diagnosticCheckpoint) && !sourceAssets)
+  (sourceAssets && !isUpgradeSourceDiagnostic(diagnosticCheckpoint)) ||
+  (isUpgradeSourceDiagnostic(diagnosticCheckpoint) && !sourceAssets)
 )
   throw new Error('The update diagnostic requires immutable source artifacts and their version')
 const releaseChannels = releaseVerificationChannels(
@@ -128,7 +133,11 @@ try {
 }
 
 async function verifyChannel(catalogs, targetChannel) {
-  const plan = releaseUpgradePlan(Object.values(catalogs), node, targetChannel)
+  // An explicit, non-publishing bridge pair has no published source yet. It
+  // cannot authorize a catalog edge and must not infer one from older releases.
+  const plan = sourceAssets
+    ? null
+    : releaseUpgradePlan(Object.values(catalogs), node, targetChannel)
   const report = {
     schemaVersion: 1,
     version: release.version,
@@ -383,14 +392,14 @@ async function verifySource(source, targetChannel, previous) {
 }
 
 async function run(environment) {
+  const checkpoint =
+    diagnosticCheckpoint && diagnosticCheckpoint !== UPGRADE_CHECKPOINT_GROUP
+      ? diagnosticCheckpoint
+      : upgradeVerificationCheckpoint(platform)
   return new Promise((accept, reject) => {
     const child = spawn(
       process.execPath,
-      [
-        'e2e/desktop/run-checkpoints.mjs',
-        '--parallel-segments',
-        diagnosticCheckpoint || upgradeVerificationCheckpoint(platform),
-      ],
+      ['e2e/desktop/run-checkpoints.mjs', '--parallel-segments', checkpoint],
       {
         cwd: root,
         env: {
@@ -407,13 +416,7 @@ async function run(environment) {
     child.once('error', reject)
     child.once('exit', (code, signal) => {
       try {
-        accept(
-          upgradeCheckpointPassed(
-            diagnosticCheckpoint || upgradeVerificationCheckpoint(platform),
-            { code, signal },
-            Boolean(diagnosticCheckpoint)
-          )
-        )
+        accept(upgradeCheckpointPassed(checkpoint, { code, signal }, Boolean(diagnosticCheckpoint)))
       } catch (error) {
         reject(error)
       }

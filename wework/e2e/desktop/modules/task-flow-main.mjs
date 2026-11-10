@@ -1248,6 +1248,7 @@ async function main() {
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
       codexSqliteHome,
+      codexHome,
       executorHome,
       electronUserDataDirectory,
       usesDefaultUserData,
