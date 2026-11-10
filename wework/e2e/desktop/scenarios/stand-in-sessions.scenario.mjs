@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as poll } from 'node:timers/promises'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -30,6 +30,13 @@ const FOLLOWUP = 'STAND_IN_SESSION_FOLLOWUP'
 const CHILD = 'STAND_IN_SESSION_CHILD_RESULT'
 const SWITCH = 'STAND_IN_SESSION_UI_PROVIDER_SWITCH'
 const SWITCH_FOLLOWUP = 'STAND_IN_SESSION_UI_PROVIDER_FOLLOWUP'
+const ASYNC_QUESTION = 'STAND_IN_SESSION_ASYNC_QUESTION'
+const ASYNC_ANSWER = 'STAND_IN_SESSION_ASYNC_ANSWER'
+const ASYNC_COMPLETION = 'STAND_IN_SESSION_ASYNC_ANSWER_ACCEPTED'
+const RETRY_PROMPT = 'STAND_IN_SESSION_PROVIDER_RETRY'
+const RETRY_FAILURE = 'STAND_IN_SESSION_INTENTIONAL_RETRY_FAILURE'
+const RETRY_COMPLETION = 'STAND_IN_SESSION_PROVIDER_RETRY_COMPLETE'
+const RETRY_CONTINUATION = 'Continue the unfinished work from the previous turn'
 const CHAT = '[data-testid="stand-in-conversation"]'
 const SOURCE_MODEL = 'local-model:desktop-e2e-responses'
 
@@ -44,6 +51,9 @@ export function createDesktopScenario({
   let questionCalls = 0
   let resultDelivered = false
   let providerSwitchObserved = false
+  let asyncAnswerObserved = false
+  let retryFailureDelivered = false
+  let retrySwitchObserved = false
 
   async function settled(control, expected = () => true) {
     const deadline = Date.now() + modelResponseTimeoutMs
@@ -74,11 +84,25 @@ export function createDesktopScenario({
   return {
     modelProviderId: 'openai',
     modelId: PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
-    async prepareApp({ codexHome, control }) {
+    async prepareApp({ codexHome, executorHome, control }) {
       const configPath = join(codexHome, 'config.toml')
       const config = await readFile(configPath, 'utf8')
       // Keep the real built-in provider identity while mocking only its model service.
       await writeFile(configPath, `openai_base_url = "${control.url}/v1"\n${config}`)
+      // The official model must advertise the same non-blocking question tool as
+      // the custom provider so the switched session can ask before it settles.
+      const capabilities = join(executorHome, 'capabilities')
+      await mkdir(capabilities, { recursive: true })
+      await writeFile(
+        join(capabilities, 'model-catalog-overrides.json'),
+        JSON.stringify([
+          {
+            slug: PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+            fields: { experimental_supported_tools: ['request_user_input_async'] },
+          },
+        ])
+      )
+      await rm(join(codexHome, 'models_cache.json'), { force: true })
     },
     attachServer(server) {
       server.on('upgrade', (_request, socket) => rejectModelWebSocketUpgrade(server, socket))
@@ -89,20 +113,65 @@ export function createDesktopScenario({
       const body = await readRequestBody(req)
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
+      const lastUserText = JSON.stringify(
+        (Array.isArray(body.input) ? body.input : [])
+          .filter(item => item?.role === 'user')
+          .at(-1) ?? ''
+      )
       let events
-      if (input.includes(SWITCH_FOLLOWUP)) {
+      if (lastUserText.includes(RETRY_CONTINUATION)) {
+        assert.notEqual(
+          body.model,
+          PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+          'The cross-provider retry stayed on the failed thread model'
+        )
+        retrySwitchObserved = true
+        events = [assistantMessage(RETRY_COMPLETION)]
+      } else if (lastUserText.includes(RETRY_PROMPT)) {
+        assert.equal(retryFailureDelivered, false, 'The retry prompt failed more than once')
+        retryFailureDelivered = true
+        response.writeHead(400, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            error: { type: 'invalid_request_error', message: RETRY_FAILURE },
+          })
+        )
+        return true
+      } else if (lastUserText.includes(ASYNC_ANSWER)) {
+        assert.equal(
+          body.model,
+          PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+          'The async answer was routed back to the stale provider'
+        )
+        asyncAnswerObserved = true
+        events = [assistantMessage(ASYNC_COMPLETION)]
+      } else if (input.includes(SWITCH_FOLLOWUP)) {
         events = [assistantMessage('切换后的后续消息继续使用同一个执行会话。')]
       } else if (input.includes(SWITCH)) {
-        assert.ok(
-          input.includes('untrusted background context'),
-          'Provider transitions must bridge readable reference context'
-        )
-        assert.ok(
-          input.includes(SECOND),
-          'The previous stand-in conversation must remain available as reference'
-        )
-        providerSwitchObserved = true
-        events = [assistantMessage('模型已在原分身入口切换，历史保持可读。')]
+        if (toolOutputText(body, 'stand-in-async-question') !== null) {
+          events = [assistantMessage('问题已记录，继续当前工作。')]
+        } else {
+          assert.ok(
+            input.includes('untrusted background context'),
+            'Provider transitions must bridge readable reference context'
+          )
+          assert.ok(
+            input.includes(SECOND),
+            'The previous stand-in conversation must remain available as reference'
+          )
+          providerSwitchObserved = true
+          events = selectedToolCall(
+            'stand-in-async-question',
+            selectTool(body, 'request_user_input_async', {
+              questions: [
+                {
+                  title: ASYNC_QUESTION,
+                  options: ['Wait', ASYNC_ANSWER],
+                },
+              ],
+            })
+          )
+        }
       } else if (input.includes('Wework delegated task result:')) {
         assert.ok(input.includes(SECOND), 'Work results must wake the current execution session')
         assert.ok(!input.includes(FIRST), 'Work results must not reopen the old execution session')
@@ -402,6 +471,7 @@ export function createDesktopScenario({
         current.threadId
       )
       assert.equal(current.modelSelection.modelName, SOURCE_MODEL)
+      await control.command('focusMainWindow', 'body')
       await control.command(
         'fill',
         `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
@@ -421,17 +491,52 @@ export function createDesktopScenario({
         ),
         'Switching providers must preserve the stand-in draft'
       )
+      // Fail the work-list refresh that follows the accepted switch so the
+      // renderer keeps the previous provider until a later successful refresh.
+      await control.command('failLocalExecutorRequests', 'body', {
+        value: JSON.stringify({
+          method: 'runtime.tasks.list',
+          message: 'Desktop E2E intentional work list refresh failure',
+        }),
+      })
       await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
-      await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
-        text: '模型已在原分身入口切换',
+      await control.command('waitFor', `${CHAT} [data-testid="request-user-input-card"]`, {
+        text: ASYNC_QUESTION,
         timeoutMs: modelResponseTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="runtime-work-load-status"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.match(
+        await control.command('getText', '[data-testid="runtime-work-load-status"]'),
+        /任务刷新失败|Couldn't refresh tasks/,
+        'The switched session must keep the stale task list after its refresh fails'
+      )
       const switched = await settled(
         control,
         task => task.threadId !== current.threadId && providerSwitchObserved
       )
       assert.equal(switched.taskId, TASK)
       assert.equal(switched.modelSelection.modelName, PROVIDER_SWITCH_OFFICIAL_OPTION_ID)
+      await control.command('focusMainWindow', 'body')
+      await control.command(
+        'click',
+        `${CHAT} [data-testid="request-user-input-option-question_1-1"]`
+      )
+      await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
+        text: ASYNC_COMPLETION,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      assert.equal(asyncAnswerObserved, true)
+      assert.equal((await settled(control)).threadId, switched.threadId)
+      await control.command('clearLocalExecutorRequestFailures', 'body')
+      await control.command('clickWhenEnabled', '[data-testid="runtime-work-load-retry"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="runtime-work-load-status"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command(
         'fill',
         `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
@@ -443,9 +548,48 @@ export function createDesktopScenario({
         timeoutMs: modelResponseTimeoutMs,
       })
       assert.equal((await settled(control)).threadId, switched.threadId)
+      await control.command(
+        'fill',
+        `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
+        { value: RETRY_PROMPT }
+      )
+      await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
+      await control.command('waitFor', `${CHAT} [data-testid="assistant-error-retry"]`, {
+        visible: true,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const failed = (
+        await requestExecutor(control, 'runtime.tasks.get', { taskId: TASK }, uiTimeoutMs)
+      ).task
+      assert.equal(failed.threadId, switched.threadId)
+      await selectE2EModel(control, SOURCE_MODEL, 'Desktop E2E Responses', CHAT)
+      await control.command('focusMainWindow', 'body')
+      await control.command('clickWhenEnabled', `${CHAT} [data-testid="assistant-error-retry"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
+        text: RETRY_COMPLETION,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const retried = await settled(control)
+      assert.equal(retrySwitchObserved, true)
+      assert.notEqual(retried.threadId, failed.threadId)
+      assert.equal(retried.modelSelection.modelName, SOURCE_MODEL)
+      await control.command('waitFor', '[data-testid="personal-stand-in-unread-count"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
     },
     diagnostics() {
-      return { cleanContextObserved, questionCalls, resultDelivered, providerSwitchObserved }
+      return {
+        cleanContextObserved,
+        questionCalls,
+        resultDelivered,
+        providerSwitchObserved,
+        asyncAnswerObserved,
+        retryFailureDelivered,
+        retrySwitchObserved,
+      }
     },
   }
 }

@@ -23,6 +23,8 @@ import {
   resumeBundledPluginUpdates,
   ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
+  clearLocalExecutorRequestFailuresForE2E,
+  failLocalExecutorRequestsForE2E,
   getBundledPluginUpdateState,
   getInitializedBundledPluginMarketplace,
   getLocalExecutorRequestHoldSnapshotForE2E,
@@ -994,6 +996,24 @@ describe('localExecutor', () => {
       expect(requestDshExecutorMock).toHaveBeenCalledExactlyOnceWith('runtime.tasks.send', {
         taskId: 'task-1',
       })
+    })
+
+    test('rejects every matching executor request until the failure is cleared', async () => {
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      requestDshExecutorMock.mockResolvedValue({ accepted: true })
+      failLocalExecutorRequestsForE2E('runtime.tasks.list', 'Desktop E2E stale cache')
+
+      await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow(
+        'Desktop E2E stale cache'
+      )
+      await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow(
+        'Desktop E2E stale cache'
+      )
+      expect(requestDshExecutorMock).not.toHaveBeenCalled()
+
+      clearLocalExecutorRequestFailuresForE2E()
+      await expect(requestLocalExecutor('runtime.tasks.list')).resolves.toEqual({ accepted: true })
+      expect(requestDshExecutorMock).toHaveBeenCalledExactlyOnceWith('runtime.tasks.list', {})
     })
   })
 })

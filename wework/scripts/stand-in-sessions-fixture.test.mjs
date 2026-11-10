@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -11,17 +11,33 @@ describe('stand-in session provider-switch fixture', () => {
   test('uses the built-in provider instead of a custom provider with the same GPT alias', async () => {
     const scenario = createDesktopScenario({})
     expect(scenario.modelProviderId).toBe('openai')
-    const codexHome = await mkdtemp(join(tmpdir(), 'stand-in-sessions-fixture-'))
+    const executorHome = await mkdtemp(join(tmpdir(), 'stand-in-sessions-fixture-'))
+    const codexHome = join(executorHome, 'codex')
+    await mkdir(codexHome, { recursive: true })
     try {
       const configPath = join(codexHome, 'config.toml')
       const config = `model_provider = "${scenario.modelProviderId}"\nmodel = "${scenario.modelId}"\n`
       await writeFile(configPath, config)
-      await scenario.prepareApp({ codexHome, control: { url: 'http://127.0.0.1:43111' } })
+      await scenario.prepareApp({
+        codexHome,
+        executorHome,
+        control: { url: 'http://127.0.0.1:43111' },
+      })
       expect(await readFile(configPath, 'utf8')).toBe(
         `openai_base_url = "http://127.0.0.1:43111/v1"\n${config}`
       )
+      expect(
+        JSON.parse(
+          await readFile(join(executorHome, 'capabilities', 'model-catalog-overrides.json'), 'utf8')
+        )
+      ).toEqual([
+        {
+          slug: 'gpt-5.5',
+          fields: { experimental_supported_tools: ['request_user_input_async'] },
+        },
+      ])
     } finally {
-      await rm(codexHome, { recursive: true, force: true })
+      await rm(executorHome, { recursive: true, force: true })
     }
   })
 

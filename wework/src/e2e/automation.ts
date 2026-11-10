@@ -82,6 +82,8 @@ import type { RuntimeTaskLifecycleSnapshot } from '@/features/workbench/runtimeT
 import { summarizeRuntimeTaskExecution } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import {
   awaitLocalExecutorRequestHoldForE2E,
+  clearLocalExecutorRequestFailuresForE2E,
+  failLocalExecutorRequestsForE2E,
   failNextLocalExecutorRequestForE2E,
   ensureBundledPluginInstalled,
   getInitializedBundledPluginMarketplace,
@@ -2449,6 +2451,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
       return ''
     }
+    case 'failLocalExecutorRequests': {
+      const { method, message } = JSON.parse(command.value ?? '{}') as {
+        method?: string
+        message?: string
+      }
+      if (!method) throw new Error('failLocalExecutorRequests requires a method')
+      failLocalExecutorRequestsForE2E(
+        method,
+        message ?? 'Desktop E2E intentional local executor failure'
+      )
+      return ''
+    }
+    case 'clearLocalExecutorRequestFailures':
+      clearLocalExecutorRequestFailuresForE2E()
+      return ''
     case 'clearRuntimeGoalDirectly':
       return JSON.stringify(
         await requestLocalExecutor('runtime.tasks.goal.clear', JSON.parse(command.value ?? '{}'))

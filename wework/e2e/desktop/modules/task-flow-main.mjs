@@ -1497,7 +1497,13 @@ async function main() {
       for (const key of Object.keys(appEnvironment)) delete appEnvironment[key]
       Object.assign(appEnvironment, cleanEnvironment)
     }
-    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
+    await desktopScenario?.prepareApp?.({
+      appBinary,
+      appEnvironment,
+      codexHome,
+      control,
+      executorHome,
+    })
     if (desktopScenario?.requiresNativeCloudAuthorization) {
       assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
       nativeCloudLogin = nativeCloudAuthorizationFixture(

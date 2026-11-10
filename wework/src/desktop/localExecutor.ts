@@ -226,6 +226,8 @@ let nextLocalExecutorRequestFailure: {
   resolve: () => void
 } | null = null
 
+let localExecutorRequestFailure: { method: string; message: string } | null = null
+
 type LocalExecutorRequestHold = {
   method: string
   phase: 'before-dispatch' | 'after-response'
@@ -249,6 +251,21 @@ export function failNextLocalExecutorRequestForE2E(method: string, message: stri
   return new Promise(resolve => {
     nextLocalExecutorRequestFailure = { method, message, resolve }
   })
+}
+
+/** Reject every matching E2E request until the scenario clears the failure. */
+export function failLocalExecutorRequestsForE2E(method: string, message: string): void {
+  if (!isLocalExecutorE2EMode()) {
+    throw new Error('Local executor request failure injection is only available in E2E mode')
+  }
+  localExecutorRequestFailure = { method, message }
+}
+
+export function clearLocalExecutorRequestFailuresForE2E(): void {
+  if (!isLocalExecutorE2EMode()) {
+    throw new Error('Local executor request failure injection is only available in E2E mode')
+  }
+  localExecutorRequestFailure = null
 }
 
 /**
@@ -650,6 +667,7 @@ export function resetLocalExecutorStateForTests(): void {
   reconcileBundledPluginMarketplacePromise = null
   localExecutorRequestHold = null
   nextLocalExecutorRequestFailure = null
+  localExecutorRequestFailure = null
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
@@ -729,6 +747,9 @@ export function requestLocalExecutor<T = unknown>(
       nextLocalExecutorRequestFailure = null
       failure.resolve()
       return Promise.reject(new Error(failure.message))
+    }
+    if (localExecutorRequestFailure?.method === method) {
+      return Promise.reject(new Error(localExecutorRequestFailure.message))
     }
     const send = (query: Record<string, unknown>) =>
       requestOptions
