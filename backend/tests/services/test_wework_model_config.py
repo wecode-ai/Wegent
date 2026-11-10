@@ -73,6 +73,34 @@ def test_invalid_request_mode_is_rejected(mode: object) -> None:
         wework_model_config_options({"codex_request_mode": mode})
 
 
+@pytest.mark.parametrize("conversion", ["none", "all", "except_apply_patch"])
+def test_custom_tool_conversion_is_exposed(conversion: str) -> None:
+    assert wework_model_config_options({"custom_tool_conversion": conversion}) == {
+        "custom_tool_conversion": conversion
+    }
+
+
+@pytest.mark.parametrize("conversion", ["unknown", True, {}, []])
+def test_invalid_custom_tool_conversion_is_rejected(conversion: object) -> None:
+    with pytest.raises(ValueError, match="custom_tool_conversion"):
+        wework_model_config_options({"custom_tool_conversion": conversion})
+
+
+@pytest.mark.parametrize("conversion", ["unknown", True, {}, []])
+def test_catalog_omits_invalid_custom_tool_conversion(
+    conversion: object,
+) -> None:
+    config = {
+        "custom_tool_conversion": conversion,
+        "env": {"thinking_config": {"reasoning": {"effort": "high"}}},
+    }
+    catalog_config = wework_model_catalog_config(config)
+    assert "custom_tool_conversion" not in catalog_config
+    assert catalog_config["reasoning"] == {"effort": "high"}
+    with pytest.raises(ValueError, match="custom_tool_conversion"):
+        wework_model_config_options(config)
+
+
 @pytest.mark.parametrize("mode", ["unknown", True, {}, []])
 def test_catalog_omits_invalid_mode_without_mutating_execution_config(
     mode: object,

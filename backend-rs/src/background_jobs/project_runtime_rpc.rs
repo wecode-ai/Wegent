@@ -203,7 +203,7 @@ pub(crate) async fn runtime_model_config(
         let owner = super::authority::integer(&options["weworkCloudModelResourceUserId"])
             .filter(|value| *value >= 0)
             .context("Cloud model identity is incomplete")?;
-        let config = crate::llm_proxy::resolve_model_config(
+        let (config, spec) = crate::llm_proxy::resolve_model_config_with_spec(
             state,
             user,
             model,
@@ -232,6 +232,12 @@ pub(crate) async fn runtime_model_config(
         )?;
         let native = format == "openai-responses";
         let mut result = json!({"model":"openai","model_id":model,"api_format":"responses","protocol":"openai-responses","upstream_api_format":format,"codex_catalog_model_id":"wework-gpt-5.6-sol","base_url":format!("{}/api/runtime-work/llm-responses-proxy",base.trim_end_matches('/')),"api_key":access,"default_headers":{"X-Wegent-Model-Type":kind,"X-Wegent-Model-Namespace":namespace,"X-Wegent-Model-User-Id":owner.to_string(),"X-Wegent-Upstream-Header-wecode-executor":"codex","X-Wegent-Upstream-Header-wecode-source":"wegent-agent"},"runtime_config":{"codex":{"use_user_config":false,"configured":true}},"wework_model_kind":"cloud","tool_profile":"custom","codex_responses_compat_proxy":true,"native_tool_search":native,"native_namespace_tools":native});
+        if let Some(conversion) = spec
+            .pointer("/modelConfig/custom_tool_conversion")
+            .and_then(Value::as_str)
+        {
+            result["custom_tool_conversion"] = json!(conversion);
+        }
         apply_model_options(&mut result, options);
         return Ok(result);
     }

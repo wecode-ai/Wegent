@@ -234,6 +234,25 @@ fn codex_request_mode_overrides_native_tool_flags() {
 }
 
 #[test]
+fn custom_tool_conversion_is_exposed_and_validated() {
+    let spec = json!({
+        "modelConfig": {"custom_tool_conversion": "except_apply_patch", "env": {}}
+    });
+    let options = wework_model_config_options(&spec, "openai-responses").expect("options");
+    assert_eq!(
+        options.get("custom_tool_conversion"),
+        Some(&json!("except_apply_patch"))
+    );
+    assert!(
+        wework_model_config_options(
+            &json!({"modelConfig": {"custom_tool_conversion": "sometimes", "env": {}}}),
+            "openai-responses"
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn decodes_conversation_and_response_identity() {
     let conversation = encode_identity("conv_", &["device-1", "task-1"]);
     assert_eq!(

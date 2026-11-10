@@ -219,6 +219,21 @@ pub(super) fn wework_model_config_options(
             Value::String(mode.to_string()),
         );
     }
+    let conversion = model_config
+        .get("custom_tool_conversion")
+        .and_then(Value::as_str);
+    if let Some(conversion) = conversion {
+        if !["none", "all", "except_apply_patch"].contains(&conversion) {
+            return Err(FastApiError::detail(
+                StatusCode::BAD_REQUEST,
+                "custom_tool_conversion must be none, all or except_apply_patch",
+            ));
+        }
+        options.insert(
+            "custom_tool_conversion".to_string(),
+            Value::String(conversion.to_string()),
+        );
+    }
     for (key, alias) in [
         ("native_tool_search", "nativeToolSearch"),
         ("native_namespace_tools", "nativeNamespaceTools"),

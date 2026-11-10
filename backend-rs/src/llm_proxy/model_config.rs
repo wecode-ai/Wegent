@@ -171,9 +171,19 @@ pub(crate) fn validate_wework_model_config_options(
     model_name: &str,
     config: &ModelConfig,
 ) -> Result<(), FastApiError> {
-    let mode = spec
-        .get("modelConfig")
-        .and_then(Value::as_object)
+    let model_config = spec.get("modelConfig").and_then(Value::as_object);
+    if let Some(conversion) = model_config
+        .and_then(|model_config| model_config.get("custom_tool_conversion"))
+        .filter(|value| !value.is_null())
+    {
+        let Some(conversion) = conversion.as_str() else {
+            return Err(custom_tool_conversion_error());
+        };
+        if !["none", "all", "except_apply_patch"].contains(&conversion) {
+            return Err(custom_tool_conversion_error());
+        }
+    }
+    let mode = model_config
         .and_then(|model_config| model_config.get("codex_request_mode"))
         .filter(|value| !value.is_null());
     let Some(mode) = mode else {
@@ -206,6 +216,14 @@ fn codex_request_mode_error() -> FastApiError {
     FastApiError::detail(
         StatusCode::BAD_REQUEST,
         "codex_request_mode must be auto, standard or passthrough",
+    )
+}
+
+/// `wework_model_config_options`' `ValueError` for an unsupported conversion mode.
+fn custom_tool_conversion_error() -> FastApiError {
+    FastApiError::detail(
+        StatusCode::BAD_REQUEST,
+        "custom_tool_conversion must be none, all or except_apply_patch",
     )
 }
 
@@ -641,6 +659,21 @@ mod tests {
         let null = json!({ "modelConfig": { "codex_request_mode": null, "env": {} } });
         assert!(validate_wework_model_config_options(&null, "m", &responses).is_ok());
         assert!(validate_wework_model_config_options(&json!({}), "m", &responses).is_ok());
+    }
+
+    #[test]
+    fn custom_tool_conversion_validation_matches_source() {
+        let responses = config(Some("openai-responses"), Some("responses"));
+        for conversion in ["none", "all", "except_apply_patch"] {
+            let spec = json!({ "modelConfig": { "custom_tool_conversion": conversion } });
+            assert!(validate_wework_model_config_options(&spec, "m", &responses).is_ok());
+        }
+        let invalid = json!({ "modelConfig": { "custom_tool_conversion": "sometimes" } });
+        assert!(validate_wework_model_config_options(&invalid, "m", &responses).is_err());
+        let numeric = json!({ "modelConfig": { "custom_tool_conversion": 3 } });
+        assert!(validate_wework_model_config_options(&numeric, "m", &responses).is_err());
+        let null = json!({ "modelConfig": { "custom_tool_conversion": null } });
+        assert!(validate_wework_model_config_options(&null, "m", &responses).is_ok());
     }
 
     #[test]

@@ -11,6 +11,7 @@ REASONING_VALUES = {
     "summary": {"auto", "concise", "detailed"},
 }
 CODEX_REQUEST_MODES = {"auto", "standard", "passthrough"}
+CUSTOM_TOOL_CONVERSIONS = {"none", "all", "except_apply_patch"}
 
 
 def positive_token_limit(value: Any) -> int | None:
@@ -47,6 +48,9 @@ def wework_model_catalog_config(model_config: dict[str, Any]) -> dict[str, Any]:
     config = dict(model_config)
     if not isinstance(mode, str) or mode not in CODEX_REQUEST_MODES:
         config.pop("codex_request_mode", None)
+    conversion = config.get("custom_tool_conversion")
+    if not isinstance(conversion, str) or conversion not in CUSTOM_TOOL_CONVERSIONS:
+        config.pop("custom_tool_conversion", None)
     config.update(wework_model_config_options(config))
     return config
 
@@ -83,6 +87,13 @@ def wework_model_config_options(
         ):
             raise ValueError("Codex passthrough requires an OpenAI Responses model")
         options["codex_request_mode"] = mode
+    conversion = model_config.get("custom_tool_conversion")
+    if conversion is not None:
+        if not isinstance(conversion, str) or conversion not in CUSTOM_TOOL_CONVERSIONS:
+            raise ValueError(
+                "custom_tool_conversion must be none, all or except_apply_patch"
+            )
+        options["custom_tool_conversion"] = conversion
     for key, alias in (
         ("native_tool_search", "nativeToolSearch"),
         ("native_namespace_tools", "nativeNamespaceTools"),
