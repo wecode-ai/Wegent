@@ -40,5 +40,11 @@ export function subscribeRuntimeRead<T>(
     void read.promise.then(release, release)
     return read.promise
   }
-  return abortableRuntimeRead(read.promise, signal).finally(release)
+  // Release synchronously so a replacement subscriber cannot join an abandoned read.
+  signal.addEventListener('abort', release, { once: true })
+  if (signal.aborted) release()
+  return abortableRuntimeRead(read.promise, signal).finally(() => {
+    signal.removeEventListener('abort', release)
+    release()
+  })
 }
