@@ -341,7 +341,14 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
   assert.match(
     workflow.concurrency.group,
-    /app-update-refresh.*app-update-retry.*!inputs.publish_release/,
+    /all.*app-update-refresh.*app-update-retry.*!inputs.publish_release/,
+  );
+  const sourceGuard = jobs["prepare-release"].steps.find(
+    (step) => step.name === "Reject publishing an unpublished source pair",
+  );
+  assert.equal(
+    sourceGuard.if,
+    "inputs.verification_source_run_id != '' && inputs.publish_release",
   );
   assert.ok(
     workflow.true.workflow_dispatch.inputs.verification_checkpoint.options.includes(

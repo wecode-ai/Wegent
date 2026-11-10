@@ -48,7 +48,7 @@ on:
           - app-update-retry
         default: all
       verification_source_run_id:
-        description: "Immutable source producer for a non-publishing refresh or retry diagnostic"
+        description: "Immutable source producer for a non-publishing full bridge round trip, refresh, or retry diagnostic"
         type: string
         required: false
         default: ""
@@ -59,7 +59,7 @@ on:
         default: ""
 
 concurrency:
-  group: ${{ (inputs.verification_run_id != '' || (contains(fromJSON('["app-update-refresh","app-update-retry"]'), inputs.verification_checkpoint) && inputs.verification_source_run_id != '' && !inputs.publish_release)) && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id || inputs.verification_source_run_id) || github.workflow }}
+  group: ${{ (inputs.verification_run_id != '' || (contains(fromJSON('["all","app-update-refresh","app-update-retry"]'), inputs.verification_checkpoint) && inputs.verification_source_run_id != '' && !inputs.publish_release)) && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id || inputs.verification_source_run_id) || github.workflow }}
   cancel-in-progress: false
 
 permissions:
@@ -136,6 +136,11 @@ jobs:
         if: inputs.build_only && inputs.publish_release
         run: |
           echo 'Build-only diagnostics cannot publish a release' >&2
+          exit 1
+      - name: Reject publishing an unpublished source pair
+        if: inputs.verification_source_run_id != '' && inputs.publish_release
+        run: |
+          echo 'Immutable source-pair diagnostics cannot publish a release' >&2
           exit 1
       - name: Create release app token
         id: release-app-token
