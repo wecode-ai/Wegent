@@ -61,6 +61,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'dismiss-popout': 'dismissPopoutWindow',
       drag: 'drag',
       'drop-file': 'dropFile',
+      'select-file': 'selectFile',
       'drop-paths': 'dropPaths',
       fill: 'fill',
       'get-attribute': 'getAttribute',

@@ -9,12 +9,13 @@ export async function primeElectronInstallerCache({
   environment = process.env,
   runtime = { arch: process.arch, platform: process.platform },
   downloadArtifact,
+  downloadSourceArtifact = downloadArtifact,
 }) {
   const zipDirectory = await prepareSharedElectronZip({
     electronPackageRoot,
     environment,
     runtime,
-    downloadArtifact,
+    downloadArtifact: downloadSourceArtifact,
   })
   const { version } = JSON.parse(await readFile(join(electronPackageRoot, 'package.json'), 'utf8'))
   const checksums = JSON.parse(await readFile(join(electronPackageRoot, 'checksums.json'), 'utf8'))

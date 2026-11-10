@@ -179,7 +179,7 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
       DEEPSEEK_V4_FLASH_MODEL_ID,
       DEEPSEEK_V4_PRO_MODEL_ID,
     ],
-    toolProfile: 'custom',
+    toolProfile: 'function',
     group: 'DeepSeek',
     contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
     webSearchMode: 'live',

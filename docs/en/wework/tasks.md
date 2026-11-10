@@ -54,6 +54,8 @@ Add files, images, code locations, or an Appshot to the composer when they clari
 
 Type `@` in the composer and select a conversation or Issue to insert a reference chip. Click the chip before sending, or focus it and press Enter/Space, to open the referenced conversation in the current task pane, or to open or reuse the matching project-space board with that Issue selected; the draft is preserved. After sending, click the same reference in the user message to make the same jump. If the reference address cannot be resolved, Wework does not navigate. If it resolves but the target was deleted or is inaccessible, Wework opens the corresponding task or board and shows the load error or unavailable state there.
 
+Conversation references retain completed visible assistant replies. A later tool-record update does not make a reply process text solely because of record order; explicit process messages and text still being generated retain their phase-based handling.
+
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
 ### Voice input

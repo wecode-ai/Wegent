@@ -627,6 +627,9 @@ const sharedMessages: Record<
     "todo.none": "暂无",
     "todo.select_project_member": "选择项目空间成员",
     "todo.new_issue": "新建任务",
+    "todo.issue_markdown_hint": "支持 Markdown，可拖拽文件到编辑器添加附件",
+    "todo.created_at_short": "创建于 {{date}}",
+    "todo.automation_source": "自动化",
     "todo.issue_detail": "任务详情",
     "todo.project_space": "项目空间",
     "todo.new_sub_issue": "新建子任务",
@@ -1195,6 +1198,10 @@ const sharedMessages: Record<
     "todo.none": "None",
     "todo.select_project_member": "Select a project member",
     "todo.new_issue": "New issue",
+    "todo.issue_markdown_hint":
+      "Markdown supported. Drop files into the editor to attach them.",
+    "todo.created_at_short": "Created {{date}}",
+    "todo.automation_source": "Automation",
     "todo.issue_detail": "Issue details",
     "todo.project_space": "Project space",
     "todo.new_sub_issue": "New sub-issue",
@@ -1467,8 +1474,24 @@ export function localizeStandardStatuses<
   }
   return statuses.map((status) => ({
     ...status,
-    name: translate(`todo.status_${status.id}`, status.name),
+    name: localizeStandardStatusName(status.id, status.name, translate),
   }));
+}
+
+export function localizeStandardStatusName(
+  statusId: string,
+  name: string | null | undefined,
+  translate: CollaborationTranslate,
+): string {
+  const standardId = standardStatusIds.find((id) => id === statusId);
+  if (
+    !name ||
+    !standardId ||
+    !standardStatusNames[standardId].includes(name.trim())
+  ) {
+    return name ?? "";
+  }
+  return translate(`todo.status_${standardId}`, name);
 }
 
 export const collaborationMyWorkMessages: Record<

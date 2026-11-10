@@ -21,7 +21,7 @@ vi.mock('@/api/plugins', () => ({
 
 const address = { deviceId: 'device-1', taskId: 'runtime-a' }
 const createdAt = '2026-08-01T00:00:00.000Z'
-function fixture({ identified = false, hasMoreBefore = false } = {}) {
+function fixture({ identified = false, hasMoreBefore = false, publicStandIn = false } = {}) {
   const original: ProjectChatMessage = {
     messageId: 'activity-run',
     taskId: 'WEG-1',
@@ -35,6 +35,15 @@ function fixture({ identified = false, hasMoreBefore = false } = {}) {
     updatedAt: createdAt,
     metadata: { run_id: 'run-1', run_status: 'running', automation_run_id: 'automation-1' },
     runtimeAddress: address,
+  }
+  if (publicStandIn) {
+    original.type = 'text'
+    original.status = 'completed'
+    original.runtimeAddress = undefined
+    original.metadata = {
+      execution_dispatch: 'comment_only',
+      stand_in: { user_id: 1, role_id: 'review' },
+    }
   }
   const client = {
     subscribe: vi.fn(async () => ({
@@ -78,7 +87,7 @@ function fixture({ identified = false, hasMoreBefore = false } = {}) {
     ],
   }))
   const cancelRuntimeTask = vi.fn().mockResolvedValue({ accepted: true })
-  const getLoopItem = vi.fn()
+  const getLoopItem = vi.fn().mockResolvedValue({ assignment_history: [], status_history: [] })
   const onTaskUpdated = vi.fn()
   const services = {
     teamApi: { listTeams: vi.fn().mockResolvedValue([]) },
@@ -149,6 +158,7 @@ function fixture({ identified = false, hasMoreBefore = false } = {}) {
           task={{ id: 'WEG-1', title: 'Original task', status: 'in_progress' } as CloudLoopItem}
           onTaskUpdated={onTaskUpdated}
           linear
+          issueTimeline={publicStandIn}
         />
       </WorkbenchProvider>
     </CloudConnectionContext.Provider>
@@ -179,6 +189,20 @@ describe('opening an activity execution with the real pane session', () => {
   afterEach(() => {
     cleanup()
     clearRuntimeConversationCacheForTests()
+  })
+
+  it('renders public stand-in messages as conversation replies, not completed executions', async () => {
+    fixture({ publicStandIn: true })
+    await screen.findByText('Activity summary')
+    expect(
+      screen.queryByTestId('cloud-task-activity-execution-badge-activity-run')
+    ).not.toBeInTheDocument()
+    const reply = await screen.findByTestId('cloud-task-activity-reply-toggle-activity-run')
+    expect(reply).toHaveTextContent('回复')
+    expect(reply).not.toHaveTextContent('继续此任务')
+    await userEvent.click(reply)
+    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent('继续此 Issue 对话')
+    expect(screen.getByTestId('issue-reply-composer')).not.toHaveTextContent('原执行任务')
   })
 
   it.each([false, true])(

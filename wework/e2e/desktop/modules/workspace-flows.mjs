@@ -6,7 +6,10 @@ import {
   assertFullscreenIssueComposerColumnAtWindowSize,
 } from './issue-composer-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
-import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
+import {
+  verifyNewTaskBoardAssociation,
+  waitForViewedIssueRead,
+} from './new-task-board-association.mjs'
 import {
   waitForProjectIdentity,
   selectCollaborationProjectView,
@@ -1913,6 +1916,24 @@ async function verifyExistingTaskBoardAssociation(
   if (captureScreenshots) {
     await captureVerificationScreenshot(control, 'workspace-10-existing-card-linked.png')
   }
+  await control.command('click', '[data-testid="work-item-guide-open-summary"]')
+  const linkedDetail = '[data-testid="work-item-context-panel"]'
+  await control.command('waitFor', linkedDetail, {
+    text: existingTargetTitle,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('cloud-task-activity-list') &&
+      !snapshot.text.includes('正在加载动态'),
+    'The newly associated Issue activity did not finish loading',
+    DEFAULT_STEP_TIMEOUT_MS,
+    linkedDetail
+  )
+  // The final association displays a different Issue; finish its read before the draft baseline.
+  await waitForViewedIssueRead(control, targetProjectName, existingTargetTitle)
   await verifyNewTaskBoardAssociation(control, targetProjectName, existingTargetTitle)
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
 }

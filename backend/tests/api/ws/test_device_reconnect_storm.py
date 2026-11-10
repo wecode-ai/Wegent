@@ -24,7 +24,7 @@ def isolate_execution_reconciliation(monkeypatch):
     async def identity_lock(user_id):
         yield
 
-    monkeypatch.setattr(device_namespace, "app_identity_lock", identity_lock)
+    monkeypatch.setattr(device_namespace, "device_identity_lock", identity_lock)
 
 
 @pytest.mark.asyncio

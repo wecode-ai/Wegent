@@ -121,7 +121,7 @@ export function WorkspaceXMindPreview({ file, name }: WorkspaceXMindPreviewProps
   }, [file, t])
 
   if (error) {
-    return <p className="p-6 text-sm text-destructive">{error}</p>
+    return <p className="p-6 text-sm text-destructive wework:text-red-500">{error}</p>
   }
 
   if (!sheets) {

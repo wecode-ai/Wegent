@@ -1,6 +1,6 @@
 {
   "order": 42500,
-  "scenario": "./scenarios/stand-in-sessions.scenario.mjs",
+  "scenario": "./scenarios/stand-in-native-chat.scenario.mjs",
   "scenarioOnly": true,
   "ci": {
     "core": {

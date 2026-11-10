@@ -170,7 +170,7 @@ export function AutomationDetailWorkspace({
       >
         <div className="min-w-0 flex-1">
           <span
-            className={`block text-sm font-medium ${compact ? 'text-text-secondary' : 'text-focus'}`}
+            className={`block text-sm font-medium ${compact ? 'text-text-secondary' : 'text-focus wework:text-blue-500'}`}
           >
             {automation
               ? automation.enabled
@@ -249,7 +249,7 @@ export function AutomationDetailWorkspace({
                         setActionsOpen(false)
                         onDelete()
                       }}
-                      className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-sm text-destructive hover:bg-destructive/5"
+                      className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-sm text-destructive hover:bg-destructive/5 wework:text-red-600 wework:hover:bg-red-500/5"
                     >
                       <Trash2 className="h-4 w-4" />
                       {t('workbench.delete', '删除')}
@@ -858,7 +858,10 @@ function RunHistory({
                 {formatDate(run.scheduledFor, locale)}
               </span>
               {run.error ? (
-                <span className="max-w-48 truncate text-destructive" title={run.error}>
+                <span
+                  className="max-w-48 truncate text-destructive wework:text-red-600"
+                  title={run.error}
+                >
                   {run.error}
                 </span>
               ) : null}

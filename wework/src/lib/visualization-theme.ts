@@ -30,6 +30,8 @@ export const VISUALIZATION_THEME_PROPERTIES = [
 ]
 
 export function readVisualizationThemeVariables(): Record<string, string> {
+  // Wework uses the original host defaults and the fragment's authored palette.
+  if (document.documentElement.dataset.appearanceTheme === 'wework') return {}
   const style = window.getComputedStyle(document.documentElement)
   const variables: Record<string, string> = {}
   for (const [property, token] of Object.entries(COLOR_TOKENS)) {

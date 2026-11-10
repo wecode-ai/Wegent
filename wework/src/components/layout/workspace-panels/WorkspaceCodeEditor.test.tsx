@@ -28,7 +28,7 @@ const props = { file, loading: false, onRetry: vi.fn(), onSave: vi.fn() }
 beforeAll(async () => {
   await getSharedHighlighter({
     langs: ['typescript', 'text'],
-    themes: [WEWORK_CODE_THEME],
+    themes: [WEWORK_CODE_THEME, 'pierre-light', 'pierre-dark'],
     preferredHighlighter: 'highlights',
   })
 })
