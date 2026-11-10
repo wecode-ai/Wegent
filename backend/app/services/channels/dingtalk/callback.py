@@ -178,6 +178,14 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         """Parse callback info from dictionary."""
         return DingTalkCallbackInfo.from_dict(data)
 
+    async def _mark_callback_delivered(
+        self, task_id: TaskCallbackKey, callback_info: DingTalkCallbackInfo
+    ) -> bool:
+        """Persist terminal delivery state across workers and restarts."""
+        callback_info.delivered = True
+        await self.save_callback_info(task_id, callback_info)
+        return True
+
     def _extract_thinking_display(self, thinking: Any) -> str:
         """Extract the latest thinking step in human-readable format.
 

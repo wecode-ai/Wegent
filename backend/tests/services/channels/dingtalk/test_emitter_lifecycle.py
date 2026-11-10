@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.channels.dingtalk import emitter as emitter_module
-from app.services.channels.dingtalk.callback import DingTalkCallbackInfo
+from app.services.channels.dingtalk.callback import (
+    DingTalkCallbackInfo,
+    DingTalkCallbackService,
+)
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from shared.models import EventType, ExecutionEvent
 from tests.services.channels.dingtalk.test_emitter import FakeCache, card_factory
@@ -70,9 +73,11 @@ async def test_callback_keeps_registration_and_recoverable_state_on_failure(
     await emitter.emit_start(1, 2)
     await emitter.emit_chunk(1, 2, "buffered", 0)
     card_factory[0].ai_finish = AsyncMock(side_effect=RuntimeError("delivery failed"))
-    service = FakeCallbackService(emitter)
+    service = DingTalkCallbackService()
     service._active_emitters[1] = emitter
-    service.get_callback_info = AsyncMock(return_value=object())
+    service.get_callback_info = AsyncMock(
+        return_value=DingTalkCallbackInfo(channel_id=77, conversation_id="group-a")
+    )
     service.delete_callback_info = AsyncMock()
 
     sent = await service.send_task_result(1, 2, content="")
@@ -84,7 +89,7 @@ async def test_callback_keeps_registration_and_recoverable_state_on_failure(
 
 
 @pytest.mark.asyncio
-async def test_terminal_delivery_removes_callback_when_marker_persistence_fails(
+async def test_terminal_marker_failure_uses_delivered_callback(
     monkeypatch, card_factory
 ):
     cache = FakeCache()
@@ -94,7 +99,7 @@ async def test_terminal_delivery_removes_callback_when_marker_persistence_fails(
     emitter.set_shared_content_key("channel:streaming_content:1")
     emitter.MIN_UPDATE_INTERVAL = 3600
     await emitter.emit_start(1, 2)
-    service = FakeCallbackService(emitter)
+    service = DingTalkCallbackService()
     service._active_emitters[1] = emitter
     service.get_callback_info = AsyncMock(
         return_value=DingTalkCallbackInfo(channel_id=77, conversation_id="group-a")
@@ -109,7 +114,9 @@ async def test_terminal_delivery_removes_callback_when_marker_persistence_fails(
     sent = await service.send_task_result(1, 2, content="")
 
     assert sent is True
-    service.delete_callback_info.assert_awaited_once_with(1)
+    service.delete_callback_info.assert_not_awaited()
+    assert service.get_callback_info.await_args_list[-1].args[0] == 1
+    assert service.get_callback_info.return_value.delivered is True
     assert emitter.terminal_delivery_succeeded is True
 
 
@@ -132,11 +139,16 @@ async def test_delivered_callback_does_not_receive_late_terminal_result(
         )
     )
     service.delete_callback_info = AsyncMock()
+    create_emitter = AsyncMock()
+    monkeypatch.setattr(service, "_get_or_create_emitter", create_emitter)
+    emit_done = AsyncMock()
+    emitter.emit_done = emit_done
 
     sent = await service.send_task_result(1, 2, content="")
 
     assert sent is True
-    card_factory[0].finished.clear()
+    create_emitter.assert_not_awaited()
+    emit_done.assert_not_awaited()
     service.delete_callback_info.assert_awaited_once_with(1)
 
 

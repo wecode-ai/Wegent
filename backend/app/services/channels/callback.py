@@ -509,6 +509,13 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             return
         self._callback_ttl_refreshed_at[task_id] = now
 
+    async def _mark_callback_delivered(
+        self, task_id: TaskCallbackKey, callback_info: T
+    ) -> bool:
+        """Persist provider-specific terminal delivery state."""
+        del task_id, callback_info
+        return False
+
     async def delete_callback_info(self, task_id: TaskCallbackKey) -> None:
         """Delete callback info for a task.
 
@@ -553,6 +560,17 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 f"[{self._channel_type.value}Callback] No callback info for task {task_id}, skipping"
             )
             return False
+        if getattr(callback_info, "delivered", False):
+            # The provider already accepted this card's terminal update. Drop
+            # the stale address without letting a late result rewrite the card.
+            logger.warning(
+                "[%sCallback] Terminal result arrived after delivery: task=%s",
+                self._channel_type.value,
+                task_id,
+            )
+            await self._remove_emitter(task_id)
+            await self.delete_callback_info(task_id)
+            return True
 
         try:
             emitter = self._active_emitters.get(task_id)
@@ -603,18 +621,6 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 f"[{self._channel_type.value}Callback] Sent result for task {task_id}"
             )
 
-            if callback_info and getattr(callback_info, "delivered", False):
-                # The callback belongs to an earlier delivered card. Do not
-                # let stale state overwrite its terminal result metadata.
-                logger.warning(
-                    "[%sCallback] Terminal result arrived after delivery: task=%s",
-                    self._channel_type.value,
-                    task_id,
-                )
-                await self._remove_emitter(task_id)
-                await self.delete_callback_info(task_id)
-                return True
-
             # Clean up
             await self._remove_emitter(task_id)
             await self.delete_callback_info(task_id)
@@ -627,8 +633,24 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             # Clean up on error
             await self._remove_emitter(task_id)
             if getattr(emitter, "terminal_delivery_succeeded", False):
-                # The provider accepted the terminal card update. A failed local
-                # marker write must not leave a stale callback blocking recovery.
+                # Keep the delivered marker so another worker can distinguish a
+                # completed card from one that still needs terminal recovery.
+                delivered = False
+                try:
+                    delivered = await self._mark_callback_delivered(
+                        task_id, callback_info
+                    )
+                except Exception:
+                    logger.exception(
+                        "[%sCallback] Failed to persist delivered callback "
+                        "state: task=%s",
+                        self._channel_type.value,
+                        task_id,
+                    )
+                if delivered:
+                    return True
+                # If the delivered marker cannot be persisted, remove the
+                # address when possible so a new turn is not permanently blocked.
                 await self.delete_callback_info(task_id)
                 return True
             return False
