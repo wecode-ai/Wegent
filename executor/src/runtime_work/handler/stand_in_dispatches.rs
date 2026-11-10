@@ -216,7 +216,7 @@ impl RuntimeWorkRpcHandler {
         else {
             return Ok(());
         };
-        if config["enabled"] != true || config["executionDeviceId"] != self.device_id {
+        if config["enabled"] != true {
             return Err(AppIpcError::new(
                 "permission_denied",
                 "Stand-in dispatch is paused on this device",

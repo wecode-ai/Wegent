@@ -34,6 +34,7 @@ vi.mock('./StandInOverviewPage', () => ({
     userId,
     initialDeviceId,
     initialProfileId,
+    initialSelectedRoleId,
     headerActions,
     onSelectLocation,
     ref,
@@ -41,6 +42,7 @@ vi.mock('./StandInOverviewPage', () => ({
     userId: number
     initialDeviceId: string
     initialProfileId?: string
+    initialSelectedRoleId?: string
     headerActions: ReactNode
     onSelectLocation(device: string): void
     ref: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
@@ -53,7 +55,7 @@ vi.mock('./StandInOverviewPage', () => ({
           data-testid="retained-role-draft"
           data-owner={userId}
           data-device={initialDeviceId}
-          defaultValue={initialProfileId}
+          defaultValue={initialProfileId ?? initialSelectedRoleId}
         />
         <button data-testid="legacy-change-device" onClick={() => onSelectLocation('cloud-one')}>
           Legacy callback
@@ -207,7 +209,7 @@ async function confirmStop() {
   await userEvent.click(screen.getByTestId('stand-in-instance-stop-confirm'))
 }
 
-it('has no profile selector and cannot change the bound device via legacy navigation', async () => {
+it('keeps the primary binding while following an explicit role on another device', async () => {
   const f = fixture()
   const view = render(f.workspace())
   const field = await screen.findByTestId('retained-role-draft')
@@ -216,10 +218,12 @@ it('has no profile selector and cannot change the bound device via legacy naviga
   await userEvent.click(screen.getByTestId('legacy-change-device'))
   expect(field).toHaveAttribute('data-device', 'mac')
   expect(f.binding).toHaveBeenCalledTimes(1)
-  view.rerender(f.workspace({ contentRoute: '/stand-in?deviceId=cloud-one&profileId=other' }))
-  expect(screen.getByTestId('retained-role-draft')).toBe(field)
-  expect(field).toHaveValue('')
-  expect(field).toHaveAttribute('data-device', 'mac')
+  await act(async () =>
+    view.rerender(f.workspace({ contentRoute: '/stand-in?deviceId=cloud-one&profileId=other' }))
+  )
+  await waitFor(() => expect(screen.getByTestId('retained-role-draft')).toHaveValue('other'))
+  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
+  expect(f.binding).toHaveBeenCalledTimes(1)
 })
 
 it('honors an explicit project link only while establishing the first instance binding', async () => {

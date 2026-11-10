@@ -302,6 +302,29 @@ Regression entry points:
 
 Permission changes must update the corresponding rule, local architecture record and tests. Semantic changes require user authorization. Never weaken assertions, skip cases or add administrator exceptions to conceal a violation. Tests use isolated databases, deterministic encryption and mocked external services; passing them does not claim deployment or live Runtime execution.
 
+Stand-in roles and conversation identity do not require a cloud Executor. Cloud
+Issue reservations, assignment receipts and public replies use the owning Runtime's
+backend-assigned registration route; the desktop `electron-…` identity routes local
+IPC. Multiple Runtime registrations may share a desktop alias, so it cannot prove
+device ownership. A missing registration route waits for registration without
+bypassing device, project, Issue or active-assignment checks. Receipt outbox entries
+retain their accepted binding's device. Route changes do not recreate the role or
+conversation identity. `test_stand_in_issue_replies.py` and Executor
+`runtime_owner_tests` cover ambiguity denial, exact routes and receipt identity;
+CI's stand-in Issue-conversation scenario covers real execution with duplicate
+desktop aliases.
+
+A role's execution device selects where new work is received; it grants no resource
+authority. A device change stages a paused role on the target, redirects source
+intake, and then activates the target. The target retains identity, resource and
+source authorization checks; credentials are not copied. Source tasks, sessions
+and role configuration remain on their original device, and existing Issues retain
+their conversation binding. Recovery uses version checks and never restores a
+second receiver when target activation is uncertain. CP rules remain unchanged.
+`saveStandInRoleDevice.test.ts`, Executor role-device tests and the existing CI
+stand-in conversation scenario cover success, denial, lost responses and routing
+new work separately from existing tasks.
+
 ## Verification record
 
 Final verification is rerun against the no-DDL implementation. Counts from the withdrawn migration implementation are historical. The full backend suite already includes the focused permission tests.

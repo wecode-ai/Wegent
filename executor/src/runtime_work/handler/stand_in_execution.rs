@@ -14,6 +14,23 @@ pub(super) fn accepted_stand_in_result(result: Value) -> Result<Value, AppIpcErr
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn stand_in_role_runs_here(&self, role: &Value) -> bool {
+        role["executionDeviceId"].as_str().map_or(true, |device| {
+            device == self.device_id || self.cloud_device_id().is_ok_and(|route| route == device)
+        })
+    }
+
+    pub(super) fn stand_in_issue_runs_here(&self, config: &Value, issue: &Value) -> bool {
+        self.stand_in_role_runs_here(config)
+            || self
+                .store
+                .issue_conversation(&super::stand_in::stand_in_issue_identity(config, issue))
+                .is_some()
+            || self
+                .local_task_link(&self.stand_in_task_id(config, issue))
+                .is_some()
+    }
+
     pub(super) fn stand_in_assignment_is_handled(
         &self,
         config: &Value,
@@ -93,6 +110,21 @@ impl RuntimeWorkRpcHandler {
         binding: &Value,
     ) -> Result<(), AppIpcError> {
         let task_id = self.stand_in_task_id(config, issue);
+        if !self.stand_in_issue_runs_here(config, issue) {
+            self.log_stand_in_decision(
+                config,
+                issue,
+                "role_runs_on_another_device",
+                json!({"executionDeviceId":config["executionDeviceId"]}),
+            );
+            if config["manual"] == true {
+                return Err(AppIpcError::new(
+                    "wrong_device",
+                    "Open this role on its selected execution device",
+                ));
+            }
+            return Ok(());
+        }
         if self.stand_in_assignment_is_handled(config, &task_id, binding) {
             self.log_stand_in_decision(
                 config,
