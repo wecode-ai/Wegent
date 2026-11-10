@@ -33,6 +33,7 @@ import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-hando
 import { assertReleaseComposition } from '../modules/release-composition.mjs'
 import { waitForInterruptedRollback } from '../modules/interrupted-rollback.mjs'
 import { upgradeCredentials } from '../modules/upgrade-credentials.mjs'
+import { reservePort } from '../port-reservation.mjs'
 import { reupgradeAfterRollback } from '../modules/reupgrade-after-rollback.mjs'
 import { verifyRollbackProtection } from '../modules/rollback-protection.mjs'
 import {
@@ -125,7 +126,9 @@ export async function createDesktopScenario(options) {
     channel,
   })
   let control
-  let inspectorPort
+  // The surviving release supervisor retains its original forwarded arguments.
+  // Every driver restart must use that same endpoint, including recovery handoffs.
+  const inspectorPort = await reservePort()
   let passed = false
   let origin
   let modelRequests = 0
@@ -270,14 +273,15 @@ export async function createDesktopScenario(options) {
     usesReleasePackageRuntimeAssets: true,
     ...(!options.preparationOnly
       ? {
-          electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
+          electronLaunchArguments: [`--inspect-brk=127.0.0.1:${inspectorPort}`],
           appProcessStarted: async child => {
-            inspectorPort = await routeUpgradeRequests(
+            const port = await routeUpgradeRequests(
               child,
               origin,
               join(resultDir, 'upgrade-transport.log'),
               { followHandoffs: true }
             )
+            assert.equal(port, String(inspectorPort))
           },
         }
       : {}),
@@ -649,6 +653,13 @@ export async function createDesktopScenario(options) {
       }
       assert.equal(await installedVersion(), pair.to.version)
       const targetReleaseId = (await readFile(join(root, 'active'), 'utf8')).trim()
+      const preparedTarget = JSON.parse(
+        await readFile(join(root, 'slots', targetReleaseId, 'release.json'), 'utf8')
+      )
+      assert.equal(preparedTarget.id, targetReleaseId)
+      assert.equal(preparedTarget.version, pair.to.version)
+      if (preparedTarget.packageSha256 !== undefined)
+        assert.equal(preparedTarget.packageSha256, pair.to.sha256)
       console.log(`[upgrade-e2e] Running target ${pair.to.version}`)
       await verifyCredentials('upgraded')
       await control.command(
@@ -826,6 +837,7 @@ export async function createDesktopScenario(options) {
             control,
             root,
             target: pair.to,
+            preparedTarget,
             requests,
             about,
             route: () => routeRunningUpgradeRequests(inspectorPort, control, origin),
