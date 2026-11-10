@@ -10,6 +10,9 @@
   const LOGO_SCALE = 1.12
   const GLOW_MARGIN = 16
   const FOOTER_GAP = 32
+  const LOGO_CLEARANCE = 12
+  // Reserve the slow-card footer growth before it appears so the mark never moves.
+  const SLOW_CARD_FOOTER_GROWTH = 72
   const PALETTES = {
     dark: { aura: '12, 59, 126', auraOpacity: 0.055 },
     light: { aura: '37, 99, 180', auraOpacity: 0 },
@@ -294,7 +297,8 @@
     context.setTransform(1, 0, 0, 1, 0, 0)
     context.clearRect(0, 0, width, height)
     const glow = GLOW_MARGIN * viewport.pixelRatio
-    const belowCenter = viewport.footerTop - height / 2 - glow - FOOTER_GAP * viewport.pixelRatio
+    const stableFooterTop = viewport.stableFooterTop ?? viewport.footerTop
+    const belowCenter = stableFooterTop - height / 2 - glow - FOOTER_GAP * viewport.pixelRatio
     const fit = Math.max(
       0,
       Math.min(
@@ -308,7 +312,12 @@
     // Status and recovery controls take precedence when they cover the full-window center.
     if (fit === 0) return false
     const offsetX = (width - WIDTH * fit) / 2
-    const offsetY = (height - HEIGHT * fit) / 2
+    const centeredOffsetY = (height - HEIGHT * fit) / 2
+    const reservedFooterTop = stableFooterTop - SLOW_CARD_FOOTER_GROWTH * viewport.pixelRatio
+    const footerLimit = reservedFooterTop - LOGO_CLEARANCE * viewport.pixelRatio
+    const maxOffsetY = footerLimit - (CENTER_Y + logo.halfHeight) * fit
+    const minOffsetY = -(CENTER_Y - logo.halfHeight) * fit
+    const offsetY = Math.max(minOffsetY, Math.min(centeredOffsetY, maxOffsetY))
     viewport.transform = { fit, offsetX, offsetY }
     context.setTransform(fit, 0, 0, fit, offsetX, offsetY)
     const aura = context.createRadialGradient(CENTER_X, CENTER_Y, 30, CENTER_X, CENTER_Y, 270)
@@ -472,13 +481,24 @@
       const height = canvas.clientHeight
       if (!width || !height) return
       const ratio = Math.min(window.devicePixelRatio || 1, 2)
-      canvas.width = Math.round(width * ratio)
-      canvas.height = Math.round(height * ratio)
+      const nextWidth = Math.round(width * ratio)
+      const nextHeight = Math.round(height * ratio)
+      const sizeChanged = canvas.width !== nextWidth || canvas.height !== nextHeight
+      canvas.width = nextWidth
+      canvas.height = nextHeight
       const bounds = container.getBoundingClientRect()
       const footer = footerElement.getBoundingClientRect()
       const footerTop = Math.max(0, Math.min(height, footer.top - bounds.top))
-      canvas.style.maskImage = `linear-gradient(to bottom, #000 ${Math.max(0, footerTop - FOOTER_GAP)}px, transparent ${footerTop}px)`
-      viewport.footerTop = footerTop * (canvas.height / height)
+      canvas.style.maskImage = `linear-gradient(to bottom, #000 ${Math.max(0, footerTop - LOGO_CLEARANCE)}px, transparent ${footerTop}px)`
+      const deviceFooterTop = footerTop * (canvas.height / height)
+      if (
+        sizeChanged ||
+        viewport.stableFooterTop === undefined ||
+        elapsed < FORMATION_DURATION_MS
+      ) {
+        viewport.stableFooterTop = deviceFooterTop
+      }
+      viewport.footerTop = deviceFooterTop
       viewport.pixelRatio = ratio
       render(elapsed / 1000)
     }
