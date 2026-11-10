@@ -378,12 +378,14 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
 
     @property
     def chat_card_config(self) -> Optional[DingTalkChatCardConfig]:
+        """Return the channel's current chat-card configuration."""
         raw = self._get_chat_card_config() if self._get_chat_card_config else None
         return DingTalkChatCardConfig.model_validate(raw) if raw is not None else None
 
     async def _reject_concurrent_runtime_quote(
         self, callback_key: str, message_context: MessageContext
     ) -> bool:
+        """Reject a quoted runtime card while its previous result is pending."""
         callback_data = message_context.extra_data.get("callback_data")
         if not isinstance(callback_data, dict):
             return False
@@ -427,6 +429,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         *,
         persist_without_emitter: bool = False,
     ) -> None:
+        """Register an emitter and retire its quote address if registration fails."""
         if not (streaming_emitter and getattr(streaming_emitter, "chat_card", None)):
             await super()._register_streaming_emitter(
                 task_id,
@@ -480,6 +483,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         streaming_emitter: ResultEmitter,
         message_context: MessageContext,
     ) -> None:
+        """Stop an unregistered card and tell the user how to recover."""
         try:
             if isinstance(task_id, str):
                 await self._fail_private_im_runtime_continuation(
@@ -506,6 +510,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         emitter: StreamingResponseEmitter,
         context: MessageContext,
     ) -> None:
+        """Persist the mapping needed to route later quotes back to this card."""
         context.extra_data["card_subtask_id"] = emitter.subtask_id
         if not emitter.card_instance_id:
             raise RuntimeError("DingTalk chat card was not delivered")
