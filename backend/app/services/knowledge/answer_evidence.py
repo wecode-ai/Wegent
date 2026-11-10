@@ -147,7 +147,11 @@ def bind_answer_evidence(db: Session, answer: Any, original: dict) -> dict:
                 db.add(row)
             db.flush()
         except DBAPIError as exc:
-            if exc.connection_invalidated:
+            # Flush can itself fail while rolling back its nested transaction.
+            # Only the snapshot INSERT error is eligible for evidence degradation.
+            if exc.connection_invalidated or not (
+                exc.statement or ""
+            ).lstrip().upper().startswith("INSERT INTO KNOWLEDGE_CITATIONS "):
                 raise
             savepoint.rollback()
             rows = {}

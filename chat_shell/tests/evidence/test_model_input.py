@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from langchain_core.messages import HumanMessage, ToolMessage
 
 from chat_shell.services.answer_evidence import EvidenceRegistry
@@ -209,7 +210,8 @@ async def test_native_mcp_transport_registers_only_trusted_backend_units():
         active_evidence.reset(token)
 
 
-async def test_openai_sdk_request_preserves_registered_body_after_hooks():
+@pytest.mark.parametrize("searches", [1, 2])
+async def test_openai_sdk_request_preserves_registered_body_after_hooks(searches):
     """Capture the provider HTTP request, beyond the abstract model interface."""
     from unittest.mock import AsyncMock
 
@@ -227,13 +229,13 @@ async def test_openai_sdk_request_preserves_registered_body_after_hooks():
     async def respond(request):
         payload = json.loads(request.content)
         requests.append(payload)
-        if len(requests) == 1:
+        if len(requests) <= searches:
             message = {
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [
                     {
-                        "id": "call",
+                        "id": f"call-{len(requests)}",
                         "type": "function",
                         "function": {
                             "name": "knowledge_base_search",
@@ -255,7 +257,9 @@ async def test_openai_sdk_request_preserves_registered_body_after_hooks():
                     {
                         "index": 0,
                         "message": message,
-                        "finish_reason": "tool_calls" if len(requests) == 1 else "stop",
+                        "finish_reason": (
+                            "tool_calls" if len(requests) <= searches else "stop"
+                        ),
                     }
                 ],
             },
@@ -272,7 +276,7 @@ async def test_openai_sdk_request_preserves_registered_body_after_hooks():
                             "content": "SDK 收到的完整原文",
                             "source": "资料",
                             "knowledge_base_id": 7,
-                            "document_id": 9,
+                            "document_id": 9 + len(requests),
                         }
                     )
                 ]
@@ -306,7 +310,16 @@ async def test_openai_sdk_request_preserves_registered_body_after_hooks():
     )
     actual_unit = json.loads(sent["content"])["results"][0]
     assert actual_unit["content"] == "SDK 收到的完整原文"
-    assert registry.confirmed() == [actual_unit]
+    sent_units = [
+        json.loads(message["content"])["results"][0]
+        for message in requests[-1]["messages"]
+        if message["role"] == "tool"
+    ]
+    assert registry.confirmed() == sent_units
+    assert len({unit["evidence_id"] for unit in sent_units}) == searches
+    assert [unit["document_id"] for unit in sent_units] == list(
+        range(10, 10 + searches)
+    )
 
 
 def test_malformed_tool_units_are_not_confirmed_or_allowed_to_break_model_hook():
@@ -331,3 +344,108 @@ def test_malformed_tool_units_are_not_confirmed_or_allowed_to_break_model_hook()
             == {}
         )
     assert registry.confirmed() == []
+
+
+def test_sent_unit_survives_later_in_place_compaction():
+    registry = EvidenceRegistry()
+    unit = registry.offer(
+        {
+            "content": "完整原文",
+            "source": "同名",
+            "knowledge_base_id": 7,
+            "document_id": 9,
+        }
+    )
+    message = ToolMessage(
+        content=json.dumps({"results": [unit]}),
+        tool_call_id="first",
+        name="knowledge_base_search",
+    )
+    registry.observe({"messages": [message]})
+    # A caller can compact its own confirmed payload before the next request.
+    exported = registry.confirmed()
+    exported[0]["content"] = "摘要"
+    registry.observe({"messages": [message.model_copy(update={"content": "摘要"})]})
+    assert registry.confirmed()[0]["content"] == "完整原文"
+
+
+async def test_budget_compaction_keeps_earlier_sent_identity_but_rejects_new_fragments():
+    from chat_shell.compression.token_counter import TokenCounter
+    from chat_shell.guard import UnifiedContextGuard, chain_pre_model_hooks
+    from chat_shell.guard.tool_output import ToolOutputGuardAdapter
+    from chat_shell.guard.types import TruncationPolicy
+
+    registry = EvidenceRegistry()
+    first = registry.offer(
+        {
+            "content": "已发送的原文",
+            "source": "同名",
+            "knowledge_base_id": 7,
+            "document_id": 9,
+        }
+    )
+    second = registry.offer(
+        {
+            "content": "检索结果 " * 700,
+            "source": "同名",
+            "knowledge_base_id": 7,
+            "document_id": 10,
+        }
+    )
+    assert first["evidence_id"] != second["evidence_id"]
+    earlier = ToolMessage(
+        content=json.dumps({"results": [first]}),
+        name="knowledge_base_search",
+        tool_call_id="first",
+        id="first",
+    )
+    registry.observe({"messages": [earlier]})
+    guard = UnifiedContextGuard(
+        model_id="gpt-4",
+        sources=[
+            ToolOutputGuardAdapter(
+                TokenCounter(model_name="gpt-4"),
+                TruncationPolicy(kind="tokens", limit=50),
+            )
+        ],
+        compression_enabled=True,
+    )
+    hook = chain_pre_model_hooks(guard, registry.observe)
+    updates = await hook(
+        {
+            "messages": [
+                HumanMessage(content="核对"),
+                earlier,
+                ToolMessage(
+                    content=json.dumps({"results": [second]}),
+                    name="knowledge_base_search",
+                    tool_call_id="second",
+                    id="second",
+                ),
+            ]
+        }
+    )
+    assert any(
+        "truncated=true" in str(message.content) for message in updates["messages"]
+    )
+    assert registry.confirmed() == [first]
+    for content in [
+        json.dumps({"results": [{**second, "content": "摘要"}]}),
+        json.dumps({"results": [second]})[:-8],
+        f'[[evidence:{second["evidence_id"]}]]',
+    ]:
+        registry.observe(
+            {
+                "messages": [
+                    ToolMessage(
+                        content=content,
+                        name="knowledge_base_search",
+                        tool_call_id="partial",
+                    )
+                ]
+            }
+        )
+    assert registry.confirmed() == [first]
+    other_generation = EvidenceRegistry()
+    other_generation.observe({"messages": [earlier]})
+    assert other_generation.confirmed() == []

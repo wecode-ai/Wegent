@@ -3,16 +3,18 @@ export function resolveEvidenceResponseContent(
   template: string | undefined,
   body: unknown
 ): string | undefined {
-  if (!template?.includes('{{answer_evidence}}')) return template
-  const find = (value: unknown): string | undefined => {
+  if (!template || !/\{\{answer_evidence(?:_all)?\}\}/.test(template)) return template
+  const ids = new Set<string>()
+  const collect = (value: unknown): void => {
     if (typeof value === 'string') {
       try {
-        return find(JSON.parse(value))
+        collect(JSON.parse(value))
       } catch {
-        return undefined
+        // Ordinary model text is not a serialized tool result.
       }
+      return
     }
-    if (!value || typeof value !== 'object') return undefined
+    if (!value || typeof value !== 'object') return
     const row = value as Record<string, unknown>
     if (
       typeof row.evidence_id === 'string' &&
@@ -20,14 +22,14 @@ export function resolveEvidenceResponseContent(
       row.document_id &&
       row.knowledge_base_id
     )
-      return row.evidence_id
-    for (const child of Object.values(row)) {
-      const id = find(child)
-      if (id) return id
-    }
-    return undefined
+      ids.add(row.evidence_id)
+    for (const child of Object.values(row)) collect(child)
   }
-  const localId = find(body)
-  if (!localId) throw new Error('Actual model request contains no complete answer evidence unit')
-  return template.replaceAll('{{answer_evidence}}', `[[evidence:${localId}]]`)
+  collect(body)
+  const markers = [...ids].map(id => `[[evidence:${id}]]`)
+  if (!markers.length)
+    throw new Error('Actual model request contains no complete answer evidence unit')
+  return template
+    .replaceAll('{{answer_evidence_all}}', markers.join(''))
+    .replaceAll('{{answer_evidence}}', markers[0])
 }

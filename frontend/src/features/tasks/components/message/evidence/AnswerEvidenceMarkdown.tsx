@@ -98,7 +98,14 @@ export default function AnswerEvidenceMarkdown({
   ...props
 }: ComponentProps<typeof EnhancedMarkdown> & { evidence?: EvidenceScope }) {
   const { user } = useUser()
-  const scopeKey = `${user?.id}:${apiClient.getCacheScope()}:${evidence?.answerId}:${evidence?.generationId}:${evidence?.committed}`
+  const scopeKey = JSON.stringify([
+    user?.id,
+    apiClient.getCacheScope(),
+    evidence?.answerId,
+    evidence?.generationId,
+    evidence?.committed,
+    evidence?.citations,
+  ])
   return <EvidenceContent key={scopeKey} {...props} evidence={evidence} />
 }
 

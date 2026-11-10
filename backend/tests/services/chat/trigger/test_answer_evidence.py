@@ -48,7 +48,9 @@ def test_recoverable_insert_failure_finishes_body_without_citation(monkeypatch):
 
     db = MagicMock()
     monkeypatch.setattr(module, "require_source", lambda *a: None)
-    db.flush.side_effect = IntegrityError("INSERT", {"content": "secret"}, Exception())
+    db.flush.side_effect = IntegrityError(
+        "INSERT INTO knowledge_citations (...)", {"content": "secret"}, Exception()
+    )
     answer = SimpleNamespace(id=12, user_id=3, answer_generation_id="a" * 32)
     unit = {
         "evidence_id": "b" * 32,
@@ -94,13 +96,18 @@ def test_savepoint_infrastructure_failure_is_not_downgraded(monkeypatch, failure
     if failure == "begin":
         db.begin_nested.side_effect = RuntimeError("begin")
     elif failure == "rollback":
-        db.flush.side_effect = IntegrityError("INSERT", {}, Exception())
+        db.flush.side_effect = IntegrityError(
+            "INSERT INTO knowledge_citations (...)", {}, Exception()
+        )
         db.begin_nested.return_value.rollback.side_effect = RuntimeError("rollback")
     elif failure == "release":
         db.begin_nested.return_value.commit.side_effect = RuntimeError("release")
     else:
         db.flush.side_effect = IntegrityError(
-            "INSERT", {}, Exception(), connection_invalidated=True
+            "INSERT INTO knowledge_citations (...)",
+            {},
+            Exception(),
+            connection_invalidated=True,
         )
     unit = {
         "evidence_id": "b" * 32,
@@ -342,3 +349,161 @@ def test_read_dependency_failure_is_retryable_and_does_not_leak(caplog, monkeypa
     assert error.value.detail == {"code": "CITATION_READ_FAILED"}
     assert error.value.headers["Cache-Control"] == "private, no-store"
     assert "secret body" not in caplog.text
+
+
+def test_multiple_same_title_units_mixed_validation_and_duplicate_text_blocks(
+    monkeypatch,
+):
+    from fastapi import HTTPException
+
+    from app.services.knowledge import answer_evidence as module
+
+    def source(db, actor, kb_id, doc_id):
+        assert actor == 3
+        if doc_id == 10:
+            raise HTTPException(403)
+
+    monkeypatch.setattr(module, "require_source", source)
+    db = MagicMock()
+    inserted = []
+
+    def add(row):
+        row.id = 40 + len(inserted)
+        inserted.append(row)
+
+    db.add.side_effect = add
+    base = {"source": "同名资料", "knowledge_base_id": 7, "document_id": 9}
+    units = [
+        {**base, "evidence_id": "first", "content": "字" * 5000},
+        {**base, "evidence_id": "second", "document_id": 11, "content": "另一原文"},
+        {**base, "evidence_id": "long", "content": "字" * 5001},
+        {**base, "evidence_id": "denied", "document_id": 10, "content": "不可读"},
+        {**base, "evidence_id": "unused", "content": "未引用"},
+        {**base, "evidence_id": "title", "content": "标题超长", "source": "字" * 1025},
+        {
+            **base,
+            "evidence_id": "chunk",
+            "content": "块超长",
+            "source_chunk_id": "x" * 256,
+        },
+    ]
+    original = {
+        "value": "结论[[evidence:first]][[evidence:long]][[evidence:denied]][[citation:42]][[evidence:old]][[evidence:title]][[evidence:chunk]]",
+        "blocks": [
+            {
+                "type": "text",
+                "content": "[[evidence:first]][[evidence:second]] [[evidence:broken]",
+            }
+        ],
+        "_answer_evidence": TrustedEvidence(units, user_id=3),
+    }
+    answer = SimpleNamespace(id=12, answer_generation_id="a" * 32)
+    result = bind_answer_evidence(db, answer, original)
+    assert len(inserted) == 2
+    assert result["value"] == "结论[[citation:40]]" + "[[evidence-unavailable]]" * 6
+    assert (
+        result["blocks"][0]["content"]
+        == "[[citation:40]][[citation:41]] [[evidence:broken]"
+    )
+    assert [
+        (row.document_id, row.content, row.source_chunk_id) for row in inserted
+    ] == [(9, "字" * 5000, ""), (11, "另一原文", "")]
+    assert len(result["answer_citations"]) == 2
+    assert "_answer_evidence" not in result
+    assert original["value"].startswith("结论[[evidence:first]]")
+    db.begin_nested.assert_called_once()
+    db.commit.assert_not_called()
+
+
+def test_no_reference_does_not_create_a_savepoint(monkeypatch):
+    db = MagicMock()
+    answer = SimpleNamespace(id=12, answer_generation_id="a" * 32)
+    result = bind_answer_evidence(
+        db,
+        answer,
+        {
+            "value": "普通回答",
+            "_answer_evidence": TrustedEvidence(
+                [
+                    {
+                        "evidence_id": "unused",
+                        "content": "正文",
+                        "source": "资料",
+                        "knowledge_base_id": 7,
+                        "document_id": 9,
+                    }
+                ],
+                user_id=3,
+            ),
+        },
+    )
+    assert result["answer_citations"] == []
+    db.begin_nested.assert_not_called()
+    db.add.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "title_length,chunk_length,accepted",
+    [(1024, 255, True), (1025, 255, False), (1024, 256, False)],
+)
+def test_snapshot_metadata_uses_model_length_limits(
+    monkeypatch, title_length, chunk_length, accepted
+):
+    from app.services.knowledge import answer_evidence as module
+
+    monkeypatch.setattr(module, "require_source", lambda *args: None)
+    db = MagicMock()
+    db.add.side_effect = lambda row: setattr(row, "id", 42)
+    answer = SimpleNamespace(id=12, answer_generation_id="a" * 32)
+    unit = {
+        "evidence_id": "local",
+        "content": "完整原文",
+        "source": "题" * title_length,
+        "source_chunk_id": "c" * chunk_length,
+        "knowledge_base_id": 7,
+        "document_id": 9,
+    }
+    output = bind_answer_evidence(
+        db,
+        answer,
+        {
+            "value": "[[evidence:local]]",
+            "_answer_evidence": TrustedEvidence([unit], user_id=3),
+        },
+    )
+    assert output["value"] == (
+        "[[citation:42]]" if accepted else "[[evidence-unavailable]]"
+    )
+    assert len(output["answer_citations"]) == int(accepted)
+
+
+def test_implicit_flush_savepoint_rollback_failure_is_not_recoverable(monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    from app.services.knowledge import answer_evidence as module
+
+    monkeypatch.setattr(module, "require_source", lambda *args: None)
+    db = MagicMock()
+    # SQLAlchemy flush already attempted rollback and deactivated the savepoint.
+    # A subsequent rollback() can return without sending another SQL statement.
+    db.flush.side_effect = OperationalError(
+        "ROLLBACK TO SAVEPOINT sa_savepoint_1", {}, Exception("private rollback error")
+    )
+    db.begin_nested.return_value.is_active = False
+    answer = SimpleNamespace(id=12, answer_generation_id="a" * 32)
+    unit = {
+        "evidence_id": "local",
+        "content": "私有原文",
+        "source": "资料",
+        "knowledge_base_id": 7,
+        "document_id": 9,
+    }
+    with pytest.raises(OperationalError):
+        bind_answer_evidence(
+            db,
+            answer,
+            {
+                "value": "[[evidence:local]]",
+                "_answer_evidence": TrustedEvidence([unit], user_id=3),
+            },
+        )
