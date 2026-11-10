@@ -397,6 +397,14 @@ where
         self
     }
 
+    pub fn with_shared_capability_sync_handler(
+        mut self,
+        handler: Arc<dyn CapabilitySyncRpcHandler>,
+    ) -> Self {
+        self.capability_sync_handler = Some(handler);
+        self
+    }
+
     pub fn with_session_handler(mut self, handler: LocalSessionHandler) -> Self {
         self.session_handler = Some(Arc::new(Mutex::new(handler)));
         self

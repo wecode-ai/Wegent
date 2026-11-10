@@ -149,8 +149,14 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         plugins,
       })
     },
-    autoUpdateInstalledPlugins(): Promise<PluginAutoUpdateBatchResponse> {
-      return client.post('/plugins/installed/auto-update-batch')
+    autoUpdateInstalledPlugins(
+      sourceDeviceId?: string,
+      deliveryMode?: 'local_pull_v1'
+    ): Promise<PluginAutoUpdateBatchResponse> {
+      const query = new URLSearchParams()
+      if (sourceDeviceId) query.set('source_device_id', sourceDeviceId)
+      if (deliveryMode) query.set('delivery_mode', deliveryMode)
+      return client.post('/plugins/installed/auto-update-batch' + (query.size ? `?${query}` : ''))
     },
     updateInstalledPlugin(
       id: string | number,

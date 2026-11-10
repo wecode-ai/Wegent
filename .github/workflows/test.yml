@@ -263,6 +263,20 @@ jobs:
           cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
 
+      - name: Verify account HTTP plugin snapshots without Device registration
+        working-directory: backend-rs
+        env:
+          PLUGIN_LOCAL_SYNC_ENABLED: 'true'
+          SECRET_KEY: plugin-local-contract-test
+          DATABASE_URL: mysql://root@127.0.0.1:3306/mysql
+          REDIS_URL: redis://127.0.0.1:6379/0
+          WEGENT_BACKEND_RS_ENV_FILE: /dev/null
+          EXECUTOR_MANAGER_URL: http://127.0.0.1:1
+        run: |
+          set -o pipefail
+          cargo test --locked --lib plugins_installed::local_sync::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-local-sync-mysql.log
+
       - name: Verify plugin write leases with real Redis replication and MySQL
         working-directory: backend-rs
         run: |

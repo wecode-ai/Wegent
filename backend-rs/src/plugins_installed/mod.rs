@@ -20,6 +20,7 @@ mod catalog_write;
 mod desired_capabilities;
 mod handler;
 mod item;
+mod local_sync;
 mod online_route;
 mod record_sync_result;
 mod registration_sync;

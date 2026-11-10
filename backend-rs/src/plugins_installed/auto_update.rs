@@ -85,12 +85,55 @@ impl PluginAutoUpdateBatchResponse {
 async fn auto_update_installed_plugins(
     #[inject(state)] state: &AppState,
     #[auth] user: auth::InstalledPluginsUser,
+    source_device_id: Option<String>,
+    delivery_mode: Option<String>,
 ) -> Result<PluginAutoUpdateBatchResponse, FastApiError> {
+    let local = match delivery_mode.as_deref() {
+        None => false,
+        Some("local_pull_v1") if super::local_sync::enabled() => true,
+        Some("local_pull_v1") => {
+            return Err(FastApiError::detail(
+                brz_http_server::StatusCode::CONFLICT,
+                "LOCAL_SYNC_DISABLED",
+            ));
+        }
+        Some(_) => {
+            return Err(FastApiError::detail(
+                brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+                "LOCAL_SYNC_PROTOCOL_UNSUPPORTED",
+            ));
+        }
+    };
+    if local
+        && source_device_id.as_deref().is_some_and(|id| {
+            id.len() > 100
+                || !id
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"_.:-".contains(&c))
+        })
+    {
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+            "INVALID_SOURCE_DEVICE_ID",
+        ));
+    }
     let mysql = state.mysql.clone();
     let redis = state.redis.clone();
     let resolvers = state.entity_resolvers.clone();
     complete_auto_update(async move {
-        auto_update_batch(&mysql, redis.as_ref(), &resolvers, user.id).await
+        if local {
+            auto_update_batch_source(
+                &mysql,
+                redis.as_ref(),
+                &resolvers,
+                user.id,
+                source_device_id.as_deref(),
+                true,
+            )
+            .await
+        } else {
+            auto_update_batch(&mysql, redis.as_ref(), &resolvers, user.id).await
+        }
     })
     .await
     .map_err(http_error)
@@ -259,6 +302,21 @@ where
     M: Mysql,
     R: brz_redis::Redis,
 {
+    auto_update_batch_source(mysql, redis, resolvers, user_id, None, false).await
+}
+
+async fn auto_update_batch_source<M, R>(
+    mysql: &M,
+    redis: Option<&R>,
+    resolvers: &EntityResolvers<R>,
+    user_id: i64,
+    source: Option<&str>,
+    local: bool,
+) -> MysqlResult<PluginAutoUpdateBatchResponse>
+where
+    M: Mysql,
+    R: brz_redis::Redis,
+{
     let lease = PluginWriteLease::acquire(redis, user_id).await?;
     let result = tokio::time::timeout_at(lease.deadline, async {
         lease.ensure_policy(mysql).await?;
@@ -291,6 +349,17 @@ where
                 } else {
                     PluginAutoUpdateBatchResponse::empty()
                 };
+                if local {
+                    for item in &response.updated {
+                        super::local_sync::enqueue_auto_update(
+                            transaction,
+                            user_id,
+                            item.installed_plugin_id,
+                            source,
+                        )
+                        .await?;
+                    }
+                }
                 lease.commit_revision(transaction, revision).await?;
                 Ok(response)
             })

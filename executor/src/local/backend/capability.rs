@@ -28,6 +28,10 @@ pub trait CapabilityReportProvider: Send + Sync + 'static {
 }
 
 pub trait CapabilitySyncRpcHandler: Send + Sync + 'static {
+    fn invalidate_connection(&self) {}
+    fn local_plugin_digest(&self) -> Option<String> {
+        None
+    }
     fn handle_sync_capabilities<'a>(
         &'a self,
         payload: Value,
@@ -63,6 +67,13 @@ impl<P> CapabilitySyncRpcHandler for CapabilitySyncHandler<P>
 where
     P: CapabilityPackageProvider + Send + Sync + 'static,
 {
+    fn invalidate_connection(&self) {
+        CapabilitySyncHandler::invalidate_connection(self);
+    }
+    fn local_plugin_digest(&self) -> Option<String> {
+        CapabilitySyncHandler::local_plugin_digest(self).ok()
+    }
+
     fn handle_sync_capabilities<'a>(
         &'a self,
         payload: Value,

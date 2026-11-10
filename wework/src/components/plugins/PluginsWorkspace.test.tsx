@@ -41,6 +41,7 @@ import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconcil
 import '@/i18n'
 import * as navigation from '@/lib/navigation'
 import type {
+  InstalledPlugin,
   InstalledPluginComponents,
   InstalledPluginListResponse,
   PluginMarketplaceItem,
@@ -300,6 +301,11 @@ function mockCodexAppServerInvoke(
   const apps = options.apps ?? []
 
   vi.mocked(requestLocalExecutor).mockImplementation((method: string, params?: unknown) => {
+    if (method === 'executor.plugins.local_sync') {
+      return Promise.reject(
+        Object.assign(new Error('Legacy Runtime'), { code: 'unsupported_method' })
+      )
+    }
     if (method === 'executor.plugins.device_route') {
       return Promise.resolve(localExecutorMocks.ensureAvailable.getMockImplementation()?.()).then(
         status => ({
@@ -2428,6 +2434,57 @@ describe('PluginsWorkspace', () => {
       )
     }
   )
+
+  test('HTTP installation works without a device id or cloud registration', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    const fixture = mockSystemSkillsFetch()
+    mockCodexAppServerInvoke({ deviceId: '', backendConnected: false })
+    const original = vi.mocked(requestLocalExecutor).getMockImplementation()!
+    vi.mocked(requestLocalExecutor).mockImplementation(async (method, params) => {
+      if (method !== 'executor.plugins.local_sync') return original(method, params)
+      const request = params as { probeOnly?: boolean; action?: string }
+      if (request.probeOnly) return { enabled: true, protocolVersion: 1 }
+      fixture.setMarketplaceInstallation(true, 'installed')
+      const inventory = await (await fetch('/api/plugins/installed')).json()
+      return {
+        enabled: true,
+        protocolVersion: 1,
+        localCompleted: true,
+        operation: {
+          plugin: inventory.items.find((item: InstalledPlugin) => item.spec.pluginId === 101),
+        },
+        result: {
+          scope: 'plugin_delta',
+          plugins: [{ id: 101, status: 'synced', version: '1.0.0' }],
+        },
+      }
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-install-101')
+    await installPluginFromMarketCard('plugin-marketplace-install-101')
+    await waitFor(() =>
+      expect(requestLocalExecutor).toHaveBeenCalledWith(
+        'executor.plugins.local_sync',
+        expect.objectContaining({ action: 'install', targetId: 101 })
+      )
+    )
+    expect(await screen.findByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+      'data-notice-kind',
+      'success'
+    )
+    expect(
+      vi
+        .mocked(requestLocalExecutor)
+        .mock.calls.some(([method]) => method === 'executor.plugins.device_route')
+    ).toBe(false)
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([input]) => String(input).includes('/plugins/marketplace/101/install'))
+    ).toBe(false)
+  })
 
   test('keeps the user on the plugin page when the current device is disconnected', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }

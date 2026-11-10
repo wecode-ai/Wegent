@@ -99,6 +99,7 @@ fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
         // Context compaction waits for the Codex app-server to finish the
         // compaction turn, so the request deadline must outlive that budget.
         Some("runtime.tasks.compact") => CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS,
+        Some("executor.plugins.local_sync") => 300,
         _ => APP_IPC_REQUEST_TIMEOUT_SECONDS,
     }
 }
@@ -115,6 +116,7 @@ const APP_IPC_CAPABILITIES: &[&str] = &[
     "executor.harnesses",
     "executor.health",
     "executor.plugins",
+    "plugins.local-sync-v1",
     "executor.plugin_auth",
     "runtime.archives",
     "runtime.automations",
@@ -154,6 +156,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.harnesses.prepare_launch",
     "executor.health",
     "executor.plugins.device_route",
+    "executor.plugins.local_sync",
     "executor.plugins.initialize_bundled_marketplace",
     "executor.plugins.import_package",
     "executor.plugins.import_package.finalize",
@@ -794,6 +797,16 @@ impl AppIpcServer {
             } else {
                 handler.migrate_plugin_auth(params).await
             };
+        }
+
+        if method == "executor.plugins.local_sync" {
+            let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
+                AppIpcError::new(
+                    "plugin_local_sync_unsupported",
+                    "Local plugin synchronization is unavailable",
+                )
+            })?;
+            return handler.plugin_local_sync(params).await;
         }
 
         if method == "executor.plugins.device_route" {

@@ -18,7 +18,7 @@ from app.services.plugin_marketplace_service import plugin_marketplace_service
 
 
 def install_builtin_account_plugin(
-    db: Session, *, user_id: int, plugin_key: str
+    db: Session, *, user_id: int, plugin_key: str, commit: bool = True
 ) -> InstalledPlugin:
     item = (
         db.query(Plugin)
@@ -32,10 +32,10 @@ def install_builtin_account_plugin(
     )
     if item is not None:
         return plugin_marketplace_service.install(
-            db, user_id=user_id, plugin_id=item.id
+            db, user_id=user_id, plugin_id=item.id, commit=commit
         )
     return installed_plugin_service.install_builtin_plugin(
-        db=db, user_id=user_id, plugin_key=plugin_key
+        db=db, user_id=user_id, plugin_key=plugin_key, commit=commit
     )
 
 

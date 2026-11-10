@@ -422,9 +422,19 @@ export function PluginsWorkspace({
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const localExecutorCloudConnection = useLocalExecutorCloudConnectionStatus()
+  const [localSyncScope, setLocalSyncScope] = useState<{
+    apiBaseUrl: string | undefined
+    token: string | null | undefined
+    enabled: boolean
+  } | null>(null)
+  const localSyncAvailable =
+    localSyncScope?.apiBaseUrl === cloudApiBaseUrl &&
+    localSyncScope?.token === cloudToken &&
+    localSyncScope?.enabled === true
   const deviceCloudConnected =
-    localExecutorCloudConnection.apiBaseUrl === (cloudApiBaseUrl || '') &&
-    localExecutorCloudConnection.connected
+    localSyncAvailable ||
+    (localExecutorCloudConnection.apiBaseUrl === (cloudApiBaseUrl || '') &&
+      localExecutorCloudConnection.connected)
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false)
   const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
   const [installingMarketplacePluginIds, setInstallingMarketplacePluginIds] = useState<
@@ -513,9 +523,23 @@ export function PluginsWorkspace({
     }
     return createLocalDevicePluginApi(
       createDefaultPluginApi(profile.apiBaseUrl, cloudToken),
-      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile)
+      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile),
+      profile
     )
   }, [cloudApiBaseUrl, cloudToken])
+  useEffect(() => {
+    let disposed = false
+    void pluginApi
+      .supportsLocalSync()
+      .then(enabled => {
+        if (!disposed)
+          setLocalSyncScope({ apiBaseUrl: cloudApiBaseUrl, token: cloudToken, enabled })
+      })
+      .catch(() => undefined)
+    return () => {
+      disposed = true
+    }
+  }, [pluginApi, localExecutorCloudConnection.connected, cloudApiBaseUrl, cloudToken])
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const marketplaceCacheKeyValue = useMemo(
     () => pluginMarketplaceCacheKey(cloudApiBaseUrl, cloudToken),
@@ -1936,6 +1960,7 @@ export function PluginsWorkspace({
     deviceId: currentDeviceId,
     available: Boolean(cloudToken && cloudMarketplaceAvailable && deviceCloudConnected),
     busy: pluginMutationInFlight,
+    localSync: localSyncAvailable,
     operations: {
       readStore: readPluginReconciliationInventory,
       sync: () => pluginApi.syncInstalledPluginsToDevice(currentDeviceId, true),
@@ -2226,23 +2251,35 @@ export function PluginsWorkspace({
   }
 
   const resolveLiveRuntimeCloudConnection = async (isCurrent: () => boolean) => {
-    if (!cloudApiBaseUrl || !isCurrent()) return { connected: false, deviceId: '' }
+    if (!cloudApiBaseUrl || !isCurrent())
+      return { connected: false, deviceId: '', localSync: false }
+    if (await pluginApi.supportsLocalSync()) {
+      const executor = await ensureLocalExecutorAvailable({ refresh: true })
+      if (!isCurrent()) return { connected: false, deviceId: '', localSync: false }
+      setLocalSyncScope({ apiBaseUrl: cloudApiBaseUrl, token: cloudToken, enabled: true })
+      return {
+        connected: true,
+        deviceId: rememberCurrentDeviceId(executor.deviceId ?? ''),
+        localSync: true,
+      }
+    }
     const status = await refreshLocalExecutorCloudConnectionStatus(cloudApiBaseUrl)
-    if (!isCurrent()) return { connected: false, deviceId: '' }
-    if (status?.connected !== true) return { connected: false, deviceId: '' }
+    if (!isCurrent()) return { connected: false, deviceId: '', localSync: false }
+    if (status?.connected !== true) return { connected: false, deviceId: '', localSync: false }
 
     try {
       // Registration can replace a cached record route after reconnecting.
       // Refresh at the plugin operation boundary; retain stable inventory identity.
       const executor = await ensureLocalExecutorAvailable({ refresh: true })
-      if (!isCurrent()) return { connected: false, deviceId: '' }
+      if (!isCurrent()) return { connected: false, deviceId: '', localSync: false }
       return {
         connected: true,
+        localSync: false,
         deviceId: rememberCurrentDeviceId(executor.deviceId ?? ''),
       }
     } catch {
-      if (!isCurrent()) return { connected: false, deviceId: '' }
-      return { connected: true, deviceId: '' }
+      if (!isCurrent()) return { connected: false, deviceId: '', localSync: false }
+      return { connected: true, deviceId: '', localSync: false }
     }
   }
 
@@ -2308,7 +2345,7 @@ export function PluginsWorkspace({
         showDeviceDisconnectedNotice(item.id)
         return
       }
-      if (!liveConnection.deviceId) {
+      if (!liveConnection.localSync && !liveConnection.deviceId) {
         preparingInstallPluginIdsRef.current.delete(item.id)
         showDeviceIdentityUnavailableNotice(item.id)
         return
@@ -2490,7 +2527,8 @@ export function PluginsWorkspace({
     const request = prepareMarketplaceInstallItem(item)
       .then(async preparedItem => {
         requireCurrentScope()
-        if (!installPersonalSource) await ensureMarketplaceConnectors(preparedItem, isCurrent)
+        if (!installPersonalSource && (installFromLocal || !(await pluginApi.supportsLocalSync())))
+          await ensureMarketplaceConnectors(preparedItem, isCurrent)
         requireCurrentScope()
         return preparedItem
       })
@@ -2545,7 +2583,7 @@ export function PluginsWorkspace({
             code: 'PLUGIN_DEVICE_DISCONNECTED',
           })
         }
-        if (!liveConnection.deviceId) {
+        if (!liveConnection.localSync && !liveConnection.deviceId) {
           throw Object.assign(new Error('Current device identity is unavailable'), {
             code: 'PLUGIN_DEVICE_ID_UNAVAILABLE',
           })
@@ -2583,7 +2621,8 @@ export function PluginsWorkspace({
             throw error
           }
         }
-        await ensureLocalConnectorsAfterInstall(preparedItem, plugin, isCurrent)
+        if (!plugin.status.localExecution)
+          await ensureLocalConnectorsAfterInstall(preparedItem, plugin, isCurrent)
         requireCurrentScope()
         recordPluginInstallationAccepted(
           plugin,
@@ -2679,6 +2718,9 @@ export function PluginsWorkspace({
         if (!isCurrent()) return
         const { installed, deviceState } = publishInstallation(plugin, targetDeviceId)
         notifyLocalPluginSkillsChanged()
+        const authorizationPending =
+          Boolean(plugin.status.localExecution) &&
+          (plugin.spec.components.connectors ?? []).some(requiresInstallConnectorAuth)
         setPluginOperationNotice({
           id: `installed-${item.id}`,
           kind: deviceState === 'failed' ? 'error' : 'success',
@@ -2692,13 +2734,20 @@ export function PluginsWorkspace({
                     defaultValue: `${item.displayName || item.name} 已保存，当前设备同步失败，可稍后重试安装`,
                   }
                 )
-              : t('workbench.plugins_install_success_title', '{{name}} 已安装', {
-                  name: item.displayName || item.name,
-                  defaultValue: `${item.displayName || item.name} 已安装`,
-                }),
+              : authorizationPending
+                ? t(
+                    'workbench.plugins_install_authorization_pending',
+                    '{{name}} 已安装，可在插件详情中完成授权',
+                    { name: item.displayName || item.name }
+                  )
+                : t('workbench.plugins_install_success_title', '{{name}} 已安装', {
+                    name: item.displayName || item.name,
+                    defaultValue: `${item.displayName || item.name} 已安装`,
+                  }),
         })
         if (
           promptAfterInstall &&
+          !authorizationPending &&
           queuePluginPromptTrial(installed.raw, promptAfterInstall, { openInNewChat: true })
         ) {
           navigateTo('/')
@@ -6228,7 +6277,7 @@ export function PluginsWorkspace({
           visibleMarketplaceItems={visibleMarketplaceItems}
           marketplaceCategorySections={marketplaceCategorySections}
           visibleSearchResultLimit={visibleSearchResultLimit}
-          isLoggedIn={Boolean(cloudToken && currentDeviceId)}
+          isLoggedIn={Boolean(cloudToken && (localSyncAvailable || currentDeviceId))}
           isReconciling={isReconcilingPlugins}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
@@ -6249,7 +6298,7 @@ export function PluginsWorkspace({
       {browsingCategorySection && (
         <CategoryBrowseDialog
           section={browsingCategorySection}
-          isLoggedIn={Boolean(cloudToken && currentDeviceId)}
+          isLoggedIn={Boolean(cloudToken && (localSyncAvailable || currentDeviceId))}
           isReconciling={isReconcilingPlugins}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}

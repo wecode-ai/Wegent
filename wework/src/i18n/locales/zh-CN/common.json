@@ -4287,7 +4287,14 @@
     "diagram_render_failed": "图表渲染失败，源码如下",
     "diagram_retry": "重试",
     "plugin_python_temporary": "插件临时使用本机 Python {{version}}，托管环境继续准备。",
-    "runtime_task_load_failed": "无法加载该任务，请刷新后重试。"
+    "runtime_task_load_failed": "无法加载该任务，请刷新后重试。",
+    "plugins_install_authorization_pending": "{{name}} 已安装，可在插件详情中完成授权",
+    "plugins_local_sync_network_error": "暂时无法连接服务，请检查网络后重试；已提交的操作会在恢复后继续。",
+    "plugins_local_sync_apply_error": "本机插件处理未完成，请刷新安装状态后重试。",
+    "plugins_local_sync_unconfirmed": "尚未确认操作提交结果，请先刷新核对安装状态。",
+    "plugins_local_sync_journal_error": "无法读取或保存本机操作记录，请检查磁盘空间和权限后重试。",
+    "plugins_local_sync_superseded": "插件的安装目标已被其他操作改变，请刷新后按最新状态操作。",
+    "plugins_local_sync_disabled": "当前暂不接受新的本机插件操作，请稍后重试。"
   },
   "delivery": {
     "action": "交付",

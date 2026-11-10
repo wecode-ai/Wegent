@@ -1,0 +1,894 @@
+//! Durable account HTTP coordination around the same Socket capability handler.
+use super::plugin_route::required_profile_field;
+use super::{AppIpcError, LocalBackendConnectionController};
+use crate::{
+    agents::{backend_url::backend_http_client, wework_codex_home},
+    config::device::ConnectionConfig,
+};
+use fs2::FileExt;
+
+#[cfg(test)]
+mod execution_tests;
+mod recovery;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::{path::Path, time::Duration};
+
+struct LocalSyncSession<'a> {
+    connection: &'a ConnectionConfig,
+    handler: &'a dyn super::super::capability::CapabilitySyncRpcHandler,
+    capabilities: &'a Value,
+    instance: &'a str,
+    path: &'a Path,
+}
+
+fn error(code: &str) -> AppIpcError {
+    AppIpcError::new(code, code)
+}
+fn persist(path: &Path, journal: &Value) -> Result<(), AppIpcError> {
+    let bytes = serde_json::to_vec(journal).map_err(|_| error("plugin_local_journal_invalid"))?;
+    wegent_filesystem::atomic_file::write_atomic_file(path, &bytes)
+        .map_err(|_| error("plugin_local_journal_unavailable"))
+}
+fn load(path: &Path) -> Result<Value, AppIpcError> {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            serde_json::from_slice(&bytes).map_err(|_| error("plugin_local_journal_invalid"))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(json!({"version":1,"pending":[],"receipts":[]}))
+        }
+        Err(_) => Err(error("plugin_local_journal_unavailable")),
+    }
+}
+fn load_journal(path: &Path) -> Result<Value, AppIpcError> {
+    let journal = load(path)?;
+    let valid = journal["version"] == 1
+        && journal["pending"].as_array().is_some_and(|items| {
+            items.iter().all(|item| {
+                item.is_object() && item["operationId"].is_string() && item["action"].is_string()
+            })
+        })
+        && journal["receipts"]
+            .as_array()
+            .is_some_and(|items| items.iter().all(Value::is_object));
+    if !valid {
+        return Err(error("plugin_local_journal_invalid"));
+    }
+    Ok(journal)
+}
+
+fn instance_id(root: &Path) -> Result<String, AppIpcError> {
+    let path = root.join("instance.json");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("instance.lock"))
+        .map_err(|_| error("plugin_local_journal_unavailable"))?;
+    file.lock_exclusive()
+        .map_err(|_| error("plugin_local_journal_unavailable"))?;
+    let value = if path.exists() {
+        load(&path)?
+    } else {
+        let value = json!({"id":uuid::Uuid::new_v4().to_string()});
+        persist(&path, &value)?;
+        value
+    };
+    value["id"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| error("plugin_local_journal_invalid"))
+}
+async fn post(
+    connection: &ConnectionConfig,
+    path: &str,
+    body: &Value,
+) -> Result<Value, AppIpcError> {
+    let response = backend_http_client()
+        .map_err(|_| error("plugin_local_http_unavailable"))?
+        .post(format!(
+            "{}{}",
+            connection.backend_url.trim_end_matches('/'),
+            path
+        ))
+        .bearer_auth(&connection.auth_token)
+        .json(body)
+        .timeout(Duration::from_secs(if path.ends_with("/receipts") {
+            5
+        } else {
+            30
+        }))
+        .send()
+        .await
+        .map_err(|_| error("plugin_local_http_unavailable"))?;
+    let status = response.status();
+    if status.as_u16() == 404 {
+        return Err(error("plugin_local_sync_unsupported"));
+    }
+    let value = response
+        .json::<Value>()
+        .await
+        .map_err(|_| error("plugin_local_invalid_response"))?;
+    if !status.is_success() {
+        return Err(error(
+            value["detail"]
+                .as_str()
+                .unwrap_or("plugin_local_http_failed"),
+        ));
+    }
+    Ok(value)
+}
+fn optional_origin(value: &str) -> &str {
+    if !value.is_empty()
+        && value.len() <= 100
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"_.:-".contains(&c))
+    {
+        value
+    } else {
+        ""
+    }
+}
+
+fn next_intent_order(journal: &mut Value) -> Result<u64, AppIpcError> {
+    let current = match journal.get("nextIntentOrder") {
+        None => 0,
+        Some(value) => value
+            .as_u64()
+            .ok_or_else(|| error("plugin_local_journal_invalid"))?,
+    };
+    let order = current
+        .checked_add(1)
+        .filter(|value| *value < i64::MAX as u64)
+        .ok_or_else(|| error("plugin_local_journal_invalid"))?;
+    journal["nextIntentOrder"] = json!(order);
+    Ok(order)
+}
+
+fn retire_superseded(journal: &mut Value, operation: &str) {
+    journal["pending"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|entry| entry["operationId"].as_str() != Some(operation));
+    journal["snapshot"] = Value::Null;
+    journal["revision"] = Value::Null;
+    journal["reconcilePending"] = json!(true);
+}
+
+#[derive(Debug)]
+enum SubmitOutcome {
+    Accepted,
+    Rejected { failure: AppIpcError, status: u16 },
+}
+
+fn acknowledged(headers: &reqwest::header::HeaderMap, operation: &str, order: u64) -> bool {
+    let value = |name: &str| headers.get(name).and_then(|header| header.to_str().ok());
+    value("X-Plugin-Delivery-Mode") == Some("local_pull_v1")
+        && value("X-Plugin-Operation-Id") == Some(operation)
+        && value("X-Plugin-Intent-Order").and_then(|value| value.parse::<u64>().ok()) == Some(order)
+}
+
+async fn submit(
+    connection: &ConnectionConfig,
+    instance: &str,
+    request: &Value,
+    source_device_id: &str,
+) -> Result<SubmitOutcome, AppIpcError> {
+    let action = request["action"]
+        .as_str()
+        .ok_or_else(|| error("invalid_params"))?;
+    let id = request["targetId"].as_u64().unwrap_or(0);
+    let plugin_key = request["targetId"].as_str().unwrap_or_default();
+    if action == "ensure_builtin" {
+        if plugin_key.is_empty()
+            || plugin_key.len() > 128
+            || !plugin_key
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+        {
+            return Err(error("invalid_params"));
+        }
+    } else if id == 0 {
+        return Err(error("invalid_params"));
+    }
+    let operation = request["operationId"]
+        .as_str()
+        .ok_or_else(|| error("invalid_params"))?;
+    let intent_order = request["intentOrder"]
+        .as_u64()
+        .filter(|value| *value > 0 && *value < i64::MAX as u64)
+        .ok_or_else(|| error("plugin_local_journal_invalid"))?;
+    let client = backend_http_client().map_err(|_| error("plugin_local_http_unavailable"))?;
+    let base = connection.backend_url.trim_end_matches('/');
+    let (method, path) = match action {
+        "install" => (
+            reqwest::Method::POST,
+            format!("/api/plugins/marketplace/{id}/install"),
+        ),
+        "update" => (reqwest::Method::PUT, format!("/api/plugins/installed/{id}")),
+        "ensure_builtin" => (
+            reqwest::Method::POST,
+            format!("/api/plugins/builtin/{plugin_key}/ensure-installed"),
+        ),
+        "uninstall" => (
+            reqwest::Method::DELETE,
+            format!("/api/plugins/installed/{id}"),
+        ),
+        _ => return Err(error("invalid_params")),
+    };
+    let mut builder = client
+        .request(method, format!("{base}{path}"))
+        .bearer_auth(&connection.auth_token)
+        .query(&[
+            ("delivery_mode", "local_pull_v1"),
+            ("local_instance_id", instance),
+            ("operation_id", operation),
+            ("source_device_id", optional_origin(source_device_id)),
+        ])
+        .query(&[("local_intent_order", intent_order)])
+        .header("Idempotency-Key", operation)
+        .timeout(Duration::from_secs(30));
+    if action == "ensure_builtin" {
+        builder = builder.json(&json!({}));
+    }
+    if action == "update" {
+        builder = builder.json(&request["payload"]);
+    }
+    if action == "install" {
+        if let Some(release) = request["payload"]["releaseId"].as_i64() {
+            builder = builder.query(&[("release_id", release)]);
+        }
+    }
+    let response = builder
+        .send()
+        .await
+        .map_err(|_| error("plugin_local_http_unavailable"))?;
+    let status = response.status();
+    let ack = acknowledged(response.headers(), operation, intent_order);
+    let rejected = response
+        .headers()
+        .get("X-Plugin-Operation-State")
+        .and_then(|value| value.to_str().ok())
+        == Some("rejected");
+    if !status.is_success() {
+        let value = response.json::<Value>().await.unwrap_or_default();
+        let code = value["detail"]
+            .as_str()
+            .unwrap_or("plugin_local_intent_failed");
+        let definitive = matches!(status.as_u16(), 400 | 403 | 404 | 422)
+            || (status.as_u16() == 409 && code == "INTENT_SUPERSEDED");
+        if ack && rejected && definitive && value["detail"].is_string() {
+            return Ok(SubmitOutcome::Rejected {
+                failure: error(code),
+                status: status.as_u16(),
+            });
+        }
+        return Err(error(code));
+    }
+    // Missing acknowledgements can mean an old replica ignored the new mode.
+    if !ack || rejected {
+        return Err(error("plugin_local_acceptance_unconfirmed"));
+    }
+    Ok(SubmitOutcome::Accepted)
+}
+
+fn valid_snapshot(snapshot: &Value) -> bool {
+    snapshot["protocolVersion"] == 1
+        && snapshot["generation"].as_u64().is_some_and(|g| g > 0)
+        && snapshot["snapshotId"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty() && id.len() <= 128)
+        && snapshot["revision"].as_str().is_some_and(|revision| {
+            revision.len() == 64 && revision.bytes().all(|c| c.is_ascii_hexdigit())
+        })
+        && snapshot["payload"]["plugin_sync"]["version"] == 2
+        && snapshot["payload"]["plugin_sync"]["generation"] == snapshot["generation"]
+        && matches!(
+            (
+                snapshot["payload"]["plugin_sync"]["complete"].as_bool(),
+                snapshot["payload"]["scope"].as_str()
+            ),
+            (Some(true), Some("plugins")) | (Some(false), Some("plugin_delta"))
+        )
+        && snapshot["payload"]["mode"] == "merge"
+        && snapshot["payload"]["plugins"].is_array()
+}
+
+fn select_pending(pending: &[Value], params: &Value) -> Option<Value> {
+    if params["action"].is_string() {
+        pending.last().cloned()
+    } else {
+        None
+    }
+}
+
+fn local_result(payload: &Value, result: Value) -> Value {
+    if result["plugin_sync"] == payload["plugin_sync"]
+        && result["scope"] == payload["scope"]
+        && result["plugins"].is_array()
+    {
+        return result;
+    }
+    // Installer validation can reject an entire malformed request before it
+    // creates per-item ACKs. Report rejection without claiming materialization.
+    let mut items = Vec::new();
+    for (field, operation) in [("plugins", "upsert"), ("removed_plugins", "remove")] {
+        for target in payload[field].as_array().into_iter().flatten() {
+            items.push(json!({"id":target["installed_plugin_id"],"operation":operation,"status":"failed","generation":payload["plugin_sync"]["generation"],"error_code":"APPLY_REQUEST_REJECTED"}));
+        }
+    }
+    json!({"success":false,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":items,"error":result["error"]})
+}
+
+impl LocalBackendConnectionController {
+    fn schedule_local_receipts(&self, connection: &ConnectionConfig, path: &Path) {
+        let controller = self.clone();
+        let connection = connection.clone();
+        let path = path.to_path_buf();
+        tokio::spawn(async move {
+            let _ = controller.flush_local_receipts(&connection, &path).await;
+        });
+    }
+
+    async fn flush_local_receipts(
+        &self,
+        connection: &ConnectionConfig,
+        path: &Path,
+    ) -> Result<(), AppIpcError> {
+        // Receipt HTTP must never hold the foreground coordinator or file lease.
+        let receipts = load_journal(path)?["receipts"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let mut acknowledged = Vec::new();
+        let mut rejected = Vec::new();
+        let mut reconcile = false;
+        for receipt in receipts.into_iter().take(16) {
+            {
+                let state = self.state.lock().await;
+                if state.profile.as_ref().map(|p| &p.connection) != Some(connection) {
+                    return Err(error("plugin_route_profile_mismatch"));
+                }
+            }
+            match post(connection, "/api/plugins/local-sync/receipts", &receipt).await {
+                Ok(_) => acknowledged.push(receipt["snapshotId"].clone()),
+                Err(e) if e.code == "SNAPSHOT_EXPIRED" => {
+                    acknowledged.push(receipt["snapshotId"].clone());
+                    reconcile = true;
+                }
+                Err(e) if matches!(e.code.as_str(), "SNAPSHOT_NOT_OWNED" | "INVALID_RECEIPT") => {
+                    acknowledged.push(receipt["snapshotId"].clone());
+                    rejected.push(json!({"receipt":receipt,"errorCode":e.code,"rejectedAt":chrono::Utc::now().timestamp()}));
+                    reconcile = true;
+                }
+                Err(_) => break,
+            }
+        }
+        if acknowledged.is_empty() {
+            return Ok(());
+        }
+        let _serial = self.local_sync_lock.lock().await;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path.with_extension("lock"))
+            .map_err(|_| error("plugin_local_journal_unavailable"))?;
+        file.try_lock_exclusive()
+            .map_err(|_| error("plugin_local_sync_busy"))?;
+        let mut journal = load_journal(path)?;
+        if reconcile {
+            journal["reconcilePending"] = json!(true);
+            journal["revision"] = Value::Null;
+        }
+        if !rejected.is_empty() {
+            if !journal["rejectedReceipts"].is_array() {
+                journal["rejectedReceipts"] = json!([]);
+            }
+            let archive = journal["rejectedReceipts"].as_array_mut().unwrap();
+            archive.extend(rejected);
+            if archive.len() > 100 {
+                archive.drain(..archive.len() - 100);
+            }
+        }
+        journal["receipts"]
+            .as_array_mut()
+            .ok_or_else(|| error("plugin_local_journal_invalid"))?
+            .retain(|receipt| !acknowledged.contains(&receipt["snapshotId"]));
+        persist(path, &journal)
+    }
+
+    pub(super) async fn local_plugin_sync(&self, params: Value) -> Result<Value, AppIpcError> {
+        let root = wework_codex_home().join("plugin-local-sync");
+        self.local_plugin_sync_at(params, &root).await
+    }
+
+    async fn local_plugin_sync_at(&self, params: Value, root: &Path) -> Result<Value, AppIpcError> {
+        let backend = required_profile_field(&params, "backend_url")?.trim_end_matches('/');
+        let token = required_profile_field(&params, "auth_token")?;
+        let (connection, handler) = {
+            let state = self.state.lock().await;
+            let profile = state
+                .profile
+                .as_ref()
+                .ok_or_else(|| error("plugin_local_profile_unavailable"))?;
+            if profile.connection.backend_url != backend || profile.connection.auth_token != token {
+                return Err(error("plugin_route_profile_mismatch"));
+            }
+            (
+                profile.connection.clone(),
+                state
+                    .plugin_sync
+                    .clone()
+                    .ok_or_else(|| error("plugin_local_sync_unsupported"))?,
+            )
+        };
+        std::fs::create_dir_all(root).map_err(|_| error("plugin_local_journal_unavailable"))?;
+        // This short cross-process identity lease is independent of installer
+        // execution. Waiting for it must not occupy a Tokio worker.
+        let identity_root = root.to_path_buf();
+        let instance = tokio::task::spawn_blocking(move || instance_id(&identity_root))
+            .await
+            .map_err(|_| error("plugin_local_journal_unavailable"))??;
+        let capabilities = post(
+            &connection,
+            "/api/plugins/local-sync",
+            &json!({"protocolVersion":1,"instanceId":instance,"probeOnly":true}),
+        )
+        .await?;
+        if capabilities["protocolVersion"] != 1 || capabilities["contractRevision"] != 2 {
+            return Err(error("plugin_local_sync_unsupported"));
+        }
+        let account = capabilities["accountId"]
+            .as_i64()
+            .filter(|id| *id > 0)
+            .ok_or_else(|| error("plugin_local_invalid_response"))?;
+        let scope = format!(
+            "{:x}",
+            Sha256::digest(format!("{}:{account}", connection.backend_url).as_bytes())
+        );
+        // Independent Backend profiles must not advance each other's receipt
+        // watermarks, including two URLs routing to the same Backend database.
+        let instance = format!(
+            "{:x}",
+            Sha256::digest(format!("{instance}:{scope}").as_bytes())
+        );
+        let path = root.join(format!("{scope}.json"));
+        if params["probeOnly"] == true {
+            let journal = load_journal(&path)?;
+            let recovery = journal["pending"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+                || journal["snapshot"].is_object()
+                || journal["reconcilePending"] == true
+                || journal["receipts"]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty());
+            let mut capabilities = capabilities;
+            capabilities["recoveryPending"] = json!(recovery);
+            capabilities["sourceDeviceId"] = json!(optional_origin(&self.base_config.device_id));
+            return Ok(capabilities);
+        }
+
+        // Pure probes must remain available while a snapshot or installer is
+        // waiting. Mutating/application requests retain foreground ordering.
+        let _serial = self.local_sync_lock.lock().await;
+        {
+            let state = self.state.lock().await;
+            if state.profile.as_ref().map(|profile| &profile.connection) != Some(&connection) {
+                return Err(error("plugin_route_profile_mismatch"));
+            }
+        }
+        // Serialize sidecars sharing a home without blocking a Tokio worker.
+        let lock_path = root.join(format!("{scope}.lock"));
+        let _file = tokio::task::spawn_blocking(move || {
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(lock_path)
+                .map_err(|_| error("plugin_local_journal_unavailable"))?;
+            file.try_lock_exclusive()
+                .map_err(|_| error("plugin_local_sync_busy"))?;
+            Ok::<_, AppIpcError>(file)
+        })
+        .await
+        .map_err(|_| error("plugin_local_journal_unavailable"))??;
+        let journal = load_journal(&path)?;
+        self.apply_local_plugin_sync(
+            params,
+            LocalSyncSession {
+                connection: &connection,
+                handler: handler.as_ref(),
+                capabilities: &capabilities,
+                instance: &instance,
+                path: &path,
+            },
+            journal,
+        )
+        .await
+    }
+
+    // The caller retains foreground serialization and the ordinary journal
+    // lease. Prepared recovery submits HTTP without acquiring either again.
+    async fn apply_local_plugin_sync(
+        &self,
+        params: Value,
+        session: LocalSyncSession<'_>,
+        mut journal: Value,
+    ) -> Result<Value, AppIpcError> {
+        let LocalSyncSession {
+            connection,
+            handler,
+            capabilities,
+            instance,
+            path,
+        } = session;
+        if journal["version"] != 1 {
+            return Err(error("plugin_local_journal_invalid"));
+        }
+        if let Some(action) = params["action"].as_str() {
+            if capabilities["enabled"] != true {
+                return Err(error("LOCAL_SYNC_DISABLED"));
+            }
+            if !matches!(
+                action,
+                "install" | "update" | "uninstall" | "ensure_builtin"
+            ) || (action != "ensure_builtin"
+                && params["targetId"].as_u64().filter(|id| *id > 0).is_none())
+            {
+                return Err(error("invalid_params"));
+            }
+            let intent_order = next_intent_order(&mut journal)?;
+            let request = json!({"intentOrder":intent_order,"action":action,"targetId":params["targetId"],"payload":params.get("payload").cloned().unwrap_or(json!({})),"operationId":uuid::Uuid::new_v4().to_string()});
+            journal["pending"]
+                .as_array_mut()
+                .ok_or_else(|| error("plugin_local_journal_invalid"))?
+                .push(request);
+            persist(path, &journal)?;
+        }
+        let pending = journal["pending"]
+            .as_array()
+            .cloned()
+            .ok_or_else(|| error("plugin_local_journal_invalid"))?;
+        let selected = select_pending(&pending, &params);
+        let operation = selected
+            .as_ref()
+            .and_then(|request| request["operationId"].as_str());
+        if let Some(request) = &selected {
+            if let Some(entry) = journal["pending"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|entry| entry["operationId"] == request["operationId"])
+            {
+                entry["lastAttemptAt"] = json!(chrono::Utc::now().timestamp_millis());
+            }
+            persist(path, &journal)?;
+            let outcome = submit(connection, instance, request, &self.base_config.device_id).await;
+            if !matches!(outcome, Ok(SubmitOutcome::Accepted)) {
+                recovery::record_submission_result(&mut journal, operation.unwrap(), &outcome);
+                persist(path, &journal)?;
+                return Err(match outcome {
+                    Err(failure) | Ok(SubmitOutcome::Rejected { failure, .. }) => failure,
+                    Ok(SubmitOutcome::Accepted) => unreachable!(),
+                });
+            }
+            if let Some(entry) = journal["pending"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|entry| entry["operationId"] == request["operationId"])
+            {
+                entry["accepted"] = json!(true);
+            }
+            persist(path, &journal)?;
+        }
+        let digest = handler.local_plugin_digest();
+        let verified = digest
+            .as_ref()
+            .is_some_and(|digest| journal["verifiedDigest"].as_str() == Some(digest.as_str()));
+        let known_revision = journal["revision"]
+            .as_str()
+            .filter(|_| verified)
+            .map(str::to_owned);
+        let installed_plugin_id = params["installedPluginId"]
+            .as_u64()
+            .filter(|_| selected.is_none() && params["full"] != true);
+        let targeted = selected.is_some() || installed_plugin_id.is_some();
+        let operation_ids: Vec<String> = if let Some(operation) = operation {
+            vec![operation.to_owned()]
+        } else if !targeted {
+            pending
+                .iter()
+                .filter(|entry| entry["accepted"] == true)
+                .filter_map(|entry| entry["operationId"].as_str().map(str::to_owned))
+                .take(64)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !targeted && !pending.is_empty() {
+            if let Err(failure) =
+                self.schedule_local_recovery(connection, instance, path, &mut journal)
+            {
+                if failure.code != "plugin_local_sync_busy" {
+                    crate::logging::write_executor_error_line(&failure.code);
+                }
+            }
+        }
+        let snapshot=post(connection,"/api/plugins/local-sync",&json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["snapshot"].is_object() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id,"operationIds":operation_ids})).await?;
+        // Profile replacement fences the shared installer as well as this HTTP scope.
+        {
+            let state = self.state.lock().await;
+            if state.profile.as_ref().map(|p| &p.connection.auth_token)
+                != Some(&connection.auth_token)
+                || state.profile.as_ref().map(|p| &p.connection.backend_url)
+                    != Some(&connection.backend_url)
+            {
+                return Err(error("plugin_route_profile_mismatch"));
+            }
+        }
+        if snapshot["unchanged"] == true {
+            if !verified
+                || !pending.is_empty()
+                || journal["snapshot"].is_object()
+                || snapshot["revision"] != journal["revision"]
+            {
+                return Err(error("plugin_local_invalid_response"));
+            }
+
+            let controller = self.clone();
+            let connection = connection.clone();
+            let receipt_path = path.to_path_buf();
+            tokio::spawn(async move {
+                let _ = controller
+                    .flush_local_receipts(&connection, &receipt_path)
+                    .await;
+            });
+            return Ok(
+                json!({"enabled":capabilities["enabled"], "protocolVersion":1, "localCompleted":true, "unchanged":true, "result":journal["lastResult"]}),
+            );
+        }
+        if !valid_snapshot(&snapshot)
+            || (selected.is_some()
+                && !matches!(
+                    snapshot["operation"]["state"].as_str(),
+                    Some("intent_saved" | "superseded")
+                ))
+        {
+            return Err(error("plugin_local_invalid_response"));
+        }
+        if snapshot["operation"]["state"] == "superseded" {
+            let mut result = local_result(
+                &snapshot["payload"],
+                json!({"success":false,"error":"INTENT_SUPERSEDED"}),
+            );
+            for item in result["plugins"].as_array_mut().unwrap() {
+                item["status"] = json!("superseded");
+            }
+            journal["receipts"].as_array_mut().unwrap().push(json!({"protocolVersion":1,"instanceId":instance,"snapshotId":snapshot["snapshotId"],"generation":snapshot["generation"],"result":result}));
+
+            retire_superseded(&mut journal, operation.unwrap());
+            persist(path, &journal)?;
+            self.schedule_local_receipts(connection, path);
+            return Err(error("INTENT_SUPERSEDED"));
+        }
+        journal["snapshot"] = snapshot.clone();
+        persist(path, &journal)?;
+        let result = local_result(
+            &snapshot["payload"],
+            handler
+                .handle_sync_capabilities(snapshot["payload"].clone())
+                .await,
+        );
+        let completed = result["success"] == true
+            && result["plugins"].as_array().is_some_and(|items| {
+                items
+                    .iter()
+                    .all(|item| matches!(item["status"].as_str(), Some("synced" | "removed")))
+            });
+        let receipt = json!({"protocolVersion":1,"instanceId":instance,"snapshotId":snapshot["snapshotId"],"generation":snapshot["generation"],"result":result});
+        journal["receipts"]
+            .as_array_mut()
+            .ok_or_else(|| error("plugin_local_journal_invalid"))?
+            .push(receipt);
+        if completed {
+            journal["revision"] = if targeted {
+                Value::Null
+            } else {
+                snapshot["revision"].clone()
+            };
+            journal["verifiedDigest"] = json!(handler.local_plugin_digest());
+            journal["lastResult"] = result.clone();
+            if let Some(operation) = operation {
+                journal["pending"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|entry| entry["operationId"].as_str() != Some(operation));
+            } else if !targeted {
+                journal["pending"].as_array_mut().unwrap().retain(|entry| {
+                    !entry["operationId"]
+                        .as_str()
+                        .is_some_and(|id| operation_ids.iter().any(|item| item == id))
+                });
+            }
+            journal["reconcilePending"] = json!(targeted);
+            journal["snapshot"] = Value::Null;
+        }
+        persist(path, &journal)?;
+        let receipt_pending = !journal["receipts"].as_array().unwrap().is_empty();
+        let controller = self.clone();
+        let receipt_connection = connection.clone();
+        let receipt_path = path.to_path_buf();
+        tokio::spawn(async move {
+            let _ = controller
+                .flush_local_receipts(&receipt_connection, &receipt_path)
+                .await;
+        });
+
+        if !completed {
+            return Err(error("plugin_local_apply_failed"));
+        }
+        crate::logging::write_executor_log_line(&crate::logging::format_executor_log(
+            "local plugin execution completed",
+            &[("receipt_pending", receipt_pending.to_string())],
+        ));
+        Ok(
+            json!({"enabled":capabilities["enabled"],"protocolVersion":1,"localCompleted":true,"receiptPending":receipt_pending,"operation":snapshot["operation"],"result":result}),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn mutation_transports_the_persisted_order_and_requires_its_acknowledgement() {
+        use axum::{extract::Query, response::IntoResponse, routing::delete, Json, Router};
+        use std::collections::HashMap;
+        async fn mutate(Query(params): Query<HashMap<String, String>>) -> axum::response::Response {
+            assert_eq!(params["local_intent_order"], "42");
+            assert_eq!(params["local_instance_id"], "native");
+            if params["operation_id"] == "older" {
+                return (
+                    axum::http::StatusCode::CONFLICT,
+                    Json(json!({"detail":"INTENT_SUPERSEDED"})),
+                )
+                    .into_response();
+            }
+            let mut response = axum::http::StatusCode::NO_CONTENT.into_response();
+            response
+                .headers_mut()
+                .insert("X-Plugin-Delivery-Mode", "local_pull_v1".parse().unwrap());
+            response.headers_mut().insert(
+                "X-Plugin-Operation-Id",
+                params["operation_id"].parse().unwrap(),
+            );
+            if params["operation_id"] != "unconfirmed" {
+                response
+                    .headers_mut()
+                    .insert("X-Plugin-Intent-Order", "42".parse().unwrap());
+            }
+            response
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let connection = ConnectionConfig {
+            backend_url: format!("http://{}", listener.local_addr().unwrap()),
+            auth_token: "test-token".into(),
+            ..ConnectionConfig::default()
+        };
+        let router = Router::new().route("/api/plugins/installed/7", delete(mutate));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        for (operation, expected) in [
+            ("accepted", None),
+            ("older", Some("INTENT_SUPERSEDED")),
+            ("unconfirmed", Some("plugin_local_acceptance_unconfirmed")),
+        ] {
+            let request =
+                json!({"action":"uninstall","targetId":7,"operationId":operation,"intentOrder":42});
+            let result = submit(&connection, "native", &request, "").await;
+            match expected {
+                None => assert!(matches!(result.unwrap(), SubmitOutcome::Accepted)),
+                Some(code) => assert_eq!(result.unwrap_err().code, code),
+            }
+        }
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[test]
+    fn intent_order_survives_restart_and_superseded_recovery_retires_only_its_request() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("journal.json");
+        let mut journal = json!({"version":1,"pending":[],"receipts":[]});
+        let first = next_intent_order(&mut journal).unwrap();
+        journal["pending"] = json!([{"operationId":"old-remove","action":"uninstall","intentOrder":first,"targetId":7}]);
+        persist(&path, &journal).unwrap();
+        let mut journal = load_journal(&path).unwrap();
+        assert_eq!(next_intent_order(&mut journal).unwrap(), first + 1);
+        journal["pending"].as_array_mut().unwrap().push(
+            json!({"operationId":"other-plugin","action":"install","intentOrder":2,"targetId":8}),
+        );
+        retire_superseded(&mut journal, "old-remove");
+        persist(&path, &journal).unwrap();
+        let mut journal = load_journal(&path).unwrap();
+        assert_eq!(journal["pending"].as_array().unwrap().len(), 1);
+        assert_eq!(journal["pending"][0]["operationId"], "other-plugin");
+        assert_eq!(journal["reconcilePending"], true);
+        assert_eq!(next_intent_order(&mut journal).unwrap(), first + 2);
+        journal["nextIntentOrder"] = json!(i64::MAX);
+        assert!(next_intent_order(&mut journal).is_err());
+    }
+
+    #[test]
+    fn an_unusable_optional_device_hint_does_not_gate_local_execution() {
+        assert_eq!(optional_origin("runtime-1"), "runtime-1");
+        for value in ["", "device with spaces", "../device", "_device"] {
+            assert_eq!(optional_origin(value), "");
+        }
+    }
+
+    #[test]
+    fn a_failed_older_operation_does_not_block_a_new_target_or_starve_recovery() {
+        let pending = vec![
+            json!({"operationId":"failed","lastAttemptAt":20}),
+            json!({"operationId":"recover","lastAttemptAt":0}),
+            json!({"operationId":"new","lastAttemptAt":10}),
+        ];
+        assert_eq!(
+            select_pending(&pending, &json!({"action":"install"})).unwrap()["operationId"],
+            "new"
+        );
+        assert_eq!(
+            recovery::select_pending(&pending).unwrap()["operationId"],
+            "recover"
+        );
+        assert!(select_pending(&pending, &json!({"full":true})).is_none());
+        assert!(select_pending(&pending, &json!({"installedPluginId":7})).is_none());
+    }
+
+    #[test]
+    fn rejected_installation_does_not_create_an_unreportable_or_successful_receipt() {
+        let payload = json!({"scope":"plugin_delta","plugin_sync":{"version":2,"generation":3,"complete":false},"plugins":[{"installed_plugin_id":7}]});
+        let result = local_result(&payload, json!({"success":false,"error":"invalid package"}));
+        assert_eq!(result["success"], false);
+        assert_eq!(result["plugins"][0]["id"], 7);
+        assert_eq!(result["plugins"][0]["status"], "failed");
+        assert_eq!(result["plugin_sync"], payload["plugin_sync"]);
+    }
+
+    #[test]
+    fn http_sync_cannot_downgrade_to_an_unversioned_installer_payload() {
+        let mut snapshot = json!({"protocolVersion":1,"generation":3,"snapshotId":"issued","revision":"a".repeat(64),"payload":{"scope":"plugins","mode":"merge","plugins":[],"plugin_sync":{"version":2,"generation":3,"complete":true}}});
+        assert!(valid_snapshot(&snapshot));
+        snapshot["payload"]["plugin_sync"] = Value::Null;
+        assert!(!valid_snapshot(&snapshot));
+        assert!(!valid_snapshot(&json!({"payload":{}})));
+    }
+
+    #[test]
+    fn journal_is_atomic_and_retains_operation_without_credentials() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("journal.json");
+        let journal = json!({"version":1,"pending":[{"operationId":"id","action":"uninstall","targetId":1}],"receipts":[]});
+        persist(&path, &journal).unwrap();
+        assert_eq!(load(&path).unwrap(), journal);
+        assert_eq!(
+            instance_id(temp.path()).unwrap(),
+            instance_id(temp.path()).unwrap()
+        );
+        std::fs::write(&path, br#"{"version":1,"pending":[7],"receipts":[]}"#).unwrap();
+        assert!(load_journal(&path).is_err());
+        std::fs::write(&path, b"broken").unwrap();
+        assert!(load(&path).is_err());
+    }
+}

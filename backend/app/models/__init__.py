@@ -39,6 +39,7 @@ from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.oauth_refresh_token import OAuthRefreshToken
+from app.models.plugin_local_sync import PluginLocalSyncOperation, PluginSyncOutbox
 from app.models.plugin_marketplace import (
     Plugin,
     PluginDeviceInstallation,
@@ -96,6 +97,8 @@ from app.models.work_queue import (
 from app.schemas.namespace import GroupRole
 
 __all__ = [
+    "PluginLocalSyncOperation",
+    "PluginSyncOutbox",
     "WeworkNotification",
     "DingtalkSyncedNode",
     "CloudProject",

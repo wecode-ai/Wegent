@@ -27,6 +27,7 @@ use crate::{
 
 use super::{LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, SocketIoTransport};
 
+mod local_sync;
 mod plugin_route;
 
 #[derive(Clone)]
@@ -41,6 +42,7 @@ pub struct LocalBackendConnectionController {
     connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
     connection_status: Arc<AtomicBool>,
     device_route_id: Arc<StdMutex<Option<String>>>,
+    local_sync_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Default)]
@@ -49,6 +51,7 @@ struct LocalBackendConnectionState {
     profile: Option<LocalBackendConnectionProfile>,
     transport: Option<SocketIoTransport>,
     task: Option<JoinHandle<()>>,
+    plugin_sync: Option<Arc<dyn super::capability::CapabilitySyncRpcHandler>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +126,7 @@ impl LocalBackendConnectionController {
             connection_snapshot,
             connection_status: Arc::new(AtomicBool::new(false)),
             device_route_id,
+            local_sync_lock: Arc::new(Mutex::new(())),
         };
         controller.replace_connection(initial_profile, false).await;
         controller
@@ -163,6 +167,9 @@ impl LocalBackendConnectionController {
             return true;
         }
 
+        if let Some(handler) = state.plugin_sync.take() {
+            handler.invalidate_connection();
+        }
         if let Some(task) = state.task.take() {
             self.connection_status.store(false, Ordering::Release);
             // Stop the old route producer before clearing the shared slot.
@@ -203,7 +210,15 @@ impl LocalBackendConnectionController {
             }
             .with_connection_status(Arc::clone(&self.connection_status))
             .with_connection_snapshot(Arc::clone(&self.connection_snapshot));
-            let runner = runner.with_device_route_id_slot(Arc::clone(&self.device_route_id));
+            let handler = runner
+                .capability_sync_handler
+                .as_ref()
+                .expect("default capability handler")
+                .clone();
+            state.plugin_sync = Some(handler.clone());
+            let runner = runner
+                .with_shared_capability_sync_handler(handler)
+                .with_device_route_id_slot(Arc::clone(&self.device_route_id));
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {
@@ -252,6 +267,13 @@ impl LocalBackendConnectionController {
 }
 
 impl BackendConnectionHandler for LocalBackendConnectionController {
+    fn plugin_local_sync<'a>(
+        &'a self,
+        params: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(self.local_plugin_sync(params))
+    }
+
     fn plugin_device_route<'a>(
         &'a self,
         params: Value,
@@ -507,6 +529,38 @@ mod tests {
     use axum::{http::HeaderMap, routing::get, Json, Router};
     use serde_json::json;
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn disconnect_invalidates_the_installer_held_by_in_flight_http_work() {
+        use super::super::CapabilitySyncRpcHandler;
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        struct Installer(Arc<AtomicBool>);
+        impl CapabilitySyncRpcHandler for Installer {
+            fn invalidate_connection(&self) {
+                self.0.store(true, Ordering::Release);
+            }
+            fn handle_sync_capabilities<'a>(
+                &'a self,
+                _: serde_json::Value,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = serde_json::Value> + Send + 'a>>
+            {
+                Box::pin(async { json!({}) })
+            }
+        }
+        let controller = LocalBackendConnectionController::start(DeviceConfig::default()).await;
+        let profile = json!({"backend_url":"http://127.0.0.1:9", "auth_token":"test-token"});
+        controller.configure_backend(profile.clone()).await.unwrap();
+        let invalidated = Arc::new(AtomicBool::new(false));
+        controller.state.lock().await.plugin_sync = Some(Arc::new(Installer(invalidated.clone())));
+        controller.configure_backend(profile).await.unwrap();
+        assert!(!invalidated.load(Ordering::Acquire));
+        controller.configure_backend(json!({})).await.unwrap();
+        assert!(invalidated.load(Ordering::Acquire));
+        assert!(controller.state.lock().await.plugin_sync.is_none());
+    }
 
     #[tokio::test]
     async fn explicit_disconnect_is_distinct_from_a_fresh_executor_and_resets_on_connect() {

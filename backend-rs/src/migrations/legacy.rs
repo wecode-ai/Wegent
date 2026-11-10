@@ -53,6 +53,22 @@ pub async fn execute(
     revision: &Revision,
     down: bool,
 ) -> MysqlResult<()> {
+    if down && revision.revision == "a9c1e3f5b702" {
+        #[derive(FromMysqlRow)]
+        struct Count {
+            n: i64,
+        }
+        for table in ["plugin_local_sync_operations", "plugin_sync_outbox"] {
+            let count: Count = tx
+                .fetch_one(format!("SELECT COUNT(*) AS n FROM {table}"), ())
+                .await?;
+            if count.n != 0 {
+                return Err(brz_mysql::MysqlError::InvalidQuery {
+                    reason: "Drain and archive plugin local sync records before downgrade".into(),
+                });
+            }
+        }
+    }
     let statements = if down {
         &revision.downgrade
     } else {

@@ -28,6 +28,18 @@ pub trait RuntimeWorkHandler: Send + Sync {
 }
 
 pub trait BackendConnectionHandler: Send + Sync {
+    fn plugin_local_sync<'a>(
+        &'a self,
+        _params: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+        Box::pin(async {
+            Err(AppIpcError::new(
+                "plugin_local_sync_unsupported",
+                "Local plugin synchronization is unavailable",
+            ))
+        })
+    }
+
     fn execute_plugin_auth<'a>(
         &'a self,
         params: Value,
