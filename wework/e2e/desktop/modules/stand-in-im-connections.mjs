@@ -5,7 +5,12 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
-import { finishStandInOnboarding } from './stand-in-instance-flows.mjs'
+import {
+  bindStoppedStandIn,
+  finishStandInOnboarding,
+  readStandInBinding,
+  stopBoundStandIn,
+} from './stand-in-instance-flows.mjs'
 
 /** Reuse the real Backend/Redis/Executor; only the external IM input is synthetic. */
 export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot }) {
@@ -50,6 +55,15 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await finishStandInOnboarding(control)
+      const originalBinding = await readStandInBinding(control, uiTimeoutMs)
+      assert.equal(originalBinding.status, 'active')
+      assert.ok(originalBinding.target, 'Onboarding must establish the original stand-in instance')
+      const changedInstance = originalBinding.target?.deviceId !== initial.executionDeviceId
+      if (changedInstance) {
+        await stopBoundStandIn(control, uiTimeoutMs)
+        await bindStoppedStandIn(control, userId, initial.executionDeviceId, uiTimeoutMs)
+        await finishStandInOnboarding(control)
+      }
       await openStandInSettings(control)
       const panel = '[data-testid="stand-in-primary-profile"]'
       const connections = `${panel} [data-testid="stand-in-im-connections"]`
@@ -105,9 +119,9 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
         prompt: '',
         version: 0,
         executionDeviceId: initial.executionDeviceId,
-        model: savedPrimary.primary.model,
-        modelOptions: savedPrimary.primary.modelOptions,
-        workspace: savedPrimary.primary.workspace,
+        model: savedPrimary.primary?.model,
+        modelOptions: savedPrimary.primary?.modelOptions,
+        workspace: savedPrimary.primary?.workspace,
         collaboration: {
           enabled: false,
           allProjects: true,
@@ -130,9 +144,11 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('clickWhenEnabled', `${rolePanel} ${first}`)
       await control.command('waitFor', `${rolePanel} ${first}`, { text: '已连接当前分身' })
       await captureScreenshot(control, 'im-stand-in-05-role-connected.png')
-      await control.command('setMainWindowSize', 'body', {
-        value: JSON.stringify({ width: 1000, height: 760 }),
-      })
+      const previousWindowSize = JSON.parse(
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 1000, height: 760 }),
+        })
+      )
       await control.command('waitFor', `${rolePanel} ${first}`)
       await captureScreenshot(control, 'im-stand-in-06-role-narrow.png')
       const roleRefresh = `${rolePanel} [data-testid="stand-in-im-refresh"]`
@@ -142,7 +158,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('waitFor', `${rolePanel} [role="status"]`, { visible: false })
       await captureScreenshot(control, 'im-stand-in-06-role-narrow-refreshed.png')
       await control.command('setMainWindowSize', 'body', {
-        value: JSON.stringify({ width: 1600, height: 1000 }),
+        value: JSON.stringify(previousWindowSize),
       })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-cancel"]')
       const chatMode = await fixture({
@@ -255,6 +271,15 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
         userId,
         settings: { ...savedPrimary, version: latest.version },
       })
+      if (changedInstance) {
+        await stopBoundStandIn(control, uiTimeoutMs)
+        await bindStoppedStandIn(
+          control,
+          originalBinding.target.userId,
+          originalBinding.target.deviceId,
+          uiTimeoutMs
+        )
+      }
     },
   }
 }
