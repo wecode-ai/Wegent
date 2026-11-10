@@ -32,7 +32,7 @@ async fn assignment_history_includes_archived_work_and_preserves_ownership() {
         };
         handler.upsert_local_task(link.clone());
         if id == "deleted" {
-            handler.mark_archived_link_deleted(&link);
+            handler.mark_archived_link_deleted(&link).unwrap();
         }
     }
     let payload = json!({"userId":7,"assignments":[{
@@ -165,6 +165,7 @@ async fn omitted_manual_identity_uses_a_connected_role_and_rejects_no_connection
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: task_id.clone(),
         status: "done".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"local","cloudProjectId":project.id,"loopItemId":issue.id,"humanAssignmentId":format!("{}-1",issue.id)}}),
         ..RuntimeTaskLink::default()
     });
     assert_eq!(
@@ -230,7 +231,7 @@ fn assignment_tasks_are_owned_by_each_role_and_reuse_existing_execution_identity
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
     let role = json!({"id":"review","userId":7,"projectStore":"local","projectId":"project"});
-    let binding = json!({"humanAssignmentId":"human"});
+    let binding = json!({"id":"issue"});
     let mut other = role.clone();
     other["id"] = json!("docs");
     assert_ne!(
@@ -240,7 +241,7 @@ fn assignment_tasks_are_owned_by_each_role_and_reuse_existing_execution_identity
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "existing-execution".into(),
         status: "done".into(),
-        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"local","cloudProjectId":"project","humanAssignmentId":"human"}}),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","loopItemId":"issue","initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"local","cloudProjectId":"project","humanAssignmentId":"human"}}),
         ..RuntimeTaskLink::default()
     });
     assert_eq!(
@@ -293,6 +294,7 @@ async fn cloud_stand_in_ignores_issue_status_but_checks_current_assignment() {
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "stand-in-human-default".into(),
         status: "running".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"default","userId":7,"projectStore":"cloud","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"}}),
         ..RuntimeTaskLink::default()
     });
     let payload = json!({"id":"default","projectId":"project","issueId":"issue","userId":7,"projectStore":"cloud","standInId":"default"});
@@ -525,6 +527,7 @@ async fn existing_matching_role_does_not_revalidate_unrelated_roles() {
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "stand-in-human-review".into(),
         status: "running".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"cloud","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"}}),
         ..RuntimeTaskLink::default()
     });
     let configs = ["review", "docs"].map(
@@ -655,6 +658,7 @@ async fn archived_local_stand_in_requires_real_preparation_before_reporting_succ
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "stand-in-human-default".into(),
         status: "archived".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"default","userId":7,"projectStore":"local","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"}}),
         ..RuntimeTaskLink::default()
     });
     let mut config = json!({"id":"default","projectId":"project","projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"}});
@@ -723,6 +727,7 @@ async fn explicit_retry_reuses_failed_task_and_preserves_a_rejected_restart_rese
     let binding = json!({"humanAssignmentId":"human"});
     let payload =
         json!({"taskId":"stand-in-human-default","executionRequest":{"schema_version":99}});
+    handler.store.update_task("stand-in-human-default", |task| task.runtime_handle = json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"default","userId":null,"projectStore":"local","cloudProjectId":project.id,"loopItemId":issue.id,"humanAssignmentId":"human"}}));
     handler
         .create_stand_in_task(
             &config,
@@ -825,7 +830,13 @@ async fn default_personal_task_needs_no_project_environment() {
         )
         .await
         .unwrap();
-    assert_eq!(payload["taskId"], "stand-in-human-default");
+    assert_eq!(
+        payload["taskId"],
+        handler.stand_in_task_id(
+            &json!({"id":"default","projectStore":"local","projectId":"not-configured","userId":7}),
+            &json!({"id":"issue"})
+        )
+    );
     assert_eq!(payload["executionRequest"]["bot"][0]["shell_type"], "Codex");
     assert!(payload.get("workspacePath").is_none());
     let request = execution_request(&payload).unwrap();

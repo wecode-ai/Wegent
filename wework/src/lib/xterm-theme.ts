@@ -1,4 +1,5 @@
 import type { ITheme, Terminal } from '@xterm/xterm'
+import { DEFAULT_UI_THEME_ID } from '@wegent/collaboration/theme'
 
 type RequiredTerminalTheme = Required<
   Pick<ITheme, 'background' | 'foreground' | 'cursor' | 'selectionBackground'>
@@ -106,6 +107,14 @@ export function applyTerminalTheme(
     ...(transparentBackground ? { background: 'rgba(0, 0, 0, 0)' } : {}),
   }
   terminal.options.theme = appliedTheme
+  // ANSI whites need contrast correction on the default opaque light background.
+  const themeId = container.ownerDocument.documentElement.dataset.appearanceTheme
+  terminal.options.minimumContrastRatio =
+    !transparentBackground &&
+    !isDarkAppearance() &&
+    (themeId ?? DEFAULT_UI_THEME_ID) === DEFAULT_UI_THEME_ID
+      ? 4.5
+      : 1
 
   if (appliedTheme.background) {
     container.style.backgroundColor = appliedTheme.background

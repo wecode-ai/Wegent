@@ -14,6 +14,14 @@ backgrounds with a `#2563eb` accent.
 The acceptance inventory is independent of application data to detect omissions. Tokyo Night uses
 `#1a1b26` for the background, `#a9b1d6` for text, and `#7aa2f7` for the accent.
 
+Terminal ANSI palettes are independent of syntax highlighting. Wework and themes without an
+authored terminal palette preserve the original 16 xterm colors; function, string, or operator
+colors must not replace ANSI blue, green, or cyan. Authored terminal palettes still follow their
+themes; switching back to Wework restores the original cyan and blue zsh directory and Git prompts.
+Opaque Wework light terminals use xterm's 4.5 minimum text contrast so ANSI whites remain readable
+without changing the palette definitions. Dark mode, other named themes, and transparent backgrounds
+retain xterm's default contrast behavior.
+
 Themes cover Wework-owned chrome, tabs, sidebars, every settings page, authentication, plugins,
 applications, automations, interactions, projects, boards, Issues, project Agent editors, menus and
 dialogs. Detached windows, quick windows, Process Explorer, and system drag surfaces also consume

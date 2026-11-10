@@ -712,9 +712,10 @@ export function createWebSharedWorkspaceApi(
         )
         return response.items
       },
-      markRead(issueId, activitySequence) {
+      markRead(issueId, activitySequence, contentRevision) {
         return client.post(`/v1/loop-items/${encoded(issueId)}/read`, {
           activity_sequence: activitySequence ?? null,
+          content_revision: contentRevision ?? null,
         })
       },
     },

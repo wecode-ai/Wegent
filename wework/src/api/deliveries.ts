@@ -926,11 +926,16 @@ export function createDeliveryApi(client: HttpClient) {
         { kind: 'human_read' }
       )
     },
-    async markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
+    async markLoopItemRead(
+      itemId: string,
+      activitySequence?: number,
+      contentRevision?: number
+    ): Promise<CloudLoopItem> {
       const item = await client.post<CloudLoopItem>(
         `/v1/loop-items/${encodeURIComponent(itemId)}/read`,
         {
           activity_sequence: activitySequence ?? null,
+          content_revision: contentRevision ?? null,
         }
       )
       window.dispatchEvent(new Event('wework-notifications-changed'))

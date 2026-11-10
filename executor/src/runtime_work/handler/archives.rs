@@ -124,6 +124,9 @@ impl RuntimeWorkRpcHandler {
         thread_id: &str,
         archive_error: String,
     ) -> Value {
+        if let Err(error) = self.mark_archived_link_deleted(link) {
+            return task_action_failure(link, error.to_string());
+        }
         let started_at = Instant::now();
         let delete_result = self
             .call_codex_thread_method_without_list_invalidation(
@@ -151,7 +154,6 @@ impl RuntimeWorkRpcHandler {
             ),
         }
 
-        self.mark_archived_link_deleted(link);
         self.store.delete_task(&link.local_task_id);
         let mut response = task_action_success(link);
         response["cleaned"] = json!(true);
@@ -406,7 +408,9 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn delete_archived_link(&self, link: RuntimeTaskLink) -> Value {
         self.store.upsert_task(link.clone());
-        self.mark_archived_link_deleted(&link);
+        if let Err(error) = self.mark_archived_link_deleted(&link) {
+            return task_action_failure(&link, error.to_string());
+        }
         let background = match self.archived_delete_tx.send(link.clone()) {
             Ok(()) => true,
             Err(error) => {

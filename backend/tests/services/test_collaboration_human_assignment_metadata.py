@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem
+from app.models.delivery import CloudProject, LoopItem, LoopNode
 from app.models.user import User
 from app.services import collaboration_human_assignments
 from app.services.channels.dingtalk.notification_card import card_param_map
@@ -187,7 +187,8 @@ def test_external_assignment_card_uses_the_provider_target_not_the_sparse_index(
     assert card["itemTitle"] == "远端 Issue 的标题"
     assert card["itemKey"] == "123EXT-42"
     assert card["metaLine"] == "代码托管看板 · 等待确认 · 负责人：新负责人"
-    # The explicit target replaces the board lookup; only the actor is loaded.
-    assert [call.args[0] for call in db.get.call_args_list] == [User]
+    # The explicit target replaces board context lookup, not the wakeup's node lock.
+    assert [call.args[0] for call in db.get.call_args_list] == [User, LoopNode]
+    assert db.get.call_args_list[1].args[1] == index.id
     assert index.title is None
     assert index.status is None

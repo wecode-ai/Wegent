@@ -1429,12 +1429,13 @@ export function createLocalDeliveryApi(
         user_id: userId,
       })
     },
-    async markLoopItemRead(itemId: string, activitySequence?: number) {
+    async markLoopItemRead(itemId: string, activitySequence?: number, contentRevision?: number) {
       const projectId = await resolveProjectId(itemId)
       const record = await request<LocalLoopItemRecord>('todos.mark_read', {
         project_id: projectId,
         task_id: itemId,
         ...(activitySequence == null ? {} : { activity_sequence: activitySequence }),
+        ...(contentRevision == null ? {} : { content_revision: contentRevision }),
       })
       return localTask(record)
     },

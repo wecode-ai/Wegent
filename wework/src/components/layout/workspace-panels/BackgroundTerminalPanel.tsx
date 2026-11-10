@@ -45,6 +45,7 @@ export function BackgroundTerminalPanel({
     xterm.loadAddon(fit)
     xterm.loadAddon(createXtermWebLinksAddon())
     xterm.open(container)
+    applyTerminalTheme(xterm, container)
     const disposeViewport =
       import.meta.env.VITE_WEWORK_E2E === 'true'
         ? registerNativeTerminalViewport(container, () => xterm.buffer.active.viewportY + 1)

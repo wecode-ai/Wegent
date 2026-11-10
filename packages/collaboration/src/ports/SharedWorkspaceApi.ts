@@ -542,6 +542,7 @@ export interface SharedWorkspaceIssuesApi {
   markRead(
     issueId: string,
     activitySequence?: number,
+    contentRevision?: number,
   ): Promise<CollaborationIssue>;
 }
 

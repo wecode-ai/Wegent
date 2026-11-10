@@ -63,6 +63,9 @@ methods = ["GET"]
 path = "/api/v1/wework-notifications"
 [[routes]]
 methods = ["GET"]
+path = "/api/v1/stand-in-issue-events"
+[[routes]]
+methods = ["GET"]
 path = "/api/v1/wework-notifications/preferences"
 #[[routes]]
 #methods = ["PUT"]
