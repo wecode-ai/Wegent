@@ -64,6 +64,22 @@ describe('Provider YAML schema', () => {
         )
       )
     ).toThrow(/custom_tool_conversion/)
+    expect(() =>
+      parseModelConfiguration(
+        YAML.replace(
+          'model_id: upstream-a',
+          'model_id: upstream-a\n        api_format: anthropic-messages\n        custom_tool_conversion: none'
+        )
+      )
+    ).toThrow(/custom_tool_conversion/)
+    expect(
+      parseModelConfiguration(
+        YAML.replace(
+          'model_id: upstream-a',
+          'model_id: upstream-a\n        api_format: anthropic-messages\n        custom_tool_conversion: all'
+        )
+      ).config.providers[0].models[0].custom_tool_conversion
+    ).toBe('all')
   })
   test('rejects unknown fields, duplicate IDs, incompatible tools and unsafe URLs', () => {
     for (const source of [

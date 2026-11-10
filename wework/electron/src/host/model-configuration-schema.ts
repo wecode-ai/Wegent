@@ -157,6 +157,13 @@ function validateModel(value: unknown, path: string, provider: ModelProvider): P
   ) {
     fail(`${path}.tool_profile`, 'custom tools require Responses')
   }
+  if (
+    item.custom_tool_conversion !== undefined &&
+    item.custom_tool_conversion !== 'all' &&
+    (item.api_format ?? provider.api_format) !== 'openai-responses'
+  ) {
+    fail(`${path}.custom_tool_conversion`, 'native custom tools require Responses')
+  }
   return { ...item, id, model_id: (item.model_id as string).trim() } as unknown as ProviderModel
 }
 
