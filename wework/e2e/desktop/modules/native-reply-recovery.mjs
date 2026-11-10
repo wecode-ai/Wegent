@@ -18,7 +18,7 @@ async function waitFor(read, ready, message) {
   assert.fail(`${message}: ${JSON.stringify(last)}`)
 }
 
-async function pendingFixture(storagePath, question) {
+export async function pendingFixture(storagePath, question) {
   return waitFor(
     async () => {
       const { entries } = JSON.parse(await readFile(storagePath, 'utf8'))

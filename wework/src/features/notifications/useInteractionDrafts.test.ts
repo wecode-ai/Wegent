@@ -3,6 +3,11 @@ import { createInteractionDraftStore } from './useInteractionDrafts'
 import { readInteractionDraftState, saveInteractionState } from './interactionStorage'
 import type { InteractionHistory } from './RuntimeInteractionsContext'
 
+const flushStorage = vi.hoisted(() => vi.fn())
+vi.mock('@/desktop/localStoragePersistence', () => ({
+  flushDesktopLocalStoragePersistence: flushStorage,
+}))
+
 const prefix = 'wework.interactions:test:1:'
 const draftsKey = `${prefix}drafts`
 const historyKey = `${prefix}history`
@@ -17,6 +22,7 @@ const interaction: InteractionHistory = {
 
 beforeEach(() => {
   localStorage.clear()
+  flushStorage.mockReset().mockResolvedValue(undefined)
   const locks = new Map<string, Promise<unknown>>()
   Object.defineProperty(navigator, 'locks', {
     configurable: true,
@@ -145,5 +151,56 @@ it('keeps the draft visible when discard cannot be persisted', async () => {
 
   expect(await store.discardDraft('reply')).toBe(false)
   expect(store.getSnapshot()).toEqual({ reply: 'Keep until discard commits' })
+  stop()
+})
+
+it('keeps the visible draft when discard cannot be flushed to disk', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  const store = createInteractionDraftStore('test:1')
+  const stop = store.activate()
+  store.setDraft('reply', 'Keep until discard commits')
+  await store.flush()
+  flushStorage.mockRejectedValueOnce(new Error('Disk unavailable'))
+
+  expect(await store.discardDraft('reply')).toBe(false)
+  expect(store.getSnapshot()).toEqual({ reply: 'Keep until discard commits' })
+  expect(await store.discardDraft('reply')).toBe(true)
+  expect(store.getSnapshot()).toEqual({})
+  stop()
+})
+
+it('retains an unsaved local draft after its write fails', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  const store = createInteractionDraftStore('test:1')
+  const stop = store.activate()
+  const original = Storage.prototype.setItem
+  const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    if (key === draftsKey) throw new Error('Quota exceeded')
+    return original.call(this, key, value)
+  })
+  store.setDraft(interaction.id, 'Write failed but keep this reply')
+  await store.flush()
+  write.mockRestore()
+  saveInteractionState(draftsKey, { remote: 'Another window' })
+  window.dispatchEvent(
+    new StorageEvent('storage', { key: draftsKey, newValue: localStorage.getItem(draftsKey) })
+  )
+  expect(store.getSnapshot()).toMatchObject({
+    [interaction.id]: 'Write failed but keep this reply',
+    remote: 'Another window',
+  })
+
+  await store.retainDraft(interaction)
+
+  expect(store.getSnapshot()[interaction.id]).toEqual({
+    text: 'Write failed but keep this reply',
+    interaction,
+    nativeReplyIds: [],
+  })
+  expect(JSON.parse(localStorage.getItem(draftsKey)!)[interaction.id]).toEqual({
+    text: 'Write failed but keep this reply',
+    interaction,
+    nativeReplyIds: [],
+  })
   stop()
 })

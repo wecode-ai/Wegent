@@ -27,6 +27,7 @@ import {
   NATIVE_RECOVERY_TEXT,
   verifyNativeReplyRecoveryAfterReload,
 } from '../modules/native-reply-recovery.mjs'
+import { openInteractionDraftWindow } from '../modules/interaction-draft-windows.mjs'
 
 const PROMPT = 'WEWORK_CONSECUTIVE_ASYNC_QUESTIONS'
 const COMPLETE = 'WEWORK_CONSECUTIVE_ANSWERS_ACCEPTED'
@@ -127,60 +128,70 @@ export function createDesktopScenario({
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       try {
         await control.command('waitFor', CARD, { text: FIRST, visible: true })
-        await control.command('focus', INPUT)
-        await control.command('fill', INPUT, { value: 'STAFF' })
-        const readQuestions = async () => {
-          const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-          const task = snapshot.pane.currentRuntimeTask
-          const messages = JSON.parse(
-            await control.command('getRuntimeConversationMessages', 'body', {
-              value: JSON.stringify({ deviceId: task.deviceId, taskId: task.taskId }),
-            })
-          )
-          return {
-            input: await control.command('getValue', INPUT),
-            inputAttribute: await control.command('getAttribute', INPUT, { value: 'value' }),
-            mountId: await control.command(
-              'getAttribute',
-              `${CARD} [data-testid="request-user-input-question-question_1"]`,
-              { value: 'id' }
-            ),
-            questions: messages.flatMap(message =>
-              (message.blocks ?? []).flatMap(block =>
-                block.renderPayload?.kind === 'request_user_input' ? [block.renderPayload] : []
-              )
-            ),
+        const draftWindow = await openInteractionDraftWindow({
+          control,
+          electronUserDataDirectory,
+          question: FIRST,
+        })
+        try {
+          await control.command('focus', INPUT)
+          await control.command('fill', INPUT, { value: 'STAFF' })
+          const readQuestions = async () => {
+            const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+            const task = snapshot.pane.currentRuntimeTask
+            const messages = JSON.parse(
+              await control.command('getRuntimeConversationMessages', 'body', {
+                value: JSON.stringify({ deviceId: task.deviceId, taskId: task.taskId }),
+              })
+            )
+            return {
+              input: await control.command('getValue', INPUT),
+              inputAttribute: await control.command('getAttribute', INPUT, { value: 'value' }),
+              mountId: await control.command(
+                'getAttribute',
+                `${CARD} [data-testid="request-user-input-question-question_1"]`,
+                { value: 'id' }
+              ),
+              questions: messages.flatMap(message =>
+                (message.blocks ?? []).flatMap(block =>
+                  block.renderPayload?.kind === 'request_user_input' ? [block.renderPayload] : []
+                )
+              ),
+            }
           }
-        }
-        const firstState = await readQuestions()
-        await writeFile(
-          join(resultDir, 'consecutive-question-first-draft.json'),
-          JSON.stringify(firstState, null, 2)
-        )
-        assert.equal(
-          firstState.input,
-          'STAFF',
-          'Establish the first draft before releasing further questions'
-        )
-        assert.equal(firstState.inputAttribute, 'STAFF', 'React must retain the first draft')
-        releaseSecond()
-        await control.command('waitFor', CARD, { text: THIRD, visible: true })
-        await writeFile(
-          join(resultDir, 'consecutive-question-identities.json'),
-          JSON.stringify(
-            {
-              first: firstState,
-              afterArrival: await readQuestions(),
-            },
-            null,
-            2
+          const firstState = await readQuestions()
+          await writeFile(
+            join(resultDir, 'consecutive-question-first-draft.json'),
+            JSON.stringify(firstState, null, 2)
           )
-        )
-        assert.equal(
-          await control.command('getValue', INPUT),
-          'STAFF',
-          'New questions must preserve the first draft'
-        )
+          assert.equal(
+            firstState.input,
+            'STAFF',
+            'Establish the first draft before releasing further questions'
+          )
+          assert.equal(firstState.inputAttribute, 'STAFF', 'React must retain the first draft')
+          await draftWindow.verifyMerge('STAFF')
+          releaseSecond()
+          await control.command('waitFor', CARD, { text: THIRD, visible: true })
+          await writeFile(
+            join(resultDir, 'consecutive-question-identities.json'),
+            JSON.stringify(
+              {
+                first: firstState,
+                afterArrival: await readQuestions(),
+              },
+              null,
+              2
+            )
+          )
+          assert.equal(
+            await control.command('getValue', INPUT),
+            'STAFF',
+            'New questions must preserve the first draft'
+          )
+        } finally {
+          await draftWindow.close()
+        }
         const text = await control.command('getText', CARD)
         assert.ok(
           text.indexOf(FIRST) < text.indexOf(SECOND) && text.indexOf(SECOND) < text.indexOf(THIRD)

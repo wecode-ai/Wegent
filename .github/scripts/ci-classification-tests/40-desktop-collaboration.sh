@@ -245,6 +245,7 @@ done
 for runtime_input_path in \
   "wework/e2e/desktop/scenarios/runtime-input-answer-persistence.scenario.mjs" \
   "wework/e2e/desktop/scenarios/consecutive-questions.scenario.mjs" \
+  "wework/e2e/desktop/modules/interaction-draft-windows.mjs" \
   "wework/e2e/desktop/modules/native-reply-recovery.mjs" \
   "wework/e2e/desktop/modules/pending-interactions-tab.mjs"; do
   assert_desktop_case "Runtime input answer scenario dependency selects only its checkpoint: $runtime_input_path" \

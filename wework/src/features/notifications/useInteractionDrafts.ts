@@ -11,7 +11,7 @@ interface DraftMutation {
   state: InteractionDraftState
   save: boolean
   flush: boolean
-  publish?: boolean
+  publish?: 'before' | 'after'
 }
 
 function draftText(value: InteractionDraftState[string] | undefined): string | undefined {
@@ -40,13 +40,23 @@ export function createInteractionDraftStore(accountKey: string) {
   let pending = 0
   let syncAfterPending = false
   let writes = Promise.resolve()
+  const pendingText = new Map<string, string>()
   const listeners = new Set<() => void>()
   const publish = (next: typeof values) => {
     if (JSON.stringify(next) === JSON.stringify(values)) return
     values = next
     listeners.forEach(listener => listener())
   }
-  const refresh = () => publish(readInteractionDraftState(key, historyKey))
+  const refresh = () => {
+    let next = readInteractionDraftState(key, historyKey)
+    for (const [id, text] of pendingText) next = withDraftText(next, id, text)
+    publish(next)
+  }
+  const commitPendingText = (state: InteractionDraftState) => {
+    for (const [id, text] of pendingText) {
+      if (text ? draftText(state[id]) === text : !(id in state)) pendingText.delete(id)
+    }
+  }
   const enqueue = (update: (latest: InteractionDraftState) => DraftMutation | null) => {
     revision += 1
     const operationRevision = revision
@@ -58,9 +68,12 @@ export function createInteractionDraftStore(accountKey: string) {
         if (!mutation) return
         if (mutation.save && !saveInteractionState(key, mutation.state))
           throw new Error('Could not save interaction draft')
-        if (active && operationRevision === revision && (mutation.save || mutation.publish))
-          publish(mutation.state)
+        if (mutation.save) commitPendingText(mutation.state)
+        const shouldPublish =
+          active && operationRevision === revision && (mutation.save || mutation.publish)
+        if (shouldPublish && mutation.publish !== 'after') publish(mutation.state)
         if (mutation.flush) await flushDesktopLocalStoragePersistence()
+        if (shouldPublish && mutation.publish === 'after') publish(mutation.state)
       })
     })
     writes = operation.catch(() => undefined)
@@ -98,6 +111,7 @@ export function createInteractionDraftStore(accountKey: string) {
     },
     setDraft(id: string, text: string) {
       if (!active) return
+      pendingText.set(id, text)
       publish(withDraftText(values, id, text))
       const operation = enqueue(latest => ({
         state: withDraftText(latest, id, text),
@@ -117,8 +131,13 @@ export function createInteractionDraftStore(accountKey: string) {
         const retained = typeof previous === 'object' ? previous : undefined
         // An acknowledgement retry must not replace newer edits.
         const alreadyRetained = nativeReply && retained?.nativeReplyIds.includes(nativeReply.id)
+        const unsaved = pendingText.get(interaction.id)
         const text =
-          alreadyRetained && retained ? retained.text : (nativeReply?.text ?? draftText(previous))
+          unsaved !== undefined
+            ? unsaved
+            : alreadyRetained && retained
+              ? retained.text
+              : (nativeReply?.text ?? draftText(previous))
         if (!text) return null
         const entry: InteractionReplyDraft = {
           text,
@@ -134,8 +153,8 @@ export function createInteractionDraftStore(accountKey: string) {
         const unchanged = JSON.stringify(entry) === JSON.stringify(previous)
         // Retrying a native acknowledgement still waits for the existing text to be durable.
         if (unchanged && !nativeReply)
-          return { state: latest, save: false, flush: false, publish: true }
-        return { state: next, save: !unchanged, flush: true, publish: true }
+          return { state: latest, save: false, flush: false, publish: 'before' }
+        return { state: next, save: !unchanged, flush: true, publish: 'before' }
       })
     },
     async discardDraft(id: string): Promise<boolean> {
@@ -145,8 +164,9 @@ export function createInteractionDraftStore(accountKey: string) {
           const exists = id in latest
           const next = { ...latest }
           delete next[id]
-          return { state: next, save: exists, flush: true, publish: true }
+          return { state: next, save: exists, flush: true, publish: 'after' }
         })
+        pendingText.delete(id)
         refresh()
         return true
       } catch (error) {

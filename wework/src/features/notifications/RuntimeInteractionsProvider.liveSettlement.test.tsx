@@ -26,6 +26,7 @@ import { useRuntimeInteractionSettlements } from './useRuntimeInteractionSettlem
 import { archiveInteraction } from './interactionStorage'
 
 const historyKey = 'wework.interactions:test:1:history'
+const draftsKey = 'wework.interactions:test:1:drafts'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -109,6 +110,34 @@ it('does not settle another task or an unanswered request when cached history is
   })
   expect(context!.pending).toHaveLength(1)
   expect(context!.history).toHaveLength(0)
+})
+
+it('keeps text recoverable when its draft write fails before conversation settlement', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const item = context!.pending[0]
+  const original = Storage.prototype.setItem
+  const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    if (key === draftsKey) throw new Error('Quota exceeded')
+    return original.call(this, key, value)
+  })
+  act(() => context!.setDraft(item.id, 'Keep after a failed draft write'))
+  await waitFor(() => expect(log).toHaveBeenCalled())
+  write.mockRestore()
+
+  await act(async () => cacheQuestion({ ...interactionQuestion, interactionStatus: 'answered' }))
+
+  await waitFor(() => expect(context!.pending).toHaveLength(0))
+  expect(context!.drafts[item.id]).toBe('Keep after a failed draft write')
+  expect(context!.replyDrafts).toEqual([
+    expect.objectContaining({ text: 'Keep after a failed draft write' }),
+  ])
+  await waitFor(() =>
+    expect(screen.getByTestId('interaction-unsent-text')).toHaveValue(
+      'Keep after a failed draft write'
+    )
+  )
 })
 
 it('does not let a reused synchronous request ID from an older turn settle a new question', async () => {
