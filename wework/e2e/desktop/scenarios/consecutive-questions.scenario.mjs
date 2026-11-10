@@ -1,6 +1,7 @@
+import { setNativeCatalogOverride } from '../modules/model-catalog-recovery.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -31,12 +32,7 @@ const ANSWER = 'STAFF\nPDF\nTomorrow'
 const CARD = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-card"]`
 const INPUT = `${CARD} [data-testid="request-user-input-custom-question_1"]`
 
-export function createDesktopScenario({
-  executorHome,
-  workspacePath,
-  resultDir,
-  workbenchReadyTimeoutMs,
-}) {
+export function createDesktopScenario({ workspacePath, resultDir, workbenchReadyTimeoutMs }) {
   let active = false
   let releaseSecond
   const secondReady = new Promise(resolve => {
@@ -87,18 +83,14 @@ export function createDesktopScenario({
     },
     async verify(control) {
       active = true
-      const capabilities = join(executorHome, 'capabilities')
-      await mkdir(capabilities, { recursive: true })
-      await writeFile(
-        join(capabilities, 'model-catalog-overrides.json'),
-        JSON.stringify([
-          {
-            slug: DEFAULT_MODEL_ID,
-            fields: { experimental_supported_tools: ['request_user_input_async'] },
-          },
-        ])
+      await setNativeCatalogOverride(
+        control,
+        DEFAULT_MODEL_ID,
+        {
+          experimental_supported_tools: ['request_user_input_async'],
+        },
+        workbenchReadyTimeoutMs
       )
-      await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
       await control.command('waitFor', '[data-testid="new-chat-button"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })

@@ -1,3 +1,4 @@
+import { setNativeCatalogOverride } from './model-catalog-recovery.mjs'
 import {
   countTextOccurrences,
   createCheckpointTaskFixture,
@@ -56,12 +57,9 @@ import {
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   join,
-  mkdir,
   readFile,
-  rm,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
-  writeFile,
   withTimeout,
 } from './shared.mjs'
 
@@ -271,21 +269,16 @@ async function verifyPriorityFilter({ composerSelector, control, projectRowSelec
  * Codex's non-blocking `request_user_input_async` question must render as the
  * interactive card and be answered with the next user message.
  */
-async function setCatalogOverride(executorHome, slug, fields) {
-  const capabilities = join(executorHome, 'capabilities')
-  await mkdir(capabilities, { recursive: true })
-  await writeFile(
-    join(capabilities, 'model-catalog-overrides.json'),
-    `${JSON.stringify([{ slug, fields }], null, 2)}\n`
-  )
-  // Codex caches the served catalog; drop it so the new entry is picked up.
-  await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
-}
 
-export async function verifyFreeTextRequestUserInput({ composerSelector, control, executorHome }) {
-  await setCatalogOverride(executorHome, DEFAULT_MODEL_ID, {
-    experimental_supported_tools: ['request_user_input_async'],
-  })
+export async function verifyFreeTextRequestUserInput({ composerSelector, control }) {
+  await setNativeCatalogOverride(
+    control,
+    DEFAULT_MODEL_ID,
+    {
+      experimental_supported_tools: ['request_user_input_async'],
+    },
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   control.setScenario('request_user_input_async')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
@@ -334,13 +327,18 @@ export async function verifyFreeTextRequestUserInput({ composerSelector, control
   assert.equal(Number(await control.command('getElementCount', card)), 0)
 }
 
-export async function verifyAsyncRequestUserInput({ composerSelector, control, executorHome }) {
+export async function verifyAsyncRequestUserInput({ composerSelector, control }) {
   // Codex only exposes its non-blocking question tool to models that declare it,
   // which the cloud catalog does in production. Declare it for the E2E model so
   // the regression exercises the real app-server path.
-  await setCatalogOverride(executorHome, DEFAULT_MODEL_ID, {
-    experimental_supported_tools: ['request_user_input_async'],
-  })
+  await setNativeCatalogOverride(
+    control,
+    DEFAULT_MODEL_ID,
+    {
+      experimental_supported_tools: ['request_user_input_async'],
+    },
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   control.setScenario('request_user_input_async')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -505,14 +503,15 @@ export async function verifyAsyncRequestUserInput({ composerSelector, control, e
   )
 }
 
-export async function verifyAsyncQuestionWaitingIndicator({
-  composerSelector,
-  control,
-  executorHome,
-}) {
-  await setCatalogOverride(executorHome, DEFAULT_MODEL_ID, {
-    experimental_supported_tools: ['request_user_input_async'],
-  })
+export async function verifyAsyncQuestionWaitingIndicator({ composerSelector, control }) {
+  await setNativeCatalogOverride(
+    control,
+    DEFAULT_MODEL_ID,
+    {
+      experimental_supported_tools: ['request_user_input_async'],
+    },
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   control.setScenario('request_user_input_async')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
