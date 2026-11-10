@@ -263,7 +263,6 @@ pub fn upstream_from_model_config(
         .or_else(|| non_empty_string(model_config, "apiKey"))
         .or_else(|| non_empty_string(model_config, "auth_token"))
         .unwrap_or_default();
-    let native_by_default = api_format == "openai-responses";
     Ok(Some(LocalModelProxyUpstream {
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_string(model_config, "responses_url")
@@ -274,13 +273,13 @@ pub fn upstream_from_model_config(
         codex_request_mode,
         convert_custom_tools: non_empty_string(model_config, "tool_profile")
             .or_else(|| non_empty_string(model_config, "toolProfile"))
-            .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
+            .map_or(true, |profile| !profile.eq_ignore_ascii_case("custom")),
         native_tool_search: boolean_value(model_config, "native_tool_search")
             .or_else(|| boolean_value(model_config, "nativeToolSearch"))
-            .unwrap_or(native_by_default),
+            .unwrap_or(false),
         native_namespace_tools: boolean_value(model_config, "native_namespace_tools")
             .or_else(|| boolean_value(model_config, "nativeNamespaceTools"))
-            .unwrap_or(native_by_default),
+            .unwrap_or(false),
         api_key,
         default_headers: header_pairs(model_config.get("default_headers")),
         proxy_url: model_config

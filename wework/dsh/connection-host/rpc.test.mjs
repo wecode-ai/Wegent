@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 import { handleConnectionRpc } from './rpc.js'
+import { ExecutorRuntimeClient } from '../executor-runtime/executor-runtime-client.js'
 
 async function invoke({
   authorization = 'Bearer secret',
@@ -88,4 +89,43 @@ test('does not execute a provider on unsupported HTTP methods', async () => {
   const result = await invoke({ method: 'GET' })
   assert.equal(result.status, 405)
   assert.equal(result.calls, 0)
+})
+
+test('native CLI classification and cause survive the client and collection RPC without replay', async () => {
+  for (const method of ['collect', 'executeAction']) {
+    const client = new ExecutorRuntimeClient({ transport: { on() {} } })
+    let failure
+    client.pending.set('failed-read', {
+      cleanup() {},
+      reject: error => {
+        failure = error
+      },
+    })
+    client.handleMessage({
+      type: 'response',
+      id: 'failed-read',
+      ok: false,
+      error: {
+        code: 'connection_cli_request_unavailable',
+        message: 'Plugin tool request failed (request_failed)',
+        providerCode: 'request_failed',
+        retryAfterMs: 30000,
+      },
+    })
+    const result = await invoke({ body: { method }, failure })
+    assert.equal(result.calls, 1)
+    assert.equal(result.response.error.code, 'connection_cli_request_unavailable')
+    assert.equal(result.response.error.providerCode, 'request_failed')
+    assert.equal(result.response.error.retryAfterMs, method === 'collect' ? 30000 : undefined)
+  }
+  for (const providerCode of ['private token', 'invalid\ncode', 'x'.repeat(65)]) {
+    const result = await invoke({
+      body: { method: 'collect' },
+      failure: Object.assign(new Error('Failed'), {
+        code: 'connection_cli_request_failed',
+        providerCode,
+      }),
+    })
+    assert.equal(result.response.error.providerCode, undefined)
+  }
 })

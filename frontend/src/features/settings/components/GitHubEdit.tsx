@@ -18,6 +18,7 @@ interface GitHubEditProps {
   onClose: () => void
   mode: 'add' | 'edit'
   editInfo: GitInfo | null
+  initialDomain?: string
 }
 
 const sanitizeDomainInput = (value: string) => {
@@ -33,7 +34,7 @@ const sanitizeDomainInput = (value: string) => {
   const withoutProtocol = trimmed.replace(/^https?:\/\//i, '')
 
   // Get domain only (remove path)
-  const domainOnly = withoutProtocol.split('common:/')[0]
+  const domainOnly = withoutProtocol.split('/')[0]
 
   // Return with protocol if it was http://, otherwise return domain only
   return protocol === 'http://'
@@ -69,7 +70,13 @@ const isValidDomain = (value: string) => {
   return labels.every(label => !label.endsWith('-'))
 }
 
-const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo }) => {
+const GitHubEdit: React.FC<GitHubEditProps> = ({
+  isOpen,
+  onClose,
+  mode,
+  editInfo,
+  initialDomain,
+}) => {
   const { user, refresh } = useUser()
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -104,6 +111,16 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     () => platforms.some((info: GitInfo) => sanitizeDomainInput(info.git_domain) === 'github.com'),
     [platforms]
   )
+  const selectPlatform = (platform: GitInfo['type']) => {
+    setType(platform)
+    if (!initialDomain && mode === 'add') {
+      setDomain(
+        { github: 'github.com', gitlab: '', gitee: 'gitee.com', gitea: 'gitea.com', gerrit: '' }[
+          platform
+        ]
+      )
+    }
+  }
 
   // Load platform info and reset form when modal opens
   useEffect(() => {
@@ -118,14 +135,14 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         setAuthType(editInfo.auth_type || 'digest')
       } else {
         // For add mode, default to github.com when type is github
-        setDomain('github.com')
+        setDomain(initialDomain || 'github.com')
         setToken('')
         setUsername('')
-        setType('github')
+        setType(initialDomain && initialDomain !== 'github.com' ? 'gitlab' : 'github')
         setAuthType('digest')
       }
     }
-  }, [isOpen, user, mode, editInfo])
+  }, [isOpen, user, mode, editInfo, initialDomain])
 
   // Save logic
   const handleSave = async () => {
@@ -210,10 +227,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 type="radio"
                 value="github"
                 checked={type === 'github'}
-                onChange={() => {
-                  setType('github')
-                  setDomain('github.com')
-                }}
+                onChange={() => selectPlatform('github')}
+                data-testid="github-platform-radio"
                 disabled={mode === 'edit' && editInfo?.type !== 'github' && hasGithubPlatform}
               />
               {t('common:github.platform_github')}
@@ -226,10 +241,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 type="radio"
                 value="gitlab"
                 checked={isGitlab}
-                onChange={() => {
-                  setType('gitlab')
-                  setDomain('')
-                }}
+                onChange={() => selectPlatform('gitlab')}
+                data-testid="gitlab-platform-radio"
               />
               {t('common:github.platform_gitlab')}
             </label>
@@ -241,10 +254,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 type="radio"
                 value="gitee"
                 checked={isGitee}
-                onChange={() => {
-                  setType('gitee')
-                  setDomain('gitee.com')
-                }}
+                onChange={() => selectPlatform('gitee')}
                 data-testid="gitee-platform-radio"
               />
               {t('common:github.platform_gitee') || 'Gitee'}
@@ -257,10 +267,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 type="radio"
                 value="gitea"
                 checked={isGitea}
-                onChange={() => {
-                  setType('gitea')
-                  setDomain('gitea.com')
-                }}
+                onChange={() => selectPlatform('gitea')}
+                data-testid="gitea-platform-radio"
               />
               {t('common:github.platform_gitea') || 'Gitea'}
             </label>
@@ -272,10 +280,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 type="radio"
                 value="gerrit"
                 checked={isGerrit}
-                onChange={() => {
-                  setType('gerrit')
-                  setDomain('')
-                }}
+                onChange={() => selectPlatform('gerrit')}
+                data-testid="gerrit-platform-radio"
               />
               {t('common:github.platform_gerrit') || 'Gerrit'}
             </label>
@@ -288,6 +294,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
           </label>
           <input
             type="text"
+            data-testid="git-account-domain-input"
             value={domain}
             onChange={e => setDomain(e.target.value)}
             onBlur={e => setDomain(sanitizeDomainInput(e.target.value))}

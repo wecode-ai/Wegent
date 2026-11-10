@@ -1,15 +1,9 @@
 import { expect, test } from 'vitest'
 import { gitCloneFailureReason, isGitCloneDeviceMissing } from './gitCloneProjectRecovery'
 
-test('recognizes a missing device in an already retained legacy failure', () => {
+test('recognizes a missing device in a retained failure', () => {
   expect(
     isGitCloneDeviceMissing({
-      id: 'pending-clone',
-      deviceId: 'removed-device',
-      name: 'repo',
-      url: 'https://git.example/repo.git',
-      targetPath: '/workspace/repo',
-      status: 'failed',
       failureReason: 'clone-failed',
       error: 'executor-not-found:removed-device',
     })
