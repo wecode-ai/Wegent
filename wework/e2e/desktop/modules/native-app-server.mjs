@@ -30,11 +30,14 @@ export async function startNativeAppServer({
   let sequence = 0
   const pending = new Map()
   const notifications = []
+  let failure
   const rejectPending = error => {
-    for (const entry of pending.values()) entry.reject(error)
+    failure ??= error
+    for (const entry of pending.values()) entry.reject(failure)
     pending.clear()
   }
   child.once('error', rejectPending)
+  child.stdin.on('error', rejectPending)
   child.once('exit', (code, signal) =>
     rejectPending(new Error(`Native app-server exited (${code ?? signal})`))
   )
@@ -54,6 +57,7 @@ export async function startNativeAppServer({
     } else if (message.method) notifications.push(message)
   })
   async function rpc(method, params) {
+    if (failure) throw failure
     const id = ++sequence
     let timer
     try {
