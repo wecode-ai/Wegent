@@ -98,6 +98,19 @@ jobs:
       - name: Install runtime dependencies for index-to-query contract tests
         run: uv sync --project knowledge_runtime --frozen
 
+      - name: Verify answer evidence at the actual model input boundary
+        working-directory: ./backend
+        run: |
+          set -euo pipefail
+          mkdir -p ../.ci-artifacts/backend-tests
+          git rev-parse HEAD > ../.ci-artifacts/backend-tests/model-input.sha.txt
+          command=(uv run pytest -c ../chat_shell/pyproject.toml \
+            ../chat_shell/tests/evidence/test_model_input.py ../chat_shell/tests/test_guard_composition.py \
+            -n 0 --junitxml=../.ci-artifacts/backend-tests/model-input-results.xml)
+          printf '%q ' "${command[@]}" > ../.ci-artifacts/backend-tests/model-input-command.txt
+          printf '\n' >> ../.ci-artifacts/backend-tests/model-input-command.txt
+          "${command[@]}" 2>&1 | tee ../.ci-artifacts/backend-tests/model-input.log
+
       - name: Guard approved collaboration permission invariants
         working-directory: ./backend
         env:
