@@ -87,7 +87,6 @@ jsonwebtoken = { version = "9.3", default-features = false }
 # (`hashlib.md5`).
 md-5 = "0.10"
 regex = "1"
-rdkafka = { version = "=0.39.0", features = ["cmake-build", "sasl", "ssl", "tokio"] }
 serde = { version = "1", features = ["derive"] }
 brz-json = "=0.0.11"
 # Preserve source dict ordering at the remaining dynamic mutation boundaries.

@@ -15,9 +15,9 @@ use brz_mysql::MysqlService;
 use brz_redis::RedisService;
 use std::sync::Arc;
 
-pub async fn build(event_reporter: crate::event_reporting::ReporterHandle) -> Result<AppState> {
+pub async fn build() -> Result<AppState> {
     let (mysql, redis) = clients().await?;
-    build_with_clients(mysql, redis, event_reporter).await
+    build_with_clients(mysql, redis).await
 }
 
 pub async fn clients() -> Result<(MysqlService, Option<RedisService>)> {
@@ -42,7 +42,6 @@ pub async fn clients() -> Result<(MysqlService, Option<RedisService>)> {
 pub async fn build_with_clients(
     mysql: MysqlService,
     redis: Option<RedisService>,
-    event_reporter: crate::event_reporting::ReporterHandle,
 ) -> Result<AppState> {
     // `Settings.LOCAL_DEVICE_COMMANDS` is validated while the source process
     // starts; an invalid value fails startup instead of the first command.
@@ -122,7 +121,6 @@ pub async fn build_with_clients(
         completion_app: std::sync::OnceLock::new(),
         background_jobs: crate::background_jobs::BackgroundJobsClient::from_env()?,
         video_extensions: Arc::new(crate::background_jobs::video::DefaultVideoExtensions),
-        event_reporter,
         entity_resolvers: crate::permissions::EntityResolvers::public(mysql.clone()),
         seed_tasks: crate::new_user_resources::default_tasks(mysql.clone()),
         user_profile: Arc::new(crate::user_profile::DefaultUserViewExtension),

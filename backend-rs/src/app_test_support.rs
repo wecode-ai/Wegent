@@ -25,7 +25,6 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
             },
         ),
         video_extensions: Arc::new(crate::background_jobs::video::DefaultVideoExtensions),
-        event_reporter: crate::event_reporting::ReporterHandle::disabled(),
         entity_resolvers: crate::permissions::EntityResolvers::public(mysql.clone()),
         seed_tasks: crate::new_user_resources::default_tasks(mysql.clone()),
         user_profile: Arc::new(crate::user_profile::DefaultUserViewExtension),

@@ -100,9 +100,7 @@ async fn application_state(mysql: MysqlService) -> Arc<AppState> {
             "disposable loopback service required"
         );
     }
-    let mut state = build_app_state(wegent_backend_rs::ReporterHandle::disabled())
-        .await
-        .unwrap();
+    let mut state = build_app_state().await.unwrap();
     state.mysql = mysql;
     state.auth = AuthConfig {
         jwt_key: SIGNING_KEY.into(),

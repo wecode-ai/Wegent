@@ -30,9 +30,7 @@ use serde::Serialize;
 use crate::http_compat::FastApiError;
 use crate::knowledge_documents_content::access::{knowledge_base_access, knowledge_base_record};
 use crate::knowledge_documents_content::reader::{document_by_id, document_by_id_and_kind};
-use crate::knowledge_documents_content::{
-    DocumentReadContext, document_read_rejection_event, parse_paging_fastapi, read_document_content,
-};
+use crate::knowledge_documents_content::{parse_paging_fastapi, read_document_content};
 use crate::state::AppState;
 use brz_json::OpaqueJson;
 
@@ -137,31 +135,6 @@ fn internal_error(message: &str) -> FastApiError {
     FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
 }
 
-fn report_content_preflight_rejection(
-    state: &AppState,
-    include_content: bool,
-    document_id: i64,
-    user_id: i64,
-    error_code: &'static str,
-) {
-    if !include_content {
-        return;
-    }
-    state
-        .event_reporter
-        .emit_document_read(document_read_rejection_event(
-            document_id,
-            DocumentReadContext {
-                entrypoint: "knowledge_api",
-                actor_user_id: user_id,
-                effective_reader_id: user_id,
-                task_id: None,
-                subtask_id: None,
-            },
-            error_code,
-        ));
-}
-
 /// Handler body for `GET /api/knowledge-bases/{kb_id}/documents/{doc_id}/detail`.
 #[allow(clippy::too_many_arguments)]
 async fn document_detail(
@@ -191,139 +164,47 @@ async fn document_detail(
     let redis = state.redis.as_ref();
 
     // `_validate_knowledge_base_access_or_raise`.
-    let Some(kb) = knowledge_base_record(mysql, kb_id).await.map_err(|error| {
-        report_content_preflight_rejection(
-            state,
-            include_content,
-            doc_id,
-            user_id,
-            "DOCUMENT_READ_FAILED",
-        );
-        internal_error(&error.to_string())
-    })?
+    let Some(kb) = knowledge_base_record(mysql, kb_id)
+        .await
+        .map_err(|error| internal_error(&error.to_string()))?
     else {
-        report_content_preflight_rejection(
-            state,
-            include_content,
-            doc_id,
-            user_id,
-            "KNOWLEDGE_BASE_NOT_FOUND",
-        );
         return Err(value_error("Knowledge base not found").into());
     };
     let kb_access = knowledge_base_access(mysql, redis, &state.entity_resolvers, &kb, user_id)
         .await
-        .map_err(|error| {
-            report_content_preflight_rejection(
-                state,
-                include_content,
-                doc_id,
-                user_id,
-                "DOCUMENT_READ_FAILED",
-            );
-            DetailError(error.into_fastapi_error())
-        })?;
+        .map_err(|error| DetailError(error.into_fastapi_error()))?;
     if !kb_access {
-        report_content_preflight_rejection(
-            state,
-            include_content,
-            doc_id,
-            user_id,
-            "DOCUMENT_ACCESS_DENIED",
-        );
         return Err(value_error("Access denied to this knowledge base").into());
     }
 
     // `db.query(KnowledgeDocument).filter(id == doc_id, kind_id == kb_id)`.
     let kb_document = document_by_id_and_kind(mysql, doc_id, kb_id)
         .await
-        .map_err(|error| {
-            report_content_preflight_rejection(
-                state,
-                include_content,
-                doc_id,
-                user_id,
-                "DOCUMENT_READ_FAILED",
-            );
-            internal_error(&error.to_string())
-        })?;
+        .map_err(|error| internal_error(&error.to_string()))?;
     if kb_document.is_none() {
-        report_content_preflight_rejection(
-            state,
-            include_content,
-            doc_id,
-            user_id,
-            "DOCUMENT_NOT_FOUND",
-        );
         return Err(value_error("Document not found in the specified knowledge base").into());
     }
 
     // `KnowledgeOrchestrator.get_document_detail`:
     // `_get_document_with_access_or_raise` (the result is discarded after the
     // access validation, exactly like the source).
-    let Some(document) = document_by_id(mysql, doc_id).await.map_err(|error| {
-        report_content_preflight_rejection(
-            state,
-            include_content,
-            doc_id,
-            user_id,
-            "DOCUMENT_READ_FAILED",
-        );
-        internal_error(&error.to_string())
-    })?
+    let Some(document) = document_by_id(mysql, doc_id)
+        .await
+        .map_err(|error| internal_error(&error.to_string()))?
     else {
-        report_content_preflight_rejection(
-            state,
-            include_content,
-            doc_id,
-            user_id,
-            "DOCUMENT_NOT_FOUND",
-        );
         return Err(value_error("Document not found").into());
     };
     let Some(document_kb) = knowledge_base_record(mysql, document.knowledge_documents_kind_id)
         .await
-        .map_err(|error| {
-            report_content_preflight_rejection(
-                state,
-                include_content,
-                doc_id,
-                user_id,
-                "DOCUMENT_READ_FAILED",
-            );
-            internal_error(&error.to_string())
-        })?
+        .map_err(|error| internal_error(&error.to_string()))?
     else {
-        report_content_preflight_rejection(
-            state,
-            include_content,
-            doc_id,
-            user_id,
-            "KNOWLEDGE_BASE_NOT_FOUND",
-        );
         return Err(value_error("Knowledge base not found").into());
     };
     let document_access =
         knowledge_base_access(mysql, redis, &state.entity_resolvers, &document_kb, user_id)
             .await
-            .map_err(|error| {
-                report_content_preflight_rejection(
-                    state,
-                    include_content,
-                    doc_id,
-                    user_id,
-                    "DOCUMENT_READ_FAILED",
-                );
-                DetailError(error.into_fastapi_error())
-            })?;
+            .map_err(|error| DetailError(error.into_fastapi_error()))?;
     if !document_access {
-        report_content_preflight_rejection(
-            state,
-            include_content,
-            doc_id,
-            user_id,
-            "DOCUMENT_ACCESS_DENIED",
-        );
         return Err(value_error("Access denied to this document").into());
     }
 
@@ -331,21 +212,9 @@ async fn document_detail(
     let mut content_length = None;
     let mut truncated = None;
     if include_content {
-        let paged = read_document_content(
-            state,
-            doc_id,
-            offset,
-            limit,
-            DocumentReadContext {
-                entrypoint: "knowledge_api",
-                actor_user_id: user_id,
-                effective_reader_id: user_id,
-                task_id: None,
-                subtask_id: None,
-            },
-        )
-        .await
-        .map_err(|error| DetailError(error.into_fastapi_error()))?;
+        let paged = read_document_content(state, user_id, doc_id, offset, limit)
+            .await
+            .map_err(|error| DetailError(error.into_fastapi_error()))?;
         let (page_content, total_length, is_truncated) = paged.into_detail_parts();
         content = Some(page_content);
         content_length = Some(total_length);

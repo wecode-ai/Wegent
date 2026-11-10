@@ -21,9 +21,7 @@
 use serde_json::{Value, json};
 
 use crate::knowledge_documents_content::access;
-use crate::knowledge_documents_content::{
-    DocumentReadContext, document_read_rejection_event, read_document_content,
-};
+use crate::knowledge_documents_content::read_document_content;
 use crate::state::AppState;
 use crate::task_token;
 
@@ -528,37 +526,10 @@ async fn read_document_call(
     let limit = integer_argument(arguments, "limit").unwrap_or(MAX_DOCUMENT_READ_LIMIT);
 
     let Some(user_id) = resolve_read_user(state, identity.user_id, document_id).await else {
-        state
-            .event_reporter
-            .emit_document_read(document_read_rejection_event(
-                document_id,
-                DocumentReadContext {
-                    entrypoint: "mcp",
-                    actor_user_id: identity.user_id,
-                    effective_reader_id: identity.user_id,
-                    task_id: Some(identity.task_id),
-                    subtask_id: Some(identity.subtask_id),
-                },
-                "DOCUMENT_READ_IDENTITY_UNRESOLVED",
-            ));
         return CallReply::Result(super::tools::text_result(json_error("User not found")));
     };
 
-    match read_document_content(
-        state,
-        document_id,
-        offset,
-        limit,
-        DocumentReadContext {
-            entrypoint: "mcp",
-            actor_user_id: identity.user_id,
-            effective_reader_id: user_id,
-            task_id: Some(identity.task_id),
-            subtask_id: Some(identity.subtask_id),
-        },
-    )
-    .await
-    {
+    match read_document_content(state, user_id, document_id, offset, limit).await {
         Ok(result) => match serde_json::to_value(&result) {
             Ok(value) => CallReply::Result(super::tools::text_result(python_json(&value))),
             Err(error) => {

@@ -232,7 +232,7 @@ fn metadata_only_content(
 ) -> Value {
     #[allow(clippy::too_many_arguments)]
     let build = || async move {
-        let state = crate::startup::app::build(crate::ReporterHandle::disabled())
+        let state = crate::startup::app::build()
             .await
             .expect("public application state");
         build_user_message_content(

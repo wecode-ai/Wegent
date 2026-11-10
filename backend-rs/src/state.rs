@@ -22,9 +22,6 @@ pub struct AppState {
     /// Explicit Rust task ownership; initialized after deployment-specific injection.
     pub background_jobs: crate::background_jobs::BackgroundJobsClient,
     pub video_extensions: Arc<dyn crate::background_jobs::video::VideoExtensions>,
-    /// Best-effort knowledge-event reporter. Business handlers only see this
-    /// non-blocking Interface; the process entrypoint owns its runtime.
-    pub event_reporter: crate::event_reporting::ReporterHandle,
     pub entity_resolvers: crate::permissions::EntityResolvers,
     /// Default-resource Task/Workspace storage, selected by the application.
     pub seed_tasks: Arc<dyn crate::new_user_resources::tasks::TaskResources>,

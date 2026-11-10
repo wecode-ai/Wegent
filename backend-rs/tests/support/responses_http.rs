@@ -90,9 +90,7 @@ pub async fn assert_http_reads(
             "loopback fixture required"
         );
     }
-    let mut state = build_app_state(wegent_backend_rs::ReporterHandle::disabled())
-        .await
-        .unwrap();
+    let mut state = build_app_state().await.unwrap();
     state.mysql = mysql.clone();
     state.task_store = store;
     state.user_reader = Arc::new(PublicUserReader::new(mysql.clone()));

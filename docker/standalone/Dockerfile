@@ -122,7 +122,7 @@ RUN dnf install -y \
     # Public reverse proxy for the bundled frontend applications
     nginx \
     # Development environment and runtime diagnostics
-    procps-ng iproute lsof less tree unzip ripgrep libcap cyrus-sasl-lib cyrus-sasl-plain \
+    procps-ng iproute lsof less tree unzip ripgrep libcap \
     # Redis server for standalone mode (embedded)
     redis \
     # MySQL server for standalone mode (embedded)
@@ -165,8 +165,7 @@ ARG APP_VERSION=dev
 WORKDIR /app
 
 # turbojpeg-sys builds libjpeg-turbo from source with CMake.
-RUN dnf install -y gcc gcc-c++ cmake make ca-certificates openssl-devel \
-        cyrus-sasl-devel libcurl-devel pkgconf-pkg-config \
+RUN dnf install -y gcc gcc-c++ cmake ca-certificates openssl-devel pkgconf-pkg-config \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable \
     && dnf clean all \

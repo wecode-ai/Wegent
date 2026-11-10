@@ -2,12 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::Arc;
 
 use wegent_backend_rs::{
-    Application, HybridConfig, ReporterRuntime, build_app_state_with_clients,
-    build_database_clients, prepare_database, serve_hybrid_application, shutdown_signal,
+    Application, HybridConfig, build_app_state_with_clients, build_database_clients,
+    prepare_database, run_hybrid,
 };
 
 fn main() -> Result<(), wegent_backend_rs::BoxError> {
@@ -41,45 +40,15 @@ async fn run() -> Result<(), wegent_backend_rs::BoxError> {
         return database_command(&command).await;
     }
     let config = HybridConfig::from_env()?;
-    let process_deadline = Arc::new(Mutex::new(None));
-    let signal_deadline = Arc::clone(&process_deadline);
-    let shutdown_grace = config.shutdown_grace;
-    let shutdown = async move {
-        shutdown_signal().await;
-        if let Ok(mut deadline) = signal_deadline.lock() {
-            *deadline = Some(Instant::now() + shutdown_grace);
-        }
-    };
-
-    // Event reporting is optional and never turns a configuration or Kafka
-    // failure into an application startup failure.
-    let reporter_runtime = ReporterRuntime::from_env("backend");
-    let reporter = reporter_runtime.handle();
-    let app_result = async {
-        let (mysql, redis) = build_database_clients().await?;
-        let database = wegent_backend_rs::config::DatabaseConfig::from_env()?;
-        let migration_mysql = wegent_backend_rs::migrations::connect(&database.mysql_url())?;
-        let prepared = prepare_database(&migration_mysql, redis.as_ref()).await;
-        migration_mysql.close().await;
-        prepared?;
-        let state = Arc::new(build_app_state_with_clients(mysql, redis, reporter).await?);
-        let application = Application::build(state).await?;
-        serve_hybrid_application(config, application, shutdown).await
-    }
-    .await;
-
-    let deadline = process_deadline
-        .lock()
-        .ok()
-        .and_then(|deadline| *deadline)
-        .unwrap_or_else(|| Instant::now() + reporter_runtime.shutdown_timeout());
-    let health = reporter_runtime.shutdown(deadline).await;
-    tracing::info!(
-        ?health,
-        implementation = "backend-rs",
-        "event reporter stopped"
-    );
-    app_result
+    let (mysql, redis) = build_database_clients().await?;
+    let database = wegent_backend_rs::config::DatabaseConfig::from_env()?;
+    let migration_mysql = wegent_backend_rs::migrations::connect(&database.mysql_url())?;
+    let prepared = prepare_database(&migration_mysql, redis.as_ref()).await;
+    migration_mysql.close().await;
+    prepared?;
+    let state = Arc::new(build_app_state_with_clients(mysql, redis).await?);
+    let application = Application::build(state).await?;
+    run_hybrid(config, application).await
 }
 
 async fn database_command(command: &[String]) -> Result<(), wegent_backend_rs::BoxError> {

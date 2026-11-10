@@ -9,8 +9,7 @@
 use std::sync::Arc;
 
 use wegent_backend_rs::{
-    Application, BoxError, HybridConfig, MinioConfig, ReporterHandle, S3StorageBackend,
-    build_app_state, run_hybrid,
+    Application, BoxError, HybridConfig, MinioConfig, S3StorageBackend, build_app_state, run_hybrid,
 };
 
 fn main() -> Result<(), BoxError> {
@@ -18,7 +17,7 @@ fn main() -> Result<(), BoxError> {
     let logs = brz_logs::init_default()?;
     let runtime = tokio::runtime::Runtime::new()?;
     let result: Result<(), BoxError> = runtime.block_on(async {
-        let mut state = build_app_state(ReporterHandle::disabled()).await?;
+        let mut state = build_app_state().await?;
         let config = MinioConfig::from_env()
             .ok_or_else(|| std::io::Error::other("S3 endpoint and credentials are required"))?;
         state.attachment_upload =

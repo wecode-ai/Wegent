@@ -9,16 +9,14 @@
 //!
 //! ```no_run
 //! use std::sync::Arc;
-//! use wegent_backend_rs::{
-//!     Application, HybridConfig, ReporterHandle, build_app_state, init_env, run_hybrid,
-//! };
+//! use wegent_backend_rs::{Application, HybridConfig, build_app_state, init_env, run_hybrid};
 //!
 //! fn main() -> Result<(), wegent_backend_rs::BoxError> {
 //!     // Must run before the process spawns any thread.
 //!     init_env();
 //!     let runtime = tokio::runtime::Runtime::new()?;
 //!     runtime.block_on(async {
-//!         let state = Arc::new(build_app_state(ReporterHandle::disabled()).await?);
+//!         let state = Arc::new(build_app_state().await?);
 //!         let application = Application::build(state).await?;
 //!         run_hybrid(HybridConfig::from_env()?, application).await
 //!     })
@@ -54,13 +52,12 @@ pub use brz_http_gateway::{
 pub use brz_http_server as http_server;
 pub use celery_broker::CeleryBroker;
 pub use config::{init_env, init_env_file};
-pub use event_reporting::{ReporterHandle, ReporterRuntime};
 pub use filters::RequestIdFilter;
 pub use git_repositories::GitRepositoriesService;
 pub use hybrid::{
     HybridConfig, load_routes_config, run_hybrid, run_hybrid_with_gateway,
     run_hybrid_with_services, serve_hybrid, serve_hybrid_application,
-    serve_hybrid_application_with_gateway, serve_hybrid_application_with_services, shutdown_signal,
+    serve_hybrid_application_with_gateway, serve_hybrid_application_with_services,
 };
 pub use knowledge_documents_content::access::is_organization_namespace;
 pub use repository_tokens::{RepositoryTokenResolver, StoredRepositoryTokens};
@@ -134,7 +131,6 @@ mod device_upgrade;
 pub mod devices;
 mod dingtalk_wikispace;
 mod dsh_plugin_storage;
-pub mod event_reporting;
 pub use wegent_directory::erp_provider;
 pub use wegent_directory::erp_types;
 use wegent_executor_manager::executor_manager;

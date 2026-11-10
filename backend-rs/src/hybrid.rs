@@ -392,7 +392,7 @@ where
     .await
 }
 
-pub async fn shutdown_signal() {
+async fn shutdown_signal() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};

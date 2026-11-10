@@ -209,9 +209,6 @@ jobs:
           manifest-path: backend-rs/Cargo.toml
           components: rustfmt, clippy
 
-      - name: Install Kafka build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsasl2-dev libsasl2-modules libcurl4-openssl-dev
-
       - name: Check Rust backend formatting
         working-directory: backend-rs
         run: cargo fmt --all --check
