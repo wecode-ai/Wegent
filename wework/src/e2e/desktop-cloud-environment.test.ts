@@ -71,12 +71,13 @@ test('backend restart requires fresh registration before accepting cached online
   environment.backendEnv = { TERMINAL_PROTOCOL_V2_ENABLED: 'true' }
   environment.backendLogPath = join(directory, 'backend.log')
   environment.remoteExecutorLogPath = join(directory, 'executor.log')
-  const registration = '[Device WS] Device registered: user=1, device=wework-e2e-cloud-device\n'
-  await writeFile(environment.backendLogPath, registration)
+  const registration =
+    'local backend registered backend_url=http://127.0.0.1:8000 device_id=wework-e2e-cloud-device\n'
+  await writeFile(environment.remoteExecutorLogPath, registration)
   const launchBackend = vi.fn(async () => {
     await appendFile(
-      environment.backendLogPath,
-      '[Device WS] Device registered: user=1, device=wework-e2e-cloud-device-other\n'
+      environment.remoteExecutorLogPath,
+      'local backend registered backend_url=http://127.0.0.1:8000 device_id=wework-e2e-cloud-device-other\n'
     )
   })
   const waitForDevice = vi.fn(async () => {})
@@ -89,7 +90,7 @@ test('backend restart requires fresh registration before accepting cached online
     expect(waitForDevice).not.toHaveBeenCalled()
     expect(environment.backendEnv.TERMINAL_PROTOCOL_V2_ENABLED).toBe('false')
   } finally {
-    await appendFile(environment.backendLogPath, registration)
+    await appendFile(environment.remoteExecutorLogPath, registration)
     try {
       await restart
     } finally {

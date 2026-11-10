@@ -196,12 +196,12 @@ mod tests {
             }))
             .await
             .unwrap_err();
-        assert_eq!(error.code, "assignment_already_handled");
+        assert_eq!(error.code, "wrong_device");
         assert_eq!(
             error.message,
-            "This assignment has already been handled or is no longer active"
+            "Open the existing Issue conversation on its owning device"
         );
-        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.bindings.load(Ordering::SeqCst), 2);
         assert!(fixture.handler.local_task_links(true).is_empty());
     }

@@ -31,6 +31,7 @@ use brz_redis::Redis as _;
 use brz_socket_io::ClientError;
 use serde_json::{Map, Value, json};
 
+use super::mcp_app_ownership::{self, AppInstance, Ownership};
 use crate::device_commands::{
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
     MAX_OUTPUT_BYTES, build_local_device_command_argv, python_str, python_truthy,
@@ -84,9 +85,10 @@ enum CommandFailure {
 }
 
 /// `WeworkRuntimeNamespace.on_runtime_request`.
-pub(crate) async fn handle(
+pub(super) async fn handle(
     app: &AppState,
     identity: &Identity,
+    ownership: &Ownership,
     data: Value,
 ) -> Result<Value, ClientError> {
     let user_id = identity.user_id;
@@ -173,7 +175,17 @@ pub(crate) async fn handle(
             Err(CommandFailure::Internal) => return Err(internal_error()),
         }
     } else {
-        match runtime_rpc::call(
+        let operation = params["method"]
+            .as_str()
+            .filter(|method| matches!(*method, "retain" | "release"));
+        let owned_app = if method == mcp_app_ownership::METHOD {
+            operation
+                .zip(AppInstance::parse(&device_id, &params))
+                .map(|(op, instance)| (op == "retain", instance))
+        } else {
+            None
+        };
+        let result = runtime_rpc::call(
             app,
             rpc_user_id,
             &device_id,
@@ -182,8 +194,23 @@ pub(crate) async fn handle(
             timeout_seconds,
             project_transcript,
         )
-        .await
-        {
+        .await;
+        if let Some((retain, instance)) = owned_app {
+            let succeeded = result.as_ref().is_ok_and(|value| value["success"] != false);
+            if retain {
+                let cleanup = if succeeded {
+                    ownership.retain(instance)
+                } else {
+                    Some(instance)
+                };
+                if let Some(instance) = cleanup {
+                    instance.release(app, rpc_user_id).await;
+                }
+            } else if succeeded {
+                ownership.forget(&instance);
+            }
+        }
+        match result {
             Ok(result) => result,
             Err(CallFailure::Rpc(error)) => return Ok(ipc_rpc_error(&request_id, &error)),
             Err(CallFailure::Internal) => return Err(internal_error()),
@@ -504,6 +531,35 @@ fn project_session_denied(error: FastApiError) -> CallFailure {
         retryable: None,
         details: None,
     })
+}
+
+/// Sync the saved auth file through the same owner-scoped device command path.
+pub(super) async fn sync_runtime_auth_file(
+    app: &AppState,
+    user_id: i64,
+    device_id: &str,
+    runtime: &str,
+    content: &str,
+) -> bool {
+    let params = Map::from_iter([
+        ("command_key".to_string(), json!("sync_runtime_auth_file")),
+        (
+            "env".to_string(),
+            json!({
+                "WEGENT_RUNTIME_CONFIG_RUNTIME": runtime,
+                "WEGENT_RUNTIME_CONFIG_CONTENT": content,
+            }),
+        ),
+    ]);
+    execute_device_command(
+        app,
+        user_id,
+        device_id,
+        &params,
+        DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    )
+    .await
+    .is_ok_and(|ack| ack["success"] == true)
 }
 
 /// `relay_ipc_request`'s `device.execute_command` branch through

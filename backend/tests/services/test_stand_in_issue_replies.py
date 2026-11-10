@@ -10,8 +10,10 @@ from fastapi import HTTPException
 from app.models.delivery import LoopItem, LoopItemTaskBinding, StandInIssueEvent
 from app.models.kind import Kind
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.resource_member import ResourceMember
+from app.models.user import User
 from app.models.wework_notification import WeworkNotification
-from app.schemas.delivery import LoopItemTaskBind
+from app.schemas.delivery import LoopItemTaskBind, LoopItemUpdate
 from app.schemas.issue_activity_comment import StandInPublicReply
 from app.schemas.project_chat import LoopItemAssign, ProjectChatMention, ProjectChatSend
 from app.services.collaboration_human_assignments import human_task_bindings
@@ -196,7 +198,6 @@ def test_future_read_revision_cannot_acknowledge_later_public_results(
     [
         ("device_id", "foreign"),
         ("task_id", "foreign"),
-        ("trigger_comment_id", "foreign"),
     ],
 )
 def test_publication_rejects_foreign_or_missing_source_identity(
@@ -208,9 +209,7 @@ def test_publication_rejects_foreign_or_missing_source_identity(
     assert test_db.query(ProjectChatMessage).filter_by(sender_type="agent").count() == 0
 
 
-def test_assignment_revalidation_is_independent_of_persistent_conversation(
-    test_db, test_user, scope
-):
+def test_publication_continues_after_assignment_is_removed(test_db, test_user, scope):
     project, issue, _, _, identity = scope
     assigned = loop_item_service.assign(
         test_db,
@@ -231,17 +230,20 @@ def test_assignment_revalidation_is_independent_of_persistent_conversation(
         }
     )
     publish(test_db, test_user, scope, identity)
-    with pytest.raises(HTTPException) as error:
-        publish(
-            test_db,
-            test_user,
-            scope,
-            identity.model_copy(
-                update={"message_id": "late", "human_assignment_id": "superseded"}
-            ),
-        )
-    assert error.value.status_code == 409
-    assert test_db.query(ProjectChatMessage).filter_by(sender_type="agent").count() == 1
+    loop_item_service.update(
+        test_db,
+        item_id=issue.id,
+        user_id=test_user.id,
+        values=LoopItemUpdate(version=issue.version, assignee_user_id=None),
+    )
+    late = publish(
+        test_db,
+        test_user,
+        scope,
+        identity.model_copy(update={"message_id": "late"}),
+    )
+    assert late.content == "Received"
+    assert test_db.query(ProjectChatMessage).filter_by(sender_type="agent").count() == 2
 
 
 def test_revoked_device_binding_cannot_publish(test_db, test_user, scope):
@@ -252,7 +254,7 @@ def test_revoked_device_binding_cannot_publish(test_db, test_user, scope):
     assert error.value.status_code == 409
 
 
-def test_deleted_mention_cannot_authorize_a_late_public_reply(
+def test_deleted_mention_does_not_disable_an_owned_conversation(
     test_db, test_user, scope
 ):
     trigger = (
@@ -262,10 +264,65 @@ def test_deleted_mention_cannot_authorize_a_late_public_reply(
     )
     trigger.deleted_at = datetime.now()
     test_db.commit()
+    assert publish(test_db, test_user, scope).content == "Received"
+    assert test_db.query(ProjectChatMessage).filter_by(sender_type="agent").count() == 1
+
+
+def test_owned_conversation_needs_no_assignment_or_mention(test_db, test_user, scope):
+    identity = scope[-1].model_copy(update={"trigger_comment_id": None})
+    assert publish(test_db, test_user, scope, identity).content == "Received"
+
+
+def test_publication_cannot_borrow_another_users_binding(
+    test_db, test_user, test_admin_user, scope
+):
+    scope[2].task_user_id = test_admin_user.id
+    test_db.commit()
     with pytest.raises(HTTPException) as error:
         publish(test_db, test_user, scope)
     assert error.value.status_code == 409
     assert test_db.query(ProjectChatMessage).filter_by(sender_type="agent").count() == 0
+
+
+@pytest.mark.parametrize("role", ["Viewer", None])
+def test_owned_conversation_still_requires_current_project_execution_access(
+    test_db, scope, role
+):
+    project, _, binding, device, identity = scope
+    member = User(
+        user_name="conversation-member",
+        password_hash="unused",
+        email="conversation-member@example.com",
+        is_active=True,
+    )
+    test_db.add(member)
+    test_db.flush()
+    grant = ResourceMember.create(
+        resource_type="CloudProject",
+        resource_id=int(project.id),
+        entity_id=str(member.id),
+        role="Developer",
+        status="approved",
+    )
+    test_db.add(grant)
+    device.user_id = member.id
+    binding.task_user_id = member.id
+    test_db.commit()
+    assert publish(test_db, member, scope, identity).content == "Received"
+    if role is None:
+        test_db.delete(grant)
+    else:
+        grant.role = role
+    test_db.commit()
+    with pytest.raises(HTTPException) as error:
+        publish(
+            test_db,
+            member,
+            scope,
+            identity.model_copy(update={"message_id": "after-revocation"}),
+        )
+    assert error.value.status_code in (403, 404)
+    assert test_db.query(ProjectChatMessage).filter_by(sender_type="agent").count() == 1
 
 
 def test_exact_message_lookup_is_independent_of_history_page_limit(

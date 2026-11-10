@@ -25,7 +25,7 @@ fn connection_event() -> Value {
 }
 
 #[tokio::test]
-async fn explicit_issue_requests_do_not_enable_automatic_followups_or_bypass_assignment() {
+async fn conversation_turns_do_not_depend_on_automatic_followup_policy_or_assignment() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, mut settings) = fixture(root.path());
     let project = store
@@ -51,13 +51,19 @@ async fn explicit_issue_requests_do_not_enable_automatic_followups_or_bypass_ass
         .unwrap_err();
     assert_eq!(automatic.message, "Automatic project handling is disabled");
     handler
-        .validate_stand_in_work_authority(&store, 7, role, &link, true)
+        .read_stand_in_issue(&store, 7, &link.runtime_handle["origin"])
         .await
         .unwrap();
     link.runtime_handle["origin"]["humanAssignmentId"] = json!("superseded");
+    handler
+        .read_stand_in_issue(&store, 7, &link.runtime_handle["origin"])
+        .await
+        .unwrap();
+    let mut automatic_role = role.clone();
+    automatic_role["collaboration"]["policy"]["automatic"] = json!(true);
     assert_eq!(
         handler
-            .validate_stand_in_work_authority(&store, 7, role, &link, true)
+            .validate_followup_role(&store, 7, &automatic_role, &link)
             .await
             .unwrap_err()
             .code,

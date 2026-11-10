@@ -1,522 +1,156 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
-#
 # SPDX-License-Identifier: Apache-2.0
-
 from types import SimpleNamespace
-from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy.orm import Session
 
 from app.models.im_session import IMPrivateSession, IMSessionMode
-from app.models.user import User
-from app.services.channels.callback import ChannelType
-from app.services.channels.handler import MessageContext
-from app.services.im.interaction_service import im_interaction_service
+from app.services.im.interaction_service import GUIDANCE, im_interaction_service
 from app.services.im.session_service import im_session_service
 
 pytestmark = pytest.mark.asyncio
 
 
-class FakeInteractionPort:
-    channel_type = ChannelType.TELEGRAM
-    channel_id = 44
-
-    def __init__(self) -> None:
-        self.replies: list[str] = []
-        self.deleted_conversations: list[tuple[str, int]] = []
-        self.bound_tasks: list[int | None] = []
-        self.continued_tasks: list[tuple[int | None, str]] = []
-        self.continued_runtime_tasks: list[dict[str, Any] | None] = []
-        self.created_tasks: list[tuple[int | None, str]] = []
-
-    async def send_text_reply(
-        self,
-        message_context: MessageContext,
-        text: str,
-    ) -> bool:
-        self.replies.append(text)
-        return True
-
-    async def delete_conversation_task_id(
-        self,
-        conversation_id: str,
-        user_id: int,
-    ) -> None:
-        self.deleted_conversations.append((conversation_id, user_id))
-
-    async def execute_private_im_bind_task(
-        self,
-        db: Session,
-        user: User,
-        im_session: IMPrivateSession,
-        task_id: int | None,
-        message_context: MessageContext,
-    ) -> None:
-        self.bound_tasks.append(task_id)
-
-    async def execute_private_im_continue_task(
-        self,
-        db: Session,
-        user: User,
-        im_session: IMPrivateSession,
-        task_id: int | None,
-        message: str,
-        message_context: MessageContext,
-        runtime_task: dict[str, Any] | None = None,
-    ) -> None:
-        self.continued_tasks.append((task_id, message))
-        self.continued_runtime_tasks.append(runtime_task)
-
-    async def execute_private_im_create_task(
-        self,
-        db: Session,
-        user: User,
-        im_session: IMPrivateSession,
-        project_id: int | None,
-        message: str,
-        message_context: MessageContext,
-    ) -> None:
-        self.created_tasks.append((project_id, message))
-
-
-def _context(
-    content: str,
-    *,
-    images: list[dict[str, str]] | None = None,
-    files: list[dict[str, Any]] | None = None,
-) -> MessageContext:
-    return MessageContext(
-        content=content,
-        sender_id="telegram-user",
-        sender_name="Alice",
-        conversation_id="telegram-chat",
-        conversation_type="private",
-        is_mention=False,
-        raw_message={},
-        extra_data={},
-        images=images or [],
-        files=files or [],
-    )
-
-
-async def _session(test_db: Session, test_user: User) -> IMPrivateSession:
-    return await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="telegram",
-        channel_id=44,
-        conversation_id="telegram-chat",
-        sender_id="telegram-user",
-        display_name="Alice",
-    )
-
-
-async def _dingtalk_session(
-    test_db: Session,
-    test_user: User,
-) -> IMPrivateSession:
-    return await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=45,
-        conversation_id="dingtalk-chat",
-        sender_id="dingtalk-user",
-        display_name="Alice",
-    )
-
-
-def _stub_task_lists(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "app.services.im.interaction_service.im_task_continuation_service.list_recent_wework_tasks",
-        lambda db, user_id, limit=5: [],
-    )
-    monkeypatch.setattr(
-        "app.services.im.interaction_service.im_task_continuation_service.list_wework_projects",
-        lambda db, user_id, limit=8: [],
-    )
-
-
-@pytest.mark.asyncio
-async def test_new_chat_choice_deletes_cached_chat_and_replies(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _session(test_db, test_user)
-    _stub_task_lists(monkeypatch)
-
-    first = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("/new"),
-        port=port,
-    )
-    second = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("1"),
-        port=port,
-    )
-
-    assert first is True
-    assert second is True
-    assert port.deleted_conversations == [("telegram-chat", test_user.id)]
-    assert port.replies[-1] == "已开始新 Chat，请发送消息。"
-
-
-@pytest.mark.asyncio
-async def test_pending_switch_choice_binds_selected_task(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _session(test_db, test_user)
-    monkeypatch.setattr(
-        "app.services.im.interaction_service.im_task_continuation_service.list_recent_wework_tasks",
-        lambda db, user_id, limit=5: [
-            {"id": 101, "title": "修复登录"},
-            {"id": 102, "title": "整理文档"},
-        ],
-    )
-    monkeypatch.setattr(
-        "app.services.im.interaction_service.im_task_continuation_service.list_wework_projects",
-        lambda db, user_id, limit=8: [],
-    )
-
-    await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("/task"),
-        port=port,
-    )
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("2"),
-        port=port,
-    )
-
-    assert handled is True
-    assert port.bound_tasks == [102]
-
-
-@pytest.mark.asyncio
-async def test_task_mode_text_continues_active_task(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _session(test_db, test_user)
-    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
-    _stub_task_lists(monkeypatch)
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("继续处理"),
-        port=port,
-    )
-
-    assert handled is True
-    assert port.continued_tasks == [(7001, "继续处理")]
-
-
-@pytest.mark.asyncio
-async def test_task_mode_media_only_continues_active_task_with_empty_message(
-    test_db: Session,
-    test_user: User,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _session(test_db, test_user)
-    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context(
-            "",
-            images=[{"mime_type": "image/png", "base64_data": "aGVsbG8="}],
+def fixture(content):
+    return (
+        IMPrivateSession("s", 7, "telegram", 1, "chat", "sender"),
+        SimpleNamespace(
+            content=content, conversation_id="chat", images=[], files=[], extra_data={}
         ),
-        port=port,
+        SimpleNamespace(
+            send_text_reply=AsyncMock(), delete_conversation_task_id=AsyncMock()
+        ),
     )
 
-    assert handled is True
-    assert port.continued_tasks == [(7001, "")]
 
-
-@pytest.mark.asyncio
-async def test_runtime_notification_reply_inherits_bound_model_selection(
-    test_db: Session,
-    test_user: User,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _session(test_db, test_user)
-    session.active_runtime_task = {
-        "deviceId": "device-1",
-        "workspacePath": "/repo/Wegent",
-        "taskId": "codex-1",
-        "modelSelection": {
-            "modelName": "gpt-5.6-luna",
-            "modelType": "public",
-            "options": {
-                "weworkCloudModelNamespace": "default",
-                "weworkCloudModelResourceUserId": "0",
-                "permissionMode": "workspace-write",
-            },
-        },
-    }
-    await im_session_service.save_runtime_task_reply_target(
-        session=session,
-        message_id=901,
-        runtime_task={
-            "deviceId": "device-1",
-            "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
-        },
+@pytest.mark.parametrize("content", ["hello", "", "1"])
+async def test_stand_in_mode_routes_text_media_and_old_numeric_choices(
+    monkeypatch, content
+):
+    session, context, port = fixture(content)
+    context.images = [{}]
+    context.extra_data = {"reply_to_message_id": "old-task-notification"}
+    await im_session_service.set_mode(session, IMSessionMode.STAND_IN)
+    send = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.im.interaction_service.send_stand_in_message", send
     )
-    context = _context("继续处理")
-    context.extra_data["reply_to_message_id"] = 901
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=context,
-        port=port,
+    db, user = Mock(), SimpleNamespace(id=7)
+    assert await im_interaction_service.route_private_message(
+        db=db, user=user, im_session=session, message_context=context, port=port
     )
+    send.assert_awaited_once_with(db, user, session, context, port)
 
-    assert handled is True
-    runtime_target = port.continued_runtime_tasks[0]
-    assert runtime_target is not None
-    assert runtime_target["taskId"] == "codex-1"
-    assert runtime_target["localTaskId"] == "codex-1"
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "hello",
+        "/new",
+        "/use cloud",
+        "/devices",
+        "/models",
+        "/agents",
+        "/help",
+        "/status",
+    ],
+)
+async def test_default_chat_preserves_the_existing_wegent_flow(monkeypatch, content):
+    session, context, port = fixture(content)
+    send = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.im.interaction_service.send_stand_in_message", send
+    )
     assert (
-        runtime_target["modelSelection"]
-        == session.active_runtime_task["modelSelection"]
+        await im_interaction_service.route_private_message(
+            db=Mock(),
+            user=SimpleNamespace(id=7),
+            im_session=session,
+            message_context=context,
+            port=port,
+        )
+        is False
     )
+    assert await im_session_service.get_mode(session) == IMSessionMode.CHAT
+    send.assert_not_awaited()
+    port.send_text_reply.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_dingtalk_quoted_notification_routes_exact_runtime_task(
-    test_db: Session,
-    test_user: User,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _dingtalk_session(test_db, test_user)
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task={"deviceId": "device-old", "localTaskId": "runtime-old"},
-    )
-    quoted_target = {
-        "deviceId": "device-notified",
-        "workspacePath": "/repo/Notified",
-        "localTaskId": "runtime-notified",
-        "modelSelection": {
-            "modelName": "deepseek-v4-pro-responses(public)",
-            "modelType": "public",
-            "options": {"reasoning": "medium"},
-        },
-    }
-    await im_session_service.save_runtime_task_reply_target(
-        session=session,
-        message_id="quoted-notification-query-key",
-        runtime_task=quoted_target,
-    )
-    await im_session_service.save_runtime_task_reply_target(
-        session=session,
-        message_id="newer-notification-query-key",
-        runtime_task={
-            "deviceId": "device-newer",
-            "localTaskId": "runtime-newer",
-        },
-    )
-    context = _context("继续处理这个任务")
-    context.extra_data["reply_to_message_id"] = "quoted-notification-query-key"
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+@pytest.mark.parametrize(
+    "command",
+    ["/standin", "/stand-in", "/分身", "/mode standin", "/mode stand_in", "/mode 分身"],
+)
+async def test_explicit_command_enters_stand_in_mode(command):
+    session, context, port = fixture(command)
+    assert await im_interaction_service.route_private_message(
+        db=Mock(),
+        user=SimpleNamespace(id=7),
         im_session=session,
         message_context=context,
         port=port,
     )
-
-    assert handled is True
-    assert session.mode == IMSessionMode.TASK
-    assert session.active_runtime_task == quoted_target
-    assert port.continued_tasks == [(None, "继续处理这个任务")]
-    assert port.continued_runtime_tasks == [None]
+    assert await im_session_service.get_mode(session) == IMSessionMode.STAND_IN
+    assert "分身模式" in port.send_text_reply.await_args.args[1]
 
 
-@pytest.mark.asyncio
-async def test_dingtalk_unquoted_message_does_not_switch_runtime_task(
-    test_db: Session,
-    test_user: User,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _dingtalk_session(test_db, test_user)
-    active_target = {"deviceId": "device-old", "localTaskId": "runtime-old"}
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task=active_target,
-    )
-    await im_session_service.save_runtime_task_reply_target(
-        session=session,
-        message_id="notification-query-key",
-        runtime_task={
-            "deviceId": "device-notified",
-            "localTaskId": "runtime-notified",
-        },
-    )
+async def test_chat_command_leaves_stand_in_without_changing_its_identity(monkeypatch):
+    from app.services.channels.device_selection import device_selection_manager
 
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+    session, context, port = fixture("/chat")
+    await im_session_service.set_mode(session, IMSessionMode.STAND_IN)
+    selection = AsyncMock()
+    monkeypatch.setattr(device_selection_manager, "set_chat_mode", selection)
+    assert await im_interaction_service.route_private_message(
+        db=Mock(),
+        user=SimpleNamespace(id=7),
         im_session=session,
-        message_context=_context("没有引用通知"),
+        message_context=context,
         port=port,
     )
+    assert await im_session_service.get_mode(session) == IMSessionMode.CHAT
+    selection.assert_awaited_once_with(7)
+    port.delete_conversation_task_id.assert_awaited_once_with("chat", 7)
 
-    assert handled is True
-    assert session.active_runtime_task == active_target
-    assert port.continued_runtime_tasks == [None]
 
-
-@pytest.mark.asyncio
-async def test_pending_task_creation_creates_selected_project_task(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _session(test_db, test_user)
-    monkeypatch.setattr(
-        "app.services.im.interaction_service.im_task_continuation_service.list_recent_wework_tasks",
-        lambda db, user_id, limit=5: [],
-    )
-    monkeypatch.setattr(
-        "app.services.im.interaction_service.im_task_continuation_service.list_wework_projects",
-        lambda db, user_id, limit=8: [
-            {"id": 201, "name": "Wegent Backend"},
-            {"id": 202, "name": "Wegent Docs"},
-        ],
-    )
-
+@pytest.mark.parametrize("command", ["/task", "/switch", "/mode task", "/cancel"])
+async def test_retired_task_commands_cannot_create_or_select_a_task(command):
+    session, context, port = fixture(command)
     await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        db=Mock(),
+        user=SimpleNamespace(id=7),
         im_session=session,
-        message_context=_context("/task"),
+        message_context=context,
         port=port,
     )
+    assert await im_session_service.get_mode(session) == IMSessionMode.CHAT
+    assert (
+        "/standin" in port.send_text_reply.await_args.args[1]
+        or "/mode standin" in port.send_text_reply.await_args.args[1]
+    )
+
+
+async def test_stand_in_mode_does_not_change_wegent_model_or_device_commands():
+    session, context, port = fixture("/models")
+    await im_session_service.set_mode(session, IMSessionMode.STAND_IN)
     await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        db=Mock(),
+        user=SimpleNamespace(id=7),
         im_session=session,
-        message_context=_context("new"),
+        message_context=context,
         port=port,
     )
-    project_choice = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("2"),
-        port=port,
+    assert port.send_text_reply.await_args.args[1] == GUIDANCE
+
+
+async def test_notification_preference_remains_independent(fake_im_session_cache):
+    session, _, _ = fixture("")
+    assert "开启" in await im_interaction_service._notification_command(
+        None, session, "on"
     )
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("创建新的任务需求"),
-        port=port,
+    assert "已开启" in await im_interaction_service._notification_command(
+        None, session, "status"
     )
-
-    assert project_choice is True
-    assert handled is True
-    assert port.created_tasks == [(202, "创建新的任务需求")]
-
-
-@pytest.mark.asyncio
-async def test_none_action_sends_router_reply(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _session(test_db, test_user)
-    _stub_task_lists(monkeypatch)
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("/bind"),
-        port=port,
+    assert "关闭" in await im_interaction_service._notification_command(
+        None, session, "off"
     )
-
-    assert handled is True
-    assert port.replies == ["已绑定当前私聊会话。"]
-
-
-@pytest.mark.asyncio
-async def test_unhandled_plain_chat_message_falls_through(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _session(test_db, test_user)
-    _stub_task_lists(monkeypatch)
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("普通 Chat 消息"),
-        port=port,
-    )
-
-    assert handled is False
-    assert port.replies == []
-
-
-@pytest.mark.asyncio
-async def test_unhandled_router_action_falls_through(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _session(test_db, test_user)
-    _stub_task_lists(monkeypatch)
-
-    async def fake_route(**kwargs):
-        return SimpleNamespace(handled=True, action="unknown")
-
-    monkeypatch.setattr(
-        "app.services.im.interaction_service.im_command_router.route",
-        fake_route,
-    )
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("/unknown-action"),
-        port=port,
-    )
-
-    assert handled is False

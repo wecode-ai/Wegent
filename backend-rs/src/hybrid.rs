@@ -239,8 +239,9 @@ where
     )?;
     let api_service = brz_http_server::hyper::Mount::new(
         socketio.config().path.clone(),
-        // Engine.IO polling responses keep the gateway CORS policy; a successful
-        // protocol switch must not gain CORS headers the ASGI source never sent.
+        // Engine.IO owns this mount's CORS policy: its HTTP responses reflect
+        // the Origin without the FastAPI boundary's expose/Vary headers, and a
+        // successful protocol switch keeps only the handshake headers.
         crate::socketio::upgrade::CorsOptOut::new(socketio.service()),
         http,
     )?;

@@ -16,6 +16,7 @@ Do not run through the unit-test conftest, which installs service doubles.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -28,6 +29,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+import socketio
 from PIL import Image
 from redis import Redis
 from sqlalchemy.orm.attributes import flag_modified
@@ -42,6 +44,7 @@ from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.models.resource_member import ResourceMember
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import SubtaskContext
+from app.models.task import TaskResource
 from app.models.user import User
 from app.services.knowledge.external_document_access import (
     DOWNLOAD_TOKEN_HEADER,
@@ -194,10 +197,15 @@ class KnowledgePythonGateway(unittest.TestCase):
         cls.db.query(Subtask).filter(Subtask.user_id.in_(ids)).delete(
             synchronize_session=False
         )
-        cls.db.query(Kind).filter(Kind.id.in_(kb_ids)).delete(synchronize_session=False)
-        cls.db.query(SubtaskContext).filter(
-            SubtaskContext.id == cls.attachment_id
-        ).delete(synchronize_session=False)
+        cls.db.query(TaskResource).filter(TaskResource.user_id.in_(ids)).delete(
+            synchronize_session=False
+        )
+        cls.db.query(Kind).filter(Kind.user_id.in_(ids)).delete(
+            synchronize_session=False
+        )
+        cls.db.query(SubtaskContext).filter(SubtaskContext.user_id.in_(ids)).delete(
+            synchronize_session=False
+        )
         cls.db.query(User).filter(User.id.in_(ids)).delete(synchronize_session=False)
         cls.db.commit()
         cls.db.close()
@@ -380,6 +388,116 @@ class KnowledgePythonGateway(unittest.TestCase):
             f"/api/knowledge-bases/{self.kbs[1].id}/documents/{document.id}/detail"
         )
         self.assertEqual(wrong_library.status_code, 404)
+
+    def test_artifact_node_chat_replaces_client_scope_and_rejects_unknown_node(
+        self,
+    ) -> None:
+        kb_id = self.kbs[0].id
+        owner = self.users[0].id
+        source_id, excluded_id = [document.id for document in self.documents[:2]]
+        artifact_id = str(uuid.uuid4())
+        name = f"artifact-node-{self.suffix}"
+        for kind, spec in (
+            ("Bot", {}),
+            (
+                "Team",
+                {
+                    "collaborationModel": "solo",
+                    "members": [{"botRef": {"name": name, "namespace": "default"}}],
+                    "requiresWorkspace": False,
+                    "bind_mode": ["knowledge"],
+                },
+            ),
+        ):
+            resource = Kind(
+                kind=kind,
+                name=name,
+                namespace="default",
+                user_id=owner,
+                is_active=True,
+                json={"kind": kind, "spec": spec},
+            )
+            self.db.add(resource)
+        self.db.add(
+            KnowledgeArtifactRecord(
+                artifact_id=artifact_id,
+                knowledge_base_id=kb_id,
+                user_id=owner,
+                artifact_type="mind_map",
+                status="succeeded",
+                title="Scoped map",
+                content=json.dumps({"nodes": [{"id": "permitted"}]}),
+                source_document_ids=[source_id],
+            )
+        )
+        self.db.flush()
+        team_id = resource.id
+        self.db.commit()
+
+        async def send() -> tuple[dict, dict]:
+            socket = socketio.AsyncClient(reconnection=False)
+            try:
+                await socket.connect(
+                    BASE_URL,
+                    auth={
+                        "token": self.headers[0]["Authorization"].removeprefix(
+                            "Bearer "
+                        )
+                    },
+                    namespaces=["/chat"],
+                    transports=["websocket"],
+                )
+                payload = {
+                    "team_id": team_id,
+                    "task_type": "knowledge",
+                    "knowledge_base_id": kb_id,
+                    "is_group_chat": True,
+                    "message": "Question about the artifact node",
+                    "attachment_ids": [self.attachment_id],
+                    "contexts": [
+                        {
+                            "type": "knowledge_base",
+                            "data": {
+                                "knowledge_id": kb_id,
+                                "document_ids": [excluded_id],
+                            },
+                        }
+                    ],
+                }
+                answers = []
+                for node_id in ("missing", "permitted"):
+                    answers.append(
+                        await socket.call(
+                            "chat:send",
+                            {
+                                **payload,
+                                "artifact_context": {
+                                    "artifact_id": artifact_id,
+                                    "node_id": node_id,
+                                },
+                            },
+                            namespace="/chat",
+                            timeout=15,
+                        )
+                    )
+                return answers[0], answers[1]
+            finally:
+                await socket.disconnect()
+
+        rejected, accepted = asyncio.run(send())
+        self.assertEqual(rejected.get("error"), "Mind map node not found")
+        self.assertNotIn("subtask_id", rejected)
+        self.assertNotIn("error", accepted)
+        self.db.rollback()
+        rows = (
+            self.db.query(SubtaskContext)
+            .filter_by(subtask_id=accepted["subtask_id"])
+            .all()
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].context_type, "knowledge_base")
+        self.assertEqual(rows[0].type_data["document_ids"], [source_id])
+        self.assertTrue(rows[0].type_data["scope_restricted"])
 
     def test_artifact_empty_persisted_and_reopened(self) -> None:
         empty = self.get(f"/api/knowledge-bases/{self.kbs[2].id}/artifacts")

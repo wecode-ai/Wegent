@@ -27,6 +27,7 @@ pub(crate) struct Admission {
     pub waiting_runtime: bool,
 }
 pub(crate) struct Execution {
+    pub runtime_task_id: String,
     pub id: i64,
     pub status: String,
     pub device_id: String,
@@ -190,10 +191,11 @@ pub(crate) async fn enqueue_intent_on(
         .unwrap_or_else(|| format!("codex-queue-{id}"));
     tx.execute(
         "UPDATE loop_item_executions SET runtime_task_id=? WHERE id=?",
-        (runtime_task_id, id),
+        (runtime_task_id.as_str(), id),
     )
     .await?;
     Ok(Execution {
+        runtime_task_id,
         id,
         status: status.into(),
         device_id: input.device_id.clone(),
@@ -210,7 +212,7 @@ fn priority(value: &str) -> i64 {
     }
 }
 
-fn validate_non_secret_plugins(plugins: &Value) -> Result<()> {
+pub(crate) fn validate_non_secret_plugins(plugins: &Value) -> Result<()> {
     if plugins.is_null() {
         return Ok(());
     }
