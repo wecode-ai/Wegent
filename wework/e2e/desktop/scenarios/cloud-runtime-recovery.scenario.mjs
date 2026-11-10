@@ -126,7 +126,9 @@ export function createDesktopScenario(options) {
         proxy.disconnectWebSockets(true)
         finishModel()
         const completed = await cloud.waitForRuntimeTask(address)
-        assert.equal(completed.executionState?.phase, 'idle', 'The cloud Executor did not settle')
+        // runtime-work exposes the list projection, not the native execution snapshot.
+        assert.equal(completed.status, 'done', 'The cloud Executor did not complete successfully')
+        assert.equal(completed.running, false, 'The cloud Executor is still running')
         assert.ok(!(await control.command('getText', ASSISTANT)).includes(COMPLETED))
 
         proxy.disconnectWebSockets(false)
