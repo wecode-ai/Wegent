@@ -23,13 +23,6 @@ from fastapi.testclient import TestClient
 # Only components used by HTTP contracts that cannot be replaced by a direct
 # function call without losing authentication or request/response assertions.
 _COMPONENTS = {
-    "connector_connection_refresh": (
-        "connector_apps",
-        "refresh_connector_connection",
-        "POST",
-        "/api/connector-apps/{slug}/connection/refresh",
-        "ConnectorConnectionResponse",
-    ),
     "chat_history": (
         "internal.chat_storage",
         "get_chat_history",

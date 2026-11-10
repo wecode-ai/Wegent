@@ -19,6 +19,7 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SEND_BUTTON_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
+  selectE2EModel,
 } from '../modules/shared.mjs'
 import {
   CONNECTOR_OAUTH_SLUG,
@@ -205,6 +206,7 @@ export function createDesktopScenario({
         })
         return
       }
+      await selectE2EModel(control)
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
         timeoutMs: workbenchReadyTimeoutMs,
       })

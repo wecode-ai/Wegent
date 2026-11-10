@@ -4,6 +4,7 @@
 
 """API coverage for administrator-managed connector apps."""
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -750,21 +751,14 @@ def test_expired_oauth_connector_remains_visible_but_not_callable(
         "app.services.connector_oauth.create_connector_http_client",
         lambda **_kwargs: Client(),
     )
-    monkeypatch.setattr(
-        ConnectorRuntimeService,
-        "probe_app",
-        AsyncMock(return_value=None),
+    # The route is Rust-owned and cannot be exercised through the Python ASGI
+    # client. Verify the same refresh boundary; the Rust refresh handler has
+    # its own compatibility coverage.
+    refreshed = asyncio.run(
+        ConnectorOAuthService.refresh_connection(test_db, connection)
     )
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("connector_connection_refresh",)) as client:
-        refresh_response = client.post(
-            f"/api/connector-apps/{app.slug}/connection/refresh",
-            headers=_admin_headers(test_token),
-        )
-
-    assert refresh_response.status_code == 200
-    assert refresh_response.json()["status"] == "connected"
+    assert refreshed is not None
+    assert connector_connection_service.response(refreshed).status == "connected"
 
 
 def test_apps_projection_rejects_malformed_cursor(

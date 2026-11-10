@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `POST /api/connector-apps/{slug}/connection/refresh`
-//! (`app/api/endpoints/connector_apps.py::refresh_connector_connection`).
 //!
 //! Renews an expired grant and probes the upstream so the settings retry action
 //! reports what the provider actually answers instead of guessing from the
@@ -155,14 +154,17 @@ where
         // These apps have inline definitions, not an MCP discovery endpoint.
         // Cache the current operations without invoking them; a probe must
         // never execute a potentially mutating tool just to refresh metadata.
-        let tools = super::http_tools::definitions(app)
-            .map_err(|error| ProbeError::Transport(error.to_string(), attempted_access.clone()))?
-            .into_iter()
+        let definitions = super::http_tools::definitions(app)
+            .map_err(|error| ProbeError::Transport(error.to_string(), attempted_access.clone()))?;
+        let allowlist = &app.tool_allowlist;
+        let tools = definitions
+            .iter()
+            .filter(|tool| allowlist.is_empty() || allowlist.contains(&tool.name))
             .map(|tool| mcp::UpstreamTool {
-                name: tool.name,
+                name: tool.name.clone(),
                 title: None,
-                description: Some(tool.description),
-                input_schema: tool.input_schema,
+                description: Some(tool.description.clone()),
+                input_schema: tool.input_schema.clone(),
                 annotations: None,
             })
             .collect();

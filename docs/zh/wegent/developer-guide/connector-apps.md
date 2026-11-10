@@ -112,7 +112,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 | `dingtalk_aitable` | 钉钉 AI 表格 | `https://mcp-gw.dingtalk.com/oauth/server/aitable` |
 | `dingtalk_wiki` | 钉钉知识库 | `https://mcp-gw.dingtalk.com/oauth/server/wiki` |
 
-`CONNECTOR_BUILTIN_APPS_ENABLED` 默认开启。Rust 和 Python 初始化共用 `shared/data/builtin-connector-apps.json` 清单，不依赖开发环境 YAML 初始化。补齐是幂等的：缺失的系统应用会被创建，后续管理员的停用、加载方式和关键词设置会保留；已有相同地址的系统应用不会重复创建。删除内置应用后，下一次启动会重新建出它；如需长期移除，请设置 `CONNECTOR_BUILTIN_APPS_ENABLED=False`。
+`CONNECTOR_BUILTIN_APPS_ENABLED` 默认开启。当前补齐逻辑只在 Python 拥有数据库初始化时执行，并使用 `shared/data/builtin-connector-apps.json` 清单，不依赖开发环境 YAML 初始化；如果由 Rust 拥有数据库初始化，开启该开关不会自动补齐这些应用。补齐是幂等的：缺失的系统应用会被创建，后续管理员的停用、加载方式和关键词设置会保留；已有相同地址的系统应用不会重复创建。删除内置应用后，下一次启动会重新建出它；如需长期移除，请设置 `CONNECTOR_BUILTIN_APPS_ENABLED=False`。
 
 这四个服务不再使用 provider 配置弹窗，也不再注入"打开配置弹窗"的引导。内置 App 默认使用 `toolLoadingMode: lazy`，并带有钉钉服务关键词；消息命中关键词时提前 preload 对应 `wegent-connector-<slug>` Skill，否则由模型按需 `load_skill`。未授权时仍由对话内的 Connector 授权链接引导。OAuth 授权、工具发现和白名单校验保持原有 Connector 流程不变。Wegent Web 的"设置 → 集成"不再展示钉钉 provider 卡片，改用"应用连接"卡片。
 
