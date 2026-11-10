@@ -1074,6 +1074,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       ),
       target_group_names: publishTarget === 'team' ? publishGroupNames : [],
       namespace,
+      team_id: editingTeamId ?? undefined,
     }
     const trimmedDisplayName = displayName.trim()
     const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)

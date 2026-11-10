@@ -31,6 +31,7 @@ from app.services.group_permission import check_group_permission
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.skill_binding_service import skill_binding_service
 from app.services.skill_resolution import build_skill_ref_meta
+from app.services.team_access_policy import can_edit_team
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,60 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         ):
             return
         raise HTTPException(status_code=403, detail="Access denied")
+
+    def _can_update_bot_through_team(
+        self,
+        db: Session,
+        *,
+        bot: Kind,
+        team_id: int,
+        user_id: int,
+    ) -> bool:
+        """Whether the user may edit this Bot as a member of the given Team."""
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if team is None or not can_edit_team(db, team, user_id):
+            return False
+
+        if bot.namespace == "default" and bot.user_id != team.user_id:
+            return False
+
+        try:
+            team_crd = Team.model_validate(team.json)
+        except ValueError:
+            return False
+        return any(
+            member.botRef.name == bot.name
+            and (member.botRef.namespace or "default") == (bot.namespace or "default")
+            for member in team_crd.spec.members
+        )
+
+    def _require_update_bot_permission(
+        self,
+        db: Session,
+        *,
+        bot: Kind,
+        user_id: int,
+        team_id: Optional[int],
+    ) -> None:
+        """Require Bot ownership, namespace permission, or Team edit permission."""
+        if team_id is not None and self._can_update_bot_through_team(
+            db, bot=bot, team_id=team_id, user_id=user_id
+        ):
+            return
+        self._require_bot_permission(
+            db,
+            bot=bot,
+            user_id=user_id,
+            required_role=BaseRole.Developer,
+        )
 
     def _validate_default_knowledge_bases(
         self,
@@ -987,11 +1042,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
 
-        self._require_bot_permission(
+        self._require_update_bot_permission(
             db,
             bot=bot,
             user_id=user_id,
-            required_role=BaseRole.Developer,
+            team_id=obj_in.team_id,
         )
 
         update_data = obj_in.model_dump(exclude_unset=True)

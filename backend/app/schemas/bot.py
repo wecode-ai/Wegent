@@ -61,6 +61,13 @@ class BotUpdate(BaseModel):
     preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     target_group_names: Optional[List[str]] = Field(default=None, max_length=100)
     namespace: Optional[str] = None  # Namespace for the bot (group name or 'default')
+    team_id: Optional[int] = Field(
+        None,
+        description=(
+            "Optional Team context. Allows a Team editor to update a private Bot "
+            "referenced by that Team."
+        ),
+    )
     is_active: Optional[bool] = None
     secondary_model_name: Optional[str] = None
     secondary_model_namespace: Optional[str] = None

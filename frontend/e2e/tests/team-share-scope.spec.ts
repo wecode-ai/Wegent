@@ -20,6 +20,7 @@ interface TeamRecord {
 interface ShareScopeFixture {
   groupName: string
   groupTeamId: number
+  groupTeamBotId: number
   reporterTeamId: number
   reporterUserId: number
   developerApi: ApiClient
@@ -163,6 +164,7 @@ async function createShareScopeFixture(
     return {
       groupName,
       groupTeamId: groupTeam.teamId,
+      groupTeamBotId: groupTeam.botId,
       reporterTeamId: reporterTeam.teamId,
       reporterUserId,
       developerApi,
@@ -174,6 +176,12 @@ async function createShareScopeFixture(
     await cleanup()
     throw error
   }
+}
+
+async function readLeaderBotPrompt(api: ApiClient, botId: number): Promise<string | undefined> {
+  const response = await api.get<{ system_prompt?: string }>(`/api/bots/${botId}`)
+  expect(response.status, JSON.stringify(response.data)).toBe(200)
+  return response.data?.system_prompt
 }
 
 async function openUserPage(browser: Browser, token: string): Promise<Page> {
@@ -378,6 +386,45 @@ test.describe('Agent share scope', () => {
       ).toBeVisible({ timeout: 15000 })
 
       expect(await findCreatedTeam(fixture.reporterApi, agentDisplayName)).toBeUndefined()
+    } finally {
+      await page.context().close()
+      await fixture.cleanup()
+    }
+  })
+
+  test('group editor can save an agent whose leader bot is private to its creator', async ({
+    browser,
+    request,
+  }) => {
+    const prefix = `e2e-share-scope-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const fixture = await createShareScopeFixture(request, prefix)
+    const page = await openUserPage(browser, fixture.reporterToken)
+
+    try {
+      await page.goto(
+        `/resource-library?tab=mine&type=agent&source=group&group=${encodeURIComponent(
+          fixture.groupName
+        )}`
+      )
+      await expect(page.getByTestId('my-resources')).toBeVisible({ timeout: 20000 })
+      const card = page.getByTestId(`team-card-${fixture.groupTeamId}`)
+      await expect(card).toBeVisible({ timeout: 20000 })
+      await card.getByTestId(`edit-team-button-${fixture.groupTeamId}`).click()
+      const dialog = page.getByTestId('team-edit-dialog')
+      await expect(dialog).toBeVisible({ timeout: 15000 })
+
+      const prompt = dialog.getByTestId('simple-prompt-textarea')
+      await expect(prompt).toBeVisible({ timeout: 15000 })
+      await prompt.fill('Updated by a group editor with only Team permission.')
+      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).click()
+      await expect(dialog).toBeHidden({ timeout: 30000 })
+
+      await expect
+        .poll(
+          () => readLeaderBotPrompt(fixture.reporterApi, fixture.groupTeamBotId),
+          { timeout: 20000 }
+        )
+        .toBe('Updated by a group editor with only Team permission.')
     } finally {
       await page.context().close()
       await fixture.cleanup()

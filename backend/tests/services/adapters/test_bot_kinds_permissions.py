@@ -15,19 +15,21 @@ from app.schemas.bot import BotUpdate
 from app.services.adapters.bot_kinds import bot_kinds_service
 
 
-def _create_bot(db, *, user_id: int, namespace: str = "default") -> Kind:
+def _create_bot(
+    db, *, user_id: int, namespace: str = "default", name: str = "secured-bot"
+) -> Kind:
     bot = Kind(
         user_id=user_id,
         kind="Bot",
-        name="secured-bot",
+        name=name,
         namespace=namespace,
         is_active=True,
         json={
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Bot",
-            "metadata": {"name": "secured-bot", "namespace": namespace},
+            "metadata": {"name": name, "namespace": namespace},
             "spec": {
-                "ghostRef": {"name": "secured-bot-ghost", "namespace": namespace},
+                "ghostRef": {"name": f"{name}-ghost", "namespace": namespace},
                 "shellRef": {"name": "ClaudeCode", "namespace": "default"},
             },
             "status": {"state": "Available"},
@@ -37,6 +39,43 @@ def _create_bot(db, *, user_id: int, namespace: str = "default") -> Kind:
     db.commit()
     db.refresh(bot)
     return bot
+
+
+def _create_team(
+    db,
+    *,
+    user_id: int,
+    namespace: str,
+    bot: Kind,
+    name: str = "team-with-private-bot",
+) -> Kind:
+    team = Kind(
+        user_id=user_id,
+        kind="Team",
+        name=name,
+        namespace=namespace,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {"name": name, "namespace": namespace},
+            "spec": {
+                "members": [
+                    {
+                        "botRef": {"name": bot.name, "namespace": bot.namespace},
+                        "prompt": "",
+                        "role": "leader",
+                    }
+                ],
+                "collaborationModel": "solo",
+            },
+            "status": {"state": "Available"},
+        },
+    )
+    db.add(team)
+    db.commit()
+    db.refresh(team)
+    return team
 
 
 def _add_group_member(db, *, namespace: Namespace, user_id: int, role: BaseRole):
@@ -264,3 +303,113 @@ def test_group_update_loads_components_in_resource_owner_scope(
     components.assert_called_once_with(
         test_db, bot, test_admin_user.id, viewer_id=test_user.id
     )
+
+
+def test_group_editor_can_update_private_bot_referenced_by_team(
+    test_db,
+    test_user,
+    test_admin_user,
+):
+    namespace = Namespace(
+        name="team-editors",
+        display_name="Team Editors",
+        owner_user_id=test_admin_user.id,
+        visibility="private",
+        level="group",
+        is_active=True,
+    )
+    test_db.add(namespace)
+    test_db.commit()
+    _add_group_member(
+        test_db, namespace=namespace, user_id=test_user.id, role=BaseRole.Developer
+    )
+    bot = _create_bot(test_db, user_id=test_admin_user.id)
+    team = _create_team(
+        test_db, user_id=test_admin_user.id, namespace=namespace.name, bot=bot
+    )
+
+    with (
+        patch.object(
+            bot_kinds_service, "_get_bot_components", return_value=(None, None, None)
+        ),
+        patch.object(bot_kinds_service, "_convert_to_bot_dict", return_value={}),
+    ):
+        updated = bot_kinds_service.update_with_user(
+            test_db,
+            bot_id=bot.id,
+            obj_in=BotUpdate(system_prompt="Updated by a group editor", team_id=team.id),
+            user_id=test_user.id,
+        )
+
+    assert updated == {}
+
+
+def test_team_context_cannot_authorize_unrelated_private_bot(
+    test_db,
+    test_user,
+    test_admin_user,
+):
+    namespace = Namespace(
+        name="unrelated-team-editors",
+        display_name="Unrelated Team Editors",
+        owner_user_id=test_admin_user.id,
+        visibility="private",
+        level="group",
+        is_active=True,
+    )
+    test_db.add(namespace)
+    test_db.commit()
+    _add_group_member(
+        test_db, namespace=namespace, user_id=test_user.id, role=BaseRole.Developer
+    )
+    team_bot = _create_bot(test_db, user_id=test_admin_user.id, name="team-bot")
+    team = _create_team(
+        test_db, user_id=test_admin_user.id, namespace=namespace.name, bot=team_bot
+    )
+    unrelated_bot = _create_bot(
+        test_db, user_id=test_admin_user.id, name="unrelated-bot"
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        bot_kinds_service.update_with_user(
+            test_db,
+            bot_id=unrelated_bot.id,
+            obj_in=BotUpdate(team_id=team.id),
+            user_id=test_user.id,
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+def test_team_reporter_cannot_update_private_bot_through_team(
+    test_db,
+    test_user,
+    test_admin_user,
+):
+    namespace = Namespace(
+        name="team-reporters",
+        display_name="Team Reporters",
+        owner_user_id=test_admin_user.id,
+        visibility="private",
+        level="group",
+        is_active=True,
+    )
+    test_db.add(namespace)
+    test_db.commit()
+    _add_group_member(
+        test_db, namespace=namespace, user_id=test_user.id, role=BaseRole.Reporter
+    )
+    bot = _create_bot(test_db, user_id=test_admin_user.id)
+    team = _create_team(
+        test_db, user_id=test_admin_user.id, namespace=namespace.name, bot=bot
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        bot_kinds_service.update_with_user(
+            test_db,
+            bot_id=bot.id,
+            obj_in=BotUpdate(team_id=team.id),
+            user_id=test_user.id,
+        )
+
+    assert exc_info.value.status_code == 403

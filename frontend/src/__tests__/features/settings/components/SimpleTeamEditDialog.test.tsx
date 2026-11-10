@@ -1738,6 +1738,40 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
+  it('sends the Team context when saving an existing group agent', async () => {
+    const team = makeTeam({ id: 77, namespace: 'engineering' })
+    mockedGetAgentBindings.mockResolvedValueOnce({
+      agent_id: team.id,
+      personal: false,
+      group_names: ['engineering'],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot({ namespace: 'default' })]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Group editable agent' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        10,
+        expect.objectContaining({ team_id: team.id })
+      )
+    })
+  })
+
   it('loads all existing team bindings when editing an agent', async () => {
     const team = makeTeam({ namespace: 'default' })
     const writableGroups = [
