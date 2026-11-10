@@ -18,16 +18,13 @@ impl LocalTaskStore {
             get_item_from(&transaction, issue_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
         let binding = get_binding_by_kind(&transaction, device, task, false)?
             .ok_or(TaskRuntimeError::TaskNotFound)?;
-        let metadata = issue.metadata.clone();
-        let history = metadata["assignment_history"].as_array();
         if issue.cloud_project_id.as_deref() != Some(project)
             || binding.cloud_project_id != project
             || binding.loop_item_id.as_deref() != Some(issue_id)
-            || issue.assignee_user_id != Some(user)
-            || origin["humanAssignmentId"] != format!("{issue_id}-{}", history.map_or(0, Vec::len))
+            || origin["userId"] != user
         {
             return Err(TaskRuntimeError::Invalid(
-                "Stand-in Issue assignment changed".into(),
+                "Stand-in Issue conversation owner does not match".into(),
             ));
         }
         let sender = format!(
@@ -271,7 +268,7 @@ mod stand_in_reply_tests {
     use super::*;
 
     #[test]
-    fn public_stand_in_reply_is_idempotent_and_cannot_borrow_a_new_assignment() {
+    fn public_stand_in_reply_preserves_owned_conversations_after_reassignment() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
         let project = store
@@ -283,7 +280,7 @@ mod stand_in_reply_tests {
                 serde_json::from_value(json!({"title":"Issue","assignee_user_id":7})).unwrap(),
             )
             .unwrap();
-        let origin = json!({"cloudProjectId":project.id,"loopItemId":issue.id,"standInId":"review","roleName":"Review stand-in","humanAssignmentId":format!("{}-1",issue.id)});
+        let origin = json!({"userId":7,"cloudProjectId":project.id,"loopItemId":issue.id,"standInId":"review","roleName":"Review stand-in","humanAssignmentId":format!("{}-1",issue.id)});
         store
             .bind_task(
                 &project.id,
@@ -312,11 +309,37 @@ mod stand_in_reply_tests {
         assert!(store
             .publish_stand_in_reply("mac", "conversation", 7, &origin, "first", "Changed")
             .is_err());
-        let mut superseded = origin.clone();
-        superseded["humanAssignmentId"] = json!("superseded");
-        assert!(store
-            .publish_stand_in_reply("mac", "conversation", 7, &superseded, "late", "Late")
-            .is_err());
+        let reassigned = store
+            .update_task(
+                &project.id,
+                &issue.id,
+                serde_json::from_value(json!({"version":issue.version,"assignee_user_id":8}))
+                    .unwrap(),
+            )
+            .unwrap();
+        store
+            .publish_stand_in_reply("mac", "conversation", 7, &origin, "late", "Late")
+            .unwrap();
+        store
+            .update_task(
+                &project.id,
+                &issue.id,
+                serde_json::from_value(
+                    json!({"version":reassigned.version,"assignee_user_id":null}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        store
+            .publish_stand_in_reply(
+                "mac",
+                "conversation",
+                7,
+                &origin,
+                "unassigned",
+                "Still here",
+            )
+            .unwrap();
         assert!(store
             .publish_stand_in_reply("mac", "conversation", 8, &origin, "foreign", "Foreign")
             .is_err());
@@ -331,7 +354,7 @@ mod stand_in_reply_tests {
                 .list_comments(&project.id, &issue.id, 0)
                 .unwrap()
                 .len(),
-            2
+            4
         );
     }
 }

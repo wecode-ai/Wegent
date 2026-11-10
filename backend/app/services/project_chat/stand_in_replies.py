@@ -6,12 +6,11 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem, loop_datetime_is_unset
+from app.models.delivery import LoopItem
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
 from app.schemas.issue_activity_comment import StandInPublicReply
 from app.schemas.project_chat import ProjectChatMessageView
-from app.services.collaboration_human_assignments import human_task_bindings
 from app.services.device.identity import resolve_owned_device_alias
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.task_bindings import active_task_binding_query
@@ -45,7 +44,7 @@ def publish_stand_in_reply(
     body: str,
     identity: StandInPublicReply,
 ) -> ProjectChatMessageView:
-    project = project_chat_service._require_scope(
+    project_chat_service._require_scope(
         db,
         user_id=user_id,
         project_id=project_id,
@@ -76,16 +75,6 @@ def publish_stand_in_reply(
     ).all()
     if not bindings:
         raise HTTPException(409, "The stand-in has no owned Issue session binding")
-    if identity.human_assignment_id:
-        current = human_task_bindings(db, [item], user_id, projects=[project]).get(
-            item.id
-        )
-        if not current or current["humanAssignmentId"] != identity.human_assignment_id:
-            raise HTTPException(409, "The stand-in assignment changed")
-    elif not _is_mentioned(
-        db, project_id, item_id, user_id, identity.trigger_comment_id
-    ):
-        raise HTTPException(409, "The stand-in has no matching Issue mention")
     sender = (
         f"stand-in:{user_id}:{hashlib.sha256(identity.role_id.encode()).hexdigest()}"
     )
@@ -136,29 +125,3 @@ def publish_stand_in_reply(
     project_chat_service._commit(db)
     db.refresh(row)
     return project_chat_service.to_view(row, db=db)
-
-
-def _is_mentioned(
-    db: Session,
-    project_id: str,
-    item_id: str,
-    user_id: int,
-    comment_id: str | None,
-) -> bool:
-    if not comment_id:
-        return False
-    row = (
-        db.query(ProjectChatMessage)
-        .filter(
-            ProjectChatMessage.project_id == project_id,
-            ProjectChatMessage.task_id == item_id,
-            ProjectChatMessage.message_id == comment_id,
-            ProjectChatMessage.sender_type == "user",
-            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-        )
-        .first()
-    )
-    return row is not None and any(
-        mention.get("type") == "user" and mention.get("id") == str(user_id)
-        for mention in (row.metadata_json or {}).get("mentions", [])
-    )
