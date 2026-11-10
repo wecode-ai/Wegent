@@ -8,7 +8,8 @@ export function resolveEvidenceResponseContent(
   const collect = (value: unknown): void => {
     if (typeof value === 'string') {
       try {
-        collect(JSON.parse(value))
+        const envelope = value.match(/^\[tool_output [^\]\n]*\btruncated=false\]\n([\s\S]*)$/)
+        collect(JSON.parse(envelope ? envelope[1] : value))
       } catch {
         // Ordinary model text is not a serialized tool result.
       }

@@ -147,6 +147,10 @@ async def test_real_react_guard_guidance_chain_matches_model_request():
 async def test_native_mcp_transport_registers_only_trusted_backend_units():
     from langchain_core.tools import StructuredTool
 
+    from chat_shell.compression.token_counter import TokenCounter
+    from chat_shell.guard import UnifiedContextGuard, chain_pre_model_hooks
+    from chat_shell.guard.tool_output import ToolOutputGuardAdapter
+    from chat_shell.guard.types import TruncationPolicy
     from chat_shell.services.answer_evidence import active_evidence, wrap_native_search
 
     async def search(query: str):
@@ -204,14 +208,35 @@ async def test_native_mcp_transport_registers_only_trusted_backend_units():
                 "type": "tool_call",
             }
         )
-        registry.observe({"messages": [message]})
+        message.id = "native-result"
+        guard = UnifiedContextGuard(
+            model_id="gpt-4",
+            sources=[
+                ToolOutputGuardAdapter(
+                    TokenCounter(model_id="gpt-4"),
+                    TruncationPolicy(kind="tokens", limit=15000),
+                )
+            ],
+            compression_enabled=True,
+        )
+        updates = await chain_pre_model_hooks(guard, registry.observe)(
+            {"messages": [HumanMessage(content="核对资料"), message]}
+        )
+        visible = next(
+            row for row in updates["messages"] if isinstance(row, ToolMessage)
+        )
+        assert visible.content.startswith("[tool_output ")
+        assert "truncated=false" in visible.content
         assert registry.confirmed()[0]["content"] == "原生 MCP 原文"
     finally:
         active_evidence.reset(token)
 
 
 @pytest.mark.parametrize("searches", [1, 2])
-async def test_openai_sdk_request_preserves_registered_body_after_hooks(searches):
+@pytest.mark.parametrize("compact_sources", [False, True])
+async def test_openai_sdk_request_preserves_registered_body_after_hooks(
+    searches, compact_sources
+):
     """Capture the provider HTTP request, beyond the abstract model interface."""
     from unittest.mock import AsyncMock
 
@@ -220,7 +245,10 @@ async def test_openai_sdk_request_preserves_registered_body_after_hooks(searches
     from langchain_openai import ChatOpenAI
     from langgraph.prebuilt import create_react_agent
 
+    from chat_shell.compression.token_counter import TokenCounter
     from chat_shell.guard import UnifiedContextGuard, chain_pre_model_hooks
+    from chat_shell.guard.tool_output import ToolOutputGuardAdapter
+    from chat_shell.guard.types import TruncationPolicy
     from chat_shell.services.guidance import GuidanceConsumer
 
     registry = EvidenceRegistry()
@@ -284,6 +312,9 @@ async def test_openai_sdk_request_preserves_registered_body_after_hooks(searches
             ensure_ascii=False,
         )
 
+    adapter = ToolOutputGuardAdapter(
+        TokenCounter(model_id="gpt-4"), TruncationPolicy(kind="tokens", limit=15000)
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         model = ChatOpenAI(
             model="gpt-4",
@@ -292,7 +323,9 @@ async def test_openai_sdk_request_preserves_registered_body_after_hooks(searches
             http_async_client=client,
         )
         guard = UnifiedContextGuard(
-            model_id="gpt-4", sources=[], compression_enabled=True
+            model_id="gpt-4",
+            sources=[adapter] if compact_sources else [],
+            compression_enabled=True,
         )
         guidance = GuidanceConsumer(
             7, 12, AsyncMock(consume=AsyncMock(return_value=None)), AsyncMock()
@@ -308,10 +341,17 @@ async def test_openai_sdk_request_preserves_registered_body_after_hooks(searches
     sent = next(
         message for message in requests[-1]["messages"] if message["role"] == "tool"
     )
-    actual_unit = json.loads(sent["content"])["results"][0]
+
+    def model_body(message):
+        if compact_sources:
+            assert "truncated=false" in message["content"]
+            return adapter.extract_raw(message)["text"]
+        return message["content"]
+
+    actual_unit = json.loads(model_body(sent))["results"][0]
     assert actual_unit["content"] == "SDK 收到的完整原文"
     sent_units = [
-        json.loads(message["content"])["results"][0]
+        json.loads(model_body(message))["results"][0]
         for message in requests[-1]["messages"]
         if message["role"] == "tool"
     ]
@@ -320,6 +360,27 @@ async def test_openai_sdk_request_preserves_registered_body_after_hooks(searches
     assert [unit["document_id"] for unit in sent_units] == list(
         range(10, 10 + searches)
     )
+
+
+@pytest.mark.parametrize("header", ["truncated=true", "truncated=unknown", ""])
+def test_guard_envelope_must_explicitly_preserve_the_complete_unit(header):
+    registry = EvidenceRegistry()
+    unit = registry.offer(
+        {"content": "完整原文", "knowledge_base_id": 7, "document_id": 9}
+    )
+    registry.observe(
+        {
+            "messages": [
+                ToolMessage(
+                    content=f"[tool_output name=knowledge_base_search {header}]\n"
+                    + json.dumps({"results": [unit]}),
+                    name="knowledge_base_search",
+                    tool_call_id="incomplete",
+                )
+            ]
+        }
+    )
+    assert registry.confirmed() == []
 
 
 def test_malformed_tool_units_are_not_confirmed_or_allowed_to_break_model_hook():

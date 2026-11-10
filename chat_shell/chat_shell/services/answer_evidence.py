@@ -10,6 +10,8 @@ from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 
+from chat_shell.guard.tool_output import intact_tool_output_body
+
 active_evidence: ContextVar["EvidenceRegistry | None"] = ContextVar(
     "answer_evidence", default=None
 )
@@ -51,8 +53,11 @@ class EvidenceRegistry:
             )
             for block in blocks:
                 text = block.get("text") if isinstance(block, dict) else block
+                body = intact_tool_output_body(text)
+                if body is None:
+                    continue
                 try:
-                    payload = json.loads(text)
+                    payload = json.loads(body)
                 except (TypeError, ValueError):
                     continue
                 if not isinstance(payload, dict):
@@ -111,6 +116,7 @@ def wrap_native_search(
         content = output[0] if isinstance(output, tuple) else output
         blocks = content if isinstance(content, list) else [content]
         formatted = []
+        native_text = None
         for block in blocks:
             text = block.get("text") if isinstance(block, dict) else block
             try:
@@ -138,9 +144,13 @@ def wrap_native_search(
                     if isinstance(chunk, dict)
                 ]
                 text = json.dumps(payload, ensure_ascii=False)
+                native_text = text
                 block = {**block, "text": text} if isinstance(block, dict) else text
             formatted.append(block)
         value = formatted if isinstance(content, list) else formatted[0]
+        if native_text is not None and len(formatted) == 1:
+            # Keep native text JSON as text through the guard, not Python repr(list).
+            value = native_text
         return (value, output[1]) if isinstance(output, tuple) else value
 
     object.__setattr__(tool, "_arun", run)
