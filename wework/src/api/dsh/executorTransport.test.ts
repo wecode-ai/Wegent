@@ -15,6 +15,38 @@ import {
 vi.mock('@/lib/model-loading-diagnostics', () => ({ logModelLoading: vi.fn() }))
 
 describe('DSH executor transport', () => {
+  test('persists directory RPC diagnostics beyond startup without request paths', async () => {
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(60_000)
+    vi.mocked(logModelLoading).mockClear()
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ ok: true, result: { success: true } }), { status: 200 })
+        )
+    )
+    try {
+      await requestDshExecutor('device.execute_command', {
+        command_key: 'home_dir',
+        path: '/private/path',
+      })
+      expect(logModelLoading).toHaveBeenCalledWith(
+        expect.any(String),
+        'rpc.device.execute_command.fetch_started',
+        expect.any(Object)
+      )
+      expect(logModelLoading).toHaveBeenCalledWith(
+        expect.any(String),
+        'rpc.device.execute_command.body_parsed',
+        expect.objectContaining({ ok: true })
+      )
+      expect(JSON.stringify(vi.mocked(logModelLoading).mock.calls)).not.toContain('/private/path')
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
   afterEach(() => {
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
     resetRuntimeTransportGates()

@@ -114,9 +114,12 @@ export async function requestDshExecutor<T>(
   const requestId = createRequestId('wework-local')
   const startedAt = Date.now()
   const diagnosticCount = modelDiagnosticCounts.get(method) ?? 0
+  const directoryCommand =
+    method === 'device.execute_command' &&
+    (params.command_key === 'home_dir' || params.command_key === 'ls_dirs')
   const diagnose =
-    performance.now() < modelDiagnosticsDeadline &&
-    modelDiagnosticMethods.has(method) &&
+    (directoryCommand ||
+      (performance.now() < modelDiagnosticsDeadline && modelDiagnosticMethods.has(method))) &&
     diagnosticCount < 3
   if (diagnose) modelDiagnosticCounts.set(method, diagnosticCount + 1)
   const diagnosticStart = performance.now()
