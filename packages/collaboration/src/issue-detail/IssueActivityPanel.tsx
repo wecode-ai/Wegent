@@ -105,14 +105,14 @@ export function IssueActivityPanel({
     async (sequence: number) => {
       if (!api.issues) return
       try {
-        const updated = await api.issues.markRead(issue.id, sequence)
+        const updated = await api.issues.markRead(issue.id, sequence, issue.content_revision)
         onTaskRead(updated)
       } catch (cause) {
         onError()
         throw cause
       }
     },
-    [api.issues, issue.id, onError, onTaskRead]
+    [api.issues, issue.id, issue.content_revision, onError, onTaskRead]
   )
   const scroll = useIssueActivityScroll({
     messages: chat.messages,

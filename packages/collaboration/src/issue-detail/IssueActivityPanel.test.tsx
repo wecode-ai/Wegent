@@ -115,7 +115,7 @@ describe("IssueActivityPanel", () => {
         pending.forEach((callback) => callback(0));
       });
       if (succeeds) {
-        expect(markRead).toHaveBeenCalledExactlyOnceWith(issue.id, 0);
+        expect(markRead).toHaveBeenCalledExactlyOnceWith(issue.id, 0, 1);
         expect(onTaskRead).toHaveBeenCalledExactlyOnceWith(readIssue);
       } else {
         expect(markRead).not.toHaveBeenCalled();

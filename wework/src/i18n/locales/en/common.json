@@ -502,6 +502,8 @@
     "task_activity_replying_to_human": "Replying to {{name}} · Opens a new personal task",
     "task_activity_reply_action": "Reply and continue this task",
     "task_activity_replying_to": "Replying to {{name}} · Continues the existing execution",
+    "task_activity_replying_to_stand_in": "Replying to {{name}} · Continues this Issue conversation",
+    "task_activity_stand_in_reply_placeholder": "Continue discussing this Issue with the stand-in…",
     "task_activity_cancel_reply": "Cancel reply",
     "task_activity_reply_starts_task": "A task panel will open after you reply to start “{{title}}”",
     "task_activity_ready_for_review": "Result submitted, waiting for review",
@@ -5445,6 +5447,15 @@
     "im_target": "Choose IM notification conversation"
   },
   "standIn": {
+    "native_input_pending": "Resolve the current question or permission card before sending another message.",
+    "desktop_notifications": {
+      "title": "Turn on stand-in desktop notifications",
+      "description": "Get notified about new messages or decisions. Allow notifications in both system and Wework settings.",
+      "enable": "Notification settings",
+      "never": "Don't show again",
+      "dismiss": "Dismiss for now",
+      "error": "Couldn't open or save notification settings. Try again."
+    },
     "project_coordinator": {
       "open": "Talk to lead",
       "title": "{{project}} · Lead",

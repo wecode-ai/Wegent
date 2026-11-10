@@ -34,11 +34,13 @@ function statusTone(status: PluginPublicationStatus): 'normal' | 'warning' | 'er
 }
 
 function checkTone(check: PluginPublicationCheckItem) {
-  if (check.status === 'passed') return 'text-success bg-success/10'
+  if (check.status === 'passed')
+    return 'text-success bg-success/10 wework:text-green-700 wework:bg-green-600/10'
   if (check.status === 'failed' || check.status === 'blocked')
-    return 'text-destructive bg-destructive/10'
-  if (check.status === 'not_run') return 'text-warning bg-warning/10'
-  return 'text-focus bg-focus/10'
+    return 'text-destructive bg-destructive/10 wework:text-red-600 wework:bg-red-500/10'
+  if (check.status === 'not_run')
+    return 'text-warning bg-warning/10 wework:text-orange-700 wework:bg-orange-500/10'
+  return 'text-focus bg-focus/10 wework:text-blue-600 wework:bg-blue-500/10'
 }
 
 export function PluginPublicationProgressDrawer({
@@ -232,12 +234,12 @@ export function PluginPublicationProgressDrawer({
                 className={cn(
                   'rounded-full px-2.5 py-1 text-xs',
                   tone === 'success'
-                    ? 'bg-success/10 text-success'
+                    ? 'bg-success/10 text-success wework:bg-green-600/10 wework:text-green-700'
                     : tone === 'error'
-                      ? 'bg-destructive/10 text-destructive'
+                      ? 'bg-destructive/10 text-destructive wework:bg-red-500/10 wework:text-red-600'
                       : tone === 'warning'
-                        ? 'bg-warning/10 text-warning'
-                        : 'bg-focus/10 text-focus'
+                        ? 'bg-warning/10 text-warning wework:bg-orange-500/10 wework:text-orange-700'
+                        : 'bg-focus/10 text-focus wework:bg-blue-500/10 wework:text-blue-600'
                 )}
               >
                 {t(
@@ -269,7 +271,7 @@ export function PluginPublicationProgressDrawer({
 
           {latestRequiredChanges?.length ? (
             <section
-              className="space-y-3 rounded-xl border border-warning/25 bg-warning/5 px-4 py-4"
+              className="space-y-3 rounded-xl border border-warning/25 bg-warning/5 px-4 py-4 wework:border-orange-500/25 wework:bg-orange-500/5"
               data-testid="plugin-publication-required-changes"
             >
               <h3 className="text-sm font-medium text-text-primary">
@@ -373,7 +375,7 @@ export function PluginPublicationProgressDrawer({
                           href={check.jobUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="mt-2 inline-flex items-center gap-1 text-xs text-focus hover:underline"
+                          className="mt-2 inline-flex items-center gap-1 text-xs text-focus hover:underline wework:text-blue-600"
                           data-testid={'plugin-publication-check-evidence-' + check.id}
                         >
                           {t('workbench.plugins_publication_view_evidence', '查看证据')}
@@ -405,7 +407,7 @@ export function PluginPublicationProgressDrawer({
                       href={publication.gitlab.mergeRequestUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-focus hover:underline"
+                      className="inline-flex items-center gap-1 text-focus hover:underline wework:text-blue-600"
                       data-testid="plugin-publication-progress-mr-link"
                     >
                       {t('workbench.plugins_publication_open_mr', '打开 MR')}
@@ -417,7 +419,7 @@ export function PluginPublicationProgressDrawer({
                       href={publication.gitlab.pipelineUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-focus hover:underline"
+                      className="inline-flex items-center gap-1 text-focus hover:underline wework:text-blue-600"
                       data-testid="plugin-publication-progress-pipeline-link"
                     >
                       {t('workbench.plugins_publication_open_pipeline', '查看 Pipeline')}
@@ -468,7 +470,7 @@ export function PluginPublicationProgressDrawer({
                                 href={failure.jobUrl}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="mt-1 inline-flex items-center gap-1 text-xs text-focus hover:underline"
+                                className="mt-1 inline-flex items-center gap-1 text-xs text-focus hover:underline wework:text-blue-600"
                                 data-testid={`plugin-publication-failed-job-${event.id}-${index}`}
                               >
                                 {t('workbench.plugins_publication_open_failed_job')}
@@ -538,7 +540,7 @@ export function PluginPublicationProgressDrawer({
                   <Button
                     type="button"
                     variant="outline"
-                    className="border-destructive/40 text-destructive hover:border-destructive/60 hover:bg-destructive/10 hover:text-destructive"
+                    className="border-destructive/40 text-destructive hover:border-destructive/60 hover:bg-destructive/10 hover:text-destructive wework:border-red-500/40 wework:text-red-600 wework:hover:border-red-500/60 wework:hover:bg-red-500/10 wework:hover:text-red-700"
                     disabled={withdrawing}
                     data-testid="plugin-publication-progress-withdraw"
                     onClick={() => setConfirmingWithdraw(true)}

@@ -5241,6 +5241,23 @@ class DesktopE2EServer {
     state.requests.push({ body, headers })
     const evidenceDirectory = captureMatrixRequest(this, model, body)
 
+    if (model.providerProfileId === 'deepseek') {
+      const unsupported = wireDeclarations(body, protocol).find(
+        tool => tool.type === 'custom' && tool.name !== 'apply_patch'
+      )
+      if (unsupported) {
+        const message = `Unsupported custom tool: '${unsupported.name}'. Only 'apply_patch' is supported.`
+        recordMatrixFailure(this, 'deepseek-tool-contract', new Error(message))
+        console.error(`[deepseek-matrix] ${message}`)
+        json(response, 400, { error: { message, type: 'invalid_request_error' } })
+        return
+      }
+      const exec = wireDeclarations(body, protocol).find(tool =>
+        ['exec', 'functions__exec'].includes(tool.name)
+      )
+      if (exec) assert.equal(exec.type, 'function', 'DeepSeek exec must use function tools')
+    }
+
     const requestKind = codexRequestKind(body)
     if (requestKind === 'prewarm' || requestKind === 'compaction') {
       this.writeMatrixAssistantMessage(response, model, '')

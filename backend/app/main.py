@@ -178,6 +178,7 @@ def _load_system_initialization_state(logger: logging.Logger) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Keep the cache available through startup, channel draining and shutdown.
+    from app.core.socketio import socketio_ack_probe_lifespan
     from app.services.execution.chat_shell_client import chat_shell_clients
     from app.services.execution.package_runtime import package_runtime_lifespan
 
@@ -196,6 +197,7 @@ async def lifespan(app: FastAPI):
             chat_shell_clients.lifespan(),
             _application_lifespan(app),
             package_runtime_lifespan(),
+            socketio_ack_probe_lifespan(),
         ):
             yield
     finally:

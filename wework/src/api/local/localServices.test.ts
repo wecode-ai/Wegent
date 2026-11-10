@@ -4268,7 +4268,7 @@ describe('createLocalAppServices', () => {
           base_url: 'https://api.deepseek.com',
           responses_url: 'https://api.deepseek.com/responses',
           upstream_api_format: 'openai-responses',
-          tool_profile: 'custom',
+          tool_profile: 'function',
           codex_catalog_model_id: catalogModelId,
           native_tool_search: true,
           native_namespace_tools: true,

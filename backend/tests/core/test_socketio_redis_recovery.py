@@ -254,6 +254,7 @@ async def redis_subscription(
         "settings",
         SimpleNamespace(
             REDIS_URL=f"redis://127.0.0.1:{port}/0",
+            SOCKETIO_REDIS_CLIENT_NAME=None,
             SOCKETIO_REDIS_SOCKET_TIMEOUT=0.2,
             SOCKETIO_REDIS_CONNECT_TIMEOUT=1.0,
             SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL=0.1,

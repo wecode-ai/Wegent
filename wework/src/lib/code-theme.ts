@@ -1,8 +1,27 @@
 import { createCSSVariablesTheme, registerCustomTheme } from '@pierre/diffs'
-import { PIERRE_SYNTAX_COLORS, SYNTAX_COLOR_NAMES } from '@wegent/collaboration/theme'
+import {
+  DEFAULT_UI_THEME_ID,
+  PIERRE_SYNTAX_COLORS,
+  SYNTAX_COLOR_NAMES,
+} from '@wegent/collaboration/theme'
 
 // Stable CSS references preserve mounted code views when the palette changes.
 export const WEWORK_CODE_THEME = 'wework-semantic'
+
+const codeThemes = {
+  default: { light: 'pierre-light', dark: 'pierre-dark' },
+  light: { light: 'pierre-light', dark: WEWORK_CODE_THEME },
+  dark: { light: WEWORK_CODE_THEME, dark: 'pierre-dark' },
+} as const
+
+export function getWorkbenchCodeTheme(lightThemeId: string, darkThemeId: string) {
+  const light = lightThemeId === DEFAULT_UI_THEME_ID
+  const dark = darkThemeId === DEFAULT_UI_THEME_ID
+  if (light && dark) return codeThemes.default
+  if (light) return codeThemes.light
+  if (dark) return codeThemes.dark
+  return WEWORK_CODE_THEME
+}
 
 const variableDefaults = {
   ...Object.fromEntries(

@@ -136,9 +136,6 @@ impl RuntimeWorkRpcHandler {
         } else {
             self.collect_query_links(false).await
         };
-        for link in &collected_links {
-            self.project_runtime_link_status(link);
-        }
         log_runtime_work_list_diagnostic(
             "links_collected",
             started_at,

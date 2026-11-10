@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import { verifyVoiceToolbar } from '../modules/voice-toolbar-flow.mjs'
+import { readVoiceProfileDiagnostics } from '../modules/voice-profile-diagnostics.mjs'
 
-export async function createDesktopScenario({ resultDir }) {
+export async function createDesktopScenario({ resultDir, electronUserDataDirectory }) {
   let restartDesktopApp
   return {
+    diagnostics() {
+      return { profile: readVoiceProfileDiagnostics(electronUserDataDirectory) }
+    },
     setRestartDesktopApp(value) {
       restartDesktopApp = value
     },

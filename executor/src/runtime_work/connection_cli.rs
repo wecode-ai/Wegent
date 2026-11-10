@@ -60,9 +60,12 @@ pub(super) async fn request(
 }
 
 pub(super) fn collection_read_error(error: AppIpcError) -> AppIpcError {
-    // This module only invokes host-declared reads. An absent process outcome is
-    // retryable during collection, never a permission or protocol decision.
-    if error.code == "connection_cli_failed" {
+    // Only host-declared reads receive recovery hints for process, transport or
+    // generic request failures. Permission and protocol rejections remain stopped.
+    if matches!(
+        error.code.as_str(),
+        "connection_cli_failed" | "connection_cli_timeout" | "connection_cli_request_unavailable"
+    ) {
         error.with_retry_after_ms(30_000)
     } else {
         error

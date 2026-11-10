@@ -106,6 +106,7 @@ class TestSettings:
             "SOCKETIO_REDIS_SOCKET_TIMEOUT",
             "SOCKETIO_REDIS_CONNECT_TIMEOUT",
             "SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL",
+            "SOCKETIO_REDIS_ACK_PROBE_INTERVAL_SECONDS",
         ],
     )
     @pytest.mark.parametrize("invalid_value", [0, -1, float("inf")])

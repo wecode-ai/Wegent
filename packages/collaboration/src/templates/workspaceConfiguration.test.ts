@@ -30,6 +30,35 @@ function fixture() {
   return { document, drafts, create, addAgent, api, host }
 }
 
+it('uses the model explicitly chosen in the workspace import dialog instead of resolving a default', async () => {
+  const { document, drafts, api, host } = fixture()
+  const chosen = {
+    executionPolicy: { mode: 'fixed' as const, environment_id: 'chosen-device' },
+    modelPolicy: {
+      mode: 'fixed' as const,
+      model: { runtime: 'codex' as const, provider: 'company', model_id: 'chosen-model' },
+    },
+  }
+  const resolve = vi.fn(async () => chosen)
+  await applyWorkspaceTemplate(
+    api,
+    { id: 'space', location: 'cloud', namespace: 'design' },
+    document,
+    drafts,
+    host,
+    'partial',
+    vi.fn(),
+    'unsupported',
+    'zh-CN',
+    resolve
+  )
+  expect(host.resolveTemplateAgentRouting).not.toHaveBeenCalled()
+  expect(resolve).toHaveBeenCalledWith('codex')
+  for (const agent of document.spec.resources.collaboration.agents!) {
+    expect(host.createTemplateAgent).toHaveBeenCalledWith(agent, 'design', chosen)
+  }
+})
+
 it('creates cloud resources in the destination namespace and binds them before the group', async () => {
   const { document, drafts, api, host, addAgent, create } = fixture()
   await applyWorkspaceTemplate(
@@ -139,27 +168,30 @@ it.each([
   { workspacePolicy: 'git_worktree' },
   { maxConcurrentExecutions: 1 },
   { maxConcurrentExecutions: 3 },
-])('rejects unsupported cloud execution settings before creating any resource: %j', async policy => {
-  const { document: source, drafts, api, host } = fixture()
-  const document = structuredClone(source)
-  Object.assign(document.spec.resources.collaboration.agents![5], policy)
-  await expect(
-    applyWorkspaceTemplate(
-      api,
-      { id: 'space', location: 'cloud', namespace: 'default' },
-      document,
-      drafts,
-      host,
-      'partial',
-      vi.fn(),
-      'Execution settings cannot be preserved'
-    )
-  ).rejects.toThrow('Execution settings cannot be preserved')
-  expect(host.resolveTemplateAgentRouting).not.toHaveBeenCalled()
-  expect(host.createTemplateAgent).not.toHaveBeenCalled()
-  expect(api.workspaces!.addAgent).not.toHaveBeenCalled()
-  expect(api.workspaces!.createCollaborationGroup).not.toHaveBeenCalled()
-})
+])(
+  'rejects unsupported cloud execution settings before creating any resource: %j',
+  async policy => {
+    const { document: source, drafts, api, host } = fixture()
+    const document = structuredClone(source)
+    Object.assign(document.spec.resources.collaboration.agents![5], policy)
+    await expect(
+      applyWorkspaceTemplate(
+        api,
+        { id: 'space', location: 'cloud', namespace: 'default' },
+        document,
+        drafts,
+        host,
+        'partial',
+        vi.fn(),
+        'Execution settings cannot be preserved'
+      )
+    ).rejects.toThrow('Execution settings cannot be preserved')
+    expect(host.resolveTemplateAgentRouting).not.toHaveBeenCalled()
+    expect(host.createTemplateAgent).not.toHaveBeenCalled()
+    expect(api.workspaces!.addAgent).not.toHaveBeenCalled()
+    expect(api.workspaces!.createCollaborationGroup).not.toHaveBeenCalled()
+  }
+)
 
 it('ignores unsupported settings on definitions that are not being imported', async () => {
   const { document: source, drafts, api, host } = fixture()

@@ -512,6 +512,7 @@ def mark_loop_item_read(
         item_id,
         current_user.id,
         activity_sequence=values.activity_sequence if values else None,
+        observed_content_revision=values.content_revision if values else None,
     )
     return _loop_item_response(db, item, current_user)
 
