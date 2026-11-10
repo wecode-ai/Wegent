@@ -376,88 +376,91 @@ async fn send_message(
         runtime_activity_key: "",
         status: "completed",
     };
-    let id = if recipients.is_empty() && request.task_id.is_none() {
-        insert_message(state, &message).await?
-    } else {
-        let preview = project_chat_mentions::preview(&request.content);
-        let title = match target["itemTitle"]
-            .as_str()
-            .filter(|title| !title.is_empty())
-        {
-            Some(title) => format!("{user_name} 在「{title}」提到了你"),
-            None => format!("{user_name} 在评论中提到了你"),
-        };
-        target["actorName"] = json!(user_name);
-        target["commentId"] = json!(message_id);
-        target["commentPreview"] = json!(preview);
-        if let Some(reply_preview) = reply.2.filter(|preview| !preview.is_empty()) {
-            target["replyPreview"] = json!(reply_preview);
-        }
-        let (id, pending) = state
-            .mysql
-            .with_transaction(async |tx| {
-                let row = tx
-                    .execute(
-                        super::project_chat_messages::INSERT_MESSAGE_SQL,
-                        super::project_chat_messages::insert_message_args(&message),
-                    )
-                    .await?;
-                let mut pending = Vec::with_capacity(recipients.len());
-                for recipient in recipients {
-                    pending.push(
-                        notifications::create_on(
-                            tx,
-                            state,
-                            recipient,
-                            user_id,
-                            "mention",
-                            &title,
-                            &preview,
-                            target.clone(),
-                        )
-                        .await?,
-                    );
-                }
-                if let Some(item_id) = request.task_id.as_deref()
-                    && let Some(item) =
-                        crate::background_jobs::project::store::locked(tx, "task", item_id).await?
-                    && item.cloud_project_id == request.project_id
-                {
-                    let mut metadata = item.meta();
-                    crate::background_jobs::project::issues::update_change_request_source(
-                        &mut metadata,
-                        &format!("activity:{message_id}"),
-                        &request.content,
-                    );
-                    super::project_chat_snapshot::advance_content_revision(
-                        metadata
-                            .as_object_mut()
-                            .expect("issue metadata is an object"),
-                        user_id,
-                    );
-                    tx.execute(
-                        "UPDATE loop_items SET metadata=?, version=version+1 WHERE id=?",
-                        (brz_mysql::Json(metadata), item_id),
-                    )
-                    .await?;
-                }
-                Ok((row.last_insert_id as i64, pending))
-            })
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, "project chat mention transaction failed");
-                ack_error("INVALID_MESSAGE", "database query failed")
-            })?;
-        for notification in pending {
-            notifications::deliver(state, notification).await;
-        }
-        id
+    let preview = project_chat_mentions::preview(&request.content);
+    let title = match target["itemTitle"]
+        .as_str()
+        .filter(|title| !title.is_empty())
+    {
+        Some(title) => format!("{user_name} 在「{title}」提到了你"),
+        None => format!("{user_name} 在评论中提到了你"),
     };
-    match load_message_by_id(state, id).await {
-        Ok(Some(row)) => Ok((message_view(&row), true)),
-        Ok(None) => Err(ack_error("INVALID_MESSAGE", "message refresh lost the row")),
-        Err(failure) => Err(failure),
+    target["actorName"] = json!(user_name);
+    target["commentId"] = json!(message_id);
+    target["commentPreview"] = json!(preview);
+    if let Some(reply_preview) = reply.2.filter(|preview| !preview.is_empty()) {
+        target["replyPreview"] = json!(reply_preview);
     }
+    let (saved, pending) = state
+        .mysql
+        .with_transaction(async |tx| {
+            let row = tx
+                .execute(
+                    super::project_chat_messages::INSERT_MESSAGE_SQL,
+                    super::project_chat_messages::insert_message_args(&message),
+                )
+                .await?;
+            let mut pending = Vec::with_capacity(recipients.len());
+            for recipient in recipients {
+                pending.push(
+                    notifications::create_on(
+                        tx,
+                        state,
+                        recipient,
+                        user_id,
+                        "mention",
+                        &title,
+                        &preview,
+                        target.clone(),
+                    )
+                    .await?,
+                );
+            }
+            if let Some(item_id) = request.task_id.as_deref()
+                && let Some(item) =
+                    crate::background_jobs::project::store::locked(tx, "task", item_id).await?
+                && item.cloud_project_id == request.project_id
+            {
+                let mut metadata = item.meta();
+                crate::background_jobs::project::issues::update_change_request_source(
+                    &mut metadata,
+                    &format!("activity:{message_id}"),
+                    &request.content,
+                );
+                super::project_chat_snapshot::advance_content_revision(
+                    metadata
+                        .as_object_mut()
+                        .expect("issue metadata is an object"),
+                    user_id,
+                );
+                tx.execute(
+                    "UPDATE loop_items SET metadata=?, version=version+1 WHERE id=?",
+                    (brz_mysql::Json(metadata), item_id),
+                )
+                .await?;
+            }
+            let saved: super::project_chat_messages::MessageRow = tx
+                .fetch_optional(
+                    format!(
+                        "SELECT {} FROM project_chat_messages WHERE id = ? LIMIT 1",
+                        super::project_chat_messages::MESSAGE_COLUMNS
+                    ),
+                    (row.last_insert_id as i64,),
+                )
+                .await?
+                .ok_or_else(|| brz_mysql::MysqlError::InvalidQuery {
+                    reason: "message refresh lost the row".to_owned(),
+                })?;
+            Ok((saved, pending))
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "project chat mention transaction failed");
+            ack_error("INVALID_MESSAGE", "database query failed")
+        })?;
+    for notification in pending {
+        notifications::deliver(state, notification).await;
+    }
+    Ok((message_view(&saved), true))
 }
 
 /// The reply target's `(reply_to_message_id, thread_root_message_id)`.
