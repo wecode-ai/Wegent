@@ -21,7 +21,11 @@ import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnect
 import { availableStandInDevices } from './standInDevices'
 import { useStandInInstance } from './useStandInInstance'
 import { StandInMigration } from './StandInMigration'
-import { navigateTo } from '@/lib/navigation'
+import {
+  navigateTo,
+  WORKSPACE_NAVIGATION_EVENT,
+  type WorkspaceNavigationDetail,
+} from '@/lib/navigation'
 import { useStandInRoleDirectory } from './useStandInRoleDirectory'
 
 type PersonalStandInWorkspaceProps = {
@@ -58,6 +62,17 @@ function AccountStandInWorkspace({
 }: PersonalStandInWorkspaceProps) {
   const { t, i18n } = useTranslation('common')
   const cloud = useContext(CloudConnectionContext)
+  const [reentry, setReentry] = useState(0)
+  const refreshKey = (entryRequestKey ?? 0) + reentry
+  useEffect(() => {
+    if (!active || contentRoute !== '/stand-in') return
+    const onNavigate = (event: Event) => {
+      if ((event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute === contentRoute)
+        setReentry(current => current + 1)
+    }
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+    return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+  }, [active, contentRoute])
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
   const [initialBindingDevice] = useState(() => query.get('deviceId') ?? undefined)
   const instance = useStandInInstance(
@@ -68,7 +83,7 @@ function AccountStandInWorkspace({
     active,
     cloud?.apiBaseUrl ?? '',
     initialBindingDevice,
-    entryRequestKey
+    refreshKey
   )
   const { binding, localDeviceId, busy } = instance
   const target = binding?.target
@@ -108,7 +123,7 @@ function AccountStandInWorkspace({
     deviceId,
     active && ownerAvailable && binding?.status === 'active',
     localDeviceId,
-    entryRequestKey
+    refreshKey
   )
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
   const [error, setError] = useState<{ message: string; cause?: unknown } | null>(null)

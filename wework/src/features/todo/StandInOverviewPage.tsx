@@ -157,12 +157,17 @@ export function StandInOverviewPage({
     if (panelRef.current) panelRef.current.requestLeave(openSettings)
     else openSettings()
   }, [settingsRequestKey, props.initialProfileId, profile, roleId])
+  const deviceId = state.loadedDeviceId ?? props.initialDeviceId ?? saved?.executionDeviceId
   const requestNavigation = useCallback(
     (route: string) => {
       const [pathname, search] = route.split('?')
       if (pathname !== '/stand-in') return
       if (!search) {
         const openPrimary = () => {
+          if (primaryDeviceId && primaryDeviceId !== deviceId && onSelectLocation) {
+            onSelectLocation(primaryDeviceId)
+            return
+          }
           setRoleId(undefined)
           setDetailsAnchor(null)
           setCalendarRequest(0)
@@ -182,7 +187,7 @@ export function StandInOverviewPage({
       if (panelRef.current) panelRef.current.requestLeave(openView)
       else openView()
     },
-    [roleId, reload]
+    [roleId, reload, primaryDeviceId, deviceId, onSelectLocation]
   )
   const previousEntryRequest = useRef(entryRequestKey)
   useEffect(() => {
@@ -205,7 +210,6 @@ export function StandInOverviewPage({
     else action()
   }
   const pressedInPanel = useRef(false)
-  const deviceId = state.loadedDeviceId ?? props.initialDeviceId ?? saved?.executionDeviceId
   const detailsScope = JSON.stringify([props.userId, deviceId, roleId, active])
   const selectedScheduleId = scheduleTarget?.scope === detailsScope ? scheduleTarget.id : undefined
   const setSelectedScheduleId = (id?: string) =>

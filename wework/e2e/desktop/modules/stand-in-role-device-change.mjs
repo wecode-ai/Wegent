@@ -57,7 +57,7 @@ export async function verifyStandInRoleDeviceChange({
     rows => rows.length === 1,
     'New work must be accepted on the role-selected device'
   )
-  assert.equal(bindings[0].device_id, target.execution_target_id)
+  assert.equal(bindings[0].device_id, target.device_id)
   await until(
     () => request(`/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`),
     rows =>

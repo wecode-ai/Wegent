@@ -14,6 +14,7 @@ import { PersonalStandInWorkspace } from './PersonalStandInWorkspace'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import * as migration from './migrateStandIn'
 import { newStandInRole } from '@/api/personalStandIn'
+import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 
 const guard = vi.hoisted(() => vi.fn((action: () => void) => action()))
 const projectList = vi.hoisted(() => vi.fn(async () => []))
@@ -150,6 +151,23 @@ it('reads the authoritative primary binding again when the workspace is explicit
   )
   expect(f.lifecycle).not.toHaveBeenCalled()
   expect(f.binding).toHaveBeenCalledTimes(2)
+})
+
+it('refreshes native data when the active page is opened again at the same route', async () => {
+  const f = fixture()
+  render(f.workspace())
+  await screen.findByTestId('retained-role-draft')
+  const reads = f.personalGet.mock.calls.length
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+        detail: { kind: 'task', contentRoute: '/stand-in' },
+      })
+    )
+  })
+  await waitFor(() => expect(f.binding).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(f.personalGet.mock.calls.length).toBeGreaterThan(reads))
+  expect(f.lifecycle).not.toHaveBeenCalled()
 })
 
 it('does not report another account while the instance binding is still unknown', async () => {

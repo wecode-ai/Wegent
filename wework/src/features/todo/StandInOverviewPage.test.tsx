@@ -183,6 +183,29 @@ it('returns immediately while settings refresh in the background and pauses hidd
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
 
+it('returns to the bound primary device when reopening the active workspace from a remote role', async () => {
+  const { props } = fixture()
+  const onSelectLocation = vi.fn()
+  render(
+    <StandInOverviewPage
+      {...props}
+      initialDeviceId="remote"
+      primaryDeviceId="mac"
+      initialSelectedRoleId="default"
+      onSelectLocation={onSelectLocation}
+    />
+  )
+  await screen.findByTestId('identity-conversation')
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+        detail: { kind: 'task', contentRoute: '/stand-in' },
+      })
+    )
+  })
+  await waitFor(() => expect(onSelectLocation).toHaveBeenCalledExactlyOnceWith('mac'))
+})
+
 it('handles primary and calendar entry requests received while the retained page was inactive', async () => {
   const { props } = fixture()
   const view = render(
