@@ -5138,7 +5138,7 @@ fn configured_codex_provider(
             .get("tool_profile")
             .or_else(|| provider_config.get("toolProfile"))
             .and_then(|value| value.as_str())
-            .is_none_or(|profile| !profile.eq_ignore_ascii_case("custom"));
+            .map_or(true, |profile| !profile.eq_ignore_ascii_case("custom"));
     let native_tool_search = provider_config
         .get("native_tool_search")
         .or_else(|| provider_config.get("nativeToolSearch"))

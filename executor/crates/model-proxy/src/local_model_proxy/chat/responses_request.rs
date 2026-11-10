@@ -149,7 +149,7 @@ pub(super) fn responses_tool_choice(
     let choice_type = choice.get("type").and_then(Value::as_str)?;
     if choice_type == "custom" {
         let namespace = choice.get("namespace").and_then(Value::as_str);
-        if !convert_custom_tools && !(bridge_namespace_tools && namespace.is_some()) {
+        if !(convert_custom_tools || bridge_namespace_tools && namespace.is_some()) {
             return None;
         }
         let mut converted = choice.clone();

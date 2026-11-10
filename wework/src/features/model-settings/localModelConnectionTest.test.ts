@@ -20,7 +20,7 @@ describe('localModelConnectionTest', () => {
       )
       await expect(
         testLocalModelConnection(
-          { baseUrl: 'https://models.local/v1', modelId: 'deepseek-flash' },
+          { baseUrl: 'https://models.local/v1', modelId: 'deepseek-flash', toolProfile: 'custom' },
           { fetcher, verifyExactProbePayload: false }
         )
       ).resolves.toEqual({ status: 200, toolCalling: true })
@@ -34,7 +34,7 @@ describe('localModelConnectionTest', () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ output: [item] })))
     await expect(
       testLocalModelConnection(
-        { baseUrl: 'https://models.local/v1', modelId: 'gpt-5' },
+        { baseUrl: 'https://models.local/v1', modelId: 'gpt-5', toolProfile: 'custom' },
         { fetcher, verifyExactProbePayload: false }
       )
     ).rejects.toThrow('required capability probe tool call')
@@ -63,7 +63,13 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'apply_patch', input: APPLY_PATCH_PROBE }],
+          output: [
+            {
+              type: 'function_call',
+              name: 'wework_capability_probe',
+              arguments: '{"input":"PING"}',
+            },
+          ],
         }),
         {
           status: 200,
@@ -101,13 +107,13 @@ describe('localModelConnectionTest', () => {
           content: [
             {
               type: 'input_text',
-              text: `Call apply_patch with this exact patch:\n${APPLY_PATCH_PROBE}`,
+              text: 'Call the capability probe with value PING.',
             },
           ],
         },
       ],
       stream: true,
-      tools: [{ type: 'custom', name: 'apply_patch' }],
+      tools: [{ type: 'function', name: 'wework_capability_probe' }],
     })
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('max_output_tokens')
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('tool_choice')
@@ -159,6 +165,7 @@ describe('localModelConnectionTest', () => {
         {
           baseUrl: 'https://models.local/v1',
           modelId: 'gpt-5',
+          toolProfile: 'custom',
         },
         { fetcher }
       )
@@ -180,6 +187,7 @@ describe('localModelConnectionTest', () => {
         {
           baseUrl: 'https://models.local/v1',
           modelId: 'gpt-5',
+          toolProfile: 'custom',
         },
         { fetcher }
       )
@@ -240,7 +248,13 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'apply_patch', input: APPLY_PATCH_PROBE }],
+          output: [
+            {
+              type: 'function_call',
+              name: 'wework_capability_probe',
+              arguments: '{"input":"PING"}',
+            },
+          ],
         })
       )
     )
@@ -264,7 +278,13 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'apply_patch', input: APPLY_PATCH_PROBE }],
+          output: [
+            {
+              type: 'function_call',
+              name: 'wework_capability_probe',
+              arguments: '{"input":"PING"}',
+            },
+          ],
         })
       )
     )

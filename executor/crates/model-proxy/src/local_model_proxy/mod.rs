@@ -273,7 +273,7 @@ pub fn upstream_from_model_config(
         codex_request_mode,
         convert_custom_tools: non_empty_string(model_config, "tool_profile")
             .or_else(|| non_empty_string(model_config, "toolProfile"))
-            .is_none_or(|profile| !profile.eq_ignore_ascii_case("custom")),
+            .map_or(true, |profile| !profile.eq_ignore_ascii_case("custom")),
         native_tool_search: boolean_value(model_config, "native_tool_search")
             .or_else(|| boolean_value(model_config, "nativeToolSearch"))
             .unwrap_or(false),
