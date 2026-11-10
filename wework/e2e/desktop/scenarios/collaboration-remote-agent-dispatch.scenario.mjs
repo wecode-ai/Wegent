@@ -1,5 +1,4 @@
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
-import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import assert from 'node:assert/strict'
 import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue-boundary.mjs'
 
@@ -28,6 +27,7 @@ import {
   responseCompleted,
   responseCreated,
   selectProgrammaticExec,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 import {
   REMOTE_DOCKER_DEVICE_ID,
@@ -634,7 +634,7 @@ export function createDesktopScenario({
           )
           return true
         }
-        const output = readMcpToolOutput(body, MANUAL_READ_CALL)
+        const output = toolOutputText(body, MANUAL_READ_CALL)
         assert.ok(
           JSON.stringify(output)?.includes(MANUAL_READ_OK),
           `The real bound Issue read did not succeed: ${JSON.stringify(output)}`

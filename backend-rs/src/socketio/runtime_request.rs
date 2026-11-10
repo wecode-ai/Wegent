@@ -640,7 +640,7 @@ async fn execute_device_command(
 
     let payload = command_payload(
         &command_key,
-        &definition.command,
+        &definition,
         params,
         timeout_seconds,
         max_output_bytes,
@@ -669,7 +669,7 @@ async fn execute_device_command(
 
 fn command_payload(
     command_key: &str,
-    command: &str,
+    definition: &crate::device_commands::CommandDefinition,
     params: &Map<String, Value>,
     timeout_seconds: i64,
     max_output_bytes: i64,
@@ -685,22 +685,25 @@ fn command_payload(
         .iter()
         .map(python_str)
         .collect::<Vec<_>>();
-    let argv = build_local_device_command_argv(command, &argv_args)?;
+    let argv = build_local_device_command_argv(&definition.command, &argv_args)?;
     let cwd = params
         .get("path")
         .and_then(Value::as_str)
         .filter(|path| !path.is_empty())
         .or_else(|| params.get("cwd").and_then(Value::as_str));
-    Ok(json!({
-        "command_key": command_key,
-        "command": command,
+    let mut payload = json!({
+        "command": definition.command,
         "cwd": cwd,
         "args": args,
         "argv": argv,
         "env": params.get("env").filter(|value| value.is_object()).cloned().unwrap_or_else(|| json!({})),
         "timeout_seconds": timeout_seconds,
         "max_output_bytes": max_output_bytes,
-    }))
+    });
+    if definition.native_git {
+        payload["command_key"] = json!(command_key);
+    }
+    Ok(payload)
 }
 
 /// The `device:execute_command` `sio.call` round trip.
@@ -919,7 +922,9 @@ mod tests {
     #[test]
     fn command_payload_preserves_the_resolved_command_key_for_executor_gates() {
         let payload = command_payload(
-            "git_clone", "git clone", &object(json!({
+            "git_clone", &crate::device_commands::CommandDefinition {
+                command: "git clone".into(), post_processor: None, native_git: true,
+            }, &object(json!({
                 "args":["--branch","invalid..branch","--single-branch","https://example.test/repo.git","/target"],
                 "path":"/parent", "cwd":"/ignored", "env":{"GIT_TERMINAL_PROMPT":"0"},
             })), 300, 512,
@@ -941,6 +946,18 @@ mod tests {
         assert_eq!(payload["env"]["GIT_TERMINAL_PROMPT"], "0");
         assert_eq!(payload["timeout_seconds"], 300);
         assert_eq!(payload["max_output_bytes"], 512);
+    }
+
+    #[test]
+    fn overridden_commands_do_not_enter_native_git_execution() {
+        let definition = crate::device_commands::CommandDefinition {
+            command: "echo overridden".into(),
+            post_processor: None,
+            native_git: false,
+        };
+        let payload = command_payload("git_clone", &definition, &Map::new(), 60, 512).unwrap();
+        assert!(payload.get("command_key").is_none());
+        assert_eq!(payload["argv"], json!(["echo", "overridden"]));
     }
 
     #[test]

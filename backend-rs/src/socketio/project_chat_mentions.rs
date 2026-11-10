@@ -30,11 +30,11 @@ enum MentionKind {
 }
 
 impl Mention {
-    pub(super) fn user(id: i64, label: &str) -> Self {
+    pub(super) fn user(id: i64, label: String) -> Self {
         Self {
             kind: MentionKind::User,
             id: id.to_string(),
-            label: label.to_owned(),
+            label,
         }
     }
 
@@ -132,7 +132,7 @@ pub(super) async fn recipients(
                 "Mentioned user is not a project member",
             ));
         }
-        if user == actor || !seen.insert(user) {
+        if !seen.insert(user) {
             continue;
         }
         if let Some(task) = task {
@@ -165,6 +165,7 @@ pub(super) async fn recipients(
         }
         recipients.push(user);
     }
+    recipients.sort_unstable();
     Ok((recipients, target))
 }
 

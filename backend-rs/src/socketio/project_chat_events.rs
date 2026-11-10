@@ -41,6 +41,9 @@ use crate::socketio::device_runtime_event::{
 use crate::socketio::runtime::SocketRuntime;
 use crate::state::AppState;
 
+#[path = "project_chat_reply.rs"]
+mod reply;
+
 /// `PROJECT_CHAT_SEND`'s defaults and bounds.
 const CONTENT_MAX: usize = 100_000;
 const IDENTIFIER_MAX: usize = 64;
@@ -334,22 +337,10 @@ async fn send_message(
         }
         return Ok((message_view(&existing), false));
     }
-    let reply = super::project_chat_reply::resolve_reply(
-        state,
-        &request.project_id,
-        request.task_id.as_deref(),
-        request.reply_to_message_id.as_deref(),
-    )
-    .await?;
-    let inherited = request.mentions.is_empty() && reply.recipient.is_some();
-    let mentions = if let Some(recipient) = reply.recipient.as_ref().filter(|_| inherited) {
-        vec![Mention::user(
-            recipient["user_id"].as_i64().unwrap(),
-            recipient["name"].as_str().unwrap_or_default(),
-        )]
-    } else {
-        request.mentions.clone()
-    };
+    let reply = reply::resolve(state, request).await?;
+    let mut mentions = request.mentions.clone();
+    let mut metadata = Map::new();
+    reply.apply_stand_in(&mut mentions, &mut metadata);
     let (recipients, mut target) = project_chat_mentions::recipients(
         state,
         user_id,
@@ -358,13 +349,9 @@ async fn send_message(
         &mentions,
     )
     .await?;
-    let mut metadata = Map::new();
     metadata.insert("mentions".into(), json!(mentions));
     if !mentions.is_empty() && mentions.iter().all(Mention::is_user) {
         metadata.insert("execution_dispatch".into(), json!("comment_only"));
-        if inherited {
-            metadata.insert("stand_in_reply_to".into(), reply.recipient.clone().unwrap());
-        }
     }
     if let Some(model) = &request.model {
         metadata.insert("model".into(), Value::String(model.clone()));
@@ -408,7 +395,9 @@ async fn send_message(
         .mysql
         .with_transaction(async |tx| {
             let item = match request.task_id.as_deref() {
-                Some(item) => crate::background_jobs::project::store::locked(tx, "task", item).await?,
+                Some(item) => {
+                    crate::background_jobs::project::store::locked(tx, "task", item).await?
+                }
                 None => None,
             };
             let row = tx
@@ -418,7 +407,11 @@ async fn send_message(
                 )
                 .await?;
             let mut pending = Vec::with_capacity(recipients.len());
-            for recipient in recipients {
+            for recipient in recipients
+                .iter()
+                .copied()
+                .filter(|recipient| *recipient != user_id)
+            {
                 pending.push(
                     notifications::create_on(
                         tx,
@@ -433,7 +426,10 @@ async fn send_message(
                     .await?,
                 );
             }
-            if let Some(item) = item.as_ref().filter(|item| item.cloud_project_id == request.project_id) {
+            if let Some(item) = item
+                .as_ref()
+                .filter(|item| item.cloud_project_id == request.project_id)
+            {
                 let item_id = item.id.as_str();
                 let mut metadata = item.meta();
                 crate::background_jobs::project::issues::update_change_request_source(
@@ -454,9 +450,19 @@ async fn send_message(
                 .await?;
             }
             if let Some(item_id) = request.task_id.as_deref() {
-                let users = mentions.iter().filter_map(Mention::user_id).collect::<std::collections::BTreeSet<_>>();
+                let users = mentions
+                    .iter()
+                    .filter_map(Mention::user_id)
+                    .collect::<std::collections::BTreeSet<_>>();
                 for recipient in users {
-                    super::project_chat_wakeups::enqueue(tx, recipient, &json!({"projectId":request.project_id,"itemId":item_id,"commentId":message_id})).await?;
+                    crate::stand_in_issue_events::enqueue_mention_on(
+                        tx,
+                        recipient,
+                        &request.project_id,
+                        item_id,
+                        &message_id,
+                    )
+                    .await?;
                 }
             }
             let saved: super::project_chat_messages::MessageRow = tx
