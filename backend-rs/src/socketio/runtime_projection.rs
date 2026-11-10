@@ -79,6 +79,13 @@ const CANCELLED_STATUSES: [&str; 2] = ["cancelled", "canceled"];
 
 /// `json.dumps(envelope)` for the live channel and `json.dumps([view])` for the
 /// adapter message both keep Python's separators and key order.
+fn projected_delta_view(message: &Message, delta: &str) -> Value {
+    let mut view = projected_view(message);
+    view["content"] = json!(delta);
+    view["metadata"]["contentMode"] = json!("delta");
+    view
+}
+
 fn projected_view(message: &Message) -> Value {
     message.view()
 }
@@ -726,9 +733,7 @@ async fn project_runtime_event<T: MysqlTransaction>(
                 .await?;
             // The delta emission carries only this chunk, like the source's
             // `model_copy(update={"content": delta, ...})`.
-            let mut view = projected_view(&message);
-            view["content"] = json!(delta);
-            view["metadata"] = json!({"contentMode": "delta"});
+            let view = projected_delta_view(&message, delta);
             return Ok(Some(Projected {
                 message: view,
                 delta: true,

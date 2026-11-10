@@ -38,9 +38,15 @@ pub(super) async fn enqueue(
         return Ok(());
     }
     // Match HTTP writers: Issue, sorted owner rows, then recipient inboxes.
-    let _: Option<Id> = tx
-        .fetch_optional("SELECT id FROM loop_items WHERE id=? FOR UPDATE", (issue,))
+    let indexed: Option<Id> = tx
+        .fetch_optional("SELECT id FROM loop_items WHERE id=?", (issue,))
         .await?;
+    // Provider-owned Issues may have no index. Locking an absent key would range-lock unrelated writes.
+    if indexed.is_some() {
+        let _: Option<Id> = tx
+            .fetch_optional("SELECT id FROM loop_items WHERE id=? FOR UPDATE", (issue,))
+            .await?;
+    }
     let recipients = recipients
         .iter()
         .copied()
