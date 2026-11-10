@@ -274,6 +274,22 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         },
       })
       const issue = await create(`${MARKER}：同一事项持续协作`)
+      const savedRole = settings.roles.find(role => role.id === ROLE)
+      console.info(
+        '[stand-in-mention-preconditions]',
+        JSON.stringify({
+          issue: { id: issue.id, tags: issue.tags, created_at: issue.created_at },
+          executionDeviceId: settings.executionDeviceId,
+          lifecycle: settings.lifecycle,
+          role: savedRole && {
+            id: savedRole.id,
+            enabled: savedRole.enabled,
+            enabledAfter: savedRole.enabledAfter,
+            projectBoundaries: savedRole.projectBoundaries,
+            collaboration: savedRole.collaboration,
+          },
+        })
+      )
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/${project.id}/issues/${issue.id}`,
       })
