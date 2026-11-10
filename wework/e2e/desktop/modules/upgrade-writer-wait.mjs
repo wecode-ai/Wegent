@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { startNativeAppServer } from './native-app-server.mjs'
@@ -118,9 +118,11 @@ export async function startUpgradeWriter({ binary, home, workspace, timeoutMs })
     } finally {
       clearTimeout(timer)
     }
-    assert.notEqual(
-      await optional(join(home, 'thread-writer-locks', `${thread.id}.lock`)),
-      undefined
+    // Windows forbids reading the byte range held by the native writer lock.
+    // Its existence is metadata; observing it must not read the locked contents.
+    assert.equal(
+      (await stat(join(home, 'thread-writer-locks', `${thread.id}.lock`))).isFile(),
+      true
     )
     const rolloutName = (await readdir(join(home, 'sessions'), { recursive: true })).find(
       name => name.includes(thread.id) && name.endsWith('.jsonl')
