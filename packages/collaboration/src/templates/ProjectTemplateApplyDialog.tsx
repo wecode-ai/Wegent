@@ -117,6 +117,16 @@ export function ProjectTemplateApplyDialog({
       currentUserId={currentUserId}
       existingNames={context.names}
       onClose={onClose}
+      modelConfiguration={
+        agentConfiguration
+          ? {
+              host: agentConfiguration,
+              location: context.project.project_store === 'local' ? 'local' : 'cloud',
+              projectId,
+              environmentId,
+            }
+          : undefined
+      }
       renderConfiguration={
         agentConfiguration?.listTemplateAgentEnvironments &&
         document.spec.resources.collaboration.agents?.length
@@ -132,7 +142,7 @@ export function ProjectTemplateApplyDialog({
             )
           : undefined
       }
-      onApply={async (drafts, configured) => {
+      onApply={async (drafts, configured, resolveRouting) => {
         if (
           agentConfiguration?.listTemplateAgentEnvironments &&
           !environmentId &&
@@ -149,13 +159,14 @@ export function ProjectTemplateApplyDialog({
           drafts,
           locale,
           m.partial,
-          templateRoutingResolver(
-            agentConfiguration,
-            context.project.project_store === 'local' ? 'local' : 'cloud',
-            projectId,
-            locale,
-            environmentId
-          )
+          resolveRouting ??
+            templateRoutingResolver(
+              agentConfiguration,
+              context.project.project_store === 'local' ? 'local' : 'cloud',
+              projectId,
+              locale,
+              environmentId
+            )
         )
         try {
           onApplied(await api.projects.get(projectId))

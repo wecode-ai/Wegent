@@ -93,7 +93,7 @@ export function WeworkAuthorizePage() {
 
         {state.status === 'success' && (
           <>
-            <CheckCircle2 className="h-16 w-16 text-success" />
+            <CheckCircle2 className="h-16 w-16 text-success wework:text-green-500" />
             <div className="text-center">
               <h1 className="text-xl font-semibold text-text-primary">{state.message}</h1>
               <p className="mt-2 text-sm text-text-secondary">
@@ -105,7 +105,7 @@ export function WeworkAuthorizePage() {
 
         {state.status === 'error' && (
           <>
-            <XCircle className="h-16 w-16 text-destructive" />
+            <XCircle className="h-16 w-16 text-destructive wework:text-red-500" />
             <div className="text-center">
               <h1 className="text-xl font-semibold text-text-primary">
                 {t('workbench.wework_authorize_failed_title', '授权失败')}
@@ -125,7 +125,7 @@ export function WeworkAuthorizePage() {
 
         {state.status === 'expired' && (
           <>
-            <AlertCircle className="h-16 w-16 text-warning" />
+            <AlertCircle className="h-16 w-16 text-warning wework:text-orange-500" />
             <div className="text-center">
               <h1 className="text-xl font-semibold text-text-primary">
                 {t('workbench.wework_authorize_session_expired', '授权会话已过期')}

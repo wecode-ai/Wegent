@@ -601,7 +601,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           >
             <div
               data-testid="mobile-context-sheet"
-              className="absolute bottom-0 left-0 right-0 rounded-t-[28px] border border-border bg-background px-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-20px_60px_rgba(0,0,0,0.18)]"
+              className="absolute bottom-0 left-0 right-0 rounded-t-[28px] border border-border bg-background px-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-20px_60px_rgba(0,0,0,0.18)] wework:border-white/10"
               onClick={event => event.stopPropagation()}
             >
               <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-border" />

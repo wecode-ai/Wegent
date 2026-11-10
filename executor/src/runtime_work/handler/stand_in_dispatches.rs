@@ -10,6 +10,7 @@ fn retryable_dispatch_error(error: &AppIpcError) -> bool {
             | "cloud_response_invalid"
             | "permission_denied"
             | "stand_in_settings"
+            | "stand_in_busy"
     )
 }
 
@@ -37,9 +38,8 @@ impl RuntimeWorkRpcHandler {
         let pending: Vec<&Value> = matching
             .into_iter()
             .filter(|config| {
-                let task_id = self.stand_in_task_id(config, binding);
-                self.local_task_link(&task_id).is_none()
-                    && !self.store.is_deleted_archived_task_id(&task_id)
+                let task_id = self.stand_in_task_id(config, issue);
+                !self.stand_in_assignment_is_handled(config, &task_id, binding)
             })
             .collect();
         if pending.is_empty() {
@@ -210,12 +210,10 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(());
         }
-        let task_id = self.stand_in_task_id(&config, &intent["binding"]);
+        let task_id = self.stand_in_task_id(&config, &issue);
         // Once accepted locally, never replay a model turn (including failed or
         // archived work) just because the process crashed before clearing intent.
-        if self.local_task_link(&task_id).is_some()
-            || self.store.is_deleted_archived_task_id(&task_id)
-        {
+        if self.stand_in_assignment_is_handled(&config, &task_id, &intent["binding"]) {
             return Ok(());
         }
         config["manual"] = intent["manual"].clone();

@@ -957,7 +957,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         ) : activeView === 'files' && workspaceTargetError ? (
           <section
             data-testid="workspace-target-error"
-            className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-destructive"
+            className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-destructive wework:text-red-500"
           >
             {workspaceTargetError}
           </section>
@@ -1335,7 +1335,7 @@ function RightWorkspaceTitleTab({
             event.stopPropagation()
             onClose()
           }}
-          className="flex h-[18px] w-[18px] items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-text-primary/70 hover:text-background focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40"
+          className="flex h-[18px] w-[18px] items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-text-primary/70 hover:text-background focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 wework:hover:bg-black/70 wework:hover:text-white"
           aria-label={t('workbench.close_right_workspace_panel')}
         >
           <X className="h-3 w-3" />

@@ -286,7 +286,7 @@ export function BrowserSettingsPage() {
         <div
           data-testid="browser-settings-status"
           className={`mt-4 flex items-center gap-2 text-xs ${
-            error ? 'text-destructive' : 'text-text-secondary'
+            error ? 'text-destructive wework:text-red-500' : 'text-text-secondary'
           }`}
         >
           {(loading || saving) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}

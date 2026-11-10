@@ -301,7 +301,9 @@ function StandaloneFolderProjectDialogContent({
               <h2 className="text-lg font-semibold">
                 {t('workbench.use_existing_folder_title', '使用现有文件夹')}
               </h2>
-              <p className="mt-2 text-sm leading-5 text-destructive">{nativePickerError}</p>
+              <p className="mt-2 text-sm leading-5 text-destructive wework:text-red-500">
+                {nativePickerError}
+              </p>
             </div>
             <button
               type="button"

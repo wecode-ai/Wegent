@@ -267,7 +267,7 @@ export function WorkspaceFileTree({
           </p>
         )}
         {error ? (
-          <div className="px-2 py-3 text-xs text-destructive">
+          <div className="px-2 py-3 text-xs text-destructive wework:text-red-500">
             <p>{error}</p>
             <button
               type="button"

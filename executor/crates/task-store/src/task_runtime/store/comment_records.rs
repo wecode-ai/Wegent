@@ -1,6 +1,75 @@
 use super::*;
 
 impl LocalTaskStore {
+    pub fn publish_stand_in_reply(
+        &self,
+        device: &str,
+        task: &str,
+        user: i64,
+        origin: &Value,
+        message: &str,
+        body: &str,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let project = origin["cloudProjectId"].as_str().unwrap_or_default();
+        let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
+        let issue =
+            get_item_from(&transaction, issue_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        let binding = get_binding_by_kind(&transaction, device, task, false)?
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let metadata = issue.metadata.clone();
+        let history = metadata["assignment_history"].as_array();
+        if issue.cloud_project_id.as_deref() != Some(project)
+            || binding.cloud_project_id != project
+            || binding.loop_item_id.as_deref() != Some(issue_id)
+            || issue.assignee_user_id != Some(user)
+            || origin["humanAssignmentId"] != format!("{issue_id}-{}", history.map_or(0, Vec::len))
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Stand-in Issue assignment changed".into(),
+            ));
+        }
+        let sender = format!(
+            "stand-in:{user}:{}",
+            origin["standInId"].as_str().unwrap_or_default()
+        );
+        let existing = transaction.query_row(
+            "SELECT message_id FROM loop_item_comments WHERE project_id=?1 AND task_id=?2 AND sender_type='agent' AND sender_id=?3 AND client_message_id=?4",
+            params![project,issue_id,sender,message], |row| row.get::<_,String>(0),
+        ).optional()?;
+        if let Some(existing) = existing {
+            let comment = comment_row(&transaction, &existing)?;
+            if comment.content != body {
+                return Err(TaskRuntimeError::Invalid(
+                    "Public message identity has different content".into(),
+                ));
+            }
+            return Ok(comment);
+        }
+        let comment = insert_comment(
+            &transaction,
+            &LocalCommentCreate {
+                project_id: project.into(),
+                task_id: issue_id.into(),
+                client_message_id: Some(message.into()),
+                sender_type: "agent".into(),
+                sender_id: sender,
+                sender_name: origin["roleName"]
+                    .as_str()
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or("Stand-in")
+                    .into(),
+                content: body.into(),
+                metadata: json!({"execution_dispatch":"comment_only","stand_in":{"user_id":user,"role_id":origin["standInId"],"message_id":message}}),
+                reply_to_message_id: None,
+            },
+            "completed",
+        )?;
+        transaction.commit()?;
+        Ok(comment)
+    }
+
     pub fn list_comments(
         &self,
         project_id: &str,
@@ -195,4 +264,74 @@ impl LocalTaskStore {
     // ------------------------------------------------------------------
     // Local execution lifecycle
     // ------------------------------------------------------------------
+}
+
+#[cfg(test)]
+mod stand_in_reply_tests {
+    use super::*;
+
+    #[test]
+    fn public_stand_in_reply_is_idempotent_and_cannot_borrow_a_new_assignment() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Room"})).unwrap())
+            .unwrap();
+        let issue = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Issue","assignee_user_id":7})).unwrap(),
+            )
+            .unwrap();
+        let origin = json!({"cloudProjectId":project.id,"loopItemId":issue.id,"standInId":"review","roleName":"Review stand-in","humanAssignmentId":format!("{}-1",issue.id)});
+        store
+            .bind_task(
+                &project.id,
+                Some(&issue.id),
+                None,
+                serde_json::from_value(json!({"deviceId":"mac","taskId":"conversation"})).unwrap(),
+                None,
+            )
+            .unwrap();
+        let first = store
+            .publish_stand_in_reply("mac", "conversation", 7, &origin, "first", "Received")
+            .unwrap();
+        assert_eq!(
+            first.message_id,
+            store
+                .publish_stand_in_reply("mac", "conversation", 7, &origin, "first", "Received")
+                .unwrap()
+                .message_id
+        );
+        let result = store
+            .publish_stand_in_reply("mac", "conversation", 7, &origin, "result", "Done")
+            .unwrap();
+        assert!(result.sequence_number > first.sequence_number);
+        assert_eq!(first.sender_type, "agent");
+        assert_eq!(first.metadata["execution_dispatch"], "comment_only");
+        assert!(store
+            .publish_stand_in_reply("mac", "conversation", 7, &origin, "first", "Changed")
+            .is_err());
+        let mut superseded = origin.clone();
+        superseded["humanAssignmentId"] = json!("superseded");
+        assert!(store
+            .publish_stand_in_reply("mac", "conversation", 7, &superseded, "late", "Late")
+            .is_err());
+        assert!(store
+            .publish_stand_in_reply("mac", "conversation", 8, &origin, "foreign", "Foreign")
+            .is_err());
+        store
+            .unbind_task("mac", "conversation", Some(&issue.id))
+            .unwrap();
+        assert!(store
+            .publish_stand_in_reply("mac", "conversation", 7, &origin, "unbound", "Unbound")
+            .is_err());
+        assert_eq!(
+            store
+                .list_comments(&project.id, &issue.id, 0)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
 }

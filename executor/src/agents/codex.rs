@@ -79,6 +79,8 @@ const CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE: &str =
     "features.default_mode_request_user_input=true";
 const CODEX_DISABLE_MULTI_AGENT_OVERRIDE: &str = "features.multi_agent=false";
 const CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE: &str = "features.multi_agent_v2=false";
+const CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE: &str = "features.multi_agent_v2=true";
+const CODEX_DISABLE_AGENTS_OVERRIDE: &str = "agents.enabled=false";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
@@ -4900,6 +4902,22 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
 
 fn codex_runtime_default_config_overrides() -> Vec<String> {
     let mut overrides = codex_streaming_patch_config_overrides();
+    // Apply this to both process startup and per-thread feature configuration.
+    // Keep V2 collaboration discoverable through Code Mode, not expanded at bootstrap.
+    overrides.push("features.multi_agent_v2.non_code_mode_only=false".to_owned());
+    // Native's direct-only root hint contradicts the Code Mode tool exposure.
+    overrides.push(format!(
+        "features.multi_agent_v2.root_agent_usage_hint_text={}",
+        toml_value(concat!(
+            "You are the primary agent in a team sharing one workspace. ",
+            "Use Code Mode to discover collaboration tools when delegation is explicitly ",
+            "requested by the user or applicable project/skill instructions. Keep delegated ",
+            "tasks independent and scoped, preserve shared edits, review agent results, ",
+            "and verify the combined outcome. Use inherited model and reasoning settings ",
+            "unless an explicit user or applicable instruction requires an override. ",
+            "Child agents share your filesystem."
+        ))
+    ));
     // Native request_user_input has one waiter per turn. Keep MCP approvals on
     // their separately correlated elicitation channel so they cannot replace it.
     overrides.push(CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
@@ -4923,9 +4941,21 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
 fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     if codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single")) {
         return vec![
+            // Feature toggles alone do not override a resumed thread's persisted agent family.
+            CODEX_DISABLE_AGENTS_OVERRIDE.to_owned(),
             CODEX_DISABLE_MULTI_AGENT_OVERRIDE.to_owned(),
             CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE.to_owned(),
         ];
+    }
+    if request
+        .extra
+        .get("origin")
+        .and_then(|origin| origin.get("type"))
+        .and_then(Value::as_str)
+        == Some("stand_in_identity")
+    {
+        // Stand-in chat needs the native mailbox wait that also wakes on user input.
+        return vec![CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE.to_owned()];
     }
     Vec::new()
 }

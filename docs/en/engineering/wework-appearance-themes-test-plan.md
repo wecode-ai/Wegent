@@ -14,11 +14,26 @@ backgrounds with a `#2563eb` accent.
 The acceptance inventory is independent of application data to detect omissions. Tokyo Night uses
 `#1a1b26` for the background, `#a9b1d6` for text, and `#7aa2f7` for the accent.
 
+Terminal ANSI palettes are independent of syntax highlighting. Wework and themes without an
+authored terminal palette preserve the original 16 xterm colors; function, string, or operator
+colors must not replace ANSI blue, green, or cyan. Authored terminal palettes still follow their
+themes; switching back to Wework restores the original cyan and blue zsh directory and Git prompts.
+Opaque Wework light terminals use xterm's 4.5 minimum text contrast so ANSI whites remain readable
+without changing the palette definitions. Dark mode, other named themes, and transparent backgrounds
+retain xterm's default contrast behavior.
+
 Themes cover Wework-owned chrome, tabs, sidebars, every settings page, authentication, plugins,
 applications, automations, interactions, projects, boards, Issues, project Agent editors, menus and
 dialogs. Detached windows, quick windows, Process Explorer, and system drag surfaces also consume
-the theme. Startup flow, startup colors, recovery and error documents follow upstream. Code, diffs, terminal ANSI colors,
-Markdown, rich text, file viewer controls, and interactive visualizations use semantic colors.
+the theme. Startup flow, startup colors, recovery and error documents follow upstream. Code, diffs,
+Markdown, rich text, file viewer controls, and interactive visualizations continue using semantic
+colors for the other named themes. Wework restores its pre-#4394 original Pierre light/dark
+code palettes, links and focus, scrollbar opacity, component status colors,
+hover/selection states, switches, and plugin badges. Rich text and file previews retain their original
+renderer styles; visualizations retain the original host defaults and authored content colors.
+Switching back to Wework clears injected visualization theme variables without rebuilding the iframe
+or losing content state. These restorations apply only to Wework and do not change other themes or
+write back/reset custom colors, fonts, sizes, or background image preferences.
 The remote Wegent Agent content is excluded; its Wework chrome still follows the theme.
 Images, document paper, explicitly formatted cells, video, brand icons, QR codes, and web content
 retain their content colors.
@@ -40,7 +55,7 @@ removes isolated files and processes.
 | Case                          | Preconditions and actions                                                                                    | Expected result and evidence                                                                                              |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `appearance-themes` inventory | Enumerate an independent list of 17 light and 29 dark options; select every option in the real UI            | All 30 names and 46 variants apply; individual screenshots, observed colors and JSON evidence                             |
-| Wework defaults and reset     | Confirm fresh light/dark defaults, inspect both original palettes, then click Reset after browsing themes     | Both choices return to Wework; original backgrounds, accent and sidebar opacity match; retain a reset screenshot           |
+| Wework defaults and reset     | Confirm fresh light/dark defaults, inspect both original palettes, then click Reset after browsing themes    | Both choices return to Wework; original backgrounds, accent and sidebar opacity match; retain a reset screenshot          |
 | Persistence                   | Select Proof and Tokyo Night independently; reload the renderer and restart Electron                         | Both choices survive; Tokyo Night matches three reference colors; light mode restores Proof                               |
 | Settings                      | Visit all 20 built-in and Git plugin settings routes in Tokyo Night                                          | Theme colors and readable titles, with a screenshot of each page                                                          |
 | Workspaces and portals        | Visit plugin marketplace/management, applications, automations, interactions, task home and settings menu    | Shared palette across real surfaces, including empty/unavailable states and portal screenshots                            |
@@ -58,6 +73,9 @@ logs and images are not committed. Appearance gallery captures survive reduced s
 
 ## Execution record
 
-This task requires CI-only verification, with Git hooks as the only local exception. CI opens the
-actual Electron interfaces and produces screenshots. Use the latest PR revision's CI results and
-artifacts as evidence; authored coverage alone is not a passing result.
+The Wework visual restoration uses focused unit/component tests and real Tailwind compilation to
+check original colors in both modes, unchanged named themes, custom preference preservation, and
+clearing stale styles when returning to Wework. The first push runs repository quality hooks.
+Repository policy requires an explicit request before local E2E or `ai:verify` execution. CI owns
+the real-Electron matrix and screenshots above. Use the latest PR revision's results and artifacts
+as evidence; authored coverage alone is not a passing result.

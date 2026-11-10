@@ -147,8 +147,8 @@ describe('bundled plugin resources', () => {
     const plugin = resolve(root, 'plugins/wework-runtime')
     const manifest = JSON.parse(readFileSync(resolve(plugin, '.codex-plugin/plugin.json'), 'utf8'))
     expect(manifest.skills).toBe('./skills/')
+    expect(existsSync(resolve(plugin, 'skills/coding/SKILL.md'))).toBe(false)
     for (const name of [
-      'coding',
       'browser',
       'computer',
       'github',

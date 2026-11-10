@@ -7,12 +7,17 @@ import { assertCodexHomeCanMove } from './workbench-codex-migration.js'
 vi.mock('node:child_process', async importOriginal => {
   const original = await importOriginal<typeof import('node:child_process')>()
   const { promisify } = await import('node:util')
+  const { testNodeEnvironment } = await import('./test-helpers.js')
   const execFile = Object.assign(vi.fn(), {
     [promisify.custom]: (
       command: string,
       args: string[],
       options: import('node:child_process').ExecFileOptions
-    ) => promisify(original.execFile)(process.execPath, [command, ...args], options),
+    ) =>
+      promisify(original.execFile)(process.execPath, [command, ...args], {
+        ...options,
+        env: testNodeEnvironment(options.env),
+      }),
   })
   return { ...original, execFile }
 })

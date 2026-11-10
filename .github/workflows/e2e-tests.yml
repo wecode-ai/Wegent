@@ -889,6 +889,8 @@ jobs:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           RS_DATABASE_URL_COLLATION: utf8mb4_0900_ai_ci
           REDIS_URL: redis://redis:6379/0
+          SOCKETIO_REDIS_CLIENT_NAME: ${{ matrix.shardIndex == 1 && 'wegent-platform-python-socketio' || '' }}
+          SOCKETIO_REDIS_ACK_PROBE_INTERVAL_SECONDS: ${{ matrix.shardIndex == 1 && '1' || '30' }}
           EXECUTOR_MANAGER_URL: http://localhost:8001
           SECRET_KEY: test-secret-key-for-ci-testing
           ALGORITHM: HS256
@@ -913,6 +915,15 @@ jobs:
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend.log 2>&1 &
           echo $! > backend/backend.pid
+
+      - name: Verify Socket.IO ACK readiness with Redis
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          E2E_SOCKETIO_REDIS_URL: redis://redis:6379/0
+          E2E_API_URL: http://localhost:8000
+          E2E_PYTHON_LOG: ${{ github.workspace }}/backend/backend.log
+        run: uv run --no-sync python tests/e2e/socketio_ack_readiness.py
 
       - name: Start parallel Backend index worker
         working-directory: ./backend

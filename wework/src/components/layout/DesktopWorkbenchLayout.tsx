@@ -939,6 +939,10 @@ export function DesktopWorkbenchLayout({
       standaloneWorkspacePath={state.standaloneWorkspacePath}
       imNotificationSettings={imNotificationSettings}
       unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
+      standInUnreadCount={[...(taskReminders.unreadMessageCounts?.values() ?? [])].reduce(
+        (sum, count) => sum + count,
+        0
+      )}
       preferredDeviceId={
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }

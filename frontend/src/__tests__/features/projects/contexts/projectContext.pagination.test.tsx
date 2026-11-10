@@ -50,7 +50,7 @@ jest.mock('@/contexts/SocketContext', () => ({
 const api = projectApis as jest.Mocked<typeof projectApis>
 const taskApi = taskApis as jest.Mocked<typeof taskApis>
 
-function project(id: number, count: number): ProjectWithTasks {
+function project(id: number, count: number | null): ProjectWithTasks {
   return {
     id,
     user_id: 7,
@@ -77,7 +77,7 @@ function task(id: number, projectId = 1): ProjectTask {
 }
 
 function taskPage(
-  total: number,
+  total: number | null,
   items: ProjectTask[],
   nextCursor: string | null = null
 ): ProjectTaskListResponse {
@@ -172,7 +172,7 @@ describe('ProjectContext task pagination', () => {
       .mockResolvedValueOnce(taskPage(120, [task(50), task(51)], 'after-second'))
     renderProvider()
     await waitFor(() => expect(currentProjects()).toHaveLength(2))
-    expect(api.getProjects).toHaveBeenCalledWith(false)
+    expect(api.getProjects).toHaveBeenCalledWith(false, { includeTaskCount: false })
     expect(api.getProjectTasks).not.toHaveBeenCalled()
     expect(currentProjects()[0].task_count).toBe(120)
 
@@ -181,11 +181,30 @@ describe('ProjectContext task pagination', () => {
     fireEvent.click(screen.getByText('load more'))
     await waitFor(() => expect(currentProjects()[0].tasks).toHaveLength(51))
     expect(api.getProjectTasks.mock.calls).toEqual([
-      [1, 50, undefined],
-      [1, 50, 'after-first'],
+      [1, 50, undefined, { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
     ])
     expect(currentProjects()[0].task_count).toBe(120)
     expect(currentPage()).toMatchObject({ hasMore: true, nextCursor: 'after-second' })
+  })
+
+  test('opens a project and follows its cursor without an exact task count', async () => {
+    api.getProjects.mockResolvedValue({ total: 1, items: [project(1, null)] })
+    api.getProjectTasks
+      .mockResolvedValueOnce(taskPage(null, [task(1)], 'next'))
+      .mockResolvedValueOnce(taskPage(null, [task(2)]))
+
+    renderProvider()
+    await waitFor(() => expect(currentProjects()).toHaveLength(1))
+    expect(api.getProjectTasks).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByText('load first'))
+    await waitFor(() => expect(currentPage()).toMatchObject({ hasMore: true, nextCursor: 'next' }))
+    fireEvent.click(screen.getByText('load more'))
+    await waitFor(() => expect(currentProjects()[0].tasks).toEqual([task(1), task(2)]))
+
+    expect(currentProjects()[0].task_count).toBeNull()
+    expect(currentPage()).toMatchObject({ loaded: true, hasMore: false, nextCursor: null })
+    expect(api.getProjectTasks).toHaveBeenLastCalledWith(1, 50, 'next', { includeTotal: false })
   })
 
   test('retries a failed first page without a cursor', async () => {
@@ -202,8 +221,8 @@ describe('ProjectContext task pagination', () => {
     fireEvent.click(screen.getByText('load first'))
     await waitFor(() => expect(currentProjects()[0].tasks).toEqual([task(1)]))
     expect(api.getProjectTasks.mock.calls).toEqual([
-      [1, 50, undefined],
-      [1, 50, undefined],
+      [1, 50, undefined, { includeTotal: false }],
+      [1, 50, undefined, { includeTotal: false }],
     ])
     expect(currentPage()).toEqual({
       loaded: true,
@@ -239,7 +258,9 @@ describe('ProjectContext task pagination', () => {
     if (total === 100) {
       fireEvent.click(screen.getByText('load more'))
       await waitFor(() => expect(currentProjects()[0].tasks).toHaveLength(100))
-      expect(api.getProjectTasks).toHaveBeenLastCalledWith(1, 50, 'after-50')
+      expect(api.getProjectTasks).toHaveBeenLastCalledWith(1, 50, 'after-50', {
+        includeTotal: false,
+      })
     }
     expect(currentPage()).toMatchObject({ hasMore: false, nextCursor: null })
     fireEvent.click(screen.getByText('load more'))
@@ -299,9 +320,9 @@ describe('ProjectContext task pagination', () => {
     fireEvent.click(screen.getByText('load all'))
     await waitFor(() => expect(currentProjects()[0].tasks).toHaveLength(101))
     expect(api.getProjectTasks.mock.calls).toEqual([
-      [1, 50, undefined],
-      [1, 50, 'after-first'],
-      [1, 50, 'after-second'],
+      [1, 50, undefined, { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
+      [1, 50, 'after-second', { includeTotal: false }],
     ])
     expect(currentPage()).toMatchObject({
       loaded: true,
@@ -327,9 +348,9 @@ describe('ProjectContext task pagination', () => {
     fireEvent.click(screen.getByText('load all'))
     await waitFor(() => expect(currentProjects()[0].tasks).toEqual([task(1), task(51)]))
     expect(api.getProjectTasks.mock.calls).toEqual([
-      [1, 50, undefined],
-      [1, 50, 'after-first'],
-      [1, 50, 'after-first'],
+      [1, 50, undefined, { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
     ])
     expect(currentPage()).toMatchObject({
       loaded: true,
@@ -357,9 +378,9 @@ describe('ProjectContext task pagination', () => {
     fireEvent.click(screen.getByText('load more'))
     await waitFor(() => expect(currentProjects()[0].tasks).toHaveLength(2))
     expect(api.getProjectTasks.mock.calls).toEqual([
-      [1, 50, undefined],
-      [1, 50, 'after-first'],
-      [1, 50, 'after-first'],
+      [1, 50, undefined, { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
+      [1, 50, 'after-first', { includeTotal: false }],
     ])
     expect(currentPage()).toMatchObject({ nextCursor: 'after-second', hasMore: true })
   })

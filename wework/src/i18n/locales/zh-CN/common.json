@@ -503,6 +503,8 @@
     "task_activity_replying_to_human": "正在回复 {{name}} · 打开新的个人任务",
     "task_activity_reply_action": "回复并继续此任务",
     "task_activity_replying_to": "正在回复 {{name}} · 将继续原执行任务",
+    "task_activity_replying_to_stand_in": "正在回复 {{name}} · 继续此 Issue 对话",
+    "task_activity_stand_in_reply_placeholder": "继续与分身讨论此 Issue…",
     "task_activity_cancel_reply": "取消回复",
     "task_activity_reply_starts_task": "回复后将打开任务面板，开始「{{title}}」",
     "task_activity_ready_for_review": "已提交结果，等待验收",
@@ -1049,6 +1051,8 @@
     "cloud_work_page_description": "查看云端设备资源状态并进入云端项目",
     "cloud_work_connection_settings": "连接设置",
     "cloud_work_devices": "设备",
+    "cloud_work_local_device_guidance": "本机执行环境由当前 Wework 管理，不在下方云端与远程设备列表中。若本机版本不兼容，请检查 Wework 更新并重启。",
+    "cloud_work_local_version": "查看本机版本",
     "cloud_work_add_device": "添加设备",
     "cloud_work_available_devices": "云端与远程设备",
     "cloud_work_no_devices": "还没有可用的云端设备",
@@ -5457,6 +5461,15 @@
     "im_target": "设置 IM 接收会话"
   },
   "standIn": {
+    "native_input_pending": "请先通过当前问题或权限确认卡片完成确认，再发送新消息。",
+    "desktop_notifications": {
+      "title": "开启桌面分身通知",
+      "description": "分身有新消息或需要你处理时接收通知；请在系统和 Wework 通知设置中允许。",
+      "enable": "打开通知设置",
+      "never": "不再提示",
+      "dismiss": "暂时关闭",
+      "error": "无法打开或保存通知设置，请重试。"
+    },
     "project_coordinator": {
       "open": "负责人对话",
       "title": "{{project}} · 负责人",
@@ -5512,6 +5525,7 @@
     "saving": "保存中…",
     "loading": "加载中…",
     "reload": "重新加载",
+    "view_devices": "查看设备情况",
     "saved": "分身设置已保存",
     "enabled": "我的分身 · 自动处理已开启",
     "project_enabled": "自动处理已开启",
@@ -5924,7 +5938,7 @@
       "load_projects_failed": "未能加载协作项目。请检查云端连接，再点击「重新加载」。你仍可查看分身的其他配置。",
       "executor_unavailable": "无法连接执行设备。请确认该设备上的 Wework 正在运行，再点击「重新加载」。",
       "executor_restarted": "执行设备刚刚重新启动，当前页面的数据已过期。请点击「重新加载」后继续。",
-      "executor_update_required": "当前 Wework 与执行设备的版本不兼容。请更新两端的 Wework 并重新启动。",
+      "executor_update_required": "当前 Wework 与执行设备的版本不兼容。请前往云端工作查看设备情况，升级后重试。",
       "assignment_lookup_failed": "无法读取设备 {{deviceId}} 的分身处理记录：{{error}}",
       "remote_control_disabled": "该桌面设备不允许远程操作。请在该设备上的 Wework 中处理，或选择支持远程操作的执行设备。",
       "authentication_required": "云端登录已失效。请在设置中重新连接云端账号，再重新加载。",

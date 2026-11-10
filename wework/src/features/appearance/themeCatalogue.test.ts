@@ -72,6 +72,45 @@ describe('desktop theme catalogue', () => {
     expect(variables['--color-primary-contrast']).toBe('255 255 255')
   })
 
+  test.each(['light', 'dark'] as const)(
+    'preserves the original xterm ANSI palette in the Wework %s theme',
+    mode => {
+      const variables = resolveAppearanceThemeVariables(defaultAppearance, mode)
+      const expected = [
+        '46 52 54',
+        '204 0 0',
+        '78 154 6',
+        '196 160 0',
+        '52 101 164',
+        '117 80 123',
+        '6 152 154',
+        '211 215 207',
+        '85 87 83',
+        '239 41 41',
+        '138 226 52',
+        '252 233 79',
+        '114 159 207',
+        '173 127 168',
+        '52 226 226',
+        '238 238 236',
+      ]
+
+      expect(TERMINAL_COLOR_NAMES.map(name => variables[`--color-terminal-${name}`])).toEqual(
+        expected
+      )
+    }
+  )
+
+  test.each(['absolutely', 'codex', 'linear', 'matrix'])(
+    'does not derive %s ANSI colors from unrelated syntax tokens',
+    id => {
+      const theme = getUiTheme(id, 'dark').variant
+      expect(theme.terminal['bright-blue']).toBe('114 159 207')
+      expect(theme.terminal['bright-cyan']).toBe('52 226 226')
+      expect(theme.terminal['bright-green']).toBe('138 226 52')
+    }
+  )
+
   test('provides distinct palettes and complete code and terminal colors', () => {
     const signatures = new Set<string>()
     for (const theme of UI_THEME_CATALOGUE) {

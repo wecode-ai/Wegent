@@ -104,7 +104,7 @@ export function PluginSettingsPage() {
           {codexConfigError && (
             <div
               data-testid="codex-plugin-config-error"
-              className="mt-3 flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              className="mt-3 flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-500"
             >
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{codexConfigError}</span>

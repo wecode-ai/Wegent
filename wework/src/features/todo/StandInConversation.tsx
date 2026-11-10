@@ -113,6 +113,9 @@ export function StandInConversation({
       sendEphemeral={false}
       showExecutionTools={false}
       hideProcessing
+      assistantMessageStyle="bubble"
+      markReadWhenActive
+      nativeConversation
       expanded
       active={active}
       placeholder={t(roleId ? 'standIn.workspace.role_prompt' : 'standIn.workspace.primary_prompt')}
