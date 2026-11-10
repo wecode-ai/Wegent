@@ -644,8 +644,9 @@ def test_disabled_rollout_still_confirms_compacted_request_supersession(
     assert c.account() is None
 
 
+@pytest.mark.parametrize("catalog_linked", [True, False])
 def test_compacted_acceptance_cannot_be_reported_as_unaccepted(
-    local_context, monkeypatch
+    local_context, monkeypatch, catalog_linked
 ):
     c = local_context
     initial = install(c)
@@ -659,6 +660,13 @@ def test_compacted_acceptance_cannot_be_reported_as_unaccepted(
         == 200
     )
 
+    if not catalog_linked:
+        # Catalog repair can detach an orphan's original plugin ID. Without
+        # that linkage, a missing marker cannot prove supersession or rejection.
+        with c.sessions.begin() as db:
+            row = db.get(Kind, installed)
+            row.json = plugin_marketplace_service._detached_catalog_payload(row)
+
     def fail(*args, **kwargs):
         raise HTTPException(403, "Catalog temporarily inaccessible")
 
@@ -666,6 +674,143 @@ def test_compacted_acceptance_cannot_be_reported_as_unaccepted(
         plugin_marketplace_service, "reconcile_stale_installed_catalog_refs", fail
     )
     replay = install(c)
-    assert replay.status_code == 403
-    assert "X-Plugin-Operation-State" not in replay.headers
+    if catalog_linked:
+        assert replay.status_code == 409
+        assert replay.headers["X-Plugin-Operation-State"] == "superseded"
+        assert replay.headers["X-Plugin-Operation-Id"] == "install:1"
+        assert replay.headers["X-Plugin-Intent-Order"] == "1"
+    else:
+        assert replay.status_code == 403
+        assert "X-Plugin-Operation-State" not in replay.headers
     assert c.account().json["spec"]["enabled"] is False
+
+
+@pytest.mark.parametrize(
+    "entry", ["explicit_release", "withdrawn_catalog", "withdrawn_builtin"]
+)
+@pytest.mark.parametrize("successor", ["update", "uninstall"])
+def test_compacted_install_is_superseded_before_catalog_validation(
+    local_context, monkeypatch, entry, successor
+):
+    from copy import deepcopy
+
+    from app.models.plugin_marketplace import Plugin
+
+    c = local_context
+    params = query("original:install", 1)
+    if entry == "explicit_release":
+        params = {**params, "release_id": c.release_id}
+    if entry == "withdrawn_builtin":
+        with c.sessions() as db:
+            slug = db.get(Plugin, c.plugin_id).slug
+        url = f"/plugins/builtin/{slug}/ensure-installed"
+        body = {"json": {}}
+    else:
+        url = f"/plugins/marketplace/{c.plugin_id}/install"
+        body = {}
+    accepted = c.client.post(url, params=params, **body)
+    assert accepted.status_code == 200, accepted.text
+    installed_id = int(accepted.json()["plugin"]["metadata"]["labels"]["id"])
+    # The response is lost to Native; a later intent compacts its acceptance slot.
+    if successor == "update":
+        newer = c.client.put(
+            f"/plugins/installed/{installed_id}",
+            params=query("newer:update", 2),
+            json={"releaseId": c.upgraded_release_id},
+        )
+        assert newer.status_code == 200, newer.text
+    else:
+        newer = c.client.delete(
+            f"/plugins/installed/{installed_id}", params=query("newer:uninstall", 2)
+        )
+        assert newer.status_code == 204
+    with c.sessions.begin() as db:
+        if entry.startswith("withdrawn"):
+            db.get(Plugin, c.plugin_id).status = "draft"
+        row = db.get(Kind, installed_id)
+        original_state = (deepcopy(row.json), row.is_active)
+        original_markers = deepcopy(markers(db, c.user_id))
+    background_count = len(c.background_tasks)
+    install_spy = Mock(wraps=plugin_marketplace_service.install)
+    repair_spy = Mock(
+        wraps=plugin_marketplace_service.reconcile_stale_installed_catalog_refs
+    )
+    monkeypatch.setattr(plugin_marketplace_service, "install", install_spy)
+    monkeypatch.setattr(
+        plugin_marketplace_service, "reconcile_stale_installed_catalog_refs", repair_spy
+    )
+
+    replay = c.client.post(url, params=params, **body)
+
+    assert replay.status_code == 409, replay.text
+    assert replay.json()["detail"] == "INTENT_SUPERSEDED"
+    assert replay.headers["X-Plugin-Delivery-Mode"] == "local_pull_v1"
+    assert replay.headers["X-Plugin-Operation-Id"] == "original:install"
+    assert replay.headers["X-Plugin-Intent-Order"] == "1"
+    assert replay.headers["X-Plugin-Operation-State"] == "superseded"
+    install_spy.assert_not_called()
+    repair_spy.assert_not_called()
+    assert len(c.background_tasks) == background_count
+    with c.sessions() as db:
+        row = db.get(Kind, installed_id)
+        assert (row.json, row.is_active) == original_state
+        assert markers(db, c.user_id) == original_markers
+
+
+@pytest.mark.parametrize("withdrawn", [False, True])
+def test_legacy_install_keeps_release_and_catalog_validation(
+    plugin_requests, withdrawn
+):
+    from app.models.plugin_marketplace import Plugin
+
+    c = plugin_requests
+    c.seed_update()
+    if withdrawn:
+        with c.sessions.begin() as db:
+            db.get(Plugin, c.plugin_id).status = "draft"
+    response = c.client.post(
+        f"/plugins/marketplace/{c.plugin_id}/install",
+        params={"release_id": c.release_id},
+    )
+    assert response.status_code == (404 if withdrawn else 400)
+    assert "X-Plugin-Operation-State" not in response.headers
+    assert "X-Plugin-Delivery-Mode" not in response.headers
+    with c.sessions() as db:
+        assert markers(db, c.user_id) == {}
+
+
+def test_install_rechecks_supersession_after_catalog_repair_commits(
+    local_context, monkeypatch
+):
+    c = local_context
+    c.seed_update()
+    installed = c.installed_id
+
+    def repair_then_accept_newer(db, *, user_id):
+        assert user_id == c.user_id
+        db.commit()
+        newer = c.client.put(
+            f"/plugins/installed/{installed}",
+            params=query("newer:update", 2),
+            json={"releaseId": c.upgraded_release_id},
+        )
+        assert newer.status_code == 200, newer.text
+        return 0
+
+    install_spy = Mock(wraps=plugin_marketplace_service.install)
+    monkeypatch.setattr(plugin_marketplace_service, "install", install_spy)
+    monkeypatch.setattr(
+        plugin_marketplace_service,
+        "reconcile_stale_installed_catalog_refs",
+        repair_then_accept_newer,
+    )
+    replay = c.client.post(
+        f"/plugins/marketplace/{c.plugin_id}/install",
+        params={**query("old:install", 1), "release_id": c.release_id},
+    )
+    assert replay.status_code == 409, replay.text
+    assert replay.headers["X-Plugin-Operation-State"] == "superseded"
+    assert replay.headers["X-Plugin-Operation-Id"] == "old:install"
+    assert replay.headers["X-Plugin-Intent-Order"] == "1"
+    install_spy.assert_not_called()
+    assert c.account().json["spec"]["releaseId"] == c.upgraded_release_id

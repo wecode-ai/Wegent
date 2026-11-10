@@ -82,33 +82,22 @@ def mutate_local_plugin(
                 db, user_id, instance_id, operation_id, request_hash
             )
             if previous is None:
-                if action in {"update", "uninstall"}:
-                    target = int(target_id)
-                elif action == "install":
-                    installed = plugin_marketplace_service._find_installed(
-                        db, user_id=user_id, plugin_id=target_id
-                    )
-                    target = installed.id if installed is not None else None
-                else:
-                    installed = (
-                        db.query(Kind)
-                        .filter_by(
-                            user_id=user_id, kind="InstalledPlugin", namespace="default"
-                        )
-                        .filter(
-                            Kind.json["spec"]["source"]["pluginKey"].as_string()
-                            == str(target_id)
-                        )
-                        .first()
-                    )
-                    target = installed.id if installed is not None else None
-                if target is not None:
-                    _guard_intent_order(
-                        db, user_id, instance_id, target, intent_order, advance=False
-                    )
+                _guard_existing_intent(
+                    db, user_id, instance_id, action, target_id, intent_order
+                )
                 raise HTTPException(409, "LOCAL_SYNC_DISABLED")
             return _current_result(db, user_id, previous)
         if action in {"install", "ensure_builtin"}:
+            # Resolve supersession from owned state before catalog repair can
+            # change its identity or fail for a withdrawn catalog entry.
+            acquire_plugin_write_lock(db, user_id)
+            if (
+                _replay_operation(db, user_id, instance_id, operation_id, request_hash)
+                is None
+            ):
+                _guard_existing_intent(
+                    db, user_id, instance_id, action, target_id, intent_order
+                )
             # Legacy catalog repair owns its own commit; finish it before opening
             # the atomic intent/operation transaction.
             plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
@@ -120,10 +109,11 @@ def mutate_local_plugin(
         )
         if existing is not None:
             return _current_result(db, user_id, existing)
-        if action in {"update", "uninstall"}:
-            _guard_intent_order(
-                db, user_id, instance_id, int(target_id), intent_order, advance=False
-            )
+        # Catalog repair may commit and release the lease. Recheck against
+        # committed state before entering any mutation's business validation.
+        _guard_existing_intent(
+            db, user_id, instance_id, action, target_id, intent_order
+        )
         installed: InstalledPlugin | None = None
         if action == "install":
             installed = plugin_marketplace_service.install(
@@ -251,6 +241,38 @@ def _replay_operation(
     if existing is not None and existing["requestHash"] != request_hash:
         raise HTTPException(409, "IDEMPOTENCY_CONFLICT")
     return existing
+
+
+def _guard_existing_intent(
+    db: Session,
+    user_id: int,
+    instance: str,
+    action: str,
+    target_id: int | str,
+    order: int,
+) -> None:
+    """Fence a known owned installation without consulting catalog availability."""
+    if action in {"update", "uninstall"}:
+        installed_id = int(target_id)
+    elif action == "install":
+        installed = plugin_marketplace_service._find_installed(
+            db, user_id=user_id, plugin_id=target_id
+        )
+        installed_id = installed.id if installed is not None else None
+    elif action == "ensure_builtin":
+        installed = (
+            db.query(Kind)
+            .filter_by(user_id=user_id, kind="InstalledPlugin", namespace="default")
+            .filter(
+                Kind.json["spec"]["source"]["pluginKey"].as_string() == str(target_id)
+            )
+            .first()
+        )
+        installed_id = installed.id if installed is not None else None
+    else:
+        return
+    if installed_id is not None:
+        _guard_intent_order(db, user_id, instance, installed_id, order, advance=False)
 
 
 def _guard_intent_order(
