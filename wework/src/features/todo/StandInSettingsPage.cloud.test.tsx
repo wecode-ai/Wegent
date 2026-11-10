@@ -15,6 +15,62 @@ vi.mock('./StandInComposer', () => ({ StandInComposer: () => null }))
 vi.mock('./StandInRequirements', () => ({ StandInRequirements: () => null }))
 afterEach(cleanup)
 
+test('keeps a new local role and its draft when the cloud device inventory changes', async () => {
+  const personalGet = vi.fn(async () => ({
+    userId: 7,
+    executionDeviceId: 'mac',
+    version: 0,
+    roles: [],
+  }))
+  const personalSave = vi.fn(async (_user, settings) => settings)
+  const services = {
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
+    standInApi: { personalGet, personalSave },
+  } as unknown as WorkbenchServices
+  const form = (devices: DeviceInfo[]) => (
+    <CloudConnectionContext.Provider value={{ isConnected: true } as CloudConnectionContextValue}>
+      <StandInSettingsPage
+        api={{} as SharedWorkspaceApi}
+        services={services}
+        userId={7}
+        projects={[]}
+        initialCreate
+        devices={devices}
+      />
+    </CloudConnectionContext.Provider>
+  )
+  const device = {
+    id: 1,
+    device_id: 'cloud-one',
+    name: 'Cloud',
+    device_type: 'cloud',
+    status: 'online',
+    is_default: true,
+  } as DeviceInfo
+  const view = render(form([device]))
+  fireEvent.change(await screen.findByTestId('stand-in-role-name'), {
+    target: { value: 'Unsaved local role' },
+  })
+  view.rerender(
+    form([
+      { ...device, status: 'offline' },
+      { ...device, id: 2, device_id: 'two' },
+    ])
+  )
+  expect(screen.getByTestId('stand-in-role-name')).toHaveValue('Unsaved local role')
+  expect(screen.getByTestId('stand-in-role-device')).toHaveValue('mac')
+  expect(personalGet).toHaveBeenCalledExactlyOnceWith(7, 'mac')
+  fireEvent.click(screen.getByTestId('stand-in-save'))
+  await waitFor(() => expect(personalSave).toHaveBeenCalledOnce())
+  expect(personalSave).toHaveBeenCalledWith(
+    7,
+    expect.objectContaining({
+      roles: [expect.objectContaining({ name: 'Unsaved local role', executionDeviceId: 'mac' })],
+    }),
+    'mac'
+  )
+})
+
 test('edits a signed-out local role after cloud connection without querying cloud agents for user zero', async () => {
   const role = { ...newStandInRole('mac', 'local-role'), name: 'Local role' }
   const personalGet = vi.fn(async () => ({
@@ -74,6 +130,7 @@ test('retries a failed cloud profile load on the same device without a local fal
         userId={7}
         projects={[]}
         initialCreate
+        initialDeviceId="cloud-one"
         devices={[
           {
             id: 1,
@@ -95,7 +152,7 @@ test('retries a failed cloud profile load on the same device without a local fal
   expect(personalSave).not.toHaveBeenCalled()
 })
 
-test('loads and saves a new role on the sole cloud Executor without touching the local profile', async () => {
+test('loads and saves a new role on the explicitly selected cloud Executor without touching the local profile', async () => {
   const personalGet = vi.fn(async (_user, deviceId) => ({
     userId: 7,
     executionDeviceId: deviceId,
@@ -113,10 +170,10 @@ test('loads and saves a new role on the sole cloud Executor without touching the
       <StandInSettingsPage
         api={{} as SharedWorkspaceApi}
         services={services}
-        userId={0}
+        userId={7}
         projects={[]}
         initialCreate
-        initialDeviceId="mac"
+        initialDeviceId="cloud-one"
         devices={[
           {
             id: 1,
@@ -164,7 +221,7 @@ test('keeps the cloud device and unsaved draft when the cloud connection drops',
       userId={7}
       projects={[]}
       initialCreate
-      initialDeviceId="mac"
+      initialDeviceId="cloud-one"
       devices={[
         {
           id: 1,

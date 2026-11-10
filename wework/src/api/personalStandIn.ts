@@ -54,6 +54,7 @@ export interface StandInRole extends WorkspaceStandInSettings {
   id: string
   name: string
   migrationSource?: string
+  previousExecutionDevices?: string[]
   calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration: {

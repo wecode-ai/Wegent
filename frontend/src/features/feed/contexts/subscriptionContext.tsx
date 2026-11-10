@@ -81,6 +81,8 @@ interface SubscriptionProviderProps {
 
 const SUBSCRIPTIONS_PER_PAGE = 20
 const EXECUTIONS_PER_PAGE = 50
+// Ask the list endpoint for truncated previews; full summaries load on expand.
+const EXECUTIONS_PREVIEW_CHARS = 2000
 
 export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
   // Socket for real-time updates
@@ -159,10 +161,16 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     }
   }, [subscriptions.length, subscriptionsTotal, subscriptionsPage])
 
+  // Read the list size through a ref so refreshExecutions keeps a stable identity.
+  // Depending on executions.length made the first response re-create the callback,
+  // which re-ran the refresh effect and fetched the whole timeline a second time.
+  const hasExecutionsRef = useRef(false)
+  hasExecutionsRef.current = executions.length > 0
+
   // Fetch executions
   const refreshExecutions = useCallback(async () => {
     // If we already have data, show refreshing state instead of loading
-    if (executions.length > 0) {
+    if (hasExecutionsRef.current) {
       setExecutionsRefreshing(true)
     } else {
       setExecutionsLoading(true)
@@ -174,7 +182,8 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         executionFilter.status,
         executionFilter.startDate,
         executionFilter.endDate,
-        showSilentExecutions
+        showSilentExecutions,
+        EXECUTIONS_PREVIEW_CHARS
       )
       setExecutions(response.items)
       setExecutionsTotal(response.total)
@@ -185,7 +194,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
       setExecutionsLoading(false)
       setExecutionsRefreshing(false)
     }
-  }, [executionFilter, executions.length, showSilentExecutions])
+  }, [executionFilter, showSilentExecutions])
 
   // Load more executions
   const loadMoreExecutions = useCallback(async () => {
@@ -200,7 +209,8 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         executionFilter.status,
         executionFilter.startDate,
         executionFilter.endDate,
-        showSilentExecutions
+        showSilentExecutions,
+        EXECUTIONS_PREVIEW_CHARS
       )
       setExecutions(prev => [...prev, ...response.items])
       setExecutionsPage(nextPage)

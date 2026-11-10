@@ -65,6 +65,7 @@ export function createStreamingToolChecks({
   subagentToolRenderTimeoutMs,
   subagentPartialWritten,
   releaseSubagentCompletion,
+  beforeSubagentOutput,
   releasePhaseFlipCompletion,
   toolFollowUpReceived,
   releaseToolCompletion,
@@ -363,6 +364,7 @@ export function createStreamingToolChecks({
       false,
       'The running child tool leaked into the root conversation'
     )
+    await beforeSubagentOutput?.(control)
     await subagentPartialWritten
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: SUBAGENT_CHILD_TOOL_MARKER,

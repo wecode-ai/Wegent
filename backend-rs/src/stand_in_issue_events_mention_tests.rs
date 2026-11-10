@@ -2,7 +2,7 @@
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlError, MysqlTransaction};
 use serde_json::{Value, json};
 
-use super::enqueue;
+use super::enqueue_mention_on;
 
 #[derive(FromMysqlRow)]
 struct Event {
@@ -17,7 +17,10 @@ pub(crate) async fn verify(mysql: &impl Mysql) -> anyhow::Result<()> {
     let write = |issue: &'static str, comment: &'static str| async move {
         mysql
             .with_transaction(async |tx| {
-                enqueue(tx, &[7002, 7001, 7001], "mention-project", issue, comment).await
+                for user in [7001, 7002] {
+                    enqueue_mention_on(tx, user, "mention-project", issue, comment).await?;
+                }
+                Ok(())
             })
             .await
     };
@@ -30,9 +33,9 @@ pub(crate) async fn verify(mysql: &impl Mysql) -> anyhow::Result<()> {
     write("mention-issue-a", "first").await?;
     let rolled_back: brz_mysql::MysqlResult<()> = mysql
         .with_transaction(async |tx| {
-            enqueue(
+            enqueue_mention_on(
                 tx,
-                &[7001],
+                7001,
                 "mention-project",
                 "mention-issue-a",
                 "rolled-back",
@@ -54,7 +57,7 @@ pub(crate) async fn verify(mysql: &impl Mysql) -> anyhow::Result<()> {
     );
     for (index, event) in events.iter().enumerate() {
         assert_eq!(event.user_id, if index < 3 { 7001 } else { 7002 });
-        assert_eq!(event.sort_order, [1, 2, 4][index % 3]);
+        assert_eq!(event.sort_order, [1, 2, 3][index % 3]);
         assert_ne!(event.metadata.0["commentId"], "rolled-back");
         assert_eq!(event.metadata.0["projectId"], "mention-project");
     }
@@ -87,9 +90,15 @@ async fn verify_missing_provider_scope_does_not_lock_other_indexes(
     let (entered, admitted) = tokio::sync::oneshot::channel();
     let (release, released) = tokio::sync::oneshot::channel();
     let pending = mysql.with_transaction(async |tx| {
-        enqueue(
+        crate::background_jobs::project::store::locked_existing(
             tx,
-            &[7003],
+            "task",
+            "provider-missing-scope",
+        )
+        .await?;
+        enqueue_mention_on(
+            tx,
+            7003,
             "mention-project",
             "provider-missing-scope",
             "held-comment",

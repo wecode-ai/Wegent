@@ -16,7 +16,8 @@ export function useStandInInstance(
   connected: boolean,
   active: boolean,
   backendUrl = '',
-  initialDeviceId?: string
+  initialDeviceId?: string,
+  entryRequestKey?: number
 ) {
   const [binding, setBinding] = useState<StandInInstanceBinding>()
   const [stoppedProfile, setStoppedProfile] = useState<PersonalStandInSettings>()
@@ -159,7 +160,18 @@ export function useStandInInstance(
       if (current) setError({ cause, fallback: 'load_settings_failed' })
     })
     return cancel
-  }, [api, services, userId, devices, connected, active, attempt, backendUrl, initialDeviceId])
+  }, [
+    api,
+    services,
+    userId,
+    devices,
+    connected,
+    active,
+    attempt,
+    backendUrl,
+    initialDeviceId,
+    entryRequestKey,
+  ])
 
   const run = async <T>(action: () => Promise<T>, propagate = false): Promise<T | undefined> => {
     if (operation.current) return

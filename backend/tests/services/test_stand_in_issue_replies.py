@@ -404,6 +404,57 @@ def test_issue_conversation_reservation_rejects_a_foreign_device(
     assert error.value.status_code == 403
 
 
+def test_issue_conversation_uses_registered_route_when_app_alias_is_ambiguous(
+    test_db, test_user, scope
+):
+    from app.services.device.identity import record_route_id
+
+    _, issue, binding, device, _ = scope
+    alias = "electron-shared-installation"
+    device.json = {
+        "spec": {
+            "deviceType": "app",
+            "appDeviceId": alias,
+            "runtimeInstanceId": "original-runtime",
+        }
+    }
+    replacement = Kind(
+        kind="Device",
+        name=device.name,
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                "deviceType": "app",
+                "appDeviceId": alias,
+                "runtimeInstanceId": "replacement-runtime",
+            }
+        },
+    )
+    test_db.add(replacement)
+    test_db.commit()
+    values = LoopItemTaskBind(
+        device_id=alias,
+        task_id="replacement-task",
+        stand_in_conversation_id="review-issue-identity",
+    )
+    with pytest.raises(HTTPException) as error:
+        loop_item_service.bind_task(test_db, issue.id, values, test_user.id)
+    assert error.value.status_code == 403
+    assert error.value.detail == "Stand-in conversations require an active owned device"
+    test_db.rollback()
+    result = loop_item_service.bind_task(
+        test_db,
+        issue.id,
+        values.model_copy(update={"device_id": record_route_id(replacement)}),
+        test_user.id,
+    )
+    assert result.device_id == record_route_id(replacement)
+    assert result.task_id == "replacement-task"
+    assert binding.device_id == device.name
+
+
 @pytest.mark.asyncio
 async def test_reply_to_public_stand_in_message_continues_without_an_explicit_mention(
     test_db, test_user, scope

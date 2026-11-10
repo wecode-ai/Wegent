@@ -587,6 +587,7 @@ pub struct RuntimeWorkRpcHandler {
     /// carry credentials, so turns fill them from here before launching the
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    backend_device_route: Option<Arc<Mutex<Option<String>>>>,
 }
 
 struct CodexRuntimeProxyConfig {
@@ -958,6 +959,7 @@ impl RuntimeWorkRpcHandler {
                 crate::agents::wework_codex_home(),
             ),
             backend_connection: Arc::new(Mutex::new(None)),
+            backend_device_route: None,
         };
         for (local_task_id, turn) in handler
             .active_goal_turns
@@ -1016,6 +1018,11 @@ impl RuntimeWorkRpcHandler {
         handler.start_automation_scheduler();
         handler.start_local_issue_scheduler();
         handler
+    }
+
+    pub fn with_backend_device_route(mut self, route: Arc<Mutex<Option<String>>>) -> Self {
+        self.backend_device_route = Some(route);
+        self
     }
 
     pub fn with_backend_connection(

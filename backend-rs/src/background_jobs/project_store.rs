@@ -107,6 +107,24 @@ pub(crate) async fn locked(
     .await
 }
 
+/// Provider-owned Issues can have no index; avoid range-locking an absent key.
+pub(crate) async fn locked_existing(
+    tx: &mut impl MysqlTransaction,
+    kind: &str,
+    id: &str,
+) -> MysqlResult<Option<Node>> {
+    let present: Option<(String,)> = tx
+        .fetch_optional(
+            "SELECT id FROM loop_items WHERE id=? AND resource_type=?",
+            (id, kind),
+        )
+        .await?;
+    if present.is_none() {
+        return Ok(None);
+    }
+    locked(tx, kind, id).await
+}
+
 #[derive(Debug, FromMysqlRow)]
 struct Column {
     column_name: String,

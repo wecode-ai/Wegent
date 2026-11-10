@@ -627,8 +627,11 @@ export function createDesktopScenario({
               `text(${JSON.stringify(MANUAL_READ_OK)})`,
             ].join('\n')
           )
-          const event = selectedToolCall(MANUAL_READ_CALL, { codeMode: selection }).at(-1)
-          writeEvents(response, responseId, [event])
+          writeEvents(
+            response,
+            responseId,
+            selectedToolCall(MANUAL_READ_CALL, { codeMode: selection })
+          )
           return true
         }
         const output = toolOutputText(body, MANUAL_READ_CALL)

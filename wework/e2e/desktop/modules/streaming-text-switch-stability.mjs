@@ -3,8 +3,8 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
+  COMPOSER_SELECTOR,
   SCROLLER_SELECTOR,
-  openNewChatWithE2EModel,
   waitForBottom,
 } from './streaming-text-fixture.mjs'
 import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
@@ -17,6 +17,9 @@ export async function verifyConversationSwitchPosition(
   { address, anchorText, name, pinned, resultDir, uiTimeoutMs, whileAway }
 ) {
   await control.command('waitFor', ANCHORS, { text: anchorText })
+  const startedAt = Date.now()
+  const phases = []
+  const recordPhase = phase => phases.push({ phase, elapsedMs: Date.now() - startedAt })
   await control.command('startScrollStabilitySampling', ANCHORS, {
     value: JSON.stringify({
       anchorText,
@@ -30,7 +33,11 @@ export async function verifyConversationSwitchPosition(
   let expired = false
   let settledFrom = 0
   try {
-    await openNewChatWithE2EModel(control, uiTimeoutMs)
+    // The away pane sends no model request. Catalog/provider setup is not part
+    // of the measured conversation switch and has a separate readiness timeout.
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    recordPhase('away-ready')
     await whileAway?.()
     await control.command(
       'clickWhenEnabled',
@@ -43,6 +50,7 @@ export async function verifyConversationSwitchPosition(
         snapshot.pane?.transcript?.loading === false,
       `${name}: the selected task transcript did not finish restoring`
     )
+    recordPhase('transcript-restored')
     await control.command('startElementMetricsSampling', SCROLLER_SELECTOR, {
       value: String(uiTimeoutMs),
       target: '[data-testid="desktop-floating-composer-card"]',
@@ -50,9 +58,11 @@ export async function verifyConversationSwitchPosition(
     layoutStarted = true
     settledFrom = JSON.parse(await control.command('getScrollStabilitySample', ANCHORS)).frames
       .length
+    recordPhase('idle-observation-started')
     // Observe the completed fixture without input or new model output. Existence alone
     // is deliberately insufficient: the sampler must catch every intervening layout.
     await control.command('waitFor', ANCHORS, { text: anchorText, stableMs: 1_000 })
+    recordPhase('idle-observation-completed')
   } finally {
     expired = JSON.parse(await control.command('getScrollStabilitySample', ANCHORS)).done
     sample = JSON.parse(await control.command('stopScrollStabilitySampling', ANCHORS))
@@ -63,7 +73,7 @@ export async function verifyConversationSwitchPosition(
     )
     await writeFile(
       join(resultDir, `conversation-switch-${name}.json`),
-      JSON.stringify({ sample, layout, diagnostics }, null, 2)
+      JSON.stringify({ sample, layout, diagnostics, phases }, null, 2)
     )
   }
   assert.equal(expired, false, `${name}: sampling expired before the switch observation completed`)
