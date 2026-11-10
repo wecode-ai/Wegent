@@ -424,10 +424,10 @@ export function createWeworkPlatformApi(
           ? localApi.issues.reorder(projectId, input)
           : cloudApi.issues.reorder(projectId, input)
       },
-      async markRead(issueId, activitySequence) {
+      async markRead(issueId, activitySequence, contentRevision) {
         return (await issueLocation(issueId)) === 'local'
-          ? localApi.issues.markRead(issueId, activitySequence)
-          : cloudApi.issues.markRead(issueId, activitySequence)
+          ? localApi.issues.markRead(issueId, activitySequence, contentRevision)
+          : cloudApi.issues.markRead(issueId, activitySequence, contentRevision)
       },
     },
     resources: {

@@ -4,6 +4,14 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
+## Ongoing Issue collaboration
+
+Assigning an Issue or mentioning a member wakes their enabled, project-connected stand-ins that match its tags and allow automatic handling.
+You can mention yourself: eligible stand-ins receive the event without a human self-reminder.
+The same stand-in reuses its conversation for the same Issue. Reassignment retains history but still requires fresh authorization.
+Acknowledgment and result appear as separate comments. You can keep writing and sending while subagents work; follow-up wakeups are handled in order.
+Reply directly to a stand-in comment without another mention to continue with that role. Private chats, reasoning and tool activity are not published.
+
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
 

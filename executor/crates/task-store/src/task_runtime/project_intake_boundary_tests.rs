@@ -13,6 +13,34 @@ fn boundary(role: &Value, id: &str, store: &str) -> Value {
 }
 
 #[test]
+fn project_intake_does_not_trust_saved_dispatch_flags() {
+    let mut saved = role();
+    saved["manual"] = json!(true);
+    saved["intakeRouted"] = json!(true);
+    saved["recoveringDispatch"] = json!(true);
+    saved["triggerCommentId"] = json!("untrusted-comment");
+    saved["triggerMessage"] = json!("untrusted-message");
+    let config = project_role(&saved, 7, "existing", "local");
+    for key in [
+        "manual",
+        "intakeRouted",
+        "recoveringDispatch",
+        "triggerCommentId",
+        "triggerMessage",
+    ] {
+        assert!(
+            config.get(key).is_none(),
+            "{key} must come from trusted dispatch"
+        );
+    }
+    assert_eq!(config["userId"], 7);
+    assert_eq!(config["projectId"], "existing");
+    assert_eq!(config["enabledAfter"], OLD);
+    assert!(role_project_matches(&saved, "existing", "local"));
+    assert!(!role_project_matches(&saved, "other", "local"));
+}
+
+#[test]
 fn project_intake_new_connections_do_not_inherit_role_age_or_client_timestamps() {
     let previous = role();
     let mut next = previous.clone();

@@ -30,6 +30,7 @@ def list_activity_comments(
     item_id: str,
     after_sequence: int = Query(default=0, ge=0),
     limit: int = Query(default=200, ge=1, le=500),
+    message_id: str | None = Query(default=None, min_length=1, max_length=64),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> list[dict[str, Any]]:
@@ -40,6 +41,7 @@ def list_activity_comments(
         item_id=item_id,
         after_sequence=after_sequence,
         limit=limit,
+        message_id=message_id,
     )
 
 
@@ -59,4 +61,5 @@ def add_activity_comment(
         item_id=item_id,
         body=values.body,
         mentions=values.mentions,
+        stand_in=values.stand_in,
     )
