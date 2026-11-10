@@ -33,7 +33,7 @@ test(
       entry,
       `
     const {app} = require('electron')
-    const {appendFileSync,existsSync,readFileSync,mkdirSync,watchFile,unwatchFile} = require('node:fs')
+    const {appendFileSync,existsSync,readFileSync,mkdirSync} = require('node:fs')
     const trace = phase => {
       const event = JSON.stringify({phase,pid:process.pid})
       appendFileSync(require('node:path').join(${JSON.stringify(root)}, 'trace-' + process.pid + '.jsonl'), event + '\\n')
@@ -57,18 +57,16 @@ test(
       console.log(JSON.stringify({owned:true,pid:process.pid}))
       // Windows Electron's GUI entry closes stdin; use an explicit test command file.
       const command = require('node:path').join(${JSON.stringify(root)}, 'release-' + process.pid)
-      let releasing = false
-      watchFile(command, {interval:25}, () => {
-        if (releasing || !existsSync(command)) return
-        releasing = true
-        unwatchFile(command)
+      const commands = setInterval(() => {
+        if (!existsSync(command)) return
+        clearInterval(commands)
         void (async () => {
           trace('releasing')
           await release()
           trace('released')
           app.exit(0)
         })().catch(error => {console.error(error);app.exit(1)})
-      })
+      }, 25)
     }).catch(error => {console.error(error);app.exit(1)})
   `
     )
