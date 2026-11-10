@@ -17,7 +17,10 @@ export async function configurePluginNativeAuthorization(apiBaseUrl: string, tok
   if (!bridge) return { ready: true, expiresIn: null }
   try {
     const response = await bridge.configure(apiBaseUrl, token)
-    return { ready: response.ok, expiresIn: response.value?.expiresIn ?? null }
+    return {
+      ready: response.ok || response.error?.code === 'credentials_unavailable',
+      expiresIn: response.value?.expiresIn ?? null,
+    }
   } catch {
     return { ready: false, expiresIn: null }
   }

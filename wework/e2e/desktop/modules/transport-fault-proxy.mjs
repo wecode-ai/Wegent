@@ -435,7 +435,11 @@ export class TransportFaultProxy {
         for (const prefix of requests) {
           if (!text.startsWith(`43${prefix}[`)) continue
           const [ack] = JSON.parse(text.slice(2 + prefix.length))
-          if (ack?.success === false) fault.rejected += 1
+          if (
+            ack?.success === false ||
+            (typeof ack?.error === 'string' && ack.error.startsWith('Invalid payload:'))
+          )
+            fault.rejected += 1
           requests.delete(prefix)
         }
       },

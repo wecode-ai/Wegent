@@ -176,6 +176,9 @@ describe('LocalExecutorCloudBridge', () => {
         await vi.advanceTimersByTimeAsync(1)
       })
       expect(mocks.pluginAuth).toHaveBeenCalledTimes(2)
+      expect(mocks.connect).toHaveBeenCalledTimes(1)
+      expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(1)
+      expect(mocks.issueToken).toHaveBeenCalledTimes(1)
       expect(mocks.disconnect).not.toHaveBeenCalled()
     } finally {
       view.unmount()
@@ -183,7 +186,7 @@ describe('LocalExecutorCloudBridge', () => {
     }
   })
 
-  test('renews a shorter plugin session with the existing runtime refresh timer', async () => {
+  test('renews a shorter plugin session without reconfiguring other services', async () => {
     vi.useFakeTimers()
     mocks.pluginAuth.mockResolvedValue({ ready: true, expiresIn: 2 })
     const view = render(connectedCloudBridge())
@@ -194,6 +197,30 @@ describe('LocalExecutorCloudBridge', () => {
         await vi.advanceTimersByTimeAsync(1_000)
       })
       expect(mocks.pluginAuth).toHaveBeenCalledTimes(2)
+      expect(mocks.connect).toHaveBeenCalledTimes(1)
+      expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(1)
+      expect(mocks.issueToken).toHaveBeenCalledTimes(1)
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  test('plugin provisioning failure cannot postpone Runtime token renewal', async () => {
+    vi.useFakeTimers()
+    mocks.runtimeTokenPost
+      .mockResolvedValueOnce({ auth_token: 'short-runtime-token', expires_in: 2 })
+      .mockResolvedValue({ auth_token: 'renewed-runtime-token', expires_in: 86400 })
+    mocks.pluginAuth.mockResolvedValue({ ready: false, expiresIn: null })
+    const view = render(connectedCloudBridge())
+    try {
+      await flushAsyncEffects()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(2)
+      expect(mocks.connect).toHaveBeenCalledTimes(2)
+      expect(mocks.disconnect).not.toHaveBeenCalled()
     } finally {
       view.unmount()
       vi.useRealTimers()

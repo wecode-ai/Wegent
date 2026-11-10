@@ -21,6 +21,19 @@ export async function verifyPluginNativeAuth({
 }) {
   const flags = { ...cloud.backendEnv }
   const current = (await requestPluginExecutor(control, 'executor.backend.status')).payload.result
+  const stored = JSON.parse(
+    await control.command('getLocalStorageItem', 'body', {
+      value: 'wework.cloudConnection',
+    })
+  )
+  const restoreProfile = async profile => {
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({ cloudConnection: profile }),
+    })
+    const readyCount = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await control.awaitReadyAfter(readyCount)
+  }
   const proxy = await new TransportFaultProxy(cloud.backendUrl).start()
   const fault = proxy.rejectDeviceRegistration()
   const runtime = await fetch(`${cloud.backendUrl}/api/users/me/wegent-runtime-token`, {
@@ -45,6 +58,9 @@ export async function verifyPluginNativeAuth({
     await cloud.stopBackend()
     cloud.backendEnv = { ...flags, PLUGIN_LOCAL_SYNC_ENABLED: 'true' }
     await cloud.launchBackend()
+    // Change the authoritative profile too: a real token renewal must keep
+    // exercising the rejected registration instead of restoring a direct URL.
+    await restoreProfile({ ...stored, socketBaseUrl: proxy.url, socketBaseUrlOverride: proxy.url })
     await configure(proxy.url)
     await until(
       () => fault.rejected,
@@ -141,10 +157,26 @@ export async function verifyPluginNativeAuth({
       )
     )
   } finally {
-    await proxy.stop()
-    await cloud.stopBackend()
-    cloud.backendEnv = flags
-    await cloud.launchBackend()
-    await configure(current.socket_url || cloud.backendUrl)
+    try {
+      await writeFile(
+        join(resultDir, 'plugin-native-registration-fault.json'),
+        JSON.stringify(
+          {
+            submitted: fault.submitted,
+            rejected: fault.rejected,
+            transportError: fault.error ? String(fault.error.message) : null,
+          },
+          null,
+          2
+        )
+      )
+      await cloud.stopBackend()
+      cloud.backendEnv = flags
+      await cloud.launchBackend()
+      await restoreProfile(stored)
+      await configure(current.socket_url || cloud.backendUrl)
+    } finally {
+      await proxy.stop()
+    }
   }
 }
