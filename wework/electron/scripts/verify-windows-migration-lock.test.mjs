@@ -21,8 +21,14 @@ async function packagedApp() {
   const manifestPath = join(resources, 'components.json')
   const executor = join(resources, 'bin', 'wegent-executor.exe')
   const context = { appOutDir: directory, electronPlatformName: 'win32' }
-  await writeFile(manifestPath, JSON.stringify({ components: { executor: { sha256: 'missing' } } }))
-  return { executor, manifestPath, context }
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      windowsRuntime: [],
+      components: { executor: { path: 'bin/wegent-executor.exe', sha256: 'missing' } },
+    })
+  )
+  return { executor, manifestPath, resources, context }
 }
 
 test('rejects a Windows update missing the pre-ready migration executor', async () => {
@@ -50,9 +56,36 @@ test('rejects an executor without the migration lock protocol even when its hash
   const sha256 = createHash('sha256')
     .update(await readFile(executor))
     .digest('hex')
-  await writeFile(manifestPath, JSON.stringify({ components: { executor: { sha256 } } }))
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      windowsRuntime: [],
+      components: { executor: { path: 'bin/wegent-executor.exe', sha256 } },
+    })
+  )
   await expect(verifyWindowsMigrationLock(context)).rejects.toThrow('failed the startup lock check')
 })
+
+test.each(['missing', 'modified'])(
+  'rejects a %s app-local runtime before starting the executor',
+  async state => {
+    const { executor, manifestPath, resources, context } = await packagedApp()
+    await writeFile(executor, 'executor')
+    const sha256 = createHash('sha256').update('executor').digest('hex')
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        windowsRuntime: [{ path: 'bin/vcruntime140.dll', sha256 }],
+        components: { executor: { path: 'bin/wegent-executor.exe', sha256 } },
+      })
+    )
+    if (state === 'modified')
+      await writeFile(join(resources, 'bin', 'vcruntime140.dll'), 'wrong DLL')
+    const result = expect(verifyWindowsMigrationLock(context)).rejects
+    if (state === 'missing') await result.toMatchObject({ code: 'ENOENT' })
+    else await result.toThrow('app-local runtime checksum mismatch')
+  }
+)
 
 test.each(['darwin', 'linux'])('leaves %s package verification unchanged', async platform => {
   await expect(

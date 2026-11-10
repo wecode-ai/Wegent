@@ -73,6 +73,31 @@ test('rejects unsupported delivered packages', () => {
   )
 })
 
+test('publishes and seals the complete Windows native directory including its VC runtime', async () => {
+  const options = await fixture()
+  options.platform = 'windows'
+  options.arch = 'x64'
+  const native = join(options.resourcesRoot, 'bin')
+  await mkdir(native)
+  await writeFile(join(native, 'wegent-executor.exe'), 'delivered executor')
+  await writeFile(join(native, 'vcruntime140.dll'), 'delivered VC runtime')
+  options.manifest.components.executor.path = 'bin'
+  options.manifest.components.executor.sha256 = await hashComponentPath(native)
+  await writeFile(options.manifestPath, JSON.stringify(options.manifest))
+  const result = await preparePackagedComponentAssets(options)
+  const component = result.components.executor
+  expect(component.entryPath).toBe('.')
+  const extracted = join(options.root, 'windows-executor')
+  await mkdir(extracted)
+  await extract({ file: join(options.output, component.assetName), cwd: extracted })
+  expect(await readFile(join(extracted, 'vcruntime140.dll'), 'utf8')).toBe('delivered VC runtime')
+  expect(await hashComponentPath(extracted)).toBe(component.contentSha256)
+  await writeFile(join(native, 'vcruntime140.dll'), 'modified runtime')
+  await expect(preparePackagedComponentAssets(options)).rejects.toThrow(
+    'checksum mismatch: executor'
+  )
+})
+
 test('archives delivered signed bytes even after E2E overwrites mutable build resources', async () => {
   const options = await fixture()
   const staging = join(options.root, 'electron/resources')

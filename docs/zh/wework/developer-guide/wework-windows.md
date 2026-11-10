@@ -62,6 +62,29 @@ NSIS 安装器写入
 安装器使用 Electron Builder 的标准 NSIS 安装流程，不再处理旧 updater 的 `/P`
 参数或旧安装注册表迁移。
 
+### 应用本地 VC++ 运行库
+
+Windows 打包需要 Visual Studio C++ Build Tools 的 x64 可再发行文件。
+构建脚本优先读取 `VCToolsRedistDir`，否则通过微软的 `vswhere.exe` 定位已安装
+工具链的 `VC\Redist\MSVC`。非标准工具链或交叉打包可显式设置
+`WEWORK_VC_REDIST_DIR`，指向官方的 `x64\Microsoft.VC*.CRT` 目录。
+不要从系统目录、第三方 DLL 网站或其他应用复制运行库。
+
+打包按 Executor 和原生启动器的 PE 普通/延迟导入表收集 VC DLL 及其传递依赖，
+只将必要的 x64 DLL 放到各自 EXE 旁边，不运行 `vc_redist`、不写 `System32`。
+因此最终用户不需要额外安装 Node.js 或 VC++ 运行库，也不会因为部署这些 DLL
+而被要求重启。缺失 DLL 或架构不符会直接阻止打包。
+
+Windows 的 `bin` 原生工具目录（Executor、DWS 和本地 VC DLL）作为一个完整
+Executor 组件进行内容校验、发布、激活和回滚。Host-only 更新同样包含启动前
+必须可用的 `bin` 目录和启动器 DLL。打包检查校验运行库哈希，并执行真实的
+迁移锁协议。VC DLL 的安全更新由应用发布负责，不能依赖 Windows Update
+替应用更新这些本地副本。
+
+干净 Windows 沙箱验收应覆盖：不安装全局 VC++ 运行库，首次安装并启动应用，
+完成一次云端模型文字聊天，再验证组件升级和回滚。单元测试或已有全局运行库的
+构建机通过不能替代该验收。
+
 ## 验证
 
 ```powershell

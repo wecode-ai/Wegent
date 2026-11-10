@@ -1,6 +1,6 @@
 import { packager } from '@electron/packager'
 import { spawn } from 'node:child_process'
-import { cp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stringify } from 'yaml'
@@ -53,7 +53,7 @@ await run(
   electronRoot
 )
 await Promise.all(
-  ['scripts', 'src', 'pnpm-workspace.yaml', 'tsconfig.json', 'vitest.config.ts'].map(path =>
+  ['scripts', 'src', 'test', 'pnpm-workspace.yaml', 'tsconfig.json', 'vitest.config.ts'].map(path =>
     rm(join(staging, path), { recursive: true, force: true })
   )
 )
@@ -102,6 +102,11 @@ try {
     },
     extraResource: [
       launcherPath,
+      ...(process.platform === 'win32'
+        ? (await readdir(join(electronRoot, 'resources')))
+            .filter(name => name.toLowerCase().endsWith('.dll'))
+            .map(name => join(electronRoot, 'resources', name))
+        : []),
       ...(process.platform === 'darwin' ? [macosAppIcon.assetCatalog] : []),
       join(electronRoot, 'resources', 'harness-runtime'),
       join(electronRoot, 'resources', 'bin'),
@@ -130,6 +135,10 @@ try {
         updaterCacheDirName: `${identity.packageName.toLowerCase()}-updater`,
       })
     )
+    await builderConfig.afterPack({
+      appOutDir: application,
+      electronPlatformName: process.platform,
+    })
   }
 
   if (process.platform === 'darwin') {

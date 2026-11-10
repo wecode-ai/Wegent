@@ -71,6 +71,35 @@ Icons, plugins, runtime descriptors, and sidecars come from
 The installer uses Electron Builder's standard NSIS installation flow without
 custom passive-install arguments or installation registry migration.
 
+### App-local VC++ runtime
+
+Windows packaging requires the official x64 redistributable files from Visual
+Studio C++ Build Tools. The build uses `VCToolsRedistDir` when configured, or
+Microsoft's `vswhere.exe` to locate the installed toolchain's
+`VC\Redist\MSVC` directory. Nonstandard toolchains and cross-packaging may set
+`WEWORK_VC_REDIST_DIR` to the official `x64\Microsoft.VC*.CRT` directory.
+Do not source runtime DLLs from system directories, third-party DLL sites, or
+other applications.
+
+Packaging reads the Executor and native launcher's PE normal/delay imports and
+their transitive VC dependencies, then places only the required x64 DLLs beside
+each consuming EXE. It neither runs `vc_redist` nor writes to `System32`.
+End users therefore do not install Node.js or a separate VC++ runtime, and this
+DLL deployment does not require a reboot. Missing or wrong-architecture DLLs
+fail packaging.
+
+The Windows `bin` native tool directory (Executor, DWS, and app-local VC DLLs)
+is hashed, published, activated, and rolled back as one complete Executor
+component. Host-only updates also include this pre-startup `bin` directory and
+the launcher's DLLs. Package verification checks runtime hashes and executes
+the real migration-lock protocol. Application releases own security updates
+for these local DLLs; Windows Update does not service the application's copies.
+
+Clean Windows sandbox acceptance must cover first installation and startup
+without a machine-wide VC++ runtime, one cloud-model text conversation, and
+component upgrade and rollback. Unit tests and a build machine with global
+runtimes do not replace that acceptance.
+
 ## Verification
 
 ```powershell

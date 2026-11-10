@@ -27,6 +27,10 @@ import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runti
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 import { extractWeworkAppStaticResources } from '../../scripts/lib/wework-app-component-resources.mjs'
 import { buildLauncher } from './build-launcher.mjs'
+import {
+  deployWindowsAppLocalRuntime,
+  findWindowsCrtDirectory,
+} from './windows-app-local-runtime.mjs'
 import { withTemporaryBuildDirectory } from '../../scripts/lib/temporary-build-directory.mjs'
 import { packagedHarnessRuntimeCatalog } from '../../scripts/lib/packaged-harness-runtime.mjs'
 import builderConfig from '../electron-builder.config.cjs'
@@ -76,7 +80,7 @@ await withTemporaryBuildDirectory({
   consume: async ([executorPath], appWebRoot) => {
     await rm(resourcesRoot, { recursive: true, force: true })
     await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
-    await buildLauncher(resourcesRoot, packageTargets.cargoTarget)
+    const launcherPath = await buildLauncher(resourcesRoot, packageTargets.cargoTarget)
     const runtimeCatalog = JSON.parse(
       await readFile(join(harnessRuntimeMaterializedRoot, 'runtimes.json'), 'utf8')
     )
@@ -131,7 +135,6 @@ await withTemporaryBuildDirectory({
     const packagedExecutor = join(resourcesRoot, 'bin', executorName)
     await cp(executorPath, packagedExecutor)
     if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
-    const executorSha256 = await hashComponentPath(packagedExecutor)
     const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
     const packagedDws = join(resourcesRoot, 'bin', dwsName)
     const dwsSourceName = targetExecutableName(
@@ -140,6 +143,17 @@ await withTemporaryBuildDirectory({
     )
     await cp(join(sharedResourcesRoot, 'binaries', dwsSourceName), packagedDws)
     if (process.platform !== 'win32') await chmod(packagedDws, 0o755)
+    const windowsTarget = packageTargets.cargoTarget.includes('windows')
+    const windowsRuntime = windowsTarget
+      ? await deployWindowsAppLocalRuntime({
+          resources: resourcesRoot,
+          executables: [packagedExecutor, launcherPath],
+          crtDirectory: await findWindowsCrtDirectory(),
+        })
+      : undefined
+    // Windows native tools and their app-local DLLs are one verified update unit.
+    const executorComponentPath = windowsTarget ? 'bin' : `bin/${executorName}`
+    const executorSha256 = await hashComponentPath(join(resourcesRoot, executorComponentPath))
     const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
     const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
     const sourceSha =
@@ -163,6 +177,7 @@ await withTemporaryBuildDirectory({
           readableDataSchemas: builderConfig.extraMetadata.weworkReadableDataSchemas,
           sourceSha,
           channel: process.env.VITE_WEWORK_RELEASE_CHANNEL?.trim() || 'development',
+          ...(windowsRuntime ? { windowsRuntime } : {}),
           components: {
             electron: { version: electronPackage.devDependencies.electron },
             coreDsh: {
@@ -187,7 +202,7 @@ await withTemporaryBuildDirectory({
             },
             executor: {
               version: weworkRuntimeVersion,
-              path: `bin/${executorName}`,
+              path: executorComponentPath,
               sha256: executorSha256,
             },
             codex: {

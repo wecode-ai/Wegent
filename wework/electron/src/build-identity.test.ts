@@ -303,14 +303,11 @@ test.each([
       )
     )
     const resources = [...config.extraResources, ...config.win.extraResources]
-    expect(
-      resources.filter(resource => ['bin', 'bin/wegent-executor.exe'].includes(resource.to))
-    ).toHaveLength(1)
-    expect(config.win.extraResources).toEqual(
-      bootstrapOnly
-        ? [{ from: 'resources/bin/wegent-executor.exe', to: 'bin/wegent-executor.exe' }]
-        : []
-    )
+    expect(resources.filter(resource => resource.to === 'bin')).toHaveLength(1)
+    expect(config.win.extraResources).toEqual([
+      { from: 'resources', to: '.', filter: ['*.dll'] },
+      ...(bootstrapOnly ? [{ from: 'resources/bin', to: 'bin' }] : []),
+    ])
     expect(config.mac.extraResources).toBeUndefined()
     expect(config.linux.extraResources).toBeUndefined()
     expect(require(builderConfigPath).afterPack).toBe(
