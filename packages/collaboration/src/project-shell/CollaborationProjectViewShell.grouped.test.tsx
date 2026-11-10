@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { groupedProjectViewMetadata } from '../workspace-header/ProjectViewSwitcher'
 import {
   CollaborationProjectViewShell,
+  buildCollaborationProjectViewOptions,
   type CollaborationProjectViewShellProps,
   type CollaborationProjectViewExtension,
 } from './CollaborationProjectViewShell'
@@ -91,6 +92,27 @@ function render(overrides: Partial<CollaborationProjectViewShellProps> = {}) {
 }
 
 describe('grouped project shell', () => {
+  it('retains available extensions when their flat ordering anchor is unavailable', () => {
+    const options = buildCollaborationProjectViewOptions({
+      project: props.project,
+      labels: props.labels,
+      testIds: props.testIds,
+      enabledStandardViews: ['board', 'files', 'manage'],
+      extensions,
+      viewMetadata: groupedProjectViewMetadata,
+    })
+    expect(options.map((option) => option.id)).toContain('milestones')
+    render({
+      view: 'milestones',
+      enabledStandardViews: ['board', 'files', 'manage'],
+    })
+    expect(
+      container
+        .querySelector('[data-testid="milestones"]')
+        ?.getAttribute('aria-selected'),
+    ).toBe('true')
+    expect(container.textContent).toContain('milestones-content')
+  })
   it('derives groups from metadata and keeps navigation outside the fixed-height header', () => {
     render({ view: 'calendar' })
     expect(container.textContent).toContain('calendar-content')

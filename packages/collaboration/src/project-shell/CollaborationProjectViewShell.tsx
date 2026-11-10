@@ -162,6 +162,13 @@ export function buildCollaborationProjectViewOptions({
       }),
     )
 
+  const availableOptions = [
+    ...standardOptions,
+    ...extensionOptions.map(({ after: _after, ...option }) => option),
+  ]
+  // Grouped navigation has its own fixed order; flat anchors cannot hide a view.
+  if (hasGroupedProjectViews(availableOptions)) return availableOptions
+
   return standardOptions.flatMap((option) => [
     option,
     ...extensionOptions
