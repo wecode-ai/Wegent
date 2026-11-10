@@ -61,17 +61,31 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       const panel = '[data-testid="stand-in-primary-profile"]'
       const connections = `${panel} [data-testid="stand-in-im-connections"]`
       const refresh = `${panel} [data-testid="stand-in-im-refresh"]`
+      const waitForPrimaryConnections = async count => {
+        await control.command('waitFor', refresh, { enabled: true })
+        await control.command('waitFor', `${connections} [role="status"]`, { visible: false })
+        assert.equal(
+          await control.command(
+            'getElementCount',
+            `${connections} button[data-testid^="stand-in-im-connect-"]`
+          ),
+          String(count)
+        )
+      }
       await control.command('waitFor', connections, { text: '暂无 IM 私聊' })
+      await waitForPrimaryConnections(0)
       await captureScreenshot(control, 'im-stand-in-00-empty-conversations.png')
       keys = (await fixture({ operation: 'seed', count: 1 })).keys
       const first = `[data-testid="stand-in-im-connect-${keys[0]}"]`
       await control.command('clickWhenEnabled', refresh)
       await control.command('waitFor', `${panel} ${first}`)
+      await waitForPrimaryConnections(1)
       await captureScreenshot(control, 'im-stand-in-00-single-conversation.png')
       keys = (await fixture({ operation: 'seed', count: 2 })).keys
       await control.command('clickWhenEnabled', refresh)
       await control.command('waitFor', `${panel} [data-testid="stand-in-im-connect-${keys[1]}"]`)
       await control.command('waitFor', `${panel} ${first}`)
+      await waitForPrimaryConnections(2)
       await captureScreenshot(control, 'im-stand-in-01-primary-conversations.png')
       await control.command('waitFor', `${panel} ${first}`, { enabled: true })
       await control.command('nativePress', `${panel} ${first}`, { key: 'Enter' })
