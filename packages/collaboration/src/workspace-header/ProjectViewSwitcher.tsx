@@ -82,6 +82,7 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
   const memory = selectionMemory ?? localMemory.current
   const messages = projectViewMessages[locale]
   const groups = buildProjectViewNavigation(options)
+  const primaryLabel = groups.map((group) => messages[group.id]).join(' / ')
   const resolvedView = resolveGroupedProjectView(options, value)
   const selectedGroup =
     groups.find((group) =>
@@ -153,7 +154,7 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
   return (
     <nav
       ref={containerRef}
-      aria-label={ariaLabel ?? messages[selectedGroup.id]}
+      aria-label={ariaLabel ?? primaryLabel}
       className="project-view-switcher electron-titlebar-interactive-region"
       data-testid="project-view-switcher"
       data-compact={compact}
@@ -161,7 +162,7 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
       <div
         className="project-view-switcher-primary"
         role="tablist"
-        aria-label={messages.work}
+        aria-label={primaryLabel}
         onKeyDown={navigateTabs}
       >
         {groups.map((group) => (

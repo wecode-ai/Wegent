@@ -91,6 +91,30 @@ afterEach(() => {
 })
 
 describe('grouped project navigation', () => {
+  it('names the primary navigation accurately and consistently while switching views', async () => {
+    render(<Harness />)
+    const navigation = byId('project-view-switcher')
+    const primary = container.querySelector('.project-view-switcher-primary')!
+    expect(navigation.getAttribute('aria-label')).toBe('工作 / 计划 / 管理')
+    expect(primary.getAttribute('aria-label')).toBe('工作 / 计划 / 管理')
+    await click('collaboration-tab-plan')
+    expect(navigation.getAttribute('aria-label')).toBe('工作 / 计划 / 管理')
+    render(
+      <Harness
+        key="restricted-label"
+        options={options.filter((option) => option.group !== 'admin')}
+        ariaLabel="工作"
+      />,
+    )
+    expect(byId('project-view-switcher').getAttribute('aria-label')).toBe(
+      '工作',
+    )
+    expect(
+      container
+        .querySelector('.project-view-switcher-primary')
+        ?.getAttribute('aria-label'),
+    ).toBe('工作 / 计划')
+  })
   it('keeps segment aliases unique when timeline has a separate parent entry', () => {
     render(
       <Harness
