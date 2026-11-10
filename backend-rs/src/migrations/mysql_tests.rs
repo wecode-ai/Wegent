@@ -206,9 +206,9 @@ async fn answer_attempt_upgrade_and_destructive_rollback_preserve_old_answers() 
         assert_eq!(answer.name, "old answer");
         upgrade(mysql).await?;
         check(mysql).await?;
-        let preserved: Name = mysql.fetch_one("SELECT COALESCE(answer_generation_id,'legacy-null') AS name FROM subtasks WHERE id=987", ()).await?;
+        let preserved: Name = mysql.fetch_one("SELECT CAST(COALESCE(answer_generation_id,'legacy-null') AS CHAR) AS name FROM subtasks WHERE id=987", ()).await?;
         assert_eq!(preserved.name, "legacy-null");
-        let document: Name = mysql.fetch_one("SELECT JSON_UNQUOTE(JSON_EXTRACT(chunks,'$[0].content')) AS name FROM knowledge_documents WHERE id=987", ()).await?;
+        let document: Name = mysql.fetch_one("SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(chunks,'$[0].content')) AS CHAR) AS name FROM knowledge_documents WHERE id=987", ()).await?;
         assert_eq!(document.name, "original");
         let snapshots: Vec<Name> = mysql.fetch_all("SELECT title AS name FROM knowledge_citations", ()).await?;
         assert!(snapshots.is_empty());

@@ -500,6 +500,7 @@ async def test_multiple_same_name_documents_mixed_prevalidation_and_read_binding
             kind_id=kb_id,
             user_id=7,
             name="原生资料",
+            file_extension="txt",
             source_type="text",
             status=DocumentStatus.ENABLED,
             is_active=True,

@@ -1,7 +1,8 @@
 import { createAuthenticatedSocketClient } from '@wegent/chat-core'
 import { expect, test } from '@playwright/test'
 import { resolveEvidenceResponseContent } from '../../utils/mock-answer-evidence'
-import { ADMIN_USER } from '../../config/test-users'
+import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
+import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
 import { createExternalImportRetrieval } from '../../utils/external-import-retrieval'
 import { ProviderNativeKnowledgePage } from '../../pages/tasks/provider-native-knowledge.page'
@@ -18,6 +19,8 @@ import {
 test('native RAG answer keeps its committed snapshot across refresh and opens current original', async ({
   page,
   request,
+  browser,
+  baseURL,
 }) => {
   const client = createApiClient(request)
   const login = await client.login(ADMIN_USER.username, ADMIN_USER.password)
@@ -158,6 +161,44 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
       page.getByText('CURRENT-ORIGINAL：项目日期已更新。', { exact: false })
     ).toBeVisible()
     await expect(page.getByTestId('knowledge-source-preview-download')).toHaveCount(0)
+
+    // Reopening must reauthorize the source while answer access remains granted.
+    const recipient = createApiClient(request)
+    const recipientLogin = await recipient.login(REGULAR_USER.username, REGULAR_USER.password, 1)
+    expect(recipientLogin.status).toBe(200)
+    const identity = await recipient.get<{ id: number }>('/api/users/me')
+    expect(identity.status).toBe(200)
+    const membership = { user_id: identity.data!.id, role: 'Reporter' }
+    await create(`/api/share/Task/${taskId}/members`, membership)
+    const sourceMember = await create(`/api/share/KnowledgeBase/${kb.id}/members`, membership)
+    const recipientToken = recipientLogin.data!.access_token
+    const context = await browser.newContext({
+      baseURL,
+      storageState: buildStorageState(baseURL!, recipientToken, getJwtExpiryMs(recipientToken)),
+    })
+    try {
+      const viewer = await context.newPage()
+      await viewer.goto(page.url())
+      const viewerCitation = viewer.getByTestId(id!).first()
+      await viewerCitation.click()
+      await expect(viewer.getByTestId('answer-evidence-content')).toContainText(text)
+      const revoked = await request.delete(
+        `${API}/api/share/KnowledgeBase/${kb.id}/members/${sourceMember.id}`,
+        { headers }
+      )
+      expect(revoked.ok(), await revoked.text()).toBeTruthy()
+      await viewer.getByTestId('answer-evidence-close').click()
+      const denied = viewer.waitForResponse(
+        response =>
+          response.url().includes('/knowledge-bases/citations/') && response.status() === 403
+      )
+      await viewerCitation.click()
+      expect((await denied).status()).toBe(403)
+      await expect(viewer.getByTestId('answer-evidence-content')).toHaveCount(0)
+      await expect(viewer.getByTestId('answer-evidence-panel').getByRole('alert')).toBeVisible()
+    } finally {
+      await context.close()
+    }
   } finally {
     await clearToolScenario(request, prompt)
     if (taskId) await request.delete(`${API}/api/tasks/${taskId}`, { headers })
