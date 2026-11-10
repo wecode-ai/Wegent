@@ -23,6 +23,7 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.services.device.background_db import run_device_background_db
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.device_service import device_service
 from app.services.loop_item_executions.cancellation import execution_cancellation_target
@@ -304,15 +305,9 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
     }
 
 
-async def reconcile_device_executions(
-    *,
-    user_id: int,
-    device_id: str,
-    needs_confirmation_only: bool = False,
-) -> int:
-    """Reconcile active runs through the Executor's current local socket."""
-
-    from app.core.socketio import get_sio
+def _load_reconciliation_refs(
+    user_id: int, device_id: str, needs_confirmation_only: bool
+) -> list[tuple[int, str, int]]:
     from app.db.session import get_db_session
 
     with get_db_session() as db:
@@ -322,15 +317,77 @@ async def reconcile_device_executions(
             runtime_device_id=device_id,
             needs_confirmation_only=needs_confirmation_only,
         )
-        execution_refs = [
-            (execution.id, execution.runtime_task_id) for execution in executions
+        return [
+            (execution.id, execution.runtime_task_id, execution.version)
+            for execution in executions
         ]
+
+
+def _apply_reconciliation_snapshots(
+    user_id: int,
+    device_id: str,
+    execution_refs: list[tuple[int, str, int]],
+    snapshots: dict[str, dict],
+) -> int:
+    from app.db.session import get_db_session
+
+    reconciled = 0
+    with get_db_session() as db:
+        for execution_id, runtime_task_id, version in execution_refs:
+            # Lock the matching revision through the existing state transition.
+            current = db.get(
+                LoopItemExecution,
+                execution_id,
+                populate_existing=True,
+                with_for_update=True,
+            )
+            if current is None or (
+                current.version != version
+                or current.executor_owner_user_id != user_id
+                or current.runtime_device_id != device_id
+                or current.runtime_task_id != runtime_task_id
+            ):
+                db.rollback()
+                continue
+
+            snapshot = snapshots.get(runtime_task_id)
+            loop_item_execution_service.reconcile_runtime_snapshot(
+                db,
+                execution_id=execution_id,
+                runtime_status=(
+                    str(snapshot.get("status") or "") if snapshot else "missing"
+                ),
+                running=bool(snapshot.get("running")) if snapshot else False,
+                turn_status=(
+                    str(snapshot.get("turnStatus") or snapshot.get("turn_status") or "")
+                    if snapshot
+                    else None
+                ),
+            )
+            reconciled += 1
+    return reconciled
+
+
+@trace_async("robot_queue.device_reconcile", tracer_name="backend")
+async def reconcile_device_executions(
+    *,
+    user_id: int,
+    device_id: str,
+    needs_confirmation_only: bool = False,
+    expected_sid: str | None = None,
+) -> int:
+    """Reconcile active runs through the Executor's current local socket."""
+    from app.core.socketio import get_sio
+
+    execution_refs = await run_device_background_db(
+        _load_reconciliation_refs, user_id, device_id, needs_confirmation_only
+    )
     if not execution_refs:
         return 0
 
     online = await device_service.get_device_online_info(user_id, device_id)
     socket_id = (online or {}).get("socket_id") if online else None
-    if not socket_id:
+    if not socket_id or (expected_sid is not None and expected_sid != socket_id):
         return 0
     try:
         response = await get_sio().call(
@@ -361,22 +418,9 @@ async def reconcile_device_executions(
             if task_id:
                 snapshots[task_id] = task
 
-    reconciled = 0
-    with get_db_session() as db:
-        for execution_id, runtime_task_id in execution_refs:
-            snapshot = snapshots.get(runtime_task_id)
-            loop_item_execution_service.reconcile_runtime_snapshot(
-                db,
-                execution_id=execution_id,
-                runtime_status=(
-                    str(snapshot.get("status") or "") if snapshot else "missing"
-                ),
-                running=bool(snapshot.get("running")) if snapshot else False,
-                turn_status=(
-                    str(snapshot.get("turnStatus") or snapshot.get("turn_status") or "")
-                    if snapshot
-                    else None
-                ),
-            )
-            reconciled += 1
-    return reconciled
+    current = await device_service.get_device_online_info(user_id, device_id)
+    if not current or current.get("socket_id") != socket_id:
+        return 0
+    return await run_device_background_db(
+        _apply_reconciliation_snapshots, user_id, device_id, execution_refs, snapshots
+    )

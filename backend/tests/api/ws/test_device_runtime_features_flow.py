@@ -320,11 +320,14 @@ async def test_app_heartbeat_reconciles_wegent_tasks(
     reconcile.assert_any_await(
         user_id=test_user.id,
         device_id=device_id,
+        needs_confirmation_only=False,
+        expected_sid="socket-app",
     )
     reconcile.assert_any_await(
         user_id=test_user.id,
         device_id=device_id,
         needs_confirmation_only=True,
+        expected_sid="socket-app",
     )
     plugin_removal_sync.sync_pending_plugin_removals.assert_awaited_once_with(
         test_user.id, device_id

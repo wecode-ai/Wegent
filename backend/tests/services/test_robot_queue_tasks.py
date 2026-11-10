@@ -744,3 +744,80 @@ async def test_heartbeat_reconciliation_queries_only_unconfirmed_executions(
         needs_confirmation_only=True,
     )
     get_sio.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["none", "version", "sid"])
+async def test_device_reconciliation_writes_off_loop_and_skips_stale_snapshots(
+    test_db: Session, test_user: User, change: str
+) -> None:
+    from app.tasks.robot_queue_tasks import reconcile_device_executions
+
+    execution = _make_execution(test_db, test_user)
+    execution.status = "running"
+    execution.runtime_device_id = "cloud-device"
+    execution.runtime_task_id = "runtime-1"
+    execution_id = execution.id
+    user_id = test_user.id
+    test_db.commit()
+    loop_thread = get_ident()
+    session_open = False
+    sid = "sid"
+
+    @contextmanager
+    def fresh_session():
+        nonlocal session_open
+        assert get_ident() != loop_thread
+        assert not session_open
+        session_open = True
+        try:
+            with Session(test_db.get_bind()) as db:
+                yield db
+        finally:
+            session_open = False
+
+    async def online(*args):
+        return {"socket_id": sid}
+
+    async def call(*args, **kwargs):
+        nonlocal sid
+        assert get_ident() == loop_thread
+        assert not session_open
+        if change == "sid":
+            sid = "replacement"
+        elif change == "version":
+            execution.version += 1
+            test_db.commit()
+        return {
+            "success": True,
+            "workspaces": [{"tasks": [{"taskId": "runtime-1", "status": "running"}]}],
+        }
+
+    def apply(db, *, execution_id, runtime_status, **kwargs):
+        assert get_ident() != loop_thread
+        assert session_open
+        assert runtime_status == "running"
+
+    with (
+        patch("app.db.session.get_db_session", fresh_session),
+        patch(
+            "app.core.socketio.get_sio",
+            return_value=MagicMock(call=AsyncMock(side_effect=call)),
+        ),
+        patch(
+            "app.tasks.robot_queue_tasks.device_service.get_device_online_info",
+            side_effect=online,
+        ),
+        patch.object(
+            loop_item_execution_service, "reconcile_runtime_snapshot", side_effect=apply
+        ) as write,
+    ):
+        count = await reconcile_device_executions(
+            user_id=user_id, device_id="cloud-device", expected_sid="sid"
+        )
+
+    if change == "none":
+        assert count == 1
+        assert write.call_args.kwargs["execution_id"] == execution_id
+    else:
+        assert count == 0
+        write.assert_not_called()

@@ -160,67 +160,70 @@ async def test_device_status_broadcast_reaches_frontend_and_wework_rooms(monkeyp
 
 @pytest.mark.asyncio
 async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
+    from threading import get_ident
+
+    from app.services import user_runtime_config
+
     namespace = device_namespace.DeviceNamespace()
+    loop_thread = get_ident()
     user = SimpleNamespace(
-        id=7,
         preferences=json.dumps(
             {"runtime_configs": {"codex": {"use_user_config": True}}}
-        ),
+        )
     )
     db = MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = user
+    db.get.return_value = user
+    prepared = object()
+    session_open = False
 
     @contextmanager
     def fake_db_session():
-        yield db
+        nonlocal session_open
+        assert get_ident() != loop_thread
+        session_open = True
+        try:
+            yield db
+        finally:
+            session_open = False
 
-    def fake_get_config(db_arg, *, user_id, runtime, preferences):
-        assert db_arg is db
-        assert user_id == 7
-        assert runtime == "codex"
-        assert preferences == user.preferences
-        return {"use_user_config": True, "configured": True}
-
-    sync_auth_to_devices = AsyncMock(
-        return_value={
-            "items": [
-                {
-                    "device_id": "device-1",
-                    "success": True,
-                    "status": "written",
-                }
-            ]
+    def prepare_command(**kwargs):
+        assert session_open
+        assert get_ident() != loop_thread
+        assert kwargs == {
+            "db": db,
+            "user_id": 7,
+            "device_id": "device-1",
+            "command_key": "sync_runtime_auth_file",
         }
-    )
-    monkeypatch.setattr(device_namespace, "_db_session", fake_db_session)
+        return prepared
+
+    async def execute_command(command, *, env):
+        assert not session_open
+        assert get_ident() == loop_thread
+        assert command is prepared
+        assert env["WEGENT_RUNTIME_CONFIG_CONTENT"] == "{}"
+        return {"success": True}
+
+    service = device_namespace.user_runtime_config_service
+    monkeypatch.setattr(user_runtime_config, "get_db_session", fake_db_session)
+    monkeypatch.setattr(service, "_get_kind", Mock())
     monkeypatch.setattr(
-        device_namespace.user_runtime_config_service,
-        "get_config",
-        fake_get_config,
+        service, "_get_spec", Mock(return_value={"auth": {"encryptedValue": "saved"}})
     )
+    monkeypatch.setattr(user_runtime_config, "decrypt_sensitive_data", lambda _: "{}")
     monkeypatch.setattr(
-        device_namespace.user_runtime_config_service,
-        "sync_auth_to_devices",
-        sync_auth_to_devices,
+        user_runtime_config, "prepare_configured_device_command", prepare_command
     )
+    execute = AsyncMock(side_effect=execute_command)
+    monkeypatch.setattr(user_runtime_config, "execute_prepared_device_command", execute)
 
     key = (7, "device-1", "codex")
     namespace._runtime_auth_sync_inflight.add(key)
-
     await namespace._sync_runtime_auth_for_heartbeat_device(
-        user_id=7,
-        device_id="device-1",
-        runtime="codex",
-        key=key,
+        user_id=7, device_id="device-1", runtime="codex", key=key
     )
 
-    sync_auth_to_devices.assert_awaited_once_with(
-        db,
-        user_id=7,
-        runtime="codex",
-        preferences=user.preferences,
-        device_ids=["device-1"],
-    )
+    execute.assert_awaited_once()
     assert key not in namespace._runtime_auth_sync_inflight
 
 

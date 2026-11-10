@@ -92,7 +92,9 @@ from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
+from app.services.device.background_db import record_device_background_overload
 from app.services.device.capability_sync_service import device_capability_sync_service
+from app.services.device.command_service import DeviceCommandError
 from app.services.device.identity import record_route_id
 from app.services.device.presence import (
     PRESENCE_PERSIST_INTERVAL_SECONDS,
@@ -246,6 +248,17 @@ class DeviceRegistrationFingerprint:
     runtime_transfer_port: Optional[int]
     runtime_instance_id: str
     app_device_id: str
+
+
+# Keep the DB executor's wait queue bounded during reconnect storms.
+MAX_DEVICE_BACKGROUND_JOBS = 64
+MAX_HEARTBEAT_BACKGROUND_JOBS = 48
+
+
+@dataclass
+class DeviceReconciliation:
+    sid: str
+    needs_confirmation_only: bool
 
 
 @contextmanager
@@ -1147,6 +1160,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         self._subtask_locks: Dict[int, asyncio.Lock] = {}
         self._runtime_event_locks: Dict[str, asyncio.Lock] = {}
         self._runtime_auth_sync_inflight: set[tuple[int, str, str]] = set()
+        self._device_reconciliations: dict[tuple[int, str], DeviceReconciliation] = {}
         self._connection_attempts: Dict[str, list[float]] = {}
         self._recent_registrations: Dict[
             tuple[int, str],
@@ -1222,6 +1236,71 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 logger.exception("[Device WS] Background task failed: %s", description)
 
         task.add_done_callback(_on_done)
+
+    def _device_background_job_count(self) -> int:
+        return len(self._runtime_auth_sync_inflight) + len(self._device_reconciliations)
+
+    def _schedule_device_reconciliation(
+        self,
+        user_id: int,
+        device_id: str,
+        sid: str,
+        *,
+        needs_confirmation_only: bool = False,
+    ) -> None:
+        key = (user_id, device_id)
+        current = self._device_reconciliations.get(key)
+        if current is not None:
+            # A delayed heartbeat from a different SID must not replace
+            # registration's full scan. A new registration can replace it.
+            if needs_confirmation_only and (
+                current.sid == sid or not current.needs_confirmation_only
+            ):
+                return
+            if current.sid == sid and not current.needs_confirmation_only:
+                return
+        else:
+            limit = (
+                MAX_HEARTBEAT_BACKGROUND_JOBS
+                if needs_confirmation_only
+                else MAX_DEVICE_BACKGROUND_JOBS
+            )
+            if self._device_background_job_count() >= limit:
+                record_device_background_overload("reconcile")
+                return
+
+        self._device_reconciliations[key] = DeviceReconciliation(
+            sid, needs_confirmation_only
+        )
+        if current is None:
+            self._schedule_background_task(
+                self._run_device_reconciliation(key), "reconcile device executions"
+            )
+
+    async def _run_device_reconciliation(self, key: tuple[int, str]) -> None:
+        from app.tasks.robot_queue_tasks import reconcile_device_executions
+
+        user_id, device_id = key
+        try:
+            while True:
+                current = self._device_reconciliations[key]
+                try:
+                    await reconcile_device_executions(
+                        user_id=user_id,
+                        device_id=device_id,
+                        needs_confirmation_only=current.needs_confirmation_only,
+                        expected_sid=current.sid,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[Device WS] Device reconciliation failed: user=%s device=%s",
+                        user_id,
+                        device_id,
+                    )
+                if current is self._device_reconciliations[key]:
+                    return
+        finally:
+            self._device_reconciliations.pop(key, None)
 
     def _get_subtask_lock(self, subtask_id: int) -> asyncio.Lock:
         """Get or create a lock for the given subtask.
@@ -1841,15 +1920,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             ),
             "sync global capabilities after device registration",
         )
-        from app.tasks.robot_queue_tasks import reconcile_device_executions
-
-        self._schedule_background_task(
-            reconcile_device_executions(
-                user_id=int(user_id),
-                device_id=route_id,
-            ),
-            "reconcile active executions after device registration",
-        )
+        self._schedule_device_reconciliation(int(user_id), route_id, sid)
 
         logger.info(
             f"[Device WS] Device registered: user={user_id}, device={payload.device_id}"
@@ -1955,16 +2026,21 @@ class DeviceNamespace(socketio.AsyncNamespace):
         key = (user_id, device_id, CODEX_RUNTIME)
         if key in self._runtime_auth_sync_inflight:
             return
+        if self._device_background_job_count() >= MAX_HEARTBEAT_BACKGROUND_JOBS:
+            record_device_background_overload("auth")
+            return
         self._runtime_auth_sync_inflight.add(key)
-        asyncio.create_task(
+        self._schedule_background_task(
             self._sync_runtime_auth_for_heartbeat_device(
                 user_id=user_id,
                 device_id=device_id,
                 runtime=CODEX_RUNTIME,
                 key=key,
-            )
+            ),
+            "sync runtime auth after device heartbeat",
         )
 
+    @trace_async("device.heartbeat.auth_sync", tracer_name="backend.device")
     async def _sync_runtime_auth_for_heartbeat_device(
         self,
         *,
@@ -1975,57 +2051,20 @@ class DeviceNamespace(socketio.AsyncNamespace):
     ) -> None:
         """Best-effort sync of enabled user runtime auth to one heartbeat device."""
         try:
-            with _db_session() as db:
-                user = db.query(User).filter(User.id == user_id).first()
-                if not user:
-                    logger.warning(
-                        "[Device WS] Runtime auth sync skipped: user not found: user=%s",
-                        user_id,
-                    )
-                    return
-                status = user_runtime_config_service.get_config(
-                    db,
-                    user_id=user_id,
-                    runtime=runtime,
-                    preferences=user.preferences,
-                )
-                if not status.get("use_user_config") or not status.get("configured"):
-                    return
-                result = await user_runtime_config_service.sync_auth_to_devices(
-                    db,
-                    user_id=user_id,
-                    runtime=runtime,
-                    preferences=user.preferences,
-                    device_ids=[device_id],
-                )
-            items = result.get("items") if isinstance(result, dict) else None
-            target_item = next(
-                (
-                    item
-                    for item in (items or [])
-                    if isinstance(item, dict) and item.get("device_id") == device_id
-                ),
-                None,
+            synced = await user_runtime_config_service.sync_heartbeat_auth(
+                user_id=user_id, device_id=device_id, runtime=runtime
             )
-            if not target_item or not target_item.get("success"):
+            if synced is False:
                 logger.warning(
                     "[Device WS] Runtime auth heartbeat sync did not complete: "
-                    "user=%s device=%s runtime=%s result=%s",
+                    "user=%s device=%s runtime=%s",
                     user_id,
                     device_id,
                     runtime,
-                    target_item,
                 )
-        except (UserRuntimeConfigError, UserRuntimeConfigSyncError):
-            logger.exception(
+        except (UserRuntimeConfigError, UserRuntimeConfigSyncError, DeviceCommandError):
+            logger.warning(
                 "[Device WS] Runtime auth heartbeat sync failed: user=%s device=%s runtime=%s",
-                user_id,
-                device_id,
-                runtime,
-            )
-        except Exception:
-            logger.exception(
-                "[Device WS] Runtime auth heartbeat sync errored: user=%s device=%s runtime=%s",
                 user_id,
                 device_id,
                 runtime,
@@ -2230,15 +2269,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"[Device WS] Heartbeat received: user={user_id}, device={payload.device_id}, "
             f"running_tasks={len(payload.running_task_ids)}"
         )
-        from app.tasks.robot_queue_tasks import reconcile_device_executions
-
-        self._schedule_background_task(
-            reconcile_device_executions(
-                user_id=int(user_id),
-                device_id=payload.device_id,
-                needs_confirmation_only=True,
-            ),
-            "reconcile unconfirmed executions after device heartbeat",
+        self._schedule_device_reconciliation(
+            int(user_id), payload.device_id, sid, needs_confirmation_only=True
         )
         from app.services.device.plugin_removal_sync import sync_pending_plugin_removals
 
