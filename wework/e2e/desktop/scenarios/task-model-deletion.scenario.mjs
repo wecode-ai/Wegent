@@ -30,9 +30,11 @@ const SEND = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, resultDir }) {
   let cloud
   let deletedModelId
+  let offlineModelId
   let replyCount = 0
   const modelName = `task-model-deletion-${process.pid}`
   const localModelName = `local-deletion-${process.pid}`
+  const offlineModelName = `task-model-offline-${process.pid}`
   const request = (path, options = {}) =>
     fetchJson(`${cloud.backendUrl}${path}`, {
       ...options,
@@ -41,6 +43,15 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
         'Content-Type': 'application/json',
       },
     })
+
+  async function deletePublicModel(modelId) {
+    // The admin delete endpoint answers 204 with no JSON body.
+    const response = await fetch(`${cloud.backendUrl}/api/admin/public-models/${modelId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${cloud.authToken}` },
+    })
+    assert.equal(response.status, 204, 'Offline fixture cleanup must return 204')
+  }
 
   async function createLocalModel(control) {
     await control.command('navigate', 'body', { value: '/settings/personal/models' })
@@ -310,8 +321,69 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
         await send(control, 'follow-up after cloud deletion')
         assert.equal(replyCount, 3, 'Recovery did not continue the existing task')
         await assertOriginalConversation(control, identity, row)
+
+        // Hiding a public model after it has served the task must not replace
+        // the saved selection: the same task keeps calling it.
+        const offline = await request('/api/admin/public-models', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: offlineModelName,
+            namespace: 'default',
+            json: {
+              apiVersion: 'agent.wecode.io/v1',
+              kind: 'Model',
+              metadata: {
+                name: offlineModelName,
+                namespace: 'default',
+                displayName: offlineModelName,
+              },
+              spec: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                modelType: 'llm',
+                isVisible: true,
+                isWeworkAvailable: true,
+                modelConfig: {
+                  env: {
+                    model: 'openai',
+                    model_id: offlineModelName,
+                    base_url: `${cloud.modelServerUrl}/v1`,
+                    api_key: 'desktop-e2e',
+                  },
+                },
+              },
+            },
+          }),
+        })
+        offlineModelId = offline.id
+        assert.ok(offlineModelId, 'The offline fixture was not persisted')
+        await selectE2EModel(control, offlineModelName, offlineModelName)
+        await send(control, 'offline initial')
+        await request(`/api/admin/public-models/${offlineModelId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ is_visible: false }),
+        })
+        await reloadMainWindow(
+          control,
+          'The renderer did not reconnect after the model went offline'
+        )
+        await control.command('waitFor', taskSelector)
+        await control.command('click', taskSelector)
+        await control.command('waitFor', SELECTOR, { text: offlineModelName })
+        // The hidden model is still a usable saved selection, unlike the
+        // deleted-model recovery path, so the composer stays enabled.
+        assert.equal(Number(await control.command('getElementCount', `${SELECTOR}:disabled`)), 0)
+        await control.command('waitFor', SEND, { visible: true })
+        await send(control, 'continue after offline')
+        assert.equal(
+          replyCount,
+          5,
+          'Continuing a task after its model went offline did not reach the model'
+        )
+        await assertOriginalConversation(control, identity, row)
       } finally {
         if (deletedModelId) await request(`/api/models/${deletedModelId}`, { method: 'DELETE' })
+        if (offlineModelId) await deletePublicModel(offlineModelId)
       }
     },
   }

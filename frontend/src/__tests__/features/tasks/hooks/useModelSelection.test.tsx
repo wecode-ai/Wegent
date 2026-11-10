@@ -692,6 +692,35 @@ describe('useModelSelection', () => {
     expect(result.current.selectedModel?.name).toBe('hidden-public-model')
   })
 
+  it('keeps a typed recorded task model when a refresh hides it from the catalog', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    const modelLoad = mockDeferredModelsLoad([mockModel])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: 100,
+        taskModelId: mockModel.name,
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+    await waitFor(() =>
+      expect(result.current.selectedModel).toEqual(expect.objectContaining(mockModel))
+    )
+    expect(result.current.selectedModel?.type).toBe('public')
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: [] })
+    await act(async () => {
+      await result.current.refreshModels()
+    })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.selectedModel).toEqual(expect.objectContaining(mockModel))
+    expect(result.current.selectedModel?.type).toBe('public')
+    expect(result.current.isModelRequired).toBe(false)
+  })
+
   it('does not save a restored placeholder as the team model preference', async () => {
     ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
     ;(saveGlobalModelPreference as jest.Mock).mockClear()
