@@ -211,6 +211,7 @@ fn cloud_runtime_spec(
             .map(Value::from)
             .unwrap_or(Value::Null),
     );
+    crate::device_presence::mark_registered(&mut updated, chrono::Utc::now());
     Some(serde_json::to_string(&updated).expect("a JSON value serializes"))
 }
 
@@ -604,6 +605,7 @@ fn create_device_json(
     document.insert("status".into(), serde_json::json!({"state": "Available"}));
     let mut json = Value::Object(document);
     set_device_display_name(&mut json, &payload.name);
+    crate::device_presence::mark_registered(&mut json, chrono::Utc::now());
     python_json_value(&json)
 }
 
@@ -667,6 +669,7 @@ fn updated_device_json(
         "bindShell".into(),
         Value::String(payload.bind_shell.value().to_owned()),
     );
+    crate::device_presence::mark_registered(&mut json, chrono::Utc::now());
     Ok(python_json_value(&json))
 }
 
@@ -696,6 +699,56 @@ fn set_device_display_name(json: &mut Value, display_name: &str) {
         if let Some(map) = entry.as_object_mut() {
             map.insert("displayName".into(), Value::String(display_name.to_owned()));
         }
+    }
+}
+
+pub(super) const PERSIST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+pub(super) async fn persist_observation(
+    state: &crate::state::AppState,
+    user_id: i64,
+    route_id: &str,
+    instance_id: Option<&str>,
+    observed_at: chrono::DateTime<chrono::Utc>,
+    force: bool,
+) {
+    let record_id = crate::device_identity::record_id_from_route(route_id);
+    let timestamp = observed_at.to_rfc3339_opts(chrono::SecondsFormat::Micros, false);
+    let cutoff = if force {
+        observed_at - chrono::TimeDelta::microseconds(1)
+    } else {
+        observed_at - chrono::TimeDelta::seconds(PERSIST_INTERVAL.as_secs() as i64)
+    }
+    .to_rfc3339_opts(chrono::SecondsFormat::Micros, false);
+    let sql = "UPDATE kinds SET json=JSON_SET(
+                   IF(JSON_TYPE(JSON_EXTRACT(json, '$.status')) = 'OBJECT', json,
+                      JSON_SET(json, '$.status', JSON_OBJECT())),
+                   '$.status.lastSeenAt', ?)
+               WHERE user_id=? AND kind='Device' AND namespace='default' AND is_active IS true
+                 AND (id=? OR (? IS NULL AND name=?))
+                 AND (CASE WHEN JSON_TYPE(JSON_EXTRACT(json, '$.spec.runtimeInstanceId')) = 'STRING'
+                           THEN JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.runtimeInstanceId'))
+                      END) <=> ?
+                 AND (JSON_TYPE(JSON_EXTRACT(json, '$.status.lastSeenAt')) IS NULL
+                      OR JSON_TYPE(JSON_EXTRACT(json, '$.status.lastSeenAt')) <> 'STRING'
+                      OR JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.lastSeenAt')) <= ?)";
+    if let Err(error) = state
+        .mysql
+        .execute(
+            sql,
+            (
+                timestamp.as_str(),
+                user_id,
+                record_id,
+                record_id,
+                route_id,
+                instance_id,
+                cutoff.as_str(),
+            ),
+        )
+        .await
+    {
+        tracing::warn!(%error, user_id, route_id, "failed to persist device presence");
     }
 }
 

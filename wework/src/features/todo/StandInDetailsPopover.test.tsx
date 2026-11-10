@@ -241,3 +241,28 @@ it('does not turn subagent children or execution blocks into separate activities
   expect(screen.queryByText('内部检索代理')).not.toBeInTheDocument()
   expect(screen.queryByText('内部分析代理')).not.toBeInTheDocument()
 })
+
+it('opens IM directly from the identity popover and returns there on Escape', async () => {
+  const user = userEvent.setup()
+  const props = fixture({
+    imConnections: {
+      services: {
+        imSessionApi: {
+          listPrivateSessions: vi.fn().mockResolvedValue({ items: [] }),
+          bindStandIn: vi.fn(),
+        },
+      } as unknown as import('@/features/workbench/workbenchServices').WorkbenchServices,
+      deviceId: 'local',
+    },
+  })
+  const trigger = await screen.findByTestId('stand-in-im-channel-telegram')
+  await user.click(trigger)
+  await screen.findByTestId('stand-in-im-dialog')
+  expect(screen.getByTestId('stand-in-details-popover')).toHaveAttribute('inert')
+  expect(props.onSettings).not.toHaveBeenCalled()
+  await user.keyboard('{Escape}')
+  expect(screen.queryByTestId('stand-in-im-dialog')).not.toBeInTheDocument()
+  expect(props.onClose).not.toHaveBeenCalled()
+  expect(screen.getByTestId('stand-in-details-popover')).not.toHaveAttribute('inert')
+  await vi.waitFor(() => expect(trigger).toHaveFocus())
+})

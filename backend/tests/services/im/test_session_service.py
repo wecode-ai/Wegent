@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.models.im_session import IMSessionMode, IMSessionState
+from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.user import User
 from app.services.im.session_service import im_session_service
 
@@ -40,9 +40,6 @@ async def test_get_or_create_private_session_uses_stable_redis_key(
     assert refreshed.session_key == first.session_key
     assert refreshed.display_name == "Alice New"
     assert refreshed.proactive_recipient_id == "staff-original"
-    assert refreshed.mode == IMSessionMode.CHAT
-    assert refreshed.state == IMSessionState.IDLE
-    assert refreshed.active_task_id is None
     assert (
         f"channel:user_private_sessions:{test_user.id}" in fake_im_session_cache.zsets
     )
@@ -89,64 +86,6 @@ async def test_list_user_sessions_returns_recent_redis_sessions(
 
 
 @pytest.mark.asyncio
-async def test_pending_state_expires_and_returns_to_idle(
-    fake_im_session_cache,
-    test_user: User,
-) -> None:
-    session = await im_session_service.get_or_create_private_session(
-        db=None,
-        user_id=test_user.id,
-        channel_type="telegram",
-        channel_id=33,
-        conversation_id="chat-9",
-        sender_id="1001",
-        display_name="Alice",
-    )
-    await im_session_service.set_pending_state(
-        db=None,
-        session=session,
-        state=IMSessionState.PENDING_TASK_SWITCH,
-        payload={"task_ids": [1, 2]},
-        expires_at=datetime.now() - timedelta(seconds=1),
-    )
-
-    active_payload = await im_session_service.get_active_pending_payload(None, session)
-
-    assert active_payload is None
-    assert session.state == IMSessionState.IDLE
-    assert session.pending_payload == {}
-
-
-@pytest.mark.asyncio
-async def test_bind_active_task_sets_task_mode_and_clears_pending_state(
-    fake_im_session_cache,
-    test_user: User,
-) -> None:
-    session = await im_session_service.get_or_create_private_session(
-        db=None,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=12,
-        conversation_id="conv-1",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.set_pending_state(
-        db=None,
-        session=session,
-        state=IMSessionState.PENDING_TASK_CREATION,
-        payload={"first_message": "fix auth"},
-    )
-
-    await im_session_service.bind_active_task(None, session=session, task_id=7001)
-
-    assert session.mode == IMSessionMode.TASK
-    assert session.state == IMSessionState.IDLE
-    assert session.active_task_id == 7001
-    assert session.pending_payload == {}
-
-
-@pytest.mark.asyncio
 async def test_im_notification_presence_aggregates_clients_and_expires(
     fake_im_session_cache,
     test_user: User,
@@ -177,3 +116,68 @@ async def test_im_notification_presence_aggregates_clients_and_expires(
     key = f"channel:user_im_notification_presence:{test_user.id}"
     fake_im_session_cache.zsets[key] = {"client-a\0active": 0}
     assert await im_session_service.is_user_away_for_im_notifications(test_user.id)
+
+
+async def test_loading_legacy_session_drops_task_bindings_and_preserves_address(
+    fake_im_session_cache,
+):
+    old = {
+        "session_key": "legacy",
+        "user_id": 7,
+        "channel_type": "telegram",
+        "channel_id": 1,
+        "conversation_id": "chat",
+        "sender_id": "sender",
+        "mode": "task",
+        "state": "pending_task_switch",
+        "active_task_id": 42,
+        "active_runtime_task": {"deviceId": "old", "localTaskId": "old-task"},
+        "pending_payload": {"choices": [42]},
+        "state_expires_at": "2020-01-01T00:00:00",
+    }
+    old.update(
+        {
+            key: datetime.now().isoformat()
+            for key in ("last_seen_at", "created_at", "updated_at")
+        }
+    )
+    await fake_im_session_cache.set("channel:private_session:legacy", old)
+    session = await im_session_service.get_session("legacy")
+    assert session is not None
+    assert session.conversation_id == "chat"
+    assert await im_session_service.get_mode(session) == IMSessionMode.STAND_IN
+    assert not hasattr(session, "active_task_id")
+    assert not hasattr(session, "active_runtime_task")
+    await im_session_service.save_session(session)
+    saved = fake_im_session_cache.values["channel:private_session:legacy"]
+    assert "active_task_id" not in saved
+    assert "mode" not in saved
+    assert "pending_payload" not in saved
+
+
+async def test_address_refresh_cannot_overwrite_a_concurrent_mode_change(
+    fake_im_session_cache,
+):
+    session = IMPrivateSession("mode-race", 7, "telegram", 1, "chat", "sender")
+    await im_session_service.save_session(session)
+    stale = await im_session_service.get_session(session.session_key)
+    await im_session_service.set_mode(session, IMSessionMode.STAND_IN)
+    await im_session_service.save_session(stale)
+    assert await im_session_service.get_mode(stale) == IMSessionMode.STAND_IN
+    await im_session_service.set_mode(session, IMSessionMode.CHAT)
+    await im_session_service.save_session(stale)
+    assert await im_session_service.get_mode(stale) == IMSessionMode.CHAT
+
+
+async def test_legacy_task_read_cannot_reactivate_stand_in_after_chat_choice(
+    fake_im_session_cache,
+):
+    session = IMPrivateSession("legacy-mode", 7, "telegram", 1, "chat", "sender")
+    data = session.to_dict()
+    data["mode"] = "task"
+    await fake_im_session_cache.set("channel:private_session:legacy-mode", data)
+    await im_session_service.get_session("legacy-mode")
+    assert await im_session_service.get_mode(session) == IMSessionMode.STAND_IN
+    await im_session_service.set_mode(session, IMSessionMode.CHAT)
+    await im_session_service.get_session("legacy-mode")
+    assert await im_session_service.get_mode(session) == IMSessionMode.CHAT

@@ -74,6 +74,16 @@ pub trait VideoExtensions: Send + Sync {
     fn resolve_material(&self, _type_data: &Value, _media_type: &str) -> Option<Value> {
         None
     }
+    /// Resolve one authorized uploaded reference before sending it to a provider.
+    async fn resolve_uploaded_material(
+        &self,
+        type_data: &Value,
+        media_type: &str,
+        _user_id: i64,
+        _attachment_id: i64,
+    ) -> Result<Option<Value>> {
+        Ok(self.resolve_material(type_data, media_type))
+    }
     fn provider_content(
         &self,
         _protocol: &str,

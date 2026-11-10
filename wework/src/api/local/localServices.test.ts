@@ -4229,7 +4229,7 @@ describe('createLocalAppServices', () => {
     ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
     ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
   ])(
-    'uses the native %s Responses profile with high reasoning',
+    'uses compatible %s Responses tools by default with high reasoning',
     async (modelId, catalogModelId) => {
       saveLocalModelConfig({
         id: modelId,
@@ -4238,7 +4238,6 @@ describe('createLocalAppServices', () => {
         modelId,
         baseUrl: 'https://api.deepseek.com',
         apiFormat: 'openai-responses',
-        toolProfile: 'custom',
         requestPath: '/responses',
         apiKey: 'deepseek-key',
         contextWindow: 1_048_576,
@@ -4270,8 +4269,8 @@ describe('createLocalAppServices', () => {
           upstream_api_format: 'openai-responses',
           tool_profile: 'function',
           codex_catalog_model_id: catalogModelId,
-          native_tool_search: true,
-          native_namespace_tools: true,
+          native_tool_search: false,
+          native_namespace_tools: false,
           model_context_window: 1_048_576,
           reasoning: { effort: 'high' },
         })
@@ -4591,7 +4590,7 @@ describe('createLocalAppServices', () => {
         codex_request_mode: 'passthrough',
         reasoning: { effort: 'high', summary: 'detailed' },
         api_format: 'responses',
-        tool_profile: 'custom',
+        tool_profile: 'function',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',
@@ -4837,7 +4836,7 @@ describe('createLocalAppServices', () => {
         upstream_api_format: 'openai-chat-completions',
         native_tool_search: false,
         native_namespace_tools: false,
-        tool_profile: 'custom',
+        tool_profile: 'function',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',

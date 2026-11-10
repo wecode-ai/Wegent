@@ -17,9 +17,7 @@ const session = (key: string): IMPrivateSession => ({
   conversation_id: key,
   sender_id: key,
   display_name: key,
-  mode: 'task',
-  state: 'idle',
-  active_task_id: null,
+  mode: 'stand_in',
   last_seen_at: '2026-10-30T00:00:00Z',
 })
 

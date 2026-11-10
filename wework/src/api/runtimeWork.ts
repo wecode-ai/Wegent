@@ -4,8 +4,6 @@ import type { LocalRuntimeSidebarOptions } from '@/lib/local-runtime-sidebar-ide
 import type {
   ArchivedConversationsListRequest,
   ArchivedConversationsListResponse,
-  BindRuntimeTaskIMSessionsRequest,
-  BindRuntimeTaskIMSessionsResponse,
   DeleteDeviceWorkspaceRequest,
   DeleteDeviceWorkspaceResponse,
   DeviceWorkspaceResponse,
@@ -275,11 +273,6 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     restoreWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
       return client.post('/runtime-work/worktrees/restore', data)
-    },
-    bindRuntimeTaskImSessions(
-      data: BindRuntimeTaskIMSessionsRequest
-    ): Promise<BindRuntimeTaskIMSessionsResponse> {
-      return client.post('/runtime-work/im-sessions', data)
     },
     getImNotificationSettings(): Promise<RuntimeIMNotificationSettingsResponse> {
       return client.get('/runtime-work/im-notifications')

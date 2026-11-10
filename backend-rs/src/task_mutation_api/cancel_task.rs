@@ -66,7 +66,7 @@ pub(crate) async fn cancel_task(
 /// `get_task_detail` through the shared detail chain; only the status is
 /// consumed, but the source issues every related read before the state gate.
 async fn task_status(state: &AppState, task_id: i64, user_id: i64) -> Result<String, FastApiError> {
-    match build_task_detail(state, task_id, user_id, None).await {
+    match build_task_detail(state, task_id, user_id, None, false).await {
         Ok(outcome) => Ok(outcome.body.status),
         Err(error) => {
             if error.downcast_ref::<TaskNotFound>().is_some() {

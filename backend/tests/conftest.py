@@ -123,6 +123,19 @@ class FakeIMSessionCache:
         self.expires[key] = expire
         return True
 
+    async def get_or_raise(self, key: str) -> Any:
+        return await self.get(key)
+
+    async def set_or_raise(
+        self, key: str, value: Any, expire: int | None = None
+    ) -> bool:
+        return await self.set(key, value, expire)
+
+    async def setnx(self, key: str, value: Any, expire: int | None = None) -> bool:
+        if key in self.values:
+            return False
+        return await self.set(key, value, expire)
+
     async def delete(self, key: str) -> bool:
         existed = key in self.values
         self.values.pop(key, None)

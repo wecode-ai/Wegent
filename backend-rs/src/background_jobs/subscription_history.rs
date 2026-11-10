@@ -61,8 +61,8 @@ fn column<T: FromMysqlCol>(row: &MysqlRow, name: &str) -> Option<T> {
     row.get_at::<T>(crate::task_store::subtask_column_index(name)?)
         .ok()
 }
-type Entry = (i64, String, String, String, Value);
-fn rebuild(entries: Vec<Entry>, limit: usize) -> Vec<Value> {
+pub(crate) type Entry = (i64, String, String, String, Value);
+pub(crate) fn rebuild(entries: Vec<Entry>, limit: usize) -> Vec<Value> {
     let mut messages: Vec<_> = entries
         .into_iter()
         .filter_map(|(_, status, role, prompt, result)| {

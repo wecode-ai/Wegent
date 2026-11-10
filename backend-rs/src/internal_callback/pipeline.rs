@@ -139,6 +139,8 @@ async fn dispatch_execution(
             new_session: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
+            web_runtime_guidance: false,
+            subtask_bot_resolved: false,
         },
     )
     .await?;
@@ -202,6 +204,9 @@ async fn dispatch_execution(
             target_url: url.to_string(),
             request: execution,
             request_id,
+            forward: false,
+            start_data: serde_json::Value::Null,
+            created_task: None,
         };
         state
             .responses_dispatch
@@ -211,13 +216,18 @@ async fn dispatch_execution(
         state
             .responses_dispatch
             .submit(DefaultDispatchJob::Executor {
+                consumer: Box::new(crate::responses::dispatch::ConsumerState::from_app(state)),
+                task_id: execution.task_id,
+                subtask_id: execution.subtask_id,
+                user_id: execution.user_id,
+                message_id: execution.message_id,
                 url: executor_client::executor_responses_url(url),
                 body: serde_json::to_value(dispatch::assemble(&execution, false, true))
                     .map_err(|_| FastApiError::internal())?,
                 start: state
                     .redis
                     .clone()
-                    .map(|redis| crate::responses::dispatch::start_event(redis, &execution)),
+                    .map(|redis| crate::responses::dispatch::start_event(redis, &execution, None)),
             });
     }
     Ok(())

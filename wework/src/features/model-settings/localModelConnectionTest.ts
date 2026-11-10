@@ -156,6 +156,9 @@ function normalizeStreamedToolItem(item: unknown): Record<string, unknown> | nul
     type: candidate.type,
     name: candidate.name,
     ...(typeof input === 'string' ? { input } : {}),
+    ...(candidate.type === 'function_call' && typeof candidate.arguments === 'string'
+      ? { arguments: candidate.arguments }
+      : {}),
   }
 }
 
@@ -197,7 +200,12 @@ function responseItemsFromEvent(
     const input = payload.input ?? payload.arguments
     if (typeof input !== 'string' || !itemId) return
     const existing = items.get(itemId)
-    if (existing) items.set(itemId, { ...existing, input })
+    if (existing)
+      items.set(itemId, {
+        ...existing,
+        input,
+        ...(type === 'response.function_call_arguments.done' ? { arguments: input } : {}),
+      })
     return
   }
 }
@@ -235,6 +243,16 @@ async function readResponsesProbeBody(response: Response): Promise<unknown> {
   }
 }
 
+function hasValidFunctionProbeArguments(argumentsValue: unknown, exact: boolean): boolean {
+  if (typeof argumentsValue !== 'string') return false
+  try {
+    const input = recordOf(JSON.parse(argumentsValue))?.input
+    return typeof input === 'string' && input.trim().length > 0 && (!exact || input === 'PING')
+  } catch {
+    return false
+  }
+}
+
 function hasProbeToolCall(
   apiFormat: LocalModelApiFormat,
   toolProfile: LocalModelToolProfile,
@@ -261,13 +279,17 @@ function hasProbeToolCall(
   const expectedToolName = toolProfile === 'custom' ? APPLY_PATCH_TOOL_NAME : PROBE_TOOL_NAME
   return arrayOf(value.output).some(item => {
     const candidate = recordOf(item)
+    if (!candidate || candidate.name !== expectedToolName) return false
+    if (toolProfile !== 'custom')
+      return (
+        candidate.type === 'function_call' &&
+        hasValidFunctionProbeArguments(candidate.arguments, verifyExactProbePayload)
+      )
     return (
-      (candidate?.type === 'custom_tool_call' || candidate?.type === 'function_call') &&
-      candidate.name === expectedToolName &&
-      (toolProfile !== 'custom' ||
-        (verifyExactProbePayload
-          ? candidate.input === APPLY_PATCH_PROBE
-          : typeof candidate.input === 'string' && candidate.input.trim().length > 0))
+      (candidate.type === 'custom_tool_call' || candidate.type === 'function_call') &&
+      (verifyExactProbePayload
+        ? candidate.input === APPLY_PATCH_PROBE
+        : typeof candidate.input === 'string' && candidate.input.trim().length > 0)
     )
   })
 }

@@ -83,24 +83,25 @@ pub(crate) async fn task_detail(
 
     // `task_kinds_service.get_task_detail`; a missing/inaccessible task
     // raises the source 404.
-    let outcome = match build_task_detail(state, task_id, user_id, Some(&client_origin)).await {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            if error.downcast_ref::<TaskNotFound>().is_some() {
+    let outcome =
+        match build_task_detail(state, task_id, user_id, Some(&client_origin), false).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if error.downcast_ref::<TaskNotFound>().is_some() {
+                    return Err(ApiError {
+                        status: StatusCode::NOT_FOUND,
+                        detail: "Task not found".to_owned(),
+                        www_authenticate: false,
+                    });
+                }
+                warn!(%error, %task_id, "[task_detail] internal error");
                 return Err(ApiError {
-                    status: StatusCode::NOT_FOUND,
-                    detail: "Task not found".to_owned(),
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    detail: "Internal server error".to_owned(),
                     www_authenticate: false,
                 });
             }
-            warn!(%error, %task_id, "[task_detail] internal error");
-            return Err(ApiError {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                detail: "Internal server error".to_owned(),
-                www_authenticate: false,
-            });
-        }
-    };
+        };
 
     Ok(outcome.body)
 }

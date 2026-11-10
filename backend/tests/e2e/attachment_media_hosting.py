@@ -36,7 +36,7 @@ if __name__ == "__main__":
         "errors": len(result.errors),
         "skipped": len(result.skipped),
         "success": result.wasSuccessful()
-        and result.testsRun == 10
+        and result.testsRun == 11
         and not result.skipped,
     }
     (REPORT / "result.json").write_text(json.dumps(report, indent=2) + "\n")

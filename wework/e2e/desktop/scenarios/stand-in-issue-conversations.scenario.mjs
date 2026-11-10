@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { setTimeout as poll } from 'node:timers/promises'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { verifyStandInConversationAssignmentIndependence } from '../modules/stand-in-conversation-assignment-independence.mjs'
 import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import {
@@ -485,6 +486,21 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         'Saved manual flags must not mint manual authority'
       )
       assert.equal(transcript.origin.triggerCommentId, null)
+      await verifyStandInConversationAssignmentIndependence({
+        control,
+        cloud,
+        user,
+        project,
+        roleId: ROLE,
+        issue: assigned,
+        taskId: assignmentTask,
+        deviceId: assignedBindings[0].device_id,
+        marker: MARKER,
+        rpc,
+        request,
+        until,
+        timeoutMs: uiTimeoutMs,
+      })
       settings = await rpc('runtime.stand_in.personal.get', { userId: user.id })
       await rpc('runtime.stand_in.personal.save', {
         userId: user.id,

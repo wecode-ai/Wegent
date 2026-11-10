@@ -38,6 +38,83 @@ fn fixture() -> (tempfile::TempDir, RuntimeWorkRpcHandler, StandInMcpIdentity) {
     (root, handler, identity)
 }
 
+fn im_followup_payload(handler: &RuntimeWorkRpcHandler, task: &str, callback: &str) -> Value {
+    json!({
+        "taskId": task,
+        "message": callback,
+        "clientUserMessageId": callback,
+        "source": {"source":"im","callback_id":callback},
+        "executionRequest": handler.local_task_link(task).unwrap().runtime_handle["executionRequest"]
+    })
+}
+
+#[tokio::test]
+async fn im_followup_queues_while_the_initial_identity_session_is_not_ready() {
+    let (_root, handler, identity) = fixture();
+    handler
+        .store
+        .update_task(&identity.task_id, |link| link.thread_id = None);
+    let initial = im_followup_payload(&handler, &identity.task_id, "first-callback");
+    let mut request = execution_request(&initial).unwrap();
+    apply_runtime_payload_metadata(&mut request, &initial);
+    handler
+        .queue_turn(SpawnTurnRequest {
+            task_kind: None,
+            local_task_id: identity.task_id.clone(),
+            runtime: "codex".into(),
+            request,
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_goal: None,
+        })
+        .await
+        .unwrap();
+
+    let result = handler
+        .dispatch_stand_in_conversation(
+            im_followup_payload(&handler, &identity.task_id, "second-callback"),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["accepted"], true, "{result}");
+    let scheduler = handler.turn_scheduler.lock().unwrap();
+    assert_eq!(scheduler.queued_turns.len(), 2);
+    assert_eq!(
+        scheduler.queued_turns[0].request.extra["source"]["callback_id"],
+        "first-callback"
+    );
+    assert_eq!(
+        scheduler.queued_turns[1].request.extra["source"]["callback_id"],
+        "second-callback"
+    );
+}
+
+#[tokio::test]
+async fn im_followup_rejects_an_idle_identity_with_a_missing_session() {
+    let (_root, handler, identity) = fixture();
+    handler
+        .store
+        .update_task(&identity.task_id, |link| link.thread_id = None);
+    let result = handler
+        .dispatch_stand_in_conversation(
+            im_followup_payload(&handler, &identity.task_id, "idle-callback"),
+            false,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(result.code, "missing_runtime_session");
+    assert!(handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .queued_turns
+        .is_empty());
+}
+
 async fn owner_input(
     handler: &RuntimeWorkRpcHandler,
     identity: &StandInMcpIdentity,

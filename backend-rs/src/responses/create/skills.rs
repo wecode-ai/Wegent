@@ -89,6 +89,10 @@ pub struct SkillRefMeta {
     pub namespace: String,
     pub is_public: bool,
     pub content_hash: Option<String>,
+    /// `get_runtime_skill_shells(skill)`; omitted when the package declares
+    /// none (`build_skill_ref_meta` only adds the key for a non-empty list).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind_shells: Option<Vec<String>>,
 }
 
 impl SkillRefMeta {
@@ -110,8 +114,65 @@ impl SkillRefMeta {
             },
             is_public: row.kinds_user_id == 0,
             content_hash: file_hash.map(|hash| format!("sha256:{hash}")),
+            bind_shells: runtime_skill_shells(row),
         }
     }
+}
+
+/// `skill_resolution.get_runtime_skill_shells`: the package's `spec.bindShells`
+/// projected onto the request, with the built-in interactive-form Skill's
+/// shipped Codex compatibility retained.
+///
+/// `build_skill_ref_meta`/`binding_reference` add the key only for a non-empty
+/// list, so this wrapper keeps that omission while
+/// [`project_runtime_skill_shells`] preserves an explicit empty array.
+fn runtime_skill_shells(row: &SkillKindRow) -> Option<Vec<String>> {
+    project_runtime_skill_shells(
+        &row.kinds_json.0,
+        row.kinds_user_id,
+        &row.kinds_namespace,
+        &row.kinds_name,
+    )
+    .filter(|shells| !shells.is_empty())
+}
+
+/// `skill_resolution.get_runtime_skill_shells` over a persisted Kind JSON.
+///
+/// `None` when `spec.bindShells` is absent, `Some([])` for an explicitly empty
+/// array, and the declared list (plus the built-in interactive-form Skill's
+/// shipped Codex compatibility) otherwise.
+pub(crate) fn project_runtime_skill_shells(
+    json: &Value,
+    user_id: i64,
+    namespace: &str,
+    name: &str,
+) -> Option<Vec<String>> {
+    let spec = json.get("spec");
+    let shells = spec
+        .and_then(|spec| spec.get("bindShells"))
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let has_claude = shells.iter().any(|shell| shell == "ClaudeCode");
+    let has_codex = shells.iter().any(|shell| shell == "Codex");
+    let interactive_mcp = spec
+        .and_then(|spec| spec.get("mcpServers"))
+        .and_then(Value::as_object)
+        .is_some_and(|servers| servers.contains_key("wegent-interactive-form-question"));
+    if has_claude
+        && !has_codex
+        && interactive_mcp
+        && user_id == 0
+        && namespace == "default"
+        && name == "interactive"
+    {
+        let mut shells = shells;
+        shells.push("Codex".to_string());
+        return Some(shells);
+    }
+    Some(shells)
 }
 
 /// `_get_bot_skills`' Ghost-skill ref (`request_builder.py:1685-1701`):
@@ -605,18 +666,33 @@ pub async fn list_user_default_skill_refs<M: Mysql>(
         let Some(skill) = skill else {
             continue;
         };
-        let mut reference = serde_json::json!({
-            "skill_id": skill.kinds_id,
-            "name": skill.kinds_name,
-            "namespace": skill.kinds_namespace,
-            "is_public": skill.kinds_user_id == 0,
-        });
-        if extract_force_preload(&binding.kinds_json.0) {
-            reference["force_preload"] = Value::Bool(true);
-        }
-        refs.push(reference);
+        refs.push(binding_reference(
+            &skill,
+            extract_force_preload(&binding.kinds_json.0),
+        ));
     }
     Ok(refs)
+}
+
+/// One `list_user_default_skill_refs` entry
+/// (`skill_binding_service.py:477-487`): the Skill identity, its declared
+/// runtime shells when the package has any, and `force_preload` only when the
+/// binding sets it. The shells let the caller reproduce `request_builder`'s
+/// pre-load-time Shell filter (`request_builder.py:374-388`).
+fn binding_reference(skill: &SkillKindRow, force_preload: bool) -> Value {
+    let mut reference = serde_json::json!({
+        "skill_id": skill.kinds_id,
+        "name": skill.kinds_name,
+        "namespace": skill.kinds_namespace,
+        "is_public": skill.kinds_user_id == 0,
+    });
+    if let Some(shells) = runtime_skill_shells(skill) {
+        reference["bind_shells"] = serde_json::to_value(shells).unwrap_or(Value::Null);
+    }
+    if force_preload {
+        reference["force_preload"] = Value::Bool(true);
+    }
+    reference
 }
 
 /// The `_get_bot_skills` result.
@@ -658,12 +734,11 @@ pub(crate) async fn get_bot_skills<M: Mysql, T: UserMcpAccessTokens>(
     tokens: &T,
     is_subscription: bool,
     user_default_target_id: &str,
-    binding_context: &SkillBindingContext<'_>,
     access: Option<&SkillAccess<'_>>,
     // `user_available_skills` (`_get_bot_skills`' third input): the automatic
     // user-default/group binding refs. The late `resolve_request_preload_skills`
     // re-resolution passes none, so it must not re-read the SkillBinding rows.
-    include_available_skills: bool,
+    available_refs: Option<Vec<Value>>,
 ) -> Result<BotSkills, FastApiError> {
     let mut result = BotSkills::default();
     let include_ghost = bot_capability_mode != "follow_device";
@@ -722,7 +797,7 @@ pub(crate) async fn get_bot_skills<M: Mysql, T: UserMcpAccessTokens>(
     // part of `user_available_skills` (`request_builder.py:364`) and
     // `_get_bot_skills` only consumes it inside `if user_available_skills:`
     // (`:1815`), so a re-resolution without available skills must not add it.
-    if include_available_skills {
+    if available_refs.is_some() {
         for injected in inject_subscription_manager_skill(is_subscription) {
             let name = injected
                 .get("name")
@@ -751,20 +826,7 @@ pub(crate) async fn get_bot_skills<M: Mysql, T: UserMcpAccessTokens>(
 
     // The user-default binding refs (available, not preloaded, unless
     // `force_preload`).
-    let available_refs = if include_available_skills {
-        list_user_default_skill_refs(
-            mysql,
-            user_id,
-            user_default_target_id,
-            binding_context,
-            access,
-        )
-        .await
-        .map_err(dependency)?
-    } else {
-        Vec::new()
-    };
-    for reference in available_refs {
+    for reference in available_refs.into_iter().flatten() {
         let name = reference
             .get("name")
             .and_then(Value::as_str)
@@ -838,6 +900,13 @@ fn build_skill_data(
         "skill_id": skill.kinds_id,
         "skill_user_id": skill.kinds_user_id,
     });
+    // `skill_resolution.get_runtime_skill_shells(skill)`: the same projection
+    // the refs carry, including the built-in interactive-form Skill's Codex
+    // compatibility, so `skill_configs[].bindShells` and
+    // `skill_refs[].bind_shells` never disagree for the same Skill.
+    if let Some(shells) = runtime_skill_shells(skill) {
+        data["bindShells"] = serde_json::to_value(shells).unwrap_or(Value::Null);
+    }
     for key in ["config", "runtime", "mcpServers"] {
         if let Some(value) = spec
             .get(key)
@@ -951,6 +1020,115 @@ fn binary_download_url(base_url: &str, skill_id: i64) -> String {
     )
 }
 
+/// `_filter_runtime_skills` / `skill_runtime.select_runtime_skill_names`:
+/// an optional Skill whose `bind_shells` does not include the bot's Shell is
+/// excluded from the turn, while a required (preloaded) selection stays strict
+/// and rejects the turn.
+/// `_filter_runtime_skills`' projection step: keep only the Skills the runtime
+/// selection accepted, in both the `skill_configs` entries and the
+/// `skill_refs` map. A Skill dropped from the selection must not survive in
+/// `skill_refs` — the runtime request advertises that map verbatim, and its
+/// `preload_skill_refs` is derived from it, so leaving an incompatible entry
+/// there re-introduces a Skill the turn no longer contains.
+pub(crate) fn retain_runtime_skills(skills: &mut BotSkills, selected: &[String]) {
+    skills.skills.retain(|entry| {
+        entry
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| selected.iter().any(|kept| kept == name))
+    });
+    skills
+        .skill_refs
+        .retain(|name, _| selected.iter().any(|kept| kept == name));
+}
+
+pub(crate) fn select_runtime_skill_names(
+    skills: &BotSkills,
+    shell_type: &str,
+) -> Result<Vec<String>, FastApiError> {
+    let required: Vec<&String> = skills.preload_skills.iter().collect();
+    let mut selected = Vec::new();
+    for entry in &skills.skills {
+        let Some(name) = entry.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let bindings = skills
+            .skill_refs
+            .get(name)
+            .and_then(|reference| reference.get("bind_shells"))
+            .and_then(Value::as_array)
+            .map(|shells| {
+                shells
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|shells| !shells.is_empty());
+        let incompatible = bindings
+            .as_ref()
+            .filter(|shells| !shells.iter().any(|shell| shell == shell_type))
+            .map(|_| shell_type.to_string());
+        if let Some(shell) = incompatible {
+            if required.iter().any(|required| required.as_str() == name) {
+                return Err(FastApiError::detail(
+                    brz_http_server::StatusCode::BAD_REQUEST,
+                    format!("Skill '{name}' is not compatible with Shell '{shell}'"),
+                ));
+            }
+            continue;
+        }
+        selected.push(name.to_string());
+    }
+    Ok(selected)
+}
+
 #[cfg(test)]
 #[path = "skills_tests.rs"]
 mod tests;
+
+/// `request_builder.py:374-378`: the automatic bindings are filtered against
+/// the bot's Shell only when at least one of them declares `bind_shells`, so a
+/// turn without such a binding keeps the lazy Shell lookup.
+pub fn binding_refs_restrict_shell(binding_refs: &[Value]) -> bool {
+    binding_refs.iter().any(|reference| {
+        reference
+            .get("bind_shells")
+            .and_then(Value::as_array)
+            .is_some_and(|shells| !shells.is_empty())
+    })
+}
+
+/// `request_builder.py:381-388`: an automatic binding whose declared
+/// `bind_shells` does not include the bot's Shell is excluded from the turn
+/// before `_get_bot_skills` resolves it; a binding without a shell restriction
+/// always survives.
+pub fn retain_shell_compatible_bindings(binding_refs: &mut Vec<Value>, shell_type: &str) {
+    binding_refs.retain(|reference| {
+        let shells = reference
+            .get("bind_shells")
+            .and_then(Value::as_array)
+            .filter(|shells| !shells.is_empty());
+        match shells {
+            Some(shells) => shells
+                .iter()
+                .any(|shell| shell.as_str() == Some(shell_type)),
+            None => true,
+        }
+    });
+}
+
+pub(crate) fn preload_skill_refs(result: &BotSkills) -> Value {
+    Value::Object(
+        result
+            .preload_skills
+            .iter()
+            .filter_map(|name| {
+                result
+                    .skill_refs
+                    .get(name)
+                    .map(|reference| (name.clone(), reference.clone()))
+            })
+            .collect(),
+    )
+}
