@@ -335,12 +335,25 @@ mod tests {
         }
 
         fn detach(&mut self) {
-            assert!(Command::new("/usr/bin/hdiutil")
-                .args(["detach", "-quiet"])
+            let detached = Command::new("/usr/bin/hdiutil")
+                .arg("detach")
                 .arg(&self.mount)
-                .status()
-                .unwrap()
-                .success());
+                .output()
+                .unwrap();
+            if !detached.status.success() {
+                let holders = Command::new("/usr/sbin/lsof")
+                    .arg("+D")
+                    .arg(&self.mount)
+                    .output();
+                eprintln!("Fixture mount holders: {holders:?}");
+            }
+            assert!(
+                detached.status.success(),
+                "Fixture detach failed ({}): stdout={}, stderr={}",
+                detached.status,
+                String::from_utf8_lossy(&detached.stdout),
+                String::from_utf8_lossy(&detached.stderr)
+            );
             self.mounted = false;
         }
     }

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Branch command identity on the Backend-to-executor Socket.IO boundary."""
+"""Native Git command identity on the Backend-to-executor Socket.IO boundary."""
 
 import shlex
 from types import SimpleNamespace
@@ -44,7 +44,7 @@ def branch_socket(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command_key", ["git_branch", "git_branch_list"])
+@pytest.mark.parametrize("command_key", ["git_branch", "git_branch_list", "git_clone"])
 @pytest.mark.parametrize("config_source", ["global", "request"])
 @pytest.mark.parametrize(
     "override", ["default", "same_string", "same_object", "custom"]
@@ -67,6 +67,12 @@ async def test_branch_identity_preserves_configured_overrides(
     monkeypatch.setattr(
         command_service.settings, "LOCAL_DEVICE_COMMANDS", global_commands
     )
+    args = (
+        ["--branch", "main", "--single-branch", "https://git.example/repo.git", "/repo"]
+        if command_key == "git_clone"
+        else []
+    )
+    env = {"GIT_TERMINAL_PROMPT": "0"}
 
     result = await command_service.execute_configured_device_command(
         db=object(),
@@ -74,6 +80,8 @@ async def test_branch_identity_preserves_configured_overrides(
         device_id="branch-device",
         command_key=command_key,
         path="/workspace/repo",
+        args=args,
+        env=env,
         command_config=overrides if config_source == "request" else None,
     )
 
@@ -81,7 +89,9 @@ async def test_branch_identity_preserves_configured_overrides(
     event, payload = branch_socket.await_args.args
     assert event == "device:execute_command"
     assert payload["command"] == command
-    assert payload["argv"] == shlex.split(command)
+    assert payload["argv"] == shlex.split(command) + args
+    assert payload["args"] == args
+    assert payload["env"] == env
     assert payload["cwd"] == "/workspace/repo"
     assert branch_socket.await_args.kwargs["namespace"] == "/local-executor"
     if override == "default":
@@ -92,7 +102,7 @@ async def test_branch_identity_preserves_configured_overrides(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command_key", ["git_branch", "git_branch_list"])
+@pytest.mark.parametrize("command_key", ["git_branch", "git_branch_list", "git_clone"])
 @pytest.mark.parametrize(
     "override", ["default", "same_string", "same_object", "custom"]
 )
@@ -122,12 +132,23 @@ async def test_runtime_relay_preserves_builtin_branch_identity(
             )
         ),
     )
+    args = (
+        ["--branch", "main", "--single-branch", "https://git.example/repo.git", "/repo"]
+        if command_key == "git_clone"
+        else []
+    )
+    env = {"GIT_TERMINAL_PROMPT": "0"}
 
     result = await relay.relay_ipc_request(
         user_id=7,
         device_id="logical-device",
         method="device.execute_command",
-        params={"command_key": command_key, "cwd": "/workspace/repo"},
+        params={
+            "command_key": command_key,
+            "cwd": "/workspace/repo",
+            "args": args,
+            "env": env,
+        },
         timeout_seconds=30,
     )
 
@@ -135,7 +156,9 @@ async def test_runtime_relay_preserves_builtin_branch_identity(
     event, payload = branch_socket.await_args.args
     assert event == "device:execute_command"
     assert payload["command"] == command
-    assert payload["argv"] == shlex.split(command)
+    assert payload["argv"] == shlex.split(command) + args
+    assert payload["args"] == args
+    assert payload["env"] == env
     assert payload["cwd"] == "/workspace/repo"
     if override == "default":
         assert payload["command_key"] == command_key

@@ -108,6 +108,30 @@ describe('shared transcript cancellation', () => {
     expect(recovery).toHaveBeenCalledTimes(1)
   })
 
+  test('a replacement viewer starts a fresh read in the same turn as cancellation', async () => {
+    const controller = new AbortController()
+    const address = { deviceId: 'cancel-device', taskId: 'immediate-recovery' }
+    let providerSignal: AbortSignal | undefined
+    const abandonedRead = vi.fn((_request, options?: { signal?: AbortSignal }) => {
+      providerSignal = options?.signal
+      return new Promise<RuntimeTranscriptResponse>(() => {})
+    })
+    const abandoned = synchronizeRuntimeConversation(abandonedRead, address, {
+      signal: controller.signal,
+    })
+    const cancelled = expect(abandoned).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(abandonedRead).toHaveBeenCalledOnce())
+
+    controller.abort()
+    expect(providerSignal?.aborted).toBe(true)
+    const recoveredRead = vi.fn(async () => response)
+    const recovered = synchronizeRuntimeConversation(recoveredRead, address)
+
+    await cancelled
+    await expect(recovered).resolves.toMatchObject({ turns: [] })
+    expect(recoveredRead).toHaveBeenCalledOnce()
+  })
+
   test('never dispatches an abandoned queued page', async () => {
     const address = { deviceId: 'cancel-device', taskId: 'queued-read' }
     let resolve!: (value: RuntimeTranscriptResponse) => void

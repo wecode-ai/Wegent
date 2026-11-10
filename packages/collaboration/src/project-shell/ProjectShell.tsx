@@ -2,7 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useLayoutEffect, useRef, useState, type ReactNode, type Ref, type RefObject } from 'react'
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+  type RefObject,
+} from 'react'
 import { registerBoardCursorPolicy } from '../project-board/boardCursorPolicy'
 
 export interface ProjectShellActionRefs {
@@ -42,6 +49,7 @@ export interface ProjectShellProps {
   titleIcon: ReactNode
   renderRightActions(context: ProjectShellRenderContext): ReactNode
   renderViewSwitcher(context: ProjectShellViewSwitcherContext): ReactNode
+  viewSwitcherPlacement?: 'header' | 'below-header'
   searchPanel?: ReactNode
 }
 
@@ -59,11 +67,13 @@ export function resolveProjectShellLevel({
   boardView,
   hasCreateAction,
   widths,
+  viewSwitcherPlacement = 'header',
 }: {
   assistantOpen: boolean
   boardView: boolean
   hasCreateAction: boolean
   widths: ProjectShellResponsiveWidths
+  viewSwitcherPlacement?: 'header' | 'below-header'
 }): number {
   const compactViewSwitcherWidth = 96
   const compactControlWidth = 48
@@ -72,14 +82,24 @@ export function resolveProjectShellLevel({
 
   const usedWidthAt = (candidateLevel: number): number => {
     let used = candidateLevel < 2 ? widths.title + 8 : 0
-    used += candidateLevel < 2 ? widths.viewSwitcher : compactViewSwitcherWidth
+    if (viewSwitcherPlacement === 'header') {
+      used +=
+        candidateLevel < 2 ? widths.viewSwitcher : compactViewSwitcherWidth
+    }
     if (candidateLevel >= 2) return used + overflowWidth + compactAddWidth
-    used += candidateLevel >= 1 && widths.search > 0 ? compactControlWidth : widths.search
+    used +=
+      candidateLevel >= 1 && widths.search > 0
+        ? compactControlWidth
+        : widths.search
     if (!assistantOpen) {
-      used += candidateLevel >= 1 && widths.assistant > 0 ? compactControlWidth : widths.assistant
+      used +=
+        candidateLevel >= 1 && widths.assistant > 0
+          ? compactControlWidth
+          : widths.assistant
     }
     if (hasCreateAction) {
-      used += candidateLevel >= 1 && widths.add > 0 ? compactControlWidth : widths.add
+      used +=
+        candidateLevel >= 1 && widths.add > 0 ? compactControlWidth : widths.add
     }
     return used
   }
@@ -104,6 +124,7 @@ export function ProjectShell({
   sidebarCollapsed,
   title,
   titleIcon,
+  viewSwitcherPlacement = 'header',
 }: ProjectShellProps) {
   const headerRef = useRef<HTMLElement>(null)
   const titleRef = useRef<HTMLDivElement>(null)
@@ -121,9 +142,11 @@ export function ProjectShell({
     additionalActions: 0,
   })
   const [level, setLevel] = useState(0)
+  const [navigationCompact, setNavigationCompact] = useState(false)
 
   useLayoutEffect(() => {
-    if (boardView && headerRef.current) return registerBoardCursorPolicy(headerRef.current)
+    if (boardView && headerRef.current)
+      return registerBoardCursorPolicy(headerRef.current)
   }, [boardView])
 
   useLayoutEffect(() => {
@@ -133,6 +156,7 @@ export function ProjectShell({
 
     const compute = () => {
       if (header.clientWidth <= 0) return
+      setNavigationCompact(header.clientWidth < 720)
       const style = getComputedStyle(header)
       const availableWidth =
         header.clientWidth -
@@ -140,24 +164,31 @@ export function ProjectShell({
         (parseFloat(style.paddingRight) || 0)
       const rememberWidth = (
         key: keyof typeof naturalWidthsRef.current,
-        element: HTMLElement | null
+        element: HTMLElement | null,
       ) => {
         const measured = element?.getBoundingClientRect().width ?? 0
         if (measured > naturalWidthsRef.current[key]) {
           naturalWidthsRef.current[key] = measured
         }
-        return naturalWidthsRef.current[key] > 0 ? naturalWidthsRef.current[key] + 8 : 0
+        return naturalWidthsRef.current[key] > 0
+          ? naturalWidthsRef.current[key] + 8
+          : 0
       }
       const titleWidth = rememberWidth('title', titleElement)
-      const viewSwitcherWidth = rememberWidth('viewSwitcher', viewSwitcherRef.current)
-      const assistantWidth = assistantOpen ? 0 : rememberWidth('assistant', assistantRef.current)
+      const viewSwitcherWidth = rememberWidth(
+        'viewSwitcher',
+        viewSwitcherRef.current,
+      )
+      const assistantWidth = assistantOpen
+        ? 0
+        : rememberWidth('assistant', assistantRef.current)
       const searchWidth = rememberWidth('search', searchRef.current)
       const addWidth = rememberWidth('add', addRef.current)
       const additionalActionsWidth = Math.max(
         naturalWidthsRef.current.additionalActions,
         (rightActionsRef.current?.getBoundingClientRect().width ?? 0) -
           (addRef.current?.getBoundingClientRect().width ?? 0) -
-          (searchRef.current?.getBoundingClientRect().width ?? 0)
+          (searchRef.current?.getBoundingClientRect().width ?? 0),
       )
       // Compact labels must not release the width that caused them to collapse.
       naturalWidthsRef.current.additionalActions = additionalActionsWidth
@@ -166,6 +197,7 @@ export function ProjectShell({
           assistantOpen,
           boardView,
           hasCreateAction,
+          viewSwitcherPlacement,
           widths: {
             add: addWidth,
             assistant: assistantWidth,
@@ -174,7 +206,7 @@ export function ProjectShell({
             title: titleWidth,
             viewSwitcher: viewSwitcherWidth,
           },
-        })
+        }),
       )
     }
 
@@ -218,15 +250,21 @@ export function ProjectShell({
           className={`relative z-10 min-w-0 items-center ${level < 2 ? 'flex' : 'hidden'}`}
         >
           {titleIcon}
-          <span className="ml-2 min-w-0 truncate text-base font-semibold">{title}</span>
+          <span className="ml-2 min-w-0 truncate text-base font-semibold">
+            {title}
+          </span>
         </div>
-        {renderViewSwitcher({
-          compact: level >= 2,
-          containerRef: viewSwitcherRef,
-        })}
+        {viewSwitcherPlacement === 'header' &&
+          renderViewSwitcher({
+            compact: level >= 2,
+            containerRef: viewSwitcherRef,
+          })}
         <span className="flex-1" />
         {assistantAction?.renderTooltip && assistantButton
-          ? assistantAction.renderTooltip(assistantButton, assistantAction.label)
+          ? assistantAction.renderTooltip(
+              assistantButton,
+              assistantAction.label,
+            )
           : assistantButton}
         <div
           ref={rightActionsRef}
@@ -244,6 +282,17 @@ export function ProjectShell({
         </div>
         {searchPanel}
       </header>
+      {viewSwitcherPlacement === 'below-header' && (
+        <div
+          className="project-shell-view-navigation"
+          data-testid="project-shell-view-navigation"
+        >
+          {renderViewSwitcher({
+            compact: navigationCompact,
+            containerRef: viewSwitcherRef,
+          })}
+        </div>
+      )}
       {children}
     </>
   )

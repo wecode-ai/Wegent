@@ -17,6 +17,7 @@ class FakeSplashElement {
   disabled = false
   hidden = true
   textContent = ''
+  title = ''
   clientWidth = 1000
   clientHeight = 8
 
@@ -243,15 +244,21 @@ describe('startup splash renderer', () => {
     const progressGradient = html.match(
       /<linearGradient\b(?=[^>]*\bid="startup-progress-gradient")[^>]*>/
     )?.[0]
-    expect(progressLine).toContain('x1="1"')
-    expect(progressLine).toContain('x2="1"')
+    expect(progressLine).toContain('x1="0"')
+    expect(progressLine).toContain('x2="0"')
+    expect(progressLine).toContain('y1="2"')
+    expect(progressLine).toContain('y2="2"')
     expect(progressSvg).not.toContain('pathLength')
     expect(progressSvg).not.toContain('viewBox')
     expect(html).not.toContain('startup-brand-name')
     expect(progressGradient).toContain('gradientUnits="userSpaceOnUse"')
-    expect(progressGradient).toContain('x1="1"')
+    expect(progressGradient).toContain('x1="0"')
     expect(styles).toMatch(/\.startup-progress-fill\s*\{[^}]*fill:\s*none/)
-    expect(styles).toContain('stroke-width: 1')
+    expect(progressSvg?.match(/id="splash-progress-fill"/g)).toHaveLength(1)
+    expect(html).not.toContain('splash-progress-head')
+    expect(html).not.toContain('splash-progress-glow')
+    expect(styles).toMatch(/\.startup-progress-fill\s*\{[^}]*stroke-width:\s*4/)
+    expect(styles).toContain('stroke-linecap: round')
     expect(styles).not.toContain('stroke-dasharray')
     expect(styles).not.toContain('stroke-dashoffset')
     expect(styles).toContain('transform-origin: 50% 50%')
@@ -299,6 +306,14 @@ describe('startup splash renderer', () => {
     expect(styles).toContain('.startup-timeout-actions')
     const rootStyles = styles.match(/:root\s*\{([^}]+)\}/)?.[1]
     const footerStyles = styles.match(/\.startup-status\s*\{([^}]+)\}/)?.[1]
+    const summary = html.match(/<div class="splash-copy">[\s\S]*?<\/div>/)?.[0]
+    expect(summary).toContain('id="splash-title" class="sr-only"')
+    expect(summary).toContain('id="splash-activity"')
+    expect(summary).toContain('id="splash-percentage"')
+    expect(styles).toMatch(/\.splash-copy\s*\{[^}]*justify-content:\s*flex-start/)
+    expect(styles).toMatch(/\.splash \.activity-line\s*\{[^}]*font-size:\s*var\(--text-xs\)/)
+    expect(styles).toMatch(/\.progress-block\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*auto 0 0/)
+    expect(styles).toMatch(/\.startup-progress\s*\{[^}]*height:\s*4px/)
     expect(html).toContain('name="color-scheme" content="light dark"')
     expect(html.indexOf('src="./theme.js"')).toBeLessThan(html.indexOf('href="./styles.css"'))
     expect(rootStyles).toContain('color-scheme: dark')
@@ -405,26 +420,29 @@ describe('startup splash renderer', () => {
     }
 
     expect(progressListener).toBeTypeOf('function')
-    expect(stroke.getAttribute('x2')).toBe('1')
+    expect(stroke.getAttribute('x2')).toBe('0')
     expect(progress.attributes.get('aria-valuenow')).toBe('0')
+    expect(stroke.getAttribute('visibility')).toBe('hidden')
     progressListener?.(update)
-    expect(stroke.getAttribute('x2')).toBe('250.5')
+    expect(stroke.getAttribute('x2')).toBe('250')
+    expect(element('#startup-progress-gradient').getAttribute('x2')).toBe('250')
+    expect(stroke.getAttribute('visibility')).toBe('visible')
     expect(progress.attributes.get('aria-valuenow')).toBe('25')
 
     now += 1_000
     progressListener?.(update)
-    expect(Number(stroke.getAttribute('x2'))).toBeCloseTo(427.98, 2)
+    expect(Number(stroke.getAttribute('x2'))).toBeCloseTo(427.839, 3)
     expect(progress.attributes.get('aria-valuenow')).toBe('43')
 
     now += 60_000
     progressListener?.(update)
-    expect(Number(stroke.getAttribute('x2'))).toBeCloseTo(434.132, 3)
+    expect(Number(stroke.getAttribute('x2'))).toBeCloseTo(434, 3)
     expect(progress.attributes.get('aria-valuenow')).toBe('43')
     expect(stroke.style.width).toBeUndefined()
     element('.startup-progress-svg').clientWidth = 520
     resizeProgress()
-    expect(element('#splash-progress-track').getAttribute('x2')).toBe('519')
-    expect(Number(stroke.getAttribute('x2'))).toBeCloseTo(225.812, 3)
+    expect(element('#splash-progress-track').getAttribute('x2')).toBe('520')
+    expect(Number(stroke.getAttribute('x2'))).toBeCloseTo(225.68, 3)
   })
 
   test('settles early readiness from displayed progress and acknowledges only after visible 100%', async () => {
@@ -448,13 +466,13 @@ describe('startup splash renderer', () => {
     expect(complete(rendererUpdate(true))).toBe(pending)
     expect(brandAnimation.complete).toHaveBeenCalledExactlyOnceWith(200)
     expect(clearInterval).toHaveBeenCalledExactlyOnceWith(42)
-    expect(element('#splash-progress').getAttribute('aria-valuenow')).toBe('85')
+    expect(element('#splash-progress').getAttribute('aria-valuenow')).toBe('0')
     await step(100)
-    expect(element('#splash-progress').getAttribute('aria-valuenow')).toBe('93')
-    expect(element('#splash-percentage').textContent).toBe('92%')
-    expect(Number(element('#splash-progress-fill').getAttribute('x2'))).toBeCloseTo(924.15, 2)
+    expect(element('#splash-progress').getAttribute('aria-valuenow')).toBe('50')
+    expect(element('#splash-percentage').textContent).toBe('50%')
+    expect(Number(element('#splash-progress-fill').getAttribute('x2'))).toBeCloseTo(500, 2)
     await step(200)
-    expect(element('#splash-progress-fill').getAttribute('x2')).toBe('999')
+    expect(element('#splash-progress-fill').getAttribute('x2')).toBe('1000')
     expect(element('#splash-percentage').textContent).toBe('100%')
     expect(acknowledged).not.toHaveBeenCalled()
     finishBrand()
@@ -469,8 +487,8 @@ describe('startup splash renderer', () => {
     await expect(pending).resolves.toEqual({
       reducedMotion: false,
       progressNow: 100,
-      fillEnd: 999,
-      trackEnd: 999,
+      fillEnd: 1000,
+      trackEnd: 1000,
       wordmarkVisible: false,
       appearance: {
         theme: 'dark',
@@ -510,8 +528,8 @@ describe('startup splash renderer', () => {
     await expect(pending).resolves.toMatchObject({
       reducedMotion: true,
       progressNow: 100,
-      fillEnd: 999,
-      trackEnd: 999,
+      fillEnd: 1000,
+      trackEnd: 1000,
       appearance: {
         theme: copy.theme,
         colorScheme: copy.theme,
@@ -558,7 +576,7 @@ describe('startup splash renderer', () => {
     expect(frames.size).toBe(0)
   })
 
-  test('paints live progress between metadata ticks and cancels its frame loop on failure', async () => {
+  test('eases progress updates without snapping or retreating and freezes on failure', async () => {
     let now = 10_000
     const { element, progressListener, step, frames, listeners } = await createRendererFixture(
       () => now,
@@ -568,14 +586,28 @@ describe('startup splash renderer', () => {
     await step(0)
     progressListener?.(rendererUpdate())
     const initial = Number(element('#splash-progress-fill').getAttribute('x2'))
+    expect(initial).toBe(0)
     now += 16
     await step(16)
     const firstFrame = Number(element('#splash-progress-fill').getAttribute('x2'))
+    expect(firstFrame).toBeGreaterThan(initial)
+    expect(firstFrame).toBeLessThan(850)
+    const next = rendererUpdate()
+    progressListener?.({ ...next, completedWeight: 95, stage: { ...next.stage, weight: 0 } })
+    expect(Number(element('#splash-progress-fill').getAttribute('x2'))).toBe(firstFrame)
     now += 16
     await step(32)
-    expect(firstFrame).toBeGreaterThan(initial)
     expect(Number(element('#splash-progress-fill').getAttribute('x2'))).toBeGreaterThan(firstFrame)
+    expect(Number(element('#splash-progress-fill').getAttribute('x2'))).toBeLessThan(950)
+    await step(2_000)
+    const settled = Number(element('#splash-progress-fill').getAttribute('x2'))
+    expect(settled).toBe(950)
+    expect(element('#splash-percentage').textContent).toBe('95%')
+    progressListener?.(rendererUpdate())
+    await step(2_016)
+    expect(Number(element('#splash-progress-fill').getAttribute('x2'))).toBe(settled)
     listeners.get('wework-startup-error')?.({ detail: {} })
+    expect(Number(element('#splash-progress-fill').getAttribute('x2'))).toBe(settled)
     expect(frames.size).toBe(0)
   })
 
@@ -766,6 +798,7 @@ describe('startup splash renderer', () => {
       expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
       expect(element('#splash-step-count').textContent).toBe('Step 2 of 9 · Stage 1')
       expect(element('#splash-activity').textContent).toBe('Working on stage 1')
+      expect(element('#splash-activity').title).toBe('Working on stage 1')
 
       progressListener?.({
         ...update(1, 1_000, 60_000),
@@ -781,6 +814,9 @@ describe('startup splash renderer', () => {
       expect(shortenedActivity.startsWith('Scanning …/')).toBe(true)
       expect(shortenedActivity.endsWith('index.js')).toBe(true)
       expect(shortenedActivity.length).toBeLessThanOrEqual(60)
+      expect(element('#splash-activity').title).toBe(
+        `Scanning plugins/${'segment/'.repeat(10)}index.js`
+      )
 
       progressListener?.(update(1, slowAfterMs + 1_000, 60_000))
       expect(element('#startup-slow').hidden).toBe(false)
