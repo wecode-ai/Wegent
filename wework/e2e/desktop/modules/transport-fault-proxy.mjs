@@ -211,6 +211,17 @@ export class TransportFaultProxy {
   forwardUpstream(request, response, entry, fault) {
     const upstream = httpRequest(this.options(request), incoming => {
       entry.status = incoming.statusCode
+      if (fault === 'drop-before-headers') {
+        // Native send() completes when headers arrive. Lose the acknowledgement
+        // itself after the real Backend commits, not merely its response body.
+        incoming.resume()
+        incoming.once('end', () => {
+          entry.committedResponseDropped = true
+          entry.dropped = true
+          response.destroy()
+        })
+        return
+      }
       if (fault === 'hold-response') {
         const chunks = []
         incoming.on('data', chunk => chunks.push(chunk))

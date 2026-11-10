@@ -500,6 +500,37 @@ test('drops a real response after upstream completion', { timeout: 5000 }, async
   assert.equal(received.length, 1)
 })
 
+test('loses native acceptance headers only after the upstream write commits', async t => {
+  const { proxy, received } = await fixture(t, {
+    'X-Plugin-Delivery-Mode': 'local_pull_v1',
+    'X-Plugin-Operation-Id': 'original-operation',
+    'X-Plugin-Intent-Order': '7',
+  })
+  proxy.rule = () => 'drop-before-headers'
+  let headersObserved = false
+  await assert.rejects(
+    new Promise((resolve, reject) => {
+      const outgoing = request(
+        `${proxy.url}/api/plugins/installed/42`,
+        { method: 'PUT' },
+        response => {
+          headersObserved = true
+          response.resume()
+          resolve()
+        }
+      )
+      outgoing.once('error', reject)
+      outgoing.end('{}')
+    }),
+    /socket hang up/
+  )
+  assert.equal(headersObserved, false, 'Native must not observe the acceptance headers')
+  assert.deepEqual(received, [{ method: 'PUT', url: '/api/plugins/installed/42' }])
+  assert.equal(proxy.requests[0].status, 200)
+  assert.equal(proxy.requests[0].committedResponseDropped, true)
+  assert.notEqual(proxy.requests[0].responseCompleted, true)
+})
+
 test(
   'releases the first real response after a later response without changing either body',
   { timeout: 5000 },

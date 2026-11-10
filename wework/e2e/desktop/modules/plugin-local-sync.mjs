@@ -241,7 +241,7 @@ async function verifyUncertainRecovery({ request, invoke, apiProxy, journal, clo
     if (entry.method !== 'PUT' || entry.path !== path) return noFault(entry)
     if (drop) {
       drop = false
-      return 'drop-response'
+      return 'drop-before-headers'
     }
     return 'hold-response'
   }
