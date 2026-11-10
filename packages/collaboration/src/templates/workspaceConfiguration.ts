@@ -23,7 +23,8 @@ export async function applyWorkspaceTemplate(
   partialMessage: string,
   onGroupCreated: (group: CollaborationGroup) => void,
   unsupportedPolicyMessage = 'Cloud workspaces cannot preserve the template execution settings. Apply it directly to a project instead.',
-  locale: 'zh-CN' | 'en' = 'en'
+  locale: 'zh-CN' | 'en' = 'en',
+  resolveRouting?: import('./types').TemplateRoutingResolver
 ): Promise<CollaborationGroup[]> {
   const owner = api.workspaces!
   const referenced = templateAgentReferences(drafts)
@@ -56,7 +57,7 @@ export async function applyWorkspaceTemplate(
       }
       return resource
     },
-    templateRoutingResolver(host, workspace.location, undefined, locale)
+    resolveRouting ?? templateRoutingResolver(host, workspace.location, undefined, locale)
   )
   try {
     return await applyTemplateGroups(

@@ -3,6 +3,7 @@ import type { ResolvedProviderModel } from './model-configuration-contract.js'
 import {
   modelInterfaceRunnerModels,
   modelInterfaceRuntimeConfig,
+  modelInterfaceToolProfile,
 } from './model-interface-runtime.js'
 
 const entry: ResolvedProviderModel = {
@@ -25,6 +26,63 @@ const entry: ResolvedProviderModel = {
 }
 
 describe('device-owned model interfaces', () => {
+  test.each([
+    ['custom', 'openai-responses', 'custom', 'custom'],
+    ['deepseek', 'openai-responses', 'shell', 'shell'],
+    ['deepseek', 'openai-chat-completions', undefined, 'function'],
+    ['custom', 'openai-responses', undefined, 'custom'],
+  ] as const)(
+    'preserves %s %s %s tool settings',
+    (providerProfileId, apiFormat, toolProfile, expected) => {
+      expect(modelInterfaceToolProfile({ providerProfileId, apiFormat, toolProfile })).toBe(
+        expected
+      )
+    }
+  )
+
+  test.each(['custom', 'function', undefined] as const)(
+    'adapts saved DeepSeek %s tools for both foreground and background work',
+    toolProfile => {
+      const config = {
+        id: 'deepseek',
+        providerProfileId: 'deepseek',
+        modelId: 'deepseek-v4-flash',
+        displayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        apiFormat: 'openai-responses',
+        toolProfile,
+      }
+      const foreground = modelInterfaceRuntimeConfig(config)
+      const [background] = modelInterfaceRunnerModels([
+        {
+          provider: { ...entry.provider, base_url: config.baseUrl, api_format: 'openai-responses' },
+          model: {
+            id: config.id,
+            model_id: config.modelId,
+            provider_profile_id: 'deepseek',
+            tool_profile: toolProfile,
+          },
+        },
+      ])
+      expect(foreground.tool_profile).toBe('function')
+      expect(background.modelConfig.tool_profile).toBe('function')
+      expect(foreground.upstream_api_format).toBe('openai-responses')
+    }
+  )
+
+  test('does not change native custom tools for other providers', () => {
+    expect(
+      modelInterfaceRuntimeConfig({
+        id: 'native',
+        modelId: 'native',
+        displayName: 'Native',
+        baseUrl: 'https://example.com',
+        apiFormat: 'openai-responses',
+        toolProfile: 'custom',
+      }).tool_profile
+    ).toBe('custom')
+  })
+
   test('materializes the same upstream configuration for ordinary and background work', () => {
     const [runner] = modelInterfaceRunnerModels([entry])
     expect(runner.model_id).toBe('local-model:assistant')

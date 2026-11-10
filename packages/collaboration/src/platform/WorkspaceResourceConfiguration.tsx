@@ -50,6 +50,7 @@ export interface WorkspaceResourceCommands {
   createTemplateGroups?(
     document: import("../templates/types").CollaborationTemplate,
     drafts: import("../project-create/types").ProjectCreateCollaborationGroupDraft[],
+    resolveRouting?: import('../templates/types').TemplateRoutingResolver,
   ): Promise<CollaborationGroup[]>;
   searchUsers(query: string): Promise<CollaborationUser[]>;
   addMember(
@@ -252,6 +253,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   detailPresentation = "page",
   agentActions,
   showGroupCollection = true,
+  agentConfiguration,
 }: {
   workspace?: CollaborationWorkspace;
   groups: CollaborationGroup[];
@@ -274,6 +276,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   detailPresentation?: "page" | "dialog";
   agentActions?: CollaborationGroupAgentActions;
   showGroupCollection?: boolean;
+  agentConfiguration?: import('../project-agent-config/types').ProjectAgentConfigurationHost;
 }) {
   const messages = copy[locale];
   const templateStore = useCollaborationTemplateStore();
@@ -1386,6 +1389,9 @@ export function WorkspaceCollaborationGroupsConfiguration({
                     <div className="collaboration-group-create-content">
                       <section className="collaboration-group-create-panel">
                         <GroupTemplateCreator
+                          modelConfiguration={agentConfiguration && workspace ? {
+                            host: agentConfiguration, location: workspace.location,
+                          } : undefined}
                           locale={locale}
                           candidates={candidates.map((candidate) => ({
                             ...candidate,
@@ -1395,11 +1401,12 @@ export function WorkspaceCollaborationGroupsConfiguration({
                           currentUserId={currentUserId}
                           existingNames={groups.map((group) => group.name)}
                           disabled={saving || participantsPending}
-                          onApply={async (drafts, document) => {
+                          onApply={async (drafts, document, resolveRouting) => {
                             const created = commands.createTemplateGroups
                               ? await commands.createTemplateGroups(
                                   document,
                                   drafts,
+                                  resolveRouting,
                                 )
                               : await applyTemplateGroups(
                                   drafts,

@@ -23,15 +23,7 @@ export function isPersonalStandInTask(item: Pick<RuntimeTaskReminderItem, 'task'
 export function runtimeTaskNotificationCategory(
   item: Pick<RuntimeTaskReminderItem, 'task'>
 ): 'tasks' | 'stand_in' {
-  const handle = item.task.runtimeHandle
-  const source = handle?.latestUserMessageSource as
-    | { source?: unknown; turnId?: unknown }
-    | undefined
-  return isPersonalStandInTask(item) &&
-    source?.source === 'stand_in_activity' &&
-    source.turnId === handle?.lastTurnId
-    ? 'stand_in'
-    : 'tasks'
+  return isPersonalStandInTask(item) ? 'stand_in' : 'tasks'
 }
 
 const NOTIFICATION_TEXT_MAX_CHARS = 160
@@ -117,7 +109,10 @@ export async function getRuntimeTaskNotificationText(
     )
     const text = notificationTextFromMessages(transcript.messages)
     const fallback = fallbackNotificationText(item)
-    return text ? { ...text, body: text.body || fallback.body } : fallback
+    const notification = text ? { ...text, body: text.body || fallback.body } : fallback
+    return isPersonalStandInTask(item)
+      ? { ...notification, title: i18n.t('common:standIn.title') }
+      : notification
   } catch (error) {
     console.error('[Wework] Failed to load task completion notification content', error)
     return fallbackNotificationText(item)

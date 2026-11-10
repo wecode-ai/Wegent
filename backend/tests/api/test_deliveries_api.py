@@ -2142,6 +2142,14 @@ def test_loop_item_unread_follows_content_revision_and_read_cursor(
     assert refreshed_member_item.status_code == 200
     assert refreshed_member_item.json()["content_revision"] == 2
     assert refreshed_member_item.json()["is_unread"] is True
+    delayed_read = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/read",
+        headers=_auth(member_token),
+        json={"content_revision": marked.json()["content_revision"]},
+    )
+    assert delayed_read.status_code == 200
+    assert delayed_read.json()["is_unread"] is True
+    assert delayed_read.json()["version"] == refreshed_member_item.json()["version"]
 
 
 def test_reading_issue_consumes_only_its_readers_notifications(

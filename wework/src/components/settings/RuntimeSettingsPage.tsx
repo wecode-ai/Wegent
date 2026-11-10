@@ -178,7 +178,7 @@ export function RuntimeSettingsPage({
                       )
                       .finally(() => setBusyKey(null))
                   }}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-destructive disabled:opacity-40"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-destructive disabled:opacity-40 wework:hover:text-red-600"
                   aria-label={t('workbench.runtime_profile_delete')}
                 >
                   {busyKey === `delete:${profile.id}` ? (
@@ -244,7 +244,7 @@ export function RuntimeSettingsPage({
           }}
         >
           <div className="space-y-4" data-testid="runtime-profile-create-dialog">
-            <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
+            <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning wework:bg-amber-500/10 wework:text-amber-700">
               {t('workbench.runtime_profile_stay_on_page')}
             </p>
             <label className="block text-xs text-text-secondary">

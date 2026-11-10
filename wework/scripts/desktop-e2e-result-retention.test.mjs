@@ -57,6 +57,26 @@ function gitBash() {
 }
 
 describe('desktop E2E result retention', () => {
+  test.each(['model-requests.jsonl', 'model-context-audit.json'])(
+    'retains independent model evidence %s through runner and CI cleanup',
+    async name => {
+      const resultRoot = await temporaryRoot()
+      const directory = join(resultRoot, '2026-11-09T00-00-00-000Z-123')
+      await mkdir(directory, { recursive: true })
+      const evidence = join(directory, name)
+      await writeFile(evidence, '{"synthetic":true}\n')
+      await compactDesktopE2EResult(directory)
+      await execFileAsync(gitBash(), [
+        resolve(
+          import.meta.dirname,
+          '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'
+        ).replaceAll('\\', '/'),
+        resultRoot.replaceAll('\\', '/'),
+      ])
+      await expectExists(evidence)
+    }
+  )
+
   test.each(['electron-logs', 'release-logs'])(
     'preserves %s through runner and CI cleanup',
     async name => {

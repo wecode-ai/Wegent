@@ -730,6 +730,8 @@ jobs:
 
       - name: Prepare Wework Electron dependencies
         if: matrix.shard == 1
+        env:
+          WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: pnpm --filter wework prepare:electron
 
       - name: Install Wework host modules for renderer fixtures

@@ -351,7 +351,7 @@ export function DeviceFolderPicker({
       {error && (
         <p
           data-testid="device-folder-picker-error"
-          className="border-b border-border px-3 py-2 text-xs text-destructive"
+          className="border-b border-border px-3 py-2 text-xs text-destructive wework:text-red-500"
         >
           {error}
         </p>

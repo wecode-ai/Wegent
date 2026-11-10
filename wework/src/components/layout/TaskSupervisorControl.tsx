@@ -157,11 +157,11 @@ export function TaskSupervisorStatusButton({
             className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary"
           >
             {supervisor.status === 'error' ? (
-              <AlertCircle className="h-[18px] w-[18px] text-warning" />
+              <AlertCircle className="h-[18px] w-[18px] text-warning wework:text-amber-600" />
             ) : supervisor.status === 'checking' ? (
               <Loader2 className="h-[18px] w-[18px] animate-spin" />
             ) : latestCheckFoundNoCorrection ? (
-              <Check className="h-[18px] w-[18px] text-success" />
+              <Check className="h-[18px] w-[18px] text-success wework:text-green-500" />
             ) : (
               <ShieldCheck className="h-[18px] w-[18px]" />
             )}
@@ -197,7 +197,9 @@ export function TaskSupervisorStatusButton({
           </button>
         )}
       </div>
-      {runError && <p className="ml-[30px] text-xs text-destructive">{runError}</p>}
+      {runError && (
+        <p className="ml-[30px] text-xs text-destructive wework:text-red-600">{runError}</p>
+      )}
     </div>
   )
 }
@@ -482,9 +484,11 @@ function TaskSupervisorDialogContent({
           />
 
           {supervisor?.lastError && (
-            <p className="mt-2 text-xs text-warning">{supervisor.lastError}</p>
+            <p className="mt-2 text-xs text-warning wework:text-amber-700">
+              {supervisor.lastError}
+            </p>
           )}
-          {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+          {error && <p className="mt-2 text-xs text-destructive wework:text-red-600">{error}</p>}
 
           <div className="mt-3 flex items-center justify-between gap-2">
             {supervisor || initialConfig ? (

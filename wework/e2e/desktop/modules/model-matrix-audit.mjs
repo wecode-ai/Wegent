@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { wireDeclarations } from './model-wire-contract.mjs'
 import {
   functionCall,
+  matrixCaseId,
   namespacedFunctionCall,
   responseCompleted,
   responseCreated,
@@ -26,9 +27,7 @@ export function recordMatrixFailure(control, phase, error) {
 
 export function writeMatrixReport(control, model) {
   const state = control.matrixState
-  const caseId = [model.execution, model.source, model.protocol, model.requestMode ?? 'auto'].join(
-    '-'
-  )
+  const caseId = `${matrixCaseId(model)}${model.requestMode ? '' : '-auto'}`
   const report = {
     caseId,
     execution: model.execution,

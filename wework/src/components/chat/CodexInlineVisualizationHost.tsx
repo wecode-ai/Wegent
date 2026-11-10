@@ -251,9 +251,13 @@ function buildVisualizationDocument(
   const variables = Object.entries(readVisualizationThemeVariables())
     .map(([property, value]) => `${property}:${value.replace(/</g, '\\3c ')};`)
     .join('')
-  const styles = `<style>${CODEX_VISUALIZATION_HOST_STYLES}\n:root { color-scheme: ${theme}; }\n:root { ${variables} }</style>`
+  const themeStyleId = `wework-visualization-theme-${token}`
+  const styles = `<style>${CODEX_VISUALIZATION_HOST_STYLES}\n:root { color-scheme: ${theme}; }</style><style id="${escapeHtmlAttribute(themeStyleId)}">:root { ${variables} }</style>`
   const resizeScript = `<script>(()=>{
     const token=${JSON.stringify(token)};
+    const properties=${JSON.stringify(VISUALIZATION_THEME_PROPERTIES)};
+    const originalProperties=new Map();
+    const themeStyle=document.getElementById(${JSON.stringify(themeStyleId)});
     const height=()=>{
       const body=document.body,top=body.getBoundingClientRect().top;
       return Math.max(body.getBoundingClientRect().height,...Array.from(body.children,child=>child.getBoundingClientRect().bottom-top));
@@ -264,10 +268,20 @@ function buildVisualizationDocument(
       if(event.source!==parent||!data||data.type!==${JSON.stringify(THEME_MESSAGE_TYPE)}||data.token!==token) return;
       if(data.theme!=='light'&&data.theme!=='dark') return;
       document.documentElement.style.colorScheme=data.theme;
-      const properties=${JSON.stringify(VISUALIZATION_THEME_PROPERTIES)};
+      themeStyle.textContent='';
       if(data.variables&&typeof data.variables==='object') {
-        for(const [property,value] of Object.entries(data.variables)) {
-          if(properties.includes(property)&&typeof value==='string') document.documentElement.style.setProperty(property,value);
+        const style=document.documentElement.style;
+        for(const property of properties) {
+          const value=data.variables[property];
+          if(typeof value==='string') {
+            if(!originalProperties.has(property)) originalProperties.set(property,[style.getPropertyValue(property),style.getPropertyPriority(property)]);
+            style.setProperty(property,value);
+          } else if(originalProperties.has(property)) {
+            const [original,priority]=originalProperties.get(property);
+            if(original) style.setProperty(property,original,priority);
+            else style.removeProperty(property);
+            originalProperties.delete(property);
+          }
         }
       }
       send();

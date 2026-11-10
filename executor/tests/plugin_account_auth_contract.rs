@@ -9,6 +9,8 @@ use std::{
     time::Duration,
 };
 use wegent_executor::plugin_account_auth::{AuthError, Credential, NativeAdapter};
+// Protocol fixtures must not depend on the running desktop's runtime bridge.
+use wegent_executor_test_support as _;
 
 fn python() -> PathBuf {
     std::env::var_os("WEGENT_TEST_PYTHON")
@@ -692,6 +694,10 @@ impl wegent_executor::local::backend::LocalBackendTransport for MigrationTranspo
                     );
                     Ok(json!({"success":true,"packages":[]}))
                 }
+                "plugin.auth.oauth.revocations" => {
+                    assert_eq!(payload, json!({"after_id":0}));
+                    Ok(json!({"success":true,"revocations":[],"next_cursor":null}))
+                }
                 "plugin.auth.execute" => {
                     assert_eq!(
                         payload,
@@ -751,6 +757,29 @@ fn managed_fixture(root: &Path, checksum: &str) -> PathBuf {
     )
     .unwrap();
     home
+}
+
+#[tokio::test]
+async fn migration_fixture_handles_read_only_background_revocation_queries() {
+    use wegent_executor::local::backend::LocalBackendTransport;
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let transport = MigrationTransport(calls.clone());
+    let response = transport
+        .call(
+            "plugin.auth.oauth.revocations",
+            json!({"after_id":0}),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response,
+        json!({"success":true,"revocations":[],"next_cursor":null})
+    );
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec!["plugin.auth.oauth.revocations"]
+    );
 }
 
 #[derive(Clone)]
@@ -1118,11 +1147,10 @@ async fn public_sdk_cli_reaches_native_broker_without_local_login_or_secret_outp
         .await
         .unwrap();
     assert_eq!(rejected, json!({"error":"plugin_auth_broker_unauthorized"}));
-    assert!(calls
-        .lock()
-        .unwrap()
-        .iter()
-        .all(|event| event == "plugin.auth.automatic"));
+    assert!(calls.lock().unwrap().iter().all(|event| matches!(
+        event.as_str(),
+        "plugin.auth.automatic" | "plugin.auth.oauth.revocations"
+    )));
     let output = tokio::process::Command::new(python())
         .arg(&cli)
         .arg("read")
@@ -1158,7 +1186,10 @@ async fn public_sdk_cli_reaches_native_broker_without_local_login_or_secret_outp
             .lock()
             .unwrap()
             .iter()
-            .filter(|event| event.as_str() != "plugin.auth.automatic")
+            .filter(|event| !matches!(
+                event.as_str(),
+                "plugin.auth.automatic" | "plugin.auth.oauth.revocations"
+            ))
             .cloned()
             .collect::<Vec<_>>(),
         vec!["plugin.auth.execute"]

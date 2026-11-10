@@ -1,0 +1,75 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { RuntimeMessageReceipts } from './RuntimeMessageReceipts'
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  localStorage.clear()
+})
+const message = (id: string, createdAt: number) => ({ id, createdAt, text: 'private text' })
+describe('message-level stand-in receipts', () => {
+  it('counts separate messages during one running turn and deduplicates canonical refreshes', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000)
+    const store = new RuntimeMessageReceipts('messages')
+    expect(store.observe('chat', [message('history', 100)], false)).toEqual([])
+    const incoming = [message('ack', 1100), message('result', 1200)]
+    expect(store.observe('chat', incoming, false)).toEqual(incoming)
+    expect(store.unreadCount('chat')).toBe(2)
+    expect(store.observe('chat', incoming, false)).toEqual([])
+    expect(new RuntimeMessageReceipts('messages').unreadCount('chat')).toBe(2)
+    expect(localStorage.getItem('messages')).not.toContain('private text')
+  })
+  it('clears only the viewed conversation, persists reads, and ignores older pagination', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000)
+    const store = new RuntimeMessageReceipts('reads')
+    store.observe('primary', [message('a', 1100)], false)
+    store.observe('role', [message('b', 1100)], false)
+    store.setViewed('primary', true)
+    expect(store.observe('primary', [message('c', 1200)], false)).toEqual([])
+    expect(store.unreadCount('primary')).toBe(0)
+    expect(store.unreadCount('role')).toBe(1)
+    store.setViewed('primary', false)
+    expect(store.observe('primary', [message('old', 500)], false)).toEqual([])
+    expect(store.observe('primary', [message('d', 1300)], false)).toHaveLength(1)
+  })
+  it('baselines historical unread work without emitting a desktop notification', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000)
+    const store = new RuntimeMessageReceipts('baseline')
+    expect(store.observe('chat', [message('a', 100), message('b', 200)], true)).toEqual([])
+    expect(store.unreadCount('chat')).toBe(1)
+    expect(new RuntimeMessageReceipts('other-account').unreadCount('chat')).toBe(0)
+  })
+  it('merges device aliases without restoring already read messages', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000)
+    const store = new RuntimeMessageReceipts('aliases')
+    store.observe('alias', [message('a', 1100)], false)
+    store.markRead('alias')
+    store.observe('canonical', [message('a', 1100), message('b', 1200)], false)
+    store.merge('alias', 'canonical')
+    expect(store.unreadCount('canonical')).toBe(1)
+    expect(store.unreadCount('alias')).toBe(0)
+  })
+
+  it('keeps a conversation read while another visible pane still owns it', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000)
+    const store = new RuntimeMessageReceipts('two-panes')
+    store.observe('chat', [message('a', 1100)], false)
+    store.setViewed('chat', true, 'first')
+    store.setViewed('chat', true, 'second')
+    store.setViewed('chat', false, 'first')
+    expect(store.observe('chat', [message('b', 1200)], false)).toEqual([])
+    store.setViewed('chat', false, 'second')
+    expect(store.observe('chat', [message('c', 1300)], false)).toHaveLength(1)
+  })
+
+  it('does not publish repeated read acknowledgements when unread state is unchanged', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000)
+    const store = new RuntimeMessageReceipts('idempotent-read')
+    store.observe('chat', [message('a', 1100)], false)
+    const listener = vi.fn()
+    store.subscribe(listener)
+    store.markRead('chat')
+    store.markRead('chat')
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(new RuntimeMessageReceipts('idempotent-read').unreadCount('chat')).toBe(0)
+  })
+})
