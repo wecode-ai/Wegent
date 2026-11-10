@@ -739,3 +739,120 @@ async def test_done_event_forwards_finalized_result_to_wrapped_emitter():
     wrapped.emit.assert_awaited_once()
     forwarded_event = wrapped.emit.await_args.args[0]
     assert forwarded_event.result == finalized_result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["completed", "failed"])
+async def test_video_card_saves_json_and_forwards_without_private_evidence(
+    monkeypatch, terminal
+):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.services.chat.trigger import lifecycle
+    from app.services.execution.emitters import status_updating as module
+    from app.services.knowledge.answer_evidence import TrustedEvidence
+
+    wrapped = AsyncMock()
+    emitter = module.StatusUpdatingEmitter(
+        wrapped, task_id=101, subtask_id=202, generation_id="a" * 32
+    )
+    video_job = {
+        "card_type": "video_director_generation",
+        "query_url": "https://workflow.example.com/task/1",
+        "status": "polling",
+    }
+    blocks = [{"id": "card-1", "type": "card", "card_status": "pending"}]
+    runtime_result = {
+        "video_job": video_job,
+        "blocks": blocks,
+        "_answer_evidence": TrustedEvidence([], user_id=7),
+    }
+    monkeypatch.setattr(
+        module, "collect_completed_result", AsyncMock(return_value=runtime_result)
+    )
+    db = MagicMock()
+    monkeypatch.setattr(lifecycle, "SessionLocal", lambda: db)
+    monkeypatch.setattr(
+        lifecycle.task_stores.subtask_store,
+        "get_by_id",
+        lambda *a, **k: SimpleNamespace(id=202),
+    )
+    saved = []
+
+    def write_result(*args, **kwargs):
+        # Exercise the JSON serialization required by the actual storage column.
+        saved.append(json.loads(json.dumps(kwargs["result"])))
+        assert kwargs["generation_id"] == "a" * 32
+        return True
+
+    monkeypatch.setattr(
+        lifecycle.task_stores.subtask_store, "update_fields_if_attempt", write_result
+    )
+
+    if terminal == "completed":
+        result = await emitter._update_status_completed(runtime_result)
+    else:
+        result = await emitter._update_status_failed("runtime ended")
+
+    assert result == {"video_job": video_job, "blocks": blocks}
+    assert saved == [result]
+    assert emitter._terminal_event_deferred
+    assert not emitter._save_unconfirmed
+    db.commit.assert_called_once()
+    assert "_answer_evidence" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("save_outcome", ["rejected", "commit_failed"])
+async def test_video_card_unsaved_result_is_not_reported_as_success(
+    monkeypatch, save_outcome
+):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.services.chat.trigger import lifecycle
+    from app.services.execution.emitters import status_updating as module
+    from app.services.knowledge.answer_evidence import TrustedEvidence
+
+    wrapped = AsyncMock()
+    emitter = module.StatusUpdatingEmitter(
+        wrapped, task_id=101, subtask_id=202, generation_id="a" * 32
+    )
+    evidence = TrustedEvidence([], user_id=7)
+    runtime_result = {
+        "video_job": {
+            "card_type": "video_director_generation",
+            "query_url": "https://workflow.example.com/task/1",
+            "status": "polling",
+        },
+        "_answer_evidence": evidence,
+    }
+    monkeypatch.setattr(
+        module, "collect_completed_result", AsyncMock(return_value=runtime_result)
+    )
+    db = MagicMock()
+    if save_outcome == "commit_failed":
+        db.commit.side_effect = OSError("connection lost")
+    monkeypatch.setattr(lifecycle, "SessionLocal", lambda: db)
+    monkeypatch.setattr(
+        lifecycle.task_stores.subtask_store,
+        "get_by_id",
+        lambda *a, **k: SimpleNamespace(id=202),
+    )
+    monkeypatch.setattr(
+        lifecycle.task_stores.subtask_store,
+        "update_fields_if_attempt",
+        lambda *a, **k: save_outcome != "rejected",
+    )
+    result = await emitter._update_status_completed(runtime_result)
+    assert result is None
+    assert not emitter._status_updated
+    assert runtime_result["_answer_evidence"] is evidence
+    if save_outcome == "commit_failed":
+        assert emitter._save_unconfirmed
+        db.rollback.assert_called_once()
+    else:
+        assert emitter._terminal_transition_lost
+    wrapped.emit_done.assert_not_awaited()

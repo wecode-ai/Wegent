@@ -467,6 +467,9 @@ async def persist_result_without_status(
     generation_id: Optional[str] = None,
 ) -> bool:
     """Persist result data while leaving the current subtask status unchanged."""
+    from app.services.knowledge.answer_evidence import public_result
+
+    sanitized_result = public_result(result)
     db = SessionLocal()
     try:
         subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
@@ -483,9 +486,12 @@ async def persist_result_without_status(
                 if generation_id is None
                 else (SubtaskStatus.PENDING, SubtaskStatus.RUNNING)
             ),
-            result=result,
+            result=sanitized_result,
         )
         db.commit()
+        if changed:
+            result.clear()
+            result.update(sanitized_result)
         return changed
     except Exception:
         db.rollback()
