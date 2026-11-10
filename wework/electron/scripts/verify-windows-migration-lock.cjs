@@ -10,24 +10,11 @@ module.exports = async function verifyWindowsMigrationLock(context) {
   const resources = join(context.appOutDir, 'resources')
   const executor = join(resources, 'bin', 'wegent-executor.exe')
   const manifest = JSON.parse(await readFile(join(resources, 'components.json'), 'utf8'))
-  const { hashComponentPath } = await import('../../scripts/lib/component-content-hash.mjs')
-  const component = manifest.components?.executor
-  const digest = await hashComponentPath(join(resources, component.path))
+  const digest = createHash('sha256')
+    .update(await readFile(executor))
+    .digest('hex')
   if (digest !== manifest.components?.executor?.sha256) {
     throw new Error('Packaged Windows migration executor checksum mismatch')
-  }
-  if (!Array.isArray(manifest.windowsRuntime))
-    throw new Error('Packaged Windows app-local runtime metadata is missing')
-  for (const file of manifest.windowsRuntime) {
-    const { isAbsolute, resolve, sep } = require('node:path')
-    const path = resolve(resources, file.path)
-    if (isAbsolute(file.path) || !path.startsWith(resolve(resources) + sep))
-      throw new Error('Packaged Windows app-local runtime path is invalid')
-    const digest = createHash('sha256')
-      .update(await readFile(path))
-      .digest('hex')
-    if (digest !== file.sha256)
-      throw new Error(`Packaged Windows app-local runtime checksum mismatch: ${file.path}`)
   }
   const directory = await mkdtemp(join(tmpdir(), 'wework-packaged-migration-'))
   const lockFile = join(directory, 'startup.lock')

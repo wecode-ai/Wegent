@@ -96,13 +96,10 @@ module.exports = {
   },
   win: {
     // Desktop data migration runs before managed components can be resolved.
-    extraResources: [
-      // Keep the native launcher independent of machine-wide VC runtime installs.
-      { from: 'resources', to: '.', filter: ['*.dll'] },
-      ...(onlineUpdateBuild && !onlineUpdateIncludesComponents
-        ? [{ from: 'resources/bin', to: 'bin' }]
-        : []),
-    ],
+    extraResources:
+      onlineUpdateBuild && !onlineUpdateIncludesComponents
+        ? [{ from: 'resources/bin/wegent-executor.exe', to: 'bin/wegent-executor.exe' }]
+        : [],
     artifactName: `${artifactPrefix}_\${version}_windows_\${arch}-setup.\${ext}`,
     electronLanguages: ['en-US', 'zh-CN'],
     icon: path.resolve(__dirname, '../resources/icons/icon.ico'),

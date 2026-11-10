@@ -491,21 +491,11 @@ export class ComponentUpdateManager {
       coreDsh: paths.coreDsh,
       weworkCorePlugins: composedCorePlugins,
       bundledPlugins: paths.bundledPlugins,
-      executor: await this.resolveExecutorBinary(paths.executor),
+      executor: paths.executor,
       codex: await this.resolveCodexBinary(paths.codex),
       dws: paths.dws,
       contentSha256: fingerprints,
     }
-  }
-
-  private async resolveExecutorBinary(componentPath: string): Promise<string> {
-    if (this.platform !== 'win32') return componentPath
-    const metadata = await stat(componentPath)
-    if (!metadata.isDirectory()) return componentPath
-    const binaryPath = join(componentPath, 'wegent-executor.exe')
-    if (!(await stat(binaryPath)).isFile())
-      throw new Error(`Executor executable is invalid: ${binaryPath}`)
-    return binaryPath
   }
 
   private async resolveCodexBinary(componentPath: string): Promise<string> {

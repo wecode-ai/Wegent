@@ -1,7 +1,6 @@
 import { lstat, mkdir, readFile, readlink, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
-import * as tar from 'tar'
 import { ComponentUpdateManager, hashComponentPath } from './component-update-manager.js'
 
 import {
@@ -25,63 +24,6 @@ afterEach(async () => {
 })
 
 describe('ComponentUpdateManager', () => {
-  test.each(['rollback', 'damaged-dll'])(
-    'keeps the Windows executor and its app-local runtime together through %s',
-    async recovery => {
-      const fixture = await createFixture()
-      const executable = join(fixture.resources, 'bin', 'wegent-executor.exe')
-      await writeFile(executable, 'executor-v1')
-      await writeFile(join(fixture.resources, 'bin', 'vcruntime140.dll'), 'runtime-v1')
-      const codexBin = join(fixture.resources, 'codex', 'vendor', 'test-target', 'bin')
-      await writeFile(join(codexBin, 'codex-code-mode-host.exe'), 'code-mode-host')
-      fixture.components.executor.path = 'bin'
-      fixture.components.executor.sha256 = await hashComponentPath(join(fixture.resources, 'bin'))
-      fixture.components.codex.sha256 = await hashComponentPath(join(fixture.resources, 'codex'))
-      await writePackagedManifest(fixture, appVersion)
-      const update = await createExecutorUpdate(fixture.root, 'windows-executor')
-      const source = join(fixture.root, 'windows-component')
-      await mkdir(source)
-      await writeFile(join(source, 'wegent-executor.exe'), 'executor-v2')
-      await writeFile(join(source, 'vcruntime140.dll'), 'runtime-v2')
-      const archivePath = join(fixture.root, 'windows-component.tar.gz')
-      await tar.c({ cwd: source, file: archivePath, gzip: true }, ['.'])
-      update.archive = await readFile(archivePath)
-      Object.assign(update.manifest, { platform: 'windows', arch: 'x64' })
-      Object.assign(update.manifest.components.executor, {
-        entryPath: '.',
-        contentSha256: await hashComponentPath(source),
-        archiveSha256: sha256(update.archive),
-        archiveBytes: update.archive.length,
-      })
-      const manager = new ComponentUpdateManager({
-        resourcesRoot: fixture.resources,
-        dataDirectory: fixture.data,
-        updateBaseUrl,
-        currentAppVersion: appVersion,
-        platform: 'win32',
-        arch: 'x64',
-        fetch: componentFetch(update.manifest, update.assetName, update.archive),
-      })
-      expect((await manager.prepareStartup()).executor).toBe(executable)
-      await manager.stageUpdateForApp(appVersion, 'beta')
-      const selected = await manager.prepareStartup()
-      expect(await readFile(selected.executor, 'utf8')).toBe('executor-v2')
-      const runtime = join(dirname(selected.executor), 'vcruntime140.dll')
-      expect(await readFile(runtime, 'utf8')).toBe('runtime-v2')
-      if (recovery === 'rollback') {
-        expect(await manager.rollbackStartup()).toBe(true)
-      } else {
-        await manager.confirmStartup()
-        await writeFile(runtime, 'tampered DLL')
-      }
-      const restored = await manager.prepareStartup()
-      expect(restored.executor).toBe(executable)
-      expect(await readFile(join(dirname(restored.executor), 'vcruntime140.dll'), 'utf8')).toBe(
-        'runtime-v1'
-      )
-    }
-  )
-
   test('publishes complete plugin content and shares concurrent initialization', async () => {
     const fixture = await createFixture()
     const manager = createManager(fixture, async () => new Response(null, { status: 404 }))

@@ -62,28 +62,21 @@ NSIS 安装器写入
 安装器使用 Electron Builder 的标准 NSIS 安装流程，不再处理旧 updater 的 `/P`
 参数或旧安装注册表迁移。
 
-### 应用本地 VC++ 运行库
+### 自包含的原生二进制
 
-Windows 打包需要 Visual Studio C++ Build Tools 的 x64 可再发行文件。
-构建脚本优先读取 `VCToolsRedistDir`，否则通过微软的 `vswhere.exe` 定位已安装
-工具链的 `VC\Redist\MSVC`。非标准工具链或交叉打包可显式设置
-`WEWORK_VC_REDIST_DIR`，指向官方的 `x64\Microsoft.VC*.CRT` 目录。
-不要从系统目录、第三方 DLL 网站或其他应用复制运行库。
+Windows 启动器和 Executor 使用静态 C 运行库
+（`-C target-feature=+crt-static`）。因此干净 Windows 环境不需要安装
+Visual C++ 运行库、Node.js，也不需要随应用放置 `vcruntime140.dll` 或
+`msvcp140.dll`。构建过程不从构建机复制运行库 DLL，不产生这些文件的再分发
+许可和安全维护义务。
 
-打包按 Executor 和原生启动器的 PE 普通/延迟导入表收集 VC DLL 及其传递依赖，
-只将必要的 x64 DLL 放到各自 EXE 旁边，不运行 `vc_redist`、不写 `System32`。
-因此最终用户不需要额外安装 Node.js 或 VC++ 运行库，也不会因为部署这些 DLL
-而被要求重启。缺失 DLL 或架构不符会直接阻止打包。
+打包会读取资源目录中每个 `.exe` 的普通和延迟导入表；只要发现导入
+`vcruntime*`、`msvcp*` 或 `concrt*` 就判定失败。该检查同样覆盖外部传入的
+`WEWORK_EXECUTOR_PATH`，防止后续原生组件重新引入对机器级运行库的依赖。
 
-Windows 的 `bin` 原生工具目录（Executor、DWS 和本地 VC DLL）作为一个完整
-Executor 组件进行内容校验、发布、激活和回滚。Host-only 更新同样包含启动前
-必须可用的 `bin` 目录和启动器 DLL。打包检查校验运行库哈希，并执行真实的
-迁移锁协议。VC DLL 的安全更新由应用发布负责，不能依赖 Windows Update
-替应用更新这些本地副本。
-
-干净 Windows 沙箱验收应覆盖：不安装全局 VC++ 运行库，首次安装并启动应用，
-完成一次云端模型文字聊天，再验证组件升级和回滚。单元测试或已有全局运行库的
-构建机通过不能替代该验收。
+干净 Windows 沙箱验收仍应覆盖：不安装全局 VC++ 运行库，首次安装并启动应用，
+完成一次云端模型文字聊天，再验证组件升级和回滚。已安装运行库的托管构建机
+不能替代该验收，但打包检查可以证明交付的 EXE 不再请求该运行库。
 
 ## 验证
 
@@ -91,6 +84,7 @@ Executor 组件进行内容校验、发布、激活和回滚。Host-only 更新�
 pnpm --filter wework typecheck
 pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
+node --test wework/scripts/windows-native-runtime.test.mjs
 pnpm --dir wework/electron build:release
 ```
 

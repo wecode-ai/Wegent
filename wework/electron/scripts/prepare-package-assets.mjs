@@ -27,12 +27,12 @@ import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runti
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 import { extractWeworkAppStaticResources } from '../../scripts/lib/wework-app-component-resources.mjs'
 import { buildLauncher } from './build-launcher.mjs'
-import {
-  deployWindowsAppLocalRuntime,
-  findWindowsCrtDirectory,
-} from './windows-app-local-runtime.mjs'
 import { withTemporaryBuildDirectory } from '../../scripts/lib/temporary-build-directory.mjs'
 import { packagedHarnessRuntimeCatalog } from '../../scripts/lib/packaged-harness-runtime.mjs'
+import {
+  assertWindowsNativeRuntimeIndependent,
+  windowsStaticCrtEnvironment,
+} from '../../scripts/lib/windows-native-runtime.mjs'
 import builderConfig from '../electron-builder.config.cjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -44,6 +44,7 @@ const sharedResourcesRoot = join(weworkRoot, 'resources')
 const executorProfile = resolveExecutorProfile()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const packageTargets = resolveDesktopPackageTargets(process.env)
+const windowsTarget = packageTargets.cargoTarget.includes('windows')
 const executorTargetDirectory = resolveExecutorPackageTargetDirectory(process.env, executorRoot)
 const packageEnvironment = {
   ...process.env,
@@ -143,17 +144,8 @@ await withTemporaryBuildDirectory({
     )
     await cp(join(sharedResourcesRoot, 'binaries', dwsSourceName), packagedDws)
     if (process.platform !== 'win32') await chmod(packagedDws, 0o755)
-    const windowsTarget = packageTargets.cargoTarget.includes('windows')
-    const windowsRuntime = windowsTarget
-      ? await deployWindowsAppLocalRuntime({
-          resources: resourcesRoot,
-          executables: [packagedExecutor, launcherPath],
-          crtDirectory: await findWindowsCrtDirectory(),
-        })
-      : undefined
-    // Windows native tools and their app-local DLLs are one verified update unit.
-    const executorComponentPath = windowsTarget ? 'bin' : `bin/${executorName}`
-    const executorSha256 = await hashComponentPath(join(resourcesRoot, executorComponentPath))
+    if (windowsTarget) await assertWindowsNativeRuntimeIndependent(resourcesRoot)
+    const executorSha256 = await hashComponentPath(packagedExecutor)
     const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
     const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
     const sourceSha =
@@ -177,7 +169,6 @@ await withTemporaryBuildDirectory({
           readableDataSchemas: builderConfig.extraMetadata.weworkReadableDataSchemas,
           sourceSha,
           channel: process.env.VITE_WEWORK_RELEASE_CHANNEL?.trim() || 'development',
-          ...(windowsRuntime ? { windowsRuntime } : {}),
           components: {
             electron: { version: electronPackage.devDependencies.electron },
             coreDsh: {
@@ -202,7 +193,7 @@ await withTemporaryBuildDirectory({
             },
             executor: {
               version: weworkRuntimeVersion,
-              path: executorComponentPath,
+              path: `bin/${executorName}`,
               sha256: executorSha256,
             },
             codex: {
@@ -256,10 +247,18 @@ async function buildExecutor(profile, target, targetDirectory) {
     'wegent-executor',
   ]
   if (target) buildArgs.push('--target', target)
-  await run('cargo', buildArgs, repositoryRoot, {
-    ...process.env,
-    CARGO_TARGET_DIR: targetDirectory,
-  })
+  await run(
+    'cargo',
+    buildArgs,
+    repositoryRoot,
+    windowsStaticCrtEnvironment(
+      {
+        ...process.env,
+        CARGO_TARGET_DIR: targetDirectory,
+      },
+      target
+    )
+  )
   return executorPackageBinaryPath(targetDirectory, target, profile)
 }
 
