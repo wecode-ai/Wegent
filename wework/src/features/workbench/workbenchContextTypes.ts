@@ -4,7 +4,6 @@ import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type { ModelSelectionDiagnostics } from './modelSelectionDiagnostics'
 import type {
   Attachment,
-  BindRuntimeTaskIMSessionsResponse,
   CloneGitRepositoryInput,
   CreatedRuntimeProject,
   CreateGitWorkspaceProjectRequest,
@@ -368,10 +367,6 @@ export interface WorkbenchContextValue {
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
-  bindRuntimeTaskToImSessions: (
-    address: RuntimeTaskAddress,
-    sessionKeys: string[]
-  ) => Promise<BindRuntimeTaskIMSessionsResponse>
   getImNotificationSettings: () => Promise<RuntimeIMNotificationSettingsResponse>
   updateGlobalImNotification: (
     data: RuntimeGlobalIMNotificationUpdateRequest

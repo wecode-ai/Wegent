@@ -349,7 +349,7 @@ pub(super) async fn cloud_model_config(
         },
         "runtime_config": {"codex": {"use_user_config": false, "configured": true}},
         "wework_model_kind": "cloud",
-        "tool_profile": "custom",
+        "tool_profile": "function",
         "codex_responses_compat_proxy": true,
     });
     if let Some(object) = model_config.as_object_mut() {

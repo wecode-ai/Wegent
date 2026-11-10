@@ -14,20 +14,24 @@ const conversation = (id, direct, sender) => ({
   ],
 })
 
-test('DingTalk collection retries only definite transport failures, not rejected or invalid reads', async () => {
+test('DingTalk collection preserves the host read classification without provider-specific retries', async () => {
   for (const code of [
-    'connection_cli_timeout',
-    'ECONNRESET',
-    'ETIMEDOUT',
+    'connection_cli_request_unavailable',
     'connector_auth_required',
     'connection_cli_failed',
     'dingtalk_response_invalid',
     'forbidden',
   ]) {
+    const failure = Object.assign(new Error('Read failed'), {
+      code,
+      ...(code === 'connection_cli_request_unavailable'
+        ? { retryAfterMs: 30000, providerCode: 'request_failed' }
+        : {}),
+    })
     const ctx = {
       cli: {
         callTool: async () => {
-          throw Object.assign(new Error('Read failed'), { code })
+          throw failure
         },
       },
     }
@@ -43,10 +47,7 @@ test('DingTalk collection retries only definite transport failures, not rejected
         checkpoint: {},
       }),
       error => {
-        assert.equal(
-          error.retryAfterMs,
-          ['connection_cli_timeout', 'ECONNRESET', 'ETIMEDOUT'].includes(code) ? 30000 : undefined
-        )
+        assert.equal(error, failure)
         return true
       }
     )

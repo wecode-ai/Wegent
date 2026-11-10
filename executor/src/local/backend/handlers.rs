@@ -132,6 +132,27 @@ where
                     if command_key == "task_artifact" {
                         return Some(json!(crate::artifact_workspace::command(payload).await));
                     }
+                    if command_key == "git_clone" {
+                        let args = payload["args"]
+                            .as_array()
+                            .map(|args| {
+                                args.iter()
+                                    .filter_map(Value::as_str)
+                                    .map(str::to_owned)
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        let request = CommandRequest::from_value(payload);
+                        let result = crate::local::git_access::execute_clone(
+                            &args,
+                            request.cwd.as_deref().map(std::path::Path::new),
+                            &request.env,
+                            request.timeout_seconds,
+                            request.max_output_bytes,
+                        )
+                        .await;
+                        return Some(json!(result));
+                    }
                     if command_key == "environment_prepare" {
                         let args = payload
                             .get("args")

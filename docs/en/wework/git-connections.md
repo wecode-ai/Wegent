@@ -12,6 +12,28 @@ Open **Settings → Coding → Git hosting**, confirm the execution device and p
 
 For repository events, use **My Stand-in → role profile → connection sources → GitHub/GitLab**, not just the status switch. Distinguish missing CLI, sign-in, network and permission failures before choosing login or retry.
 
+<a id="device-git-configuration"></a>
+
+## Repository access configuration and device sync
+
+**Device Git configuration → Configure Git account** on the Git hosting page opens the current cloud connection's Web **Settings → Integrations → Git accounts**. These HTTP(S) repository credentials are separate from stand-in event sources and native `gh` login. Navigation is unavailable until the cloud Web address is resolved and the connection is available; the Backend address is never a substitute.
+
+The clone dialog offers the same quiet action beside the repository URL. Device error rows on execution-environment pages and Git authentication error cards in conversations also offer **Configure Git account** for ClaudeCode cloud or remote devices. The link retains the exact repository domain and port, editing an existing matching account or prefilling a new one. No duplicate clone notice appears in the sidebar. Return to the original entry to retry; repository, branch and directory inputs remain intact.
+
+To sync manually:
+
+1. Configure the repository domain's account in Web Git accounts.
+2. Return to **Settings → Coding → Git hosting → Device Git configuration** and select **Refresh**.
+3. Choose an online ClaudeCode cloud or remote device, then select **Sync Git configuration**.
+
+Only the first effective account per domain in configuration order is synced. Success does not prove repository permission, branch availability or commit identity. Cloning and environment preparation first check actual device access; only HTTP(S) authentication failures trigger synchronization of existing accounts and one recheck. Sync failures retain the original Git diagnosis and configuration action.
+
+Clearing is independent: when there are no effective cloud accounts, ordinary sync is disabled. Select a target, choose **Clear Wegent Git configuration**, and confirm to remove that device's managed configuration. Empty accounts, refreshes and authentication failures never clear it automatically or alter native local configuration.
+
+Local devices use existing Git, credential managers and SSH configuration, including `core.sshCommand`, `GIT_SSH` and `GIT_SSH_COMMAND`. Repair SSH keys on the selected device rather than opening HTTP(S) accounts. Network, TLS, SSH host trust and 403/404 permission errors do not prove expired login. See [Git projects](../wegent/user-guide/coding/git-workspace-projects.md#configuration-and-recovery) for cloning and recovery.
+
+## Stand-in event sources
+
 Select GitHub or GitLab in a role's connection settings. GitHub.com, GitLab.com and HTTPS self-managed GitLab instances are supported. The connection provides events and the execution device's `gh` / `glab` capabilities. The stand-in's role instructions decide whether to analyze, review or modify code.
 
 ## Accounts and scopes

@@ -49,17 +49,18 @@ const api = {
 const onConnected = vi.fn()
 const getHome = vi.fn(async (deviceId: string) => `/home/${deviceId}`)
 const listDirectories = vi.fn().mockResolvedValue([])
+const openWorkspace = vi.fn().mockResolvedValue(undefined)
 
 function ConnectedProject({
   devices = [],
   accountId = 1,
-  onStartGitCloneProject,
+  onCloneGitRepository,
 }: {
   devices?: DeviceInfo[]
   accountId?: number
-  onStartGitCloneProject?: React.ComponentProps<
+  onCloneGitRepository?: React.ComponentProps<
     typeof StandaloneFolderProjectDialog
-  >['onStartGitCloneProject']
+  >['onCloneGitRepository']
 }) {
   const context = useOptionalCloudConnection()
   return (
@@ -78,7 +79,8 @@ function ConnectedProject({
         onGetDeviceHomeDirectory={getHome}
         onListDeviceDirectories={listDirectories}
         onCreateDeviceDirectory={vi.fn()}
-        onStartGitCloneProject={onStartGitCloneProject}
+        onCloneGitRepository={onCloneGitRepository}
+        onOpenStandaloneWorkspace={openWorkspace}
       />
     </CloudConnectionContext.Provider>
   )
@@ -345,11 +347,9 @@ describe('shared device onboarding', () => {
   test('resets the Git directory and folder picker when a new device is selected', async () => {
     await installGitUiTestContributions()
     const original = device({ device_id: 'existing' })
-    const onStartGitCloneProject = vi.fn()
+    const onCloneGitRepository = vi.fn().mockResolvedValue(undefined)
     api.getAllDevices.mockResolvedValue([original, device()])
-    render(
-      <ConnectedProject devices={[original]} onStartGitCloneProject={onStartGitCloneProject} />
-    )
+    render(<ConnectedProject devices={[original]} onCloneGitRepository={onCloneGitRepository} />)
 
     fireEvent.click(screen.getByTestId('remote-project-source-git'))
     const parent = screen.getByTestId('remote-project-git-parent-input')
@@ -374,10 +374,19 @@ describe('shared device onboarding', () => {
     )
     expect(screen.getByTestId('remote-project-git-url-input')).toHaveValue(url)
     fireEvent.click(screen.getByTestId('remote-project-git-submit'))
-    expect(onStartGitCloneProject).toHaveBeenCalledWith('new-remote', {
-      url,
-      targetPath: '/home/new-remote/repository',
-    })
+    await waitFor(() =>
+      expect(onCloneGitRepository).toHaveBeenCalledWith('new-remote', {
+        url,
+        targetPath: '/home/new-remote/repository',
+      })
+    )
+    await waitFor(() =>
+      expect(openWorkspace).toHaveBeenCalledWith(
+        'new-remote',
+        '/home/new-remote/repository',
+        'repository'
+      )
+    )
   })
 
   test('settings closes and publishes only the connected target', async () => {

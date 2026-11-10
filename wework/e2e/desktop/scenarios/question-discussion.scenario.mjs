@@ -403,7 +403,10 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
       )
       await control.command('waitFor', CARD, { text: QUESTION, visible: true })
-      await control.command('click', `${CARD} [data-testid="request-user-input-discuss"]`)
+      await control.command(
+        'clickWhenEnabled',
+        `${CARD} [data-testid="request-user-input-discuss"]`
+      )
       const multiSize = await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 480, height: 760 }),
       })

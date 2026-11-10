@@ -1,8 +1,9 @@
 import '@/i18n'
-import { render } from '@testing-library/react'
+import { fireEvent, render, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { expect, it, vi } from 'vitest'
-import type { CollaborationApp, RunnerModel } from '@wegent/collaboration'
+import { runnerModelKey, type CollaborationApp, type RunnerModel } from '@wegent/collaboration'
+import { TemplateModelSelection } from '../../../../packages/collaboration/src/templates/TemplateModelSelection'
 import { WeworkSharedProject } from './WeworkCollaborationPlatform'
 
 const captured = vi.hoisted(() => ({
@@ -15,11 +16,23 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
   ...(await importOriginal<typeof import('@wegent/collaboration')>()),
   CollaborationApp: ({ host }: ComponentProps<typeof CollaborationApp>) => {
     captured.host = host
-    return null
+    return (
+      <TemplateModelSelection
+        runtime="codex"
+        configuration={{
+          host: host.projectAgentConfiguration!,
+          location: 'cloud',
+          projectId: 'cloud-project',
+        }}
+        locale="en"
+        disabled={false}
+        onChange={() => {}}
+      />
+    )
   },
 }))
 
-it('exposes explicit model selection for cloud project imports without enabling local Agent creation', async () => {
+it('retains the selected cloud import model across device refreshes without enabling local Agent creation', async () => {
   const model: RunnerModel = {
     runtime: 'codex',
     provider: 'company',
@@ -52,8 +65,15 @@ it('exposes explicit model selection for cloud project imports without enabling 
     workspace: { id: 'space', name: 'Cloud space' },
     setLocation: vi.fn(),
   } as unknown as ComponentProps<typeof WeworkSharedProject>
-  render(<WeworkSharedProject {...props} />)
+  const { getByRole, rerender } = render(<WeworkSharedProject {...props} />)
   const configuration = captured.host!.projectAgentConfiguration!
+  const field = getByRole('combobox')
+  await waitFor(() => expect(getByRole('option', { name: /Selected/ })).toBeEnabled())
+  fireEvent.change(field, { target: { value: runnerModelKey(model) } })
+  expect(field).toHaveValue(runnerModelKey(model))
+  rerender(<WeworkSharedProject {...props} devices={[]} />)
+  await waitFor(() => expect(field).toHaveValue(runnerModelKey(model)))
+  expect(captured.host!.projectAgentConfiguration).toBe(configuration)
   expect(configuration.listTemplateAgentModels).toBeTypeOf('function')
   expect(configuration.renderLocalAgentCreator).toBeUndefined()
   expect((await configuration.listTemplateAgentModels!('codex')).models).toEqual([model])

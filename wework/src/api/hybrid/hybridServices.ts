@@ -957,7 +957,7 @@ export function createHybridWorkbenchServices(
       }
       return cloudRuntimeIpc.request<DeviceCommandResponse>(
         'device.execute_command',
-        data,
+        { ...data },
         deviceId
       )
     },
@@ -1254,9 +1254,6 @@ export function createHybridWorkbenchServices(
     },
     restoreWorktree(data) {
       return runtimeApiForDevice(data.deviceId).then(api => api.restoreWorktree(data))
-    },
-    bindRuntimeTaskImSessions(data) {
-      return cloudServices.runtimeWorkApi!.bindRuntimeTaskImSessions(data)
     },
     getImNotificationSettings() {
       return cloudServices.runtimeWorkApi!.getImNotificationSettings()

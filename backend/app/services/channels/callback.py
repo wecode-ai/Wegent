@@ -14,6 +14,7 @@ its own callback logic while sharing common infrastructure.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -37,9 +38,14 @@ CHANNEL_TASK_CALLBACK_TTL = 60 * 60
 RUNTIME_LOCAL_TASK_CALLBACK_PREFIX = "runtime"
 
 
-def runtime_local_task_callback_key(device_id: str, local_task_id: str) -> str:
+def runtime_local_task_callback_key(
+    device_id: str, local_task_id: str, callback_id: str | None = None
+) -> str:
     """Build the IM callback key for a device-local runtime task."""
-    return f"{RUNTIME_LOCAL_TASK_CALLBACK_PREFIX}:{device_id}:{local_task_id}"
+    key = f"{RUNTIME_LOCAL_TASK_CALLBACK_PREFIX}:{device_id}:{local_task_id}"
+    if callback_id:
+        key += ":" + hashlib.sha256(callback_id.encode()).hexdigest()
+    return key
 
 
 class ChannelType(str, Enum):

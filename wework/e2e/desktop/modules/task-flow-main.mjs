@@ -1141,10 +1141,19 @@ async function main() {
     mkdir(codexSqliteHome, { recursive: true }),
     mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  // Desktop scenarios own their viewport instead of inheriting first-launch defaults.
+  // The host clamps these bounds to each runner's available display, as before.
   // Exercise consent explicitly; the product default already marks it as asked.
   await writeFile(
     join(electronUserDataDirectory, 'app-preferences.json'),
-    `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
+    `${JSON.stringify({
+      telemetryConsentAsked: false,
+      telemetryEnabled: false,
+      mainWindowState: {
+        bounds: { x: 0, y: 0, width: 1440, height: 960 },
+        maximized: true,
+      },
+    })}\n`,
     { flag: 'wx', mode: 0o600 }
   )
   // Background update dialogs steal focus from unrelated keyboard scenarios.
@@ -1477,6 +1486,10 @@ async function main() {
       'WEWORK_NODE_RUNTIME_ROOT',
     ]) {
       delete appEnvironment[key]
+    }
+    if (shouldRunDesktopCheckpoint('cloud-project-creation')) {
+      // New Backend clone coverage shares the fixture's existing native root.
+      appEnvironment.WEGENT_EXECUTOR_PROJECTS_DIR = appEnvironment.WORKSPACE_ROOT
     }
     if (electronCoreRuntimeRoot) {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
@@ -3205,35 +3218,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         taskRowTestId,
         userText: TASK_PROMPT,
       })
-      phase = 'private-im-model-binding'
-      await control.command('click', '[data-testid="continue-in-im-button"]')
-      await withTimeout(
-        (async () => {
-          while (control.runtimeImBindingRequests.length === 0) {
-            await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-          }
-        })(),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'The runtime task was not bound to the private IM session'
-      )
-      await withTimeout(
-        (async () => {
-          while (
-            Number(
-              await control.command('getElementCount', '[data-testid="continue-im-dialog-overlay"]')
-            ) !== 0
-          ) {
-            await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-          }
-        })(),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'The single private IM session dialog did not close after automatic binding'
-      )
-      const runtimeImBinding = control.runtimeImBindingRequests.at(-1)
+      phase = 'private-im-stand-in-entry'
       assert.equal(
-        runtimeImBinding?.modelSelection?.modelName,
-        DEFAULT_MODEL_ID,
-        'The private IM binding did not preserve the active runtime model'
+        await control.command('getElementCount', '[data-testid="continue-in-im-button"]'),
+        '0',
+        'Private IM connects through stand-in settings instead of a task binding'
       )
       if (associatedTaskTabTestId) {
         phase = 'project-space-selected-task-tracked'
