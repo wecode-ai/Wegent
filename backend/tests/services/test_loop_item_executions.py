@@ -33,7 +33,7 @@ from app.models.delivery import (
     loop_datetime_value_is_unset,
 )
 from app.models.kind import Kind
-from app.models.loop_item_execution import LoopItemExecution
+from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -1053,6 +1053,50 @@ def test_trusted_terminal_snapshot_completes_without_event_sequence(
     assert completed is not None
     assert completed.status == "completed"
     assert completed.last_event_seq == 0
+
+
+def test_created_event_refreshes_execution_after_concurrent_lease_write(
+    independent_session_database,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.wework_notifications.deliver_notification", AsyncMock()
+    )
+    factory, user = independent_session_database
+    with factory() as setup:
+        execution, _, _ = _make_running_automation_execution(setup, user)
+        execution.status = "claimed"
+        execution.observed_state = "accepted"
+        execution.started_at = EPOCH_TIME
+        execution.last_event_seq = 0
+        setup.commit()
+        execution_id = execution.id
+
+    with factory() as observer, factory() as lease_writer:
+        stale = observer.get(LoopItemExecution, execution_id)
+        previous_version = stale.version
+        current = lease_writer.get(LoopItemExecution, execution_id)
+        current.version += 1
+        current.heartbeat_at = utcnow()
+        lease_writer.commit()
+        assert stale.version == previous_version
+
+        observed = loop_item_execution_service.handle_runtime_event(
+            observer,
+            device_id=stale.runtime_device_id,
+            runtime_task_id=stale.runtime_task_id,
+            owner_user_id=user.id,
+            event_name="response.created",
+            payload={"eventSeq": 2, "subtaskId": "native-turn", "data": {}},
+        )
+
+        assert observed is not None
+        assert observed.status == "running"
+        assert observed.version == previous_version + 2
+        assert observed.last_event_seq == 2
+        assert not loop_datetime_value_is_unset(observed.started_at)
+        activity = loop_item_execution_service._linked_activity(observer, observed)
+        assert activity.metadata_json["runtime_turn_id"] == "native-turn"
 
 
 def test_complete_wins_concurrent_cancel_across_independent_sessions(

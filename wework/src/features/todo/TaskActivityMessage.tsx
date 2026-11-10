@@ -1,6 +1,7 @@
 import { useActivityExecutionDisplayStatus } from './useActivityExecutionStatus'
 import type { ComponentProps } from 'react'
 import { createCollaborationTranslator, IssueChatMessage } from '@wegent/collaboration'
+import { isPublicStandInMessage } from './issueActivityRole'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import { useDesktopMarkdownServices } from '@/components/chat/useDesktopMarkdownServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -23,6 +24,9 @@ export function ChatMessage({
     <MarkdownServicesProvider value={useDesktopMarkdownServices()}>
       <IssueChatMessage
         {...props}
+        showInlineExecutionStatus={
+          props.showInlineExecutionStatus && !isPublicStandInMessage(props.message)
+        }
         executionStatus={status}
         translate={useActivityTranslate()}
         onOpenUrl={url => {

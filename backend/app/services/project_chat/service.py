@@ -37,6 +37,7 @@ from app.schemas.project_chat import (
     ProjectChatAgentStart,
     ProjectChatAgentUpdate,
     ProjectChatAgentView,
+    ProjectChatMention,
     ProjectChatMessageView,
     ProjectChatSend,
     ProjectChatSubscribe,
@@ -1020,6 +1021,29 @@ class ProjectChatService:
             task_id=request.task_id,
             reply_to_message_id=request.reply_to_message_id,
         )
+        if reply.reply_to_message_id:
+            from app.services.project_chat.stand_in_replies import (
+                stand_in_reply_recipient,
+            )
+
+            recipient = stand_in_reply_recipient(db, reply.reply_to_message_id)
+            if recipient is not None and not request.mentions:
+                request = request.model_copy(
+                    update={
+                        "mentions": [
+                            ProjectChatMention(
+                                type="user",
+                                id=str(recipient["user_id"]),
+                                label=recipient["name"],
+                            )
+                        ]
+                    }
+                )
+                metadata["mentions"] = [
+                    mention.model_dump(by_alias=True) for mention in request.mentions
+                ]
+                metadata["stand_in_reply_to"] = recipient
+                metadata["execution_dispatch"] = "comment_only"
         row = ProjectChatMessage(
             message_id=message_id,
             client_message_id=request.client_message_id,
@@ -1052,6 +1076,25 @@ class ProjectChatService:
             mentions=request.mentions,
             reply_preview=reply.preview,
         )
+        if request.task_id and request.mentions:
+            from app.services.project_chat.stand_in_events import enqueue_issue_wakeup
+
+            for recipient_id in sorted(
+                {
+                    int(mention.id)
+                    for mention in request.mentions
+                    if mention.type == "user"
+                }
+            ):
+                enqueue_issue_wakeup(
+                    db,
+                    user_id=recipient_id,
+                    payload={
+                        "projectId": request.project_id,
+                        "itemId": request.task_id,
+                        "commentId": message_id,
+                    },
+                )
         if request.task_id:
             if item is not None:
                 item.metadata_json = update_change_request_source(

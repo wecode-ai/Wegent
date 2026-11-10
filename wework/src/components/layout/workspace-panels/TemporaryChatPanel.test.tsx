@@ -49,6 +49,9 @@ const address: RuntimeTaskAddress = {
 }
 
 const mocks = vi.hoisted(() => ({
+  markRead: vi.fn(),
+  windowFocused: true,
+  focusListener: undefined as undefined | ((focused: boolean) => void),
   renderToolBlocks: false,
   inputHost: undefined as
     | undefined
@@ -87,6 +90,8 @@ const mocks = vi.hoisted(() => ({
     blocks?: WorkbenchMessage['blocks']
   }>,
   lifecycleSnapshot: null as {
+    unread?: boolean
+    interactionStatus?: 'waitingForUserInput' | 'awaitingUserReply'
     turn?: { id: string | null }
     derived: {
       isRunning: boolean
@@ -104,6 +109,16 @@ const mocks = vi.hoisted(() => ({
   } | null,
   inputByScope: {} as Record<string, string>,
   setInputForScope: vi.fn(),
+}))
+
+vi.mock('@/desktop/windowFocus', () => ({
+  isMainWindowFocused: () => mocks.windowFocused,
+  subscribeMainWindowFocus: (listener: (focused: boolean) => void) => {
+    mocks.focusListener = listener
+    return () => {
+      mocks.focusListener = undefined
+    }
+  },
 }))
 
 function CatalogBindingProbe({ scope }: { scope?: string }) {
@@ -467,6 +482,11 @@ vi.mock('@/features/workbench/runtimePaneStatus', () => ({
 }))
 
 vi.mock('@/features/workbench/runtimeConversationCache', () => ({
+  appendOptimisticRuntimeConversationGuidance: (
+    _address: RuntimeTaskAddress,
+    _turn: string,
+    message: { id: string; content: string }
+  ) => [{ ...message, role: 'user', status: 'pending', runtimeGuidance: true }],
   abortRuntimeConversationHydration: vi.fn(),
   getRuntimeConversationTurnIds: () => new Set<string>(),
   appendAcceptedRuntimeConversationMessage: (_address: RuntimeTaskAddress, message: unknown) => [
@@ -497,6 +517,7 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
     return revision
   }
   let store = {
+    markRead: mocks.markRead,
     getTask: () => mocks.lifecycleSnapshot,
     getTaskRevision: taskRevision,
     syncTranscript: mocks.syncTranscript,
@@ -510,6 +531,7 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
         revision = 0
         previousSnapshot = mocks.lifecycleSnapshot
         store = {
+          markRead: mocks.markRead,
           getTask: () => mocks.lifecycleSnapshot,
           getTaskRevision: taskRevision,
           syncTranscript: mocks.syncTranscript,
@@ -521,7 +543,95 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 })
 
 describe('TemporaryChatPanel', () => {
+  it.each(['waitingForUserInput', 'awaitingUserReply'] as const)(
+    'preserves the native draft while %s instead of delivering another message',
+    async interactionStatus => {
+      mocks.lifecycleSnapshot = {
+        interactionStatus,
+        turn: { id: 'parent-turn' },
+        derived: { isRunning: true, isTurnActive: true },
+      }
+      render(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          initialAddress={address}
+          initialInput="keep pending draft"
+          instanceId="native-pending"
+          nativeConversation
+        />
+      )
+      await userEvent.click(screen.getByTestId('mock-send'))
+      expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+      expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
+      expect(mocks.resetAttachments).not.toHaveBeenCalled()
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+        'data-draft-value',
+        'keep pending draft'
+      )
+      expect(screen.queryByTestId('mock-queue-row')).not.toBeInTheDocument()
+    }
+  )
+  it('keeps the stand-in usable and steers new messages while native subagents are running', async () => {
+    mocks.busy = true
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    mocks.lifecycleSnapshot = {
+      turn: { id: 'parent-turn' },
+      derived: { isRunning: true, isTurnActive: true },
+    }
+    mocks.sendRuntimePaneGuidance.mockResolvedValue({ sent: true, turnId: 'parent-turn' })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="native-chat"
+        nativeConversation
+      />
+    )
+    await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(mocks.sendRuntimePaneGuidance).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(mocks.sendRuntimePaneGuidance).toHaveBeenCalledTimes(2))
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('mock-queue-row')).not.toBeInTheDocument()
+  })
+  it('acknowledges visible stand-in messages only while the main window is focused', async () => {
+    mocks.windowFocused = false
+    mocks.lifecycleSnapshot = {
+      unread: true,
+      turn: { id: null },
+      derived: { isRunning: false, isTurnActive: false },
+    }
+    const panel = (active: boolean) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="read-stand-in"
+        markReadWhenActive
+        active={active}
+      />
+    )
+    const view = render(panel(false))
+    expect(mocks.markRead).not.toHaveBeenCalled()
+    view.rerender(panel(true))
+    expect(mocks.markRead).not.toHaveBeenCalled()
+    act(() => {
+      mocks.windowFocused = true
+      mocks.focusListener?.(true)
+    })
+    expect(mocks.markRead).toHaveBeenCalledExactlyOnceWith(address)
+    view.rerender(panel(false))
+    expect(mocks.focusListener).toBeUndefined()
+  })
   beforeEach(() => {
+    mocks.markRead.mockClear()
+    mocks.windowFocused = true
+    mocks.cancelRuntimePaneTask.mockClear()
     clearWorkbenchWorkspaceLaunch()
     mocks.renderToolBlocks = false
     mocks.inputHost = undefined
@@ -1640,117 +1750,129 @@ describe('TemporaryChatPanel', () => {
       'Keep the old rule for existing customers.'
     )
   })
-  it('starts a cross-provider stand-in session on the same task with reference context and attachments', async () => {
-    mocks.activeModelSelection = { modelName: 'deepseek', modelType: 'public', options: {} }
-    mocks.activeTaskModel = { name: 'deepseek', type: 'public', provider: 'cloud' }
-    mocks.selectedTaskModel = {
-      name: 'gpt-6.1-sol',
-      type: 'runtime',
-      provider: 'local',
-      config: { weworkModelKind: 'codex-official' },
+  it.each([false, true])(
+    'starts a cross-provider stand-in session on the same task with reference context and attachments (native: %s)',
+    async nativeConversation => {
+      mocks.activeModelSelection = { modelName: 'deepseek', modelType: 'public', options: {} }
+      mocks.activeTaskModel = { name: 'deepseek', type: 'public', provider: 'cloud' }
+      mocks.selectedTaskModel = {
+        name: 'gpt-6.1-sol',
+        type: 'runtime',
+        provider: 'local',
+        config: { weworkModelKind: 'codex-official' },
+      }
+      render(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={null}
+          instanceId="stand-in-switch"
+          initialAddress={{ ...address, threadId: 'old-thread' }}
+          sendEphemeral={false}
+          crossProviderSwitchBehavior="new-session"
+          nativeConversation={nativeConversation}
+        />
+      )
+      await userEvent.click(screen.getByTestId('mock-send'))
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+      expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          address: expect.objectContaining({ taskId: address.taskId }),
+          message: '发送附件',
+          modelId: 'gpt-6.1-sol',
+          startNewSession: true,
+          expectedThreadId: 'old-thread',
+          attachments: expect.arrayContaining([
+            expect.objectContaining({ filename: attachment.filename }),
+          ]),
+          additionalContext: {
+            referencedConversations: expect.objectContaining({
+              value: expect.stringContaining('untrusted background context'),
+            }),
+          },
+        }),
+        expect.any(Object)
+      )
+      expect(mocks.resetAttachments).toHaveBeenCalledOnce()
+      expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
     }
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={null}
-        instanceId="stand-in-switch"
-        initialAddress={{ ...address, threadId: 'old-thread' }}
-        sendEphemeral={false}
-        crossProviderSwitchBehavior="new-session"
-      />
-    )
-    await userEvent.click(screen.getByTestId('mock-send'))
-    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
-    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        address: expect.objectContaining({ taskId: address.taskId }),
-        message: '发送附件',
-        modelId: 'gpt-6.1-sol',
+  )
+  it.each([false, true])(
+    'retains the stand-in draft and attachments on rejected session admission instead of queuing it (native: %s)',
+    async nativeConversation => {
+      mocks.activeModelSelection = { modelName: 'deepseek', modelType: 'public', options: {} }
+      mocks.activeTaskModel = { name: 'deepseek', type: 'public', provider: 'cloud' }
+      mocks.selectedTaskModel = {
+        name: 'gpt-6.1-sol',
+        type: 'runtime',
+        provider: 'local',
+        config: { weworkModelKind: 'codex-official' },
+      }
+      mocks.busySendError = true
+      mocks.sendRuntimePaneMessage.mockImplementationOnce(async (_request, options) => {
+        options?.onError(
+          'Finish the current execution, questions and approvals before starting a session'
+        )
+        return false
+      })
+      render(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={null}
+          instanceId="stand-in-rejected"
+          initialAddress={{ ...address, threadId: 'old-thread' }}
+          sendEphemeral={false}
+          crossProviderSwitchBehavior="new-session"
+          nativeConversation={nativeConversation}
+        />
+      )
+      await userEvent.click(screen.getByTestId('mock-send'))
+      await waitFor(() =>
+        expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '发送附件')
+      )
+      expect(mocks.resetAttachments).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('mock-queue-row')).not.toBeInTheDocument()
+      await userEvent.click(screen.getByTestId('mock-send'))
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+      expect(mocks.sendRuntimePaneMessage.mock.calls[1]?.[0]).toMatchObject({
         startNewSession: true,
         expectedThreadId: 'old-thread',
-        attachments: expect.arrayContaining([
-          expect.objectContaining({ filename: attachment.filename }),
-        ]),
-        additionalContext: {
-          referencedConversations: expect.objectContaining({
-            value: expect.stringContaining('untrusted background context'),
-          }),
-        },
-      }),
-      expect.any(Object)
-    )
-    expect(mocks.resetAttachments).toHaveBeenCalledOnce()
-  })
-
-  it('retains the stand-in draft and attachments on rejected session admission instead of queuing it', async () => {
-    mocks.activeModelSelection = { modelName: 'deepseek', modelType: 'public', options: {} }
-    mocks.activeTaskModel = { name: 'deepseek', type: 'public', provider: 'cloud' }
-    mocks.selectedTaskModel = {
-      name: 'gpt-6.1-sol',
-      type: 'runtime',
-      provider: 'local',
-      config: { weworkModelKind: 'codex-official' },
+      })
+      expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
     }
-    mocks.busySendError = true
-    mocks.sendRuntimePaneMessage.mockImplementationOnce(async (_request, options) => {
-      options?.onError(
-        'Finish the current execution, questions and approvals before starting a session'
+  )
+  it.each([false, true])(
+    'does not interrupt or queue a cross-provider stand-in transition while busy (native: %s)',
+    async nativeConversation => {
+      mocks.activeModelSelection = { modelName: 'deepseek', modelType: 'public', options: {} }
+      mocks.activeTaskModel = { name: 'deepseek', type: 'public', provider: 'cloud' }
+      mocks.selectedTaskModel = {
+        name: 'gpt-6.1-sol',
+        type: 'runtime',
+        provider: 'local',
+        config: { weworkModelKind: 'codex-official' },
+      }
+      mocks.busy = true
+      render(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={null}
+          instanceId="stand-in-busy"
+          initialInput="keep draft"
+          initialAddress={{ ...address, threadId: 'old-thread' }}
+          sendEphemeral={false}
+          crossProviderSwitchBehavior="new-session"
+          nativeConversation={nativeConversation}
+        />
       )
-      return false
-    })
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={null}
-        instanceId="stand-in-rejected"
-        initialAddress={{ ...address, threadId: 'old-thread' }}
-        sendEphemeral={false}
-        crossProviderSwitchBehavior="new-session"
-      />
-    )
-    await userEvent.click(screen.getByTestId('mock-send'))
-    await waitFor(() =>
-      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '发送附件')
-    )
-    expect(mocks.resetAttachments).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('mock-queue-row')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('mock-send'))
-    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
-    expect(mocks.sendRuntimePaneMessage.mock.calls[1]?.[0]).toMatchObject({
-      startNewSession: true,
-      expectedThreadId: 'old-thread',
-    })
-  })
-
-  it('does not interrupt or queue a cross-provider stand-in transition while busy', async () => {
-    mocks.activeModelSelection = { modelName: 'deepseek', modelType: 'public', options: {} }
-    mocks.activeTaskModel = { name: 'deepseek', type: 'public', provider: 'cloud' }
-    mocks.selectedTaskModel = {
-      name: 'gpt-6.1-sol',
-      type: 'runtime',
-      provider: 'local',
-      config: { weworkModelKind: 'codex-official' },
+      await userEvent.click(screen.getByTestId('mock-interrupt'))
+      expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+      expect(mocks.interruptAndSendRuntimePaneMessage).not.toHaveBeenCalled()
+      expect(mocks.resetAttachments).not.toHaveBeenCalled()
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', 'keep draft')
+      expect(screen.queryByTestId('mock-queue-row')).not.toBeInTheDocument()
+      expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
     }
-    mocks.busy = true
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={null}
-        instanceId="stand-in-busy"
-        initialInput="keep draft"
-        initialAddress={{ ...address, threadId: 'old-thread' }}
-        sendEphemeral={false}
-        crossProviderSwitchBehavior="new-session"
-      />
-    )
-    await userEvent.click(screen.getByTestId('mock-interrupt'))
-    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
-    expect(mocks.interruptAndSendRuntimePaneMessage).not.toHaveBeenCalled()
-    expect(mocks.resetAttachments).not.toHaveBeenCalled()
-    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', 'keep draft')
-    expect(screen.queryByTestId('mock-queue-row')).not.toBeInTheDocument()
-  })
-
+  )
   it('uses the shared pending queue while busy and drains it after becoming idle', async () => {
     mocks.busy = true
     mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }

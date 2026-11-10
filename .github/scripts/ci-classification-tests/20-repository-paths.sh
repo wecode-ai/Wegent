@@ -2,9 +2,21 @@
 
 assert_case "docs only" "$all_false" "docs/zh/index.md"
 
+electron_cache_expected="${all_false/wework=false/wework=true}"
+for path in .github/scripts/prime-ci-electron-installer-cache.mjs \
+  .github/actions/prepare-electron-installer-cache/action.yml; do
+  assert_case "Electron installer cache changes run both consumer workflows: $path" \
+    "${electron_cache_expected/wework_e2e=false/wework_e2e=true}" "$path"
+done
+
 assert_case "DingTalk HTTPS fixture changes run platform E2E" \
   "${all_false/platform_e2e=false/platform_e2e=true}" \
   ".github/scripts/setup-dingtalk-oauth-e2e.sh"
+
+e2e_apt_expected="${all_false/platform_e2e=false/platform_e2e=true}"
+assert_case "E2E dependency installer changes run both consumer workflows" \
+  "${e2e_apt_expected/wework_e2e=false/wework_e2e=true}" \
+  ".github/scripts/install-e2e-apt-packages.sh"
 
 permission_contract_expected="${all_false/backend=false/backend=true}"
 assert_case "Chinese permission contract runs backend guards" "$permission_contract_expected" \

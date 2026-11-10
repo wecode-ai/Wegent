@@ -4,16 +4,31 @@
 
 use super::*;
 
-#[test]
-fn rejects_malformed_catalog_without_replacing_it_with_base_models() {
+fn native_catalog_fixture() -> Value {
+    json!({"models":[{
+        "slug":"native-default", "visibility":"list", "priority":1,
+        "base_instructions":"Native Codex base instructions",
+        "model_messages":{"instructions_template":"Native canonical template", "permissions":{"read_only":"Native permission guidance"}},
+        "include_skills_usage_instructions":true,
+        "include_plugin_usage_instructions":false,
+        "include_apps_usage_instructions":false
+    }]})
+}
+
+#[tokio::test]
+async fn rejects_malformed_catalog_without_replacing_it_with_base_models() {
     let mut catalog = json!({ "data": [] });
     let original = catalog.clone();
-    assert!(merge_base_models(&mut catalog).is_err());
+    assert!(
+        merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+            .await
+            .is_err()
+    );
     assert_eq!(catalog, original);
 }
 
-#[test]
-fn rejects_uneditable_model_entries_before_merging() {
+#[tokio::test]
+async fn rejects_uneditable_model_entries_before_merging() {
     for model in [
         Value::Null,
         json!({}),
@@ -22,7 +37,11 @@ fn rejects_uneditable_model_entries_before_merging() {
     ] {
         let mut catalog = json!({"models": [model]});
         let original = catalog.clone();
-        assert!(merge_base_models(&mut catalog).is_err());
+        assert!(
+            merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+                .await
+                .is_err()
+        );
         assert_eq!(catalog, original);
     }
     assert!(validate_catalog(&json!({"models": []})).is_ok());
@@ -33,12 +52,15 @@ fn catalog() -> Value {
     let mut catalog = json!({
         "models": base_models()
     });
+    for model in catalog["models"].as_array_mut().unwrap() {
+        inherit_native_instructions(model, &native_catalog_fixture()["models"][0]).unwrap();
+    }
     append_catalog_vision_sidecars(&mut catalog);
     catalog
 }
 
-#[test]
-fn compatibility_catalogs_keep_tools_and_configured_windows_without_official_auth() {
+#[tokio::test]
+async fn compatibility_catalogs_keep_tools_and_configured_windows_without_official_auth() {
     let official = json!({
         "slug": "gpt-6.1-sol",
         "tool_mode": "code_mode_only",
@@ -46,7 +68,9 @@ fn compatibility_catalogs_keep_tools_and_configured_windows_without_official_aut
         "max_context_window": 872_000,
     });
     let mut catalog = json!({"models": [official.clone()]});
-    merge_base_models(&mut catalog).unwrap();
+    merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+        .await
+        .unwrap();
     let models = catalog["models"].as_array().unwrap();
     assert_eq!(models[0], official);
     for slug in [
@@ -135,7 +159,9 @@ async fn bundled_catalog_preserves_native_models_and_supports_overrides() {
     let mut catalog = export_bundled_catalog(&binary, home.path())
         .await
         .expect("native bundled catalog");
-    merge_base_models(&mut catalog).unwrap();
+    merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+        .await
+        .unwrap();
     let models = catalog["models"].as_array().expect("models");
     assert_eq!(
         models
@@ -192,11 +218,11 @@ fn catalog_includes_verified_builtin_kimi_profiles() {
         .iter()
         .find(|model| model["slug"] == KIMI_K3_MODEL)
         .expect("Kimi K3 entry");
-    assert!(k3["base_instructions"]
-        .as_str()
-        .is_some_and(|instructions| instructions.len() < 4_000
-            && instructions.contains("ALL_TOOLS")
-            && instructions.contains("wework-runtime:coding")));
+    assert_eq!(k3["base_instructions"], "Native Codex base instructions");
+    assert_eq!(
+        k3["model_messages"],
+        native_catalog_fixture()["models"][0]["model_messages"]
+    );
     assert_eq!(k3["context_window"], 1_048_576);
     assert_eq!(k3["auto_compact_token_limit"], Value::Null);
     assert_eq!(k3["default_reasoning_level"], "low");
@@ -378,8 +404,8 @@ fn vision_derivation_adds_text_to_an_image_only_profile() {
     assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
 }
 
-#[test]
-fn merge_derives_vision_from_the_effective_upstream_base_profile() {
+#[tokio::test]
+async fn merge_derives_vision_from_the_effective_upstream_base_profile() {
     let mut catalog = json!({
         "models": [{
             "slug": GPT_56_SOL_MODEL,
@@ -391,7 +417,9 @@ fn merge_derives_vision_from_the_effective_upstream_base_profile() {
         }]
     });
 
-    merge_base_models(&mut catalog).unwrap();
+    merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+        .await
+        .unwrap();
     apply_catalog_overrides(&mut catalog, &read_catalog_overrides());
     append_catalog_vision_sidecars(&mut catalog);
 
@@ -611,35 +639,149 @@ fn invalidates_models_cache_and_accepts_missing_cache() {
     invalidate_models_cache_at(&path).expect("missing cache should be accepted");
 }
 
-#[test]
-fn progressive_defaults_update_the_native_canonical_template_and_preserve_permissions() {
+#[tokio::test]
+async fn native_defaults_preserve_the_canonical_template_permissions_and_metadata() {
     let permissions = json!({"danger_full_access":"native permission guidance"});
     let mut catalog = json!({"models":[{"slug":"native-template-fixture", "base_instructions":"legacy provider prompt", "model_messages":{"instructions_template":"canonical provider prompt", "permissions":permissions.clone()}, "context_window":500000}]});
-    apply_progressive_base_instructions(&mut catalog);
+    let original = catalog["models"][0].clone();
+    merge_base_models(&mut catalog, Some(&native_catalog_fixture()))
+        .await
+        .unwrap();
     let model = &catalog["models"][0];
-    assert_eq!(model["base_instructions"], default_base_instructions());
+    assert_eq!(*model, original);
+    assert_eq!(model["base_instructions"], "legacy provider prompt");
     assert_eq!(
         model["model_messages"]["instructions_template"],
-        model["base_instructions"]
+        "canonical provider prompt"
     );
     assert_eq!(model["model_messages"]["permissions"], permissions);
     assert_eq!(model["context_window"], 500000);
 }
 
+#[tokio::test]
+async fn complete_upstream_catalog_does_not_require_a_bundled_default() {
+    let mut upstream = catalog();
+    let original = upstream.clone();
+    merge_base_models(&mut upstream, Some(&json!({"models":[]})))
+        .await
+        .expect("complete upstream does not need native inheritance");
+    assert_eq!(upstream, original);
+}
+
 #[test]
 fn legacy_default_identity_preserves_user_edits() {
-    let workflow = include_str!("../../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/coding/workflow.md");
-    let legacy = workflow.replacen(
-        "You are Codex, a coding agent.",
-        "You are Codex, an agent based on GPT-5.",
-        1,
-    );
-    assert!(is_legacy_base_instructions(&legacy));
+    let legacy = include_str!("../tests/fixtures/legacy-base-instructions.md");
+    assert!(is_legacy_base_instructions(legacy));
     assert!(!is_legacy_base_instructions(&format!(
         "{legacy}\nUser edit"
     )));
-    assert!(!is_legacy_base_instructions(workflow));
-    assert!(!is_legacy_base_instructions(&default_base_instructions()));
+    assert!(!is_legacy_base_instructions(&legacy.replacen(
+        "You are Codex, an agent based on GPT-5.",
+        "You are Codex, a coding agent.",
+        1,
+    )));
+    let progressive = include_str!("../tests/fixtures/legacy-progressive-instructions.md");
+    assert!(is_legacy_base_instructions(progressive));
+    assert!(!is_legacy_base_instructions(&format!(
+        "{progressive}\nUser edit"
+    )));
+}
+
+#[test]
+fn compatibility_profiles_inherit_the_native_default_without_overwriting_user_instructions() {
+    let native = native_catalog_fixture()["models"][0].clone();
+    for legacy in [
+        None,
+        Some(include_str!(
+            "../tests/fixtures/legacy-base-instructions.md"
+        )),
+        Some(include_str!(
+            "../tests/fixtures/legacy-progressive-instructions.md"
+        )),
+    ] {
+        let mut model = model_entry("wework-custom-inherited", "Inherited", None);
+        if let Some(legacy) = legacy {
+            model["base_instructions"] = json!(legacy);
+        }
+        inherit_native_instructions(&mut model, &native).unwrap();
+        assert_eq!(model["base_instructions"], native["base_instructions"]);
+        assert_eq!(model["model_messages"], native["model_messages"]);
+        assert_eq!(model["include_skills_usage_instructions"], true);
+        assert_eq!(model["slug"], "wework-custom-inherited");
+        assert_eq!(model["tool_mode"], "code_mode_only");
+    }
+    for explicit in [
+        json!({"base_instructions":"User instructions", "model_messages":null}),
+        json!({"model_messages":{"instructions_template":"User canonical template", "permissions":{"read_only":"User permission guidance"}}}),
+        json!({"base_instructions":""}),
+    ] {
+        let mut model = explicit.clone();
+        let mut expected = explicit;
+        expected["include_skills_usage_instructions"] = json!(true);
+        expected["include_plugin_usage_instructions"] = json!(false);
+        expected["include_apps_usage_instructions"] = json!(false);
+        inherit_native_instructions(&mut model, &native).unwrap();
+        assert_eq!(model, expected);
+    }
+    let mut edited = json!({
+        "base_instructions":"User-edited base instructions",
+        "model_messages":{"instructions_template":include_str!("../tests/fixtures/legacy-progressive-instructions.md"), "permissions":{"read_only":"Preserved"}}
+    });
+    inherit_native_instructions(&mut edited, &native).unwrap();
+    assert_eq!(
+        edited["model_messages"]["instructions_template"],
+        edited["base_instructions"]
+    );
+    assert_eq!(
+        edited["model_messages"]["permissions"]["read_only"],
+        "Preserved"
+    );
+    let mut explicit_usage = json!({"include_skills_usage_instructions":false});
+    inherit_native_instructions(&mut explicit_usage, &native).unwrap();
+    assert_eq!(explicit_usage["include_skills_usage_instructions"], false);
+    assert_eq!(explicit_usage["model_messages"], native["model_messages"]);
+}
+
+#[test]
+fn native_default_selection_follows_picker_visibility_and_priority() {
+    let visible = json!({"slug":"visible-default", "visibility":"list", "priority":1});
+    let mut catalog = json!({"models":[
+        {"slug":"hidden", "visibility":"none", "priority":0},
+        {"slug":"visible-later", "visibility":"list", "priority":2},
+        visible.clone()
+    ]});
+    assert_eq!(*native_default_model(&catalog).unwrap(), visible);
+    catalog["models"][2]["visibility"] = json!("hide");
+    assert_eq!(
+        native_default_model(&catalog).unwrap()["slug"],
+        "visible-later"
+    );
+    catalog["models"][1]["visibility"] = json!("hide");
+    assert_eq!(native_default_model(&catalog).unwrap()["slug"], "hidden");
+    assert!(native_default_model(&json!({"models":[]})).is_err());
+    assert!(inherit_native_instructions(&mut json!({}), &json!({})).is_err());
+}
+
+#[test]
+fn native_usage_inheritance_replaces_null_without_overwriting_boolean_choices() {
+    let native = native_catalog_fixture()["models"][0].clone();
+    for base in [None, Some("User-authored instructions")] {
+        let mut model = json!({
+            "include_skills_usage_instructions":null,
+            "include_plugin_usage_instructions":true,
+            "include_apps_usage_instructions":false
+        });
+        if let Some(base) = base {
+            model["base_instructions"] = json!(base);
+        }
+        inherit_native_instructions(&mut model, &native).unwrap();
+        assert_eq!(model["include_skills_usage_instructions"], true);
+        assert_eq!(model["include_plugin_usage_instructions"], true);
+        assert_eq!(model["include_apps_usage_instructions"], false);
+        if let Some(base) = base {
+            assert_eq!(model["base_instructions"], base);
+        }
+    }
 }
 
 #[test]

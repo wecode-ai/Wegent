@@ -194,12 +194,12 @@ impl RuntimeWorkRpcHandler {
                 .is_some_and(|thread_id| self.store.is_deleted_archived_task_id(thread_id))
     }
 
-    pub(super) fn mark_archived_link_deleted(&self, link: &RuntimeTaskLink) {
+    pub(super) fn mark_archived_link_deleted(&self, link: &RuntimeTaskLink) -> std::io::Result<()> {
         let mut ids = vec![link.local_task_id.clone()];
         if let Some(thread_id) = &link.thread_id {
             ids.push(thread_id.clone());
         }
-        self.store.mark_deleted_archived_task_ids(ids);
+        self.store.mark_deleted_archived_task_ids(ids)
     }
 
     pub(super) async fn archived_cleanup_links(

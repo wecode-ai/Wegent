@@ -21,7 +21,10 @@ export function useStandInInstance(
   const [binding, setBinding] = useState<StandInInstanceBinding>()
   const [stoppedProfile, setStoppedProfile] = useState<PersonalStandInSettings>()
   const [localDeviceId, setLocalDeviceId] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{
+    cause: unknown
+    fallback: 'load_settings_failed' | 'save_settings_failed'
+  } | null>(null)
   const [busy, setBusy] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const operation = useRef(false)
@@ -151,7 +154,7 @@ export function useStandInInstance(
         setError(null)
       }
     })().catch(cause => {
-      if (current) setError(getStandInErrorMessage(cause, 'load_settings_failed'))
+      if (current) setError({ cause, fallback: 'load_settings_failed' })
     })
     return () => {
       cancel()
@@ -168,7 +171,7 @@ export function useStandInInstance(
     try {
       return await action()
     } catch (cause) {
-      setError(getStandInErrorMessage(cause, 'save_settings_failed'))
+      setError({ cause, fallback: 'save_settings_failed' })
       if (propagate) throw cause
     } finally {
       operation.current = false
@@ -225,7 +228,8 @@ export function useStandInInstance(
     stoppedProfile,
     localDeviceId,
     busy,
-    error,
+    error: error ? getStandInErrorMessage(error.cause, error.fallback) : null,
+    errorCause: error?.cause,
     stop,
     bind,
     migrate,

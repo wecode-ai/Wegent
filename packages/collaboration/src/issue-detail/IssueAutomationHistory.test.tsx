@@ -2,6 +2,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+  createCollaborationTranslator,
+  localizeStandardStatusName,
+} from "../i18n";
+import {
   IssueAssignmentHistoryList,
   IssueStatusHistoryList,
 } from "./IssueHistoryLists";
@@ -67,6 +71,12 @@ describe("automation operation attribution", () => {
             unset: "Unset",
             initial: "Initial",
             accept: "Accept",
+            statusName: (id, name) =>
+              localizeStandardStatusName(
+                id,
+                name,
+                createCollaborationTranslator("en"),
+              ),
             action: () => "Change status",
           },
         }),

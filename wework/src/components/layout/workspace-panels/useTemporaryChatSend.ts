@@ -1,5 +1,6 @@
 import { useCallback, useRef, type Dispatch, type SetStateAction, type RefObject } from 'react'
 import type { ChatSubmitOptions } from '@/components/chat/ChatInput'
+import type { RuntimeConversationQueuePort } from '@wegent/collaboration/execution/runtimeConversationQueue'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
 import type {
   WorkbenchContextValue,
@@ -10,6 +11,7 @@ import { requiresNewSessionForModelSwitch } from '@/features/workbench/modelSwit
 import { isRuntimeTaskBusyError } from '@/features/workbench/runtimePaneStatus'
 import {
   appendAcceptedRuntimeConversationMessage,
+  appendOptimisticRuntimeConversationGuidance,
   applyRuntimeConversationAction,
   getRuntimeConversationMessages,
   getRuntimeConversationTurnIds,
@@ -34,12 +36,14 @@ import type {
 } from '@/types/workbench'
 import type { runtimePaneQueue } from './runtimePaneQueues'
 import { prepareModelSessionSwitch } from './prepareModelSessionSwitch'
+import { deliverNativeConversationMessage } from './nativeConversationDelivery'
 
 type StateSetter<T> = Dispatch<SetStateAction<T>>
 type SendContext = Pick<
   WorkbenchContextValue,
   | 'createTemporaryRuntimeTask'
   | 'sendRuntimePaneMessage'
+  | 'sendRuntimePaneGuidance'
   | 'interruptAndSendRuntimePaneMessage'
   | 'loadRuntimeTranscriptForPane'
 >
@@ -49,6 +53,9 @@ interface TemporaryChatSendOptions extends SendContext {
   currentProject: ProjectWithTasks | null
   input: string
   busy: boolean
+  paneBusy: boolean
+  nativeConversation?: boolean
+  queuePort: RuntimeConversationQueuePort<number>
   sendEphemeral: boolean
   crossProviderSwitchBehavior?: 'new-session'
   taskModelIdentityPending: boolean
@@ -83,7 +90,7 @@ interface TemporaryChatSendOptions extends SendContext {
 }
 
 export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
-  const sessionSwitchInFlight = useRef(false)
+  const submissionInFlight = useRef(false)
   return useCallback(
     async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
       const {
@@ -100,6 +107,9 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
         currentProject,
         input,
         busy,
+        paneBusy,
+        nativeConversation,
+        queuePort,
         queuedMessages,
         conversationQueue,
         sideChatProjectChat,
@@ -107,6 +117,7 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
         runtimeContext,
         sendQueuedMessageAsGuidance,
         sendRuntimePaneMessage,
+        sendRuntimePaneGuidance,
         interruptAndSendRuntimePaneMessage,
         source,
         sendEphemeral,
@@ -123,8 +134,12 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
         dismissTrialGuide,
       } = settings
       const message = (valueOverride ?? input).trim()
-      if (!message || sessionSwitchInFlight.current) return false
+      if (!message || submissionInFlight.current) return false
       const submittedEditVersion = draftEditVersionRef.current
+      if (nativeConversation && address && lifecycleStore.getTask(address)?.interactionStatus) {
+        setError(t('standIn.native_input_pending'))
+        return false
+      }
       if (taskModelIdentityPending) {
         setError('正在同步任务模型配置，请稍后重试')
         return false
@@ -139,7 +154,7 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
           taskModelSelection?.selectedModel ?? null
         )
       ) {
-        sessionSwitchInFlight.current = true
+        submissionInFlight.current = true
         setSending(true)
         try {
           sessionSwitch = await prepareModelSessionSwitch({
@@ -157,7 +172,7 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
             loadTranscript: loadRuntimeTranscriptForPane,
           })
         } catch (cause) {
-          sessionSwitchInFlight.current = false
+          submissionInFlight.current = false
           setSending(false)
           setError(getErrorMessage(cause, t('workbench.project_chat_send_failed')))
           return false
@@ -176,12 +191,55 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
           })
         : undefined
       const queuedMessage: RuntimePaneQueuedMessage = {
-        id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
+        id: `queued-side-chat-${crypto.randomUUID()}`,
         content: message,
         status: 'queued',
         createdAt: new Date().toISOString(),
         attachments: persistAttachmentReferences(currentAttachments),
         ...selectedModelFields,
+      }
+      // Session transitions require admission, not delivery into the existing native turn.
+      if (nativeConversation && address && !sessionSwitch) {
+        submissionInFlight.current = true
+        setSending(true)
+        try {
+          const result = await deliverNativeConversationMessage({
+            busy: paneBusy,
+            send: () => queuePort.send(queuedMessage),
+            guide: () =>
+              sendRuntimePaneGuidance({
+                address,
+                message,
+                clientGuidanceId: queuedMessage.id,
+                attachments: localRuntimeAttachments(currentAttachments),
+                attachmentIds: remoteAttachmentIds(currentAttachments),
+              }),
+            isBusyError: isRuntimeTaskBusyError,
+          })
+          if (!result.sent) {
+            setError(result.error || t('workbench.project_chat_send_failed'))
+            setInput(current => current || message)
+            return false
+          }
+          if (
+            result.delivery === 'guidance' &&
+            result.turnId &&
+            !getRuntimeConversationMessages(address).some(item => item.id === queuedMessage.id)
+          ) {
+            setMessages(
+              appendOptimisticRuntimeConversationGuidance(address, result.turnId, queuedMessage)
+            )
+          }
+          sideChatProjectChat.resetAttachments()
+          return true
+        } catch (cause) {
+          setError(getErrorMessage(cause, t('workbench.project_chat_send_failed')))
+          setInput(current => current || message)
+          return false
+        } finally {
+          submissionInFlight.current = false
+          setSending(false)
+        }
       }
       if (address && busy && !options.interruptWhenBusy) {
         conversationQueue.enqueue(queuedMessage)
@@ -241,6 +299,7 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
             : current => current.filter(currentMessage => currentMessage.id !== queuedMessage.id)
         )
         updateAddress(null)
+        if (nativeConversation) setInput(current => current || message)
         setSending(false)
         return false
       }
@@ -295,7 +354,7 @@ export function useTemporaryChatSend(settings: TemporaryChatSendOptions) {
           },
         }
       )
-      sessionSwitchInFlight.current = false
+      submissionInFlight.current = false
       if (sent) {
         if (deferLocalMessage && !queued) {
           setMessages(

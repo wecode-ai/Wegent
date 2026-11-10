@@ -2913,6 +2913,35 @@ function StartSkillChatProbe() {
 }
 
 describe('WorkbenchProvider runtime tasks', () => {
+  test('coalesces work-change events while a list refresh is pending', async () => {
+    let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
+    const pending = deferred<RuntimeWorkListResponse>()
+    const listRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(createRuntimeWork())
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue(createRuntimeWork())
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+      chatStream: {
+        subscribe: (handlers: ChatStreamHandlers) => {
+          if (handlers.onRuntimeWorkChanged) onChanged = handlers.onRuntimeWorkChanged
+          return vi.fn()
+        },
+      } as WorkbenchServices['chatStream'],
+    })
+    renderWorkbench(<ProjectSendProbe />, services)
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledOnce())
+    act(() => {
+      for (let index = 0; index < 20; index++) {
+        onChanged?.({ taskId: `task-${index}`, deviceId: 'device-1' })
+      }
+    })
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
+    await act(async () => pending.resolve(createRuntimeWork()))
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(3))
+  })
+
   test('publishes background archive cleanup failures outside the settings page', async () => {
     resetArchivedConversationsSettingsStateForTest()
     let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
@@ -7391,9 +7420,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await act(async () => initialWork.resolve(createRuntimeWork()))
     await waitFor(() => expect(cloudWork).toHaveBeenCalledOnce())
     act(() => onChanged?.({ taskId: 'runtime-a', deviceId: 'device-1' }))
-    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(3))
+    expect(listRuntimeWork).toHaveBeenCalledTimes(2)
     expect(screen.getByTestId('current-project-name')).not.toHaveTextContent('Wegent')
     await act(async () => latestWork.resolve(createRuntimeWork()))
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(3))
 
     await waitFor(() =>
       expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')

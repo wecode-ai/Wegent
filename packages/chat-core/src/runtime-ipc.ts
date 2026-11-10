@@ -95,11 +95,13 @@ export function createCloudRuntimeIpcClient(
     async subscribe(
       handler: (event: RuntimeEvent) => void,
     ): Promise<() => void> {
-      await client.ensureConnected();
       const runtimeHandler = (event: RuntimeEvent) => {
         handler(event);
       };
+      // The facade retains listeners across reconnects; registration must not
+      // depend on the first handshake finishing within the RPC timeout.
       client.socket.on(RUNTIME_EVENT, runtimeHandler);
+      await client.connect();
       return () => client.socket.off(RUNTIME_EVENT, runtimeHandler);
     },
     async reconnect() {

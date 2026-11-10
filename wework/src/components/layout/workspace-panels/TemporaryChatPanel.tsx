@@ -4,6 +4,8 @@ import { useTemporaryChatSend } from './useTemporaryChatSend'
 import { useTemporaryChatControls } from './useTemporaryChatControls'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import type { PluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
+import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
+import { StandInNotificationPrompt } from '@/features/todo/StandInNotificationPrompt'
 import { runtimePaneQueue } from './runtimePaneQueues'
 import { ComposerCatalogContext } from '@/components/chat/composer/ComposerCatalogContext'
 import { useRuntimeComposerCatalog } from '@/components/chat/composer/useRuntimeComposerCatalog'
@@ -15,6 +17,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -103,6 +106,9 @@ interface TemporaryChatPanelProps {
   placeholder?: string
   showExecutionTools?: boolean
   hideProcessing?: boolean
+  assistantMessageStyle?: 'plain' | 'bubble'
+  markReadWhenActive?: boolean
+  nativeConversation?: boolean
   allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
@@ -147,6 +153,9 @@ export function TemporaryChatPanel({
   placeholder = '要求后续变更',
   showExecutionTools = true,
   hideProcessing = false,
+  assistantMessageStyle,
+  markReadWhenActive = false,
+  nativeConversation = false,
   allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
@@ -277,6 +286,7 @@ export function TemporaryChatPanel({
   const [historyLoadingMoreBefore, setHistoryLoadingMoreBefore] = useState(false)
   const historyRequest = useRef({ loadingMore: false })
   const [sending, setSending] = useState(false)
+  const messageViewId = useId()
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
   const conversationQueue = runtimePaneQueue(lifecycleStore, address, instanceId)
@@ -289,6 +299,30 @@ export function TemporaryChatPanel({
     () => new Set()
   )
   const taskLifecycle = useRuntimeTaskLifecycle(address)
+  useEffect(() => {
+    if (!markReadWhenActive || !active || !address) return
+    const key = taskLifecycle?.key ?? `${address.deviceId}\0${address.taskId}`
+    const markRead = () => {
+      lifecycleStore.messageReceipts?.setViewed(key, isMainWindowFocused(), messageViewId)
+      if (isMainWindowFocused() && lifecycleStore.getTask(address)?.unread) {
+        lifecycleStore.markRead(address)
+      }
+    }
+    markRead()
+    const unsubscribe = subscribeMainWindowFocus(markRead)
+    return () => {
+      unsubscribe()
+      lifecycleStore.messageReceipts?.setViewed(key, false, messageViewId)
+    }
+  }, [
+    active,
+    address,
+    lifecycleStore,
+    markReadWhenActive,
+    messageViewId,
+    taskLifecycle?.key,
+    taskLifecycle?.unread,
+  ])
   const paneStatus = useMemo(
     () =>
       deriveRuntimePaneStatus({
@@ -492,6 +526,7 @@ export function TemporaryChatPanel({
             message
           ),
           {
+            silentBusyRetry: nativeConversation,
             onError: value => {
               error = value
             },
@@ -532,6 +567,7 @@ export function TemporaryChatPanel({
       sendEphemeral,
       sendRuntimePaneMessage,
       sendRuntimePaneGuidance,
+      nativeConversation,
       t,
     ]
   )
@@ -552,6 +588,10 @@ export function TemporaryChatPanel({
 
   const send = useTemporaryChatSend({
     address,
+    nativeConversation,
+    paneBusy: paneStatus.isBusy,
+    queuePort,
+    sendRuntimePaneGuidance,
     crossProviderSwitchBehavior,
     taskModelSelection,
     messages,
@@ -849,6 +889,9 @@ export function TemporaryChatPanel({
       composer={
         readOnly || !active ? null : (
           <>
+            {nativeConversation && !pendingRequest && (
+              <StandInNotificationPrompt scopeKey={lifecycleStore.notificationScope} />
+            )}
             {!pendingRequest && composerHeader}
             {pendingRequest && requestUserInputHost?.isSubmitting(pendingRequest) ? (
               <div
@@ -896,7 +939,7 @@ export function TemporaryChatPanel({
                     setError(null)
                   }}
                   onSubmit={send}
-                  disabled={taskModelIdentityPending}
+                  disabled={taskModelIdentityPending || (nativeConversation && sending)}
                   showExecutionTools={showExecutionTools}
                   showModelSelector
                   pluginPickerIconOnly
@@ -914,8 +957,8 @@ export function TemporaryChatPanel({
                   onCancelQueuedMessage={cancelQueuedMessage}
                   onSendQueuedAsGuidance={guideQueuedMessage}
                   onEditQueuedMessage={editQueuedMessage}
-                  isStreaming={busy}
-                  onPause={pause}
+                  isStreaming={nativeConversation ? false : busy}
+                  onPause={nativeConversation ? undefined : pause}
                   goalDraftActive={goalDraftActive}
                   onSetGoal={
                     allowInitialGoal && createTask && !address
@@ -934,6 +977,8 @@ export function TemporaryChatPanel({
       }
     >
       <ScrollableMessageArea
+        assistantMessageStyle={assistantMessageStyle}
+        showProcessingStatus={!hideProcessing}
         onFillSelectionToAnswer={onFillSelectionToAnswer}
         messageTarget={messageTarget}
         messages={presentation.messages}
@@ -945,7 +990,7 @@ export function TemporaryChatPanel({
         onLoadMoreBefore={loadMoreHistory}
         transcriptError={messages.length ? historyError : null}
         onRetryTranscript={retryHistory}
-        isWaitingForAssistant={busy}
+        isWaitingForAssistant={nativeConversation ? sending : busy}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}
         className="min-h-0 flex-1"

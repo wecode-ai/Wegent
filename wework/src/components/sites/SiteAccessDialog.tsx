@@ -206,7 +206,7 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
                     value={option.value}
                     checked={audience === option.value}
                     data-testid={`site-access-audience-${option.value}`}
-                    className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))]"
+                    className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
                     onChange={() => {
                       setAudience(option.value)
                       setSaved(false)

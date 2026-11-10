@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   initialAddress: undefined as RuntimeTaskAddress | null | undefined,
   hideProcessing: false,
   crossProviderSwitchBehavior: undefined as 'new-session' | undefined,
+  assistantMessageStyle: undefined as string | undefined,
+  markReadWhenActive: false,
+  nativeConversation: false,
   createTask: undefined as
     | undefined
     | ((message: string, options: RuntimeTaskComposerCreateOptions) => Promise<unknown>),
@@ -21,11 +24,17 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     initialAddress?: RuntimeTaskAddress | null
     hideProcessing?: boolean
     crossProviderSwitchBehavior?: 'new-session'
+    assistantMessageStyle?: string
+    markReadWhenActive?: boolean
+    nativeConversation?: boolean
   }) => {
     mocks.createTask = props.createTask
     mocks.initialAddress = props.initialAddress
     mocks.hideProcessing = props.hideProcessing ?? false
     mocks.crossProviderSwitchBehavior = props.crossProviderSwitchBehavior
+    mocks.assistantMessageStyle = props.assistantMessageStyle
+    mocks.markReadWhenActive = props.markReadWhenActive ?? false
+    mocks.nativeConversation = props.nativeConversation ?? false
     return <div data-testid="conversation-pane" />
   },
 }))
@@ -47,6 +56,9 @@ it('retains the persisted owner workspace when reopening the primary conversatio
   expect(mocks.initialAddress).toEqual({ deviceId: 'device', ...task })
   expect(mocks.hideProcessing).toBe(true)
   expect(mocks.crossProviderSwitchBehavior).toBe('new-session')
+  expect(mocks.assistantMessageStyle).toBe('bubble')
+  expect(mocks.markReadWhenActive).toBe(true)
+  expect(mocks.nativeConversation).toBe(true)
 })
 
 it('uses internal execution sessions for role conversations too', async () => {
@@ -55,6 +67,9 @@ it('uses internal execution sessions for role conversations too', async () => {
   await screen.findByTestId('conversation-pane')
   expect(api.readTask).toHaveBeenCalledWith('device', 'stand-in-chat-7-role-reviewer')
   expect(mocks.crossProviderSwitchBehavior).toBe('new-session')
+  expect(mocks.assistantMessageStyle).toBe('bubble')
+  expect(mocks.markReadWhenActive).toBe(true)
+  expect(mocks.nativeConversation).toBe(true)
 })
 
 it('returns failure to the pane rollback path and permits retrying the same conversation', async () => {

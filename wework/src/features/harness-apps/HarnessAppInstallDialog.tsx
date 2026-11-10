@@ -110,7 +110,7 @@ export function HarnessAppInstallDialog({
                 </h3>
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   <div className="flex items-center gap-2 rounded-xl border border-border/30 px-3 py-2.5">
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-success wework:text-green-600" />
                     <div className="min-w-0">
                       <p className="text-xs text-text-muted">DeepSeek Harness</p>
                       <p className="truncate text-sm font-medium text-text-primary">
@@ -119,7 +119,7 @@ export function HarnessAppInstallDialog({
                     </div>
                   </div>
                   <div className="flex items-center gap-2 rounded-xl border border-border/30 px-3 py-2.5">
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-success wework:text-green-600" />
                     <div className="min-w-0">
                       <p className="text-xs text-text-muted">Node.js</p>
                       <p className="truncate text-sm font-medium text-text-primary">
@@ -159,7 +159,7 @@ export function HarnessAppInstallDialog({
               </label>
 
               {modelOptions.length === 0 ? (
-                <div className="flex items-start gap-2 rounded-xl bg-warning/8 px-3 py-3 text-sm text-warning">
+                <div className="flex items-start gap-2 rounded-xl bg-warning/8 px-3 py-3 text-sm text-warning wework:bg-orange-500/8 wework:text-orange-700">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>
                     {t(
@@ -171,11 +171,11 @@ export function HarnessAppInstallDialog({
               ) : null}
             </div>
           ) : (
-            <div className="rounded-xl bg-destructive/8 px-4 py-4">
+            <div className="rounded-xl bg-destructive/8 px-4 py-4 wework:bg-red-500/8">
               <div className="flex items-start gap-3">
-                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive wework:text-red-600" />
                 <div>
-                  <h3 className="text-sm font-medium text-destructive">
+                  <h3 className="text-sm font-medium text-destructive wework:text-red-600">
                     {t('workbench.harness_apps_invalid_title', '无法安装这个智能工作台')}
                   </h3>
                   <p className="mt-1 text-sm leading-5 text-text-secondary">
@@ -197,7 +197,7 @@ export function HarnessAppInstallDialog({
           {error ? (
             <div
               data-testid="harness-app-error"
-              className="mt-4 flex items-start gap-2 rounded-xl bg-destructive/8 px-3 py-3 text-sm text-destructive"
+              className="mt-4 flex items-start gap-2 rounded-xl bg-destructive/8 px-3 py-3 text-sm text-destructive wework:bg-red-500/8 wework:text-red-600"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>

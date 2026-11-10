@@ -49,7 +49,7 @@ export function HooksSettingsPage() {
           {t('loading')}
         </div>
       ) : settings.error ? (
-        <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive wework:bg-red-500/10 wework:text-red-500">
           {settings.error}
           <button
             className="ml-3"

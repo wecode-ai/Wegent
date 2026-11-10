@@ -262,7 +262,6 @@ struct TurnTranscriptProjector<'a> {
     messages: &'a mut Vec<Value>,
     normalized_items: Vec<Value>,
     items: Vec<Value>,
-    later_process: Vec<bool>,
     device_id: &'a str,
     workspace_path: &'a str,
     turn_id: String,
@@ -272,6 +271,7 @@ struct TurnTranscriptProjector<'a> {
     assistant_status: &'static str,
     assistant_error: Option<String>,
     fold_commentary: bool,
+    unphased_progress_item_ids: HashSet<String>,
     options: TranscriptBuildOptions,
     assistant_segment_index: usize,
     assistant: AssistantTurnAccumulation,
@@ -290,13 +290,12 @@ impl<'a> TurnTranscriptProjector<'a> {
     ) -> Self {
         let turn_id = stable_indexed_id(turn, "turn", turn_index);
         let items = canonical_turn_items(turn, &turn_id, root_thread_id);
-        let later_process = later_process_flags(&items);
+        let unphased_progress_item_ids = unphased_progress_item_ids(&items, turn_interrupted(turn));
         let created_at = turn_started_at(turn);
         Self {
             messages,
             normalized_items: Vec::new(),
             items,
-            later_process,
             device_id,
             workspace_path,
             subtask_id: turn_subtask_id(turn, &turn_id),
@@ -304,6 +303,7 @@ impl<'a> TurnTranscriptProjector<'a> {
             assistant_status: turn_assistant_status(turn),
             assistant_error: turn_error_message(turn),
             fold_commentary: turn_should_fold_commentary(turn),
+            unphased_progress_item_ids,
             assistant: AssistantTurnAccumulation::new(file_changes(turn)),
             turn_id,
             created_at,
@@ -320,11 +320,11 @@ impl<'a> TurnTranscriptProjector<'a> {
         let message_start = self.messages.len();
         let mut positions = HashMap::new();
         let items = std::mem::take(&mut self.items);
-        for (item_index, item) in items.into_iter().enumerate() {
+        for item in items {
             checkpoint()?;
             let previous_block_count = self.assistant.blocks.len();
             let previous_assistant_part_count = self.assistant.assistant_part_count();
-            self.project_item(&item, self.later_process[item_index]);
+            self.project_item(&item);
             self.assistant
                 .record_new_items(previous_block_count, previous_assistant_part_count);
             if let Some(position) = item.get("position").and_then(Value::as_u64) {
@@ -361,7 +361,7 @@ impl<'a> TurnTranscriptProjector<'a> {
         Ok(self.normalized_items)
     }
 
-    fn project_item(&mut self, item: &Value, has_later_process: bool) {
+    fn project_item(&mut self, item: &Value) {
         match item_type(item).as_str() {
             "usermessage" => self.project_user_message(item),
             "reasoning" => push_reasoning_block(
@@ -443,10 +443,10 @@ impl<'a> TurnTranscriptProjector<'a> {
                 if !self.project_subagent_message(item)
                     && !self.project_async_request_user_input(item) =>
             {
-                self.project_assistant_message(item, has_later_process);
+                self.project_assistant_message(item);
             }
             "agentmessage" | "agentmessageevent" => {}
-            "message" => self.project_role_message(item, has_later_process),
+            "message" => self.project_role_message(item),
             _ if is_default_tool_output_item(item) => merge_tool_output(
                 &mut self.assistant.blocks,
                 item,
@@ -458,14 +458,14 @@ impl<'a> TurnTranscriptProjector<'a> {
         }
     }
 
-    fn project_role_message(&mut self, item: &Value, has_later_process: bool) {
+    fn project_role_message(&mut self, item: &Value) {
         match string_field(item, "role")
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str()
         {
             "user" => self.project_user_message(item),
-            "assistant" => self.project_assistant_message(item, has_later_process),
+            "assistant" => self.project_assistant_message(item),
             _ => {}
         }
     }
@@ -507,12 +507,15 @@ impl<'a> TurnTranscriptProjector<'a> {
         }
     }
 
-    fn project_assistant_message(&mut self, item: &Value, has_later_process: bool) {
+    fn project_assistant_message(&mut self, item: &Value) {
         collect_assistant_message(
             item,
             self.created_at,
             self.fold_commentary,
-            has_later_process || self.assistant_status == "streaming",
+            self.assistant_status == "streaming"
+                || self
+                    .unphased_progress_item_ids
+                    .contains(&item_id(item, "assistant-text")),
             &mut self.assistant,
             self.options,
         );
@@ -750,16 +753,6 @@ impl<'a> TurnTranscriptProjector<'a> {
         );
         self.normalized_items.extend(items);
     }
-}
-
-fn later_process_flags(items: &[Value]) -> Vec<bool> {
-    let mut has_later_process = false;
-    let mut flags = vec![false; items.len()];
-    for (index, item) in items.iter().enumerate().rev() {
-        flags[index] = has_later_process;
-        has_later_process |= is_substantive_process_item(item);
-    }
-    flags
 }
 
 fn make_transcript_ids_unique(messages: &mut [Value]) {
@@ -1215,28 +1208,49 @@ fn turn_should_fold_commentary(turn: &Value) -> bool {
     turn_interrupted(turn) && turn_has_substantive_process(turn)
 }
 
+fn unphased_progress_item_ids(items: &[Value], interrupted: bool) -> HashSet<String> {
+    let mut progress_ids = HashSet::new();
+    let mut later_reply = interrupted;
+    let mut process_before_reply = false;
+    for item in items.iter().rev() {
+        let kind = item_type(item);
+        if kind == "usermessage"
+            || (kind == "message"
+                && string_field(item, "role").is_some_and(|role| role.eq_ignore_ascii_case("user")))
+        {
+            later_reply = interrupted;
+            process_before_reply = false;
+        } else if is_final_assistant_message(item) {
+            // Preserve legacy progress across a process/reply boundary. A late
+            // tool snapshot without a later reply must not hide the final text.
+            // Interrupted turns retain their unfinished process text instead.
+            if process_before_reply && assistant_message_phase_name(item).is_none() {
+                progress_ids.insert(item_id(item, "assistant-text"));
+            }
+            later_reply = true;
+        } else if later_reply && is_substantive_process_item(item) {
+            process_before_reply = true;
+        }
+    }
+    progress_ids
+}
+
 fn turn_has_substantive_process(turn: &Value) -> bool {
     turn.get("items")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .any(|raw_item| {
-            let item = transcript_item(raw_item);
-            let item_type = item_type(&item);
-            is_substantive_process_item_type(&item_type)
-                || (item_type == "message"
-                    && !string_field(&item, "role")
-                        .unwrap_or_default()
-                        .eq_ignore_ascii_case("user")
-                    && !is_agent_message(&item))
-        })
+        .any(|raw_item| is_substantive_process_item(&transcript_item(raw_item)))
 }
 
-fn is_agent_message(item: &Value) -> bool {
-    matches!(
-        item_type(item).as_str(),
-        "agentmessage" | "agentmessageevent"
-    )
+fn is_substantive_process_item(item: &Value) -> bool {
+    let kind = item_type(item);
+    is_substantive_process_item_type(&kind)
+        || is_default_tool_item(item)
+        || (kind == "message"
+            && !string_field(item, "role")
+                .unwrap_or_default()
+                .eq_ignore_ascii_case("user"))
 }
 
 fn is_substantive_process_item_type(item_type: &str) -> bool {
@@ -1359,12 +1373,6 @@ fn collab_subagent_block(
         "subtask_id": subtask_id,
         "children": [],
     })
-}
-
-fn is_substantive_process_item(item: &Value) -> bool {
-    is_substantive_process_item_type(&item_type(item))
-        || is_default_tool_item(item)
-        || is_default_tool_output_item(item)
 }
 
 fn is_default_tool_item(item: &Value) -> bool {

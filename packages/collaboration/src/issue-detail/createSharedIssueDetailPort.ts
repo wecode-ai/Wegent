@@ -5,6 +5,7 @@
 import type {
   WorkspaceDeliveryUpdate,
   SharedWorkspaceApi,
+  IssueAttachmentContext,
 } from "../ports/SharedWorkspaceApi";
 import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
@@ -318,6 +319,7 @@ export function createSharedIssueDetailPort(
   api: SharedIssueDetailWorkspaceApi,
   saveFile: (blob: Blob, filename: string) => Promise<void>,
   getTranscript = api.runtime?.getTranscript,
+  attachmentContext?: IssueAttachmentContext,
 ): SharedIssueDetailPort {
   const projects = (
     api as SharedIssueDetailWorkspaceApi & {
@@ -397,15 +399,32 @@ export function createSharedIssueDetailPort(
     attachments: {
       list: api.attachments.list,
       upload: api.attachments.upload,
-      read: api.attachments.read,
+      read: (attachmentId) =>
+        attachmentContext
+          ? api.attachments.read(attachmentId, attachmentContext)
+          : api.attachments.read(attachmentId),
       async download(attachmentId, filename) {
         if (api.attachments.download) {
-          await api.attachments.download(attachmentId, filename);
+          await (attachmentContext
+            ? api.attachments.download(
+                attachmentId,
+                filename,
+                attachmentContext,
+              )
+            : api.attachments.download(attachmentId, filename));
           return;
         }
-        await saveFile(await api.attachments.read(attachmentId), filename);
+        await saveFile(
+          await (attachmentContext
+            ? api.attachments.read(attachmentId, attachmentContext)
+            : api.attachments.read(attachmentId)),
+          filename,
+        );
       },
-      remove: api.attachments.remove,
+      remove: (attachmentId) =>
+        attachmentContext
+          ? api.attachments.remove(attachmentId, attachmentContext)
+          : api.attachments.remove(attachmentId),
     },
     collaborators: {
       list: (issueId) =>

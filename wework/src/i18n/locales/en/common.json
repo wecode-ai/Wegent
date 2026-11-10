@@ -502,6 +502,8 @@
     "task_activity_replying_to_human": "Replying to {{name}} · Opens a new personal task",
     "task_activity_reply_action": "Reply and continue this task",
     "task_activity_replying_to": "Replying to {{name}} · Continues the existing execution",
+    "task_activity_replying_to_stand_in": "Replying to {{name}} · Continues this Issue conversation",
+    "task_activity_stand_in_reply_placeholder": "Continue discussing this Issue with the stand-in…",
     "task_activity_cancel_reply": "Cancel reply",
     "task_activity_reply_starts_task": "A task panel will open after you reply to start “{{title}}”",
     "task_activity_ready_for_review": "Result submitted, waiting for review",
@@ -1050,6 +1052,8 @@
     "cloud_work_page_description": "View cloud device resources and open cloud projects",
     "cloud_work_connection_settings": "Connection settings",
     "cloud_work_devices": "Devices",
+    "cloud_work_local_device_guidance": "The local execution environment is managed by this Wework app and is not listed among cloud and remote devices below. For incompatible local versions, check for Wework updates and restart.",
+    "cloud_work_local_version": "View local version",
     "cloud_work_add_device": "Add device",
     "cloud_work_available_devices": "Cloud and remote devices",
     "cloud_work_no_devices": "No cloud devices are available yet",
@@ -5446,6 +5450,15 @@
     "im_target": "Choose IM notification conversation"
   },
   "standIn": {
+    "native_input_pending": "Resolve the current question or permission card before sending another message.",
+    "desktop_notifications": {
+      "title": "Turn on stand-in desktop notifications",
+      "description": "Get notified about new messages or decisions. Allow notifications in both system and Wework settings.",
+      "enable": "Notification settings",
+      "never": "Don't show again",
+      "dismiss": "Dismiss for now",
+      "error": "Couldn't open or save notification settings. Try again."
+    },
     "project_coordinator": {
       "open": "Talk to lead",
       "title": "{{project}} · Lead",
@@ -5501,6 +5514,7 @@
     "saving": "Saving…",
     "loading": "Loading…",
     "reload": "Reload",
+    "view_devices": "View device status",
     "saved": "Stand-in settings saved",
     "enabled": "My Stand-in · Automatic handling enabled",
     "project_enabled": "Automatic handling enabled",
@@ -5913,7 +5927,7 @@
       "load_projects_failed": "Collaboration projects could not be loaded. Check the cloud connection, then choose Reload. Other Stand-in settings remain available.",
       "executor_unavailable": "The execution device cannot be reached. Check that Wework is running on that device, then choose Reload.",
       "executor_restarted": "The execution device restarted and this page is out of date. Choose Reload to continue.",
-      "executor_update_required": "Wework and the execution device use incompatible versions. Update Wework on both devices and restart.",
+      "executor_update_required": "Wework and the execution device use incompatible versions. Open Cloud work to check device status, upgrade, and try again.",
       "assignment_lookup_failed": "Could not read Stand-in history on device {{deviceId}}: {{error}}",
       "remote_control_disabled": "This desktop device does not allow remote operations. Open Wework on that device, or choose an execution device that supports remote operations.",
       "authentication_required": "Your cloud sign-in has expired. Reconnect your cloud account in Settings, then reload.",

@@ -8,7 +8,7 @@ import {
 import { issueAssignmentRevision, sameIssueAssignment } from './issueAssignmentReceiptScope'
 import { issueActivityTimeline } from './issueActivityTimeline'
 import { useIssueActivityHistory } from './useIssueActivityHistory'
-import { issueActivityRole } from './issueActivityRole'
+import { issueActivityRole, isPublicStandInMessage } from './issueActivityRole'
 import { useActivityExecutionBinding } from './useActivityExecutionStatus'
 import { useNotificationEntity } from '@/features/notifications/NotificationEntityContext'
 import { notificationCommentFocus } from '@/features/notifications/notificationCommentFocus'
@@ -475,7 +475,9 @@ export function TaskActivityView({
   function cardReplyLabel(card: TaskReplyCard) {
     if (humanDispatchForCard(card)) return t('workbench.task_activity_reply_start_new_task')
     return t(
-      [card.root, ...card.replies].some(message => message.sender.type === 'agent')
+      [card.root, ...card.replies].some(
+        message => message.sender.type === 'agent' && !isPublicStandInMessage(message)
+      )
         ? 'workbench.task_activity_reply_action'
         : 'workbench.task_activity_reply_discussion'
     )
@@ -535,7 +537,11 @@ export function TaskActivityView({
       const scope = readScope.current
       if (!projectDeliveryApi || !scope) return
       try {
-        const updated = await projectDeliveryApi.markLoopItemRead(task.id, sequence)
+        const updated = await projectDeliveryApi.markLoopItemRead(
+          task.id,
+          sequence,
+          task.content_revision
+        )
         if (readScope.current !== scope) {
           throw new DOMException('Activity read scope changed', 'AbortError')
         }
@@ -548,7 +554,7 @@ export function TaskActivityView({
         throw cause
       }
     },
-    [onTaskRead, projectDeliveryApi, t, task.id]
+    [onTaskRead, projectDeliveryApi, t, task.id, task.content_revision]
   )
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({
@@ -1253,7 +1259,9 @@ export function TaskActivityView({
                       {t(
                         replyHumanDispatch
                           ? 'workbench.task_activity_replying_to_human'
-                          : 'workbench.task_activity_replying_to',
+                          : isPublicStandInMessage(replyTarget.root)
+                            ? 'workbench.task_activity_replying_to_stand_in'
+                            : 'workbench.task_activity_replying_to',
                         {
                           name: replyTarget.root.sender.name,
                         }
@@ -1309,7 +1317,13 @@ export function TaskActivityView({
                 projectWork={commentProjectWork}
                 serverExecution={Boolean(client?.executeTaskComment)}
                 placeholder={
-                  replyTarget ? t('workbench.task_activity_inline_placeholder') : undefined
+                  replyTarget
+                    ? t(
+                        isPublicStandInMessage(replyTarget.root)
+                          ? 'workbench.task_activity_stand_in_reply_placeholder'
+                          : 'workbench.task_activity_inline_placeholder'
+                      )
+                    : undefined
                 }
               />
             </div>

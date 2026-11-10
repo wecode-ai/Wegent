@@ -16,6 +16,7 @@ import { Tooltip } from '../issue-detail/Tooltip'
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ReactNode } from 'react'
+import type { CollaborationTranslate } from '../i18n'
 import { KanbanBoard, type KanbanBoardProps, type KanbanEmptyState } from '../kanban/KanbanBoard'
 import type { ProjectBoardGroupBy } from './useProjectBoardState'
 import type { ProjectBoardSort, ProjectBoardSortLabels } from './projectBoardSorting'
@@ -169,6 +170,7 @@ export interface ProjectBoardBodyProps<TItem> {
   toolbarAction?: ReactNode
   rootLabel: string
   rootUnitLabel: string
+  translate: CollaborationTranslate
   searchPlaceholder: string
   sortLabels?: ProjectBoardSortLabels
   saveGlobalDisabled: boolean
@@ -225,6 +227,7 @@ export function ProjectBoardBody<TItem>({
   renderStatus,
   rootLabel,
   rootUnitLabel,
+  translate,
   searchPlaceholder,
   sortLabels,
   saveGlobalDisabled,
@@ -238,7 +241,11 @@ export function ProjectBoardBody<TItem>({
   const selectedGroupColumn = columns.find(column => column.key === state.groupFilter)
   const groupFilterLabel = state.groupFilter
     ? (selectedGroupColumn?.label ?? state.groupFilter)
-    : `全部${groupFields.find(field => field.id === state.groupBy)?.name ?? '任务'}`
+    : translate('todo.board_all_groups', undefined, {
+        group:
+          groupFields.find(field => field.id === state.groupBy)?.name ??
+          translate('todo.board_group_items'),
+      })
   const leafCount = (parentId?: string | null) =>
     new Set(
       parentRows?.rows
@@ -296,16 +303,19 @@ export function ProjectBoardBody<TItem>({
         <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
           {renderExternalGroupPicker()}
           <span className="relative inline-flex h-8 items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary">
-            {state.externalGroupFilter || `全部${externalGroupLabel}`}
+            {state.externalGroupFilter ||
+              translate('todo.board_all_groups', undefined, {
+                group: externalGroupLabel,
+              })}
             <ChevronDown className={'ml-2 h-3 w-3'} />
             <select
               data-testid="dingtalk-board-assignee-filter"
               value={state.externalGroupFilter}
               onChange={event => state.setExternalGroupFilter(event.target.value)}
               className="absolute inset-0 cursor-pointer opacity-0"
-              aria-label="分组值筛选"
+              aria-label={translate('todo.board_filter_group')}
             >
-              <option value="">全部</option>
+              <option value="">{translate('todo.board_all')}</option>
               {externalGroupValues.map(name => (
                 <option key={name} value={name}>
                   {name}
@@ -376,9 +386,9 @@ export function ProjectBoardBody<TItem>({
                   value={state.groupFilter}
                   onChange={event => state.setGroupFilter(event.target.value)}
                   className="absolute inset-0 cursor-pointer opacity-0"
-                  aria-label="分组值筛选"
+                  aria-label={translate('todo.board_filter_group')}
                 >
-                  <option value="">全部</option>
+                  <option value="">{translate('todo.board_all')}</option>
                   {state.groupFilter && !selectedGroupColumn ? (
                     <option value={state.groupFilter}>{groupFilterLabel}</option>
                   ) : null}

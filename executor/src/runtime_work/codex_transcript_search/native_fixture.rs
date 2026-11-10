@@ -147,14 +147,14 @@ done
     assert_eq!(page.thread["turns"][1]["itemsView"], "full");
     let projected =
         crate::runtime_work::transcript::full_transcript_messages(&page.thread, "test-device");
-    // The later tool item makes this unphased text a process block in the full turn.
+    // Completed unphased text keeps its full body even when later tool items exist.
     assert!(projected
         .iter()
         .any(|message| message["runtimeItems"]
             .as_array()
             .is_some_and(|items| items.iter().any(|item| item["id"] == "match"
-                && item["type"] == "block"
-                && item["block"]["content"] == match_text))));
+                && item["type"] == "assistant_text"
+                && item["content"] == match_text))));
     let calls = calls(&log);
     let turn_call = calls
         .iter()
@@ -568,10 +568,22 @@ async fn native_search_projects_terminal_turns_across_pages_and_hydrates_complet
             "interrupted",
             "interrupted",
             "",
-            // A later tool keeps this unphased output in the visible process area.
+            // Interrupted unphased progress remains visible beside its process items.
             vec![
                 json!({"id":"visible", "type":"agentMessage", "text":"interrupted"}),
                 json!({"id":"tool", "type":"commandExecution", "command":"echo padding"}),
+            ],
+            vec![("visible", 0)],
+        ),
+        (
+            "completed-unphased-before-late-tool",
+            "completed",
+            "needle",
+            "",
+            vec![
+                json!({"id":"visible", "type":"agentMessage", "text":"needle"}),
+                json!({"id":"tool", "type":"commandExecution", "command":"large-output",
+                    "status":"completed", "aggregatedOutput":"x".repeat(64 * 1024)}),
             ],
             vec![("visible", 0)],
         ),

@@ -12,6 +12,9 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
+const RESULT = 'Reassignment work completed.'
+const ROLE_NAME = 'Reassignment reviewer'
+
 export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
@@ -28,7 +31,10 @@ export function createDesktopScenario({
       signal: AbortSignal.timeout(uiTimeoutMs),
     })
     const text = await response.text()
-    assert.ok(response.ok, `${path}: ${response.status} ${text}`)
+    assert.ok(
+      response.ok,
+      `${path}: ${response.status} ${text}; requestVersion=${body?.version ?? 'none'}`
+    )
     return text ? JSON.parse(text) : null
   }
   async function until(load, accept, message) {
@@ -48,6 +54,7 @@ export function createDesktopScenario({
     const row = {
       stage,
       issueId: issue.id,
+      version: detail.version,
       assignee: detail.assignee_user_id,
       identity: detail.human_task_binding,
       assignments,
@@ -60,6 +67,13 @@ export function createDesktopScenario({
     )
     console.log('[stand-in-assignment-recovery]', JSON.stringify(row))
     return detail
+  }
+  async function expectPublicResults(issue, count) {
+    await until(
+      () => request(`/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`),
+      rows => rows.filter(row => row.body === RESULT && row.author === ROLE_NAME).length === count,
+      `Expected ${count} persisted public result(s) before continuing the assignment flow`
+    )
   }
   return {
     requiresCloudEnvironment: true,
@@ -102,11 +116,7 @@ export function createDesktopScenario({
       const id = `reassignment-${Date.now()}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       response.end(
-        createSse([
-          responseCreated(id),
-          assistantMessage('Reassignment work completed.'),
-          responseCompleted(id),
-        ])
+        createSse([responseCreated(id), assistantMessage(RESULT), responseCompleted(id)])
       )
       return true
     },
@@ -124,6 +134,7 @@ export function createDesktopScenario({
             {
               ...initial,
               id: 'recovery-reviewer',
+              name: ROLE_NAME,
               enabled: true,
               prompt: 'Handle this reassigned Issue.',
               collaboration: {
@@ -178,11 +189,7 @@ export function createDesktopScenario({
         'Initial assignment did not start'
       )
       const firstTask = firstBindings[0].task_id
-      assert.ok(
-        firstTask.endsWith('-recovery-reviewer'),
-        'Manual delegation used an unconfigured identity'
-      )
-      await until(
+      const firstConversation = await until(
         () => rpc('runtime.tasks.get', { taskId: firstTask }),
         value => {
           assert.notEqual(value.task?.status, 'failed', JSON.stringify(value))
@@ -190,6 +197,17 @@ export function createDesktopScenario({
         },
         'Initial task did not finish'
       )
+      assert.equal(
+        firstConversation.task.runtimeHandle.origin.standInId,
+        'recovery-reviewer',
+        'Manual delegation used an unconfigured identity'
+      )
+      assert.ok(
+        firstConversation.task.threadId,
+        'Initial work must have a real native conversation'
+      )
+      // Native completion precedes the separate public-comment transaction.
+      await expectPublicResults(issue, 1)
       issue = await record('first-completed', issue)
       const firstIdentity = issue.human_task_binding
       await rpc('runtime.stand_in.personal.save', {
@@ -205,6 +223,7 @@ export function createDesktopScenario({
           })),
         },
       })
+      issue = await request(`/v1/loop-items/${issue.id}`)
       issue = await request(`/v1/cloud-projects/${project.id}/loop-items/${issue.id}/assign`, {
         version: issue.version,
         assigneeType: 'user',
@@ -234,19 +253,33 @@ export function createDesktopScenario({
       await refresh()
       const secondBindings = await until(
         () => request(`/v1/loop-items/${issue.id}/tasks`),
-        rows => rows.length === 2,
-        'Reassignment back to me did not start a new stand-in task'
+        rows =>
+          rows.length === 1 &&
+          rows[0].human_assignment_id === issue.human_task_binding.humanAssignmentId,
+        'Reassignment back to me did not bind the fresh grant to the existing conversation'
       )
-      const secondTask = secondBindings.find(row => row.task_id !== firstTask)?.task_id
-      assert.ok(secondTask)
-      await until(
+      const secondTask = secondBindings[0].task_id
+      assert.equal(secondTask, firstTask, 'Reassignment must retain the Issue conversation')
+      const secondConversation = await until(
         () => rpc('runtime.tasks.get', { taskId: secondTask }),
         value => {
           assert.notEqual(value.task?.status, 'failed', JSON.stringify(value))
-          return value.task?.status === 'done'
+          return (
+            value.task?.status === 'done' &&
+            value.task.executionState?.latestTurnId !==
+              firstConversation.task.executionState?.latestTurnId
+          )
         },
         'Second task did not finish'
       )
+      assert.equal(
+        secondConversation.task.threadId,
+        firstConversation.task.threadId,
+        'Reassignment must retain native history'
+      )
+      assert.ok(firstConversation.task.executionState?.latestTurnId)
+      assert.ok(secondConversation.task.executionState?.latestTurnId)
+      await expectPublicResults(issue, 2)
       const manual = await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
       assert.equal(
         manual.taskId,
