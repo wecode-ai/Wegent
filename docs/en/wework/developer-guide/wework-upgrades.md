@@ -60,6 +60,9 @@ write the complete merged catalog to a process-owned file inside that Home and l
 `model_catalog_json`, avoiding the custom HTTP catalog's 1 MB limit without stripping native
 instructions or permission templates. Retain the file until the native process actually exits;
 cleanup of unrelated runtime profiles must not remove it.
+On Unix, a wrapper's exit does not prove its native descendants have stopped. Reserve the leader
+PID until its owned process group exits, then reap the leader and release the Home lease and catalog.
+An exit notification alone cannot admit migration. Windows retains its whole-tree termination flow.
 Catalog edits use the existing idle restart and active-work confirmation flow. Explicit native
 catalog configuration in the Home remains authoritative. Local discovery adds no resident process
 and does not serialize model requests from separate threads.

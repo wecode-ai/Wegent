@@ -159,7 +159,6 @@ fn defaults(provider: &str) -> Map<String, Value> {
     let mut values = json!({
         "wire_api":"responses", "requires_openai_auth":false,
         "supports_websockets":false, "supports_standalone_web_search":false,
-        "include_internal_metadata":false,
         "capabilities":{"cyber_access_programs":false}
     })
     .as_object()
@@ -169,7 +168,6 @@ fn defaults(provider: &str) -> Map<String, Value> {
         "openai" => values.extend(json!({
             "name":"OpenAI", "requires_openai_auth":true,
             "supports_websockets":true, "supports_standalone_web_search":true,
-            "include_internal_metadata":true,
             "capabilities":{"cyber_access_programs":true},
             "env_http_headers":{"OpenAI-Organization":"OPENAI_ORGANIZATION", "OpenAI-Project":"OPENAI_PROJECT"}
         }).as_object().unwrap().clone()),

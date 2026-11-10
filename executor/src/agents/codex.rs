@@ -17,7 +17,7 @@ use serde_json::Map;
 use serde_json::{json, Value};
 use tokio::{
     io::AsyncWriteExt,
-    process::{Child, ChildStdin, Command},
+    process::{ChildStdin, Command},
     sync::{broadcast, mpsc, oneshot, Mutex},
     time::{timeout, timeout_at, Instant},
 };
@@ -143,6 +143,9 @@ mod child;
 mod overload_recovery;
 #[path = "codex/plugin_skills.rs"]
 mod plugin_skills;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "codex/process_exit.rs"]
+mod process_exit;
 mod startup;
 use child::CodexAppServerChild;
 #[path = "codex/thread_action.rs"]
@@ -4275,12 +4278,12 @@ fn configure_codex_windows_no_window(command: &mut Command) {
 #[cfg(not(windows))]
 fn configure_codex_windows_no_window(_command: &mut Command) {}
 
-async fn terminate_codex_app_server_child(child: &mut Child) {
-    signal_codex_app_server_child(child);
-    let _ = child.wait().await;
+async fn terminate_codex_app_server_child(child: &mut CodexAppServerChild) {
+    let _ = child.kill().await;
 }
 
-fn signal_codex_app_server_child(child: &mut Child) {
+fn signal_codex_app_server_child(child: &mut CodexAppServerChild) {
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     if matches!(child.try_wait(), Ok(Some(_))) {
         return;
     }

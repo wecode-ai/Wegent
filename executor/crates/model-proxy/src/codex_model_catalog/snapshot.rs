@@ -58,7 +58,10 @@ pub async fn prepare_process_catalog(
     let mut catalog = load_baseline_catalog_with_native(None, Some(&native)).await?;
     apply_catalog_overrides(&mut catalog, &read_catalog_overrides());
     append_catalog_vision_sidecars(&mut catalog);
-    let path = home.join(format!("wework-model-catalog-{}.json", uuid::Uuid::new_v4()));
+    let path = home.join(format!(
+        "wework-model-catalog-{}.json",
+        uuid::Uuid::new_v4()
+    ));
     let snapshot = ProcessCatalog::write(path, &catalog)?;
     log_executor_event(
         "codex router model catalog prepared",
