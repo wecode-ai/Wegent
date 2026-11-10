@@ -34,3 +34,22 @@ for (const source of sources) {
     }
   })
 }
+
+test('Streamdown resolves the same HAST types as its shared Markdown components', () => {
+  const source = resolve(root, '../packages/collaboration/src/markdown/AssistantMarkdown.tsx')
+  const streamdown = ts.resolveModuleName('streamdown', source, parsed.options, ts.sys)
+  assert.ok(streamdown.resolvedModule, 'Streamdown must resolve')
+  const component = ts.resolveModuleName('hast', source, parsed.options, ts.sys)
+  const dependency = ts.resolveModuleName(
+    'hast',
+    streamdown.resolvedModule.resolvedFileName,
+    parsed.options,
+    ts.sys
+  )
+  assert.ok(component.resolvedModule, 'The shared component HAST types must resolve')
+  assert.ok(dependency.resolvedModule, 'The Streamdown HAST types must resolve')
+  assert.equal(
+    realpathSync(dependency.resolvedModule.resolvedFileName),
+    realpathSync(component.resolvedModule.resolvedFileName)
+  )
+})
