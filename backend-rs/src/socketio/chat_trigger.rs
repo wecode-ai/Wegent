@@ -341,20 +341,10 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
     // Team before the assistant/user reloads; both are custom-mapped
     // resources, so the refresh emits the flat projection
     // (`e06fe28f` qs115/qs116).
-    let trigger_tables = state
-        .task_store
-        .message_edit_tables(turn.task_id)
+    super::chat_send::refresh_task_from_writer(state, turn.task_id, user_id)
         .await
         .map_err(dependency)?;
     let mut handle = &state.mysql;
-    fetch_optional_as::<brz_mysql::MysqlRow>(
-        &mut handle,
-        RouteKey::None,
-        &crate::task_store_project::task_by_id_refresh_statement(&trigger_tables.tasks),
-        vec![StatementArg::Int(turn.task_id)],
-    )
-    .await
-    .map_err(dependency)?;
     // `db.refresh(team)` reads the row once (`make_transient` afterwards only
     // detaches it), so the flat projection's row is decoded and reused instead
     // of re-selecting the same Team.

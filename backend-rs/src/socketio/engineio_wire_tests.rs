@@ -452,7 +452,7 @@ fn capability_sync_frame(sid: &str, host_id: &str, callback_id: u64, payload: &V
 }
 
 /// Answer one capability-sync call with the real client ACK.
-async fn answer_capability_sync(client: &PollClient, payload: &Value, ack: &Value) {
+async fn answer_executor_call(client: &PollClient, event: &str, payload: &Value, ack: &Value) {
     let packets = client
         .poll_packets()
         .await
@@ -464,7 +464,7 @@ async fn answer_capability_sync(client: &PollClient, payload: &Value, ack: &Valu
     let start = packet.find('[').expect("event arguments");
     let id: u64 = packet[..start].parse().expect("the ACK id");
     let args: Value = serde_json::from_str(&packet[start..]).expect("event JSON");
-    assert_eq!(args, json!(["device:sync_capabilities", payload]));
+    assert_eq!(args, json!([event, payload]));
     client
         .post(&format!("43/local-executor,{id}[{ack}]"))
         .await
@@ -511,6 +511,41 @@ fn install_capability_callbacks(
     published
 }
 
+#[tokio::test]
+async fn remote_terminal_attach_returns_the_executor_ack_to_the_origin() {
+    let server = WireServer::start().await;
+    let client = PollClient::connect(&server.addr, EXECUTOR_NAMESPACE, "{}")
+        .await
+        .expect("local executor");
+    let sid = client.socket_id();
+    let (runtime, workers) = SocketRuntime::new();
+    let sink = runtime.adapter_emit_sink(Arc::clone(&server.emitters));
+    let published = install_capability_callbacks(workers.rpc_jobs, Arc::clone(&server.emitters));
+    let payload = json!({"session_id": "terminal-test", "protocol_version": 2});
+    let ack = json!({"success": true, "protocol_version": 2});
+    let mut frame = runtime_rpc_frame(sid);
+    frame["event"] = json!("terminal:attach");
+    frame["data"] = json!([payload]);
+    sink(frame);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            answer_executor_call(&client, "terminal:attach", &payload, &ack),
+            wait_published(&published, 1),
+        );
+    })
+    .await
+    .expect("attach completes");
+    let callbacks = published.lock().await;
+    assert_eq!(callbacks.len(), 1);
+    assert_eq!(callbacks[0].host_id, "remote-host");
+    assert_eq!(callbacks[0].room, sid);
+    assert_eq!(callbacks[0].namespace, EXECUTOR_NAMESPACE);
+    assert_eq!(callbacks[0].id, 7);
+    assert_eq!(callbacks[0].ack, ack);
+    let _ = server.stop.send(());
+    server.handle.await.expect("server stopped");
+}
+
 /// A real adapter envelope reaches the local WebSocket as one
 /// `device:sync_capabilities` event, and its real ACK is published back exactly
 /// once with the sender's original identity.
@@ -542,7 +577,7 @@ async fn a_remote_capability_sync_reaches_the_socket_and_publishes_one_callback(
 
     sink(frame);
     tokio::join!(
-        answer_capability_sync(&client, &payload, &ack),
+        answer_executor_call(&client, "device:sync_capabilities", &payload, &ack),
         wait_published(&published, 1),
     );
 
@@ -595,7 +630,7 @@ async fn two_publishers_with_callback_id_one_do_not_overwrite_each_other() {
         sink(capability_sync_frame(&sid, host, 1, &payload));
         let expected = published.lock().await.len() + 1;
         tokio::join!(
-            answer_capability_sync(&client, &payload, &ack),
+            answer_executor_call(&client, "device:sync_capabilities", &payload, &ack),
             wait_published(&published, expected),
         );
     }

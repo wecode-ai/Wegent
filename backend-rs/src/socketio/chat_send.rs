@@ -866,6 +866,34 @@ pub fn success_ack(task_id: i64, subtask_id: i64, message_id: i64) -> Value {
     })
 }
 
+/// The send has just committed, so the replica may not yet have its rows.
+pub(super) async fn refresh_task_from_writer(
+    state: &AppState,
+    task_id: i64,
+    user_id: i64,
+) -> brz_mysql::MysqlResult<Option<brz_mysql::MysqlRow>> {
+    state
+        .mysql
+        .with_transaction(async |tx| state.task_store.refresh_task_on(tx, task_id, user_id).await)
+        .await
+}
+
+async fn refresh_subtask_from_writer(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+) -> brz_mysql::MysqlResult<Option<brz_mysql::MysqlRow>> {
+    state
+        .mysql
+        .with_transaction(async |tx| {
+            state
+                .task_store
+                .refresh_subtask_on(tx, task_id, subtask_id)
+                .await
+        })
+        .await
+}
+
 /// Handle one `chat:send` event.
 pub async fn handle(
     state: &Arc<AppState>,
@@ -1444,7 +1472,7 @@ pub async fn handle(
             // hangs and gates the START behind the whole trigger build. One
             // refresh can only claim one recorded occurrence, so the pairs are
             // not merged.
-            match state.task_store.refresh_task(turn.task_id, user_id).await {
+            match refresh_task_from_writer(state, turn.task_id, user_id).await {
                 Ok(Some(_)) => {}
                 Ok(None) => {
                     tracing::error!(
@@ -1458,10 +1486,12 @@ pub async fn handle(
                     return Ok(Reply::payload(error_ack("Internal server error")));
                 }
             }
-            let user_row = match state
-                .task_store
-                .refresh_subtask(turn.task_id, turn.user_subtask_id)
-                .await
+            let user_row = match refresh_subtask_from_writer(
+                state,
+                turn.task_id,
+                turn.user_subtask_id,
+            )
+            .await
             {
                 Ok(Some(row)) => row,
                 Ok(None) => {
@@ -1495,9 +1525,7 @@ pub async fn handle(
                 return Ok(Reply::payload(error_ack("Internal server error")));
             };
             if turn.assistant_subtask_id != 0 {
-                match state
-                    .task_store
-                    .refresh_subtask(turn.task_id, turn.assistant_subtask_id)
+                match refresh_subtask_from_writer(state, turn.task_id, turn.assistant_subtask_id)
                     .await
                 {
                     Ok(Some(_)) => {}
@@ -1521,7 +1549,7 @@ pub async fn handle(
                 }
             }
             // `create_task_and_subtasks`' second commit point.
-            match state.task_store.refresh_task(turn.task_id, user_id).await {
+            match refresh_task_from_writer(state, turn.task_id, user_id).await {
                 Ok(Some(_)) => {}
                 Ok(None) => {
                     tracing::error!(
@@ -1540,9 +1568,7 @@ pub async fn handle(
                 }
             }
             if turn.assistant_subtask_id != 0 {
-                match state
-                    .task_store
-                    .refresh_subtask(turn.task_id, turn.assistant_subtask_id)
+                match refresh_subtask_from_writer(state, turn.task_id, turn.assistant_subtask_id)
                     .await
                 {
                     Ok(Some(_)) => {}
@@ -2168,12 +2194,19 @@ mod tests {
             .split("Ok(Ok(turn)) => {")
             .nth(1)
             .expect("post-commit branch");
-        assert_eq!(post_commit.matches(".refresh_task(").count(), 2);
-        assert_eq!(post_commit.matches(".refresh_subtask(").count(), 3);
-        let first_task = post_commit.find(".refresh_task(").expect("first task read");
-        let user = post_commit.find(".refresh_subtask(").expect("user read");
+        assert_eq!(post_commit.matches("refresh_task_from_writer(").count(), 2);
+        assert_eq!(
+            post_commit.matches("refresh_subtask_from_writer(").count(),
+            3
+        );
+        let first_task = post_commit
+            .find("refresh_task_from_writer(")
+            .expect("first task read");
+        let user = post_commit
+            .find("refresh_subtask_from_writer(")
+            .expect("user read");
         let second_task = post_commit[first_task + 1..]
-            .find(".refresh_task(")
+            .find("refresh_task_from_writer(")
             .map(|offset| first_task + 1 + offset)
             .expect("second task read");
         assert!(first_task < user && user < second_task);

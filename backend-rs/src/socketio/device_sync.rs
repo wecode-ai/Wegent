@@ -428,6 +428,10 @@ pub(crate) fn inbound_rpc_job(message: Value) -> Option<RuntimeRpcCall> {
         "device:execute_command" => RuntimeCallEvent::ExecuteCommand,
         "device:start_terminal_session" => RuntimeCallEvent::StartTerminalSession,
         "device:start_code_server_session" => RuntimeCallEvent::StartCodeServerSession,
+        "terminal:attach" => RuntimeCallEvent::Terminal(super::runtime::TerminalRelay::Attach),
+        "terminal:ack" => RuntimeCallEvent::Terminal(super::runtime::TerminalRelay::Ack),
+        "terminal:resize" => RuntimeCallEvent::Terminal(super::runtime::TerminalRelay::Resize),
+        "terminal:close" => RuntimeCallEvent::Terminal(super::runtime::TerminalRelay::Close),
         _ => return None,
     };
     if message.get("namespace").and_then(Value::as_str) != Some("/local-executor") {
@@ -480,6 +484,9 @@ async fn forward_runtime_rpc(
         arg,
     } = call;
     let ack = match event {
+        RuntimeCallEvent::Terminal(event) => {
+            emitters.terminal_call(event, &room, &arg, timeout).await
+        }
         RuntimeCallEvent::RuntimeRpc => emitters.runtime_rpc(&room, &arg, timeout).await,
         RuntimeCallEvent::SyncCapabilities => {
             emitters.call_sync_capabilities(&room, &arg, timeout).await
@@ -756,6 +763,29 @@ mod runtime_rpc_tests {
             assert_eq!(call.id, 1);
             assert_eq!(call.arg, json!({"session_id": "session"}));
             assert_eq!(call.ack_timeout(), Duration::from_secs(15));
+        }
+    }
+
+    #[test]
+    fn terminal_controls_preserve_the_cross_process_callback() {
+        use super::super::runtime::TerminalRelay;
+
+        for event in [
+            TerminalRelay::Attach,
+            TerminalRelay::Ack,
+            TerminalRelay::Resize,
+            TerminalRelay::Close,
+        ] {
+            let mut message = frame("device-socket", "device-socket");
+            message["event"] = json!(event.event_name());
+            message["data"] = json!([{"session_id": "terminal-session", "protocol_version": 2}]);
+            let call =
+                inbound_rpc_job(message).expect("terminal control is routed to the socket owner");
+            assert_eq!(call.event, RuntimeCallEvent::Terminal(event));
+            assert_eq!(call.room, "device-socket");
+            assert_eq!(call.id, 1);
+            assert_eq!(call.arg["session_id"], "terminal-session");
+            assert_eq!(call.ack_timeout(), Duration::from_secs(5));
         }
     }
 

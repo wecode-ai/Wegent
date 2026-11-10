@@ -33,7 +33,7 @@ use crate::state::AppState;
 pub(crate) use crate::socketio::terminal_device::relay_device_event;
 
 /// `TERMINAL_ATTACH_TIMEOUT_SECONDS`.
-const TERMINAL_ATTACH_TIMEOUT_SECONDS: Duration = Duration::from_secs(5);
+pub(super) const TERMINAL_ATTACH_TIMEOUT_SECONDS: Duration = Duration::from_secs(5);
 /// `CONSUMER_ID_PATTERN` length bound.
 const CONSUMER_ID_MAX_LENGTH: usize = 128;
 
@@ -151,15 +151,15 @@ pub(crate) async fn attach(
         ));
     }
     let attach_payload = request.payload(&record.session_id, offered, socket_id);
-    let attach_result = runtime
-        .emitters()
-        .terminal_call(
-            TerminalRelay::Attach,
-            &executor_socket_id,
-            &attach_payload,
-            TERMINAL_ATTACH_TIMEOUT_SECONDS,
-        )
-        .await;
+    let attach_result = call_terminal_executor(
+        state,
+        runtime,
+        session.user_id,
+        TerminalRelay::Attach,
+        &executor_socket_id,
+        &attach_payload,
+    )
+    .await;
     let selected = match attach_result {
         Ok(args) => match request.select(&ack_argument(&args), offered, pinned) {
             Ok(selected) => selected,
@@ -232,15 +232,15 @@ pub(crate) async fn ack(
         "consumer_id": authorized.consumer_id,
         "sequence": sequence,
     });
-    let result = runtime
-        .emitters()
-        .terminal_call(
-            TerminalRelay::Ack,
-            &authorized.record.socket_id,
-            &payload,
-            TERMINAL_ATTACH_TIMEOUT_SECONDS,
-        )
-        .await;
+    let result = call_terminal_executor(
+        state,
+        runtime,
+        session.user_id,
+        TerminalRelay::Ack,
+        &authorized.record.socket_id,
+        &payload,
+    )
+    .await;
     match executor_success(result) {
         Some(error) => Ok(Reply::payload(
             json!({"error": error_of(error, "Failed to acknowledge terminal output")}),
@@ -316,15 +316,15 @@ pub(crate) async fn resize(
     let mut payload = control_payload(&authorized.record.session_id, &authorized.consumer_id, None);
     payload.insert("rows".into(), Value::from(rows));
     payload.insert("cols".into(), Value::from(cols));
-    let result = runtime
-        .emitters()
-        .terminal_call(
-            TerminalRelay::Resize,
-            &authorized.record.socket_id,
-            &Value::Object(payload),
-            TERMINAL_ATTACH_TIMEOUT_SECONDS,
-        )
-        .await;
+    let result = call_terminal_executor(
+        state,
+        runtime,
+        session.user_id,
+        TerminalRelay::Resize,
+        &authorized.record.socket_id,
+        &Value::Object(payload),
+    )
+    .await;
     match executor_success(result) {
         Some(error) => Ok(Reply::payload(json!({
             "error": error_of(error, "Failed to resize terminal executor"),
@@ -350,15 +350,15 @@ pub(crate) async fn close(
         &authorized.consumer_id,
         None,
     ));
-    let result = runtime
-        .emitters()
-        .terminal_call(
-            TerminalRelay::Close,
-            &authorized.record.socket_id,
-            &payload,
-            TERMINAL_ATTACH_TIMEOUT_SECONDS,
-        )
-        .await;
+    let result = call_terminal_executor(
+        state,
+        runtime,
+        session.user_id,
+        TerminalRelay::Close,
+        &authorized.record.socket_id,
+        &payload,
+    )
+    .await;
     if let Some(error) = executor_success(result) {
         return Ok(Reply::payload(json!({
             "error": error_of(error, "Failed to close terminal executor"),
@@ -491,8 +491,37 @@ pub(crate) fn ack_argument(args: &Value) -> Value {
     }
 }
 
+/// The browser and executor can be connected to different Socket.IO processes.
+async fn call_terminal_executor(
+    state: &AppState,
+    runtime: &SocketRuntime,
+    user_id: i64,
+    event: TerminalRelay,
+    socket_id: &str,
+    payload: &Value,
+) -> Result<Value, String> {
+    let emitters = runtime.emitters();
+    if emitters.has_local_executor_socket(socket_id) {
+        return emitters
+            .terminal_call(event, socket_id, payload, TERMINAL_ATTACH_TIMEOUT_SECONDS)
+            .await
+            .map_err(|error| error.to_string());
+    }
+    crate::runtime_work::call_socketio_event(
+        state,
+        user_id,
+        socket_id,
+        EXECUTOR_NAMESPACE,
+        event.event_name(),
+        payload.clone(),
+        TERMINAL_ATTACH_TIMEOUT_SECONDS,
+    )
+    .await
+    .map_err(|error| error.to_string())
+}
+
 /// `None` for a successful executor ack, `Some(error)` otherwise.
-fn executor_success(result: Result<Value, brz_socket_io::EmitterError>) -> Option<Value> {
+fn executor_success(result: Result<Value, String>) -> Option<Value> {
     match result {
         Ok(args) => {
             let ack = ack_argument(&args);

@@ -592,6 +592,18 @@ pub enum TerminalRelay {
     Close,
 }
 
+impl TerminalRelay {
+    pub(crate) fn event_name(self) -> &'static str {
+        match self {
+            Self::Attach => "terminal:attach",
+            Self::Input => "terminal:input",
+            Self::Ack => "terminal:ack",
+            Self::Resize => "terminal:resize",
+            Self::Close => "terminal:close",
+        }
+    }
+}
+
 /// The `/local-executor` event one inbound adapter call delivers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeCallEvent {
@@ -603,6 +615,7 @@ pub enum RuntimeCallEvent {
     ExecuteCommand,
     StartTerminalSession,
     StartCodeServerSession,
+    Terminal(TerminalRelay),
 }
 
 /// One inbound adapter `/local-executor` call waiting for the real client ACK.
@@ -620,6 +633,9 @@ impl RuntimeRpcCall {
         use crate::device_commands::{
             DEFAULT_COMMAND_TIMEOUT_SECONDS, MAX_COMMAND_TIMEOUT_SECONDS, SOCKET_ACK_GRACE_SECONDS,
         };
+        if matches!(self.event, RuntimeCallEvent::Terminal(_)) {
+            return super::terminal_relay::TERMINAL_ATTACH_TIMEOUT_SECONDS;
+        }
         if matches!(
             self.event,
             RuntimeCallEvent::StartTerminalSession | RuntimeCallEvent::StartCodeServerSession

@@ -354,7 +354,28 @@ async fn call_runtime_envelope(
     request: Value,
     wait: Duration,
 ) -> Result<Value, RuntimeCallError> {
-    let method = request["method"].as_str().unwrap_or_default().to_owned();
+    call_socketio_event(
+        state,
+        user_id,
+        socket_id,
+        namespace,
+        RUNTIME_RPC_EVENT,
+        request,
+        wait,
+    )
+    .await
+}
+
+pub(crate) async fn call_socketio_event(
+    state: &AppState,
+    user_id: i64,
+    socket_id: &str,
+    namespace: &str,
+    event: &str,
+    request: Value,
+    wait: Duration,
+) -> Result<Value, RuntimeCallError> {
+    let method = request["method"].as_str().unwrap_or(event).to_owned();
     let Some(rpc) = state.socketio_rpc.as_ref() else {
         return Err(RuntimeCallError::Unavailable(
             "socketio_rpc_unavailable".to_string(),
@@ -383,7 +404,7 @@ async fn call_runtime_envelope(
     );
     let data = python_dumps(&Value::Array(vec![request]));
     let message = emit_message_with_callback(
-        RUNTIME_RPC_EVENT,
+        event,
         &data,
         namespace,
         socket_id,
