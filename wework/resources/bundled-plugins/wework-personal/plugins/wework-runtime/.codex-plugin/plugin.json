@@ -1,6 +1,6 @@
 {
   "name": "wework-runtime",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Wework host workflows loaded on demand.",
   "author": {
     "name": "Wework"
