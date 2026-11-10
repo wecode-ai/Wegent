@@ -117,7 +117,7 @@ export function normalizeLocalModelCodexToolCompatibility(
   apiFormat: LocalModelApiFormat
 ): LocalModelCodexToolCompatibility {
   if (apiFormat !== 'openai-responses') return 'standard'
-  return value === 'standard' ? 'standard' : 'native'
+  return value === 'native' ? 'native' : 'standard'
 }
 
 export function defaultLocalModelToolProfile(

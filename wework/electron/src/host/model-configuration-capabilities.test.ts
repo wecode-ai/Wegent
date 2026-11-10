@@ -95,6 +95,16 @@ test('uses each model protocol override and isolates a failed model probe', asyn
       return Response.json({
         choices: [{ message: { tool_calls: [{ function: { name: 'wework_capability_probe' } }] } }],
       })
+    if (model === 'responses')
+      return Response.json({
+        output: [
+          {
+            type: 'function_call',
+            name: 'wework_capability_probe',
+            arguments: '{"input":"PING"}',
+          },
+        ],
+      })
     return Response.json({
       output: [{ type: 'custom_tool_call', name: 'apply_patch', input: 'probe patch' }],
     })
@@ -113,19 +123,63 @@ test('uses each model protocol override and isolates a failed model probe', asyn
         request_path: '/custom-completions',
       },
       { id: 'responses', model_id: 'responses', api_format: 'openai-responses' },
+      {
+        id: 'custom',
+        model_id: 'custom',
+        api_format: 'openai-responses',
+        tool_profile: 'custom',
+      },
     ],
   }
   expect(await router.invoke(principal, 'modelConfiguration.test', { provider: draft })).toEqual([
     { model: 'Assistant', error: 'Connection test failed' },
     { model: 'completion' },
     { model: 'responses' },
+    { model: 'custom' },
   ])
   expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
     'https://model.example/v1/messages',
     'https://model.example/v1/custom-completions',
     'https://model.example/v1/responses',
+    'https://model.example/v1/responses',
+  ])
+  expect(JSON.parse(String(fetcher.mock.calls[2][1]?.body)).tools).toMatchObject([
+    { type: 'function', name: 'wework_capability_probe' },
+  ])
+  expect(JSON.parse(String(fetcher.mock.calls[3][1]?.body)).tools).toMatchObject([
+    { type: 'custom', name: 'apply_patch' },
   ])
 })
+
+test.each(['not-json', '{}', '{"input":" "}'])(
+  'rejects malformed Responses function arguments through the native capability: %s',
+  async argumentsValue => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        output: [
+          { type: 'function_call', name: 'wework_capability_probe', arguments: argumentsValue },
+        ],
+      })
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const result = await router.invoke(principal, 'modelConfiguration.test', {
+      provider: {
+        ...provider,
+        api_key: undefined,
+        models: [{ ...provider.models[0], api_format: 'openai-responses' }],
+      },
+    })
+    expect(result).toEqual([{ model: 'Assistant', error: 'Connection test failed' }])
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://model.example/v1/responses',
+      expect.objectContaining({
+        redirect: 'error',
+        headers: expect.objectContaining({ Authorization: 'Bearer native-only-secret' }),
+      })
+    )
+    expect(JSON.stringify(result)).not.toContain('native-only-secret')
+  }
+)
 
 test('preserves the MiniMax probe protocol without returning its credential', async () => {
   const draft: ModelProvider = {
