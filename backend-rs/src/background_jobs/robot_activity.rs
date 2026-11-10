@@ -388,7 +388,7 @@ pub(super) mod tests {
         // A repaired completion can change the badge while a newer run owns the Issue.
         mysql
             .execute(
-                "UPDATE loop_items SET metadata=JSON_SET(metadata, '$.ai_state', ?) WHERE id=?",
+                "UPDATE loop_items SET metadata=JSON_SET(metadata, '$.ai_state', CAST(? AS JSON)) WHERE id=?",
                 (
                     Json(json!({"project_chat_message_id":"newer","status":"running"})),
                     completed.task_id.as_str(),
