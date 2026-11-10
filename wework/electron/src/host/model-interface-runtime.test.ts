@@ -26,11 +26,35 @@ const entry: ResolvedProviderModel = {
 }
 
 describe('device-owned model interfaces', () => {
+  test('defaults an arbitrary Responses endpoint to ordinary function tools in both runtime paths', () => {
+    const config = {
+      id: 'saved-model',
+      modelId: 'arbitrary-model',
+      displayName: 'Custom API',
+      apiFormat: 'openai-responses',
+      baseUrl: 'https://private.example/v1',
+    }
+    const foreground = modelInterfaceRuntimeConfig(config)
+    const [background] = modelInterfaceRunnerModels([
+      {
+        provider: { ...entry.provider, base_url: config.baseUrl, api_format: 'openai-responses' },
+        model: { id: config.id, model_id: config.modelId },
+      },
+    ])
+    for (const resolved of [foreground, background.modelConfig]) {
+      expect(resolved).toMatchObject({
+        tool_profile: 'function',
+        native_tool_search: false,
+        native_namespace_tools: false,
+      })
+    }
+  })
+
   test.each([
     ['custom', 'openai-responses', 'custom', 'custom'],
     ['deepseek', 'openai-responses', 'shell', 'shell'],
     ['deepseek', 'openai-chat-completions', undefined, 'function'],
-    ['custom', 'openai-responses', undefined, 'custom'],
+    ['custom', 'openai-responses', undefined, 'function'],
   ] as const)(
     'preserves %s %s %s tool settings',
     (providerProfileId, apiFormat, toolProfile, expected) => {
@@ -41,7 +65,7 @@ describe('device-owned model interfaces', () => {
   )
 
   test.each(['custom', 'function', undefined] as const)(
-    'adapts saved DeepSeek %s tools for both foreground and background work',
+    'respects explicit %s tools without a provider-specific override',
     toolProfile => {
       const config = {
         id: 'deepseek',
@@ -64,8 +88,8 @@ describe('device-owned model interfaces', () => {
           },
         },
       ])
-      expect(foreground.tool_profile).toBe('function')
-      expect(background.modelConfig.tool_profile).toBe('function')
+      expect(foreground.tool_profile).toBe(toolProfile ?? 'function')
+      expect(background.modelConfig.tool_profile).toBe(toolProfile ?? 'function')
       expect(foreground.upstream_api_format).toBe('openai-responses')
     }
   )

@@ -34,7 +34,17 @@ pub(super) fn responses_tools(
             }
             Some("namespace") => {
                 if !bridge_namespace_tools {
-                    converted.push(tool.clone());
+                    let mut namespace = tool.clone();
+                    if let Some(tools) = tool.get("tools").and_then(Value::as_array) {
+                        namespace["tools"] = Value::Array(responses_tools(
+                            tools,
+                            context,
+                            convert_custom_tools,
+                            bridge_tool_search,
+                            false,
+                        ));
+                    }
+                    converted.push(namespace);
                     continue;
                 }
                 let Some(namespace) = tool.get("name").and_then(Value::as_str) else {
@@ -52,8 +62,14 @@ pub(super) fn responses_tools(
                     let Some(wire_name) = context.wire_name(Some(namespace), name) else {
                         continue;
                     };
-                    let mut flattened = inner_tool.clone();
-                    flattened["type"] = Value::String("function".to_owned());
+                    let mut flattened = responses_tools(
+                        std::slice::from_ref(inner_tool),
+                        context,
+                        true,
+                        bridge_tool_search,
+                        false,
+                    )
+                    .remove(0);
                     flattened["name"] = Value::String(wire_name.to_owned());
                     converted.push(flattened);
                 }
@@ -66,7 +82,7 @@ pub(super) fn responses_tools(
             converted.push(tool.clone());
             continue;
         };
-        converted.push(if convert_custom_tools && context.is_custom(name) {
+        converted.push(if convert_custom_tools && tool["type"] == "custom" {
             let contract = if name == "apply_patch" {
                 format!("{APPLY_PATCH_OUTPUT_CONTRACT}\n\n")
             } else {
@@ -131,9 +147,21 @@ pub(super) fn responses_tool_choice(
     bridge_namespace_tools: bool,
 ) -> Option<Value> {
     let choice_type = choice.get("type").and_then(Value::as_str)?;
-    if choice_type == "custom" && convert_custom_tools {
+    if choice_type == "custom" {
+        let namespace = choice.get("namespace").and_then(Value::as_str);
+        if !convert_custom_tools && !(bridge_namespace_tools && namespace.is_some()) {
+            return None;
+        }
         let mut converted = choice.clone();
         converted["type"] = Value::String("function".to_owned());
+        if bridge_namespace_tools {
+            converted["name"] = Value::String(
+                context
+                    .wire_name(namespace, choice.get("name")?.as_str()?)?
+                    .to_owned(),
+            );
+            converted.as_object_mut()?.remove("namespace");
+        }
         return Some(converted);
     }
     if let Some(name) = choice.get("name").and_then(Value::as_str) {
@@ -363,9 +391,23 @@ pub(super) fn convert_responses_input_item(
             }
             Ok(converted)
         }
-        Some("custom_tool_call") if convert_custom_tools && context.is_custom(name) => {
+        Some("custom_tool_call")
+            if (convert_custom_tools
+                || (bridge_namespace_tools && item.get("namespace").is_some()))
+                && context
+                    .wire_name(item.get("namespace").and_then(Value::as_str), name)
+                    .is_some_and(|wire_name| context.is_custom(wire_name)) =>
+        {
             let mut converted = item.clone();
             converted["type"] = Value::String("function_call".to_owned());
+            if bridge_namespace_tools {
+                if let Some(wire_name) =
+                    context.wire_name(item.get("namespace").and_then(Value::as_str), name)
+                {
+                    converted["name"] = Value::String(wire_name.to_owned());
+                    converted.as_object_mut().unwrap().remove("namespace");
+                }
+            }
             if let Some(input) = converted.get("input").and_then(Value::as_str) {
                 let arguments = serde_json::to_string(&json!({CUSTOM_TOOL_INPUT_FIELD: input}))
                     .map_err(|error| error.to_string())?;
@@ -380,7 +422,10 @@ pub(super) fn convert_responses_input_item(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if let Some(identity) = call_id_to_identity.get(call_id) {
-                if convert_custom_tools && identity.kind == ToolKind::Custom {
+                if (convert_custom_tools
+                    || (bridge_namespace_tools && identity.namespace.is_some()))
+                    && identity.kind == ToolKind::Custom
+                {
                     let mut converted = item.clone();
                     converted["type"] = Value::String("function_call_output".to_owned());
                     return Ok(converted);
@@ -430,7 +475,9 @@ pub(super) fn responses_bridge_context(
     let mut bridged = ToolContext::default();
     for (wire_name, identity) in &context.tools {
         let include = match identity.kind {
-            ToolKind::Custom => convert_custom_tools,
+            ToolKind::Custom => {
+                convert_custom_tools || (bridge_namespace_tools && identity.namespace.is_some())
+            }
             ToolKind::ToolSearch => bridge_tool_search,
             ToolKind::Function => bridge_namespace_tools && identity.namespace.is_some(),
         };

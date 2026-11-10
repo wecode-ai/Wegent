@@ -2238,7 +2238,7 @@ fn custom_model_without_catalog_entry_uses_upstream_id() {
 }
 
 #[test]
-fn explicit_responses_upstream_preserves_native_app_tools_by_default() {
+fn explicit_responses_upstream_defaults_to_ordinary_function_tools() {
     let upstream = explicit_codex_upstream(
         &json!({
             "model_id": "gpt-5.6-sol",
@@ -2248,9 +2248,9 @@ fn explicit_responses_upstream_preserves_native_app_tools_by_default() {
         "secret",
     );
 
-    assert!(!upstream.convert_custom_tools);
-    assert!(upstream.native_tool_search);
-    assert!(upstream.native_namespace_tools);
+    assert!(upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
 }
 
 #[test]
@@ -2722,7 +2722,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
 }
 
 #[test]
-fn user_configured_responses_provider_preserves_native_app_tools_by_default() {
+fn user_configured_responses_provider_defaults_to_functions_and_honors_native_opt_in() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("configured-provider-native-responses");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
@@ -2745,9 +2745,19 @@ fn user_configured_responses_provider_preserves_native_app_tools_by_default() {
         Some("http://127.0.0.1:3456/v1/responses")
     );
     assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
-    assert!(!upstream.convert_custom_tools);
-    assert!(upstream.native_tool_search);
-    assert!(upstream.native_namespace_tools);
+    assert!(upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
+    let config_path = root.join("config.toml");
+    let config = fs::read_to_string(&config_path).expect("read test configuration");
+    fs::write(
+        &config_path,
+        format!("{config}tool_profile = \"custom\"\nnative_tool_search = true\nnative_namespace_tools = true\n"),
+    ).expect("enable native tool capabilities");
+    let native = configured_codex_provider("wework-e2e", None).expect("native provider");
+    assert!(!native.convert_custom_tools);
+    assert!(native.native_tool_search);
+    assert!(native.native_namespace_tools);
     let _ = fs::remove_dir_all(root);
 }
 

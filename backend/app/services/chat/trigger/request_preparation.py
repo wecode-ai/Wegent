@@ -625,7 +625,7 @@ def build_wework_runtime_model_config(
     ) or codex_catalog_model_id_for_upstream(resolved.get("model_id"))
     if resolved_catalog_model_id:
         gateway_config["codex_catalog_model_id"] = resolved_catalog_model_id
-    gateway_config["tool_profile"] = "custom"
+    gateway_config["tool_profile"] = "function"
     gateway_config["codex_responses_compat_proxy"] = True
     return gateway_config
 
