@@ -216,7 +216,7 @@ describe('PluginAutoUpdateCoordinator', () => {
     })
     render(<PluginAutoUpdateCoordinator />)
     await waitFor(() => expect(mocks.notifyLocalPluginSkillsChanged).toHaveBeenCalledTimes(2))
-    expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledWith(undefined, 'local_pull_v1')
+    expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledWith('local_pull_v1')
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'executor.plugins.local_sync',
       expect.objectContaining({ installedPluginId: 1 })

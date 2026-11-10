@@ -17,6 +17,10 @@ from app.services.device.capability_sync_service import (
     device_capability_sync_service,
 )
 from app.services.device.plugin_change_sync import schedule_other_devices
+from app.services.device.plugin_removal_sync import (
+    prepare_plugin_removal,
+    sync_pending_plugin_removals,
+)
 from app.services.device.plugin_sync_protocol import (
     lock_plugin_sync_state,
     plugin_snapshot_watermark,
@@ -31,11 +35,81 @@ from app.services.plugin_device_identity import (
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
+from app.services.plugin_write_coordination import (
+    acquire_plugin_write_lock,
+    configure_plugin_session,
+)
 from app.services.plugin_write_errors import PluginWriteError
 from app.services.plugin_write_operations import run_plugin_operation
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
+
+
+def _prepare_cloud_sync_after_local_change(
+    db: Session, *, user_id: int, installed_id: int
+) -> tuple[bool, int | None]:
+    configure_plugin_session(db)
+    acquire_plugin_write_lock(db, user_id)
+    row = (
+        db.query(Kind)
+        .filter_by(
+            id=installed_id,
+            user_id=user_id,
+            kind="InstalledPlugin",
+            namespace="default",
+        )
+        .one_or_none()
+    )
+    if row is None:
+        return False, None
+    if not row.is_active:
+        prepare_plugin_removal(db, user_id, installed_id)
+        db.commit()
+        return False, None
+    release_id = row.json.get("spec", {}).get("releaseId")
+    return True, release_id if type(release_id) is int else None
+
+
+@trace_async(
+    span_name="plugins.sync_cloud_after_local_change", tracer_name="backend.plugins"
+)
+async def sync_cloud_plugins_after_local_change(
+    user_id: int, installed_id: int, source_device_id: str | None = None
+) -> None:
+    """Reuse legacy device synchronization after the local intent has committed."""
+    try:
+        active, release = await run_plugin_operation(
+            _prepare_cloud_sync_after_local_change,
+            user_id=user_id,
+            installed_id=installed_id,
+        )
+        if not active:
+            await sync_pending_plugin_removals(user_id)
+            return
+        with get_db_session() as db:
+            source = (
+                resolve_plugin_runtime_device_id(
+                    db, user_id=user_id, device_id=source_device_id
+                )
+                if source_device_id
+                else None
+            )
+            if release is not None:
+                await plugin_device_installation_service.ensure_pending_for_all_devices(
+                    db,
+                    user_id=user_id,
+                    installed_kind_id=installed_id,
+                    desired_release_id=release,
+                    exclude_device_id=source,
+                )
+        await sync_plugin_to_other_devices_after_change(user_id, installed_id, source)
+    except Exception:
+        logger.exception(
+            "Cloud plugin sync deferred after local intent: user_id=%s installed_id=%s",
+            user_id,
+            installed_id,
+        )
 
 
 def deferred_plugin_sync(

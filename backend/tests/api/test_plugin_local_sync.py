@@ -1,7 +1,6 @@
 """Opt-in account writes do not enumerate or wait for registered Devices."""
 
 from contextlib import contextmanager
-from datetime import datetime, timedelta
 from unittest.mock import Mock
 
 import pytest
@@ -9,8 +8,8 @@ from fastapi import HTTPException
 from sqlalchemy import event
 
 from app.models.kind import Kind
-from app.models.plugin_local_sync import PluginLocalSyncOperation, PluginSyncOutbox
-from app.services import plugin_sync_outbox
+from app.models.plugin_local_sync import PluginLocalSyncOperation
+from app.services import plugin_device_sync
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from tests.api.test_plugin_write_operations import plugin_requests  # noqa: F401
 
@@ -58,9 +57,18 @@ def test_legacy_writes_do_not_access_new_tables(
 
 @pytest.fixture
 def local_context(plugin_requests, monkeypatch):
+    from app.services.device import plugin_removal_sync
+
     monkeypatch.setenv("PLUGIN_LOCAL_SYNC_ENABLED", "true")
     with plugin_requests.sessions.begin() as db:
         db.query(Kind).filter_by(kind="Device").delete()
+
+    @contextmanager
+    def session():
+        with plugin_requests.sessions() as db:
+            yield db
+
+    monkeypatch.setattr(plugin_removal_sync, "get_db_session", session)
     return plugin_requests
 
 
@@ -97,10 +105,14 @@ def test_install_update_remove_without_device_and_without_rpc(local_context):
     )
     assert response.status_code == 204 and response.content == b""
     assert response.headers["X-Plugin-Operation-Id"] == "delete:1"
-    assert c.remote_calls == [] and c.background_tasks == []
+    assert c.remote_calls == []
+    assert len(c.background_tasks) == 3
+    assert all(
+        task.func is plugin_device_sync.sync_cloud_plugins_after_local_change
+        for task in c.background_tasks
+    )
     with c.sessions() as db:
         assert db.query(PluginLocalSyncOperation).count() == 3
-        assert db.query(PluginSyncOutbox).count() == 3
         assert not db.get(Kind, installed).is_active
 
 
@@ -117,25 +129,23 @@ def test_replay_is_idempotent_and_different_payload_conflicts(local_context):
         and response.json()["detail"] == "IDEMPOTENCY_CONFLICT"
     )
     with c.sessions() as db:
-        assert db.query(PluginSyncOutbox).count() == 1
         assert db.query(PluginLocalSyncOperation).count() == 1
 
 
-def test_outbox_failure_rolls_back_account_and_operation(local_context):
+def test_operation_failure_rolls_back_account_and_intent(local_context):
     c = local_context
 
     def fail(*args):
-        raise RuntimeError("outbox storage failed")
+        raise RuntimeError("operation storage failed")
 
-    event.listen(PluginSyncOutbox, "before_insert", fail)
+    event.listen(PluginLocalSyncOperation, "before_insert", fail)
     try:
-        with pytest.raises(RuntimeError, match="outbox storage failed"):
+        with pytest.raises(RuntimeError, match="operation storage failed"):
             install(c)
     finally:
-        event.remove(PluginSyncOutbox, "before_insert", fail)
+        event.remove(PluginLocalSyncOperation, "before_insert", fail)
     with c.sessions() as db:
         assert db.query(PluginLocalSyncOperation).count() == 0
-        assert db.query(PluginSyncOutbox).count() == 0
         assert (
             db.query(Kind)
             .filter_by(user_id=c.user_id, kind="InstalledPlugin", is_active=True)
@@ -184,33 +194,6 @@ def test_expected_release_rejects_drift_before_storage(local_context, monkeypatc
     storage.assert_not_called()
 
 
-def test_worker_reclaims_crash_and_fences_late_completion(local_context, monkeypatch):
-    c = local_context
-    install(c)
-
-    @contextmanager
-    def session():
-        with c.sessions() as db:
-            yield db
-
-    monkeypatch.setattr(plugin_sync_outbox, "get_db_session", session)
-    first = plugin_sync_outbox.claim_event()
-    assert first and plugin_sync_outbox.claim_event() is None
-    with c.sessions.begin() as db:
-        db.get(PluginSyncOutbox, first[0]).lease_until = datetime.utcnow() - timedelta(
-            seconds=1
-        )
-    second = plugin_sync_outbox.claim_event()
-    assert second and second[3] != first[3]
-    plugin_sync_outbox.finish_event(first[0], first[3], True)
-    with c.sessions() as db:
-        assert db.get(PluginSyncOutbox, first[0]).state == "running"
-    plugin_sync_outbox.finish_event(second[0], second[3], False)
-    with c.sessions() as db:
-        row = db.get(PluginSyncOutbox, first[0])
-        assert row.state == "pending" and row.attempt_count == 2
-
-
 def test_builtin_install_uses_the_same_atomic_local_path(local_context):
     c = local_context
     response = c.client.post(
@@ -220,77 +203,121 @@ def test_builtin_install_uses_the_same_atomic_local_path(local_context):
     )
     assert response.status_code == 200, response.text
     assert response.headers["X-Plugin-Delivery-Mode"] == "local_pull_v1"
-    assert c.remote_calls == [] and c.background_tasks == []
+    assert c.remote_calls == []
+    assert c.background_tasks
     with c.sessions() as db:
         assert db.query(PluginLocalSyncOperation).one().action == "ensure_builtin"
-        assert db.query(PluginSyncOutbox).count() == 1
 
 
-def test_claim_retains_optional_origin_without_requiring_registration(
-    local_context, monkeypatch
-):
+def seed_cloud_device(context, device_id="write-regression-device"):
+    with context.sessions.begin() as db:
+        db.add(
+            Kind(
+                user_id=context.user_id,
+                kind="Device",
+                namespace="default",
+                name=device_id,
+                json={"spec": {"deviceId": device_id, "runtimeInstanceId": device_id}},
+            )
+        )
+
+
+def test_unregistered_origin_reuses_existing_socket_dispatch(local_context):
     c = local_context
+    seed_cloud_device(c)
     response = c.client.post(
         f"/plugins/marketplace/{c.plugin_id}/install",
-        params={**query("source:1"), "source_device_id": "unregistered-runtime"},
+        params={**query("unregistered-origin"), "source_device_id": "not-registered"},
     )
     assert response.status_code == 200
-
-    @contextmanager
-    def session():
-        with c.sessions() as db:
-            yield db
-
-    monkeypatch.setattr(plugin_sync_outbox, "get_db_session", session)
-    claim = plugin_sync_outbox.claim_event()
-    assert claim[4] == "unregistered-runtime"
+    assert c.remote_calls == []
+    c.run_background()
+    assert c.remote_calls == ["background-plugin"]
+    installed = int(response.json()["plugin"]["metadata"]["labels"]["id"])
+    assert c.targeted_calls == [installed]
 
 
-@pytest.mark.asyncio
-async def test_worker_does_not_send_the_change_back_to_the_origin(
+def test_background_replay_reads_latest_removal_instead_of_old_install(
     local_context, monkeypatch
 ):
     from unittest.mock import AsyncMock
 
-    from app.schemas.device import DeviceCapabilitySyncResult
+    c = local_context
+    monkeypatch.setattr(
+        plugin_device_sync.device_capability_sync_service,
+        "supports_plugin_delta",
+        AsyncMock(return_value=False),
+    )
+    seed_cloud_device(c)
+    initial = install(c)
+    installed = int(initial.json()["plugin"]["metadata"]["labels"]["id"])
+    removed = c.client.delete(
+        f"/plugins/installed/{installed}", params=query("remove", 2)
+    )
+    assert removed.status_code == 204
+    c.run_background()
+    assert c.account() is None
+    assert "background-plugin" in c.remote_calls or "recovery" in c.remote_calls
+
+
+def test_cloud_failure_does_not_rollback_local_acceptance(local_context, monkeypatch):
+    from unittest.mock import AsyncMock
 
     c = local_context
-    installed = int(install(c).json()["plugin"]["metadata"]["labels"]["id"])
-
-    @contextmanager
-    def session():
-        with c.sessions() as db:
-            yield db
-
-    monkeypatch.setattr(plugin_sync_outbox, "get_db_session", session)
+    seed_cloud_device(c)
+    failure = AsyncMock(side_effect=RuntimeError("remote unavailable"))
     monkeypatch.setattr(
-        plugin_sync_outbox.device_service,
-        "get_online_devices",
-        AsyncMock(return_value=[{"device_id": "origin"}, {"device_id": "other"}]),
-    )
-    monkeypatch.setattr(
-        plugin_sync_outbox.plugin_device_installation_service,
+        plugin_device_sync.plugin_device_installation_service,
         "ensure_pending_for_all_devices",
-        AsyncMock(),
+        failure,
     )
-    dispatch = AsyncMock(
-        return_value=DeviceCapabilitySyncResult(device_id="other", success=True)
-    )
-    monkeypatch.setattr(
-        plugin_sync_outbox.device_capability_sync_service,
-        "sync_plugin_change",
-        dispatch,
-    )
-    monkeypatch.setattr(
-        plugin_sync_outbox.plugin_device_installation_service,
-        "record_device_sync_result",
-        lambda db, **kwargs: None,
-    )
+    accepted = install(c)
+    assert accepted.status_code == 200
+    c.run_background()
+    failure.assert_awaited_once()
+    assert install(c).json() == accepted.json()
+    with c.sessions() as db:
+        saved = db.query(PluginLocalSyncOperation).one()
+        assert saved.operation_id == "install:1"
+        assert saved.document["state"] == "intent_saved"
 
-    assert await plugin_sync_outbox.dispatch_event(c.user_id, installed, "origin")
-    dispatch.assert_awaited_once_with(
-        user_id=c.user_id, device_id="other", installed_plugin_ids=[installed]
+
+@pytest.mark.asyncio
+async def test_cloud_sync_wait_does_not_block_a_new_local_intent(
+    local_context, monkeypatch
+):
+    import asyncio
+
+    c = local_context
+    seed_cloud_device(c)
+    accepted = install(c)
+    installed = int(accepted.json()["plugin"]["metadata"]["labels"]["id"])
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def wait_for_cloud(*args, **kwargs):
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(
+        plugin_device_sync.plugin_device_installation_service,
+        "ensure_pending_for_all_devices",
+        wait_for_cloud,
     )
+    background = asyncio.create_task(c.background_tasks.pop(0)())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        updated = c.client.put(
+            f"/plugins/installed/{installed}",
+            params=query("next-local-intent", 2),
+            json={"enabled": False},
+        )
+        assert updated.status_code == 200
+        assert not background.done()
+        assert c.account().json["spec"]["enabled"] is False
+    finally:
+        release.set()
+        await background
 
 
 def test_rollback_allows_only_already_accepted_replay(local_context, monkeypatch):
@@ -302,46 +329,6 @@ def test_rollback_allows_only_already_accepted_replay(local_context, monkeypatch
     assert install(c, "new-operation").status_code == 409
     with c.sessions() as db:
         assert db.query(PluginLocalSyncOperation).count() == 1
-        assert db.query(PluginSyncOutbox).count() == 1
-
-
-def test_expired_snapshots_are_retired_but_pending_intents_are_kept(
-    local_context, monkeypatch
-):
-    c = local_context
-    old = datetime.utcnow() - timedelta(days=32)
-    with c.sessions.begin() as db:
-        for operation_id, action, state in [
-            ("issued", "snapshot", "issued"),
-            ("terminal", "snapshot", "local_completed"),
-            ("intent", "install", "intent_saved"),
-        ]:
-            db.add(
-                PluginLocalSyncOperation(
-                    user_id=c.user_id,
-                    instance_id="retention",
-                    operation_id=operation_id,
-                    action=action,
-                    installed_id=1,
-                    document={"state": state},
-                    created_at=old,
-                    updated_at=old,
-                )
-            )
-
-    @contextmanager
-    def session():
-        with c.sessions() as db:
-            yield db
-
-    monkeypatch.setattr(plugin_sync_outbox, "get_db_session", session)
-    plugin_sync_outbox.cleanup_completed()
-    with c.sessions() as db:
-        rows = {
-            row.operation_id: row.document["state"]
-            for row in db.query(PluginLocalSyncOperation).all()
-        }
-        assert rows == {"issued": "expired", "intent": "intent_saved"}
 
 
 def test_first_arrival_old_remove_cannot_reverse_a_newer_update(local_context):
@@ -359,8 +346,6 @@ def test_first_arrival_old_remove_cannot_reverse_a_newer_update(local_context):
     assert late.status_code == 409 and late.json()["detail"] == "INTENT_SUPERSEDED"
     assert c.account().json["spec"]["releaseId"] == c.upgraded_release_id
     assert c.remote_calls == []
-    with c.sessions() as db:
-        assert db.query(PluginSyncOutbox).count() == 1
 
 
 def test_late_install_cannot_reverse_a_newer_uninstall(local_context):
@@ -377,7 +362,6 @@ def test_late_install_cannot_reverse_a_newer_uninstall(local_context):
     assert c.account() is None
     with c.sessions() as db:
         assert not db.get(Kind, installed).is_active
-        assert db.query(PluginSyncOutbox).count() == 2
 
 
 def test_ordering_is_scoped_to_the_owned_plugin_and_local_instance(local_context):
@@ -452,7 +436,6 @@ def test_missing_catalog_is_explicitly_rejected_without_accepting_work(local_con
     assert response.headers["X-Plugin-Intent-Order"] == "1"
     with c.sessions() as db:
         assert db.query(PluginLocalSyncOperation).count() == 0
-        assert db.query(PluginSyncOutbox).count() == 0
 
 
 @pytest.mark.parametrize(

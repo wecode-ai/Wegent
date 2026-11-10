@@ -11,10 +11,10 @@ Local installation, removal, updates, component changes and reconciliation use a
 1. Negotiate Backend and Runtime support before mutation.
 2. Atomically persist a local journal entry, scoped by Backend and authenticated account ID, without storing credentials.
 3. Call the existing mutation API with `delivery_mode=local_pull_v1`, `local_instance_id`, `operation_id` and a positive `local_intent_order`.
-4. Commit account intent, the idempotent operation and a MySQL outbox event in one short transaction. No device enumeration or Socket call runs here.
+4. Commit account intent and the idempotent operation in one short transaction. No device enumeration or Socket call runs here.
 5. Fetch current account state over HTTP with the shared account generation, then apply it through the same installer instance used by Socket synchronization.
 6. Validate the published package and runtime files before completing locally. Persist receipts and send them independently, without holding the foreground coordinator lock.
-7. A separate worker claims an outbox event in a short transaction, releases the transaction, prepares durable per-device work and dispatches using each target's negotiated protocol. Crashes and failures remain retryable.
+7. Reuse the existing background Socket dispatch for cloud devices and their existing desired-state synchronization on registration. Remote failures do not change local acceptance or completion.
 
 The unified installer retains checksum verification, generation fences, tombstones, prepare/publish recovery and account-switch cancellation. A fresh local file fingerprint and account revision must both match before reconciliation can be skipped. The existing automatic-update coordinator performs account HTTP reconciliation at startup, on connectivity/visibility recovery and every 120 seconds while visible and online. Old-client writes are included in the revision.
 
@@ -26,7 +26,7 @@ The unified installer retains checksum verification, generation fences, tombston
 - New Rust `POST /api/plugins/local-sync/receipts` validates the account, local instance, issued snapshot, generation and package acknowledgements. Obsolete receipts are superseded and cannot change account intent or another device. Each snapshot binds its acknowledged operation IDs; completing one plugin cannot retire unrelated pending operations.
 - Existing package downloads accept optional `expected_release_id`; a mismatch returns 409 `RELEASE_CHANGED`, without falling back to an unrelated historical/uploaded package.
 - The only new local IPC is `executor.plugins.local_sync`. Renderer inputs cannot supply executable scripts, package URLs or installation paths.
-- `plugin_local_sync_operations` records operations, snapshots and receipts; `plugin_sync_outbox` is a transactional MySQL table, not a Redis Stream. Existing Redis account leases remain the concurrency mechanism. Optional `source_device_id` only excludes the originating Runtime from background dispatch, including batch updates; registration is not a local prerequisite.
+- Only `plugin_local_sync_operations` is added, recording operations, snapshots and receipts. No cloud dispatch queue, Redis Stream or polling worker is introduced. Existing Redis account leases remain the concurrency mechanism. Optional `source_device_id` excludes a resolvable origin only in background work; missing or unregistered origins block neither local execution nor other cloud devices. Automatic updates retain the existing account-version advancement and device reconciliation mechanisms.
 
 Plugins requiring installation-time authorization may finish package installation first. The UI directs users to connect accounts in plugin details; the new transport does not roll back a verified installation because authorization is pending. Existing transport authorization behavior is preserved.
 
@@ -46,14 +46,14 @@ Timeouts, lost responses, 5xx, 401, 408, 429, other 409 responses, and missing o
 
 1. Apply migration `a9c1e3f5b702`. Its Alembic reference, native Rust asset and bootstrap schema are maintained together.
 2. Deploy every Python, Rust and gateway replica, then release the compatible Runtime/Wework. New APIs are Rust-owned; existing Python API ownership remains unchanged.
-3. Enable `PLUGIN_LOCAL_SYNC_WORKER_ENABLED=true` on workers before enabling `PLUGIN_LOCAL_SYNC_ENABLED=true` on API replicas. Both default to false. Complete replica deployment is mandatory: old servers may ignore unknown query parameters.
+3. Enable `PLUGIN_LOCAL_SYNC_ENABLED=true` on API replicas after deploying every replica. The flag defaults to false. Complete replica deployment is mandatory: old servers may ignore unknown query parameters.
 4. Clients omitting the new mode retain legacy behavior. Explicitly unsupported servers/runtimes can select legacy before mutation. An uncertain new-mode mutation is never automatically replayed through legacy.
-5. On rollback, stop acceptance while retaining the worker, HTTP endpoints and Runtime recovery until accepted journals/receipts drain. Do not roll back to binaries unaware of the protocol while work remains.
-6. Completed outbox entries and terminal operations are retained for 30 days; in-flight records remain. Issued snapshots expire after 24 hours. Nonempty new tables block destructive downgrade until drained and archived.
+5. On rollback, stop acceptance while retaining the HTTP endpoints and Runtime recovery until accepted journals/receipts drain. Do not roll back to binaries unaware of the protocol while work remains.
+6. Operation records remain available for idempotency and pending recovery; this change adds no cleanup worker. Issued snapshots expire after 24 hours. A nonempty new table blocks destructive downgrade until drained and archived.
 
 ## Validation boundaries
 
-Focused Python tests cover default contracts, unregistered local writes, idempotency, atomic rollback and worker reclamation. Disposable MySQL tests cover upgrade, downgrade guards and concurrent claims. Rust HTTP/MySQL/Redis tests cover snapshots without Device rows, read-only probes, account/instance isolation and superseded receipts. Runtime tests cover damaged published files; Wework unit/component tests cover negotiation and transport boundaries.
+Focused Python tests cover default contracts, unregistered local writes, idempotency, atomic rollback and reuse of existing cloud-device dispatch. Disposable MySQL tests cover upgrade, downgrade guards and original-operation persistence. Rust HTTP/MySQL/Redis tests cover snapshots without Device rows, read-only probes, account/instance isolation and superseded receipts. Runtime tests cover damaged published files; Wework unit/component tests cover negotiation and transport boundaries.
 
 Focused Python/Native regressions cover definitive rejection markers, protection of accepted requests, an actual HTTP timeout, released foreground locks during recovery, concurrent journal merge, and recovery despite snapshot HTTP errors, invalid contracts or failed application. Wework tests cover failed and unresolved update/reconciliation requests independently, coalesced triggers, and manual/background reconciliation bypassing pending replay.
 

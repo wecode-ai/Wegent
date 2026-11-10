@@ -13,7 +13,6 @@ Note: Subscription scheduling has been migrated to Celery. See:
 
 import asyncio
 import logging
-import os
 import threading
 import time
 from datetime import datetime
@@ -249,21 +248,6 @@ def start_background_jobs(app):
     Args:
         app: FastAPI application instance
     """
-    # The worker flag remains on while accepted operations drain on rollback.
-    if (
-        os.getenv(
-            "PLUGIN_LOCAL_SYNC_WORKER_ENABLED",
-            str(settings.PLUGIN_LOCAL_SYNC_WORKER_ENABLED),
-        ).lower()
-        == "true"
-    ):
-        from app.services.plugin_sync_outbox import plugin_outbox_worker
-
-        app.state.plugin_outbox_stop = asyncio.Event()
-        app.state.plugin_outbox_task = asyncio.create_task(
-            plugin_outbox_worker(app.state.plugin_outbox_stop)
-        )
-
     # Start cleanup async task
     app.state.cleanup_stop_event = asyncio.Event()
     app.state.cleanup_task = asyncio.create_task(
@@ -302,17 +286,6 @@ async def stop_background_jobs(app):
     Args:
         app: FastAPI application instance
     """
-    plugin_stop = getattr(app.state, "plugin_outbox_stop", None)
-    plugin_task = getattr(app.state, "plugin_outbox_task", None)
-    if plugin_stop:
-        plugin_stop.set()
-    if plugin_task:
-        plugin_task.cancel()
-        try:
-            await plugin_task
-        except asyncio.CancelledError:
-            pass
-
     # Stop cleanup async task
     stop_event = getattr(app.state, "cleanup_stop_event", None)
     cleanup_task = getattr(app.state, "cleanup_task", None)

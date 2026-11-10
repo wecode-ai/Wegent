@@ -674,7 +674,6 @@ class Settings(BaseSettings):
 
     # Plugin marketplace package storage and controlled publishing.
     PLUGIN_LOCAL_SYNC_ENABLED: bool = False
-    PLUGIN_LOCAL_SYNC_WORKER_ENABLED: bool = False
     PLUGIN_STORAGE_BUCKET: str = "plugins"
     PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
     PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS: int = 1200

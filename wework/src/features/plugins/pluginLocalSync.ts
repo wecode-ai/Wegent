@@ -1,4 +1,4 @@
-import { getKnownLocalExecutorDeviceId, requestLocalExecutor } from '@/desktop/localExecutor'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
 import type { createPluginApi } from '@/api/plugins'
 import type {
   DeviceCapabilitySyncResponse,
@@ -17,7 +17,6 @@ interface LocalSyncResult {
   receiptPending?: boolean
   recoveryPending?: boolean
   unchanged?: boolean
-  sourceDeviceId?: string
   operation?: { plugin?: InstalledPlugin | null }
   result?: {
     scope?: string
@@ -33,7 +32,6 @@ export function createLocalFirstPluginApi(
   const completed = new Map<string, { version?: string; checksum?: string }>()
   let active = false
   let backendEnabled = false
-  let sourceDeviceId: string | undefined
   const invoke = (params: Record<string, unknown>) => {
     const { backendUrl } = normalizeCloudBackendUrl(
       new URL(profile.apiBaseUrl, window.location.origin).toString()
@@ -63,7 +61,6 @@ export function createLocalFirstPluginApi(
     try {
       const response = await invoke({ probeOnly: true })
       backendEnabled = response.enabled === true
-      sourceDeviceId = response.sourceDeviceId?.trim() || undefined
       active =
         (backendEnabled || response.recoveryPending === true) && response.protocolVersion === 1
       return active
@@ -165,10 +162,7 @@ export function createLocalFirstPluginApi(
     async autoUpdateInstalledPlugins() {
       const local = await supportsLocalSync()
       if (local && !backendEnabled) return { updated: [], updatedCount: 0, remainingCount: 0 }
-      const candidate = local ? sourceDeviceId || getKnownLocalExecutorDeviceId() : null
-      const origin =
-        candidate && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$/.test(candidate) ? candidate : undefined
-      return api.autoUpdateInstalledPlugins(origin, local ? 'local_pull_v1' : undefined)
+      return api.autoUpdateInstalledPlugins(local ? 'local_pull_v1' : undefined)
     },
     async listInstalledPlugins(deviceId?: string) {
       const response = active

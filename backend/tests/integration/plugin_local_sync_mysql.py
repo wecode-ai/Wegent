@@ -1,10 +1,8 @@
-"""Disposable MySQL verification of upgrade, guarded downgrade and worker claims."""
+"""Disposable MySQL verification of upgrade, guarded downgrade and operation recovery."""
 
 import os
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from fastapi import HTTPException
@@ -16,9 +14,8 @@ from alembic import command
 from alembic.config import Config
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.plugin_local_sync import PluginLocalSyncOperation, PluginSyncOutbox
+from app.models.plugin_local_sync import PluginLocalSyncOperation
 from app.models.user import User
-from app.services import plugin_sync_outbox
 from app.services.device.plugin_sync_protocol import load_versioned_plugin_payload
 from app.services.plugin_local_sync import _guard_intent_order
 from app.services.plugin_write_coordination import configure_plugin_session
@@ -83,64 +80,44 @@ def verify(engine, url):
         # and must not assume Device, connector, or other business rows exist.
         command.stamp(config, "f3a7c9e1b2d4")
         command.upgrade(config, "head")
-        assert "plugin_sync_outbox" in inspect(engine).get_table_names()
-        command.downgrade(config, "f3a7c9e1b2d4")
+        assert "plugin_local_sync_operations" in inspect(engine).get_table_names()
         assert "plugin_sync_outbox" not in inspect(engine).get_table_names()
+        command.downgrade(config, "f3a7c9e1b2d4")
+        assert "plugin_local_sync_operations" not in inspect(engine).get_table_names()
         command.upgrade(config, "head")
         verify_ordering(engine)
+        original = {"state": "intent_saved", "intentOrder": 7, "plugin": {"id": 17}}
         with Session(engine) as db:
-            for n in range(8):
-                db.add(
-                    PluginSyncOutbox(
-                        user_id=1,
-                        instance_id="native",
-                        installed_id=n + 1,
-                        operation_id=f"operation:{n}",
-                        action="install",
-                    )
-                )
-            db.commit()
-
-        @contextmanager
-        def session():
-            with Session(engine) as db:
-                yield db
-
-        with patch.object(plugin_sync_outbox, "get_db_session", session):
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                claims = list(
-                    pool.map(lambda _: plugin_sync_outbox.claim_event(), range(8))
-                )
-            assert all(claims) and len({claim[0] for claim in claims}) == 8
-            assert plugin_sync_outbox.claim_event() is None
-            with Session(engine) as db:
-                snapshot = PluginLocalSyncOperation(
+            db.add(
+                PluginLocalSyncOperation(
                     user_id=1,
                     instance_id="native",
-                    operation_id="old-snapshot",
-                    action="snapshot",
-                    created_at=datetime.utcnow() - timedelta(days=2),
-                    document={"state": "issued", "generation": 9},
+                    operation_id="uncertain-operation",
+                    request_hash="original-hash",
+                    action="install",
+                    installed_id=17,
+                    document=original,
                 )
-                db.add(snapshot)
-                db.commit()
-            plugin_sync_outbox.cleanup_completed()
-            with Session(engine) as db:
-                snapshot = db.query(PluginLocalSyncOperation).one()
-                assert snapshot.document == {"state": "expired", "generation": 9}
+            )
+            db.commit()
+        with Session(engine) as db:
+            saved = db.query(PluginLocalSyncOperation).one()
+            assert saved.document == original
+            assert saved.operation_id == "uncertain-operation"
+            assert saved.request_hash == "original-hash"
         try:
             command.downgrade(config, "f3a7c9e1b2d4")
         except RuntimeError as error:
             assert "Drain and archive" in str(error)
         else:
-            raise AssertionError("Downgrade removed in-flight dispatches")
-        assert "plugin_sync_outbox" in inspect(engine).get_table_names()
+            raise AssertionError("Downgrade removed a recoverable operation")
+        assert "plugin_local_sync_operations" in inspect(engine).get_table_names()
+        assert "plugin_sync_outbox" not in inspect(engine).get_table_names()
         with engine.begin() as db:
-            db.execute(text("DELETE FROM plugin_sync_outbox"))
             db.execute(text("DELETE FROM plugin_local_sync_operations"))
         command.downgrade(config, "f3a7c9e1b2d4")
     print(
-        "MySQL: upgrade head, empty downgrade, guarded in-flight downgrade, 8 exclusive worker claims and snapshot expiry passed"
+        "MySQL: upgrade head, empty downgrade, guarded in-flight downgrade, original operation persistence passed"
     )
 
 

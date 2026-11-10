@@ -2334,9 +2334,16 @@ export function PluginsWorkspace({
     if (needsCloudPackagePush) {
       const liveConnection = await resolveLiveRuntimeCloudConnection(isCurrent).catch(error => {
         preparingInstallPluginIdsRef.current.delete(item.id)
-        throw error
+        if (isCurrent()) {
+          setPluginOperationNotice({
+            id: `install-error-${item.id}`,
+            kind: 'error',
+            message: getErrorMessage(error, 'Unknown error'),
+          })
+        }
+        return null
       })
-      if (!isCurrent() || isMarketplacePluginUninstalling(item)) {
+      if (!liveConnection || !isCurrent() || isMarketplacePluginUninstalling(item)) {
         preparingInstallPluginIdsRef.current.delete(item.id)
         return
       }

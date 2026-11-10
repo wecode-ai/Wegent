@@ -2486,6 +2486,35 @@ describe('PluginsWorkspace', () => {
     ).toBe(false)
   })
 
+  test.each([
+    ['plugin_route_profile_mismatch', '本机运行环境已变化'],
+    ['plugin_local_http_unavailable', '暂时无法连接服务'],
+  ])(
+    'shows capability preflight errors without submitting an install: %s',
+    async (code, message) => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockCodexAppServerInvoke({ backendConnected: false })
+      const invoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+      vi.mocked(requestLocalExecutor).mockImplementation((method, params) => {
+        if (method === 'executor.plugins.local_sync') {
+          return Promise.reject(Object.assign(new Error(code), { code }))
+        }
+        return invoke(method, params)
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+      const notice = await screen.findByTestId('plugin-operation-notice')
+      expect(notice).toHaveAttribute('data-notice-kind', 'error')
+      expect(notice).toHaveTextContent(message)
+      expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([input]) => String(input).includes('/plugins/marketplace/101/install'))
+      ).toBe(false)
+    }
+  )
+
   test('keeps the user on the plugin page when the current device is disconnected', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })

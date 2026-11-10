@@ -69,6 +69,7 @@ from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_device_sync import (
+    sync_cloud_plugins_after_local_change,
     sync_global_capabilities,
     sync_plugin_after_change,
     sync_plugin_to_other_devices_after_change,
@@ -601,6 +602,12 @@ async def install_marketplace_plugin(
             target_id=marketplace_id,
             payload={"releaseId": release_id},
         )
+        background_tasks.add_task(
+            sync_cloud_plugins_after_local_change,
+            current_user.id,
+            int(result["metadata"]["labels"]["id"]),
+            source_device_id,
+        )
         if response is not None:
             response.headers["X-Plugin-Delivery-Mode"] = "local_pull_v1"
             response.headers["X-Plugin-Operation-Id"] = operation_id
@@ -666,6 +673,12 @@ async def ensure_builtin_plugin_installed(
             source_device_id=source_device_id,
             action="ensure_builtin",
             target_id=plugin_key,
+        )
+        background_tasks.add_task(
+            sync_cloud_plugins_after_local_change,
+            current_user.id,
+            int(result["metadata"]["labels"]["id"]),
+            source_device_id,
         )
         if response is not None:
             response.headers["X-Plugin-Delivery-Mode"] = "local_pull_v1"
@@ -787,6 +800,12 @@ async def update_installed_plugin(
             target_id=installed_id,
             payload=request.model_dump(mode="json", exclude_unset=True),
         )
+        background_tasks.add_task(
+            sync_cloud_plugins_after_local_change,
+            current_user.id,
+            int(result["metadata"]["labels"]["id"]),
+            source_device_id,
+        )
         if response is not None:
             response.headers["X-Plugin-Delivery-Mode"] = "local_pull_v1"
             response.headers["X-Plugin-Operation-Id"] = operation_id
@@ -852,6 +871,12 @@ async def uninstall_installed_plugin(
             action="uninstall",
             target_id=installed_id,
             payload=None,
+        )
+        background_tasks.add_task(
+            sync_cloud_plugins_after_local_change,
+            current_user.id,
+            installed_id,
+            source_device_id,
         )
         if response is not None:
             response.headers["X-Plugin-Delivery-Mode"] = "local_pull_v1"

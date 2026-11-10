@@ -398,20 +398,6 @@ fn new_snapshot_id() -> MysqlResult<String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-pub(super) async fn enqueue_auto_update(
-    tx: &mut impl MysqlTransaction,
-    user: i64,
-    installed: i64,
-    source: Option<&str>,
-) -> MysqlResult<()> {
-    let instance = source
-        .filter(|id| !id.is_empty())
-        .map(|id| format!("auto-update:{id}"))
-        .unwrap_or_else(|| "auto-update".into());
-    tx.execute("INSERT INTO plugin_sync_outbox (user_id, instance_id, installed_id, operation_id, action, state, claim_token, attempt_count, next_attempt_at, lease_until, created_at, updated_at) VALUES (?, ?, ?, ?, 'update', 'pending', '', 0, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))", (user, instance, installed, new_snapshot_id()?)).await?;
-    Ok(())
-}
-
 #[cfg(test)]
 #[path = "local_sync_mysql_tests.rs"]
 mod mysql_tests;

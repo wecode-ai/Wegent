@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.plugin_local_sync import PluginLocalSyncOperation, PluginSyncOutbox
+from app.models.plugin_local_sync import PluginLocalSyncOperation
 from app.schemas.installed_plugin import InstalledPlugin, InstalledPluginUpdateRequest
 from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.installed_plugin_service import installed_plugin_service
@@ -54,7 +54,7 @@ def mutate_local_plugin(
     payload: dict[str, Any] | None = None,
     source_device_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Commit account intent, idempotent result and outbox in one transaction."""
+    """Commit account intent, idempotent result in one transaction."""
     with _rejection_context(db, user_id, instance_id, operation_id, intent_order):
         if type(intent_order) is not int or not 0 < intent_order < 2**63:
             raise HTTPException(422, "INVALID_LOCAL_INTENT_ORDER")
@@ -88,7 +88,7 @@ def mutate_local_plugin(
             return previous.document.get("plugin")
         if action in {"install", "ensure_builtin"}:
             # Legacy catalog repair owns its own commit; finish it before opening
-            # the atomic intent/operation/outbox transaction.
+            # the atomic intent/operation transaction.
             plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
                 db, user_id=user_id
             )
@@ -180,16 +180,6 @@ def mutate_local_plugin(
                 },
             )
         )
-        db.add(
-            PluginSyncOutbox(
-                user_id=user_id,
-                instance_id=instance_id,
-                installed_id=installed_id,
-                operation_id=operation_id,
-                action=action,
-                next_attempt_at=datetime.utcnow(),
-            )
-        )
         db.commit()
         return result
 
@@ -214,7 +204,7 @@ def _guard_intent_order(
 ) -> None:
     """Fence first-arrival replay as well as duplicate requests, under the lease.
 
-    This watermark outlives operation/outbox retention. A rejected post-flush
+    This watermark outlives operation retention. A rejected post-flush
     install is rolled back by run_plugin_operation together with all its writes.
     """
     state = lock_plugin_sync_state(db, user_id)

@@ -53,7 +53,17 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     upgrade(mysql).await?;
     check(mysql).await?;
     let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()", ()).await?;
-    assert_eq!(tables.len(), 52);
+    assert_eq!(tables.len(), 51);
+    assert!(
+        tables
+            .iter()
+            .any(|table| table.name == "plugin_local_sync_operations")
+    );
+    assert!(
+        !tables
+            .iter()
+            .any(|table| table.name == "plugin_sync_outbox")
+    );
     upgrade(mysql).await?;
     // Exercise JSON/permission, plugin-publication, merge, notification and transcript migrations.
     downgrade(mysql, "d47dd270f4b6").await?;

@@ -124,35 +124,22 @@ describe('HTTP local plugin execution', () => {
       'PLUGIN_LOCAL_EXECUTION_UNCONFIRMED'
     )
   })
-  test('automatic updates include an optional origin without resolving Device registration', async () => {
-    request.mockResolvedValue({ enabled: true, protocolVersion: 1 })
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ updated: [], updatedCount: 0, remainingCount: 0 }))
-    )
-    const { api, route } = setup()
-    await api.supportsLocalSync()
-    await api.autoUpdateInstalledPlugins()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed/auto-update-batch?source_device_id=desktop-local&delivery_mode=local_pull_v1',
-      expect.anything()
-    )
-    expect(route).not.toHaveBeenCalled()
-  })
-  test('automatic updates can use the Runtime origin before the renderer identity cache is ready', async () => {
-    request.mockResolvedValue({
-      enabled: true,
-      protocolVersion: 1,
-      sourceDeviceId: 'runtime-origin',
-    })
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ updated: [], updatedCount: 0, remainingCount: 0 }))
-    )
-    await setup().api.autoUpdateInstalledPlugins()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed/auto-update-batch?source_device_id=runtime-origin&delivery_mode=local_pull_v1',
-      expect.anything()
-    )
-  })
+  test.each([undefined, 'runtime-origin'])(
+    'automatic updates send no device identity even if a probe returns one: %s',
+    async sourceDeviceId => {
+      request.mockResolvedValue({ enabled: true, protocolVersion: 1, sourceDeviceId })
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(JSON.stringify({ updated: [], updatedCount: 0, remainingCount: 0 }))
+      )
+      const { api, route } = setup()
+      await api.autoUpdateInstalledPlugins()
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/installed/auto-update-batch?delivery_mode=local_pull_v1',
+        expect.anything()
+      )
+      expect(route).not.toHaveBeenCalled()
+    }
+  )
   test('a per-plugin update returns the actual installer acknowledgement', async () => {
     request
       .mockResolvedValueOnce({ enabled: true, protocolVersion: 1 })
