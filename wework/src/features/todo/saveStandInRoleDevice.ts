@@ -60,6 +60,15 @@ export async function saveStandInRoleDevice(
       }
     )
   }
+  if (!previous) {
+    // New roles have no accepted source work or receiver to redirect.
+    const result = await api.personalSave(
+      userId,
+      { ...target, roles: [...target.roles.filter(row => row.id !== role.id), role] },
+      targetDevice
+    )
+    return result.roles.find(row => row.id === role.id)!
+  }
   const current = await api.personalGet(userId, sourceDevice)
   if (current.version !== source.version || !dequal(current.roles, source.roles)) {
     throw Object.assign(new Error('The source profile changed'), { code: 'version_conflict' })

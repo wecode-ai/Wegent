@@ -45,6 +45,24 @@ function fixture() {
 }
 
 describe('role execution device changes', () => {
+  it('creates a new role only on its selected device without changing unrelated source roles', async () => {
+    const f = fixture()
+    const role = { ...f.input.role, id: 'new-role', version: 0 }
+    const before = structuredClone(f.profiles.get('mac'))
+    const result = await saveStandInRoleDevice(f.api, {
+      ...f.input,
+      draft: { ...f.input.source, roles: [...f.input.source.roles, role] },
+      role,
+    })
+    expect(result.id).toBe('new-role')
+    expect(result.executionDeviceId).toBe('remote')
+    expect(result.migrationSource).toBeUndefined()
+    expect(f.profiles.get('mac')).toEqual(before)
+    expect(f.personalSave).toHaveBeenCalledTimes(1)
+    expect(f.personalSave.mock.calls[0][2]).toBe('remote')
+    expect(f.profiles.get('remote')!.roles[0]).toEqual(role)
+  })
+
   it('does not confuse two Runtime registrations that share a desktop alias', async () => {
     const f = fixture()
     f.profiles.get('remote')!.executionDeviceId = 'mac'

@@ -121,14 +121,14 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     return text ? JSON.parse(text) : null
   }
 
-  async function assertCompleted(control, issue) {
+  async function assertCompleted(control, issue, expectedDevice = currentDeviceRoute) {
     const deadline = Date.now() + modelResponseTimeoutMs
     let bindings
     while (Date.now() < deadline) {
       bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
       assert.ok(bindings.length <= 1, 'One Issue must not create duplicate personal tasks')
       if (bindings[0]) {
-        assert.equal(bindings[0].device_id, currentDeviceRoute)
+        assert.equal(bindings[0].device_id, expectedDevice)
         const result = await requestExecutor(
           control,
           'runtime.tasks.get',
@@ -277,7 +277,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           timeoutMs: modelResponseTimeoutMs,
         }
       )
-      await assertCompleted(control, manualIssue)
+      await assertCompleted(control, manualIssue, desktop.app_device_id ?? desktop.device_id)
       await assertCollaboration(manualIssue)
       await control.command('click', scoped('ai-chat-modal-close'))
       await control.command('click', scoped('cloud-todo-detail-close'))
