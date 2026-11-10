@@ -167,7 +167,7 @@ pub(crate) async fn require_cloud_project_role(
 }
 
 /// `can_view_item(db, access, item, user_id)`.
-async fn can_view_item(
+pub(crate) async fn can_view_item(
     state: &AppState,
     access: &ProjectAccess,
     item: &LoopItemGetRow,
@@ -265,16 +265,29 @@ async fn provider_get(state: &AppState, item_id: &str, user_id: i32) -> Result<(
         .await
         .map_err(internal)?
         .ok_or_else(todo_not_found)?;
-    let number = item_number(item_id).ok_or_else(todo_not_found)?;
     let access = require_cloud_project_role(state, &project.id, user_id).await?;
-    let issue = get_issue(state, &project, number).await?;
-    let response = issue_response(state, &project, &access.role, user_id, &issue)
+    require_provider_issue_view(state, &access, item_id, user_id)
+        .await
+        .map(|_| ())
+}
+
+/// Read an external issue through the provider's normal detail permission check.
+pub(crate) async fn require_provider_issue_view(
+    state: &AppState,
+    access: &ProjectAccess,
+    item_id: &str,
+    user_id: i32,
+) -> Result<PageIssue, FastApiError> {
+    let project = &access.project;
+    let number = item_number(item_id).ok_or_else(todo_not_found)?;
+    let issue = get_issue(state, project, number).await?;
+    let response = issue_response(state, project, &access.role, user_id, &issue)
         .await
         .map_err(internal)?;
     if !response.can_view_detail() {
         return Err(todo_not_found());
     }
-    Ok(())
+    Ok(issue)
 }
 
 /// `_get_issue` -> `_request`: one provider issue by number.
