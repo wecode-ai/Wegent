@@ -1,4 +1,4 @@
-import { createAuthenticatedSocketClient } from '@wegent/chat-core'
+import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { expect, test } from '@playwright/test'
 import { resolveEvidenceResponseContent } from '../../utils/mock-answer-evidence'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'

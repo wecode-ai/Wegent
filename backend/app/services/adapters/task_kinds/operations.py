@@ -1216,11 +1216,23 @@ class TaskOperationsMixin:
                 )
                 from app.services.chat.operations.cancel import (
                     capture_cancellation_attempts,
+                    finalize_empty_cancellation,
                     finalize_stuck_cancellation,
                     publish_task_cancelled_events,
                 )
 
                 attempts = capture_cancellation_attempts(db, task_id=task_id)
+                if not attempts and self._is_chat_shell_task(db, task_id):
+                    if finalize_empty_cancellation(
+                        db, task_id=task_id, user_id=user_id
+                    ):
+                        return {
+                            "message": "Task cancellation finalized",
+                            "status": "CANCELLED",
+                        }
+                    raise HTTPException(
+                        status_code=409, detail="取消目标已变化，请刷新后重试。"
+                    )
                 finalized_subtask_ids = finalize_stuck_cancellation(
                     db, task_id=task_id, attempts=attempts
                 )
@@ -1280,9 +1292,21 @@ class TaskOperationsMixin:
         attempts: dict[int, str | None],
     ) -> Dict[str, Any]:
         """Commit a captured Chat cancellation before scheduling runtime delivery."""
-        from app.services.chat.operations.cancel import update_task_on_cancel
+        from app.services.chat.operations.cancel import (
+            finalize_empty_cancellation,
+            update_task_on_cancel,
+        )
 
         try:
+            if not attempts:
+                if finalize_empty_cancellation(db, task_id=task_id, user_id=user_id):
+                    return {
+                        "message": "Chat stopped successfully",
+                        "status": "CANCELLED",
+                    }
+                raise HTTPException(
+                    status_code=409, detail="取消目标已变化，请刷新后重试。"
+                )
             running_subtask = (
                 task_stores.subtask_store.get_latest_assistant_for_user_by_statuses(
                     db,

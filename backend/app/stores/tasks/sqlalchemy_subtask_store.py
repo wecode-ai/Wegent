@@ -926,6 +926,7 @@ class SqlAlchemySubtaskStore:
         task_id: int,
         statuses: Sequence[SubtaskStatus],
         owner_user_id: Optional[int] = None,
+        for_update: bool = False,
     ) -> list[Subtask]:
         if not statuses:
             return []
@@ -934,6 +935,8 @@ class SqlAlchemySubtaskStore:
             Subtask.status.in_(statuses),
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        if for_update:
+            query = query.populate_existing().with_for_update()
         return query.all()
 
     def list_not_executor_deleted_by_task(

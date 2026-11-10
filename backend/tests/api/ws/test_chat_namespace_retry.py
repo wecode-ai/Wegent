@@ -153,7 +153,7 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
             "app.api.ws.chat_namespace.fetch_retry_context",
             return_value=(failed_ai_subtask, task, team, user_subtask),
         ),
-        patch("app.api.ws.chat_namespace.reset_subtask_for_retry"),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as mock_reset,
         patch("app.api.ws.chat_namespace.extract_display_prompt", return_value="Hello"),
         patch("app.api.ws.chat_namespace.get_device_id", return_value=None),
         patch(
@@ -174,6 +174,9 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
         )
 
     assert result == {"success": True}
+    mock_reset.assert_called_once_with(
+        db, failed_ai_subtask, task, protect_attempt=True
+    )
     assert task.json["metadata"]["labels"] == {}
     mock_task_store.update_json.assert_called_once_with(
         db, task=task, payload=task.json
@@ -215,7 +218,7 @@ async def test_chat_retry_closes_session_before_triggering_sse_dispatch():
             "app.api.ws.chat_namespace.fetch_retry_context",
             return_value=(failed_ai_subtask, task, team, user_subtask),
         ),
-        patch("app.api.ws.chat_namespace.reset_subtask_for_retry"),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as mock_reset,
         patch("app.api.ws.chat_namespace.extract_display_prompt", return_value="Hello"),
         patch("app.api.ws.chat_namespace.get_device_id", return_value=None),
         patch(
@@ -235,6 +238,9 @@ async def test_chat_retry_closes_session_before_triggering_sse_dispatch():
         )
 
     assert result == {"success": True}
+    mock_reset.assert_called_once_with(
+        db, failed_ai_subtask, task, protect_attempt=True
+    )
     mock_trigger.assert_awaited_once()
 
 
@@ -383,7 +389,7 @@ async def test_chat_retry_restores_persisted_video_generation_params():
             "app.api.ws.chat_namespace.fetch_retry_context",
             return_value=(failed_ai_subtask, task, team, user_subtask),
         ),
-        patch("app.api.ws.chat_namespace.reset_subtask_for_retry"),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as mock_reset,
         patch(
             "app.api.ws.chat_namespace.extract_display_prompt",
             return_value="Generate a video",
@@ -407,6 +413,9 @@ async def test_chat_retry_restores_persisted_video_generation_params():
         )
 
     assert result == {"success": True}
+    mock_reset.assert_called_once_with(
+        db, failed_ai_subtask, task, protect_attempt=True
+    )
     generate_params = mock_trigger.await_args.kwargs["payload"].generate_params
     assert generate_params.resolution == "1080p"
     assert generate_params.ratio == "16:9"
@@ -457,7 +466,7 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
             "app.api.ws.chat_namespace.fetch_retry_context",
             return_value=(failed_ai_subtask, task, team, user_subtask),
         ),
-        patch("app.api.ws.chat_namespace.reset_subtask_for_retry"),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as mock_reset,
         patch("app.api.ws.chat_namespace.extract_display_prompt", return_value="Hello"),
         patch("app.api.ws.chat_namespace.get_device_id", return_value=None),
         patch(
@@ -478,6 +487,9 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
         )
 
     assert result == {"success": True}
+    mock_reset.assert_called_once_with(
+        db, failed_ai_subtask, task, protect_attempt=True
+    )
     assert task.json["metadata"]["labels"] == {
         "modelId": "new-model",
         "forceOverrideBotModel": "true",

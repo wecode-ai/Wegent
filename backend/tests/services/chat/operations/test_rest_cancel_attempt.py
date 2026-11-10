@@ -19,6 +19,62 @@ from tests.services.chat.operations.test_cancel_stuck import _task_json
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("task_status", ["RUNNING", "CANCELLING"])
+@pytest.mark.parametrize("outcome", ["idle", "new_attempt", "commit_failure"])
+async def test_empty_cancel_repairs_only_an_idle_task_projection(
+    monkeypatch, task_status, outcome
+):
+    service = object.__new__(TaskOperationsMixin)
+    service.get_task_detail = MagicMock(
+        return_value={
+            "status": task_status,
+            "updated_at": datetime.now() - timedelta(hours=1),
+        }
+    )
+    service._is_chat_shell_task = MagicMock(return_value=True)
+    task = SimpleNamespace(id=1, user_id=7, json=_task_json(task_status))
+    active = SimpleNamespace(role=SubtaskRole.ASSISTANT)
+    reads = MagicMock(side_effect=[[], [active] if outcome == "new_attempt" else []])
+    monkeypatch.setattr(task_stores.subtask_store, "list_by_task_statuses", reads)
+    monkeypatch.setattr(
+        task_stores.subtask_store,
+        "get_latest_assistant_for_user_by_statuses",
+        MagicMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        task_stores.task_store, "get_owned_active_task", MagicMock(return_value=task)
+    )
+    write = MagicMock()
+    monkeypatch.setattr(task_stores.task_store, "update_json", write)
+    runner = MagicMock()
+    db = MagicMock()
+    if outcome == "commit_failure":
+        db.commit.side_effect = RuntimeError("commit acknowledgement lost")
+    if outcome != "idle":
+        with pytest.raises(HTTPException) as rejected:
+            await service.cancel_task(
+                db=db, task_id=1, user_id=7, background_task_runner=runner
+            )
+        assert rejected.value.status_code == (
+            503 if outcome == "commit_failure" else 409
+        )
+        db.rollback.assert_called()
+        if outcome == "new_attempt":
+            write.assert_not_called()
+            db.commit.assert_not_called()
+    else:
+        result = await service.cancel_task(
+            db=db, task_id=1, user_id=7, background_task_runner=runner
+        )
+        assert result["status"] == "CANCELLED"
+        assert write.call_args.kwargs["payload"]["status"]["status"] == "CANCELLED"
+        db.refresh.assert_called_once_with(task, with_for_update=True)
+        db.commit.assert_called_once()
+    assert reads.call_args.kwargs["for_update"] is True
+    runner.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_status", ["RUNNING", "CANCELLING"])
 @pytest.mark.parametrize("captured_identity", [None, "a" * 32])
 async def test_late_rest_cancel_cannot_cancel_retry(
     monkeypatch, task_status, captured_identity

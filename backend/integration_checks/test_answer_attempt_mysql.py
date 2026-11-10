@@ -373,8 +373,9 @@ async def test_preparation_failure_can_finish_pending_but_not_retried_attempt(da
 @pytest.mark.asyncio
 @pytest.mark.parametrize("task_status", ["RUNNING", "CANCELLING"])
 @pytest.mark.parametrize("retry_after_capture", [False, True])
+@pytest.mark.parametrize("initially_active", [False, True])
 async def test_rest_cancel_keeps_request_attempt_on_real_mysql(
-    database, monkeypatch, task_status, retry_after_capture
+    database, monkeypatch, task_status, retry_after_capture, initially_active
 ):
     from copy import deepcopy
     from datetime import datetime, timedelta
@@ -424,7 +425,12 @@ async def test_rest_cancel_keeps_request_attempt_on_real_mysql(
                 json=payload,
             )
         )
-        answer_id = answer(db)
+        answer_id = answer(
+            db,
+            status=(
+                SubtaskStatus.RUNNING if initially_active else SubtaskStatus.CANCELLED
+            ),
+        )
         subtask = db.get(Subtask, answer_id)
         subtask.result = {"value": "A"}
         subtask.bot_ids = []
@@ -441,14 +447,15 @@ async def test_rest_cancel_keeps_request_attempt_on_real_mysql(
             # original HTTP request attempts its conditional cancellation.
             with Session(engine) as retry_db:
                 old = retry_db.get(Subtask, answer_id)
-                assert subtask_store.update_fields_if_attempt(
-                    retry_db,
-                    subtask=old,
-                    generation_id="a" * 32,
-                    from_statuses=(SubtaskStatus.RUNNING,),
-                    status=SubtaskStatus.FAILED,
-                )
-                retry_db.commit()
+                if initially_active:
+                    assert subtask_store.update_fields_if_attempt(
+                        retry_db,
+                        subtask=old,
+                        generation_id="a" * 32,
+                        from_statuses=(SubtaskStatus.RUNNING,),
+                        status=SubtaskStatus.FAILED,
+                    )
+                    retry_db.commit()
                 generation = reset_subtask_for_retry(
                     retry_db, old, retry_db.get(TaskResource, task_id)
                 )
@@ -489,7 +496,7 @@ async def test_rest_cancel_keeps_request_attempt_on_real_mysql(
     ) as client:
         response = await client.post("/tasks/9/cancel")
 
-    assert observed["attempts"] == {answer_id: "a" * 32}
+    assert observed["attempts"] == ({answer_id: "a" * 32} if initially_active else {})
     with Session(engine) as db:
         current = db.get(Subtask, answer_id)
         task = db.get(TaskResource, 9)
@@ -507,7 +514,10 @@ async def test_rest_cancel_keeps_request_attempt_on_real_mysql(
             assert current.status == SubtaskStatus.CANCELLED
             assert current.answer_generation_id == "a" * 32
             assert task.json["status"]["status"] == "CANCELLED"
-            if task_status == "RUNNING":
+            if not initially_active:
+                signal.assert_not_called()
+                publish.assert_not_awaited()
+            elif task_status == "RUNNING":
                 assert current.result == {"value": "A"}
                 assert signal.call_count == 1
                 assert signal.call_args.args[0] == answer_id

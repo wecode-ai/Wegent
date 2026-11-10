@@ -175,6 +175,44 @@ def capture_cancellation_attempts(
     }
 
 
+def finalize_empty_cancellation(db: Session, *, task_id: int, user_id: int) -> bool:
+    """Repair an idle task projection without adopting any answer attempt."""
+    from fastapi import HTTPException
+
+    try:
+        task = task_store.get_owned_active_task(db, task_id=task_id, user_id=user_id)
+        if not task:
+            return False
+        # A current locking read fences retries and new rows under InnoDB RR.
+        active = subtask_store.list_by_task_statuses(
+            db,
+            task_id=task_id,
+            statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+            for_update=True,
+        )
+        if any(row.role == SubtaskRole.ASSISTANT for row in active):
+            db.rollback()
+            return False
+        db.refresh(task, with_for_update=True)
+        task_crd = Task.model_validate(task.json)
+        if not task_crd.status or task_crd.status.status in _TASK_FINAL_STATES:
+            db.rollback()
+            return False
+        update_task_on_cancel(db, task)
+        db.commit()
+        return True
+    except Exception as exc:
+        db.rollback()
+        logger.error(
+            "Empty cancellation save unconfirmed: task_id=%s error_type=%s",
+            task_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503, detail="取消保存状态未确认，请刷新历史核对。"
+        ) from None
+
+
 def finalize_stuck_cancellation(
     db: Session, *, task_id: int, attempts: dict[int, str | None]
 ) -> List[int]:

@@ -1,4 +1,8 @@
-"""Read committed answer evidence with current answer and source authorization."""
+"""Read committed answer evidence with current answer and source authorization.
+
+This endpoint is an explicitly user-approved Python API exception for the
+answer-evidence loop. Keep its business logic here and the gateway in proxy mode.
+"""
 
 import logging
 from typing import Annotated
