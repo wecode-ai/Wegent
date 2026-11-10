@@ -16,7 +16,6 @@ import {
   upgradeTransportScript,
 } from './upgrade-request-route.mjs'
 import { processIsAlive } from '../process-lifecycle.mjs'
-import { reservePort } from '../port-reservation.mjs'
 import {
   PROBE_EXPECTED_EXIT,
   PROBE_QUIT_SCRIPT,
@@ -24,35 +23,6 @@ import {
 } from './upgrade-startup-probe.mjs'
 
 const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
-
-test(
-  'independent native restarts reuse the supervisor endpoint after the prior host exits',
-  { timeout: 30_000 },
-  async context => {
-    const root = await mkdtemp(join(tmpdir(), 'wework-upgrade-fixed-inspector-'))
-    const server = createServer((_request, response) => response.end('real loopback transport'))
-    try {
-      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-      const inspectorPort = await reservePort()
-      for (let index = 0; index < 2; index++) {
-        const result = await verifyUpgradeStartup({
-          binary: require('electron'),
-          root,
-          index,
-          inspectorPort,
-          origin: `http://127.0.0.1:${server.address().port}`,
-          signal: context.signal,
-          recordTransportLog: true,
-        })
-        assert.equal(result.inspectorPort, inspectorPort)
-      }
-    } finally {
-      server.closeAllConnections()
-      await new Promise(resolve => server.close(resolve))
-      await rm(root, { recursive: true, force: true })
-    }
-  }
-)
 
 test('diagnostic startup reports release selection without changing the relaunch', async () => {
   const home = await mkdtemp(join(tmpdir(), 'wework-release-diagnostics-'))

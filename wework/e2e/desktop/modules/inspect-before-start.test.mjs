@@ -11,6 +11,64 @@ import {
   readConnectedApplicationPid,
 } from './inspect-before-start.mjs'
 
+test('registered handoff endpoints select the exact host without mutating other live hosts', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-inspector-registry-'))
+  const entry = join(directory, 'host.cjs')
+  await writeFile(entry, 'setInterval(() => {}, 1000); console.log("ready")')
+  const hosts = []
+  try {
+    for (let index = 0; index < 2; index++) {
+      const child = spawn(process.execPath, ['--inspect-brk=127.0.0.1:0', entry], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      const exited = once(child, 'exit')
+      const ready = once(child.stdout, 'data', { signal: AbortSignal.timeout(10_000) })
+      const host = { child, exited }
+      hosts.push(host)
+      const endpoint = await inspectBeforeStart(child, 'globalThis.visited = false', () => {})
+      await ready
+      host.port = new URL(endpoint).port
+    }
+    const [old, current] = hosts
+    const ports = hosts.map(host => host.port)
+    assert.equal(
+      await inspectRunningApp(ports, current.child.pid, 'globalThis.visited = true', () => {}),
+      true
+    )
+    assert.equal(
+      await inspectRunningApp(old.port, old.child.pid, 'globalThis.visited', () => {}),
+      false
+    )
+    await assert.rejects(
+      inspectRunningApp(ports, process.pid, 'globalThis.visited = true', () => {}),
+      /exactly one registered inspector/
+    )
+    old.child.kill('SIGKILL')
+    await old.exited
+    assert.equal(
+      await inspectRunningApp(
+        ports,
+        current.child.pid,
+        selected => JSON.stringify(selected),
+        () => {}
+      ),
+      current.port
+    )
+    await assert.rejects(
+      inspectRunningApp([...ports, 'invalid'], current.child.pid, 'true', () => {}),
+      /registered TCP port/
+    )
+  } finally {
+    await Promise.all(
+      hosts.map(async ({ child, exited }) => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+        await exited
+      })
+    )
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('reads historical native host identity without requiring an open process window', async () => {
   assert.equal(
     await readConnectedApplicationPid({

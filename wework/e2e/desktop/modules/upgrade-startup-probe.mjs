@@ -106,13 +106,12 @@ export async function verifyUpgradeStartup({
   index,
   signal,
   recordTransportLog,
-  inspectorPort = 0,
 }) {
   signal.throwIfAborted()
   const { profile, appPath, tracePath, path } = await createProbeApp(root, index)
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
-  const child = spawn(binary, [`--inspect-brk=127.0.0.1:${inspectorPort}`, appPath], {
+  const child = spawn(binary, ['--inspect-brk=127.0.0.1:0', appPath], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -123,7 +122,7 @@ export async function verifyUpgradeStartup({
   const abort = () => child.kill('SIGKILL')
   signal.addEventListener('abort', abort, { once: true })
   try {
-    const [exited, port] = await Promise.all([
+    const [exited] = await Promise.all([
       once(child, 'close', {
         signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
       }),
@@ -139,7 +138,7 @@ export async function verifyUpgradeStartup({
     assert.equal(state.pauseArgument, false)
     assert.equal(state.pauseSwitch, false)
     assert.equal(state.phase, 'fetch-complete')
-    return { path, phases: state.events, recordTransportLog, inspectorPort: Number(port) }
+    return { path, phases: state.events, recordTransportLog }
   } catch (error) {
     // Inspect only this probe's synthetic child, after failure and before cleanup.
     await captureStartupNativeStack(child)
