@@ -459,6 +459,7 @@ describe('localModelSettings', () => {
       expect.objectContaining({
         id: 'stored-catalog',
         codexCatalogModelId: 'operator-selected-catalog',
+        toolProfile: 'function',
       }),
     ])
   })
@@ -520,7 +521,7 @@ describe('localModelSettings', () => {
       expect.objectContaining({
         id: 'existing-deepseek',
         apiFormat: 'openai-responses',
-        toolProfile: 'custom',
+        toolProfile: 'function',
         requestPath: '/responses',
         contextWindow: 1_048_576,
         codexCatalogModelId: 'wework-deepseek-v4-flash',

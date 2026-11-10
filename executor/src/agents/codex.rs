@@ -4902,6 +4902,22 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
 
 fn codex_runtime_default_config_overrides() -> Vec<String> {
     let mut overrides = codex_streaming_patch_config_overrides();
+    // Apply this to both process startup and per-thread feature configuration.
+    // Keep V2 collaboration discoverable through Code Mode, not expanded at bootstrap.
+    overrides.push("features.multi_agent_v2.non_code_mode_only=false".to_owned());
+    // Native's direct-only root hint contradicts the Code Mode tool exposure.
+    overrides.push(format!(
+        "features.multi_agent_v2.root_agent_usage_hint_text={}",
+        toml_value(concat!(
+            "You are the primary agent in a team sharing one workspace. ",
+            "Use Code Mode to discover collaboration tools when delegation is explicitly ",
+            "requested by the user or applicable project/skill instructions. Keep delegated ",
+            "tasks independent and scoped, preserve shared edits, review agent results, ",
+            "and verify the combined outcome. Use inherited model and reasoning settings ",
+            "unless an explicit user or applicable instruction requires an override. ",
+            "Child agents share your filesystem."
+        ))
+    ));
     // Native request_user_input has one waiter per turn. Keep MCP approvals on
     // their separately correlated elicitation channel so they cannot replace it.
     overrides.push(CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());

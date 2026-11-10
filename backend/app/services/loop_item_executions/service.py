@@ -3240,17 +3240,17 @@ class LoopItemExecutionService:
         return str(error)
 
     @staticmethod
-    def _lock_terminal_event_execution(
+    def _lock_runtime_event_execution(
         db: Session,
         *,
         execution_id: int,
         event_seq: int | None,
     ) -> LoopItemExecution | None:
-        """Serialize Runtime terminal events with cancellation acknowledgements.
+        """Serialize Runtime observations with lease and cancellation writes.
 
-        Runtime terminal events also update their activity projection. Lock the
-        execution aggregate first so every terminal writer uses the same
-        execution -> activity lock order.
+        Refresh the execution under its lock so an acknowledgement cannot make
+        an observed event fail a stale version check. All activity writers keep
+        the execution -> activity lock order.
         """
 
         execution = (
@@ -3338,14 +3338,14 @@ class LoopItemExecutionService:
             )
             return None
         now = utcnow()
+        row = self._lock_runtime_event_execution(
+            db,
+            execution_id=row.id,
+            event_seq=event_seq,
+        )
+        if row is None:
+            return None
         if terminal is not None:
-            row = self._lock_terminal_event_execution(
-                db,
-                execution_id=row.id,
-                event_seq=event_seq,
-            )
-            if row is None:
-                return None
             self.open_execution_activity(
                 db,
                 execution=row,

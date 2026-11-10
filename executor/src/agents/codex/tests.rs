@@ -3503,6 +3503,10 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
 
     let launch_config = persistent_codex_app_server_launch_config(&request_launch_config);
 
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.multi_agent_v2.non_code_mode_only=false".to_owned()));
+
     assert_eq!(
         launch_config.env.get("HTTP_PROXY").map(String::as_str),
         Some("http://127.0.0.1:7890")
@@ -5639,6 +5643,13 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         .expect("skills config override should be valid TOML");
     assert_eq!(parsed_override["skills"]["config"], config["skills.config"]);
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
+    assert_eq!(config["features.multi_agent_v2.non_code_mode_only"], false);
+    let collaboration_hint = config["features.multi_agent_v2.root_agent_usage_hint_text"]
+        .as_str()
+        .expect("Code Mode collaboration hint");
+    assert!(collaboration_hint.contains("Use Code Mode to discover collaboration tools"));
+    assert!(collaboration_hint.contains("delegation is explicitly requested"));
+    assert!(!collaboration_hint.contains("cannot be called from inside"));
     assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
         config["mcp_servers.wework_browser.url"],
