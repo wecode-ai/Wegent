@@ -11,6 +11,44 @@ struct Fixture {
 }
 
 #[tokio::test]
+async fn process_catalog_survives_unrelated_runtime_profile_cleanup() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$(dirname "$0")/launch-args"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  printf '{"id":%s,"result":{}}\n' "$id"
+done
+"#,
+    );
+    let profile = wegent_runtime_config::paths::default_manifest_path()
+        .parent()
+        .unwrap()
+        .to_owned();
+    let executor_home = PathBuf::from(env::var("WEGENT_EXECUTOR_HOME").unwrap());
+    assert!(profile.starts_with(executor_home.parent().unwrap()));
+    assert!(!profile.starts_with(fixture._directory.path()));
+    fs::create_dir_all(&profile).unwrap();
+    fixture.client.ensure_started().await.unwrap();
+    let args = fs::read_to_string(fixture._directory.path().join("launch-args")).unwrap();
+    let path: String = serde_json::from_str(
+        args.lines()
+            .find_map(|line| line.strip_prefix("model_catalog_json="))
+            .unwrap(),
+    )
+    .unwrap();
+    fs::remove_dir_all(profile).unwrap();
+    let retained = fs::read(&path);
+    fixture.client.restart().await;
+    assert!(
+        retained.is_ok(),
+        "Unrelated profile cleanup removed a live Home's catalog: {retained:?}"
+    );
+    assert!(!Path::new(&path).exists());
+}
+
+#[tokio::test]
 async fn cold_goal_activation_can_admit_its_native_resume() {
     let fixture = Fixture::with_script(
         r#"#!/bin/sh

@@ -30,12 +30,17 @@ pub async fn prepare_process_catalog(
     binary: &str,
     home: &Path,
 ) -> Result<Option<ProcessCatalog>, String> {
-    let config = match fs::read_to_string(home.join("config.toml")) {
+    let config_path = home.join("config.toml");
+    let config = match fs::read_to_string(&config_path) {
         Ok(source) => source
             .parse::<DocumentMut>()
-            .map_err(|error| error.to_string())?,
+            .map_err(|_| format!("Invalid native catalog configuration: {config_path:?}"))?,
         Err(error) if error.kind() == ErrorKind::NotFound => DocumentMut::new(),
-        Err(error) => return Err(error.to_string()),
+        Err(error) => {
+            return Err(format!(
+                "Read native catalog configuration {config_path:?}: {error}"
+            ))
+        }
     };
     let profile_catalog = config
         .get("profile")
@@ -53,10 +58,7 @@ pub async fn prepare_process_catalog(
     let mut catalog = load_baseline_catalog_with_native(None, Some(&native)).await?;
     apply_catalog_overrides(&mut catalog, &read_catalog_overrides());
     append_catalog_vision_sidecars(&mut catalog);
-    let path = wegent_runtime_config::paths::default_manifest_path().with_file_name(format!(
-        "codex-process-models-{}.json",
-        uuid::Uuid::new_v4()
-    ));
+    let path = home.join(format!("wework-model-catalog-{}.json", uuid::Uuid::new_v4()));
     let snapshot = ProcessCatalog::write(path, &catalog)?;
     log_executor_event(
         "codex router model catalog prepared",
@@ -68,7 +70,9 @@ pub async fn prepare_process_catalog(
             (
                 "catalog_bytes",
                 fs::metadata(snapshot.path())
-                    .map_err(|error| error.to_string())?
+                    .map_err(|error| {
+                        format!("Inspect native catalog {:?}: {error}", snapshot.path())
+                    })?
                     .len()
                     .to_string(),
             ),
@@ -81,12 +85,15 @@ pub(super) fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> Resul
     let parent = path
         .parent()
         .ok_or_else(|| "model catalog path has no parent".to_owned())?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Create catalog directory {parent:?}: {error}"))?;
     let temporary = parent.join(format!(".catalog-{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| {
         let bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
-        fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
-        fs::rename(&temporary, path).map_err(|error| error.to_string())
+        fs::write(&temporary, bytes)
+            .map_err(|error| format!("Write catalog file {temporary:?}: {error}"))?;
+        fs::rename(&temporary, path)
+            .map_err(|error| format!("Publish catalog file {path:?}: {error}"))
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
