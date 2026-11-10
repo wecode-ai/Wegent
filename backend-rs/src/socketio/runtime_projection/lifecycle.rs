@@ -9,7 +9,7 @@ use crate::background_jobs::project::{notifications, store};
 use crate::socketio::{project_chat_snapshot, runtime::SocketRuntime};
 use crate::state::AppState;
 
-pub(super) async fn item_version(
+pub(in crate::socketio) async fn item_version(
     tx: &mut impl MysqlTransaction,
     execution: Option<&ExecutionRow>,
 ) -> MysqlResult<Option<i64>> {
@@ -28,15 +28,15 @@ pub(super) async fn item_version(
     row.map(|row| row.get_required("version")).transpose()
 }
 
-pub(super) struct Effects {
-    pub(super) matched: Option<ExecutionRow>,
-    pub(super) changed: bool,
-    pub(super) detail: String,
-    pub(super) messages: Vec<super::Message>,
+pub(in crate::socketio) struct Effects {
+    pub(in crate::socketio) matched: Option<ExecutionRow>,
+    pub(in crate::socketio) changed: bool,
+    pub(in crate::socketio) detail: String,
+    pub(in crate::socketio) messages: Vec<super::Message>,
 }
 
 impl Effects {
-    pub(super) async fn deliver(self, state: &AppState, runtime: &SocketRuntime) {
+    pub(in crate::socketio) async fn deliver(self, state: &AppState, runtime: &SocketRuntime) {
         for message in self.messages {
             let projected = super::Projected {
                 message: super::projected_view(&message),

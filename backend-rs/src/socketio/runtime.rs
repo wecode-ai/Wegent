@@ -854,7 +854,7 @@ impl SocketRuntime {
     /// request, so the worker is initialization-owned. The spawned task stops
     /// when the queue closes or the process begins shutting down.
     pub(crate) fn install(
-        &self,
+        self: &Arc<Self>,
         state: Arc<AppState>,
         server: &Server,
         workers: SocketRuntimeWorkers,
@@ -934,6 +934,7 @@ impl SocketRuntime {
             tokio::spawn(super::device_reconcile::run_worker(
                 Arc::clone(&reconcile_receiver),
                 Arc::clone(&state),
+                Arc::downgrade(self),
             ));
         }
         // The source publishes each `runtime:rpc` acknowledgement on the event

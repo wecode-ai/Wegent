@@ -322,6 +322,7 @@ fn terminal_status(turn: &TurnSnapshot) -> Option<&'static str> {
 pub(crate) struct Reconciled {
     pub(crate) messages: Vec<Value>,
     pub(crate) changed_items: Vec<String>,
+    effects: Vec<super::runtime_projection::lifecycle::Effects>,
 }
 
 /// `reconcile_execution_snapshot`.
@@ -373,10 +374,18 @@ pub(crate) async fn reconcile<T: MysqlTransaction>(
     }
     let mut changed = Vec::new();
     let mut changed_items = Vec::new();
+    let mut effects = Vec::new();
     for (candidate, turn) in candidates {
-        if let Some(message) = persist_outcome(transaction, user_id, &candidate, &turn, &device_ids)
-            .await
-            .map_err(mysql_error)?
+        if let Some(message) = persist_outcome(
+            transaction,
+            user_id,
+            &candidate,
+            &turn,
+            &device_ids,
+            &mut effects,
+        )
+        .await
+        .map_err(mysql_error)?
         {
             if !message.task_id.is_empty() && !changed_items.contains(&message.task_id) {
                 changed_items.push(message.task_id.clone());
@@ -387,6 +396,7 @@ pub(crate) async fn reconcile<T: MysqlTransaction>(
     Ok(Reconciled {
         messages: changed,
         changed_items,
+        effects,
     })
 }
 
@@ -444,6 +454,7 @@ async fn persist_outcome<T: MysqlTransaction>(
     current: &Message,
     turn: &TurnSnapshot,
     device_ids: &[String],
+    effects: &mut Vec<super::runtime_projection::lifecycle::Effects>,
 ) -> MysqlResult<Option<Message>> {
     let turn_status = turn.status.as_str();
     let Some(status) = terminal_status(turn) else {
@@ -517,7 +528,13 @@ async fn persist_outcome<T: MysqlTransaction>(
             turn.completed_at.clone().unwrap_or(Value::Null),
         );
         write_message(transaction, &row, &metadata).await?;
-        apply_snapshot(transaction, execution, status, false, Some(turn_status)).await?;
+        if let Some(mut effect) =
+            apply_snapshot(transaction, execution, status, false, Some(turn_status)).await?
+        {
+            effect.messages.retain(|message| message.id != row_id);
+            effect.changed = false; // The snapshot publishes this Issue below.
+            effects.push(effect);
+        }
         let Some(reconciled) = reload_execution(transaction, execution.id).await? else {
             return Ok(None);
         };
@@ -938,6 +955,9 @@ pub(crate) async fn handle(
     }
     for item_id in &reconciled.changed_items {
         publish_item_change(state, runtime, item_id, 0).await;
+    }
+    for effect in reconciled.effects {
+        effect.deliver(state, runtime).await;
     }
     json!({"ok": true, "result": reconciled.messages})
 }

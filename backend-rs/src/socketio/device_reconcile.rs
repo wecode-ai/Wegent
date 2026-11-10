@@ -17,14 +17,11 @@
 //! dedicated bounded worker so the read is never queued behind the
 //! registration capability sync, mirroring the source's independent task.
 //!
-//! The execution aggregate's transitions reuse the same helpers as the
-//! `runtime:event` projection (`runtime_projection::transition_terminal`,
-//! `set_automation_run_status`, `finish_linked_activity`). Project-chat
-//! activity creation and the post-commit websocket push remain unported in the
-//! activity domain, exactly like the event projection's documented gaps.
+//! The execution aggregate and activity projection are committed together.
+//! Lifecycle effects are delivered after commit.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use brz_json::adapters::python_truthy;
@@ -39,11 +36,16 @@ use crate::loop_tasks::loop_repository::EXECUTION_COLUMNS;
 use crate::runtime_work::call_runtime_rpc;
 use crate::socketio::execution_aggregate::{
     CAPACITY_STATUSES, DEFAULT_LEASE_SECONDS, EPOCH_TIME, ERROR_LIMIT, ExecutionRow, NOTE_LIMIT,
-    finish_linked_activity, load_execution, set_automation_run_status, transition_terminal,
+    set_automation_run_status, transition_terminal,
 };
 use crate::socketio::execution_intent::{retry_execution_payload, retry_runtime_task_id};
 use crate::sql_support::StatementArg;
 use crate::state::AppState;
+
+use super::{
+    runtime::SocketRuntime,
+    runtime_projection::{self, lifecycle::Effects},
+};
 
 /// `reconcile_device_executions`' `runtime.tasks.list` method.
 const RUNTIME_TASKS_LIST_METHOD: &str = "runtime.tasks.list";
@@ -85,6 +87,7 @@ pub(super) async fn next_job(
 pub(crate) async fn run_worker(
     jobs: Arc<tokio::sync::Mutex<mpsc::Receiver<ReconcileJob>>>,
     state: Arc<AppState>,
+    runtime: Weak<SocketRuntime>,
 ) {
     loop {
         let job = tokio::select! {
@@ -102,8 +105,12 @@ pub(crate) async fn run_worker(
         if state.shutdown.is_shutting_down() {
             return;
         }
+        let Some(runtime) = runtime.upgrade() else {
+            return;
+        };
         reconcile_after_register(
             &state,
+            &runtime,
             job.user_id,
             &job.device_id,
             job.needs_confirmation_only,
@@ -117,6 +124,7 @@ pub(crate) async fn run_worker(
 /// session boundary.
 async fn reconcile_after_register(
     state: &AppState,
+    runtime: &SocketRuntime,
     user_id: i64,
     device_id: &str,
     needs_confirmation_only: bool,
@@ -164,6 +172,7 @@ async fn reconcile_after_register(
         };
         if let Err(error) = reconcile_one(
             state,
+            runtime,
             execution.id,
             &runtime_status,
             running,
@@ -338,23 +347,29 @@ fn turn_status_text(snapshot: &Value) -> String {
 /// One `reconcile_runtime_snapshot` call on its own transaction.
 async fn reconcile_one(
     state: &AppState,
+    runtime: &SocketRuntime,
     execution_id: i64,
     runtime_status: &str,
     running: bool,
     turn_status: Option<&str>,
 ) -> MysqlResult<()> {
-    state
+    let effects = state
         .mysql
         .with_transaction(async |transaction| {
-            let Some(row) = load_execution(transaction, execution_id).await? else {
-                return Ok(());
+            let Some(row) = runtime_projection::reload_execution(transaction, execution_id).await?
+            else {
+                return Ok(None);
             };
             if !is_capacity_status(row.status.as_deref()) {
-                return Ok(());
+                return Ok(None);
             }
             apply_snapshot(transaction, &row, runtime_status, running, turn_status).await
         })
-        .await
+        .await?;
+    if let Some(effects) = effects {
+        effects.deliver(state, runtime).await;
+    }
+    Ok(())
 }
 
 /// `is_capacity_status`: the aggregate still accepts runtime observations.
@@ -369,7 +384,10 @@ pub(super) async fn apply_snapshot<T: MysqlTransaction>(
     runtime_status: &str,
     running: bool,
     turn_status: Option<&str>,
-) -> MysqlResult<()> {
+) -> MysqlResult<Option<Effects>> {
+    if !is_capacity_status(row.status.as_deref()) {
+        return Ok(None);
+    }
     let now = Utc::now().naive_utc();
     let normalized = runtime_status.to_lowercase().trim().to_owned();
     let normalized_turn = turn_status.unwrap_or("").to_lowercase().trim().to_owned();
@@ -377,10 +395,12 @@ pub(super) async fn apply_snapshot<T: MysqlTransaction>(
         return confirm_runtime_cancelled(transaction, row, now).await;
     }
     if normalized == "missing" && is_unconfirmed_start(row) {
-        return requeue_unconfirmed_start(transaction, row, now).await;
+        requeue_unconfirmed_start(transaction, row, now).await?;
+        return Ok(None);
     }
     if running || matches!(normalized.as_str(), "running" | "in_progress") {
-        return observe_running(transaction, row, now).await;
+        observe_running(transaction, row, now).await?;
+        return restore_active_activity(transaction, row.id).await;
     }
     match terminal_status(&normalized, &normalized_turn) {
         Some("completed") => {
@@ -422,9 +442,32 @@ pub(super) async fn apply_snapshot<T: MysqlTransaction>(
         normalized.as_str(),
         "accepted" | "active" | "pending" | "queued" | "starting"
     ) {
-        return observe_accepted(transaction, row, now).await;
+        observe_accepted(transaction, row, now).await?;
+        return restore_active_activity(transaction, row.id).await;
     }
-    observe_diverged(transaction, row, runtime_status, now).await
+    observe_diverged(transaction, row, runtime_status, now).await?;
+    Ok(None)
+}
+
+async fn restore_active_activity(
+    tx: &mut impl MysqlTransaction,
+    execution_id: i64,
+) -> MysqlResult<Option<Effects>> {
+    let Some(row) = runtime_projection::reload_execution(tx, execution_id).await? else {
+        return Ok(None);
+    };
+    let before = runtime_projection::lifecycle::item_version(tx, Some(&row)).await?;
+    let messages = runtime_projection::open_runtime_activity(tx, &row)
+        .await?
+        .into_iter()
+        .collect();
+    let changed = runtime_projection::lifecycle::item_version(tx, Some(&row)).await? != before;
+    Ok(Some(Effects {
+        matched: Some(row),
+        changed,
+        detail: String::new(),
+        messages,
+    }))
 }
 
 /// `terminal_observations` mapping: the first matching family wins.
@@ -504,7 +547,7 @@ async fn confirm_runtime_cancelled<T: MysqlTransaction>(
     transaction: &mut T,
     row: &ExecutionRow,
     now: NaiveDateTime,
-) -> MysqlResult<()> {
+) -> MysqlResult<Option<Effects>> {
     let (note, content) = cancelled_snapshot_text(row);
     if row.termination_reason.as_deref() == Some("stall_timeout") {
         return terminal(
@@ -668,7 +711,7 @@ async fn fail_reconciled<T: MysqlTransaction>(
     transaction: &mut T,
     row: &ExecutionRow,
     now: NaiveDateTime,
-) -> MysqlResult<()> {
+) -> MysqlResult<Option<Effects>> {
     let error = "Runtime reported a failed task during reconciliation";
     let updated = transition_terminal(
         transaction,
@@ -684,12 +727,11 @@ async fn fail_reconciled<T: MysqlTransaction>(
     )
     .await?;
     if updated != 1 {
-        return Ok(());
+        return Ok(None);
     }
-    set_automation_run_status(transaction, row.automation_run_id.as_deref(), "failed").await?;
-    finish_linked_activity(transaction, row, "failed", Some(error)).await?;
+    let effects = project_terminal(transaction, row, "failed", error, now).await?;
     if row.retry_attempt.unwrap_or(0) >= row.max_retries.unwrap_or(0) {
-        return Ok(());
+        return Ok(Some(effects));
     }
     let retry_id = insert_retry_attempt(transaction, row, now).await?;
     set_automation_run_status(transaction, row.automation_run_id.as_deref(), "queued").await?;
@@ -700,7 +742,7 @@ async fn fail_reconciled<T: MysqlTransaction>(
             (runtime_task_id, retry_id),
         )
         .await?;
-    Ok(())
+    Ok(Some(effects))
 }
 
 /// `_new_retry_attempt`: one isolated queued attempt after Runtime proved the
@@ -776,7 +818,7 @@ async fn terminal<T: MysqlTransaction>(
     reason: &str,
     observed_state: &str,
     now: NaiveDateTime,
-) -> MysqlResult<()> {
+) -> MysqlResult<Option<Effects>> {
     let updated = transition_terminal(
         transaction,
         row,
@@ -791,25 +833,53 @@ async fn terminal<T: MysqlTransaction>(
     )
     .await?;
     if updated != 1 {
-        return Ok(());
+        return Ok(None);
+    }
+    project_terminal(transaction, row, status, content.unwrap_or(error), now)
+        .await
+        .map(Some)
+}
+
+async fn project_terminal(
+    tx: &mut impl MysqlTransaction,
+    row: &ExecutionRow,
+    status: &str,
+    detail: &str,
+    now: NaiveDateTime,
+) -> MysqlResult<Effects> {
+    let before = runtime_projection::lifecycle::item_version(tx, Some(row)).await?;
+    if runtime_projection::linked_activity(tx, row)
+        .await?
+        .is_none()
+    {
+        runtime_projection::open_accepted_activity(tx, row.id, false).await?;
     }
     let run_status = match status {
         "completed" => "succeeded",
         "failed" => "failed",
         _ => "cancelled",
     };
-    set_automation_run_status(transaction, row.automation_run_id.as_deref(), run_status).await?;
-    finish_linked_activity(transaction, row, status, content).await?;
-    // `notify_execution_lifecycle`, the loop-item change publisher and the
-    // activity creation/push halves are not ported in the activity domain.
-    tracing::warn!(
-        execution = row.id,
+    set_automation_run_status(tx, row.automation_run_id.as_deref(), run_status).await?;
+    let messages = runtime_projection::finish_runtime_activity(
+        tx,
+        row,
         status,
-        "execution reconcile projection is not fully ported"
-    );
-    Ok(())
+        detail,
+        row.last_event_seq,
+        (status == "completed").then_some(now),
+    )
+    .await?;
+    let changed = runtime_projection::lifecycle::item_version(tx, Some(row)).await? != before;
+    Ok(Effects {
+        matched: runtime_projection::reload_execution(tx, row.id).await?,
+        changed,
+        detail: detail.to_owned(),
+        messages,
+    })
 }
 
 #[cfg(test)]
 #[path = "device_reconcile_tests.rs"]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::verify_reconnect_projection;

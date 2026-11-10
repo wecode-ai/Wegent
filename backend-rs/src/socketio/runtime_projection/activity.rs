@@ -737,7 +737,7 @@ fn first_non_subagent(rows: Vec<Message>) -> Option<Message> {
 }
 
 /// `_linked_activity` (`loop_item_executions/service.py:3019`).
-pub(super) async fn linked_activity<T: MysqlTransaction>(
+pub(in crate::socketio) async fn linked_activity<T: MysqlTransaction>(
     transaction: &mut T,
     execution: &ExecutionRow,
 ) -> MysqlResult<Option<Message>> {
@@ -912,12 +912,13 @@ async fn reconciled_activity_for_runtime<T: MysqlTransaction>(
 
 /// Close the current execution's parent and still-open children using the
 /// same terminal Issue projection as the robot worker.
-pub(super) async fn finish_runtime_activity(
+pub(in crate::socketio) async fn finish_runtime_activity(
     tx: &mut impl MysqlTransaction,
     execution: &ExecutionRow,
     status: &str,
     detail: &str,
     sequence: Option<i64>,
+    reconciled_at: Option<NaiveDateTime>,
 ) -> MysqlResult<Vec<Message>> {
     let Some(candidate) = linked_activity(tx, execution).await? else {
         return Ok(vec![]);
@@ -930,6 +931,15 @@ pub(super) async fn finish_runtime_activity(
     }
     record_runtime_sequence(&mut parent, sequence);
     crate::background_jobs::robot::finish_runtime_activity(tx, &mut parent, status, detail).await?;
+    if let Some(at) = reconciled_at {
+        parent
+            .metadata
+            .0
+            .as_object_mut()
+            .expect("activity metadata")
+            .entry("runtime_completed_at")
+            .or_insert_with(|| json!(at));
+    }
     update_terminal_row(tx, &parent).await?;
     let children: Vec<ActivityRow> = tx.fetch_all(
         format!("SELECT {ACTIVITY_COLUMNS} FROM project_chat_messages WHERE project_id=? AND task_id=? AND trigger_message_id=? AND sender_type='agent' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.kind'))='task_ai_subagent' AND status IN ('pending','streaming') AND {UNSET_DELETED_AT} FOR UPDATE"),
@@ -957,7 +967,7 @@ async fn update_terminal_row(tx: &mut impl MysqlTransaction, message: &Message) 
     Ok(())
 }
 
-pub(super) async fn open_runtime_activity(
+pub(in crate::socketio) async fn open_runtime_activity(
     tx: &mut impl MysqlTransaction,
     row: &ExecutionRow,
 ) -> MysqlResult<Option<Message>> {

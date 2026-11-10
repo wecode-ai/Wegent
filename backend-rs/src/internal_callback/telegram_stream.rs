@@ -11,6 +11,8 @@ use crate::state::AppState;
 
 use super::ExecutionEvent;
 
+const MESSAGE_LIMIT: usize = 4096;
+
 #[derive(Default, Serialize, Deserialize)]
 struct Reply {
     message_id: Option<i64>,
@@ -153,7 +155,7 @@ impl Reply {
             Update::Progress(text, false) => {
                 self.content.extend(
                     text.chars()
-                        .take(4096_usize.saturating_sub(self.content.chars().count())),
+                        .take(MESSAGE_LIMIT.saturating_sub(self.content.chars().count())),
                 );
                 self.content.clone()
             }
@@ -164,13 +166,26 @@ impl Reply {
         };
         let reasoning = self.reasoning.trim();
         match (reasoning.is_empty(), answer.trim().is_empty(), update) {
-            (false, false, _) => format!("💭 思考摘要\n{reasoning}\n\n回复\n{answer}"),
+            (false, false, _) => answer_with_reasoning(&answer, reasoning),
             (false, true, _) => format!("💭 思考摘要\n{reasoning}"),
-            (true, false, _) => answer,
+            (true, false, _) => answer.chars().take(MESSAGE_LIMIT).collect(),
             (true, true, Update::Progress(..)) => "⏳ 处理中...".to_owned(),
             (true, true, Update::Terminal(..)) => "✅ 已完成".to_owned(),
         }
     }
+}
+
+fn answer_with_reasoning(answer: &str, reasoning: &str) -> String {
+    const REASONING_HEADER: &str = "💭 思考摘要\n";
+    const ANSWER_HEADER: &str = "\n\n回复\n";
+    let overhead = REASONING_HEADER.chars().count() + ANSWER_HEADER.chars().count();
+    let reasoning_budget = MESSAGE_LIMIT.saturating_sub(answer.chars().count() + overhead);
+    let summary: String = reasoning.chars().take(reasoning_budget).collect();
+    let summary = summary.trim_end();
+    if summary.is_empty() {
+        return answer.chars().take(MESSAGE_LIMIT).collect();
+    }
+    format!("{REASONING_HEADER}{summary}{ANSWER_HEADER}{answer}")
 }
 
 pub(super) fn terminal_text(status: &str, result: Option<&Value>, error: Option<&str>) -> String {
@@ -216,5 +231,19 @@ mod tests {
             Reply::default().render(Update::Terminal("", "COMPLETED")),
             "✅ 已完成"
         );
+    }
+    #[test]
+    fn final_answer_keeps_its_full_budget_before_reasoning() {
+        let mut reply = Reply::default();
+        reply.render(Update::Progress(&"思".repeat(2048), true));
+        for size in [3000, MESSAGE_LIMIT - 1, MESSAGE_LIMIT, MESSAGE_LIMIT + 1] {
+            let answer = "答".repeat(size);
+            let rendered = reply.render(Update::Terminal(&answer, "COMPLETED"));
+            assert!(rendered.chars().count() <= MESSAGE_LIMIT);
+            assert!(rendered.ends_with(&"答".repeat(size.min(MESSAGE_LIMIT))));
+            if size >= MESSAGE_LIMIT - 1 {
+                assert!(!rendered.contains("思考摘要"));
+            }
+        }
     }
 }

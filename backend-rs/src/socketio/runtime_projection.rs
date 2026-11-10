@@ -644,6 +644,7 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
         status,
         note.as_deref().unwrap_or(&error),
         seq,
+        None,
     )
     .await?;
     Ok(Some(ExecutionRow {
@@ -1043,7 +1044,8 @@ async fn lifecycle_effects(
 }
 
 mod activity;
-mod lifecycle;
+pub(super) mod lifecycle;
+pub(super) use activity::{finish_runtime_activity, linked_activity, open_runtime_activity};
 mod subagent;
 pub(super) use activity::{open_accepted_activity, reload_execution};
 

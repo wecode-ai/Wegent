@@ -15,7 +15,6 @@
 use brz_mysql::{FromMysqlRow, MysqlResult, MysqlTransaction};
 use chrono::{NaiveDateTime, Utc};
 
-use crate::loop_tasks::loop_repository::EXECUTION_COLUMNS;
 use crate::sql_support::StatementArg;
 
 /// `CAPACITY_STATUSES`: the execution statuses that still accept events.
@@ -116,23 +115,6 @@ impl ExecutionRow {
             .filter(|start| !crate::background_jobs::robot::model::unset(Some(*start)))
             .unwrap_or(now)
     }
-}
-
-/// `db.get(LoopItemExecution, execution_id)`: one current read by primary key
-/// with the aggregate's mapped columns.
-pub(super) async fn load_execution<T: MysqlTransaction>(
-    transaction: &mut T,
-    execution_id: i64,
-) -> MysqlResult<Option<ExecutionRow>> {
-    transaction
-        .fetch_optional(
-            format!(
-                "SELECT {EXECUTION_COLUMNS} \nFROM loop_item_executions \n\
-                 WHERE loop_item_executions.id = ?"
-            ),
-            (execution_id,),
-        )
-        .await
 }
 
 /// `LoopItemExecutionService._transition_terminal`'s conditional update.
@@ -291,41 +273,6 @@ pub(super) async fn bind_activity_runtime_turn<T: MysqlTransaction>(
              AND status IN ('pending','streaming') \
              AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01'))",
             (turn_id, device_id, task_id),
-        )
-        .await?;
-    Ok(())
-}
-
-/// `_apply_terminal_projection`'s activity half: finish the linked activity.
-pub(super) async fn finish_linked_activity<T: MysqlTransaction>(
-    transaction: &mut T,
-    row: &ExecutionRow,
-    status: &str,
-    content: Option<&str>,
-) -> MysqlResult<()> {
-    let (Some(device_id), Some(task_id)) = (
-        row.runtime_device_id.as_deref(),
-        row.runtime_task_id.as_deref(),
-    ) else {
-        return Ok(());
-    };
-    transaction
-        .execute(
-            "UPDATE project_chat_messages SET content=IF(?='completed' OR content='', \
-             COALESCE(NULLIF(?, ''), content), content), status=?, message_type=?, \
-             metadata=JSON_SET(metadata, '$.run_status', ?), updated_at=UTC_TIMESTAMP(6) \
-             WHERE runtime_device_id=? AND runtime_task_id=? AND sender_type='agent' \
-             AND status IN ('pending','streaming') \
-             AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01'))",
-            (
-                status,
-                content.unwrap_or(""),
-                if status == "failed" { "failed" } else { status },
-                if status == "failed" { "run" } else { "text" },
-                status,
-                device_id,
-                task_id,
-            ),
         )
         .await?;
     Ok(())

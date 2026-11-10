@@ -36,6 +36,8 @@ pub mod device_pull;
 pub mod device_pull_claim;
 mod device_pull_payload;
 pub mod device_reconcile;
+#[cfg(test)]
+pub(crate) use device_reconcile::verify_reconnect_projection;
 pub mod device_responses;
 pub mod device_runtime_event;
 pub mod device_runtime_tasks;
