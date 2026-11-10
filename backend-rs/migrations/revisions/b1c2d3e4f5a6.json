@@ -27,7 +27,8 @@
     {
       "sql": [
         "DROP INDEX uniq_share_links_token_hash ON share_links"
-      ]
+      ],
+      "warning": true
     },
     {
       "sql": [

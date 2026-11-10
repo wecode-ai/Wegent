@@ -252,7 +252,22 @@ async fn historical_secure_share_tokens_backfill_and_revoke_existing_rows() -> R
             assert_eq!(row["hash"], row["expected"]);
         }
         assert!(mysql.execute("INSERT INTO share_links(resource_type,resource_id,share_token,token_hash,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) SELECT resource_type,resource_id,share_token,token_hash,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at FROM share_links WHERE id=1",()).await.is_err());
-        downgrade(mysql, "f3a7c9e1b2d4").await?;
+        // MySQL implicitly drops the named index when the indexed column is
+        // removed, so the JSON migration treats dropping it as optional.
+        mysql.with_transaction(async |tx| {
+            let graph = graph::Graph::load()
+                .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
+                    reason: "migration graph failed to load".into(),
+                })?;
+            let revision = graph
+                .get("b1c2d3e4f5a6")
+                .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
+                    reason: "secure share migration is missing".into(),
+                })?;
+            legacy::execute(tx, revision, true).await?;
+            Ok(())
+        })
+        .await?;
         assert!(data(mysql, "SELECT JSON_OBJECT('name',COLUMN_NAME) AS data FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='share_links' AND COLUMN_NAME='token_hash'").await?.is_empty());
         Ok(())
     })
