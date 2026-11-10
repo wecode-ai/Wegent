@@ -15,7 +15,7 @@ const DEVICE: &str = "app-record-88888";
 const TASK: &str = "late-answer-conversation";
 
 pub(crate) async fn verify(mysql: &impl Mysql) -> anyhow::Result<()> {
-    mysql.execute("INSERT INTO loop_items(id,resource_type,description,metadata) VALUES (?, 'project', '', JSON_OBJECT()), (?, 'task', '', JSON_OBJECT())", (PROJECT, ISSUE)).await?;
+    mysql.execute("INSERT INTO loop_items(id,resource_type,description,metadata,created_at,updated_at) VALUES (?, 'project', '', JSON_OBJECT(),NOW(),NOW()), (?, 'task', '', JSON_OBJECT(),NOW(),NOW())", (PROJECT, ISSUE)).await?;
     mysql
         .execute(
             "UPDATE loop_items SET cloud_project_id=?, status='in_progress' WHERE id=?",
@@ -26,8 +26,8 @@ pub(crate) async fn verify(mysql: &impl Mysql) -> anyhow::Result<()> {
         "human_request_id":"question-a", "comment_trigger_message_id":"answer-a"
     }})
     .to_string();
-    let execution = mysql.execute("INSERT INTO loop_item_executions(loop_item_id,cloud_project_id,executor_owner_user_id,status,runtime_device_id,runtime_task_id,execution_payload,version,last_event_seq,attempt_no) VALUES (?,?,7,'completed',?,?,?,4,2,1)", (ISSUE,PROJECT,DEVICE,TASK,payload)).await?.last_insert_id as i64;
-    let newer = mysql.execute("INSERT INTO loop_item_executions(loop_item_id,cloud_project_id,executor_owner_user_id,status,runtime_device_id,runtime_task_id,execution_payload) VALUES (?,?,7,'completed',?,?,'{}')", (ISSUE,PROJECT,DEVICE,TASK)).await?.last_insert_id as i64;
+    let execution = mysql.execute("INSERT INTO loop_item_executions(loop_item_id,cloud_project_id,executor_owner_user_id,status,runtime_device_id,runtime_task_id,execution_payload,error_message,version,last_event_seq,attempt_no) VALUES (?,?,7,'completed',?,?,?,'',4,2,1)", (ISSUE,PROJECT,DEVICE,TASK,payload)).await?.last_insert_id as i64;
+    let newer = mysql.execute("INSERT INTO loop_item_executions(loop_item_id,cloud_project_id,executor_owner_user_id,status,runtime_device_id,runtime_task_id,execution_payload,error_message) VALUES (?,?,7,'completed',?,?,'{}','')", (ISSUE,PROJECT,DEVICE,TASK)).await?.last_insert_id as i64;
     mysql.execute("INSERT INTO project_chat_messages(message_id,project_id,task_id,sender_type,sender_id,sender_name,message_type,content,metadata,trigger_message_id,runtime_device_id,runtime_task_id,status) VALUES (?,?,?,'agent','fixture-agent','Fixture agent','agent_chunk','Finished reply',JSON_OBJECT(),'answer-a',?,?,'completed')", (MESSAGE,PROJECT,ISSUE,DEVICE,TASK)).await?;
     for sequence in [1, 3] {
         for variant in [
@@ -70,7 +70,7 @@ async fn reset(
     mysql
         .execute("DELETE FROM loop_items WHERE id='late-answer-index'", ())
         .await?;
-    mysql.execute("INSERT INTO loop_items(id,resource_type,cloud_project_id,parent_id,name,description,metadata) VALUES ('late-answer-index','human_request_index',?,?,'question-a','',JSON_OBJECT())", (PROJECT,ISSUE)).await?;
+    mysql.execute("INSERT INTO loop_items(id,resource_type,cloud_project_id,parent_id,name,description,metadata,created_at,updated_at) VALUES ('late-answer-index','human_request_index',?,?,'question-a','',JSON_OBJECT(),NOW(),NOW())", (PROJECT,ISSUE)).await?;
     let mut metadata = json!({"execution_id": if variant == "wrong-execution" {newer} else {execution},
         "runtime_turn_id":"accepted-turn","runtime_completed_at":"2026-11-10T00:00:00Z"});
     if variant.ends_with("unbound") {
