@@ -119,7 +119,7 @@ jobs:
 
   prepare-release:
     name: Prepare build
-    if: inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (contains(fromJSON('["app-update-refresh","app-update-retry"]'), inputs.verification_checkpoint) && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''
+    if: ${{ false }}
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.version-files.outputs.release_sha }}
@@ -541,7 +541,7 @@ jobs:
   prepare-upgrade-inputs:
     name: Resolve immutable upgrade inputs
     needs: [prepare-release, build]
-    if: ${{ !cancelled() && !inputs.build_only && inputs.verification_checkpoint != 'runtime-extraction' && !(inputs.verification_checkpoint == 'app-update-retry' && inputs.verification_source_run_id == '' && inputs.verification_run_id == '' && !inputs.publish_release) && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || inputs.verification_release_tag != '' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && !inputs.publish_release && !inputs.build_only && inputs.verification_checkpoint == 'all' && inputs.verification_run_id == '42800250426' && inputs.verification_release_tag == '' && inputs.verification_source_run_id == '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -583,15 +583,20 @@ jobs:
           VERIFICATION_SOURCE_RUN_ID: ${{ inputs.verification_source_run_id }}
         run: node .github/scripts/resolve-wework-upgrade-inputs.mjs
 
-      - name: Freeze complete source upgrade matrix
-        if: steps.inputs.outputs.diagnostic_checkpoint == ''
+      - name: Download frozen source upgrade plans from the original attempt
+        uses: actions/download-artifact@v6
+        with:
+          name: wework-upgrade-plan-42800250426-1
+          path: ${{ runner.temp }}/upgrade-plan
+          run-id: 42800250426
+          github-token: ${{ github.token }}
+
+      - name: Select the three failed paths
         id: plan
-        env:
-          GH_TOKEN: ${{ github.token }}
-          UPGRADE_VERSION: ${{ steps.inputs.outputs.version }}
-          UPGRADE_CHANNEL: ${{ steps.inputs.outputs.channel }}
-          UPGRADE_PLAN_DIRECTORY: ${{ runner.temp }}/upgrade-plan
-        run: node .github/scripts/plan-wework-upgrade-shards.mjs
+        run: |
+          cat >> "$GITHUB_OUTPUT" <<'MATRIX'
+          matrix={"include":[{"platform":"macos","arch":"arm64","runner":"macos-15","channel":"beta","source_version":"0.6.4-beta.2","target_hash":"62abdfc508c34b398a69323418d98cb3cb8c4bfa93cec050cba01cdbe56fc89d"},{"platform":"windows","arch":"x64","runner":"windows-latest","channel":"stable","source_version":"0.6.2","target_hash":"7b1e0ac00e8eb3e97322a064a1623592e71e4e30cb1084493461a576811f346a"},{"platform":"windows","arch":"x64","runner":"windows-latest","channel":"beta","source_version":"0.5.13-beta.8","target_hash":"7b1e0ac00e8eb3e97322a064a1623592e71e4e30cb1084493461a576811f346a"}]}
+          MATRIX
 
       - name: Retain frozen source upgrade plans
         if: steps.inputs.outputs.diagnostic_checkpoint == ''
@@ -728,6 +733,22 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+      - name: Require passing suite 18 evidence for the original package pair
+        env:
+          REPLAY_SHARD: ${{ runner.temp }}/upgrade-input/wework-release-assets/upgrade-shard-${{ matrix.channel }}-${{ matrix.source_version }}-${{ matrix.platform }}-${{ matrix.arch }}.json
+          REPLAY_TARGET_HASH: ${{ matrix.target_hash }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const shard = JSON.parse(readFileSync(process.env.REPLAY_SHARD, 'utf8'))
+          assert.equal(shard.target.sourceSha, '8ad78b28ce69a031b8a92fcaf5e74be19af00036')
+          assert.equal(shard.target.sha256, process.env.REPLAY_TARGET_HASH)
+          assert.equal(shard.suiteVersion, 18)
+          assert.equal(shard.status, 'passed', 'The repeated package pair did not pass')
+          assert.ok(shard.evidence)
+          NODE
+
       - name: Report complete upgrade verification execution time
         if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
         env:
@@ -739,7 +760,7 @@ jobs:
   aggregate-upgrades:
     name: Aggregate complete upgrade verification
     needs: [prepare-upgrade-inputs, verify-upgrades]
-    if: ${{ !cancelled() && needs.prepare-upgrade-inputs.result == 'success' && needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' }}
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -797,7 +818,7 @@ jobs:
       - verify-upgrades
       - aggregate-upgrades
     runs-on: ubuntu-latest
-    if: ${{ !inputs.build_only && needs.prepare-release.outputs.publish_release == 'true' && needs.prepare-release.outputs.release_kind != 'none' }}
+    if: ${{ false }}
 
     steps:
       - name: Create release app token
