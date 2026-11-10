@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -22,7 +22,11 @@ async function fixture(run) {
   )
   await writeFile(join(root, 'rolled-back-versions.json'), JSON.stringify([target.version]))
   try {
-    await run({ root, target })
+    await run({
+      root,
+      target,
+      preparedTarget: { version: target.version, packageSha256: target.sha256 },
+    })
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -99,5 +103,35 @@ test('a download without consent cannot certify rollback protection', async () =
       }),
       /downloaded without consent/
     )
+  })
+})
+
+test('historical slot descriptors and history omit the hash together without changing delivered identity', async () => {
+  await fixture(async base => {
+    const path = join(base.root, 'update-rollback-history.json')
+    const history = JSON.parse(await readFile(path, 'utf8'))
+    delete history[0].packageSha256
+    await writeFile(path, JSON.stringify(history))
+    const options = {
+      ...base,
+      preparedTarget: { version: base.target.version },
+      requests: [],
+      async route() {},
+      async about() {},
+      control: {
+        async command(name) {
+          if (name === 'getAppUpdateProgress') return '{}'
+          if (name === 'getText') return 'No verified upgrade path'
+        },
+      },
+    }
+    assert.equal((await verifyRollbackProtection(options)).kind, 'blocked')
+    await assert.rejects(
+      verifyRollbackProtection({ ...options, preparedTarget: base.preparedTarget }),
+      /package identity/
+    )
+    history[0].packageSha256 = 'c'.repeat(64)
+    await writeFile(path, JSON.stringify(history))
+    await assert.rejects(verifyRollbackProtection(options), /package identity/)
   })
 })

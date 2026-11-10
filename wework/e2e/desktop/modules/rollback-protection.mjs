@@ -1,13 +1,25 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { readRollbackHistory, requestRetryConfirmation } from './failed-upgrade-retry.mjs'
+import { requestRetryConfirmation } from './failed-upgrade-retry.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 
 /** Preserve the delivered source's quarantine or explicit consent instead of editing its history. */
-export async function verifyRollbackProtection({ control, root, target, requests, about, route }) {
-  const history = await readRollbackHistory(root, target, 'rolled-back')
+export async function verifyRollbackProtection({
+  control,
+  root,
+  target,
+  preparedTarget,
+  requests,
+  about,
+  route,
+}) {
+  assert.equal(preparedTarget.version, target.version)
+  if (preparedTarget.packageSha256 !== undefined)
+    assert.equal(preparedTarget.packageSha256, target.sha256)
+  const readHistory = () => readProtectionHistory(root, target, preparedTarget)
+  const history = await readHistory()
   const quarantinePath = join(root, 'rolled-back-versions.json')
   const quarantine = JSON.parse(await readFile(quarantinePath, 'utf8'))
   assert.ok(quarantine.includes(target.version), 'Rollback did not quarantine the target')
@@ -49,7 +61,7 @@ export async function verifyRollbackProtection({ control, root, target, requests
     false
   )
   assert.equal(downloads(), before, 'The quarantined release downloaded without consent')
-  assert.deepEqual(await readRollbackHistory(root, target, 'rolled-back'), history)
+  assert.deepEqual(await readHistory(), history)
   assert.deepEqual(JSON.parse(await readFile(quarantinePath, 'utf8')), quarantine)
   return {
     version: target.version,
@@ -58,4 +70,22 @@ export async function verifyRollbackProtection({ control, root, target, requests
     historyPreserved: true,
     downloadPrevented: true,
   }
+}
+
+async function readProtectionHistory(root, target, preparedTarget) {
+  const history = JSON.parse(await readFile(join(root, 'update-rollback-history.json'), 'utf8'))
+  assert.ok(Array.isArray(history), 'Rollback history must be a structured array')
+  const record = history.find(
+    item => item.version === target.version && item.reason === 'rolled-back'
+  )
+  assert.ok(record?.token, 'The actual rollback activation is missing')
+  assert.ok(Number.isFinite(Date.parse(record.occurredAt)), 'Rollback time is missing')
+  // Historical preparers omit this field; compare with their actual slot descriptor,
+  // while the scenario independently verifies both immutable archives before launch.
+  assert.equal(
+    record.packageSha256,
+    preparedTarget.packageSha256,
+    'Rollback history differs from the source-prepared package identity'
+  )
+  return history
 }

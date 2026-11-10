@@ -72,7 +72,15 @@ export async function inspectBeforeStart(child, expression, log = console.log) {
 /** Reconnect only to the current host belonging to this isolated release store. */
 export async function inspectRunningApp(port, expectedPid, expression, log = console.log) {
   const origin = `http://127.0.0.1:${port}`
-  const response = await fetch(`${origin}/json/list`, { signal: AbortSignal.timeout(10_000) })
+  let response
+  try {
+    response = await fetch(`${origin}/json/list`, { signal: AbortSignal.timeout(10_000) })
+  } catch (cause) {
+    throw new Error(
+      `The isolated inspector at port ${port} is unavailable for host PID ${expectedPid}`,
+      { cause }
+    )
+  }
   if (!response.ok) throw new Error(`The isolated inspector returned HTTP ${response.status}`)
   const targets = await response.json()
   if (targets.length !== 1) throw new Error('The isolated inspector must identify exactly one host')
