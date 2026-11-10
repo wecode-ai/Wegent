@@ -338,6 +338,21 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             )
             redis_client = service.redis_client
             assert redis_client is not None
+            deadline = time.monotonic() + 10
+            while True:
+                queue_empty = redis_client.llen(service.queue_key) == 0
+                pending_removed = (
+                    not redis_client.exists(
+                        PENDING_KEY_TEMPLATE.format(task_id=self.task_id)
+                    )
+                    and redis_client.zscore(PENDING_INDEX_KEY, str(self.task_id))
+                    is None
+                )
+                if queue_empty and pending_removed:
+                    break
+                self.assertLess(time.monotonic(), deadline, after)
+                time.sleep(0.1)
+
             self.assertEqual(redis_client.llen(service.queue_key), 0)
             self.assertEqual(
                 redis_client.exists(PENDING_KEY_TEMPLATE.format(task_id=self.task_id)),
@@ -351,8 +366,8 @@ class SubscriptionCallbackGateway(unittest.TestCase):
                 redis_client.delete(
                     service.queue_key,
                     PENDING_KEY_TEMPLATE.format(task_id=self.task_id),
-                    PENDING_INDEX_KEY,
                 )
+                redis_client.zrem(PENDING_INDEX_KEY, str(self.task_id))
             ExecutorDispatcher._executors = original_executors
             callback_client_module._callback_client = None
             if previous_api_domain is None:
