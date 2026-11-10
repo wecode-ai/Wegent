@@ -81,11 +81,12 @@ The model catalog omits invalid `codex_request_mode` values while preserving oth
 
 `modelConfig.custom_tool_conversion` controls the upstream wire format for custom tools independently of the request mode:
 
-| Value                | Behavior                                                                                                                                                                  |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `none` or omitted    | Keep native custom tools. When omitted, the tool mode supplies the default: function tool conversion resolves to `all`, and native custom tools resolve to `none`.          |
-| `all`                | Declare every custom tool, including `apply_patch`, as a function with a string `input` parameter.                                                                         |
-| `except_apply_patch` | Declare `exec` and other custom tools as functions while keeping native `apply_patch`. The DeepSeek provider preset uses this mode.                                       |
+| Value                | Behavior                                                                                                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `none`               | Keep native custom tools.                                                                                                                                           |
+| `all`                | Declare every custom tool, including `apply_patch`, as a function with a string `input` parameter.                                                                   |
+| `except_apply_patch` | Declare `exec` and other custom tools as functions while keeping native `apply_patch`. The DeepSeek provider preset uses this mode.                                 |
+| omitted              | Use the tool mode default: function tool conversion resolves to `all`, and native custom tools resolve to `none`.                                                   |
 
 The adapter never infers this setting from the request URL or proxy routing, so it also applies to custom endpoints. The `standard` request mode still forces `all`, and `passthrough` still forwards requests unchanged. The adapter restores Codex custom tool calls from function responses and translates tool history and results in later requests. Catalog reads omit invalid values; actual calls return HTTP 400.
 

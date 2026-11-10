@@ -79,11 +79,12 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 `modelConfig.custom_tool_conversion` 独立于请求模式，控制 custom 工具的上游线格式：
 
-| 值                   | 行为                                                                                                                                      |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `none` 或未配置      | 保持 custom 工具原生格式。未配置时按工具模式取默认值：Function tools 转换对应 `all`，原生 Custom tools 对应 `none`。                       |
-| `all`                | 将所有 custom 工具（包括 `apply_patch`）声明为带字符串 `input` 参数的 function。                                                          |
-| `except_apply_patch` | 将 `exec` 等 custom 工具声明为 function，同时保留原生 `apply_patch`。DeepSeek 供应商预设使用该模式。                                      |
+| 值                   | 行为                                                                                                                                |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `none`               | 保持 custom 工具原生格式。                                                                                                          |
+| `all`                | 将所有 custom 工具（包括 `apply_patch`）声明为带字符串 `input` 参数的 function。                                                    |
+| `except_apply_patch` | 将 `exec` 等 custom 工具声明为 function，同时保留原生 `apply_patch`。DeepSeek 供应商预设使用该模式。                                |
+| 未配置               | 采用工具模式默认值：Function tools 转换对应 `all`，原生 Custom tools 对应 `none`。                                                  |
 
 适配层不会根据请求 URL 或代理路由推断该配置，因此自定义端点也可使用。`standard` 请求模式仍强制 `all`，`passthrough` 仍原样转发请求。适配层会把函数响应还原为 Codex custom 调用，并转换后续请求中的调用历史与结果。模型目录会忽略不合法的值；实际调用返回 HTTP 400。
 
