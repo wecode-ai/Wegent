@@ -150,7 +150,14 @@ async fn run_tool_json(
         crate::python_runtime::isolate_python_environment(&mut command)
             .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
     }
-    let mut child = command.spawn().map_err(|_| {
+    let mut child = command.spawn().map_err(|error| {
+        crate::logging::log_executor_event(
+            "connection tool spawn failed",
+            &[
+                ("tool", tool.display().to_string()),
+                ("error", error.to_string()),
+            ],
+        );
         AppIpcError::new(
             "connection_cli_unavailable",
             "Plugin tool could not be started",
@@ -388,12 +395,23 @@ mod connection_tool_tests {
     #[tokio::test]
     async fn structured_stderr_errors_preserve_auth_identity_without_exposing_messages() {
         let temp = tempfile::tempdir().unwrap();
-        let script = temp.path().join("tool");
-        fs::write(&script, "#!/bin/sh\nprintf '%s' '{\"success\":false,\"error\":{\"code\":\"need_login\",\"message\":\"private-token\"}}' >&2\nexit 1\n").unwrap();
-        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
-        let error = run_tool_json(temp.path(), &script, &[], "exact-plugin", "exact-connector")
-            .await
-            .unwrap_err();
+        // Execute through the shell instead of a just-written temporary file.
+        // Parallel tests fork while the file is open, which can briefly make a
+        // fresh script unexecutable with ETXTBSY.
+        let args = [
+            "-c".to_owned(),
+            "printf '%s' '{\"success\":false,\"error\":{\"code\":\"need_login\",\"message\":\"private-token\"}}' >&2; exit 1"
+                .to_owned(),
+        ];
+        let error = run_tool_json(
+            temp.path(),
+            Path::new("/bin/sh"),
+            &args,
+            "exact-plugin",
+            "exact-connector",
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.code, "connector_auth_required");
         assert_eq!(
             error.message,
@@ -443,16 +461,19 @@ mod connection_tool_tests {
     #[tokio::test]
     async fn unknown_action_failure_is_executed_once_without_a_retry_hint() {
         let temp = tempfile::tempdir().unwrap();
-        let script = temp.path().join("tool");
-        fs::write(
-            &script,
-            "#!/bin/sh\nprintf x >> attempts\nprintf '%s' 'private-unknown-error' >&2\nexit 1\n",
+        let args = [
+            "-c".to_owned(),
+            "printf x >> attempts; printf '%s' 'private-unknown-error' >&2; exit 1".to_owned(),
+        ];
+        let error = run_tool_json(
+            temp.path(),
+            Path::new("/bin/sh"),
+            &args,
+            "plugin",
+            "account",
         )
-        .unwrap();
-        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
-        let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
-            .await
-            .unwrap_err();
+        .await
+        .unwrap_err();
         assert_eq!(error.code, "connection_cli_failed");
         assert_eq!(error.retry_after_ms, None);
         assert_eq!(fs::read(temp.path().join("attempts")).unwrap(), b"x");
