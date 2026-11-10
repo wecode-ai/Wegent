@@ -173,7 +173,7 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
       let stopDiagnostics
       try {
         await record('start-chromedriver')
-        const port = await reservePort()
+        const port = await reservePort(undefined, { dualStack: true })
         child = spawn(
           CHROMEDRIVER_BINARY,
           [
