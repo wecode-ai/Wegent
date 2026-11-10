@@ -119,6 +119,9 @@ def wrap_native_search(
         native_text = None
         for block in blocks:
             text = block.get("text") if isinstance(block, dict) else block
+            if not isinstance(text, str):
+                formatted.append(block)
+                continue
             try:
                 payload = json.loads(text)
             except (TypeError, ValueError):
