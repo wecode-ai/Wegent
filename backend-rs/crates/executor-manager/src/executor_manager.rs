@@ -46,6 +46,9 @@ const SANDBOX_MUTATION_TIMEOUT: Duration = Duration::from_secs(180);
 const DELETE_EXECUTOR_TIMEOUT: Duration = Duration::from_secs(30);
 /// `ArchiveService._call_executor_restore`'s httpx timeout.
 const EXECUTOR_RESTORE_TIMEOUT: Duration = Duration::from_secs(120);
+/// `RemoteWorkspaceService`'s `request_timeout` default (5.0s,
+/// `remote_workspace_service.py:44`) used by the executor address probe.
+const EXECUTOR_ADDRESS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `_ExecutorRuntimeClient.get_sandbox`'s result: the source's
 /// `(payload, error)` pair collapsed to the branches `delete_task` reads.
@@ -200,6 +203,45 @@ impl ExecutorManager {
         }
     }
 
+    /// `RemoteWorkspaceService._get_executor_payload`
+    /// (`remote_workspace_service.py:522-581`): GET
+    /// `{base}/executor-manager/executor/address?executor_name=...&executor_namespace=...`.
+    /// A transport failure, a non-200 response, an empty body, or a non-object
+    /// payload yields `None`; the callers treat that as "still alive".
+    pub async fn executor_address(
+        &self,
+        executor_name: &str,
+        executor_namespace: &str,
+    ) -> Option<serde_json::Value> {
+        let endpoint = self
+            .client
+            .endpoint_named(
+                format!("{}/executor-manager/executor/address", self.base),
+                format!("{}/executor-manager/executor/address", self.base),
+            )
+            .ok()?;
+        let response = endpoint
+            .get()
+            .query(&[
+                ("executor_name", executor_name),
+                ("executor_namespace", executor_namespace),
+            ])
+            .timeout(EXECUTOR_ADDRESS_TIMEOUT)
+            .send()
+            .await
+            .ok()?;
+        if response.status().as_u16() != 200 {
+            return None;
+        }
+        let body = response.bytes().await.ok()?;
+        if body.is_empty() {
+            return None;
+        }
+        serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .filter(serde_json::Value::is_object)
+    }
+
     /// `_ExecutorRuntimeClient.delete_sandbox`: `(deleted, error)`.
     pub async fn delete_sandbox(&self, task_id: &str) -> (bool, Option<String>) {
         let Ok(endpoint) = self.sandbox_endpoint(task_id) else {
@@ -288,6 +330,28 @@ impl ExecutorManager {
             body = %preview,
             "executor_manager rejected the task cancel"
         );
+    }
+
+    /// Deliver the cancellation to the running subtask's executor. The
+    /// executor callback owns the terminal state transition.
+    pub async fn cancel_subtask(
+        &self,
+        task_id: i64,
+        subtask_id: i64,
+        executor_name: Option<&str>,
+    ) -> Result<bool> {
+        let mut payload = serde_json::json!({"task_id": task_id, "subtask_id": subtask_id});
+        if let Some(name) = executor_name.filter(|name| !name.is_empty()) {
+            payload["executor_name"] = serde_json::json!(name);
+        }
+        let response = self
+            .client
+            .post(format!("{}/executor-manager/v1/cancel", self.base))?
+            .json(&payload)
+            .timeout(CANCEL_TASK_TIMEOUT)
+            .send()
+            .await?;
+        Ok(response.status().as_u16() == 200)
     }
 
     /// `executor_kinds_service.delete_executor_task_sync`: a synchronous POST

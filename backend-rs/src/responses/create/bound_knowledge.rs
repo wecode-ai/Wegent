@@ -26,15 +26,12 @@
 //! (`KnowledgeBaseNameResolver.resolve`), including its `404` / `403`
 //! rejections.
 //!
-//! Known gap: `resolve_kb_refs_batch` for the fallback branch's
-//! `knowledgeBaseRefs` (the id/name batch lookup and its legacy ref migration)
-//! is still not part of this flow; a task without persisted refs never reaches
-//! it.
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
 use serde_json::Value;
 
 use super::selected_knowledge::KnowledgeBaseScope;
 use crate::internal_callback::completion::task_column;
+use crate::sql_support::StatementArg;
 use crate::task_store_traits::TaskStore;
 
 /// The task-level bound knowledge bases of one request.
@@ -118,14 +115,65 @@ async fn bound_knowledge_base_ids<M: Mysql>(
     if refs.is_empty() {
         return Ok(Vec::new());
     }
-    // GAP: `resolve_kb_refs_batch` (the id/name batch lookup and its legacy
-    // ref migration) is not part of this flow yet.
-    tracing::warn!(
-        task_id,
-        refs = refs.len(),
-        "bound knowledge-base refs are not resolved in the create flow yet"
-    );
-    Ok(Vec::new())
+    resolve_task_bound_refs(mysql, &refs).await
+}
+
+async fn resolve_task_bound_refs<M: Mysql>(mysql: &M, refs: &[Value]) -> MysqlResult<Vec<i64>> {
+    #[derive(brz_mysql::FromMysqlRow)]
+    struct KnowledgeBase {
+        id: i64,
+        namespace: String,
+        json: Json<Value>,
+    }
+
+    let mut predicates = Vec::new();
+    let mut args = Vec::new();
+    let identities: Vec<_> = refs
+        .iter()
+        .filter_map(|reference| {
+            if let Some(id) = reference.get("id").filter(|id| !id.is_null()) {
+                let id = int_value(id)?;
+                predicates.push("id = ?");
+                args.push(StatementArg::Int(id));
+                return Some((Some(id), "", ""));
+            }
+            let name = reference["name"].as_str().filter(|name| !name.is_empty())?;
+            let namespace = reference["namespace"].as_str().unwrap_or("default");
+            predicates
+                .push("(namespace = ? AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.name')) = ?)");
+            args.push(StatementArg::Str(namespace.to_owned()));
+            args.push(StatementArg::Str(name.to_owned()));
+            Some((None, namespace, name))
+        })
+        .collect();
+    if predicates.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<KnowledgeBase> = mysql
+        .fetch_all(
+            format!(
+                "SELECT id, namespace, json \
+                 FROM kinds WHERE kind='KnowledgeBase' AND is_active=1 AND ({}) ORDER BY id",
+                predicates.join(" OR ")
+            ),
+            args,
+        )
+        .await?;
+    Ok(identities
+        .into_iter()
+        .filter_map(|(id, namespace, name)| {
+            rows.iter()
+                .rev()
+                .find(|row| match id {
+                    Some(id) => row.id == id,
+                    None => {
+                        row.namespace == namespace
+                            && row.json.0["spec"]["name"].as_str() == Some(name)
+                    }
+                })
+                .map(|row| row.id)
+        })
+        .collect())
 }
 
 /// `task_access_store.is_member`: the accessible-task read, the owner
@@ -253,7 +301,7 @@ fn task_json(task: &MysqlRow) -> Value {
 }
 
 /// `int(raw)` for a JSON number or a numeric string.
-fn int_value(value: &Value) -> Option<i64> {
+pub(super) fn int_value(value: &Value) -> Option<i64> {
     match value {
         Value::Number(number) => number.as_i64(),
         Value::String(text) => text.trim().parse().ok(),
@@ -263,7 +311,7 @@ fn int_value(value: &Value) -> Option<i64> {
 
 /// `raw.get(key)`: `None` when the key is absent or null, the parsed integer
 /// list otherwise (empty lists are preserved).
-fn int_list(value: Option<&Value>) -> Option<Vec<i64>> {
+pub(super) fn int_list(value: Option<&Value>) -> Option<Vec<i64>> {
     match value? {
         Value::Null => None,
         Value::Array(items) => Some(items.iter().filter_map(int_value).collect()),

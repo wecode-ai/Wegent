@@ -4715,7 +4715,7 @@ class LoopItemExecutionService:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.status == STATUS_RUNNING,
-                LoopItemExecution.started_at.isnot(None),
+                ~loop_datetime_is_unset(LoopItemExecution.started_at),
                 LoopItemExecution.started_at < threshold,
             )
             .all()

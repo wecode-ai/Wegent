@@ -18,8 +18,15 @@
 //! parameters are rendered with `repr()` (SQLAlchemy truncates a single value's
 //! repr past 300 characters, `sqlalchemy/sql/util.py::_repr_base.trunc`).
 
-/// The source deployment's SQLAlchemy emits the `e/21` version token; each
+/// The source deployment runs SQLAlchemy 2.0.x, whose `DBAPIError` sets
+/// `exc._version_token = "".join(__version__.split(".")[0:2])` = `"20"`; each
 /// exception class carries its own documentation code (`sqlalchemy/exc.py`).
+///
+/// The version segment is not a separate contract: `backend/pyproject.toml`
+/// pins `sqlalchemy>=2.0.25` (the recording environment resolved 2.0.44), so
+/// `/e/20/` is the only rendered form. No deployed SQLAlchemy 2.1 line exists,
+/// and recording `20261105033227` ACKs the IntegrityError text with `/e/20/`.
+/// The previous `/e/21/` default was an unverified guess.
 fn documentation_link(class: &str) -> String {
     let code = match class {
         "IntegrityError" => "gkpj",
@@ -30,7 +37,7 @@ fn documentation_link(class: &str) -> String {
         "NotSupportedError" => "tw8g",
         _ => "gkpj",
     };
-    format!("https://sqlalche.me/e/21/{code}")
+    format!("https://sqlalche.me/e/20/{code}")
 }
 
 /// One bound parameter, rendered with `repr()` by the parameters section.
@@ -190,14 +197,14 @@ mod tests {
         );
         assert_eq!(
             lines.next(),
-            Some("(Background on this error at: https://sqlalche.me/e/21/gkpj)")
+            Some("(Background on this error at: https://sqlalche.me/e/20/gkpj)")
         );
     }
 
     #[test]
     fn an_operational_error_uses_its_own_documentation_code() {
         // Oracle: `str(DBAPIError.instance(stmt, params, OperationalError(1205, msg)))`
-        // from SQLAlchemy 2.0.44 + pymysql 1.4.6, with the source's `e/21` token.
+        // from SQLAlchemy 2.0.44 + pymysql 1.4.6, with the `e/20` token.
         let text = sqlalchemy_dbapi_error(
             1205,
             "Lock wait timeout exceeded; try restarting transaction",
@@ -206,7 +213,7 @@ mod tests {
         );
         assert_eq!(
             text,
-            "(pymysql.err.OperationalError) (1205, 'Lock wait timeout exceeded; try restarting transaction')\n[SQL: INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at) VALUES (%(user_id)s, %(kind)s, %(name)s, %(namespace)s, %(json)s, %(is_active)s, now(), now())]\n[parameters: {'id': 1}]\n(Background on this error at: https://sqlalche.me/e/21/e3q8)"
+            "(pymysql.err.OperationalError) (1205, 'Lock wait timeout exceeded; try restarting transaction')\n[SQL: INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at) VALUES (%(user_id)s, %(kind)s, %(name)s, %(namespace)s, %(json)s, %(is_active)s, now(), now())]\n[parameters: {'id': 1}]\n(Background on this error at: https://sqlalche.me/e/20/e3q8)"
         );
     }
 

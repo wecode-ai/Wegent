@@ -26,6 +26,27 @@ struct Group {
 }
 type Id = (i64,);
 
+pub(crate) fn current_dispatch(assigned: &Value, context: &Value) -> bool {
+    let snapshot = &context["collaboration_group"];
+    let assignment_key = assigned["collaboration_group_assignment_key"]
+        .as_str()
+        .filter(|key| !key.is_empty());
+    let group_id = authority::integer(&snapshot["id"]).filter(|id| *id > 0);
+    let dispatch_key = context["assignment_key"].as_str().or_else(|| {
+        context["run_id"].as_str().map(|run_id| {
+            run_id
+                .strip_prefix("collaboration-group:")
+                .unwrap_or(run_id)
+        })
+    });
+    context["dispatch_kind"] == "collaboration_group"
+        && group_id.is_some()
+        && group_id == authority::integer(&assigned["collaboration_group"]["id"])
+        && group_id == authority::integer(&context["collaboration_group_id"])
+        && assignment_key.is_some()
+        && assignment_key == dispatch_key
+}
+
 async fn authorized_definition(
     state: &AppState,
     project_id: &str,
@@ -136,15 +157,6 @@ async fn validate_member_on(
     Ok(())
 }
 
-pub(crate) async fn authorize_snapshot(
-    state: &AppState,
-    project_id: &str,
-    snapshot: &Value,
-    actor: i64,
-) -> Result<()> {
-    authorize_snapshot_on(&mut &state.mysql, project_id, snapshot, actor).await
-}
-
 pub(crate) async fn authorize_snapshot_on(
     query: &mut impl PluginQuery,
     project_id: &str,
@@ -173,7 +185,7 @@ pub(crate) async fn authorize_snapshot_on(
     Ok(())
 }
 
-async fn resolve_agent(state: &AppState, project_id: &str, id: &str) -> Result<Node> {
+pub(crate) async fn resolve_agent(state: &AppState, project_id: &str, id: &str) -> Result<Node> {
     resolve_agent_on(&mut &state.mysql, project_id, id).await
 }
 
@@ -466,4 +478,29 @@ fn human_instructions(project: &Node, issue: &Node, group: &Value) -> Result<Str
                 .unwrap_or(&json!({}))
         )?
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_reply_requires_the_current_group_and_assignment() {
+        let mut issue = json!({
+            "collaboration_group": {"id": "42"},
+            "collaboration_group_assignment_key": "current",
+        });
+        let dispatch = json!({
+            "dispatch_kind": "collaboration_group",
+            "collaboration_group": {"id": 42},
+            "collaboration_group_id": "42",
+            "assignment_key": "current",
+        });
+        assert!(current_dispatch(&issue, &dispatch));
+        issue["collaboration_group_assignment_key"] = json!("reassigned");
+        assert!(!current_dispatch(&issue, &dispatch));
+        issue["collaboration_group_assignment_key"] = json!("current");
+        issue["collaboration_group"]["id"] = json!("43");
+        assert!(!current_dispatch(&issue, &dispatch));
+    }
 }

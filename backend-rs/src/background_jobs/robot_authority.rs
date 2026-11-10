@@ -4,14 +4,15 @@ use anyhow::{Context, Result, bail};
 use brz_mysql::FromMysqlRow;
 
 use super::super::project::{
-    agents, authority, groups, issues, routing,
-    store::{self, LIVE},
+    agents, authority, groups, issues,
+    store::{LIVE, Node},
 };
 use super::{
     model::{COLUMNS, Execution},
     state,
 };
 use crate::AppState;
+use crate::plugins_marketplace::query::PluginQuery;
 
 pub(super) async fn sweep(app: &AppState) -> Result<Vec<Execution>> {
     let mut pending: Vec<Execution> = app
@@ -38,15 +39,26 @@ pub(super) async fn sweep(app: &AppState) -> Result<Vec<Execution>> {
     Ok(pending)
 }
 
-pub(super) async fn authorized(app: &AppState, row: &Execution) -> Result<bool> {
-    match require(app, row).await {
+pub(crate) async fn authorized(app: &AppState, row: &Execution) -> Result<bool> {
+    authorized_on(app, &mut &app.mysql, row, None).await
+}
+
+/// Validate the current local Issue and revocable grants using the caller's
+/// writer transaction when preparing or claiming a row.
+pub(crate) async fn authorized_on(
+    app: &AppState,
+    query: &mut impl PluginQuery,
+    row: &Execution,
+    locked_issue: Option<&Node>,
+) -> Result<bool> {
+    match require_on(app, query, row, locked_issue).await {
         Ok(()) => Ok(true),
         Err(error) if infrastructure(&error) => Err(error),
         Err(_) => Ok(false),
     }
 }
 
-pub(super) fn infrastructure(error: &anyhow::Error) -> bool {
+pub(crate) fn infrastructure(error: &anyhow::Error) -> bool {
     error.chain().any(|error| {
         error.is::<brz_mysql::MysqlError>()
             || error.is::<brz_http::Error>()
@@ -56,22 +68,63 @@ pub(super) fn infrastructure(error: &anyhow::Error) -> bool {
     })
 }
 
-async fn require(app: &AppState, row: &Execution) -> Result<()> {
-    authority::require(app, &row.cloud_project_id, row.assigner_user_id).await?;
-    let project = store::get(&app.mysql, "project", &row.cloud_project_id)
-        .await?
-        .context("Project unavailable")?;
-    let issue = issues::load(app, &project, &row.loop_item_id, row.assigner_user_id).await?;
-    authority::require_issue(app, &project, &issue, row.assigner_user_id).await?;
-    crate::project_coordination::require_execution_binding(
-        app,
-        &row.cloud_project_id,
+async fn require_on(
+    app: &AppState,
+    query: &mut impl PluginQuery,
+    row: &Execution,
+    locked_issue: Option<&Node>,
+) -> Result<()> {
+    let access =
+        authority::execution_access_on(query, &row.cloud_project_id, row.assigner_user_id).await?;
+    let project = access.project;
+    // The unlocked preflight refreshes external-provider Issues before the
+    // writer locks their local carrier.
+    let fetched;
+    let issue = match locked_issue {
+        Some(issue) => issue,
+        None => {
+            fetched = issues::load_execution_issue(
+                app,
+                &project,
+                &row.loop_item_id,
+                row.assigner_user_id,
+            )
+            .await?;
+            &fetched
+        }
+    };
+    authority::require_issue_with_priority_on(
+        query,
+        &project,
+        issue,
         row.assigner_user_id,
-        &row.context(),
+        access.priority,
     )
     .await?;
-    group(app, row).await?;
-    agent_use(app, row, &row.agent_id, row.team_id).await?;
+    let context = row.context();
+    if context["comment_continue_task_id"].as_str().is_some()
+        && context["dispatch_kind"] == "collaboration_group"
+        && !groups::current_dispatch(&issue.metadata.0, &context)
+    {
+        bail!("Collaboration dispatch is no longer active");
+    }
+    crate::project_coordination::require_execution_binding_on(
+        query,
+        &row.cloud_project_id,
+        row.assigner_user_id,
+        &context,
+    )
+    .await?;
+    group_on(app, query, row, access.workspace_id).await?;
+    agent_use_on(
+        app,
+        query,
+        row,
+        access.workspace_id,
+        &row.agent_id,
+        row.team_id,
+    )
+    .await?;
     if row.execution_environment != "wegent" {
         let device = if row.runtime_device_id.is_empty() {
             &row.execution_device_id
@@ -79,17 +132,22 @@ async fn require(app: &AppState, row: &Execution) -> Result<()> {
             &row.runtime_device_id
         };
         if !device.is_empty() {
-            let device = crate::device_identity::resolve_owned_device_alias(
-                &app.mysql,
+            // `_device_authorized`: the environment consent first, then the
+            // reported Runtime identity.
+            let environments = authority::execution_environment_ids_on(
+                query,
+                &row.cloud_project_id,
+                &row.agent_id,
+            )
+            .await?;
+            let device = crate::device_identity::resolve_owned_device_alias_on(
+                query,
                 row.executor_owner_user_id,
                 device,
             )
             .await?
             .context("Device unavailable")?;
-            if !routing::allowed_devices(app, &row.cloud_project_id, &row.agent_id)
-                .await?
-                .contains(&device.id)
-            {
+            if !environments.contains(&device.id) {
                 bail!("Device authorization revoked")
             }
         }
@@ -97,23 +155,24 @@ async fn require(app: &AppState, row: &Execution) -> Result<()> {
     Ok(())
 }
 
-async fn agent_use(
+async fn agent_use_on(
     app: &AppState,
+    query: &mut impl PluginQuery,
     row: &Execution,
+    workspace_id: i64,
     agent_id: &str,
     mut team_id: i64,
 ) -> Result<()> {
     if !agent_id.is_empty() {
-        let agent = store::get(&app.mysql, "chat_agent", agent_id).await?;
+        let agent = authority::agent_execution_on(
+            query,
+            &row.cloud_project_id,
+            workspace_id,
+            agent_id,
+            row.assigner_user_id,
+        )
+        .await?;
         if let Some(agent) = agent {
-            let agent = authority::agent(
-                app,
-                &row.cloud_project_id,
-                &agent.id,
-                row.assigner_user_id,
-                true,
-            )
-            .await?;
             team_id = authority::integer(&agent.metadata.0["wegent_team_id"]).unwrap_or(0);
             if !row.assignment_pending() {
                 let selection = row.selection();
@@ -130,14 +189,13 @@ async fn agent_use(
                     struct Profile {
                         id: String,
                     }
-                    let profile:Option<Profile>=app.mysql.fetch_optional(format!("SELECT id FROM loop_items WHERE id=? AND resource_type='runtime_profile' AND status='active' AND {LIVE}"),(id,)).await?;
+                    let profile:Option<Profile>=query.fetch_optional(format!("SELECT id FROM loop_items WHERE id=? AND resource_type='runtime_profile' AND status='active' AND {LIVE}"),(id,)).await?;
                     if profile.as_ref().is_none_or(|profile| profile.id.is_empty()) {
                         bail!("Runtime profile unavailable")
                     }
                 }
-                if team_id != 0 {
-                    agents::compile(app, &agent, row.assigner_user_id).await?;
-                }
+                // The Source validates readiness only after the second
+                // `require_project_team`, on the Team that check authorized.
             }
         } else if let Ok(id) = agent_id.parse::<i64>() {
             team_id = id;
@@ -146,18 +204,29 @@ async fn agent_use(
         }
     }
     if team_id != 0 {
-        authority::team(app, &row.cloud_project_id, team_id).await?;
+        let team =
+            authority::team_execution_on(query, &row.cloud_project_id, workspace_id, team_id)
+                .await?;
+        if !row.assignment_pending() {
+            agents::readiness(app, &team, row.assigner_user_id).await?;
+        }
     }
     Ok(())
 }
 
-async fn group(app: &AppState, row: &Execution) -> Result<()> {
+async fn group_on(
+    app: &AppState,
+    query: &mut impl PluginQuery,
+    row: &Execution,
+    workspace: i64,
+) -> Result<()> {
     let context = row.context();
     let snapshot = &context["collaboration_group"];
     if !snapshot.is_object() {
         return Ok(());
     }
-    groups::authorize_snapshot(app, &row.cloud_project_id, snapshot, row.assigner_user_id).await?;
+    groups::authorize_snapshot_on(query, &row.cloud_project_id, snapshot, row.assigner_user_id)
+        .await?;
     let mut members = vec![&snapshot["leader"]];
     if let Some(others) = snapshot["members"].as_array() {
         members.extend(others);
@@ -176,7 +245,7 @@ async fn group(app: &AppState, row: &Execution) -> Result<()> {
                 .map(str::to_owned)
                 .or_else(|| member["id"].as_i64().map(|id| id.to_string()))
                 .context("Invalid group Agent identity")?;
-            agent_use(app, row, &id, 0).await?;
+            agent_use_on(app, query, row, workspace, &id, 0).await?;
         }
     }
     Ok(())

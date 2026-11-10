@@ -15,15 +15,23 @@ use crate::http_compat::FastApiError;
 
 const LEASE_SECONDS: u64 = 30;
 const ACQUIRE_WAIT: Duration = Duration::from_secs(3);
+/// redis-py `Lock.acquire`'s default `sleep` (`redis/lock.py`): a blocked
+/// acquisition retries one `SET ... NX PX` every 100ms and gives up when the
+/// next attempt would pass `blocking_timeout`. The recorded source lease
+/// polls at this cadence, so matching it keeps the replayed attempt count and
+/// phase identical to the recorded retry loop.
+const ACQUIRE_RETRY: Duration = Duration::from_millis(100);
 // A bounded operation avoids keeping a renewal task alive after cancellation.
 // Business-record revision checks reject conflicting suspended writers.
 const OPERATION_BUDGET: Duration = Duration::from_secs(20);
 /// redis-py `Lock.release`'s immutable Lua bytes, verbatim from
 /// `redis/lock.py` (`LUA_RELEASE_SCRIPT`); the recorded witness runs
 /// `EVALSHA c3f8721cbb97f72bc19e972846bd7aaf91901658 1 <key> <token>`.
-const RELEASE_SCRIPT: &str = "\n        local token = redis.call('get', KEYS[1])\n        if not token or token ~= ARGV[1] then\n            return 0\n        end\n        redis.call('del', KEYS[1])\n        return 1\n    ";
+/// Shared with the DingTalk writer lease so both releases send the same
+/// canonical bytes and digest.
+pub(crate) const RELEASE_SCRIPT: &str = "\n        local token = redis.call('get', KEYS[1])\n        if not token or token ~= ARGV[1] then\n            return 0\n        end\n        redis.call('del', KEYS[1])\n        return 1\n    ";
 /// `sha1(RELEASE_SCRIPT)`.
-const RELEASE_SHA: &str = "c3f8721cbb97f72bc19e972846bd7aaf91901658";
+pub(crate) const RELEASE_SHA: &str = "c3f8721cbb97f72bc19e972846bd7aaf91901658";
 const POLICY_QUERY: &str = "SELECT id, json, is_active FROM kinds WHERE user_id = ? AND kind = \
     'ConnectorAuthPolicy' AND namespace = 'plugin-auth' AND name = \
     'account' LIMIT 2";
@@ -80,9 +88,6 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         let key = format!("wegent:plugin-write:{user_id}");
         let acquire_deadline = Instant::now() + wait;
         loop {
-            if Instant::now() >= acquire_deadline {
-                return Err(coordination_error("plugin_write_busy"));
-            }
             let result = tokio::time::timeout_at(
                 acquire_deadline,
                 redis.set_with(
@@ -108,10 +113,13 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                 Ok(Err(_)) => return Err(coordination_error("plugin_write_unavailable")),
                 Err(_) => return Err(coordination_error("plugin_write_busy")),
             }
-            tokio::time::sleep_until(
-                (Instant::now() + Duration::from_millis(50)).min(acquire_deadline),
-            )
-            .await;
+            // `Lock.acquire` computes `next_try_at` after each failed attempt
+            // and stops once that attempt would pass `stop_trying_at`.
+            let next_try_at = Instant::now() + ACQUIRE_RETRY;
+            if next_try_at > acquire_deadline {
+                return Err(coordination_error("plugin_write_busy"));
+            }
+            tokio::time::sleep_until(next_try_at).await;
         }
     }
 
@@ -406,17 +414,20 @@ pub(crate) fn coordination_error(code: &str) -> MysqlError {
 /// plugin sync and falls back to Skills/MCP-only desired state; every other
 /// failure aborts the best-effort follow-up.
 pub(crate) fn is_plugin_write_error(error: &MysqlError) -> bool {
-    matches!(
-        error,
-        MysqlError::InvalidQuery { reason }
-            if matches!(
-                reason.as_str(),
-                "plugin_write_busy"
-                    | "plugin_write_unavailable"
-                    | "plugin_write_lease_lost"
-                    | "plugin_write_conflict"
-            )
-    )
+    plugin_write_error_code(error).is_some()
+}
+
+pub(crate) fn plugin_write_error_code(error: &MysqlError) -> Option<&'static str> {
+    let MysqlError::InvalidQuery { reason } = error else {
+        return None;
+    };
+    match reason.as_str() {
+        "plugin_write_busy" => Some("plugin_write_busy"),
+        "plugin_write_unavailable" => Some("plugin_write_unavailable"),
+        "plugin_write_lease_lost" => Some("plugin_write_lease_lost"),
+        "plugin_write_conflict" => Some("plugin_write_conflict"),
+        _ => None,
+    }
 }
 
 pub(super) fn http_error(error: MysqlError) -> FastApiError {
