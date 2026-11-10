@@ -92,27 +92,46 @@ function render(overrides: Partial<CollaborationProjectViewShellProps> = {}) {
 }
 
 describe('grouped project shell', () => {
-  it('retains available extensions when their flat ordering anchor is unavailable', () => {
-    const options = buildCollaborationProjectViewOptions({
-      project: props.project,
-      labels: props.labels,
-      testIds: props.testIds,
-      enabledStandardViews: ['board', 'files', 'manage'],
-      extensions,
-      viewMetadata: groupedProjectViewMetadata,
-    })
-    expect(options.map((option) => option.id)).toContain('milestones')
-    render({
-      view: 'milestones',
-      enabledStandardViews: ['board', 'files', 'manage'],
-    })
-    expect(
-      container
-        .querySelector('[data-testid="milestones"]')
-        ?.getAttribute('aria-selected'),
-    ).toBe('true')
-    expect(container.textContent).toContain('milestones-content')
-  })
+  it.each(['grouped', 'partial', 'ungrouped'] as const)(
+    'retains available extensions without their ordering anchor (%s)',
+    (metadataKind) => {
+      const viewMetadata =
+        metadataKind === 'grouped'
+          ? groupedProjectViewMetadata
+          : metadataKind === 'partial'
+            ? { board: groupedProjectViewMetadata.board }
+            : undefined
+      const options = buildCollaborationProjectViewOptions({
+        project: props.project,
+        labels: props.labels,
+        testIds: props.testIds,
+        enabledStandardViews: ['board', 'files', 'manage'],
+        extensions,
+        viewMetadata,
+      })
+      expect(options.map((option) => option.id)).toEqual([
+        'board',
+        'calendar',
+        'gantt',
+        'files',
+        'manage',
+        'milestones',
+      ])
+      render({
+        view: 'milestones',
+        enabledStandardViews: ['board', 'files', 'manage'],
+        viewMetadata,
+      })
+      expect(
+        container
+          .querySelector('[data-testid="milestones"]')
+          ?.getAttribute(
+            metadataKind === 'grouped' ? 'aria-selected' : 'aria-current',
+          ),
+      ).toBe(metadataKind === 'grouped' ? 'true' : 'page')
+      expect(container.textContent).toContain('milestones-content')
+    },
+  )
   it('derives groups from metadata and keeps navigation outside the fixed-height header', () => {
     render({ view: 'calendar' })
     expect(container.textContent).toContain('calendar-content')
