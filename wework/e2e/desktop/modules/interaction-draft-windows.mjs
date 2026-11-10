@@ -8,7 +8,7 @@ const PENDING_TAB = '[data-testid="workspace-tab-select-pending-interactions"]'
 const PENDING_PAGE = '[data-testid="runtime-interactions-page"]'
 const NOTICE = '[data-testid="runtime-interaction-notice"]'
 const NOTICE_REPLY = '[data-testid="interaction-notice-reply"]'
-const NOTICE_INPUT = '[data-testid="interaction-reply-input"]'
+const NOTICE_INPUT = `${NOTICE} [data-testid="interaction-reply-input"]`
 const SECONDARY_DRAFT_ID = 'e2e:interaction-draft-window:secondary'
 const MAIN_DRAFT_TEXT = 'MAIN_WINDOW_DRAFT'
 const SECONDARY_DRAFT_TEXT = 'SECOND_WINDOW_DRAFT'

@@ -128,6 +128,9 @@ export function createDesktopScenario({
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       try {
         await control.command('waitFor', CARD, { text: FIRST, visible: true })
+        await control.command('waitFor', '[data-testid="runtime-interaction-notice"]', {
+          visible: true,
+        })
         const draftWindow = await openInteractionDraftWindow({
           control,
           electronUserDataDirectory,
