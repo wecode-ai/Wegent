@@ -34,8 +34,8 @@ use serde_json::{Map, Value, json};
 use super::mcp_app_ownership::{self, AppInstance, Ownership};
 use crate::device_commands::{
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
-    MAX_OUTPUT_BYTES, build_local_device_command_argv, executor_payload_carries_key, python_str,
-    python_truthy, resolve_local_device_command,
+    MAX_OUTPUT_BYTES, build_local_device_command_argv, python_str, python_truthy,
+    resolve_local_device_command,
 };
 use crate::http_compat::FastApiError;
 use crate::runtime_transcript_search::request::SearchRequest;
@@ -684,7 +684,7 @@ async fn execute_device_command(
         "max_output_bytes".to_string(),
         Value::from(max_output_bytes),
     );
-    if definition.native_git || executor_payload_carries_key(&command_key) {
+    if definition.native_git {
         payload.insert("command_key".to_string(), Value::String(command_key));
     }
 
