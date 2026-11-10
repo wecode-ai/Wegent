@@ -707,6 +707,8 @@ export async function createDesktopScenario(options) {
         checkpoint === 'app-rollback' ||
         checkpoint === 'app-rollback-recovery'
       ) {
+        if (checkpoint === 'app-rollback-recovery')
+          await goalContinuity.restartPaused(restartDesktopApp)
         await control.command('setLocalStorageItem', 'body', {
           value: JSON.stringify({ key: STORAGE_KEY, value: 'after-update' }),
         })

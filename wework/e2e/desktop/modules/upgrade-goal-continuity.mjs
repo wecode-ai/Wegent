@@ -22,6 +22,7 @@ export function createUpgradeGoalContinuity(pair, control, timeoutMs) {
   let armedAt = 0
   let holding = false
   let seedAnswer
+  let pausedStartupPreserved = false
   const rpc = (method, params) => requestExecutor(control(), method, params, timeoutMs)
   const waitInference = minimum =>
     waitForValue(
@@ -112,6 +113,19 @@ export function createUpgradeGoalContinuity(pair, control, timeoutMs) {
       held.clear()
       await waitForCompletedRuntimeTaskThread(control(), address.taskId, timeoutMs)
     },
+    async restartPaused(restart) {
+      if (!enabled) return
+      const before = requests
+      await restart()
+      await control().command('waitFor', '[data-testid="app-shell"]', { timeoutMs })
+      const paused = (await rpc('runtime.tasks.goal.get', { address })).goal
+      assert.equal(paused.status, 'paused', 'Ordinary startup must not activate a paused Goal')
+      for (const key of ['id', 'threadId', 'objective', 'tokenBudget', 'createdAt'])
+        assert.deepEqual(paused[key], original[key], `Paused startup lost Goal ${key}`)
+      assert.equal(requests, before, 'Paused startup unexpectedly resumed Goal inference')
+      assert.ok(paused.tokensUsed >= original.tokensUsed, 'Paused startup reset Goal accounting')
+      pausedStartupPreserved = true
+    },
     beforeRestart() {
       if (enabled)
         assert.equal(requests, armedAt, 'Target preparation must not recover the source Goal')
@@ -126,7 +140,12 @@ export function createUpgradeGoalContinuity(pair, control, timeoutMs) {
     },
     evidence() {
       return enabled
-        ? { originalGoalPreserved: true, nonzeroAccounting: true, automaticallyResumed: phases }
+        ? {
+            originalGoalPreserved: true,
+            nonzeroAccounting: true,
+            automaticallyResumed: phases,
+            pausedStartupPreserved,
+          }
         : undefined
     },
   }
