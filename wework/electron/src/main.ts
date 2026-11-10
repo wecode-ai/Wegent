@@ -1769,6 +1769,7 @@ const presentStartupWindow = createStartupReadyHandler(async (source: string) =>
       if (splashWindow && !splashWindow.isDestroyed()) splashWindow.destroy()
     })
   }
+  if (!canPresent()) return
   logStartupStep('startup-splash-close', 'completed')
   mainWindowState?.start(target)
   if (!keepE2EWindowInBackground) {
