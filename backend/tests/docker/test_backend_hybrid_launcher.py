@@ -6,6 +6,7 @@
 
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -13,14 +14,14 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import pytest
 
 LAUNCHER = (
     Path(__file__).resolve().parents[3] / "backend-rs/scripts/start-hybrid-backend.sh"
 )
-STUB = """import json, os, signal, socket, sys
+STUB = """import json, os, signal, socket, sys, time
 from pathlib import Path
 role = 'python' if Path(__file__).name.startswith('python') else 'rust'
 args = sys.argv[1:]
@@ -34,6 +35,10 @@ Path(os.environ['FIXTURE_RECORDS'], role + '.json').write_text(json.dumps({
     'db_owner': os.environ.get('DB_INITIALIZATION_OWNER'),
 }))
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+signal.signal(signal.SIGUSR1, lambda *_: sys.exit(int(os.environ['FIXTURE_EXIT_CODE'])))
+if os.environ.get('FIXTURE_HOLD_ROLE') == role:
+    while not Path(os.environ['FIXTURE_RECORDS'], role + '.start').exists():
+        time.sleep(0.01)
 with socket.socket() as server:
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(('127.0.0.1', port))
@@ -41,6 +46,21 @@ with socket.socket() as server:
     while True:
         connection, _ = server.accept()
         connection.close()
+"""
+
+POLL_STUB = """import os, signal, sys, time
+from pathlib import Path
+state_file = Path(os.environ['WEGENT_HYBRID_STATE_FILE'])
+state = dict(line.split('=', 1) for line in state_file.read_text().splitlines())
+role = os.environ['FIXTURE_HOLD_ROLE']
+if sys.argv[1:] == ['3'] and state.get(role):
+    records = Path(os.environ['FIXTURE_RECORDS'])
+    records.joinpath(role + '.polling').touch()
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    while not records.joinpath(role + '.release').exists():
+        time.sleep(0.01)
+else:
+    os.execv(os.environ['FIXTURE_SLEEP'], ['sleep', *sys.argv[1:]])
 """
 
 
@@ -112,15 +132,18 @@ def _wait_ready(process: subprocess.Popen, env: dict[str, str]) -> dict[str, str
 
 
 @contextmanager
-def _launch(tmp_path: Path, *, production: bool = True) -> Iterator[tuple]:
-    env = _environment(tmp_path, production=production)
+def _running_launcher(
+    tmp_path: Path, env: dict[str, str]
+) -> Iterator[subprocess.Popen]:
     with (tmp_path / "launcher.log").open("w") as log:
         process = subprocess.Popen(
             ["bash", str(LAUNCHER)], env=env, stdout=log, stderr=log
         )
         try:
-            yield process, env, _wait_ready(process, env)
+            yield process
         finally:
+            for role in ["python", "rust"]:
+                (tmp_path / f"{role}.release").touch()
             if process.poll() is None:
                 process.terminate()
                 try:
@@ -128,6 +151,60 @@ def _launch(tmp_path: Path, *, production: bool = True) -> Iterator[tuple]:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+
+
+@contextmanager
+def _launch(tmp_path: Path, *, production: bool = True) -> Iterator[tuple]:
+    env = _environment(tmp_path, production=production)
+    with _running_launcher(tmp_path, env) as process:
+        yield process, env, _wait_ready(process, env)
+
+
+def _wait_fixture(process: subprocess.Popen, predicate: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        assert process.poll() is None, "launcher exited before fixture checkpoint"
+        if predicate():
+            return
+        time.sleep(0.01)
+    pytest.fail("launcher did not reach fixture checkpoint")
+
+
+def _port_ready(env: dict[str, str], role: str) -> bool:
+    port_key = (
+        "WEGENT_RS_LISTEN_PORT" if role == "rust" else "WEGENT_PYTHON_UPSTREAM_PORT"
+    )
+    try:
+        with socket.create_connection(("127.0.0.1", int(env[port_key])), timeout=0.1):
+            return True
+    except OSError:
+        return False
+
+
+def _process_stopped(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return False
+    except ProcessLookupError:
+        return True
+
+
+def _hold_poll(tmp_path: Path, role: str) -> dict[str, str]:
+    env = _environment(tmp_path, production=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    sleep_stub = bin_dir / "sleep"
+    sleep_stub.write_text(f"#!{sys.executable}\n{POLL_STUB}")
+    sleep_stub.chmod(0o755)
+    real_sleep = shutil.which("sleep")
+    assert real_sleep is not None
+    env.update(
+        FIXTURE_HOLD_ROLE=role,
+        FIXTURE_SLEEP=real_sleep,
+        FIXTURE_EXIT_CODE="42",
+        PATH=f"{bin_dir}:{env['PATH']}",
+    )
+    return env
 
 
 def _assert_stopped(state: dict[str, str], env: dict[str, str]) -> None:
@@ -179,7 +256,48 @@ def test_unexpected_child_exit_stops_the_other_process(
     with _launch(tmp_path) as (process, env, state):
         os.kill(int(state[role]), signal.SIGKILL)
         assert process.wait(timeout=10) != 0
+        assert process.returncode == 137
         _assert_stopped(state, env)
+
+
+@pytest.mark.parametrize("role", ["python", "rust"])
+@pytest.mark.parametrize("listening", [False, True])
+@pytest.mark.parametrize("exit_code", [0, 42, 137])
+def test_startup_exit_preserves_child_failure_and_cleans_up(
+    tmp_path: Path, role: str, listening: bool, exit_code: int
+) -> None:
+    """Observe listener readiness while the supervisor is still in its startup poll."""
+    env = _hold_poll(tmp_path, role)
+    env["FIXTURE_EXIT_CODE"] = str(exit_code)
+    with _running_launcher(tmp_path, env) as process:
+        _wait_fixture(
+            process,
+            lambda: (tmp_path / f"{role}.polling").exists()
+            and (tmp_path / f"{role}.json").exists(),
+        )
+        state = dict(
+            line.split("=", 1)
+            for line in Path(env["WEGENT_HYBRID_STATE_FILE"]).read_text().splitlines()
+        )
+        assert state[role]
+        assert not _port_ready(env, role)
+        if listening:
+            (tmp_path / f"{role}.start").touch()
+            _wait_fixture(process, lambda: _port_ready(env, role))
+        child_signal = signal.SIGKILL if exit_code == 137 else signal.SIGUSR1
+        os.kill(int(state[role]), child_signal)
+        _wait_fixture(process, lambda: _process_stopped(int(state[role])))
+        (tmp_path / f"{role}.release").touch()
+        assert process.wait(timeout=10) == (exit_code or 1)
+        log = (tmp_path / "launcher.log").read_text()
+        assert "exited before becoming ready" in log
+        for child_role in ["rust", "python"]:
+            if state[child_role]:
+                with pytest.raises(ProcessLookupError):
+                    os.kill(int(state[child_role]), 0)
+            else:
+                assert not (tmp_path / f"{child_role}.json").exists()
+        assert not Path(env["WEGENT_HYBRID_STATE_FILE"]).exists()
 
 
 def test_invalid_reload_mode_fails_before_starting_children(tmp_path: Path) -> None:

@@ -215,10 +215,8 @@ impl LocalBackendConnectionController {
                 .as_ref()
                 .expect("default capability handler")
                 .clone();
-            state.plugin_sync = Some(handler.clone());
-            let runner = runner
-                .with_shared_capability_sync_handler(handler)
-                .with_device_route_id_slot(Arc::clone(&self.device_route_id));
+            state.plugin_sync = Some(handler);
+            let runner = runner.with_device_route_id_slot(Arc::clone(&self.device_route_id));
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {

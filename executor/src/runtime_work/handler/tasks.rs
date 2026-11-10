@@ -1311,7 +1311,13 @@ impl RuntimeWorkRpcHandler {
         let retrying_preparation = request
             .extra
             .contains_key(project_preparation::DEFERRED_ENVIRONMENT);
-        let recovered_link = if retrying_preparation {
+        let awaiting_identity_start = queue_if_busy
+            && was_busy
+            && existing_link.as_ref().is_some_and(|link| {
+                super::super::conversation_sessions::is_identity_conversation(link)
+                    && runtime_session_id_from_link(link).is_none()
+            });
+        let recovered_link = if retrying_preparation || awaiting_identity_start {
             None
         } else {
             self.recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
@@ -1332,7 +1338,7 @@ impl RuntimeWorkRpcHandler {
                     .as_ref()
                     .and_then(runtime_session_id_from_link)
             });
-        if thread_id.is_none() && !retrying_preparation {
+        if thread_id.is_none() && !retrying_preparation && !awaiting_identity_start {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",

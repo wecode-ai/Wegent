@@ -95,7 +95,9 @@ export function resolveProviderModel(
     apiKeyConfigured: Boolean(provider.api_key),
     toolProfile,
     codexToolCompatibility:
-      apiFormat === 'openai-responses' ? (model.codex_tool_compatibility ?? 'native') : 'standard',
+      apiFormat === 'openai-responses'
+        ? (model.codex_tool_compatibility ?? 'standard')
+        : 'standard',
     contextWindow: model.context_window,
     maxOutputTokens: model.max_output_tokens,
     webSearchMode: model.web_search_mode ?? 'disabled',

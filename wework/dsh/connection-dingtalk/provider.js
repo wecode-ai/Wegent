@@ -122,37 +122,21 @@ export function createProvider() {
       }
     },
     async collect(ctx, { source, checkpoint }) {
-      try {
-        const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
-        const start = checkpoint?.after ?? required(source, 'enabledAfter')
-        const until = checkpoint?.until ?? new Date().toISOString()
-        const cursor = checkpoint?.cursor ?? '0'
-        const {
-          events,
-          hasMore,
-          nextCursor: next,
-        } = await readMessagePage(ctx, source, { start, end: until, limit: 100, cursor }, selfId)
-        return {
-          events,
-          nextCheckpoint: hasMore
-            ? { after: start, until, cursor: next }
-            : { after: until, cursor: '0' },
-          hasMore,
-        }
-      } catch (error) {
-        if (
-          [
-            'connection_cli_timeout',
-            'ECONNRESET',
-            'ECONNREFUSED',
-            'ETIMEDOUT',
-            'EHOSTUNREACH',
-            'ENETUNREACH',
-            'EAI_AGAIN',
-          ].includes(error.code)
-        )
-          error.retryAfterMs ??= 30000
-        throw error
+      const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
+      const start = checkpoint?.after ?? required(source, 'enabledAfter')
+      const until = checkpoint?.until ?? new Date().toISOString()
+      const cursor = checkpoint?.cursor ?? '0'
+      const {
+        events,
+        hasMore,
+        nextCursor: next,
+      } = await readMessagePage(ctx, source, { start, end: until, limit: 100, cursor }, selfId)
+      return {
+        events,
+        nextCheckpoint: hasMore
+          ? { after: start, until, cursor: next }
+          : { after: until, cursor: '0' },
+        hasMore,
       }
     },
   }
