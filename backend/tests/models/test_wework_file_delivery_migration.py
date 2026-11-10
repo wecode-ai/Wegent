@@ -69,8 +69,7 @@ def storage() -> Iterator[tuple[Connection, sa.Table]]:
 def test_withdrawn_revision_is_absent_from_the_version_chain(
     scripts: ScriptDirectory,
 ) -> None:
-    assert scripts.get_heads() == ["a9c1e3f5b702"]
-    assert scripts.get_revision("a9c1e3f5b702").down_revision == PREDECESSOR
+    assert scripts.get_heads() == [PREDECESSOR]
     assert not list(Path(scripts.versions).glob(f"*{REVISION}*"))
     with pytest.raises(CommandError, match=REVISION):
         scripts.get_revision(REVISION)
@@ -108,7 +107,9 @@ def _advance(
         connection, opts={"version_table": VERSION_TABLE, "fn": migrations}
     )
     context.run_migrations()
-    assert context.get_current_revision() == target
+    assert context.get_current_revision() == (
+        PREDECESSOR if target == "head" else target
+    )
 
 
 @pytest.mark.parametrize("starting_revision", [PREDECESSOR, REVISION])
@@ -144,12 +145,10 @@ def test_upgrade_and_rollback_preserve_prompts_and_reject_withdrawn_version(
 
     sa.event.listen(connection, "before_cursor_execute", capture)
     try:
-        # Pin this regression to the withdrawn revision's historical boundary.
-        # Later plugin DDL is covered by its MySQL migration integration tests.
         for target, direction in [
-            (PREDECESSOR, "upgrade"),
+            ("head", "upgrade"),
             (PREDECESSOR, "downgrade"),
-            (PREDECESSOR, "upgrade"),
+            ("head", "upgrade"),
         ]:
 
             if starting_revision == REVISION:

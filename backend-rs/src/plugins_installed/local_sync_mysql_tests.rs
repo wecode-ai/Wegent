@@ -149,7 +149,9 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         ("target-operation", target.id, target.json.clone()),
         ("unrelated-operation", unrelated.id, unrelated.json.clone()),
     ] {
-        mysql.execute("INSERT INTO plugin_local_sync_operations (user_id,instance_id,operation_id,action,installed_id,document,created_at,updated_at) VALUES (81001,'native',?,'install',?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))",(operation,id,json!({"state":"intent_saved","plugin":doc}))).await?;
+        let name = state::operation_name("native", operation);
+        let saved = json!({"spec":{"instanceId":"native","operationId":operation,"requestHash":"","action":"install","installedId":id,"document":{"state":"intent_saved","plugin":doc}}});
+        mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) VALUES (81001,'PluginSyncState','plugin-local-sync',?,?,1,NOW(),NOW())",(name,saved)).await?;
     }
     let accepted = mysql
         .with_transaction(async |tx| {
@@ -177,8 +179,18 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             .as_u16(),
         200
     );
-    let ended:OperationRow=mysql.fetch_one("SELECT id,document FROM plugin_local_sync_operations WHERE user_id=81001 AND instance_id='native' AND operation_id='target-operation'",()).await?;
-    let waiting:OperationRow=mysql.fetch_one("SELECT id,document FROM plugin_local_sync_operations WHERE user_id=81001 AND instance_id='native' AND operation_id='unrelated-operation'",()).await?;
+    let (ended, waiting) = mysql
+        .with_transaction(async |tx| {
+            Ok((
+                state::load(tx, 81001, "native", "target-operation")
+                    .await?
+                    .unwrap(),
+                state::load(tx, 81001, "native", "unrelated-operation")
+                    .await?
+                    .unwrap(),
+            ))
+        })
+        .await?;
     assert_eq!(ended.document["state"], "reconciled");
     assert_eq!(
         waiting.document["state"], "intent_saved",

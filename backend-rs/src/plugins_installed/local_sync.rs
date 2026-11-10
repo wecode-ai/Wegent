@@ -1,4 +1,5 @@
 //! Account-scoped HTTP snapshots and receipts. No Device lookup or Socket RPC.
+mod state;
 use super::{
     desired_capabilities::{build_local_plugins, capability_snapshot, restrict_local_plugin},
     write_coordination::{PluginWriteLease, coordination_error, http_error},
@@ -39,11 +40,6 @@ struct ReceiptRequest {
     result: Value,
 }
 
-#[derive(FromMysqlRow)]
-struct OperationRow {
-    id: i64,
-    document: Value,
-}
 #[derive(FromMysqlRow)]
 struct StateRow {
     id: i64,
@@ -134,9 +130,8 @@ async fn local_sync(
                 })?;
                 let desired_revision = hash(&capability_snapshot(&payload));
                 let operation = read_operation(tx, i64::from(user.id), &body.instance_id, body.operation_id.as_deref()).await?;
-                if !enabled() {
-                    let accepted: Option<OperationRow> = tx.fetch_optional("SELECT id, document FROM plugin_local_sync_operations WHERE user_id = ? AND instance_id = ? LIMIT 1", (i64::from(user.id), body.instance_id.as_str())).await?;
-                    if accepted.is_none() { return Err(coordination_error("LOCAL_SYNC_DISABLED")); }
+                if !enabled() && !state::has_instance(tx, i64::from(user.id), &body.instance_id).await? {
+                    return Err(coordination_error("LOCAL_SYNC_DISABLED"));
                 }
                 if body.known_revision.as_deref() == Some(&desired_revision) && body.actual_revision.as_deref() == Some(&desired_revision) && !body.recovery_pending && !body.targeted {
                     return Ok(json!({"enabled":enabled(),"protocolVersion":1,"revision":desired_revision,"unchanged":true,"operation":operation}));
@@ -155,7 +150,7 @@ async fn local_sync(
                 payload["plugin_sync"] = json!({"version":2,"generation":generation,"complete":!body.targeted});
                 let snapshot_id = new_snapshot_id()?;
                 let document = json!({"state":"issued","revision":desired_revision,"generation":generation,"payload":payload,"operationIds":body.operation_ids,"operationState":operation["state"],"expiresAt":chrono::Utc::now().timestamp()+86400});
-                tx.execute("INSERT INTO plugin_local_sync_operations (user_id, instance_id, operation_id, request_hash, action, installed_id, document, created_at, updated_at) VALUES (?, ?, ?, '', 'snapshot', 0, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))", (i64::from(user.id), body.instance_id.as_str(), snapshot_id.as_str(), document)).await?;
+                state::save_snapshot(tx, i64::from(user.id), &body.instance_id, &snapshot_id, document).await?;
                 lease.commit_revision(tx, revision).await?;
                 Ok(json!({"enabled":enabled(),"protocolVersion":1,"revision":desired_revision,"unchanged":false,"snapshotId":snapshot_id,"generation":generation,"payload":payload,"operation":operation}))
             })).await.unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))
@@ -174,13 +169,9 @@ async fn read_operation(
     let Some(operation) = operation else {
         return Ok(Value::Null);
     };
-    #[derive(FromMysqlRow)]
-    struct Intent {
-        document: Value,
-        installed_id: i64,
-        action: String,
-    }
-    let row: Option<Intent> = tx.fetch_optional("SELECT document, installed_id, CAST(action AS CHAR) AS action FROM plugin_local_sync_operations WHERE user_id = ? AND instance_id = ? AND operation_id = ? AND action != 'snapshot'", (user, instance, operation)).await?;
+    let row = state::load(tx, user, instance, operation)
+        .await?
+        .filter(|row| row.action != "snapshot");
     let Some(row) = row else {
         return Ok(json!({"operationId":operation,"state":"unknown"}));
     };
@@ -226,7 +217,7 @@ async fn next_generation(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResu
             .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
         document["spec"]["generation"] = json!(generation);
         tx.execute(
-            "UPDATE kinds SET json = ?, updated_at = NOW() WHERE id = ? AND user_id = ?",
+            "UPDATE kinds SET json = ?, updated_at = NOW() WHERE id = ? AND user_id = ? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",
             (document, row.id, user),
         )
         .await?;
@@ -256,36 +247,98 @@ async fn local_sync_receipts(
         let lease = PluginWriteLease::acquire(redis.as_ref(), i64::from(user.id)).await?;
         let result = async {
             lease.ensure_policy(&mysql).await?;
-            mysql.with_transaction(async |tx| {
-                let revision = lease.read_revision(tx).await?;
-                let row: OperationRow = tx.fetch_optional("SELECT id, document FROM plugin_local_sync_operations WHERE user_id = ? AND instance_id = ? AND operation_id = ? AND action = 'snapshot'", (i64::from(user.id), body.instance_id.as_str(), body.snapshot_id.as_str())).await?.ok_or_else(|| coordination_error("SNAPSHOT_NOT_OWNED"))?;
-                let mut document = row.document;
-                if document["generation"].as_u64() != Some(body.generation) || !valid_receipt(&document["payload"], &body.result) { return Err(coordination_error("INVALID_RECEIPT")); }
-                if let Some(previous) = document.get("result") {
-                    if previous != &body.result { return Err(coordination_error("INVALID_RECEIPT")); }
-                    return Ok(json!({"state":document["state"]}));
-                }
-                if document["expiresAt"].as_i64().unwrap_or(0) < chrono::Utc::now().timestamp() { return Err(coordination_error("SNAPSHOT_EXPIRED")); }
-                let newer: Option<OperationRow> = tx.fetch_optional("SELECT id, document FROM plugin_local_sync_operations WHERE user_id = ? AND instance_id = ? AND action = 'snapshot' AND id > ? LIMIT 1", (i64::from(user.id), body.instance_id.as_str(), row.id)).await?;
-                let mut query = &mut *tx;
-                let current = build_local_plugins(&mut query, i64::from(user.id)).await.map_err(|_| coordination_error("plugin_write_unavailable"))?;
-                let obsolete = document["revision"] != hash(&capability_snapshot(&current));
-                let state = if newer.is_some() || obsolete || document["operationState"] == "superseded" { "superseded" } else if body.result["success"] == true { "local_completed" } else { "failed" };
-                document["state"] = json!(state);
-                document["result"] = body.result;
-                tx.execute("UPDATE plugin_local_sync_operations SET document = ?, updated_at = UTC_TIMESTAMP(6) WHERE id = ? AND user_id = ?", (document.clone(), row.id, i64::from(user.id))).await?;
-                if document["result"]["success"] == true || document["operationState"] == "superseded" {
-                    for operation in document["operationIds"].as_array().into_iter().flatten().filter_map(Value::as_str) {
-                        tx.execute("UPDATE plugin_local_sync_operations SET document = JSON_SET(document, '$.state', 'reconciled'), updated_at = UTC_TIMESTAMP(6) WHERE user_id = ? AND instance_id = ? AND operation_id = ? AND action != 'snapshot' AND id < ?", (i64::from(user.id), body.instance_id.as_str(), operation, row.id)).await?;
+            mysql
+                .with_transaction(async |tx| {
+                    let revision = lease.read_revision(tx).await?;
+                    let row =
+                        state::load(tx, i64::from(user.id), &body.instance_id, &body.snapshot_id)
+                            .await?
+                            .filter(|row| row.action == "snapshot")
+                            .ok_or_else(|| coordination_error("SNAPSHOT_NOT_OWNED"))?;
+                    let mut document = row.document;
+                    if document["generation"].as_u64() != Some(body.generation)
+                        || !valid_receipt(&document["payload"], &body.result)
+                    {
+                        return Err(coordination_error("INVALID_RECEIPT"));
                     }
-                }
-                lease.commit_revision(tx, revision).await?;
-                Ok(json!({"state":state}))
-            }).await
-        }.await;
+                    if let Some(previous) = document.get("result") {
+                        if previous != &body.result {
+                            return Err(coordination_error("INVALID_RECEIPT"));
+                        }
+                        return Ok(json!({"state":document["state"]}));
+                    }
+                    if document["expiresAt"].as_i64().unwrap_or(0) < chrono::Utc::now().timestamp()
+                    {
+                        return Err(coordination_error("SNAPSHOT_EXPIRED"));
+                    }
+                    let newer = state::has_newer_snapshot(
+                        tx,
+                        i64::from(user.id),
+                        &body.instance_id,
+                        row.id,
+                    )
+                    .await?;
+                    let mut query = &mut *tx;
+                    let current = build_local_plugins(&mut query, i64::from(user.id))
+                        .await
+                        .map_err(|_| coordination_error("plugin_write_unavailable"))?;
+                    let obsolete = document["revision"] != hash(&capability_snapshot(&current));
+                    let state = if newer || obsolete || document["operationState"] == "superseded" {
+                        "superseded"
+                    } else if body.result["success"] == true {
+                        "local_completed"
+                    } else {
+                        "failed"
+                    };
+                    document["state"] = json!(state);
+                    document["result"] = body.result;
+                    state::update_document(
+                        tx,
+                        i64::from(user.id),
+                        &body.instance_id,
+                        &body.snapshot_id,
+                        document.clone(),
+                    )
+                    .await?;
+                    if document["result"]["success"] == true
+                        || document["operationState"] == "superseded"
+                    {
+                        for operation in document["operationIds"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                        {
+                            if let Some(intent) =
+                                state::load(tx, i64::from(user.id), &body.instance_id, operation)
+                                    .await?
+                                && intent.action != "snapshot"
+                                && intent.id < row.id
+                            {
+                                let mut saved = intent.document;
+                                saved["state"] = json!("reconciled");
+                                state::update_document(
+                                    tx,
+                                    i64::from(user.id),
+                                    &body.instance_id,
+                                    operation,
+                                    saved,
+                                )
+                                .await?;
+                            }
+                        }
+                    }
+                    lease.commit_revision(tx, revision).await?;
+                    Ok(json!({"state":state}))
+                })
+                .await
+        }
+        .await;
         lease.release().await;
         result
-    }).await.map_err(map_error)
+    })
+    .await
+    .map_err(map_error)
 }
 
 fn valid_receipt(payload: &Value, result: &Value) -> bool {

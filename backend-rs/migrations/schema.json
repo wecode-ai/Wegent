@@ -1,5 +1,5 @@
 {
-  "revision": "a9c1e3f5b702",
+  "revision": "f3a7c9e1b2d4",
   "tables": [
     {
       "table": "background_executions",
@@ -465,13 +465,6 @@
         "CREATE INDEX ix_wiki_contents_generation_id ON wiki_contents (generation_id)",
         "CREATE INDEX ix_wiki_contents_id ON wiki_contents (id)",
         "CREATE INDEX ix_wiki_contents_type ON wiki_contents (type)"
-      ]
-    },
-    {
-      "table": "plugin_local_sync_operations",
-      "statements": [
-        "CREATE TABLE plugin_local_sync_operations (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tuser_id BIGINT NOT NULL, \n\tinstance_id VARCHAR(128) NOT NULL, \n\toperation_id VARCHAR(128) NOT NULL, \n\trequest_hash VARCHAR(64) NOT NULL DEFAULT '', \n\taction VARCHAR(20) NOT NULL, \n\tinstalled_id BIGINT NOT NULL DEFAULT '0', \n\tdocument JSON NOT NULL, \n\tcreated_at DATETIME(6) NOT NULL, \n\tupdated_at DATETIME(6) NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_local_operation UNIQUE (user_id, instance_id, operation_id)\n)ENGINE=InnoDB CHARSET=utf8mb4 COLLATE utf8mb4_bin",
-        "CREATE INDEX idx_plugin_local_instance ON plugin_local_sync_operations (user_id, instance_id, action)"
       ]
     }
   ]

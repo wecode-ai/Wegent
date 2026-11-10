@@ -1,4 +1,4 @@
-"""Disposable MySQL verification of upgrade, guarded downgrade and operation recovery."""
+"""Verify recovery using only existing Kind tables and an unchanged migration head."""
 
 import os
 import uuid
@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
@@ -14,10 +14,10 @@ from alembic import command
 from alembic.config import Config
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.plugin_local_sync import PluginLocalSyncOperation
 from app.models.user import User
 from app.services.device.plugin_sync_protocol import load_versioned_plugin_payload
 from app.services.plugin_local_sync import _guard_intent_order
+from app.services.plugin_local_sync_state import lookup_operation, save_operation
 from app.services.plugin_write_coordination import configure_plugin_session
 
 
@@ -76,48 +76,44 @@ def verify(engine, url):
     with patch.object(
         settings, "DATABASE_URL", url.render_as_string(hide_password=False)
     ):
-        # Seed only the old head marker: the new revision must be self-contained
-        # and must not assume Device, connector, or other business rows exist.
+        # Model a preexisting deployment with the unchanged migration head.
+        User.__table__.create(engine)
+        Kind.__table__.create(engine)
         command.stamp(config, "f3a7c9e1b2d4")
+        tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")
-        assert "plugin_local_sync_operations" in inspect(engine).get_table_names()
-        assert "plugin_sync_outbox" not in inspect(engine).get_table_names()
-        command.downgrade(config, "f3a7c9e1b2d4")
-        assert "plugin_local_sync_operations" not in inspect(engine).get_table_names()
-        command.upgrade(config, "head")
+        assert set(inspect(engine).get_table_names()) == tables
+        assert "plugin_local_sync_operations" not in tables
+        assert "plugin_sync_outbox" not in tables
         verify_ordering(engine)
         original = {"state": "intent_saved", "intentOrder": 7, "plugin": {"id": 17}}
         with Session(engine) as db:
-            db.add(
-                PluginLocalSyncOperation(
-                    user_id=1,
-                    instance_id="native",
-                    operation_id="uncertain-operation",
-                    request_hash="original-hash",
-                    action="install",
-                    installed_id=17,
-                    document=original,
-                )
+            configure_plugin_session(db)
+            _guard_intent_order(db, 1, "native", 17, 7)
+            save_operation(
+                db,
+                user_id=1,
+                instance_id="native",
+                operation_id="uncertain-operation",
+                request_hash="original-hash",
+                action="install",
+                installed_id=17,
+                document=original,
             )
             db.commit()
+        command.upgrade(config, "head")
         with Session(engine) as db:
-            saved = db.query(PluginLocalSyncOperation).one()
-            assert saved.document == original
-            assert saved.operation_id == "uncertain-operation"
-            assert saved.request_hash == "original-hash"
-        try:
-            command.downgrade(config, "f3a7c9e1b2d4")
-        except RuntimeError as error:
-            assert "Drain and archive" in str(error)
-        else:
-            raise AssertionError("Downgrade removed a recoverable operation")
-        assert "plugin_local_sync_operations" in inspect(engine).get_table_names()
-        assert "plugin_sync_outbox" not in inspect(engine).get_table_names()
-        with engine.begin() as db:
-            db.execute(text("DELETE FROM plugin_local_sync_operations"))
-        command.downgrade(config, "f3a7c9e1b2d4")
+            saved = lookup_operation(db, 1, "native", "uncertain-operation")
+            assert saved.json["spec"]["document"] == original
+            assert saved.json["spec"]["operationId"] == "uncertain-operation"
+            assert saved.json["spec"]["requestHash"] == "original-hash"
+            assert lookup_operation(db, 2, "native", "uncertain-operation") is None
+            assert (
+                lookup_operation(db, 1, "other-native", "uncertain-operation") is None
+            )
+        assert set(inspect(engine).get_table_names()) == tables
     print(
-        "MySQL: upgrade head, empty downgrade, guarded in-flight downgrade, original operation persistence passed"
+        "MySQL: unchanged schema/head, Kind-backed operation recovery and identity isolation passed"
     )
 
 

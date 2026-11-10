@@ -7,7 +7,6 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -15,10 +14,13 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.plugin_local_sync import PluginLocalSyncOperation
 from app.schemas.installed_plugin import InstalledPlugin, InstalledPluginUpdateRequest
 from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.installed_plugin_service import installed_plugin_service
+from app.services.plugin_local_sync_state import lookup_operation as _lookup_operation
+from app.services.plugin_local_sync_state import (
+    save_operation,
+)
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_write_coordination import acquire_plugin_write_lock
 from shared.telemetry.decorators import trace_sync
@@ -85,7 +87,7 @@ def mutate_local_plugin(
             )
             if previous is None:
                 raise HTTPException(409, "LOCAL_SYNC_DISABLED")
-            return previous.document.get("plugin")
+            return previous.json["spec"]["document"].get("plugin")
         if action in {"install", "ensure_builtin"}:
             # Legacy catalog repair owns its own commit; finish it before opening
             # the atomic intent/operation transaction.
@@ -97,7 +99,7 @@ def mutate_local_plugin(
             db, user_id, instance_id, operation_id, request_hash
         )
         if existing is not None:
-            return existing.document.get("plugin")
+            return existing.json["spec"]["document"].get("plugin")
         if action in {"update", "uninstall"}:
             _guard_intent_order(
                 db, user_id, instance_id, int(target_id), intent_order, advance=False
@@ -164,21 +166,19 @@ def mutate_local_plugin(
         )
         _guard_intent_order(db, user_id, instance_id, int(installed_id), intent_order)
         result = installed.model_dump(mode="json") if installed else None
-        db.add(
-            PluginLocalSyncOperation(
-                user_id=user_id,
-                instance_id=instance_id,
-                operation_id=operation_id,
-                request_hash=request_hash,
-                action=action,
-                installed_id=installed_id,
-                document={
-                    "state": "intent_saved",
-                    "intentOrder": intent_order,
-                    "plugin": result,
-                    "sourceDeviceId": source_device_id,
-                },
-            )
+        save_operation(
+            db,
+            user_id=user_id,
+            instance_id=instance_id,
+            operation_id=operation_id,
+            request_hash=request_hash,
+            action=action,
+            installed_id=installed_id,
+            document={
+                "state": "intent_saved",
+                "intentOrder": intent_order,
+                "plugin": result,
+            },
         )
         db.commit()
         return result
@@ -186,9 +186,9 @@ def mutate_local_plugin(
 
 def _replay_operation(
     db: Session, user_id: int, instance_id: str, operation_id: str, request_hash: str
-) -> PluginLocalSyncOperation | None:
+) -> Kind | None:
     existing = _lookup_operation(db, user_id, instance_id, operation_id)
-    if existing is not None and existing.request_hash != request_hash:
+    if existing is not None and existing.json["spec"]["requestHash"] != request_hash:
         raise HTTPException(409, "IDEMPOTENCY_CONFLICT")
     return existing
 
@@ -221,20 +221,6 @@ def _guard_intent_order(
     if advance:
         local[str(installed_id)] = order
         state.json = document
-
-
-def _lookup_operation(
-    db: Session, user_id: int, instance_id: str, operation_id: str
-) -> PluginLocalSyncOperation | None:
-    return (
-        db.query(PluginLocalSyncOperation)
-        .filter_by(
-            user_id=user_id,
-            instance_id=instance_id,
-            operation_id=operation_id,
-        )
-        .one_or_none()
-    )
 
 
 @contextmanager
