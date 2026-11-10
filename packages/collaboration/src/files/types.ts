@@ -1,4 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
+import type { IssueAttachmentContext } from "../ports/SharedWorkspaceApi";
 
 export type CollaborationFilesProjectId = string | number;
 
@@ -79,8 +80,15 @@ export interface CollaborationFilesApi {
   downloadFile(fileId: string): Promise<Blob>;
   previewDeliveryFile(assetId: string): Promise<Blob>;
   downloadDeliveryFile(assetId: string): Promise<Blob>;
-  previewTaskAttachment?(attachmentId: string): Promise<Blob>;
-  openTaskAttachment?(attachmentId: string, filename: string): Promise<void>;
+  previewTaskAttachment?(
+    attachmentId: string,
+    context?: IssueAttachmentContext,
+  ): Promise<Blob>;
+  openTaskAttachment?(
+    attachmentId: string,
+    filename: string,
+    context?: IssueAttachmentContext,
+  ): Promise<void>;
 }
 
 export interface CollaborationTextPreviewFile {

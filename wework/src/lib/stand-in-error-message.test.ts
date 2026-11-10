@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
-import { getStandInErrorMessage, reportStandInError } from './stand-in-error-message'
+import {
+  getStandInErrorMessage,
+  reportStandInError,
+  requiresStandInUpgrade,
+} from './stand-in-error-message'
 
 const originalLanguage = i18n.language
 
@@ -13,6 +17,37 @@ afterEach(async () => {
 })
 
 describe('stand-in error localization', () => {
+  it('keeps compatibility guidance independent of the failed operation in both languages', async () => {
+    for (const [language, message] of [
+      ['zh-CN', '当前 Wework 与执行设备的版本不兼容。请前往云端工作查看设备情况，升级后重试。'],
+      [
+        'en',
+        'Wework and the execution device use incompatible versions. Open Cloud work to check device status, upgrade, and try again.',
+      ],
+    ]) {
+      await i18n.changeLanguage(language)
+      for (const fallback of ['load_settings_failed', 'save_settings_failed'] as const) {
+        expect(getStandInErrorMessage({ code: 'unsupported_method' }, fallback)).toBe(message)
+      }
+    }
+  })
+
+  it.each(['protocol_mismatch', 'unsupported_method', 'executor_update_required'])(
+    'offers upgrade recovery for structured compatibility error %s',
+    code => {
+      expect(requiresStandInUpgrade({ code })).toBe(true)
+    }
+  )
+  it.each([
+    null,
+    undefined,
+    { code: 'device_offline' },
+    { status: 503 },
+    new Error('unsupported_method'),
+    '当前 Wework 与执行设备的版本不兼容',
+  ])('does not infer upgrade recovery from unrelated errors or display text: %j', error => {
+    expect(requiresStandInUpgrade(error)).toBe(false)
+  })
   it('records the failing operation and transport code without logging error contents', () => {
     const log = vi.spyOn(console, 'info').mockImplementation(() => {})
     try {

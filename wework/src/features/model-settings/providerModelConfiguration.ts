@@ -2,7 +2,6 @@ import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktop
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import {
   defaultLocalModelRequestPath,
-  defaultLocalModelToolProfile,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   listLegacyLocalModelConfigs,
   removeMigratedLocalModelConfigs,
@@ -10,6 +9,7 @@ import {
 } from './localModelSettings'
 import { createDefaultLocalModelCatalogEntry } from './localModelCatalog'
 import { codexCatalogModelIdForUpstream } from './codexCatalog'
+import { modelInterfaceToolProfile } from '../../../electron/src/host/model-interface-runtime'
 import { getProviderModelConfigs, replaceProviderModelConfigs } from './providerModelState'
 import type {
   ModelConfigurationSnapshot,
@@ -56,7 +56,11 @@ export function resolveProviderModel(
 ): LocalModelConfig {
   const { model, provider } = entry
   const apiFormat = model.api_format ?? provider.api_format
-  const toolProfile = model.tool_profile ?? defaultLocalModelToolProfile(apiFormat)
+  const toolProfile = modelInterfaceToolProfile({
+    apiFormat,
+    providerProfileId: model.provider_profile_id,
+    toolProfile: model.tool_profile,
+  })
   const displayName = model.display_name || model.model_id
   const profileId = model.provider_profile_id ?? 'custom'
   const catalogEntry =
@@ -91,7 +95,9 @@ export function resolveProviderModel(
     apiKeyConfigured: Boolean(provider.api_key),
     toolProfile,
     codexToolCompatibility:
-      apiFormat === 'openai-responses' ? (model.codex_tool_compatibility ?? 'native') : 'standard',
+      apiFormat === 'openai-responses'
+        ? (model.codex_tool_compatibility ?? 'standard')
+        : 'standard',
     contextWindow: model.context_window,
     maxOutputTokens: model.max_output_tokens,
     webSearchMode: model.web_search_mode ?? 'disabled',

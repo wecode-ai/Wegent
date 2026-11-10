@@ -1013,6 +1013,7 @@ function MessagesArea({
               variant="outline"
               size="sm"
               className="flex items-center justify-center h-8 w-8 p-0 rounded-[7px]"
+              aria-label={t('common:actions.more_actions')}
             >
               <MoreHorizontal className="h-4 w-4" />
             </Button>

@@ -612,9 +612,13 @@ function modelCatalogSyncCancelled(): Error {
 
 function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
   const online = status.running && status.ready !== false && !status.error
+  const deviceId = localDeviceIdFromStatus(status)
+  const identityUnresolved =
+    !status.deviceId?.trim() || (deviceId === LOCAL_DEVICE_ID && !status.runtimeInstanceId?.trim())
   const device = {
     id: 0,
-    device_id: localDeviceIdFromStatus(status),
+    device_id: deviceId,
+    ...(identityUnresolved ? { local_identity_unresolved: true } : {}),
     name: 'Local Executor',
     status: online ? ('online' as const) : ('offline' as const),
     is_default: true,
@@ -1150,7 +1154,6 @@ function localRuntimeModelConfig(
         : {}),
     }
     if (runtime === 'claude_code') return gatewayConfig
-    const nativeByDefault = upstreamApiFormat === 'openai-responses'
     const codexRequestMode = modelOptions?.[CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION] ?? 'auto'
     if (
       !['auto', 'standard', 'passthrough'].includes(codexRequestMode) ||
@@ -1160,11 +1163,11 @@ function localRuntimeModelConfig(
     }
     const nativeToolSearch =
       modelOptions?.[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION] == null
-        ? nativeByDefault
+        ? false
         : modelOptions[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION]?.trim().toLowerCase() === 'true'
     const nativeNamespaceTools =
       modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION] == null
-        ? nativeByDefault
+        ? false
         : modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
     const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
     const primaryCodexCatalogModelId =
@@ -1175,7 +1178,7 @@ function localRuntimeModelConfig(
       codex_request_mode: codexRequestMode,
       native_tool_search: nativeToolSearch,
       native_namespace_tools: nativeNamespaceTools,
-      tool_profile: 'custom',
+      tool_profile: 'function',
       ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
@@ -1235,13 +1238,10 @@ async function harnessProxyUpstream(
   if (!baseUrl || !apiFormat || !apiKey) {
     throw new Error('Harness model proxy configuration is incomplete')
   }
-  const nativeByDefault = apiFormat === 'openai-responses'
   const nativeToolSearch =
-    typeof config.native_tool_search === 'boolean' ? config.native_tool_search : nativeByDefault
+    typeof config.native_tool_search === 'boolean' ? config.native_tool_search : false
   const nativeNamespaceTools =
-    typeof config.native_namespace_tools === 'boolean'
-      ? config.native_namespace_tools
-      : nativeByDefault
+    typeof config.native_namespace_tools === 'boolean' ? config.native_namespace_tools : false
   const headers =
     config.default_headers &&
     typeof config.default_headers === 'object' &&
@@ -1256,7 +1256,7 @@ async function harnessProxyUpstream(
     base_url: baseUrl,
     request_url: requestUrl,
     api_format: apiFormat,
-    convert_custom_tools: config.tool_profile === 'function',
+    convert_custom_tools: config.tool_profile !== 'custom',
     native_tool_search: nativeToolSearch,
     native_namespace_tools: nativeNamespaceTools,
     codex_request_mode: recordString(config.codex_request_mode) ?? 'auto',

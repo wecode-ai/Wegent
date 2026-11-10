@@ -1,6 +1,134 @@
 use super::*;
 
 #[test]
+fn generic_cli_legacy_failure_recovers_original_checkpoint_with_bounded_backoff() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"account","kind":"direct","id":"own"});
+    let version = json!(20);
+    let legacy = json!({"version":20,"checkpoint":{"after":"2026-11-09T07:59:44.720Z","cursor":"0"},"error":{"code":"connection_cli_request_failed","message":"Plugin tool request failed (request_failed)"}});
+    store.save_stand_in_source(7, &source, &legacy).unwrap();
+    let mut state = store.stand_in_source(7, &source).unwrap();
+    assert!(!collection_error_latched(&state, &version));
+    for attempt in 1..=10 {
+        let mut failure = AppIpcError::new(
+            "connection_cli_request_unavailable",
+            "Plugin tool request failed (request_failed)",
+        );
+        failure.provider_code = Some("request_failed".to_owned());
+        let failure = crate::runtime_work::connection_cli::collection_read_error(failure);
+        let before = chrono::Utc::now().timestamp_millis();
+        save_collection_result(&store, 7, &source, &version, &state, Err(failure)).unwrap();
+        state = store.stand_in_source(7, &source).unwrap();
+        assert_eq!(state["checkpoint"], legacy["checkpoint"]);
+        assert_eq!(state["version"], version);
+        assert_eq!(state["error"]["providerCode"], "request_failed");
+        assert_eq!(state["failures"], attempt);
+        let delay = (30_000_i64 << (attempt - 1).min(7)).min(3_600_000);
+        assert!(state["retryAt"].as_i64().unwrap() >= before + delay);
+        assert!(
+            state["retryAt"].as_i64().unwrap() <= chrono::Utc::now().timestamp_millis() + delay
+        );
+        assert!(collection_error_latched(&state, &version));
+        state["retryAt"] = json!(before - 1);
+        assert!(!collection_error_latched(&state, &version));
+    }
+    save_collection_result(
+        &store,
+        7,
+        &source,
+        &version,
+        &state,
+        Ok(json!({"checkpoint":{"after":"2026-11-10T01:33:03Z","cursor":"0"}})),
+    )
+    .unwrap();
+    let recovered = store.stand_in_source(7, &source).unwrap();
+    assert_eq!(recovered["checkpoint"]["after"], "2026-11-10T01:33:03Z");
+    assert!(recovered["error"].is_null());
+    assert!(recovered["retryAt"].is_null());
+    assert!(recovered["failures"].is_null());
+
+    for message in [
+        "Plugin tool request failed (FORBIDDEN)",
+        "Plugin tool request failed (PERMISSION_DENIED)",
+        "Plugin tool request failed (EACCES)",
+        "Plugin tool request failed (CERTIFICATE_VERIFY_FAILED)",
+        "request_failed",
+        "Plugin tool request failed (request_failed): permission denied",
+    ] {
+        let mut rejection = legacy.clone();
+        rejection["error"]["message"] = json!(message);
+        assert!(collection_error_latched(&rejection, &version));
+    }
+    let mut structured_rejection = legacy.clone();
+    structured_rejection["error"]["providerCode"] = json!("FORBIDDEN");
+    assert!(collection_error_latched(&structured_rejection, &version));
+    let mut rejection = AppIpcError::new(
+        "connection_cli_request_failed",
+        "Plugin tool request failed (FORBIDDEN)",
+    );
+    rejection.provider_code = Some("FORBIDDEN".to_owned());
+    save_collection_result(&store, 7, &source, &version, &state, Err(rejection)).unwrap();
+    let stopped = store.stand_in_source(7, &source).unwrap();
+    assert!(collection_error_latched(&stopped, &version));
+    assert_eq!(stopped["checkpoint"], legacy["checkpoint"]);
+    assert_eq!(stopped["error"]["providerCode"], "FORBIDDEN");
+    assert!(stopped["error"]["retryable"].is_null());
+    assert!(stopped["retryAt"].is_null());
+    assert!(stopped["failures"].is_null());
+}
+
+#[test]
+fn runtime_collection_timeout_recovers_legacy_latches_and_backs_off_new_failures() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"account","kind":"direct","id":"own"});
+    let version = json!(19);
+    let legacy = json!({"version":version,"checkpoint":{"after":"2026-11-08T22:57:19.411Z","cursor":"0"},"error":{"code":"request_timeout","message":"Executor request runtime.connections.cli timed out"}});
+    store.save_stand_in_source(7, &source, &legacy).unwrap();
+    let state = store.stand_in_source(7, &source).unwrap();
+    assert!(!collection_error_latched(&state, &version));
+    let before = chrono::Utc::now().timestamp_millis();
+    save_collection_result(
+        &store,
+        7,
+        &source,
+        &version,
+        &state,
+        Err(AppIpcError::new(
+            "request_timeout",
+            "Runtime read timed out",
+        )),
+    )
+    .unwrap();
+    let failed = store.stand_in_source(7, &source).unwrap();
+    assert_eq!(failed["checkpoint"], legacy["checkpoint"]);
+    assert_eq!(failed["version"], version);
+    assert_eq!(failed["error"]["retryable"], true);
+    assert!(failed["retryAt"].as_i64().unwrap() >= before + 30_000);
+    assert!(collection_error_latched(&failed, &version));
+    let mut due = failed.clone();
+    due["retryAt"] = json!(before - 1);
+    assert!(!collection_error_latched(&due, &version));
+    let recovered = json!({"checkpoint":{"after":"2026-11-09T00:00:00Z","cursor":"0"}});
+    save_collection_result(&store, 7, &source, &version, &due, Ok(recovered.clone())).unwrap();
+    let resumed = store.stand_in_source(7, &source).unwrap();
+    assert_eq!(resumed["checkpoint"], recovered["checkpoint"]);
+    assert!(resumed["error"].is_null());
+    assert!(resumed["retryAt"].is_null());
+    assert!(resumed["failures"].is_null());
+    for code in [
+        "connector_auth_required",
+        "forbidden",
+        "dingtalk_response_invalid",
+    ] {
+        let mut permanent = legacy.clone();
+        permanent["error"]["code"] = json!(code);
+        assert!(collection_error_latched(&permanent, &version));
+    }
+}
+
+#[test]
 fn declared_cli_read_process_failure_retries_from_the_original_cursor_then_clears_error() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();

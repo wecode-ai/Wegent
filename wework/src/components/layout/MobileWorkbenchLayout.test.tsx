@@ -315,7 +315,6 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     unsubscribeRuntimeTaskNotifications: vi.fn().mockResolvedValue({ subscribed: false }),
     refreshWorkLists: props.onRefreshWorkLists ?? vi.fn().mockResolvedValue(undefined),
     refreshDevices: vi.fn().mockResolvedValue(undefined),
-    getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
     upgradeDevice: props.onUpgradeDevice ?? vi.fn().mockResolvedValue(undefined),
     createProject:
       props.onCreateProject ?? vi.fn().mockResolvedValue({ id: 1, name: '', tasks: [] }),

@@ -80,6 +80,7 @@ export function IssueStatusHistoryList({
     unset: string;
     initial: string;
     accept: string;
+    statusName(id: string, name: string | null | undefined): string;
     action(trigger: string): string;
   };
 }) {
@@ -88,7 +89,8 @@ export function IssueStatusHistoryList({
       entry.automation?.rule_name ??
       memberName(entry.by_user_id) ??
       labels.system;
-    const toName = entry.to_status_name || labels.unset;
+    const toName =
+      labels.statusName(entry.to_status, entry.to_status_name) || labels.unset;
     const isCreate = entry.trigger === "create";
     const isAccept =
       entry.trigger === "user_update" &&
@@ -110,7 +112,8 @@ export function IssueStatusHistoryList({
           ) : (
             <>
               <span className="min-w-0 truncate">
-                {entry.from_status_name || labels.unset}
+                {labels.statusName(entry.from_status, entry.from_status_name) ||
+                  labels.unset}
               </span>
               <ArrowRight className="h-3 w-3 shrink-0 text-text-muted" />
               <span className="min-w-0 truncate">{toName}</span>

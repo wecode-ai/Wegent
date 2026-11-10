@@ -9,6 +9,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
 import { useAppearance } from './useAppearance'
+import { ThemeSelector } from './ThemeSelector'
 import type { AppearanceMode, WorkbenchBackgroundConfig } from './types'
 import { WorkbenchBackgroundPreview } from './WorkbenchBackgroundPreview'
 import {
@@ -81,7 +82,7 @@ function FontSizeControl({
           event.preventDefault()
           commit(event.currentTarget)
         }}
-        className="h-8 w-16 rounded-lg border border-border bg-background px-2 text-right text-sm text-text-primary shadow-sm outline-none keyboard:focus:border-blue-500 keyboard:focus:ring-2 keyboard:focus:ring-blue-500/20"
+        className="h-8 w-16 rounded-lg border border-border bg-background px-2 text-right text-sm text-text-primary shadow-sm outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 wework:keyboard:focus:border-blue-500 wework:keyboard:focus:ring-blue-500/20"
       />
       <span className="text-sm text-text-secondary">px</span>
     </div>
@@ -244,6 +245,7 @@ export function AppearanceSettingsPage() {
                 key={item.mode}
                 type="button"
                 data-testid={`appearance-mode-${item.mode}`}
+                aria-pressed={active}
                 onClick={() => {
                   setAppearance({ mode: item.mode })
                   track('setting_changed', { setting: 'appearance_mode', value: item.mode })
@@ -261,36 +263,21 @@ export function AppearanceSettingsPage() {
             )
           })}
         </div>
-        <div className="grid gap-3 border-t border-border p-4 md:grid-cols-2">
-          <div className="overflow-hidden rounded-lg border border-border bg-background">
-            <div className="flex items-center justify-between border-b border-border px-3 py-2">
-              <span className="text-xs font-medium text-text-secondary">
-                {t('workbench.appearance_preview', '预览')}
-              </span>
-              <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-secondary">
-                {resolvedMode}
-              </span>
-            </div>
-            <div className="flex min-h-[132px]">
-              <div className="w-28 bg-sidebar p-3">
-                <div className="mb-3 h-3 w-16 rounded bg-text-muted/30" />
-                <div className="h-7 rounded bg-sidebar-active" />
-                <div className="mt-2 h-7 rounded bg-sidebar-hover" />
-              </div>
-              <div className="flex-1 space-y-3 bg-background p-4">
-                <div className="h-4 w-32 rounded bg-text-primary/20" />
-                <div className="h-3 w-full rounded bg-text-muted/30" />
-                <div className="h-3 w-3/4 rounded bg-text-muted/25" />
-                <button
-                  type="button"
-                  className="h-8 rounded-md bg-text-primary px-3 text-xs font-medium text-background"
-                >
-                  {t('workbench.appearance_preview_action', '操作')}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="overflow-hidden rounded-lg border border-border bg-background">
+        <div
+          className="grid gap-4 border-t border-border p-4 md:grid-cols-2"
+          data-testid="appearance-theme-catalogue"
+        >
+          <ThemeSelector mode="light" />
+          <ThemeSelector mode="dark" />
+          <p className="text-sm text-text-secondary md:col-span-2">
+            {t(
+              'workbench.appearance_theme_selection_description',
+              '分别选择浅色和深色配色；跟随系统时自动切换。选择配色会恢复该配色的强调色。'
+            )}
+          </p>
+        </div>
+        <div className="border-t border-border">
+          <div>
             <SettingsRow
               label={t('workbench.appearance_accent', '强调色')}
               control={
@@ -312,6 +299,28 @@ export function AppearanceSettingsPage() {
                     {appearance.accentColor.toUpperCase()}
                   </span>
                 </label>
+              }
+            />
+            <SettingsRow
+              label={t('workbench.appearance_accent_reset', '恢复配色强调色')}
+              control={
+                <button
+                  type="button"
+                  data-testid="appearance-accent-reset-button"
+                  onClick={() =>
+                    setAppearance({
+                      themeOverrides: {
+                        [resolvedMode]: {
+                          palette: appearance.themeOverrides[resolvedMode].palette,
+                        },
+                      },
+                    })
+                  }
+                  disabled={!appearance.themeOverrides[resolvedMode].accentColor}
+                  className="inline-flex h-9 items-center rounded-md px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-40"
+                >
+                  {t('workbench.appearance_accent_reset_action', '恢复')}
+                </button>
               }
             />
             <SettingsRow
@@ -506,7 +515,10 @@ export function AppearanceSettingsPage() {
             )
           })}
           {backgroundError && (
-            <p data-testid="appearance-background-error" className="text-sm text-red-500">
+            <p
+              data-testid="appearance-background-error"
+              className="text-sm text-destructive wework:text-red-500"
+            >
               {backgroundError}
             </p>
           )}

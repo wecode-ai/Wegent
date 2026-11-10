@@ -40,6 +40,9 @@ export default {
         focus: 'rgb(var(--color-focus) / <alpha-value>)',
         success: 'rgb(var(--color-success) / <alpha-value>)',
         destructive: 'rgb(var(--color-destructive) / <alpha-value>)',
+        'destructive-contrast': 'rgb(var(--color-destructive-contrast) / <alpha-value>)',
+        warning: 'rgb(var(--color-warning) / <alpha-value>)',
+        info: 'rgb(var(--color-info) / <alpha-value>)',
         'text-primary': 'rgb(var(--color-text-primary) / <alpha-value>)',
         'text-secondary': 'rgb(var(--color-text-secondary) / <alpha-value>)',
         'text-muted': 'rgb(var(--color-text-muted) / <alpha-value>)',
@@ -68,5 +71,8 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // Wework keeps its original recipes; named themes retain semantic colors.
+    ({ addVariant }) => addVariant('wework', 'html[data-appearance-theme="wework"] &'),
+  ],
 }

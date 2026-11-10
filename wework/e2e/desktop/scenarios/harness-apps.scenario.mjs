@@ -13,6 +13,7 @@ import {
 } from '../modules/harness-app-fixture.mjs'
 import { join } from 'node:path'
 import { verifyDefaultOnlyDshPackage } from '../modules/dsh-runtime-cache.mjs'
+import { fetchGithubReleaseAsset } from '../modules/github-release-asset.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
 import assert from 'node:assert/strict'
 import { copyFile, mkdir, readFile, readdir } from 'node:fs/promises'
@@ -31,6 +32,7 @@ export async function createDesktopScenario({
   captureScreenshot,
   electronUserDataDirectory,
   resultDir,
+  releaseAssetToken,
   uiTimeoutMs,
 }) {
   const packagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2')
@@ -97,11 +99,25 @@ export async function createDesktopScenario({
       WEWORK_DSH_BROWSER_AUTH: '1',
       WEWORK_DSH_BROWSER_AUTH_FD: '99',
     },
-    async prepareApp({ appBinary }) {
-      await verifyDefaultOnlyDshPackage(
+    async prepareApp({ appBinary, appEnvironment }) {
+      const legacy = await verifyDefaultOnlyDshPackage(
         join(packagedResourcesRoot(appBinary), 'harness-runtime'),
         join(resultDir, 'harness-runtime')
       )
+      if (releaseAssetToken) {
+        const response = await fetchGithubReleaseAsset({
+          repository: 'wecode-ai/Wegent',
+          tag: 'wework-updater',
+          name: legacy.assetName,
+          redirect: 'manual',
+          token: releaseAssetToken,
+        })
+        assert.equal(response.status, 302, 'Expected an official GitHub release CDN redirect')
+        appEnvironment.WEWORK_E2E_DSH_RELEASE_REDIRECT = JSON.stringify({
+          source: legacy.downloadUrl,
+          target: response.headers.get('location'),
+        })
+      }
     },
 
     async prepareCloud({ authToken, backendUrl, publishOfficialSmartApp }) {

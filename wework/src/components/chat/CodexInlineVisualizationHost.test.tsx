@@ -32,6 +32,8 @@ beforeEach(() => {
   runtimeMock.electron = true
   appearanceMock.resolvedMode = 'light'
   desktopHostMock.invokeDesktopHost.mockReset()
+  document.documentElement.removeAttribute('style')
+  document.documentElement.removeAttribute('data-appearance-theme')
 })
 
 afterEach(() => {
@@ -220,8 +222,13 @@ describe('CodexInlineVisualizationHost', () => {
     const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1]
     const token = html.match(/const token="([^"]+)"/)?.[1]
     expect(script).toBeTruthy()
+    const themeStyle = { textContent: ':root { --background:rgb(26 27 38); }' }
+    const style = document.createElement('html').style
+    style.colorScheme = 'light'
+    const setProperty = vi.spyOn(style, 'setProperty')
     const frameDocument = {
-      documentElement: { style: { colorScheme: 'light' } },
+      getElementById: () => themeStyle,
+      documentElement: { style },
       body: { getBoundingClientRect: () => ({ top: 0, height: 120 }), children: [] },
     }
     const parent = { postMessage: vi.fn() }
@@ -235,7 +242,12 @@ describe('CodexInlineVisualizationHost', () => {
       }
     )
     const receiveTheme = addListener.mock.calls.find(([type]) => type === 'message')?.[1]
-    const message = { type: 'wework-inline-visualization-theme', token, theme: 'dark' }
+    const message = {
+      type: 'wework-inline-visualization-theme',
+      token,
+      theme: 'dark',
+      variables: { '--background': 'rgb(26 27 38)', '--unrelated': 'ignored' },
+    }
 
     receiveTheme({ source: {}, data: message })
     receiveTheme({ source: parent, data: { ...message, token: 'wrong-token' } })
@@ -243,6 +255,61 @@ describe('CodexInlineVisualizationHost', () => {
     expect(frameDocument.documentElement.style.colorScheme).toBe('light')
     receiveTheme({ source: parent, data: message })
     expect(frameDocument.documentElement.style.colorScheme).toBe('dark')
+    expect(setProperty).toHaveBeenCalledExactlyOnceWith('--background', 'rgb(26 27 38)')
+    expect(themeStyle.textContent).toBe('')
+    receiveTheme({ source: parent, data: { ...message, variables: {} } })
+    expect(style.getPropertyValue('--background')).toBe('')
+    style.setProperty('--foreground', 'tomato', 'important')
+    receiveTheme({ source: parent, data: { ...message, variables: { '--foreground': 'blue' } } })
+    expect(style.getPropertyValue('--foreground')).toBe('blue')
+    receiveTheme({ source: parent, data: { ...message, variables: {} } })
+    expect(style.getPropertyValue('--foreground')).toBe('tomato')
+    expect(style.getPropertyPriority('--foreground')).toBe('important')
+  })
+
+  test('updates a mounted visualization when a palette changes within the same dark mode', async () => {
+    appearanceMock.resolvedMode = 'dark'
+    document.documentElement.dataset.appearanceTheme = 'tokyo-night'
+    document.documentElement.style.setProperty('--color-bg-base', '26 27 38')
+    document.documentElement.style.setProperty('--color-terminal-blue', '122 162 247')
+    desktopHostMock.invokeDesktopHost.mockResolvedValue('<input value="keep my state">')
+    let documentBlob: Blob | undefined
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
+      documentBlob = blob
+      return 'blob:palette-visualization'
+    })
+    render(<CodexInlineVisualizationHost file="/workspace/palette.html" />)
+    const frame = screen.getByTestId<HTMLIFrameElement>('codex-inline-visualization-frame')
+    await waitFor(() => expect(frame).toHaveAttribute('src', 'blob:palette-visualization'))
+    expect(await documentBlob?.text()).toContain('--background:rgb(26 27 38)')
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage')
+
+    document.documentElement.style.setProperty('--color-bg-base', '40 42 54')
+    await waitFor(() =>
+      expect(postMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          theme: 'dark',
+          variables: expect.objectContaining({
+            '--background': 'rgb(40 42 54)',
+            '--viz-series-1': 'rgb(122 162 247)',
+          }),
+        }),
+        '*'
+      )
+    )
+    expect(frame).toHaveAttribute('src', 'blob:palette-visualization')
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(desktopHostMock.invokeDesktopHost).toHaveBeenCalledTimes(1)
+    document.documentElement.dataset.appearanceTheme = 'wework'
+    await waitFor(() =>
+      expect(postMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ theme: 'dark', variables: {} }),
+        '*'
+      )
+    )
+    expect(frame).toHaveAttribute('src', 'blob:palette-visualization')
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(desktopHostMock.invokeDesktopHost).toHaveBeenCalledTimes(1)
   })
 
   test('accepts wheel input only from the mounted sandbox before scrolling the conversation', async () => {

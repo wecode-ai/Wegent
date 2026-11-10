@@ -1037,7 +1037,10 @@ export function createElectronCapabilityRouter(
     return mcpDiscoveryFault.configure(params.enabled)
   })
   router.register('e2e.inlineVisualizationFrame', params =>
-    controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
+    controlInlineVisualizationFrame(
+      e2eHost.captureTarget(optionalStringParam(params, 'windowLabel') ?? 'main'),
+      params
+    )
   )
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
@@ -1088,6 +1091,17 @@ export function createElectronCapabilityRouter(
       requiredIntegerParam(params, 'length')
     )
   )
+  router.register('notification.openSettings', async () => {
+    const url =
+      process.platform === 'darwin'
+        ? 'x-apple.systempreferences:com.apple.preference.notifications'
+        : process.platform === 'win32'
+          ? 'ms-settings:notifications'
+          : null
+    if (!url) return { supported: false }
+    await shell.openExternal(url)
+    return { supported: true }
+  })
   router.register('notification.show', params => {
     if (!Notification.isSupported()) {
       throw new HostCapabilityError(

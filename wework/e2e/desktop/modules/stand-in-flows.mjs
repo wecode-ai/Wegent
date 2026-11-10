@@ -29,7 +29,7 @@ export async function openProjectStandIn(
     if (!value) throw new Error('The project picker must offer an existing personal stand-in')
     await control.command('select', '[data-testid="stand-in-project-select"]', { value })
   }
-  await control.command('click', '[data-testid="stand-in-personal-settings-link"]')
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-personal-settings-link"]')
   await control.command('waitFor', '[data-testid="stand-in-role-name"]')
   if (connect) {
     await editProjectSource(control, true)

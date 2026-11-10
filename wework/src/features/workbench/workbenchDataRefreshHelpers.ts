@@ -42,6 +42,34 @@ export function queueWorkRefreshAfterInventory(
   return true
 }
 
+export function createRuntimeWorkRefreshQueue(refresh: () => Promise<void>) {
+  let pending: Promise<void> | null = null
+  let queued = false
+  let disposed = false
+  return {
+    refresh(): Promise<void> {
+      if (disposed) return Promise.resolve()
+      queued = true
+      if (pending) return pending
+      pending = (async () => {
+        try {
+          do {
+            queued = false
+            await Promise.resolve().then(refresh)
+          } while (queued && !disposed)
+        } finally {
+          pending = null
+        }
+      })()
+      return pending
+    },
+    dispose() {
+      disposed = true
+      queued = false
+    },
+  }
+}
+
 export async function loadDevicesForRefresh(
   executorClient: ExecutorClient,
   cacheScope: string,

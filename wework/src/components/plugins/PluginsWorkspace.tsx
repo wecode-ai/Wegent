@@ -2227,9 +2227,9 @@ export function PluginsWorkspace({
 
   const resolveLiveRuntimeCloudConnection = async (isCurrent: () => boolean) => {
     if (!cloudApiBaseUrl || !isCurrent()) return { connected: false, deviceId: '' }
-    const connected = await refreshLocalExecutorCloudConnectionStatus(cloudApiBaseUrl)
+    const status = await refreshLocalExecutorCloudConnectionStatus(cloudApiBaseUrl)
     if (!isCurrent()) return { connected: false, deviceId: '' }
-    if (!connected) return { connected: false, deviceId: '' }
+    if (status?.connected !== true) return { connected: false, deviceId: '' }
 
     try {
       // Registration can replace a cached record route after reconnecting.

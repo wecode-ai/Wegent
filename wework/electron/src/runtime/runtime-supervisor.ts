@@ -287,26 +287,36 @@ function waitForSpawn(child: ChildProcessWithoutNullStreams): Promise<void> {
 }
 
 export async function terminateProcessTree(child: ChildProcess, timeoutMs: number): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return
   const processGroupId = process.platform === 'win32' ? null : child.pid
-  const exited = once(child, 'exit').then(() => true)
+  const leaderAlreadyExited = child.exitCode !== null || child.signalCode !== null
+  if (leaderAlreadyExited && !processGroupId) return
+  // An owned process group can remain alive after its leader has exited.
+  const exited = leaderAlreadyExited ? Promise.resolve(true) : once(child, 'exit').then(() => true)
   signalProcessTree(child, 'SIGTERM')
+  let timeout: NodeJS.Timeout | undefined
   const timer = new Promise<false>(resolve => {
-    const timeout = setTimeout(() => resolve(false), timeoutMs)
+    timeout = setTimeout(() => resolve(false), timeoutMs)
     timeout.unref()
   })
-  const leaderExited = await Promise.race([exited, timer])
-  if (
-    leaderExited &&
-    (!processGroupId || (await waitForProcessGroupExit(processGroupId, Math.min(timeoutMs, 1_000))))
-  ) {
-    return
+  const leaderExited = await Promise.race([exited, timer]).finally(() => clearTimeout(timeout))
+  let inspectionError: unknown
+  try {
+    if (
+      leaderExited &&
+      (!processGroupId ||
+        (await waitForProcessGroupExit(processGroupId, Math.min(timeoutMs, 1_000))))
+    ) {
+      return
+    }
+  } catch (error) {
+    inspectionError = error
   }
   signalProcessTree(child, 'SIGKILL')
   if (!leaderExited) await exited
   if (processGroupId && !(await waitForProcessGroupExit(processGroupId, timeoutMs))) {
     throw new Error(`Timed out waiting for process group ${processGroupId} to exit`)
   }
+  if (inspectionError) throw inspectionError
 }
 
 async function waitForProcessGroupExit(

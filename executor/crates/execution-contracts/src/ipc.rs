@@ -50,6 +50,7 @@ pub struct AppIpcError {
     pub code: String,
     pub message: String,
     pub retry_after_ms: Option<u64>,
+    pub provider_code: Option<String>,
 }
 
 impl AppIpcError {
@@ -58,6 +59,7 @@ impl AppIpcError {
             code: code.into(),
             message: message.into(),
             retry_after_ms: None,
+            provider_code: None,
         }
     }
 

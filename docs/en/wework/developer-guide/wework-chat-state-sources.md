@@ -20,6 +20,18 @@ accepted user reply in the view layer.
 
 ## Point Refreshes and List Costs
 
+`runtime.work.changed` and cross-window work changes share a serial refresh queue.
+Events arriving during a read mark one trailing invalidation instead of starting overlapping
+full-list requests. Disposal drops trailing work; read failures remain observable and a later
+event can recover.
+
+`runtime.tasks.list`, including cached notification inventory polling, only reads the Runtime
+catalog. It must not reopen the Issue database, acquire write transactions, or reproject Issue
+statuses for each task. Lifecycle transitions, completed bindings, and explicit `todos.list`
+reconciliation own those projections. `inventory_read_tests` uses synthetic long-lived history
+to verify read isolation and lifecycle projection. The desktop `idle-executor-requests`
+checkpoint additionally covers burst invalidations without overlapping list reads.
+
 Goal updates, clearing, and post-turn settlement checks refresh only the affected execution.
 When point lookup is available, `refreshRuntimeTask` calls its owner's `runtime.tasks.get`,
 not the device-wide `runtime.tasks.list` for every event. Missing tasks return null and lookup

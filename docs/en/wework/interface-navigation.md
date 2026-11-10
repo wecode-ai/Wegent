@@ -37,7 +37,9 @@ On macOS, the default shortcuts are `Command+B` for the left sidebar, `Option+Co
 | Check how long a workflow has waited for me             | Needs your input → select project work or a question                | Requires reliable evidence of this handoff. See [Waiting time and workflow analysis](./personal-stand-in.md#waiting-time-and-workflow-analysis)                                                                                                                                      |
 | Configure project devices, repositories, initialization | Project space → Project settings → Execution environment            | Not the global execution-environment settings; AI execution requires an initialized online device                                                                                                                                                                                    |
 | Project AI / project manager                            | Project settings → AI team / Automatic processing                   | See [Project AI manager](./project-ai-manager.md) for current equivalents; do not look for the old bottom-of-board button                                                                                                                                                            |
-| Personal stand-in                                       | Left sidebar → My Stand-in                                          | Beta feature. See [Personal stand-in](./personal-stand-in.md)                                                                                                                                                                                                                        |
+| Personal stand-in                                       | Left sidebar → My Stand-in                                          | Beta feature; incompatible versions offer device status in Cloud work from the error notice. See [Personal stand-in](./personal-stand-in.md)                                                                                                                                                                                                                        |
+| Confirm stand-in configuration | My stand-in → Confirmation card in the current conversation → Confirm and apply | Review affected roles and sources; the conversation shows actual changes after success. See [Conversational configuration](./personal-stand-in.md#conversational-configuration) |
+| Stand-in chat and desktop notifications                 | My Stand-in → Notification settings above the composer; or top-right bell → Notification settings              | Async chat, bubbles and unread counts. See [Stand-in chat and desktop notifications](./personal-stand-in.md#stand-in-chat-and-desktop-notifications)                                                                                                                                 |
 | Restore archived stand-in source work | My Stand-in → Stand-in details → arrow beside Recent activity → the work → Unarchive | Visible only for archived work; restoration does not execute it. See [Source session policy](./personal-stand-in.md#stand-in-source-session-policy) |
 | Stop stand-in / change binding | Left sidebar → My Stand-in → Stand-in details → Manage stand-in → Stop stand-in at the bottom left of settings | Rebinding choices appear only after stopping the entire stand-in and cancelling its tasks. See [Instance binding and stopping](./personal-stand-in.md#instance-binding-and-stopping) |
 | Change model / reasoning level                          | Task composer → model selector                                      | Add a model in settings if none is available. See [Model settings](./user-guide/model-settings.md)                                                                                                                                                                                   |
@@ -50,6 +52,8 @@ On macOS, the default shortcuts are `Command+B` for the left sidebar, `Option+Co
 | Version / check for updates                             | Bottom-left account menu → About / Check for updates                | Separate actions. See [Settings and data](./settings.md)                                                                                                                                                                                                                             |
 
 Pending business questions offer **Talk it through** on the task question card or in **Needs your input** question details. It opens a discussion tab alongside browser and files in the original task's right sidebar. See [Handle AI questions](./workbench.md#ai-questions) for its purpose and restrictions.
+
+From **Projects → New project → Cloud project** in the sidebar, you can add a device while choosing the remote host. See [Projects and workspaces](./projects.md#add-device-from-project).
 
 ## Sidebar feature entries
 
@@ -73,13 +77,17 @@ Internal routes below support version maintenance and automated checks; they are
 | Left sidebar → Scheduled    | View scheduled tasks                                                                                       | `/automations` |
 | Left sidebar → Plugins      | Find, install and manage plugins and app authorization. See [Plugins and Skills](./plugins-and-skills.md)  | `/plugins`     |
 | Left sidebar → Applications | Open the applications page                                                                                 | `/sites`       |
-| Left sidebar → Cloud work   | View devices and cloud projects; connect first if disconnected. See [Devices and cloud work](./devices.md) | `/cloud-work`  |
+| Left sidebar → Cloud work   | View devices and cloud projects; desktop apps also offer the local version. See [Devices and cloud work](./devices.md) | `/cloud-work`  |
 
 ### Space and auxiliary feature links
+
+Model selection during template import: [Collaboration templates and configuration sharing](./projects.md#collaboration-template-models).
 
 | Search terms                                                                      | Detailed steps                                                             |
 | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Space members, global agents/teams/devices, Runner, templates, milestones         | [Space and resource operations](./projects.md#workspace-resource-controls) |
+| Delete imported personal templates | [Collaboration templates and configuration sharing](./projects.md#template-controls) |
+| Collaboration → Devices → Delete offline device | [Offline device cleanup](./projects.md#offline-device-cleanup) |
 | Stand-in memory, source evidence, scope, editing, forgetting and forgetting rules | [Memory controls](./personal-stand-in.md#stand-in-memory-controls)         |
 | Experimental lead conversation, takeover, stop, publish to Issue                  | [Project lead controls](./personal-stand-in.md#project-lead-controls)      |
 | Site PV/UV, visit dates and analytics                                             | [Site visit data](./plugins-and-skills.md#site-analytics-controls)         |

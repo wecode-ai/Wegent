@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from './executor-rpc.mjs'
+import { waitForTemporaryChatLog } from './temporary-chat-log.mjs'
 
 const PROCESS_START = /codex shared app-server process starting process_id=(\d+)/g
 const REVISION_KEY = 'WEGENT_CAPABILITY_REVISION'
@@ -28,17 +29,6 @@ function processStarts(log, fromOffset = 0) {
   }))
 }
 
-async function waitForLog(logPath, timeoutMs, description, inspect) {
-  const deadline = performance.now() + timeoutMs
-  while (performance.now() < deadline) {
-    const log = await readFile(logPath, 'utf8')
-    const result = inspect(log)
-    if (result) return { ...result, logLength: log.length }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`Timed out waiting for ${description}`)
-}
-
 export async function restartTemporaryChatCapabilities(
   control,
   { executorHome, resultDir, workspacePath, uiTimeoutMs }
@@ -62,7 +52,7 @@ export async function restartTemporaryChatCapabilities(
     assert.equal(await realpath(consumed[0].path), await realpath(skillPath))
     evidence.loadedBeforeClear = true
 
-    const before = await waitForLog(
+    const before = await waitForTemporaryChatLog(
       logPath,
       uiTimeoutMs,
       'the existing native process PID',
@@ -94,7 +84,7 @@ export async function restartTemporaryChatCapabilities(
     )
     evidence.absentAfterClear = true
 
-    const after = await waitForLog(
+    const after = await waitForTemporaryChatLog(
       logPath,
       uiTimeoutMs,
       'a capability revision restart with a different native PID (all model turns must be idle)',

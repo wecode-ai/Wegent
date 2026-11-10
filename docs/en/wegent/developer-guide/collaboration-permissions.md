@@ -4,6 +4,14 @@ sidebar_position: 36
 
 # Collaboration permission architecture and invariants
 
+Read confirmations still validate current Issue access and advance only the reader's cursor without changing Issue version/time. Automatic receipts carry the observed content revision; one atomic cloud update is bounded by `min(current, observed)` and remains monotonic, while local unread clearing uses the same observation bound. Stale requests do not consume later content or notifications. `test_delayed_read_acknowledges_only_the_observed_public_content`, API cursor regressions and real MySQL desktop coverage protect this transaction; CP invariants remain unchanged.
+
+Explicit manual delegation is distinct from automatic intake. An existing role's enablement, project subscriptions and tags do not replace authority for a manual execution. Launch compares trigger, assignment and mention identities with the persisted conversation to reject forged manual origins; execution and publication still check the current role, Issue access, assignee and original grant. Omitted role selection still requires a connected role, while automatic wakeups and follow-ups retain all intake checks. `paused_issue_intake_allows_only_trusted_manual_requests` and the existing notification/workspace desktop scenarios cover this boundary; CP invariants remain unchanged.
+
+Stand-in Issue reservations use a persistent identity independent of assignment grants. Existing binding writes lock the Issue and reread the owner, active owned device and live bindings, preventing another device or native task from occupying the same identity. Mentions and assignments share routing checks. The identity grants no execution, source or private-transcript authority. Real two-device MySQL concurrency coverage and `test_issue_conversation_reservation_is_device_independent_and_idempotent` protect this transaction; all CP invariants remain unchanged.
+
+Persistent stand-in Issue conversations preserve all CP invariants. Conversation identity is separate from assignment authority: reassignments retain history, but execution and publication revalidate the current member, project, device, role and original assignment or mention. Publication requires the exact owned Issue task binding on an active owned device; superseded grants, foreign devices/tasks, invalid mentions and revoked devices are rejected. Public messages expose no private Runtime address; replies select only the original role without granting private transcript access. Durable wakeup inboxes are recipient-only and sources are revalidated before dispatch. Self mentions create no human reminder. `test_stand_in_issue_replies.py`, Executor public-message filtering tests and the existing desktop notification checkpoint cover these boundaries.
+
 Memory-review completion must not automatically start an ordinary primary conversation, which would restore capabilities outside the memory/progress allowlist. Host-identified scheduled memory reviews retain their original task results and arrangement status but do not enter generic generative result delivery, including success, failure, cancellation and restart recovery. Ordinary scheduled and delegated reporting is unchanged. `memory_review_completion_never_starts_an_unrestricted_parent_turn` protects this boundary; CP invariants are unchanged.
 
 Only owner rule management additionally lists legacy fingerprints not referenced by current rules, without guessing text or scope. Model reads still return authorized semantic rules only. Legacy deletion requires the owner, version and exact forgetting timestamp, and rechecks for rule references inside the same immediate transaction. It reuses owner deletion RPC and is unavailable to unattended review. CP invariants are unchanged.
@@ -65,13 +73,13 @@ The three administrative roles are administrator (`Maintainer`), member (`Develo
 
 The new project, parent-space grant and creator's administrator grant are written in one transaction. Insert the new project's parent grant directly instead of locking an absent grant, avoiding MySQL gap-lock deadlocks when independent spaces create projects concurrently. Resource grants use an atomic insert or update by their unique resource/entity identity before locking the existing record, preserving the grant ID, approval history and outer transaction boundary. The MySQL permission regression suite covers concurrent project creation, concurrent authorization of distinct and identical resources, the unique parent and use permission after creation.
 
-| Space identity | Inherited project | Restricted project |
-| --- | --- | --- |
-| Owner | Administrator | Administrator |
-| Administrator | Administrator | Administrator |
-| Member | Member | Direct invitation required |
-| Read-only member | Read-only member | Direct invitation required |
-| Project guest | Direct grant | Direct grant |
+| Space identity   | Inherited project | Restricted project         |
+| ---------------- | ----------------- | -------------------------- |
+| Owner            | Administrator     | Administrator              |
+| Administrator    | Administrator     | Administrator              |
+| Member           | Member            | Direct invitation required |
+| Read-only member | Read-only member  | Direct invitation required |
+| Project guest    | Direct grant      | Direct grant               |
 
 Space owners and administrators always administer child projects. For other users, a valid direct project role takes precedence over inherited space membership, allowing promotion or demotion within that project. Removing the direct grant restores current inheritance. Updating only a member's project responsibilities neither creates a role override nor approves pending or rejected grants. Public reading does not make visitors eligible project participants.
 
@@ -87,8 +95,9 @@ An exact assigned business answer continues the trusted persisted execution's or
 
 Issue human handoffs preserve the existing membership and native-approval boundaries. Reporting a question requires current Developer access and a caller-owned Runtime attached to the same Issue activity. Routing requires Developer access plus the responsible participant, group leader or Maintainer authority; reporting alone grants no routing authority. The recipient independently needs current Issue access and comment capability. The Issue row serializes versioned transfer and exact-message reply claims. An assigned person can answer in the shared original thread without receiving the source owner's private Runtime or credentials. Read receipts do not settle questions, and queued replies are not delivery acceptance. Local SQLite and cloud metadata retain the same request identity and handling states. No CP invariant changes.
 
-| ID | Invariant |
-| --- | --- |
+<!-- prettier-ignore -->
+| ID   | Invariant                                                                                                                                                                                                                                                                                                   |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CP01 | A project has exactly one active parent space; containment is separate from membership. |
 | CP02 | Space owners and administrators administer all child projects, including restricted projects, regardless of creator. |
 | CP03 | Ordinary projects inherit members and viewers; restricted projects stop those two sources. |
@@ -251,12 +260,12 @@ Project Agent creation and reactivation reuse a space grant only when it is appr
 
 Legacy `creator_admin` input remains accepted, while shared bindings follow project visibility. Explicit `private` remains creator-only for visibility and use; another project administrator cannot publish that definition. Credentials are not shared. Ownership transfer captures a missing historical creator only during that operation, without bulk backfill.
 
-| Client / backend | Boundary |
-| --- | --- |
-| Old client / new backend | Old role and Agent fields are accepted; original containment stays readable; the new backend enforces the unified policy. |
-| New client / old backend | Missing `owner_user_id` hides transfer; missing `membership_mode` hides mode settings; catalogs require verified space access. |
-| Old client / old backend | Original tables and APIs remain usable with the original policy. |
-| Mixed backend versions | Storage compatibility does not upgrade old authorization code. Route permission-sensitive APIs to the new backend, or backport the same policy, before relying on new guarantees. |
+| Client / backend         | Boundary                                                                                                                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Old client / new backend | Old role and Agent fields are accepted; original containment stays readable; the new backend enforces the unified policy.                                                         |
+| New client / old backend | Missing `owner_user_id` hides transfer; missing `membership_mode` hides mode settings; catalogs require verified space access.                                                    |
+| Old client / old backend | Original tables and APIs remain usable with the original policy.                                                                                                                  |
+| Mixed backend versions   | Storage compatibility does not upgrade old authorization code. Route permission-sensitive APIs to the new backend, or backport the same policy, before relying on new guarantees. |
 
 Local private projects retain owner authority offline. Shared cloud operations use server-side relationships.
 
@@ -304,6 +313,8 @@ Assignment reception receipts preserve CP07, CP13, CP14 and CP15: project and Is
 Frequent receipt reads reuse `loop_items` nodes with `resource_type='assignment_index'` and the existing `(parent_id, resource_type, sort_order)` index, then fetch receipt events by primary key. Assignment creation and removal maintain these nodes in the event transaction; the Issue row lock serializes reassignment and acknowledgement. Legacy Issues are initialized once on first access under the same lock, with a marker distinguishing uninitialized state from an empty assignment set. Subsequent requests do not replay activity. Locally, small `resource_type='issue_receipt'` records in `loop_items` store receipts under deterministic primary keys. Only the first access to a legacy Issue extracts its history; later reads and acknowledgements never deserialize or rewrite Issue metadata. No tables, columns, indexes or database migrations are added.
 
 The first assignment of a newly inserted Issue writes its event and active index directly in the creation transaction, without locking absent comment or index ranges. This prevents InnoDB gap-lock deadlocks between independent projects creating Issues concurrently. Only the creation service selects this initialization path; existing Issues still read current assignments, deduplicate and rebuild the index under the Issue row lock. `test_issue_assignment_initialization.py` verifies the absence of history range locks and the complete index; CI's MySQL permission suite verifies concurrent creation and first assignments in independent projects.
+
+Assignment history reads retain `FOR UPDATE` and `populate_existing()` without forcing a MySQL index name. This avoids MySQL 1176 on historically migrated databases that lack the ORM-generated index name. Locking reads query nodes by `loop_item_id` alone, then select undeleted assignment comments in memory, avoiding subtype/deletion index scans through another Issue's uncommitted rows. Ordinary reads still filter comments in SQL. `test_loop_item_assignment.py` covers Issue-only locking predicates, no index hints, refresh semantics and comment filtering; cross-Issue lock contention is separately covered by the MySQL integration suite.
 
 Failed acknowledgements use persisted exponential backoff from 5 seconds up to 1 hour, preserving the delay across restarts. Authentication, authorization, not-found, timeout, rate-limit, server and network failures remain retryable after recovery; success and superseded-assignment conflicts (409) complete the outbox entry. Entries are retained for at most 30 days, bounding retries for deleted Issues or permanently invalid bindings. Stand-in acknowledgements must resolve an active recipient-owned device; historical bindings from inactive devices cannot acknowledge reception.
 

@@ -16,12 +16,21 @@ import { matchesMcpServerKeyword } from '../mcpMarketplace'
 import { McpMarketplaceCard } from './McpMarketplaceCard'
 import { McpTargetSelectorDialog } from './McpTargetSelectorDialog'
 
-export function McpMarketplace() {
+interface McpMarketplaceProps {
+  /** Keyword supplied by the URL so deep links can open the market pre-filtered. */
+  initialKeyword?: string
+  /** Reports explicit filter resets so the page can keep the URL in sync. */
+  onKeywordChange?: (keyword: string) => void
+}
+
+/** MCP provider marketplace with a locally filtered server list. */
+export function McpMarketplace({ initialKeyword = '', onKeywordChange }: McpMarketplaceProps) {
   const { t } = useTranslation('resource-library')
+  const normalizedInitialKeyword = initialKeyword.trim()
   const [providers, setProviders] = useState<MCPProvider[]>([])
   const [activeProviderKey, setActiveProviderKey] = useState('')
   const [servers, setServers] = useState<MCPServer[]>([])
-  const [keyword, setKeyword] = useState('')
+  const [keyword, setKeyword] = useState(normalizedInitialKeyword)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -29,6 +38,15 @@ export function McpMarketplace() {
   const [savingApiKey, setSavingApiKey] = useState(false)
   const [selectedServer, setSelectedServer] = useState<MCPServer | null>(null)
   const serverRequestId = useRef(0)
+  const lastInitialKeywordRef = useRef(normalizedInitialKeyword)
+  const onKeywordChangeRef = useRef(onKeywordChange)
+  onKeywordChangeRef.current = onKeywordChange
+
+  useEffect(() => {
+    if (lastInitialKeywordRef.current === normalizedInitialKeyword) return
+    lastInitialKeywordRef.current = normalizedInitialKeyword
+    setKeyword(normalizedInitialKeyword)
+  }, [normalizedInitialKeyword])
 
   const loadServers = useCallback(
     async (providerKey: string) => {
@@ -130,6 +148,15 @@ export function McpMarketplace() {
     }
   }
 
+  /** Switches providers and clears the filter so the new catalog is visible. */
+  const handleProviderChange = (providerKey: string) => {
+    serverRequestId.current += 1
+    const hadKeyword = keyword !== '' || lastInitialKeywordRef.current !== ''
+    setKeyword('')
+    if (hadKeyword) onKeywordChangeRef.current?.('')
+    setActiveProviderKey(providerKey)
+  }
+
   return (
     <div className="flex flex-col gap-4" data-testid="mcp-marketplace">
       {providers.length > 1 && (
@@ -147,11 +174,7 @@ export function McpMarketplace() {
               variant={provider.key === activeProviderKey ? 'primary' : 'outline'}
               role="tab"
               aria-selected={provider.key === activeProviderKey}
-              onClick={() => {
-                serverRequestId.current += 1
-                setKeyword('')
-                setActiveProviderKey(provider.key)
-              }}
+              onClick={() => handleProviderChange(provider.key)}
               className="min-h-11 min-w-11 shrink-0 md:min-h-9 md:min-w-0"
               data-testid={`mcp-marketplace-provider-${provider.key}`}
             >

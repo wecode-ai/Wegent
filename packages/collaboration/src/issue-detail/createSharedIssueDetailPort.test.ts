@@ -8,6 +8,38 @@ import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import { createSharedIssueDetailPort } from "./createSharedIssueDetailPort";
 
 describe("createSharedIssueDetailPort", () => {
+  it("preserves Issue ownership context for preview, download, and removal", async () => {
+    const blob = new Blob(["demo"]);
+    const attachments = {
+      read: vi.fn().mockResolvedValue(blob),
+      download: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+    const api = {
+      deliveries: {},
+      issues: {},
+      attachments,
+      collaborators: {},
+      taskBindings: {},
+      members: {},
+      agents: {},
+    } as unknown as Parameters<typeof createSharedIssueDetailPort>[0];
+    const context = { projectId: "project-1", issueId: "DEMO-1" };
+    const port = createSharedIssueDetailPort(api, vi.fn(), undefined, context);
+
+    await expect(port.attachments.read("attachment-1")).resolves.toBe(blob);
+    await port.attachments.download("attachment-1", "demo.html");
+    await port.attachments.remove("attachment-1");
+
+    expect(attachments.read).toHaveBeenCalledWith("attachment-1", context);
+    expect(attachments.download).toHaveBeenCalledWith(
+      "attachment-1",
+      "demo.html",
+      context,
+    );
+    expect(attachments.remove).toHaveBeenCalledWith("attachment-1", context);
+  });
+
   it("loads all source pages through the injected host transcript reader", async () => {
     const read = vi
       .fn()

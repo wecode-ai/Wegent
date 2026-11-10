@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { LocalExecutorCloudBridge } from './LocalExecutorCloudBridge'
+import { connectedCloudBridge } from './localExecutorCloudBridgeFixture'
 import {
   resetLocalExecutorCloudConnectionStatus,
   useLocalExecutorCloudConnectionStatus,
@@ -125,14 +126,7 @@ describe('LocalExecutorCloudBridge', () => {
   test('publishes whether the executor WebSocket connection succeeded', async () => {
     const view = render(
       <>
-        <LocalExecutorCloudBridge
-          preferencesLoaded
-          apiBaseUrl="https://backend.example.com/api"
-          backendUrl="https://backend.example.com"
-          socketBaseUrl="wss://socket.example.com"
-          isConnected
-          token="token-a"
-        />
+        {connectedCloudBridge()}
         <ConnectionStatusProbe />
       </>
     )
@@ -168,14 +162,7 @@ describe('LocalExecutorCloudBridge', () => {
   test('publishes a later WebSocket disconnect', async () => {
     render(
       <>
-        <LocalExecutorCloudBridge
-          preferencesLoaded
-          apiBaseUrl="https://backend.example.com/api"
-          backendUrl="https://backend.example.com"
-          socketBaseUrl="wss://socket.example.com"
-          isConnected
-          token="token-a"
-        />
+        {connectedCloudBridge()}
         <ConnectionStatusProbe />
       </>
     )
@@ -200,14 +187,7 @@ describe('LocalExecutorCloudBridge', () => {
   test('clears the published connection when the bridge unmounts', async () => {
     const view = render(
       <>
-        <LocalExecutorCloudBridge
-          preferencesLoaded
-          apiBaseUrl="https://backend.example.com/api"
-          backendUrl="https://backend.example.com"
-          socketBaseUrl="wss://socket.example.com"
-          isConnected
-          token="token-a"
-        />
+        {connectedCloudBridge()}
         <ConnectionStatusProbe />
       </>
     )
@@ -227,16 +207,7 @@ describe('LocalExecutorCloudBridge', () => {
   })
 
   test('updates backend connection whenever the cloud target changes', async () => {
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge())
 
     await waitFor(() => {
       expect(mocks.connect).toHaveBeenCalledWith({
@@ -269,32 +240,14 @@ describe('LocalExecutorCloudBridge', () => {
   })
 
   test('waits for preferences before registering the executor', async () => {
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded={false}
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge({ preferencesLoaded: false }))
 
     await flushAsyncEffects()
     expect(mocks.runtimeTokenPost).not.toHaveBeenCalled()
     expect(mocks.connect).not.toHaveBeenCalled()
     expect(mocks.disconnect).not.toHaveBeenCalled()
 
-    view.rerender(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    view.rerender(connectedCloudBridge())
 
     await waitFor(() =>
       expect(mocks.connect).toHaveBeenCalledWith(expect.objectContaining({ deviceType: 'app' }))
@@ -305,16 +258,7 @@ describe('LocalExecutorCloudBridge', () => {
   test('does not update backend connection when runtime token issuing fails', async () => {
     mocks.runtimeTokenPost.mockRejectedValue(new Error('runtime token unavailable'))
 
-    render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    render(connectedCloudBridge())
 
     await waitFor(() => {
       expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(1)
@@ -337,16 +281,7 @@ describe('LocalExecutorCloudBridge', () => {
         expires_in: 86400,
       })
 
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge())
 
     try {
       await flushAsyncEffects()
@@ -378,6 +313,159 @@ describe('LocalExecutorCloudBridge', () => {
     }
   })
 
+  test('reconfigures a restarted Executor but leaves socket reconnects to the Executor', async () => {
+    vi.useFakeTimers()
+    let configured = true
+    mocks.request.mockImplementation((method: string) =>
+      Promise.resolve(
+        method === 'executor.backend.status'
+          ? { configured, connected: configured && mocks.backendConnected }
+          : { changed: false }
+      )
+    )
+    const view = render(connectedCloudBridge())
+    try {
+      await flushAsyncEffects()
+      expect(mocks.connect).toHaveBeenCalledTimes(1)
+      mocks.backendConnected = false
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(mocks.connect).toHaveBeenCalledTimes(1)
+      configured = false
+      mocks.connect.mockImplementationOnce(async () => {
+        configured = true
+        mocks.backendConnected = true
+        return { running: true, ready: true }
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      await flushAsyncEffects()
+      expect(mocks.connect).toHaveBeenCalledTimes(2)
+      expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(2)
+      expect(mocks.issueToken).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000)
+      })
+      expect(mocks.connect).toHaveBeenCalledTimes(2)
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  test('does not undo an explicit native disconnect while still polling for restart', async () => {
+    vi.useFakeTimers()
+    let explicitlyDisconnected = false
+    mocks.request.mockImplementation(async (method: string) =>
+      method === 'executor.backend.status'
+        ? {
+            configured: !explicitlyDisconnected,
+            connected: !explicitlyDisconnected,
+            explicitly_disconnected: explicitlyDisconnected,
+          }
+        : { changed: false }
+    )
+    const view = render(connectedCloudBridge({ apiBaseUrl: '/api' }))
+    try {
+      await flushAsyncEffects()
+      explicitlyDisconnected = true
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000)
+      })
+      expect(mocks.connect).toHaveBeenCalledTimes(1)
+      expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(1)
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  test('keeps polling across a failed restart reconfiguration without bypassing retry backoff', async () => {
+    vi.useFakeTimers()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let configured = true
+    mocks.request.mockImplementation(async (method: string) =>
+      method === 'executor.backend.status'
+        ? { configured, connected: configured }
+        : { changed: false }
+    )
+    mocks.connect.mockImplementation(async () => {
+      configured = true
+      return { running: true, ready: true }
+    })
+    const view = render(connectedCloudBridge({ apiBaseUrl: '/api' }))
+    try {
+      await flushAsyncEffects()
+      configured = false
+      mocks.runtimeTokenPost.mockRejectedValueOnce(new Error('temporary token failure'))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(2)
+      expect(mocks.issueToken).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(29_000)
+      })
+      expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(2)
+      vi.setSystemTime(Date.now() - 1_000)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(mocks.connect).toHaveBeenCalledTimes(2)
+      expect(mocks.issueToken).toHaveBeenCalledTimes(2)
+      configured = false
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(mocks.connect).toHaveBeenCalledTimes(3)
+    } finally {
+      view.unmount()
+      error.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  test('keeps polling when restart recovery is coalesced with an in-flight token refresh', async () => {
+    vi.useFakeTimers()
+    let configured = true
+    const renewal = deferred<{ auth_token: string; expires_in: number }>()
+    mocks.runtimeTokenPost
+      .mockResolvedValueOnce({ auth_token: 'initial', expires_in: 2 })
+      .mockReturnValueOnce(renewal.promise)
+    mocks.request.mockImplementation(async (method: string) =>
+      method === 'executor.backend.status'
+        ? { configured, connected: configured }
+        : { changed: false }
+    )
+    mocks.connect.mockImplementation(async () => {
+      configured = true
+      return { running: true, ready: true }
+    })
+    const view = render(connectedCloudBridge({ apiBaseUrl: '/api' }))
+    try {
+      await flushAsyncEffects()
+      configured = false
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        renewal.resolve({ auth_token: 'renewed', expires_in: 86400 })
+      })
+      expect(mocks.connect).toHaveBeenCalledTimes(2)
+      configured = false
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(mocks.connect).toHaveBeenCalledTimes(3)
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
   test('clears a pending runtime token refresh when the target changes', async () => {
     vi.useFakeTimers()
     mocks.runtimeTokenPost.mockResolvedValue({
@@ -386,16 +474,7 @@ describe('LocalExecutorCloudBridge', () => {
       expires_in: 2,
     })
 
-    const view = render(
-      <LocalExecutorCloudBridge
-        preferencesLoaded
-        apiBaseUrl="https://backend.example.com/api"
-        backendUrl="https://backend.example.com"
-        socketBaseUrl="wss://socket.example.com"
-        isConnected
-        token="token-a"
-      />
-    )
+    const view = render(connectedCloudBridge())
 
     try {
       await flushAsyncEffects()

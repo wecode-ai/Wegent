@@ -112,3 +112,34 @@ test('fails instead of allocating in an exhausted dynamic-only port range', asyn
     /No E2E service ports available outside the kernel dynamic range/
   )
 })
+
+test('excludes occupied IPv6 ports when reserving a dual-stack service', async () => {
+  const registryDir = await mkdtemp(join(tmpdir(), 'wework-e2e-dual-stack-port-test-'))
+  const dynamicRange = [32768, 65535]
+  const occupied = createServer()
+  const ipv4 = createServer()
+  const ipv6 = createServer()
+  const listen = (server, port, host) =>
+    new Promise((resolvePromise, reject) => {
+      server.once('error', reject)
+      server.listen({ port, host, ipv6Only: true }, resolvePromise)
+    })
+  try {
+    const candidate = await reservePort(null, { dynamicRange })
+    await listen(occupied, candidate, '::1')
+    vi.mocked(randomInt).mockReturnValueOnce(candidate - 1024)
+    const port = await reservePort(registryDir, { dynamicRange, dualStack: true })
+    assert.notEqual(port, candidate)
+    await listen(ipv4, port, '127.0.0.1')
+    await listen(ipv6, port, '::1')
+    assert.equal(ipv4.address().port, port)
+    assert.equal(ipv6.address().port, port)
+  } finally {
+    await Promise.all(
+      [occupied, ipv4, ipv6].map(
+        server => new Promise(resolvePromise => server.close(resolvePromise))
+      )
+    )
+    await rm(registryDir, { recursive: true, force: true })
+  }
+})

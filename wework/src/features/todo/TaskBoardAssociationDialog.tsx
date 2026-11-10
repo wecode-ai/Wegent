@@ -1,5 +1,6 @@
 import { ChevronRight, LayoutDashboard, ListTodo, Loader2, Plus, Search, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -71,7 +72,7 @@ export function TaskBoardAssociationDialog({
     execute(choice)
   }
 
-  return (
+  return createPortal(
     <>
       <div
         className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
@@ -235,6 +236,7 @@ export function TaskBoardAssociationDialog({
           execute(choice)
         }}
       />
-    </>
+    </>,
+    document.body
   )
 }

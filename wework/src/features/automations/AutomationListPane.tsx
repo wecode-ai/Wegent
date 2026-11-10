@@ -269,7 +269,7 @@ function AutomationError({ error, onClear }: { error: string; onClear: () => voi
       type="button"
       data-testid="automation-error"
       onClick={onClear}
-      className="mb-4 flex w-full items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2 text-left text-sm text-red-600 dark:text-red-400"
+      className="mb-4 flex w-full items-start gap-2 rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-left text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/5 wework:text-red-600 wework:dark:text-red-400"
     >
       <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
       <span className="min-w-0 flex-1">{error}</span>
@@ -298,7 +298,7 @@ function AutomationSuggestions({
       cronExpression: '0 8 * * 1-5',
       cronTime: '08:00',
       icon: Bell,
-      iconClassName: 'text-blue-500',
+      iconClassName: 'text-focus wework:text-blue-500',
     },
     {
       name: t('todo.automation_weekly_review', '每周回顾'),
@@ -310,7 +310,7 @@ function AutomationSuggestions({
       cronExpression: '0 16 * * 5',
       cronTime: '16:00',
       icon: ClipboardList,
-      iconClassName: 'text-violet-500',
+      iconClassName: 'text-primary wework:text-violet-500',
     },
     {
       name: t('todo.automation_follow_up', '跟进监控'),
@@ -322,7 +322,7 @@ function AutomationSuggestions({
       cronExpression: '0 9 * * 1-5',
       cronTime: '09:00',
       icon: FileSearch,
-      iconClassName: 'text-emerald-600',
+      iconClassName: 'text-success wework:text-emerald-600',
     },
   ]
   return (

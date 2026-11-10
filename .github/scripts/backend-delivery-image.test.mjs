@@ -16,7 +16,34 @@ import {
   assertStopped,
   assertRouteOwnership,
   collectAndCleanup,
+  collectRustLogs,
 } from "./verify-backend-delivery-image.mjs";
+
+test("stopped-container Rust logs are retained and secrets redacted before publication", (t) => {
+  const evidence = mkdtempSync(join(tmpdir(), "delivery-rust-evidence-"));
+  t.after(() => rmSync(evidence, { recursive: true, force: true }));
+  let staging;
+  collectRustLogs(
+    "stopped-gateway",
+    evidence,
+    (text) => text.replaceAll("synthetic-secret", "<REDACTED>"),
+    (command, args) => {
+      assert.equal(command, "docker");
+      assert.equal(args[0], "cp");
+      assert.equal(args[1], "stopped-gateway:/app/logs/backend/rust/.");
+      staging = args[2];
+      writeFileSync(
+        join(staging, "startup.log"),
+        "stage=mysql secret=synthetic-secret\n",
+      );
+      return { status: 0 };
+    },
+  );
+  const body = readFileSync(join(evidence, "stopped-gateway-rust.log"), "utf8");
+  assert.match(body, /stage=mysql secret=<REDACTED>/);
+  assert.doesNotMatch(body, /synthetic-secret/);
+  assert.throws(() => readFileSync(join(staging, "startup.log")), /ENOENT/);
+});
 
 test("startup supplies independent internal credentials and redacts them on failure", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "delivery-environment-"));

@@ -348,7 +348,9 @@ function ContinueInImDialogContent({
                       )}
                       aria-hidden="true"
                     >
-                      {selected && <span className="h-2 w-2 rounded-full bg-white" />}
+                      {selected && (
+                        <span className="h-2 w-2 rounded-full bg-primary-contrast wework:bg-white" />
+                      )}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex min-w-0 items-center gap-2">
