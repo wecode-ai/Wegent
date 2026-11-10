@@ -96,6 +96,11 @@ export function credentialAssertionScript(input) {
     const crypto = require('node:crypto')
     const {app, safeStorage} = require('electron')
     const input = ${JSON.stringify(input)}
+    const started = Date.now()
+    const mark = stage => console.info('[upgrade-credential-stage]', JSON.stringify({
+      pid: process.pid, stage, elapsedMs: Date.now() - started
+    }))
+    mark('read-model')
     const directory = app.getPath('userData')
     assert.ok(input.directories.includes(directory), 'Credential fixture escaped its isolated profile')
     const host = path.join(process.resourcesPath, 'app.asar/dist/host')
@@ -103,22 +108,28 @@ export function credentialAssertionScript(input) {
     const {CloudCredentialService} = require(path.join(host, 'cloud-credential-service.js'))
     const store = new SecureValueStore(directory)
     const secret = await store.get(${JSON.stringify(KEY)})
+    mark('model-read')
     assert.ok(secret === input.expectedSecret, 'Native model credential changed across release selection')
     if (input.write) {
+      mark('write-model')
       await store.set(${JSON.stringify(KEY)}, ${JSON.stringify(NEXT_SECRET)})
       assert.ok(await store.get(${JSON.stringify(KEY)}) === ${JSON.stringify(NEXT_SECRET)},
         'Native model credential write did not persist')
+      mark('model-written')
     }
     const authenticationSecret = input.write ? ${JSON.stringify(NEXT_SECRET)} : secret
     const response = await fetch(input.modelUrl, {headers: {Authorization: 'Bearer ' + authenticationSecret}})
     assert.ok(response.ok && (await response.json()).authenticated, 'Stored model credential could not authenticate')
+    mark('model-authenticated')
     const credentials = new CloudCredentialService(directory)
     const publicKey = await (${readCloudDevicePublicKey.toString()})(credentials, 'https://upgrade-credential.invalid/api')
+    mark('cloud-read')
     assert.ok(publicKey.x === input.expectedPublicKey.x && publicKey.y === input.expectedPublicKey.y,
       'Cloud credential reader lost the authorized device identity')
     const cloudEnvelope = JSON.parse(await fs.readFile(path.join(directory, 'cloud-credentials.json'), 'utf8'))
     const cloud = cloudEnvelope.version === 3
       ? JSON.parse((await safeStorage.decryptStringAsync(Buffer.from(cloudEnvelope.ciphertext, 'base64'))).result) : cloudEnvelope
+    mark('cloud-decrypted')
     assert.ok(cloud.refreshToken === 'synthetic-upgrade-refresh-token', 'Cloud refresh credential changed')
     const challenge = Buffer.from('credential-upgrade-device-proof')
     const signature = crypto.sign('sha256', challenge, cloud.privateKey)
@@ -135,6 +146,7 @@ export function credentialAssertionScript(input) {
       assert.ok(!JSON.stringify(values).includes(authenticationSecret), 'Model secret remains readable on disk')
       assert.ok(!JSON.stringify(cloudEnvelope).includes('synthetic-upgrade-refresh-token'), 'Cloud credential remains plaintext')
     }
+    mark('verified')
     return {format: expectedFormat, storageVersion}
   })()`
 }
