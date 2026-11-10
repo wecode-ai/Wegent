@@ -39,9 +39,12 @@ import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
+// A loaded Windows runner can need more than three minutes to open its first
+// renderer even though the application started successfully.
+const DEFAULT_DESKTOP_READY_TIMEOUT_MS = 360_000
 const DESKTOP_READY_TIMEOUT_MS = readPositiveTimeout(
   process.env.WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS,
-  WORKBENCH_READY_TIMEOUT_MS,
+  DEFAULT_DESKTOP_READY_TIMEOUT_MS,
   'WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS'
 )
 const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
