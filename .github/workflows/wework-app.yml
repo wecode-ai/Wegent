@@ -337,13 +337,14 @@ jobs:
       - name: Verify native contracts before packaging
         shell: bash
         run: |
+          # Keep desktop probes exclusive while preserving their functional deadlines.
           tests=(wework/scripts/build-launcher.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs wework/e2e/desktop/modules/release-startup-owner.test.mjs)
           if [[ "$RUNNER_OS" == Linux ]]; then
             sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
             sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
-            dbus-run-session -- xvfb-run -a node --test "${tests[@]}"
+            dbus-run-session -- xvfb-run -a node --test --test-concurrency=1 "${tests[@]}"
           else
-            node --test "${tests[@]}"
+            node --test --test-concurrency=1 "${tests[@]}"
           fi
           rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
           "$RUNNER_TEMP/wework-launcher-tests.exe"

@@ -49,11 +49,10 @@ test(
     const exited = once(child, 'exit')
     const ready = once(child.stdout, 'data', { signal: AbortSignal.timeout(10_000) })
     try {
-      const endpoint = await inspectBeforeStart(child, 'void 0', () => {})
+      const endpoint = await inspectBeforeStart(child, 'void 0')
       await ready
       const port = new URL(endpoint).port
-      const read = value =>
-        inspectRunningApp(port, child.pid, nativeTrayStateScript(value), () => {})
+      const read = value => inspectRunningApp(port, child.pid, nativeTrayStateScript(value))
       await assertMacosStatusItem(
         {
           async command() {
@@ -71,10 +70,10 @@ test(
       assert.equal(hostedStatusItem(state.items[0]), true)
       assert.deepEqual((await read('different-guid')).items, [])
       await assert.rejects(
-        inspectRunningApp(port, child.pid + 1, nativeTrayStateScript(guid), () => {}),
+        inspectRunningApp(port, child.pid + 1, nativeTrayStateScript(guid)),
         /another release process/
       )
-      await inspectRunningApp(port, child.pid, 'globalThis.nativeTray.destroy()', () => {})
+      await inspectRunningApp(port, child.pid, 'globalThis.nativeTray.destroy()')
       assert.deepEqual((await read(guid)).items, [])
     } finally {
       child.kill('SIGKILL')
