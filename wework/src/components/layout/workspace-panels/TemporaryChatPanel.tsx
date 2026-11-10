@@ -2,9 +2,9 @@ import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComp
 import { conversationOutcomePresentation } from './conversationOutcomePresentation'
 import { useTemporaryChatSend } from './useTemporaryChatSend'
 import { useTemporaryChatControls } from './useTemporaryChatControls'
+import { useTemporaryChatRuntimeEvents } from './useTemporaryChatRuntimeEvents'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import type { PluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
-import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { StandInNotificationPrompt } from '@/features/todo/StandInNotificationPrompt'
 import { runtimePaneQueue } from './runtimePaneQueues'
 import { ComposerCatalogContext } from '@/components/chat/composer/ComposerCatalogContext'
@@ -17,7 +17,6 @@ import {
 import {
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -66,7 +65,6 @@ import { queueWorkbenchWorkspaceLaunch } from '@/features/workbench/workspaceLau
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { getErrorMessage } from '@/lib/error-message'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
-import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtimeGuidanceMessages'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
@@ -286,7 +284,6 @@ export function TemporaryChatPanel({
   const [historyLoadingMoreBefore, setHistoryLoadingMoreBefore] = useState(false)
   const historyRequest = useRef({ loadingMore: false })
   const [sending, setSending] = useState(false)
-  const messageViewId = useId()
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
   const conversationQueue = runtimePaneQueue(lifecycleStore, address, instanceId)
@@ -299,30 +296,19 @@ export function TemporaryChatPanel({
     () => new Set()
   )
   const taskLifecycle = useRuntimeTaskLifecycle(address)
-  useEffect(() => {
-    if (!markReadWhenActive || !active || !address) return
-    const key = taskLifecycle?.key ?? `${address.deviceId}\0${address.taskId}`
-    const markRead = () => {
-      lifecycleStore.messageReceipts?.setViewed(key, isMainWindowFocused(), messageViewId)
-      if (isMainWindowFocused() && lifecycleStore.getTask(address)?.unread) {
-        lifecycleStore.markRead(address)
-      }
-    }
-    markRead()
-    const unsubscribe = subscribeMainWindowFocus(markRead)
-    return () => {
-      unsubscribe()
-      lifecycleStore.messageReceipts?.setViewed(key, false, messageViewId)
-    }
-  }, [
-    active,
+  useTemporaryChatRuntimeEvents({
     address,
-    lifecycleStore,
+    active,
     markReadWhenActive,
-    messageViewId,
-    taskLifecycle?.key,
-    taskLifecycle?.unread,
-  ])
+    lifecycle: taskLifecycle,
+    lifecycleStore,
+    contextUsageStore,
+    conversationQueue,
+    messages,
+    subscribeRuntimeTaskStream,
+    setSending,
+    setMessages,
+  })
   const paneStatus = useMemo(
     () =>
       deriveRuntimePaneStatus({
@@ -347,16 +333,6 @@ export function TemporaryChatPanel({
       scope.active = false
     }
   }, [instanceId, initialAddress?.deviceId, initialAddress?.taskId])
-
-  useEffect(() => {
-    conversationQueue.reconcileGuidance(
-      new Set(
-        messages
-          .filter(message => message.role === 'user' && message.runtimeGuidance)
-          .map(message => message.id)
-      )
-    )
-  }, [conversationQueue, messages])
 
   const updateAddress = useCallback(
     (nextAddress: RuntimeTaskAddress | null) => {
@@ -477,24 +453,6 @@ export function TemporaryChatPanel({
       setHistoryRevision(value => value + 1)
     }
   }, [historyBeforeCursor, loadMoreHistory])
-
-  useEffect(() => {
-    if (!address) return
-    return subscribeRuntimeTaskStream(address, {
-      onContextUsageUpdated: contextUsageStore.receiveLive,
-      onMessageAction: () => undefined,
-      onAssistantStart: () => setSending(false),
-      onAssistantSettled: () => setSending(false),
-      onGuidanceApplied: payload => {
-        const guidanceMessage = conversationQueue.applyGuidance(payload)
-        if (!guidanceMessage) return
-        setMessages(current => [
-          ...current.filter(message => message.id !== guidanceMessage.id),
-          createAppliedRuntimeGuidanceMessage(guidanceMessage, payload),
-        ])
-      },
-    })
-  }, [address, contextUsageStore, subscribeRuntimeTaskStream, conversationQueue])
 
   useEffect(() => {
     if (!address) return
