@@ -32,6 +32,7 @@ import {
   mkdir,
   pathExists,
   readFile,
+  redisCliBinary,
   repoDir,
   reservePort,
   resultDir,
@@ -1119,7 +1120,7 @@ class RealCloudEnvironment {
 
   async setExecutorLatestVersion(version) {
     await runChecked(
-      'redis-cli',
+      redisCliBinary(),
       [
         '-h',
         '127.0.0.1',
