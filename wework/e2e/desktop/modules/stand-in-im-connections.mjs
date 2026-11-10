@@ -46,12 +46,17 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
     async verify(control) {
       const rpc = (method, payload) => requestExecutor(control, method, payload, uiTimeoutMs)
       const initial = await rpc('runtime.stand_in.personal.get', { userId })
+      assert.equal((await rpc('runtime.stand_in.binding', { operation: 'get' })).status, 'unbound')
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('navigate', 'body', {
         value: `/stand-in?deviceId=${encodeURIComponent(initial.executionDeviceId)}`,
       })
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await finishStandInOnboarding(control)
+      const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
+      assert.equal(binding.status, 'active')
+      assert.equal(binding.target.userId, userId)
+      assert.equal(binding.target.deviceId, initial.executionDeviceId)
       await openStandInSettings(control)
       const panel = '[data-testid="stand-in-primary-profile"]'
       const connections = `${panel} [data-testid="stand-in-im-connections"]`
