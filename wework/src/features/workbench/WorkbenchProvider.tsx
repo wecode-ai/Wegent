@@ -1,3 +1,4 @@
+import { useWorkbenchServiceConnections } from './workbenchServiceConnections'
 import { useWorkspaceTabDraftInput } from './useWorkspaceTabDraftInput'
 import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
@@ -747,26 +748,7 @@ function OwnedWorkbenchProvider({
       window.removeEventListener(PLUGIN_TRIAL_QUEUED_EVENT, stableConsumeQueuedPluginTrial)
     }
   }, [consumePluginTrials, stableConsumeQueuedPluginTrial])
-  useEffect(() => {
-    const socketClient = resolvedServices.socketClient
-    if (!socketClient) return undefined
-
-    let isMounted = true
-    void socketClient.ensureConnected().catch(error => {
-      if (isMounted) {
-        console.error('[Workbench] Failed to connect chat socket', error)
-      }
-    })
-
-    return () => {
-      isMounted = false
-      socketClient.dispose()
-    }
-  }, [resolvedServices.socketClient])
-  useEffect(() => {
-    const projectChatClient = resolvedServices.projectChatClient
-    return () => projectChatClient?.dispose()
-  }, [resolvedServices.projectChatClient])
+  useWorkbenchServiceConnections(resolvedServices)
 
   const persistProjectWorkPreference = useCallback(
     (
