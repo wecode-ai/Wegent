@@ -260,13 +260,12 @@ def _guard_existing_intent(
         )
         installed_id = installed.id if installed is not None else None
     elif action == "ensure_builtin":
-        installed = (
-            db.query(Kind)
-            .filter_by(user_id=user_id, kind="InstalledPlugin", namespace="default")
-            .filter(
-                Kind.json["spec"]["source"]["pluginKey"].as_string() == str(target_id)
-            )
-            .first()
+        from app.services.plugin_installation_operations import (
+            find_builtin_account_installation,
+        )
+
+        installed = find_builtin_account_installation(
+            db, user_id=user_id, plugin_key=str(target_id)
         )
         installed_id = installed.id if installed is not None else None
     else:

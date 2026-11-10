@@ -64,9 +64,10 @@ export async function verifyPluginLocalSync({
     const scope = createHash('sha256')
       .update(`${apiProxy.url}:${capabilities.accountId}`)
       .digest('hex')
+    // This checkpoint configures WEGENT_CODEX_HOME as executorHome/codex.
     const journal = async () =>
       JSON.parse(
-        await readFile(resolve(executorHome, 'plugin-local-sync', `${scope}.json`), 'utf8')
+        await readFile(resolve(executorHome, 'codex', 'plugin-local-sync', `${scope}.json`), 'utf8')
       )
     const request = params =>
       requestPluginExecutor(control, 'executor.plugins.local_sync', {

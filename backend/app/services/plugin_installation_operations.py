@@ -3,8 +3,10 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.plugin_marketplace import Plugin
 from app.schemas.installed_plugin import InstalledPlugin, InstalledPluginUpdateRequest
+from app.services.builtin_plugin_registry import BUILTIN_PLUGIN_OWNER_ID
 from app.services.device.plugin_removal_sync import prepare_plugin_removal
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.plugin_device_installation_service import (
@@ -17,10 +19,9 @@ from app.services.plugin_marketplace_identity import (
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 
 
-def install_builtin_account_plugin(
-    db: Session, *, user_id: int, plugin_key: str, commit: bool = True
-) -> InstalledPlugin:
-    item = (
+def _builtin_catalog_plugin(db: Session, plugin_key: str) -> Plugin | None:
+    """Resolve the catalog identity shared by builtin install and recovery."""
+    return (
         db.query(Plugin)
         .filter(
             Plugin.catalog_namespace.in_(
@@ -30,6 +31,56 @@ def install_builtin_account_plugin(
         )
         .first()
     )
+
+
+def find_builtin_account_installation(
+    db: Session, *, user_id: int, plugin_key: str
+) -> Kind | None:
+    """Read the same source as installation, independent of publication status."""
+    item = _builtin_catalog_plugin(db, plugin_key)
+    if item is not None:
+        installed = plugin_marketplace_service._find_installed(
+            db, user_id=user_id, plugin_id=item.id
+        )
+        # The compatibility lookup can also match a legacy catalogItemId.
+        # Only an explicit modern plugin identity can prove this watermark.
+        if (
+            installed is not None
+            and installed.json.get("spec", {}).get("pluginId") == item.id
+        ):
+            return installed
+        if installed is not None:
+            raise HTTPException(409, "plugin_write_conflict")
+        return None
+    legacy = installed_plugin_service._find_marketplace_item(
+        db, user_id=BUILTIN_PLUGIN_OWNER_ID, plugin_key=plugin_key
+    )
+    if legacy is None:
+        return None
+    installed = installed_plugin_service._find_installed_plugin(
+        db,
+        user_id=user_id,
+        source_type="marketplace",
+        plugin_key=plugin_key,
+        marketplace_id=legacy.id,
+    )
+    # Legacy Kind catalog IDs and modern Plugin IDs occupy different spaces.
+    # A coincident ID/name from another provider cannot prove supersession.
+    if (
+        installed is not None
+        and installed.json.get("spec", {}).get("source", {}).get("providerKey")
+        == "wegent-marketplace"
+    ):
+        return installed
+    if installed is not None:
+        raise HTTPException(409, "plugin_write_conflict")
+    return None
+
+
+def install_builtin_account_plugin(
+    db: Session, *, user_id: int, plugin_key: str, commit: bool = True
+) -> InstalledPlugin:
+    item = _builtin_catalog_plugin(db, plugin_key)
     if item is not None:
         return plugin_marketplace_service.install(
             db, user_id=user_id, plugin_id=item.id, commit=commit
