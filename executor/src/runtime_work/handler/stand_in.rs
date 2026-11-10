@@ -19,6 +19,23 @@ pub(super) fn stand_in_issue_identity(config: &Value, issue: &Value) -> String {
     )
 }
 
+pub(super) fn stand_in_issue_receipt_binding(config: &Value, issue: &Value) -> Value {
+    if issue["assignee_user_id"] != config["userId"] {
+        return json!({});
+    }
+    if config["projectStore"] == "cloud" {
+        return issue
+            .get("human_task_binding")
+            .filter(|binding| binding.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+    }
+    let Some(history) = issue["metadata"]["assignment_history"].as_array() else {
+        return json!({});
+    };
+    json!({"humanAssignmentId":format!("{}-{}", issue["id"].as_str().unwrap_or_default(), history.len())})
+}
+
 impl RuntimeWorkRpcHandler {
     /// Notification history follows assignment ownership, including archived work.
     pub(super) fn stand_in_assignment_tasks(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -168,11 +185,28 @@ impl RuntimeWorkRpcHandler {
             _ => return Err(AppIpcError::new("bad_request", "projectStore is required")),
         };
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let kind = if local { "local" } else { "cloud" };
+        let selected = if payload["standInId"].is_string() {
+            None
+        } else {
+            self.stand_in_project_configs(
+                &[store
+                    .personal_stand_in(user, &self.device_id)
+                    .map_err(settings_error)?],
+                &project,
+                kind,
+            )
+            .into_iter()
+            .next()
+        };
         let mut config = store
             .stand_in_settings(
                 &project,
                 user,
-                payload["standInId"].as_str().unwrap_or("default"),
+                payload["standInId"]
+                    .as_str()
+                    .or_else(|| selected.as_ref().and_then(|role| role["id"].as_str()))
+                    .unwrap_or("default"),
             )
             .map_err(settings_error)?;
         config["projectId"] = json!(project);
@@ -236,8 +270,12 @@ impl RuntimeWorkRpcHandler {
         }) {
             return Ok(json!({"deviceId":self.device_id,"taskId":task_id}));
         }
-        self.execute_stand_in_task(&config, &issue, &json!({}))
-            .await?;
+        self.execute_stand_in_task(
+            &config,
+            &issue,
+            &stand_in_issue_receipt_binding(&config, &issue),
+        )
+        .await?;
         let task_id = self.stand_in_task_id(&config, &issue);
         let task = self
             .local_task_link(&task_id)
@@ -439,11 +477,6 @@ impl RuntimeWorkRpcHandler {
             }
         }
         Ok(())
-    }
-
-    async fn start_cloud_stand_in(&self, config: &Value, issue: &Value) -> Result<(), AppIpcError> {
-        self.start_cloud_stand_in_with_roles(std::slice::from_ref(config), issue)
-            .await
     }
 
     pub(super) async fn start_cloud_stand_in_with_roles(

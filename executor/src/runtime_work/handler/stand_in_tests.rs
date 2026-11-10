@@ -85,11 +85,17 @@ async fn round_work_validates_the_issue_event_without_replacing_member_identity(
     let mut issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{
         "humanAssignmentId":"human","assignmentId":"member-work", "dispatchRoundId":"round-1","issueAssignmentId":"issue-event"
     }});
-    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+    handler
+        .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &issue)
+        .await
+        .unwrap();
     assert_eq!(bindings.load(Ordering::SeqCst), 1);
     assert_eq!(issue["human_task_binding"]["assignmentId"], "member-work");
     issue["human_task_binding"]["issueAssignmentId"] = json!("superseded-event");
-    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+    handler
+        .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &issue)
+        .await
+        .unwrap();
     assert_eq!(bindings.load(Ordering::SeqCst), 1);
     issue["human_task_binding"]
         .as_object_mut()
@@ -97,7 +103,7 @@ async fn round_work_validates_the_issue_event_without_replacing_member_identity(
         .remove("issueAssignmentId");
     assert_eq!(
         handler
-            .start_cloud_stand_in(&config, &issue)
+            .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &issue)
             .await
             .unwrap_err()
             .code,
@@ -341,7 +347,7 @@ async fn manual_cloud_conversations_ignore_status_and_assignment_but_keep_projec
         assert_eq!(reads.load(Ordering::SeqCst), before, "{status}");
         // Automatic handling must also reach current assignment validation.
         let error = automatic
-            .start_cloud_stand_in(&config, &value)
+            .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &value)
             .await
             .unwrap_err();
         assert_eq!(
@@ -524,7 +530,10 @@ async fn existing_manual_binding_prevents_another_device_from_creating_a_task() 
     })));
     let config = json!({"id":"default","projectId":"project","userId":7,"enabledAfter":"2026-10-20T12:00:00Z"});
     let issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
-    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+    handler
+        .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &issue)
+        .await
+        .unwrap();
     assert_eq!(bindings.load(Ordering::SeqCst), 1);
     assert!(handler.local_task_link("stand-in-human-default").is_none());
     handler.upsert_local_task(RuntimeTaskLink {
@@ -534,7 +543,10 @@ async fn existing_manual_binding_prevents_another_device_from_creating_a_task() 
     });
     let mut manual = config;
     manual["manual"] = json!(true);
-    handler.start_cloud_stand_in(&manual, &issue).await.unwrap();
+    handler
+        .start_cloud_stand_in_with_roles(std::slice::from_ref(&manual), &issue)
+        .await
+        .unwrap();
     assert_eq!(bindings.load(Ordering::SeqCst), 2);
     assert_eq!(
         handler
@@ -657,12 +669,15 @@ async fn manual_cloud_retry_reaches_preparation_without_mutating_an_existing_bin
         });
         config["manual"] = json!(true);
         let error = handler
-            .start_cloud_stand_in(&config, &issue)
+            .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &issue)
             .await
             .unwrap_err();
         assert_eq!(error.code, "workspace_unavailable");
         config["manual"] = json!(false);
-        handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+        handler
+            .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &issue)
+            .await
+            .unwrap();
         assert_eq!(mutations.load(Ordering::SeqCst), 0);
         assert_eq!(
             handler

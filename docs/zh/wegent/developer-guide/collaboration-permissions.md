@@ -6,7 +6,7 @@ sidebar_position: 36
 
 已读确认仍先验证当前 Issue 访问，仅推进当前用户游标，不改 Issue 版本或时间。自动确认携带已观测内容版本，云端单次原子更新限制到 `min(当前版本, 观测版本)` 并保持游标单调，本地以相同观测版本限制清除未读；旧请求不清除后来内容及提醒。`test_delayed_read_acknowledges_only_the_observed_public_content`、API 游标回归和真实 MySQL 桌面场景保护该事务，CP 不变量不变。
 
-显式手动委托和持久会话不依赖自动接收条件：角色接收开关、项目订阅、标签、当前负责人及旧指派或提及均不限制用户启动、继续、重试会话或发布公开回复。未指定角色时使用默认角色；启动不自动改变 Issue 指派，也不生成指派接收回执。请求来源仍与持久会话身份逐项核对，执行及公开仍验证当前角色存在、账号、项目和 Issue 访问权限。自动接收及后台跟进继续按用户配置选择工作。`issue_conversations_do_not_depend_on_intake_or_current_assignment`、`manual_issue_work_needs_no_assignment_or_intake_subscription` 和既有分身会话桌面场景覆盖该边界；CP 不变量不变。
+显式手动委托和持久会话不依赖自动接收条件：角色接收开关、项目订阅、标签、当前负责人及旧指派或提及均不限制用户启动、继续、重试会话或发布公开回复。未指定角色时沿用已有项目角色，没有项目配置也可使用默认角色；启动不自动改变 Issue 指派。当前确有本人指派时保留接收回执，缺少指派不阻止执行，也不代替其他人确认接收。请求来源仍与持久会话身份逐项核对，执行及公开仍验证当前角色存在、账号、项目和 Issue 访问权限。自动接收及后台跟进继续按用户配置选择工作。`issue_conversations_do_not_depend_on_intake_or_current_assignment`、`manual_issue_work_needs_no_assignment_or_intake_subscription` 和既有分身会话桌面场景覆盖该边界；CP 不变量不变。
 
 同一分身的 Issue 会话预留使用独立于指派的持久标识。现有任务绑定写入在 Issue 行锁下重读本人、当前活跃设备与有效绑定，另一设备或不同原生任务不能重复占用同一标识；提及和指派共用相同路由检查。标识仅用于路由，不授予执行、来源或私人会话访问权限。两设备真实 MySQL 并发验收与 `test_issue_conversation_reservation_is_device_independent_and_idempotent` 覆盖该事务，CP 不变量不变。
 

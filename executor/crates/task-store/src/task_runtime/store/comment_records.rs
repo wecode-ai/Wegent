@@ -324,12 +324,21 @@ mod stand_in_reply_tests {
             .update_task(
                 &project.id,
                 &issue.id,
-                serde_json::from_value(json!({"version":reassigned.version,"assignee_user_id":null}))
-                    .unwrap(),
+                serde_json::from_value(
+                    json!({"version":reassigned.version,"assignee_user_id":null}),
+                )
+                .unwrap(),
             )
             .unwrap();
         store
-            .publish_stand_in_reply("mac", "conversation", 7, &origin, "unassigned", "Still here")
+            .publish_stand_in_reply(
+                "mac",
+                "conversation",
+                7,
+                &origin,
+                "unassigned",
+                "Still here",
+            )
             .unwrap();
         assert!(store
             .publish_stand_in_reply("mac", "conversation", 8, &origin, "foreign", "Foreign")
