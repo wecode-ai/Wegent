@@ -293,6 +293,8 @@ Wework 不会改用其他目录启动会话，而会明确提示原工作区不�
 
 本机自定义接口和云端 Responses 模型默认使用普通 function 工具转换，不依赖提供商 profile ID 或模型名称；缺少工具配置字段的旧配置同样生效。只有显式选择原生 custom 工具、原生 namespace/工具搜索或完整透传时才保留对应原生协议。
 
+Responses 连接测试同时检查工具调用参数；参数缺失、JSON 格式错误或不符合探测要求时会显示失败，可以在原窗口重试。
+
 DeepSeek profile 使用原生 Responses API，展示当前可用于 Codex 的 `deepseek-v4-flash` 和 `deepseek-v4-pro`。两者均使用 1,048,576 tokens 上下文、默认 `high` 推理等级和实时 Web Search。DeepSeek 仅接受名为 `apply_patch` 的 custom tool，因此 Wework 保留 Code Mode，在接口边界将 `exec` 和 freeform 工具转换为 function tool，并将返回结果还原为原生工具调用；连接测试验证 function tool 调用。未显式选择原生工具的已有配置使用同一通用适配，无需重新添加模型；旧版由 Wework 管理的 Chat Completions 配置仍会迁移到 Responses API。当前模型目录声明文本输入且关闭图片生成，因此图片生成和图片理解不会在该 profile 下显示为可用能力。
 
 文本模型可以显式引用另一个明确声明图片输入能力的模型作为“视觉代理模型”。本地模型的引用在 Wework 本地模型设置中维护；云端模型的引用必须在 Wegent Web 管理端配置，Wework 只读取 Backend 下发的 `visionSidecarModel` 引用，不提供云端模型编辑入口，也不会自动选择默认视觉模型。执行时，Wework 在请求主模型前调用视觉模型描述每张图片，再用描述文本替换 `input_image`。配置视觉代理后，executor 从当前基础 catalog 通用派生视觉 catalog，因此任意文本模型都会保留自身的推理、工具、上下文和压缩能力；未配置引用时模型保持纯文本且不会产生额外模型调用。原始图片只发送给视觉模型，不发送给文本主模型。视觉代理支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 接口；单轮最多处理 8 个不同图片描述，单张图片最大 20 MB，描述失败时会插入明确的错误文本。远程视觉接口必须使用 HTTPS；仅 `localhost` 和回环 IP 可使用 HTTP，且视觉请求不会跟随重定向，避免凭证被发送到未授权的后续地址。

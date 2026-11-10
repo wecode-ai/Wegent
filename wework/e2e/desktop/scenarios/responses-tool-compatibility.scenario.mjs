@@ -17,6 +17,8 @@ import {
   readRequestBody,
   responseCompleted,
   responseCreated,
+  functionCall,
+  customToolCall,
 } from '../modules/response-protocol.mjs'
 import { programmaticExecTools } from '../modules/model-tool-catalog.mjs'
 import {
@@ -38,6 +40,8 @@ const ERROR = "Unsupported custom tool: 'exec'. Only 'apply_patch' is supported.
 /** Exercise the real desktop/runtime/Codex chain against a strict model protocol oracle. */
 export function createDesktopScenario({ electronUserDataDirectory, workspacePath, resultDir }) {
   const requests = []
+  let probeRequests = 0
+  let nativeProbeRequests = 0
   let round = 1
   let cloudEnvironment
   let cloudModelId
@@ -129,6 +133,40 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       if (handleModelMaintenanceRequest(body, response)) return true
       assert.equal(request.headers.authorization, `Bearer ${API_KEY}`)
       const native = body.model === `${MODEL}-native`
+      if (body.tools?.some(tool => tool.name === 'wework_capability_probe')) {
+        probeRequests += 1
+        const id = `probe-${probeRequests}`
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([
+            responseCreated(id),
+            ...functionCall(
+              id,
+              'wework_capability_probe',
+              probeRequests === 1 ? {} : { input: 'PING' }
+            ),
+            responseCompleted(id),
+          ])
+        )
+        return true
+      }
+      if (native && body.tools?.some(tool => tool.name === 'apply_patch')) {
+        nativeProbeRequests += 1
+        const id = `native-probe-${nativeProbeRequests}`
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([
+            responseCreated(id),
+            customToolCall(
+              id,
+              'apply_patch',
+              '*** Begin Patch\n*** Add File: connection-probe.txt\n+PING\n*** End Patch\n'
+            ),
+            responseCompleted(id),
+          ])
+        )
+        return true
+      }
       const tools = programmaticExecTools(body)
       const rejected = !native && tools.some(tool => tool.type === 'custom')
       requests.push({
@@ -210,6 +248,26 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
           'standard'
         )
         await control.command('click', '[data-testid="local-model-advanced-capabilities-close"]')
+        const probe = '[data-testid="provider-editor-test"]'
+        const probeResult = '[data-testid="provider-editor-test-result"]'
+        await control.command('clickWhenEnabled', probe)
+        await control.command('waitFor', `${probeResult}[role="alert"]`)
+        await control.command('click', '[data-testid="provider-editor-test-error-details"]')
+        await control.command('waitFor', `${probeResult}[role="alert"]`, {
+          text: 'required capability probe tool call',
+        })
+        await control.command('clickWhenEnabled', probe)
+        await control.command('waitFor', `${probeResult}[role="status"]`)
+        assert.equal(
+          probeRequests,
+          2,
+          'Invalid arguments must fail before a valid probe can recover'
+        )
+        assert.equal(
+          nativeProbeRequests,
+          2,
+          'Native probes must retain their selected tool protocol'
+        )
         await control.command('click', '[data-testid="provider-editor-cancel"]')
         await control.command('navigate', 'body', { value: '/' })
         await createSingleRootLocalProject(control, workspacePath, 'Responses compatibility')
@@ -258,7 +316,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         throw new AggregateError(errors, 'Responses verification and cleanup failed')
     },
     diagnostics() {
-      return { requests }
+      return { requests, probeRequests, nativeProbeRequests }
     },
   }
 }
