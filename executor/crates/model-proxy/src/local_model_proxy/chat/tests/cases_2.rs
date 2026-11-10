@@ -897,7 +897,7 @@ async fn lite_namespaced_custom_exec_preserves_raw_input_in_all_adapters() {
         responses_to_responses(&body, CustomToolConversion::None, true, true).unwrap();
     assert_eq!(native["input"], body["input"]);
     assert!(native.get("tools").is_none());
-    let (retained_namespace, _) =
+    let (retained_namespace, native_context) =
         responses_to_responses(&body, CustomToolConversion::All, true, true).unwrap();
     assert_eq!(retained_namespace["tools"][0]["type"], "namespace");
     assert_eq!(
@@ -909,6 +909,33 @@ async fn lite_namespaced_custom_exec_preserves_raw_input_in_all_adapters() {
         retained_namespace["tools"][0]["tools"][0]["parameters"]["required"],
         json!(["input"])
     );
+    let namespace_event = json!({
+        "type": "response.output_item.done",
+        "output_index": 0,
+        "item": {
+            "id": "fc_namespaced_exec",
+            "type": "function_call",
+            "status": "completed",
+            "call_id": "call_namespaced_exec",
+            "name": "exec",
+            "arguments": serde_json::to_string(&json!({"input": script})).unwrap()
+        }
+    });
+    let namespace_output = convert_responses_stream(
+        &format!("event: response.output_item.done\ndata: {namespace_event}\n\n"),
+        native_context,
+    )
+    .await;
+    let restored_namespaced = namespace_output
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .find_map(|event| event.get("item").cloned())
+        .filter(|item| item["type"] == "custom_tool_call")
+        .expect("A native namespace custom call must be restored by its short name");
+    assert_eq!(restored_namespaced["name"], "exec");
+    assert_eq!(restored_namespaced["namespace"], "functions");
+    assert_eq!(restored_namespaced["input"], script);
     let mut mixed_body = body.clone();
     mixed_body["input"][0]["tools"][0]["tools"] = json!([
         {"type": "custom", "name": "exec"},

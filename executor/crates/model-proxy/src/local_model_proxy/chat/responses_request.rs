@@ -516,6 +516,17 @@ pub(super) fn responses_bridge_context(
         };
         if include {
             bridged.insert_tool(wire_name.clone(), identity.clone());
+            // A native namespace keeps its members' short declaration names, so
+            // restore converted custom calls by that name as well.
+            if !bridge_namespace_tools
+                && identity.namespace.is_some()
+                && wire_name != &identity.name
+            {
+                bridged
+                    .tools
+                    .entry(identity.name.clone())
+                    .or_insert_with(|| identity.clone());
+            }
         }
     }
     bridged
