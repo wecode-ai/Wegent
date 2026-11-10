@@ -18,11 +18,13 @@ export function ProjectCoordinatorPublication({
   api,
   project,
   onClose,
+  onPublished,
   ref,
 }: {
   api: SharedWorkspaceApi
   project: CollaborationProject
   onClose(): void
+  onPublished(): void
   ref?: Ref<StandInSettingsHandle>
 }) {
   const { t } = useTranslation('common')
@@ -84,6 +86,7 @@ export function ProjectCoordinatorPublication({
       await api.comments.create(issue.id, content.trim())
       setPublished(issue)
       setContent('')
+      onPublished()
     } catch (cause) {
       setError(getStandInErrorMessage(cause))
     } finally {

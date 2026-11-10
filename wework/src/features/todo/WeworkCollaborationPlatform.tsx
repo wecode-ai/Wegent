@@ -7,6 +7,7 @@ import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/Work
 import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 import { MessageSquare } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
@@ -545,23 +546,46 @@ export function WeworkSharedProject({
       project.project_store,
     ]
   )
+  const projectAgentConfiguration = useMemo(
+    () =>
+      createWeworkProjectAgentConfigurationHost(
+        services.agentResourceApi,
+        services.localProjectChatAgentApi,
+        project.project_store === 'local' ? detailServices?.modelApi : undefined,
+        services.pluginApi,
+        services.deviceApi
+      ),
+    [
+      services.agentResourceApi,
+      services.localProjectChatAgentApi,
+      project.project_store,
+      detailServices?.modelApi,
+      services.pluginApi,
+      services.deviceApi,
+    ]
+  )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
       renderBoardToolbarAction: onOpenProjectConversation
         ? () => (
-            <button
-              type="button"
-              data-testid="project-space-chat-open"
-              aria-expanded={projectChatOpen}
-              onClick={() => {
-                if (projectChatOpen) setClosedConversationRequestKey(conversationRequestKey)
-                else onOpenProjectConversation()
-              }}
-              className="inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-            >
-              <MessageSquare className="h-4 w-4" aria-hidden="true" />
-              {t('workbench.project_space_chat.open')}
-            </button>
+            <Tooltip label={t('workbench.project_space_chat.open')} side="bottom">
+              <button
+                type="button"
+                data-testid="project-space-chat-open"
+                aria-label={t('workbench.project_space_chat.open')}
+                aria-expanded={projectChatOpen}
+                onClick={() => {
+                  if (projectChatOpen) setClosedConversationRequestKey(conversationRequestKey)
+                  else onOpenProjectConversation()
+                }}
+                className="project-board-compact-action inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+              >
+                <MessageSquare className="h-4 w-4" aria-hidden="true" />
+                <span className="project-board-action-label">
+                  {t('workbench.project_space_chat.open')}
+                </span>
+              </button>
+            </Tooltip>
           )
         : undefined,
       renderProjectHeaderAction: currentProject => (
@@ -575,6 +599,7 @@ export function WeworkSharedProject({
               userId={Number(userId)}
               devices={devices ?? []}
               onOpenTask={onOpenRuntimeTask}
+              onPublished={() => setRefreshProjectRequestKey(value => value + 1)}
               onOpenIssue={issueId => {
                 setTaskComposer(null)
                 setLocation(current => ({ ...current, projectView: 'board', issueId }))
@@ -645,13 +670,7 @@ export function WeworkSharedProject({
             },
           }
         : {}),
-      projectAgentConfiguration: createWeworkProjectAgentConfigurationHost(
-        services.agentResourceApi,
-        project.project_store === 'local' ? services.localProjectChatAgentApi : undefined,
-        project.project_store === 'local' ? detailServices?.modelApi : undefined,
-        services.pluginApi,
-        services.deviceApi
-      ),
+      projectAgentConfiguration,
     }),
     [
       focusedItemId,
@@ -666,8 +685,8 @@ export function WeworkSharedProject({
       onOpenRuntimeTask,
       onFocusedItemHandled,
       services,
+      projectAgentConfiguration,
       userId,
-      detailServices?.modelApi,
       location.issueId,
       location.projectSettingsSection,
       location.projectView,
@@ -722,6 +741,15 @@ export function WeworkSharedProject({
     }
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
+  const isIssueRunning = useCallback(
+    (_issue: CollaborationIssue, bindings: WorkspaceTaskBinding[]) =>
+      bindings.some(binding =>
+        runtimeRunningByAddress.get(
+          runtimeConversationKey({ deviceId: binding.deviceId, taskId: binding.taskId })
+        )
+      ),
+    [runtimeRunningByAddress]
+  )
   // Local archives require the Runtime to stop first. Cloud archives own the
   // tombstone and cancellation transaction in the Backend before stopping work.
   const prepareIssueArchive = useCallback(
@@ -742,18 +770,9 @@ export function WeworkSharedProject({
     },
     [onCancelRuntimeTask, runtimeRunningByAddress, scopedApi]
   )
-  const runtimeTaskStatusSignature =
-    project.project_store === 'local'
-      ? ''
-      : projectRuntimeStatusSignature(runtimeTaskLifecycle, {
-          projectStore: project.project_store,
-          projectId: String(project.id),
-        })
-  const localRuntimeLifecycleVersion =
-    project.project_store === 'local' ? runtimeTaskLifecycle?.version : undefined
-  const previousLocalRuntimeRef = useRef({
-    projectId: project.project_store === 'local' ? String(project.id) : null,
-    version: localRuntimeLifecycleVersion,
+  const runtimeTaskStatusSignature = projectRuntimeStatusSignature(runtimeTaskLifecycle, {
+    projectStore: project.project_store,
+    projectId: String(project.id),
   })
 
   useEffect(() => {
@@ -767,31 +786,6 @@ export function WeworkSharedProject({
       for (const timeout of timeouts) window.clearTimeout(timeout)
     }
   }, [runtimeTaskStatusSignature])
-
-  useEffect(() => {
-    const projectId = project.project_store === 'local' ? String(project.id) : null
-    const previous = previousLocalRuntimeRef.current
-    previousLocalRuntimeRef.current = {
-      projectId,
-      version: localRuntimeLifecycleVersion,
-    }
-    if (
-      projectId === null ||
-      localRuntimeLifecycleVersion === undefined ||
-      previous.projectId !== projectId ||
-      previous.version === localRuntimeLifecycleVersion
-    ) {
-      return
-    }
-    const timeouts = PROJECT_STATUS_REFRESH_DELAYS_MS.map(delay =>
-      window.setTimeout(() => {
-        setRefreshProjectRequestKey(value => value + 1)
-      }, delay)
-    )
-    return () => {
-      for (const timeout of timeouts) window.clearTimeout(timeout)
-    }
-  }, [localRuntimeLifecycleVersion, project.id, project.project_store])
 
   useEffect(
     () =>
@@ -1103,6 +1097,14 @@ export function WeworkSharedProject({
             project: projectRef,
             type: 'bound',
           })
+          // Finish UI-owned writes before the runtime can mutate the same Issue version.
+          const statusUpdateError = await updateIssueWhenPersonalTaskStarts(
+            scopedApi.issues,
+            taskComposer.issue.id
+          )
+          if (statusUpdateError !== null) {
+            notify(statusUpdateError || t('task_board_status_update_failed'), 'error')
+          }
           return async () => {
             await runtimePort.unbindTask(taskComposer.issue.id, sharedTask)
             publishProjectSpaceTaskBindingChanged({
@@ -1126,13 +1128,6 @@ export function WeworkSharedProject({
               }
             )
           }
-          const statusUpdateError = await updateIssueWhenPersonalTaskStarts(
-            scopedApi.issues,
-            taskComposer.issue.id
-          )
-          if (statusUpdateError !== null) {
-            notify(statusUpdateError || t('task_board_status_update_failed'), 'error')
-          }
           setTaskComposer(current =>
             current?.conversationKey === taskComposer.conversationKey
               ? { ...current, address }
@@ -1155,6 +1150,12 @@ export function WeworkSharedProject({
       />
       <div className="min-w-0 flex-1">
         <CollaborationApp
+          participationUserId={
+            project.project_store === 'local'
+              ? (services.localParticipationIdentity?.viewerUserIds ?? taskOwnerUserId)
+              : taskOwnerUserId
+          }
+          isIssueRunning={isIssueRunning}
           parentGroupingEnabled
           api={scopedApi}
           initialProject={project}

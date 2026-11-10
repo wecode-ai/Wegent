@@ -58,6 +58,9 @@ export function AutomationsPage({
   embedded = false,
   standInOwner,
   standInDeviceId,
+  initialAutomationId,
+  detailOnly = false,
+  onClose,
   onDirtyChange,
   onNavigate,
   ref,
@@ -67,6 +70,9 @@ export function AutomationsPage({
   onDirtyChange?(dirty: boolean): void
   onNavigate?(action: () => void): void
   standInDeviceId?: string
+  initialAutomationId?: string
+  detailOnly?: boolean
+  onClose?(): void
   standInOwner?: { userId: number; roleId: string }
 } = {}) {
   const { t, i18n } = useTranslation('common')
@@ -91,7 +97,6 @@ export function AutomationsPage({
     archiveChatConversations,
     selectStandaloneDevice,
     openStandaloneWorkspace,
-    getRemoteDeviceStartupCommand,
     refreshDevices,
     createProject,
     createGitWorkspaceProject,
@@ -176,10 +181,15 @@ export function AutomationsPage({
       setAutomations(items)
       const shouldSelectInitialAutomation = !initialSelectionResolvedRef.current
       initialSelectionResolvedRef.current = true
-      if (shouldSelectInitialAutomation && items[0] && ownerUserId === undefined) {
-        setSelectedAutomationId(items[0].id)
-        setEditing(items[0])
-        setDraft(automationDraftFromAutomation(items[0], state.runtimeWork))
+      const initial = initialAutomationId
+        ? items.find(item => item.id === initialAutomationId)
+        : ownerUserId === undefined
+          ? items[0]
+          : undefined
+      if (shouldSelectInitialAutomation && initial) {
+        setSelectedAutomationId(initial.id)
+        setEditing(initial)
+        setDraft(automationDraftFromAutomation(initial, state.runtimeWork))
         setDirty(false)
       }
       setError(null)
@@ -192,7 +202,7 @@ export function AutomationsPage({
     } finally {
       setLoading(false)
     }
-  }, [automationApi, state.runtimeWork, t, ownerUserId, ownerRoleId])
+  }, [automationApi, state.runtimeWork, t, ownerUserId, ownerRoleId, initialAutomationId])
 
   const loadRuns = useCallback(
     async (automationId: string) => {
@@ -490,7 +500,9 @@ export function AutomationsPage({
       setDraft(automationDraftFromAutomation(response.automation))
       setDirty(false)
       await loadAutomations()
-      if (standInOwner) {
+      if (detailOnly) {
+        onClose?.()
+      } else if (standInOwner) {
         setSelectedAutomationId(null)
         setEditing(null)
         setDraft(null)
@@ -545,6 +557,7 @@ export function AutomationsPage({
     if (!window.confirm(t('todo.automation_delete_confirm', '删除这个自动化？'))) return
     try {
       await automationApi.deleteAutomation(automation.id)
+      if (detailOnly) onClose?.()
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(null)
@@ -559,6 +572,10 @@ export function AutomationsPage({
 
   const closeDetail = () =>
     requestLeave(() => {
+      if (detailOnly) {
+        onClose?.()
+        return
+      }
       initialSelectionResolvedRef.current = true
       setSelectedAutomationId(null)
       setEditing(null)
@@ -653,7 +670,6 @@ export function AutomationsPage({
           onArchiveChatConversations={archiveChatConversations}
           onOpenStandaloneWorkspace={openStandaloneWorkspace}
           onSelectStandaloneDevice={selectStandaloneDevice}
-          onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
           onRefreshDevices={refreshDevices}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}
@@ -714,9 +730,27 @@ export function AutomationsPage({
             onToggle={() => setSidebarCollapsed(false)}
           />
         )}
-        {hasWorkspace ? (
+        {detailOnly && !draft ? (
+          <div
+            data-testid="automation-detail-status"
+            className="p-4 text-sm text-text-secondary"
+            role={loading ? 'status' : 'alert'}
+          >
+            {loading ? t('standIn.loading') : error || t('todo.automation_not_found')}
+            {!loading && (
+              <button
+                type="button"
+                data-testid="automation-detail-retry"
+                onClick={() => void loadAutomations()}
+                className="ml-2 min-h-8 underline"
+              >
+                {t('standIn.reload')}
+              </button>
+            )}
+          </div>
+        ) : hasWorkspace ? (
           <>
-            {(!standInOwner || !draft) && (
+            {!detailOnly && (!standInOwner || !draft) && (
               <AutomationListPane
                 calendar={Boolean(standInOwner)}
                 automations={filteredAutomations}
@@ -749,8 +783,9 @@ export function AutomationsPage({
             )}
             {draft ? (
               <AutomationDetailWorkspace
+                dialogMode={detailOnly}
                 compact={Boolean(standInOwner)}
-                validationError={draftError}
+                validationError={draftError || (detailOnly ? error : null)}
                 draft={draft}
                 calendarMode={Boolean(standInOwner)}
                 inheritStandIn={Boolean(standInOwner || editing?.taskRequest?.standInOwner)}

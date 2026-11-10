@@ -283,6 +283,17 @@ pub fn role_project_matches(role: &Value, project: &str, store: &str) -> bool {
 
 pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
     let mut config = role.clone();
+    if let Some(fields) = config.as_object_mut() {
+        for key in [
+            "manual",
+            "intakeRouted",
+            "recoveringDispatch",
+            "triggerCommentId",
+            "triggerMessage",
+        ] {
+            fields.remove(key);
+        }
+    }
     config["projectId"] = json!(project);
     config["projectStore"] = json!(store);
     config["userId"] = json!(user);
@@ -334,6 +345,37 @@ fn validate_policy(policy: &Value) -> bool {
     policy["automatic"].is_boolean()
         && policy["askBeforeAct"].is_boolean()
         && policy.get("immediate").map_or(true, Value::is_boolean)
+        && policy.get("sessionStrategy").map_or(true, |strategy| {
+            matches!(strategy.as_str(), Some("independent" | "reuse"))
+        })
+}
+
+#[cfg(test)]
+mod session_policy_tests {
+    use super::*;
+
+    #[test]
+    fn validates_session_strategy_independently_of_timing_and_approval() {
+        for automatic in [false, true] {
+            for ask in [false, true] {
+                for immediate in [false, true] {
+                    for strategy in ["independent", "reuse"] {
+                        assert!(validate_policy(
+                            &json!({"automatic":automatic,"askBeforeAct":ask,"immediate":immediate,"sessionStrategy":strategy})
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(validate_policy(
+            &json!({"automatic":true,"askBeforeAct":true})
+        ));
+        for strategy in [json!("automatic"), json!(false), Value::Null, json!(1)] {
+            assert!(!validate_policy(
+                &json!({"automatic":true,"askBeforeAct":true,"sessionStrategy":strategy})
+            ));
+        }
+    }
 }
 
 fn valid_collaboration(source: &Value) -> bool {
@@ -629,6 +671,7 @@ impl LocalTaskStore {
             }
         }
         let previous = read_personal(connection, user, device)?;
+        super::stand_in_lifecycle::preserve_stopped_import(&previous, &mut value)?;
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);
         }

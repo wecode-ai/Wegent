@@ -2,6 +2,7 @@ import type { CloudRuntimeState } from '@/types/workbench'
 import type { ExecutorClient } from '@/api/executorAccess'
 import type {
   DeviceInfo,
+  ProjectWithTasks,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
@@ -15,6 +16,59 @@ import {
   readCachedDeviceList,
 } from './workbenchCloudStatus'
 import { getRuntimeTaskRouteKey, removeRuntimeTasks } from './workbenchRuntimeHelpers'
+
+export interface CloudBackgroundRequest {
+  controller: AbortController
+  refreshDevices: boolean
+  workRefreshQueued: boolean
+}
+
+export interface CloudBackgroundRefreshOptions {
+  projects: ProjectWithTasks[]
+  standaloneDeviceId: string | null
+  standaloneWorkspacePath?: string | null
+  trigger?: 'bootstrap' | 'manual-refresh' | 'device-event'
+  refreshDevices?: boolean
+  isCancelled?: () => boolean
+}
+
+export function queueWorkRefreshAfterInventory(
+  request: CloudBackgroundRequest | null,
+  refreshDevices: boolean
+): boolean {
+  if (refreshDevices || !request?.refreshDevices || request.controller.signal.aborted) return false
+  // Finish inventory discovery, then coalesce work events into one fresh read.
+  request.workRefreshQueued = true
+  return true
+}
+
+export function createRuntimeWorkRefreshQueue(refresh: () => Promise<void>) {
+  let pending: Promise<void> | null = null
+  let queued = false
+  let disposed = false
+  return {
+    refresh(): Promise<void> {
+      if (disposed) return Promise.resolve()
+      queued = true
+      if (pending) return pending
+      pending = (async () => {
+        try {
+          do {
+            queued = false
+            await Promise.resolve().then(refresh)
+          } while (queued && !disposed)
+        } finally {
+          pending = null
+        }
+      })()
+      return pending
+    },
+    dispose() {
+      disposed = true
+      queued = false
+    },
+  }
+}
 
 export async function loadDevicesForRefresh(
   executorClient: ExecutorClient,

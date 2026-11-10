@@ -1,8 +1,18 @@
-import { act, renderHook } from '@testing-library/react'
+import { fireEvent, render, renderHook } from '@testing-library/react'
+import type { ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import type { ProjectBoardStatePort } from '@wegent/collaboration/project-board'
 import { useParentIssueBoard } from '@wegent/collaboration/project-board'
+
+function clickToggle(toggle: ReactElement) {
+  const view = render(toggle)
+  const button = view.getByRole('button', { name: '按父事项' })
+  expect(button.classList.contains('project-board-compact-action')).toBe(true)
+  expect(button.querySelector('.project-board-action-label')?.textContent).toBe('按父事项')
+  fireEvent.click(button)
+  view.unmount()
+}
 
 describe('parent board personal layout', () => {
   beforeEach(() => localStorage.clear())
@@ -30,9 +40,9 @@ describe('parent board personal layout', () => {
       { initialProps: { scope: 'user:a' } }
     )
     expect(result.current.active).toBe(false)
-    act(() => result.current.toggle!.props.onClick())
+    clickToggle(result.current.toggle!)
     expect(result.current.active).toBe(true)
-    act(() => result.current.toggle!.props.onClick())
+    clickToggle(result.current.toggle!)
     expect(result.current.active).toBe(false)
     rerender({ scope: 'user:b' })
     expect(result.current.active).toBe(false)
@@ -54,7 +64,7 @@ describe('parent board personal layout', () => {
       { initialProps: { scope: 'user:project-a', enabled: true } }
     )
     expect(result.current.active).toBe(false)
-    act(() => result.current.toggle!.props.onClick())
+    clickToggle(result.current.toggle!)
     expect(result.current.active).toBe(true)
     rerender({ scope: 'user:project-b', enabled: true })
     expect(result.current.active).toBe(false)

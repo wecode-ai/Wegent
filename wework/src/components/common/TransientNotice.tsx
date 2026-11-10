@@ -78,7 +78,9 @@ export function TransientNotice({
       }
       className={cn(
         'fixed left-1/2 top-28 z-system max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg border bg-surface px-4 py-3 text-sm shadow-[0_8px_28px_rgba(0,0,0,0.12)]',
-        tone === 'success' ? 'border-primary/20 text-text-primary' : 'border-red-200 text-red-700'
+        tone === 'success'
+          ? 'border-success/20 text-text-primary wework:border-primary/20'
+          : 'border-destructive/30 text-destructive wework:border-red-200 wework:text-red-700'
       )}
     >
       {message}

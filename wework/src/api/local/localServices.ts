@@ -509,6 +509,7 @@ interface CloudModelGateway {
 }
 
 interface RuntimeWorkIpcOptions {
+  localIssueUserIds?: readonly number[]
   getLocalRuntimeSidebarIdentity?: WorkbenchServices['getLocalRuntimeSidebarIdentity']
   resolveDeviceId?: (data?: Record<string, unknown>) => Promise<string>
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
@@ -537,6 +538,7 @@ interface RuntimeWorkIpcOptions {
 
 interface AutomationIpcOptions extends RuntimeWorkIpcOptions {
   prepareRuntimeModel: (data: RuntimeModelPrepareRequest) => Promise<boolean>
+  resolveRunDeviceId?: () => Promise<string>
 }
 
 function runtimeExecutionUser(
@@ -610,9 +612,13 @@ function modelCatalogSyncCancelled(): Error {
 
 function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
   const online = status.running && status.ready !== false && !status.error
+  const deviceId = localDeviceIdFromStatus(status)
+  const identityUnresolved =
+    !status.deviceId?.trim() || (deviceId === LOCAL_DEVICE_ID && !status.runtimeInstanceId?.trim())
   const device = {
     id: 0,
-    device_id: localDeviceIdFromStatus(status),
+    device_id: deviceId,
+    ...(identityUnresolved ? { local_identity_unresolved: true } : {}),
     name: 'Local Executor',
     status: online ? ('online' as const) : ('offline' as const),
     is_default: true,
@@ -1148,7 +1154,6 @@ function localRuntimeModelConfig(
         : {}),
     }
     if (runtime === 'claude_code') return gatewayConfig
-    const nativeByDefault = upstreamApiFormat === 'openai-responses'
     const codexRequestMode = modelOptions?.[CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION] ?? 'auto'
     if (
       !['auto', 'standard', 'passthrough'].includes(codexRequestMode) ||
@@ -1158,11 +1163,11 @@ function localRuntimeModelConfig(
     }
     const nativeToolSearch =
       modelOptions?.[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION] == null
-        ? nativeByDefault
+        ? false
         : modelOptions[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION]?.trim().toLowerCase() === 'true'
     const nativeNamespaceTools =
       modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION] == null
-        ? nativeByDefault
+        ? false
         : modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
     const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
     const primaryCodexCatalogModelId =
@@ -1173,7 +1178,7 @@ function localRuntimeModelConfig(
       codex_request_mode: codexRequestMode,
       native_tool_search: nativeToolSearch,
       native_namespace_tools: nativeNamespaceTools,
-      tool_profile: 'custom',
+      tool_profile: 'function',
       ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
@@ -1233,13 +1238,10 @@ async function harnessProxyUpstream(
   if (!baseUrl || !apiFormat || !apiKey) {
     throw new Error('Harness model proxy configuration is incomplete')
   }
-  const nativeByDefault = apiFormat === 'openai-responses'
   const nativeToolSearch =
-    typeof config.native_tool_search === 'boolean' ? config.native_tool_search : nativeByDefault
+    typeof config.native_tool_search === 'boolean' ? config.native_tool_search : false
   const nativeNamespaceTools =
-    typeof config.native_namespace_tools === 'boolean'
-      ? config.native_namespace_tools
-      : nativeByDefault
+    typeof config.native_namespace_tools === 'boolean' ? config.native_namespace_tools : false
   const headers =
     config.default_headers &&
     typeof config.default_headers === 'object' &&
@@ -1254,7 +1256,7 @@ async function harnessProxyUpstream(
     base_url: baseUrl,
     request_url: requestUrl,
     api_format: apiFormat,
-    convert_custom_tools: config.tool_profile === 'function',
+    convert_custom_tools: config.tool_profile !== 'custom',
     native_tool_search: nativeToolSearch,
     native_namespace_tools: nativeNamespaceTools,
     codex_request_mode: recordString(config.codex_request_mode) ?? 'auto',
@@ -2452,7 +2454,14 @@ function adaptRuntimeWorkListResponse(
     projects.push(projectWork)
   }
 
-  return { projects, chats, totalTasks }
+  return {
+    projects,
+    chats,
+    totalTasks,
+    ...(typeof record.localIssueQuestionsPending === 'boolean'
+      ? { localIssueQuestionsPending: record.localIssueQuestionsPending }
+      : {}),
+  }
 }
 
 export function createRuntimeWorkApiFromIpc(
@@ -2793,10 +2802,13 @@ export function createRuntimeWorkApiFromIpc(
         {
           success: boolean
           task?: unknown
+          code?: string
           error?: string
         },
         RuntimeTaskAddress
       >('runtime.tasks.get', address, options)
+      if (!response.success && ['task_not_found', 'task_archived'].includes(response.code ?? ''))
+        return null
       if (!response.success) throw new Error(response.error || 'Runtime task lookup failed')
       const task = normalizeRuntimeTaskSummary(response.task, address.workspacePath ?? '')
       if (!task) throw new Error('Runtime task lookup returned an invalid task')
@@ -2817,6 +2829,9 @@ export function createRuntimeWorkApiFromIpc(
           {
             ...(requestOptions?.preferCached ? { preferCached: true } : {}),
             ...(requestOptions?.pendingOnly ? { pendingOnly: true } : {}),
+            ...(requestOptions?.pendingOnly && options.localIssueUserIds
+              ? { localIssueUserIds: options.localIssueUserIds }
+              : {}),
           },
           localDeviceId
         )
@@ -3731,7 +3746,11 @@ export function createAutomationApiFromIpc(
       )
       return {
         run: response.run
-          ? withAutomationRunSource(response.run, source, automationDeviceId)
+          ? withAutomationRunSource(
+              response.run,
+              source,
+              await (options.resolveRunDeviceId?.() ?? Promise.resolve(automationDeviceId))
+            )
           : null,
       }
     },
@@ -3741,10 +3760,9 @@ export function createAutomationApiFromIpc(
         automationId ? { automationId } : {},
         automationDeviceId
       )
+      const deviceId = await (options.resolveRunDeviceId?.() ?? Promise.resolve(automationDeviceId))
       return {
-        items: (response.items ?? []).map(item =>
-          withAutomationRunSource(item, source, automationDeviceId)
-        ),
+        items: (response.items ?? []).map(item => withAutomationRunSource(item, source, deviceId)),
       }
     },
   }
@@ -3765,6 +3783,15 @@ function summarizeLocalModelOptions(
 }
 
 export function createLocalAppServices(deps: LocalAppServicesDeps = {}): WorkbenchServices {
+  const currentLocalParticipant = deps.user ?? LOCAL_USER
+  const localParticipationIdentity = {
+    nativeOwnerUserId: 0 as const,
+    currentUser: Object.freeze({
+      id: currentLocalParticipant.id,
+      user_name: currentLocalParticipant.user_name,
+    }),
+    viewerUserIds: Object.freeze([...new Set([LOCAL_USER.id, currentLocalParticipant.id])]),
+  }
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
     async listPlugins() {
       // Agent configuration must remain local-only. Both app/list and
@@ -4034,6 +4061,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       user: deps.user,
       materializeRuntimeTask: deps.materializeRuntimeTask,
       getLocalRuntimeSidebarIdentity,
+      localIssueUserIds: localParticipationIdentity.viewerUserIds,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
   const automationApi = createAutomationApiFromIpc(
@@ -4044,6 +4072,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       resolveProxy,
       user: deps.user,
       prepareRuntimeModel: data => runtimeWorkApi.prepareRuntimeModel(data),
+      // Persisted intent can use the local alias; live navigation/event scopes cannot.
+      resolveRunDeviceId: getLocalDeviceId,
     }
   )
   // Local project-space identity is the local session user, not the connected
@@ -4428,7 +4458,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const externalIssueApi = createExternalIssueApi(request)
   const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
   const localProjectChatClient = createLocalProjectChatClient(request, {
-    currentUser: LOCAL_USER,
+    currentUser: localParticipationIdentity.currentUser,
     async prepareExecution({ projectId, taskId, agentId, text, runnerSelection }) {
       const [projects, task, agents] = await Promise.all([
         deliveryApi.listCloudProjects(),
@@ -4680,6 +4710,11 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
 
   return {
     teamApi,
+    localParticipationIdentity,
+    localIssueHumanRequestsApi: createLocalIssueHumanRequestsApi(
+      request,
+      localParticipationIdentity
+    ),
     modelApi,
     skillApi: {
       listSkills: async () => [],
@@ -4829,3 +4864,4 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     },
   } as unknown as WorkbenchServices
 }
+import { createLocalIssueHumanRequestsApi } from '@/api/issueHumanRequests'

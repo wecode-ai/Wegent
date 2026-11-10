@@ -87,6 +87,17 @@ describe('Wework scheme routing', () => {
     expect(route.searchParams.get('app_type')).toBe('smart_app')
     expect(route.searchParams.get('smartAppId')).toBe('42')
   })
+
+  it.each([
+    ['stand-in-chat-7-primary', '@primary'],
+    ['stand-in-chat-7-role-review', 'review'],
+  ])('opens the identity chat for %s notification clicks', (taskId, profileId) => {
+    const destination = parseWeworkScheme(`wework://tasks/device/${taskId}`)!
+    const route = new URL(weworkDestinationRoute(destination), 'https://local')
+    expect(route.pathname).toBe('/stand-in')
+    expect(route.searchParams.get('profileId')).toBe(profileId)
+    expect(route.searchParams.get('deviceId')).toBe('device')
+  })
   it('rejects invalid DSH app and Smart app destinations', () => {
     expect(parseWeworkScheme('wework://apps')).toBeNull()
     expect(parseWeworkScheme('wework://apps/')).toBeNull()

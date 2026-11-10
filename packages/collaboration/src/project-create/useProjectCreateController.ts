@@ -137,14 +137,17 @@ export function useProjectCreateController({
         : null,
     [aitableUrl, host, isAITableProvider],
   );
+  const templateEnvironmentUnavailable =
+    location === "cloud" &&
+    (templateDocument?.spec.resources.collaboration.agents?.length ?? 0) > 0 &&
+    (resourceSetup?.executionEnvironmentLoading ||
+      resourceSetup?.executionEnvironmentError);
   const canSubmit =
     Boolean(
       createdProject ||
       (name.trim() &&
         !templatePending &&
-        (!templateDocument ||
-          (!resourceSetup?.executionEnvironmentLoading &&
-            !resourceSetup?.executionEnvironmentError)) &&
+        !templateEnvironmentUnavailable &&
         (!repositoryProvider || repositoryAddress.trim()) &&
         (!isAITableProvider || aitableLink) &&
         !saving),

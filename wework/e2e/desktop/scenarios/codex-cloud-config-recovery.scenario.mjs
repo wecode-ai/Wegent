@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createCloudConfigModelService } from '../modules/cloud-config-model-service.mjs'
 import { assertCloudConfigRecovery } from '../modules/cloud-config-recovery-evidence.mjs'
@@ -19,6 +19,34 @@ const OFFICIAL_MODEL = 'gpt-5.5'
 // Cold enterprise configuration retries and intentional desktop restarts are
 // slow operations; ordinary UI actions retain the shared ten-second timeout.
 const RECOVERY_TIMEOUT_MS = 60_000
+
+async function preparePluginSyncFixture(resultDir) {
+  const pluginName = 'cloud-config-auth-probe'
+  const root = join(resultDir, 'cloud-config-marketplace')
+  const manifestDirectory = join(root, '.agents', 'plugins')
+  const pluginDirectory = join(root, 'plugins', pluginName, '.codex-plugin')
+  await mkdir(manifestDirectory, { recursive: true })
+  await mkdir(pluginDirectory, { recursive: true })
+  const marketplacePath = join(manifestDirectory, 'marketplace.json')
+  await writeFile(
+    marketplacePath,
+    JSON.stringify({
+      name: 'wework-personal',
+      plugins: [
+        {
+          name: pluginName,
+          source: { source: 'local', path: `plugins/${pluginName}` },
+          policy: { installation: 'INSTALLED_BY_DEFAULT' },
+        },
+      ],
+    })
+  )
+  await writeFile(
+    join(pluginDirectory, 'plugin.json'),
+    JSON.stringify({ name: pluginName, version: '1.0.0' })
+  )
+  return { marketplacePath, pluginName }
+}
 
 export function createDesktopScenario({ resultDir, workspacePath }) {
   const model = createCloudConfigModelService()
@@ -192,6 +220,15 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       assert.ok(continued.turns.length > original.turns.length)
       assert.ok(JSON.stringify(continued.messages).includes(`${PREFIX}_OLD_COMPLETE`))
 
+      // A real bundled-plugin change must restart the idle process without
+      // restoring the subscription auth whose cloud configuration is still down.
+      const pluginSync = await rpc(
+        'runtime.codex.plugin.sync_bundled',
+        await preparePluginSyncFixture(resultDir)
+      )
+      assert.deepEqual(pluginSync, { status: 'ready', updated: true })
+      evidence.push({ pluginSync })
+
       model.plan(`${PREFIX}_NEW_OFFLINE`)
       const offlineTask = await create('NEW_OFFLINE')
       await completed(offlineTask, `${PREFIX}_NEW_OFFLINE`)
@@ -301,18 +338,21 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
 
       // A second complete desktop restart must reconstruct the final reply and
       // stopped Goal from disk without starting another model continuation.
-      await control.command('waitFor', `[data-testid="runtime-local-task-row-${goalTask}"]`)
-      await control.command('click', `[data-testid="runtime-local-task-row-${goalTask}"]`)
-      await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
-        text: `${goalMarker}_COMPLETE`,
-      })
+      const openGoalConversation = async () => {
+        await control.command('waitFor', `[data-testid="runtime-local-task-row-${goalTask}"]`)
+        await control.command('click', `[data-testid="runtime-local-task-row-${goalTask}"]`)
+        await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
+          text: `${goalMarker}_COMPLETE`,
+        })
+      }
+      await openGoalConversation()
       model.recoverBundle()
       await restartDesktopApp()
       await completed(goalTask, goalMarker, 3)
       assert.equal(goalPlan.count, 3, 'The completed Goal continued after a cold desktop restart')
-      await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
-        text: `${goalMarker}_COMPLETE`,
-      })
+      // Main-window startup restores configured fixed tabs, not the last transient task route.
+      await openGoalConversation()
+      assert.equal(goalPlan.count, 3, 'Reopening the completed Goal started another model turn')
       assert.equal(
         (await rpc('runtime.tasks.goal.get', { address: address(goalTask) })).goal.status,
         'complete'

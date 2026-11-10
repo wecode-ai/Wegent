@@ -77,6 +77,37 @@ const taskRecord = {
 }
 
 describe('local delivery API', () => {
+  test('includes native project work in My Work while isolating a failed project read', async () => {
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list')
+        return [projectRecord, { ...projectRecord, id: 'broken', name: 'Broken' }]
+      if (method === 'todos.list' && params?.project_id === projectRecord.id)
+        return [{ ...taskRecord, created_by_user_id: 0 }]
+      throw new Error('Offline project')
+    })
+    const result = await createLocalDeliveryApi(request).listMyWork()
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0]).toMatchObject({
+      id: 'LOCAL-1',
+      project_name: 'Local board',
+      created_by_user_name: 'local',
+    })
+    expect(result.errors).toEqual(['Broken: Offline project'])
+  })
+  test.each(['local', 'github'])(
+    'resolves creator zero only for the local identity, not %s provider identities',
+    async provider => {
+      const request = vi.fn().mockResolvedValue([
+        {
+          ...taskRecord,
+          created_by_user_id: 0,
+          metadata: { ...taskRecord.metadata, task_provider: provider },
+        },
+      ])
+      const result = await createLocalDeliveryApi(request).listLoopItems(projectRecord.id)
+      expect(result.items[0].created_by_user_name).toBe(provider === 'local' ? 'local' : null)
+    }
+  )
   test('round-trips saved board views through existing project metadata', async () => {
     const boardViews = { schema_version: 1, futureExtension: { keepCase: true }, views: [] }
     const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
@@ -184,7 +215,7 @@ describe('local delivery API', () => {
     await expect(api.listLoopItems('project-1')).resolves.toMatchObject({
       items: [{ id: 'LOCAL-1', is_unread: true }],
     })
-    await expect(api.markLoopItemRead('LOCAL-1', 17)).resolves.toMatchObject({
+    await expect(api.markLoopItemRead('LOCAL-1', 17, unreadTask.version)).resolves.toMatchObject({
       id: 'LOCAL-1',
       is_unread: false,
       activity_read_sequence: 17,
@@ -193,6 +224,7 @@ describe('local delivery API', () => {
       project_id: 'project-1',
       task_id: 'LOCAL-1',
       activity_sequence: 17,
+      content_revision: unreadTask.version,
     })
   })
 

@@ -1,3 +1,4 @@
+import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 // Internal protocol integration: real Backend, Redis, Executor and HTTP ingress.
 // No claim of live GitHub/GitLab compatibility is made by this scenario.
 import assert from 'node:assert/strict'
@@ -6,6 +7,11 @@ import { createGitReadonlyVerification } from '../modules/stand-in-git-readonly.
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
+import {
+  bindStoppedStandIn,
+  finishStandInOnboarding,
+  stopBoundStandIn,
+} from '../modules/stand-in-instance-flows.mjs'
 
 export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelResponseTimeoutMs }) {
   let cloud
@@ -197,11 +203,12 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
         ])
           await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
         // This protocol fixture installs its connection host on the local Executor.
-        await control.command('waitFor', '[data-testid="stand-in-workspace-location"]')
-        await control.command('select', '[data-testid="stand-in-workspace-location"]', {
-          value: deviceId,
-        })
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await control.command('waitFor', '[data-testid="stand-in-overview"]')
+        await finishStandInOnboarding(control)
+        await stopBoundStandIn(control, uiTimeoutMs)
+        await bindStoppedStandIn(control, user.id, deviceId, uiTimeoutMs)
+        await finishStandInOnboarding(control)
+        await openStandInSettings(control)
         await control.command(
           'clickWhenEnabled',
           '[data-testid="stand-in-primary-connections-open"]'
@@ -243,7 +250,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           Boolean(persisted.primary?.connections?.some(row => row.subscriptionId === receiver.id)),
           false
         )
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await openStandInSettings(control)
         await control.command(
           'clickWhenEnabled',
           '[data-testid="stand-in-primary-connections-open"]'
@@ -265,8 +272,11 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           value: JSON.stringify({ width: 1000, height: 760 }),
         })
         await control.command('navigate', 'body', { value: '/stand-in' })
-        for (const target of ['stand-in-settings-open', 'stand-in-primary-connections-open'])
-          await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
+        await openStandInSettings(control)
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-connections-open"]'
+        )
         await openGit('gitlab')
         await captureScreenshot(control, 'git-04-narrow-dark-gitlab-personal-scope.png')
         await control.command('select', '[data-testid="stand-in-git-kind"]', {

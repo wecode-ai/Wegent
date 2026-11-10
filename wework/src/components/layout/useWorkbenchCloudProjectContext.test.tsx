@@ -19,6 +19,50 @@ import {
 } from './workbenchCloudProjectContextTestFixtures'
 
 describe('useWorkbenchCloudProjectContext', () => {
+  test('retains the same task binding across hidden tabs and failed refreshes', async () => {
+    const targetProject = project('retained-space', 'local')
+    const item = loopItem(targetProject.id)
+    const findCloudContextForTask = vi.fn().mockResolvedValue({
+      project: targetProject,
+      loop_item: item,
+    })
+    const api = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [targetProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask,
+    }
+    const services = { projectSpaceApis: { local: api } } as unknown as WorkbenchServices
+    const { result, rerender } = renderHook(
+      ({ active, taskId }) =>
+        useWorkbenchCloudProjectContext({
+          active,
+          currentRuntimeTask: { deviceId: 'device-retained', taskId },
+          defaultProjectSpace: null,
+          paneKey: 'retained-pane',
+          runtimeTaskTitle: 'Retained task',
+          services,
+        }),
+      { initialProps: { active: true, taskId: 'retained-task' } }
+    )
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(item))
+    await act(async () => rerender({ active: false, taskId: 'retained-task' }))
+    expect(result.current.boundCloudItem).toEqual(item)
+    expect(findCloudContextForTask).toHaveBeenCalledOnce()
+
+    findCloudContextForTask.mockRejectedValue(new Error('Context lookup timed out'))
+    await act(async () => rerender({ active: true, taskId: 'retained-task' }))
+    expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(result.current.boundCloudItem).toEqual(item)
+    expect(result.current.boundCloudProject).toEqual(targetProject)
+
+    await act(async () => rerender({ active: false, taskId: 'different-task' }))
+    expect(result.current.boundCloudItem).toBeNull()
+    expect(result.current.boundCloudProject).toBeNull()
+    expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
+  })
+
   afterEach(() => {
     const { result, unmount } = renderCloudContext()
     act(() => result.current.clearPendingProjectContext())

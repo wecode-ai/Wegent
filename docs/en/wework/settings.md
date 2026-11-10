@@ -4,9 +4,11 @@ sidebar_position: 9
 
 # Settings and data
 
+Open **bottom-left account menu → Settings**, then select a page from the grouped navigation. See [Interface navigation and feature locations](./interface-navigation.md) for all entries, visibility conditions and missing-entry checks.
+
 Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
-The startup tab preference applies only when the main workspace starts at its home route. After opening an explicit address or restoring the pending interactions page, choosing **New task** opens the task composer without reapplying that startup preference.
+The startup choice in Fixed tabs applies only when the main workspace starts at its home route. After opening an explicit address or restoring the pending interactions page, choosing **New task** opens the task composer without reapplying that startup preference.
 
 The context indicator beside the task composer shows the current model's context usage. The ratio
 is measured against the context available to the input, which is the model's maximum context minus
@@ -32,6 +34,47 @@ The preference stays on the current device. Switching modes automatically restar
 Core DSH runtime so the plugin state takes effect immediately. Mode controls the Git plugin, so it
 cannot be enabled or disabled separately from the plugin management page.
 
+## General controls
+
+<a id="settings-controls"></a>
+
+<!-- ui-source: src/components/settings/GeneralSettingsPage.tsx -->
+<!-- ui-source: src/components/settings/RuntimeConcurrencySettings.tsx -->
+
+Open **bottom-left account menu → Settings → Personal → General**. The page groups basic preferences, runtime, AI assistance, privacy and the popout window. Most switches save immediately; check the page for save errors.
+
+| Feature                                    | Steps and result                                                                                             | Conditions or limitations                                                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Mode                                       | Select Focus or Developer mode and confirm                                                                   | Restarts the managed plugin runtime; Focus mode hides Git entries                                               |
+| Interface language                         | Select system language, Chinese or English                                                                   | Changes this device's UI, not task content                                                                      |
+| Message send shortcut                      | Select Enter or Command/Ctrl+Enter                                                                           | Check the option's newline behavior; composition input should not submit prematurely                            |
+| Follow-up behavior                         | Select queue or guide                                                                                        | Queue waits for the current turn; guide sends instructions to it. See [Task controls](./tasks.md#task-controls) |
+| Fixed tabs                                 | Add Tasks, Collaboration or Agent tabs, reorder with up/down, choose the startup item or remove a fixed item | Explicit page links override startup; this replaces the older Default page dropdown                             |
+| Show main window after launch              | Toggle whether startup displays the main window                                                              | Separate from closing the window to the background                                                              |
+| Experimental features                      | Enable, then look for experiment-marked entries                                                              | Does not authorize external accounts or remove OS restrictions                                                  |
+| Import work from other AI apps             | Open import, select a supported source and content, then confirm                                             | Do not share imported credential or session files in chat                                                       |
+| Task, stand-in and agent concurrency       | Select each concurrency limit in the runtime group                                                           | Controls scheduling, not reasoning effort; high limits increase device load                                     |
+| Keep running after closing the main window | Enable to retain background work when closing the window                                                     | Quitting the application stops managed local execution processes                                                |
+| Prevent sleep while tasks are running      | Enable the running-task sleep prevention preference                                                          | Does not allow execution through shutdown or loss of connectivity                                               |
+| Record performance data                    | Enable, reproduce the slowdown, then export diagnostics through Feedback                                     | See sampling and retention rules below                                                                          |
+| Tray display content                       | Select Unread tasks, running tasks, Codex quota and cloud quota separately                                   | Codex quota requires the local subscription; cloud quota labels can be server-defined                           |
+| Use friendly titles                        | Enable and select the task model or a specific model                                                         | Generates titles asynchronously; manual renames are preserved                                                   |
+| Help improve Wework                        | Change the privacy preference and read the collection notice                                                 | Separate from explicitly exporting diagnostic logs                                                              |
+| Popout Window shortcut                     | Record a new key combination or clear the binding                                                            | Opens the Wework popout, not the message-send action                                                            |
+| System drag panel                          | Toggle in the popout group                                                                                   | Availability depends on device and system capabilities                                                          |
+
+Saving a UI preference, changing scheduler limits and replacing an executable have different activation rules. Follow restart prompts for Node.js and coding tools; saved preferences do not imply that existing processes have already changed.
+
+### System drag panel and stash
+
+<a id="system-drag-controls"></a>
+
+1. Enable **Settings → Personal → General → Popout Window → System drag panel**.
+2. Start dragging selected text inside Wework or a file location supporting workspace-path transfer. Drop onto the desired zone when the panel appears; arbitrary external-application drags are not guaranteed to open it.
+3. **Create new chat** fills a new draft; **Follow up** appends to the current conversation and appears only when one exists. Review the composer and send explicitly: neither action auto-submits.
+4. **Temporary stash** stores text and attachment paths as a quick-phrase stash item. In the composer's quick-phrase menu, open **Stash**, hover to preview, select to insert, delete one item or clear the stash. Clearing items does not delete source files; moving/deleting a source can invalidate its attachment path.
+5. Close the panel or press Esc to abandon the drag. Inspect failed-add feedback rather than treating a dismissed panel as a sent message.
+
 ## Record performance data
 
 Enable **Record performance data** under **Settings → General → Runtime** to retain resource
@@ -50,7 +93,21 @@ and per-process resource changes around that time.
 
 ## Archived conversations and worktree cleanup
 
-Deleting a conversation under **Settings → Archived conversations** first accepts the request.
+<!-- ui-source: src/components/settings/ArchivedConversationsSettingsPage.tsx -->
+<!-- ui-source: src/components/settings/WorktreesSettingsPage.tsx -->
+
+1. Open **Settings → Archived → Archived tasks** and search for a conversation by title.
+2. Restore it to continue, or delete it after reviewing the confirmation. Deletion, unlike archival, starts device-side cleanup.
+3. Open **Settings → Coding → Worktrees**, select the device and inspect each repository's worktrees and linked tasks.
+
+| Worktree feature                   | Steps and effect                                                                                  |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Worktree root                      | Edit the managed root and blur the field to save; this does not move the source repository        |
+| Automatically delete old worktrees | Enable cleanup; read the confirmation when disabling it                                           |
+| Automatic deletion limit           | Set retention count and press Enter or blur to save; only eligible worktrees are reclaimed        |
+| Refresh, delete and restore        | Refresh device data; use the record's action after reviewing linked tasks and uncommitted changes |
+
+Deleting a conversation under **Settings → Archived → Archived tasks** first accepts the request.
 The owning device then removes its files and any managed worktree that no other task references
 in the background. A task disappearing from the list does not mean disk cleanup has finished.
 
@@ -65,6 +122,10 @@ verified, cleanup preserves the directory and reports the reason so you can repa
 
 ## Local device proxy
 
+<!-- ui-source: src/components/settings/ProxySettingsPage.tsx -->
+
+Open **Settings → Personal → Proxy**, distinguish the local card from cloud-device cards, select a mode or edit the URL, and save that card. Saving local configuration does not update cloud devices. Cloud operations require a connection and corresponding permissions.
+
 Under **Settings → Proxy**, the local device proxy has three modes:
 
 - **Use system proxy** follows the system proxy or PAC configuration. When the system does not use
@@ -77,13 +138,11 @@ that mode. After saving a change, restart Codex when prompted. Running tasks are
 immediately; new chats use the new network settings. Local device proxy settings stay on the current
 device and are not synced to cloud.
 
-Under **Settings → General → Basic**, set **Default page** to **Tasks**, **Project spaces**, or
-**Agent**. This device-local preference activates the matching top-level tab when the Wework main
-window opens or reloads at the root page. If every tab of that type has been closed, Wework creates
-one again. Explicit links to Settings, Plugins, or a specific workspace route take precedence and
-are not replaced by the default tab.
-
 ## Node.js execution environment
+
+<!-- ui-source: src/components/settings/ExecutionEnvironmentsSettingsPage.tsx -->
+
+Open **Settings → Coding → Execution environments** and inspect each environment card's version, executable and readiness. On the Node.js card choose a custom executable or restore the built-in one; refresh Python detection on its card. Read card errors before retrying. This global preparation is distinct from initializing a project's repositories.
 
 By default, the Wework desktop app uses the Node.js runtime included in Electron Helper for DSH,
 Skills, MCP, and local executor child processes. It does not ship a second standalone Node.js
@@ -98,6 +157,18 @@ updated environment.
 
 ## View app information
 
+### Post-upgrade notice and release notes
+
+If a version-notice card appears in the sidebar after an upgrade, open its version/new-features action to read **Wework release notes** and links. Close the dialog, press Esc or click its outside overlay to return. Dismissing the card neither uninstalls/rolls back the update nor performs an update check.
+
+### Account-menu quota details
+
+Open the **bottom-left account menu** and expand **Codex remaining usage** or the cloud quota row to inspect periods and usage. Inspect loading errors before retrying. The Codex row is hidden when the local subscription is off; the cloud quota name can be server-defined. This differs from model selection and tray display preferences.
+
+<!-- ui-source: src/components/settings/AboutSettingsPage.tsx -->
+
+Under **Settings → Personal → About**, toggle **Automatic updates** and **Receive Beta updates**. The latter opts into prerelease updates; it does not immediately replace the running version. Check About for the actual version. Update, restart and diagnostic export retain their own confirmation flows.
+
 Open the account menu in the lower-left corner of Wework and select **About** to view the app name, version, update channel, and project links.
 The version shown in the About page is read from the running Electron application package metadata,
 so it matches the version shown by the macOS **About Wework** system menu. Release builds that
@@ -109,6 +180,10 @@ when the update is ready to install. Canceling keeps the downloaded update avail
 the update action again reopens the confirmation without downloading it again. When automatic
 updates have already finished the download in the background, selecting the update action enters
 the same restart-confirmation flow immediately.
+
+<!-- ui-source: src/components/settings/KeyboardShortcutsSettingsPage.tsx -->
+
+In **Settings → Personal → Shortcuts**, search for an action and click its binding or unset value. Press a new combination to save automatically; Esc cancels recording. Clear removes the binding; Reset restores its default. A duplicate combination may replace another action's binding, so inspect related actions after editing.
 
 Common macOS shortcuts include:
 
@@ -124,8 +199,17 @@ Common macOS shortcuts include:
 
 ## Local harnesses
 
+<!-- ui-source: src/components/settings/HarnessSettingsPage.tsx -->
+
+| Field             | Steps and effect                                                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Executable        | Leave blank for detection or select a local executable; restore automatic detection if needed                     |
+| Permission mode   | For Claude Code, choose default, plan or the explicit permission-bypass option only after understanding its risks |
+| Default arguments | Enter one argument per line; the application does not parse these through a shell                                 |
+| Environment       | Enter one NAME=VALUE per line; saved on this device, not in chat                                                  |
+
 The desktop app can launch an installed OpenCode, Claude Code, or Kimi Code executable as a local coding
-harness. Under **Settings → Connections → Harnesses**, you can:
+harness. Under **Settings → Coding → Coding tools** (experimental), you can:
 
 - Enable or hide each harness. Only enabled harnesses that are detected successfully appear in
   the new-conversation runtime selector.
@@ -193,6 +277,8 @@ when a session resumes. Codex-only side-conversation flows are not exposed in ha
 
 ## Model availability
 
+See [Model settings](./user-guide/model-settings.md#model-controls) for individual add, edit, test, vision-sidecar and Catalog controls.
+
 **My Codex** shows official Codex models only when the current device has a configured
 `auth.json`. Without that file, the group is omitted from the model picker; provider models,
 local custom models, and cloud models remain available according to their own configuration. If
@@ -240,7 +326,11 @@ In **Settings → Models**, click **Add model** and choose a provider first. Wew
 
 One provider configuration can contain multiple models. Each model item has its own model selection, display name, vision proxy, enabled state, and connection test, while all items share the provider-level API key, group, and technical configuration. Clicking **Add model** automatically refreshes the provider catalog and adds an item, so **Load models** is needed only for a manual refresh. A model item's **Test** action tests only that selected model. After saving, every item appears as an independent choice in the model picker.
 
-The DeepSeek profile uses the native Responses API and exposes `deepseek-v4-flash` and `deepseek-v4-pro`, the models currently available for Codex. Both use a 1,048,576-token context window, `high` default reasoning effort, live Web Search, and freeform `apply_patch`. The connection test also requires a real `apply_patch` custom-tool call. Existing Wework-managed DeepSeek Chat Completions configurations are migrated to the Responses API. The current catalog declares text input and disables image generation, so image generation and image understanding are not presented as supported capabilities for this profile.
+Local custom APIs and cloud Responses models default to ordinary function-tool conversion, independently of provider profile IDs or model names. Existing configurations without tool capability fields use the same defaults. Native custom tools, namespaces/tool search, or full passthrough require explicit selection.
+
+Responses connection tests also validate tool-call arguments. Missing arguments, invalid JSON, or arguments that do not satisfy the probe fail the test; retry from the same editor after correcting the problem.
+
+The DeepSeek profile uses the native Responses API and exposes `deepseek-v4-flash` and `deepseek-v4-pro`, the models currently available for Codex. Both use a 1,048,576-token context window, `high` default reasoning effort, and live Web Search. DeepSeek accepts only `apply_patch` as a custom tool, so Wework retains Code Mode while translating `exec` and freeform tools into function tools at the API boundary and restoring native tool calls from responses. The connection test verifies function-tool calling. Existing configurations without an explicit native-tool selection use the same portable adaptation without re-adding models; legacy Wework-managed Chat Completions configurations still migrate to the Responses API. The current catalog declares text input and disables image generation, so image generation and image understanding are not presented as supported capabilities for this profile.
 
 A text-only model can explicitly reference another model that declares image input as its vision proxy. Local-model references are maintained in Wework's local model settings. Cloud-model references must be configured in the Wegent web administration UI; Wework only consumes the `visionSidecarModel` reference returned by the Backend, does not provide cloud-model editing, and never selects a default vision model automatically. Before the primary request, Wework asks the vision model to describe each image and replaces `input_image` with the description text. With a configured proxy, executor generically derives a vision catalog from the current base catalog, so any text model preserves its reasoning, tool, context, and compaction capabilities. Without an explicit reference, the model remains text-only and makes no additional model call. Original media reaches only the vision model and never the text-only primary model. Vision proxies support OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages endpoints. Each turn describes at most eight distinct images, accepts images up to 20 MB, and injects an explicit error message when description fails. Remote vision endpoints must use HTTPS; only `localhost` and loopback IP addresses may use HTTP, and vision requests do not follow redirects so credentials cannot be forwarded to an unauthorized destination.
 
@@ -258,6 +348,81 @@ The same Codex app-server reads the custom Catalog for the current device. When 
 Local project files remain in their project folders. Local preferences, model configurations, and conversations stay on the current device. Cloud requests and configuration are sent to the connected service only when you use cloud capabilities.
 
 Codex credentials participate in cloud synchronization only after an explicit upload or import. Protect remote-device commands, Git tokens, and model API keys as credentials.
+
+## Appearance controls
+
+<!-- ui-source: src/features/appearance/AppearanceSettingsPage.tsx -->
+
+Open **Settings → Personal → Appearance**. Changes stay on this device. **Reset** at the top restores appearance defaults; consider whether you want to keep custom values first.
+
+| Feature                                  | Steps and result                                                                                                                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Theme                                    | Select light, dark or system                                                                                                                                                                                       |
+| Light theme, Dark theme                  | Defaults to the original Wework palette, alongside all 29 names from the installed ChatGPT Desktop, including Tokyo Night: 30 names and 46 light/dark variants in total; system mode uses the corresponding choice |
+| Accent, Contrast                         | Choose a color or move the slider to adjust emphasis and contrast                                                                                                                                                  |
+| Restore theme accent                     | After customizing the accent, click Restore to use the current light/dark theme's accent again; fonts and background images remain unchanged                                                                       |
+| Translucent sidebar                      | Toggle transparency; system and window background affect the result                                                                                                                                                |
+| Use different light and dark backgrounds | Enable to configure each mode separately; disable for a shared background                                                                                                                                          |
+| Background image                         | Select or remove an image on the relevant mode card; adjust visibility and blur and choose main, sidebar or top-bar regions                                                                                        |
+| UI font, UI font size                    | Enter the interface font and adjust its size                                                                                                                                                                       |
+| Code font, Code font size                | Set the font and size for code/monospace content separately                                                                                                                                                        |
+
+The original Wework palette uses a white light background, a `#181818` dark background and a `#2563eb` blue accent.
+New preferences, migration from legacy default palettes and Reset select Wework. Changing the default does not overwrite saved named themes or custom color edits.
+
+Named themes cover application interfaces, menus, detached windows, code, terminals and visualizations.
+Startup flow and startup colors follow upstream, and remote Wegent Agent content retains its own theme.
+Reselecting a palette resets its color overrides; the light and dark choices remain independent.
+
+## Context and default instructions
+
+<!-- ui-source: src/components/settings/ContextSettingsPage.tsx -->
+<!-- ui-source: src/components/settings/CodexPersonalitySettings.tsx -->
+
+Open **Settings → Personal → Context**:
+
+| Feature                                 | Steps and scope                                                                                                                |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Inject Terminal information             | Toggle terminal context inclusion; does not itself authorize command execution                                                 |
+| Context compaction threshold            | Enter a percentage and blur the field or press Enter; controls the manual-compaction indicator, not automatic model compaction |
+| Codex personality                       | Open the selector and choose a reply style                                                                                     |
+| Default stand-in supervision principles | With experimental features enabled, edit and save; not a project permission policy                                             |
+| Wework instructions                     | Edit the text and save; unsaved text is not applied and instructions cannot override application permissions or security rules |
+
+## Quick phrases, Runtime and Hooks
+
+<!-- ui-source: src/components/settings/QuickPhrasesSettingsPage.tsx -->
+<!-- ui-source: src/components/settings/RuntimeSettingsPage.tsx -->
+<!-- ui-source: src/features/hooks/HooksSettingsPage.tsx -->
+
+| Entry                                | Features and steps                                                                                                              | Limits                                                                      |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Settings → Personal → Quick phrases  | Create, edit, reorder or delete phrases; select one in the task composer, review and send                                       | Inserting a phrase does not execute a task                                  |
+| Settings → Personal → Runtime        | Create a named configuration with device and model; choose an existing Runtime for project defaults; delete with the row action | A reusable execution configuration, not a Node.js version                   |
+| Settings → Coding → Hooks → Add Hook | Set plugin ID, name, version, tool matcher, command, Windows command, timeout, asynchronous execution and status message; save  | Runs external commands; only configure trusted commands                     |
+| Settings → Coding → Hooks → Import   | Select a local Hook directory and inspect health after import                                                                   | Fix invalid configuration or missing commands first                         |
+| Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                             | Testing actually executes the command, rather than merely validating syntax |
+
+## Appshots and computer use
+
+<!-- ui-source: src/components/settings/AppshotsSettingsPage.tsx -->
+<!-- ui-source: src/components/settings/ComputerUseSettingsPage.tsx -->
+
+| Entry and feature                                             | Steps and result                                                                    | Conditions or risks                                                     |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Settings → Integrations → Appshots → Shortcut                 | Record or clear a snapshot binding; invoke it to capture the foreground application | Separate from browser screenshots                                       |
+| Appshots → Screen recording access / Accessibility access     | Inspect status, open OS settings, grant access and return                           | Users complete OS authorization; accessibility reads window information |
+| Appshots → Appshot destination                                | Inspect the automatic destination: the current Wework composer                      | A status display, not an arbitrary folder picker                        |
+| Appshots → Play sound                                         | Toggle the successful-capture sound                                                 | Disabled while unsupported, loading or saving                           |
+| Settings → Integrations → Computer use → Enable computer use  | Enable and prepare the OS permissions requested by the page                         | Support depends on the platform status shown                            |
+| Computer use → Accessibility access / Screen recording access | Open the matching OS settings, authorize and return                                 | Changing chat permission mode cannot replace OS authorization           |
+| Computer use → Action approval                                | Read the confirmation policy for write operations                                   | A policy display, not a bypass switch                                   |
+
+## Narrow-window settings
+
+<!-- ui-source: src/components/settings/MobileSettingsPage.tsx -->
+
+Use the settings list to enter General, Appearance, Models or another page, then return to choose a different item. Desktop-only entries still depend on the actual platform. Do not locate narrow-window controls by desktop-sidebar coordinates.
 
 ## Automatic storage cleanup
 

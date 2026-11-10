@@ -38,7 +38,7 @@ export function ReplyPredictionSettings() {
         }
       />
       {error && (
-        <p role="alert" className="text-sm text-red-500">
+        <p role="alert" className="text-sm text-destructive wework:text-red-500">
           {t('workbench.reply_prediction_save_failed')}
         </p>
       )}

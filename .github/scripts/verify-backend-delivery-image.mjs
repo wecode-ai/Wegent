@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 
@@ -64,6 +72,44 @@ export function collectAndCleanup(collect, cleanups, failure) {
   }
   if (errors.length)
     throw new AggregateError(errors, "Backend delivery verification failed");
+}
+
+/** File logging survives a stopped container, unlike docker exec diagnostics. */
+export function collectRustLogs(name, evidence, redact, run = spawnSync) {
+  const directory = mkdtempSync(join(tmpdir(), "backend-delivery-logs-"));
+  try {
+    const copy = run(
+      "docker",
+      ["cp", `${name}:/app/logs/backend/rust/.`, directory],
+      {
+        encoding: "utf8",
+        timeout: 10_000,
+      },
+    );
+    const parts = [];
+    if (copy.status !== 0) {
+      parts.push(
+        copy.error?.message || copy.stderr || "Rust log collection failed",
+      );
+    } else {
+      const pending = [directory];
+      while (pending.length) {
+        const parent = pending.pop();
+        for (const entry of readdirSync(parent, { withFileTypes: true })) {
+          const path = join(parent, entry.name);
+          if (entry.isDirectory()) pending.push(path);
+          else if (entry.isFile()) {
+            parts.push(
+              `--- ${relative(directory, path)} ---\n${readFileSync(path, "utf8")}`,
+            );
+          }
+        }
+      }
+    }
+    writeFileSync(`${evidence}/${name}-rust.log`, redact(parts.join("\n")));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 export function assertRouteOwnership(routes) {
@@ -431,6 +477,8 @@ export async function verifyDeliveryImage({ image, revision, evidence }) {
     collectAndCleanup(
       () => {
         for (const name of containers) {
+          if (name !== mysql && name !== redis)
+            collectRustLogs(name, evidence, redact);
           const log = spawnSync("docker", ["logs", name], {
             encoding: "utf8",
             timeout: 10_000,

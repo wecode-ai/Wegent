@@ -24,6 +24,7 @@ import { TaskReplyQueueStore } from '@wegent/collaboration/execution/taskReplyQu
 import { cloneElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IssueAssignmentReceiptState } from './IssueAssignmentReceipts'
+import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 import { TaskActivityView } from './TaskActivityView'
 
 const createProjectRuntimeTask = vi.fn()
@@ -523,7 +524,7 @@ describe('TaskActivityView', () => {
         />
       )
 
-      await waitFor(() => expect(expectedRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
+      await waitFor(() => expect(expectedRead).toHaveBeenCalledExactlyOnceWith(task.id, 0, 1))
       expect(onTaskRead).toHaveBeenCalledExactlyOnceWith(updated)
       expect(onTaskUpdated).not.toHaveBeenCalled()
       rerender(
@@ -546,7 +547,19 @@ describe('TaskActivityView', () => {
   it.each([
     ['current assignment', {}, {}, true],
     ['different Issue', {}, { issueId: 'other' }, false],
-    ['older version', {}, { version: 0 }, false],
+    [
+      'older version without assignment identity',
+      {},
+      { version: 0, assignmentRevision: undefined },
+      false,
+    ],
+    ['same assignment before a status update', {}, { version: 0 }, true],
+    [
+      'superseded assignment to the same recipient',
+      {},
+      { assignmentRevision: 'older-assignment' },
+      false,
+    ],
     ['different recipient', {}, { assigneeUserId: 3 }, false],
     ['unassigned', { action: 'unassign' }, {}, false],
     ['agent assignment', { to_type: 'agent' }, {}, false],
@@ -574,6 +587,7 @@ describe('TaskActivityView', () => {
         issueId: task.id,
         version: 1,
         assigneeUserId: 2,
+        assignmentRevision: issueAssignmentRevision(task as never),
         error: false,
         rows: [
           {
@@ -665,7 +679,7 @@ describe('TaskActivityView', () => {
         />
       )
       const { rerender, unmount } = render(view)
-      await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
+      await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 0, 1))
 
       if (change === 'api') {
         const nextRead = vi.fn(() => new Promise(() => {}))
@@ -760,7 +774,7 @@ describe('TaskActivityView', () => {
         linear
       />
     )
-    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 2))
+    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 2, 2))
   })
 
   it('keeps failed reads retryable and clears the read error after a successful scroll retry', async () => {
@@ -797,8 +811,8 @@ describe('TaskActivityView', () => {
     expect(onTaskUpdated).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(markLoopItemRead.mock.calls).toEqual([
-      [task.id, 0],
-      [task.id, 0],
+      [task.id, 0, 1],
+      [task.id, 0, 1],
     ])
   })
 
@@ -1102,6 +1116,7 @@ describe('TaskActivityView', () => {
       title: 'Unread activities',
       status: 'inbox',
       version: 1,
+      content_revision: 2,
       is_unread: true,
       activity_read_sequence: 1,
     }
@@ -1171,8 +1186,8 @@ describe('TaskActivityView', () => {
       frames.clear()
       for (const callback of pending) callback(performance.now())
     })
-    expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2)
-    expect(markLoopItemRead).not.toHaveBeenCalledWith(task.id, 3)
+    expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2, task.content_revision)
+    expect(markLoopItemRead).not.toHaveBeenCalledWith(task.id, 3, task.content_revision)
     expect(onTaskRead).toHaveBeenCalledWith(updated)
     expect(onTaskUpdated).not.toHaveBeenCalled()
   })
@@ -1568,7 +1583,7 @@ describe('TaskActivityView', () => {
       )
 
       const card = await screen.findByTestId('cloud-task-activity-card-manager-assignment')
-      await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledWith('WEG-1', 2))
+      await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledWith('WEG-1', 2, 2))
       await user.click(
         within(card).getByTestId('cloud-task-activity-reply-toggle-manager-assignment')
       )

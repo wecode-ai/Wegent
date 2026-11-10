@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
+  DEFAULT_STEP_TIMEOUT_MS,
   DEFAULT_MODEL_ID,
   createSingleRootLocalProject,
   selectE2EModel,
@@ -21,6 +22,17 @@ import {
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { waitForElementWidth } from '../modules/layout-metrics.mjs'
+import {
+  OTHER_TASK_PROMPT,
+  OTHER_TASK_REPLY,
+  verifyQuestionDiscussionTabs,
+} from '../modules/question-discussion-tabs.mjs'
+import {
+  SOURCE_LOOKUP_PROMPT,
+  SOURCE_LOOKUP_REPLY,
+  SOURCE_LOOKUP_SEED_PROMPT,
+  verifyQuestionDiscussionSourceLookup,
+} from '../modules/question-discussion-source-lookup.mjs'
 
 const PROMPT = '请帮我整理本周项目进展，先确定周报的接收范围。'
 const MULTI_PROMPT = `${PROMPT} 还要确定发送时间。`
@@ -43,6 +55,7 @@ const CARD = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-card
 const callId = 'question-discussion-audience'
 
 export function createDesktopScenario({
+  codexSqliteHome,
   executorHome,
   workspacePath,
   resultDir,
@@ -54,7 +67,11 @@ export function createDesktopScenario({
   let finalAnswers = 0
   let ordinaryAnswers = 0
   let firstToolName
+  let nativeSourceOptions
   return {
+    async prepareApp({ appEnvironment, codexHome }) {
+      nativeSourceOptions = { appEnvironment, codexHome, codexSqliteHome }
+    },
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -65,10 +82,26 @@ export function createDesktopScenario({
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       const text = JSON.stringify(body.input ?? body.messages ?? [])
-      if (!text.includes(PROMPT) && !text.includes(QUESTION)) return false
+      if (
+        !text.includes(PROMPT) &&
+        !text.includes(QUESTION) &&
+        !text.includes(OTHER_TASK_PROMPT) &&
+        !text.includes(SOURCE_LOOKUP_PROMPT) &&
+        !text.includes(SOURCE_LOOKUP_SEED_PROMPT)
+      )
+        return false
       const id = `discussion-${Date.now()}`
       let events
-      if (text.includes('Side conversation boundary.') || text.includes('我对下面的问题还拿不准')) {
+      if (text.includes(SOURCE_LOOKUP_PROMPT)) {
+        events = [assistantMessage(SOURCE_LOOKUP_REPLY)]
+      } else if (text.includes(SOURCE_LOOKUP_SEED_PROMPT)) {
+        events = [assistantMessage('已准备跨 provider 的原始会话。')]
+      } else if (text.includes(OTHER_TASK_PROMPT)) {
+        events = [assistantMessage(OTHER_TASK_REPLY)]
+      } else if (
+        text.includes('Side conversation boundary.') ||
+        text.includes('我对下面的问题还拿不准')
+      ) {
         discussionCalls += 1
         events = [assistantMessage(text.includes(FOLLOW_UP) ? CONCLUSION : ADVICE)]
       } else if (text.includes(ORDINARY_MESSAGE)) {
@@ -129,6 +162,7 @@ export function createDesktopScenario({
         'The original question must remain pending after its turn settles'
       )
       const source = original.pane.currentRuntimeTask
+      await verifyQuestionDiscussionSourceLookup(control, { ...nativeSourceOptions, source })
       await captureScreenshot(control, 'question-discussion-01-original-question.png', 'body')
       const draftAnswer = `${CARD} [data-testid="request-user-input-custom-question_1"]`
       await control.command('fill', draftAnswer, { value: '只发给项目成员，先讨论敏感事项。' })
@@ -158,14 +192,14 @@ export function createDesktopScenario({
       assert.equal(discussionCalls, 0, 'Opening must not send a model request')
       await control.command(
         'waitFor',
-        '[data-testid="toggle-right-workspace-panel-button"]:disabled',
+        '[data-testid="toggle-right-workspace-panel-button"]:not(:disabled)',
         { visible: true }
       )
       await captureScreenshot(control, 'question-discussion-02a-unsent-prompt.png', 'body')
       const editedPrompt = `${QUESTION} 请先讨论项目成员方案。`
       await control.command('fill', sideComposer, { value: editedPrompt })
       await control.command('press', 'body', {
-        key: process.platform === 'win32' ? 'Control+Shift+b' : 'Meta+Shift+b',
+        key: process.platform === 'darwin' ? 'Meta+t' : 'Control+t',
       })
       await control.command('waitFor', DIALOG, { visible: false })
       await control.command('waitFor', '[data-testid="workspace-browser-url-input"]', {
@@ -181,6 +215,15 @@ export function createDesktopScenario({
       })
       assert.equal(await control.command('getValue', sideComposer), editedPrompt)
       await captureScreenshot(control, 'question-discussion-02a3-restored-draft.png', 'body')
+      await verifyQuestionDiscussionTabs({
+        control,
+        source,
+        dialog: DIALOG,
+        composer: sideComposer,
+        draft: editedPrompt,
+        captureScreenshot,
+      })
+      assert.equal(discussionCalls, 0, 'Task and tab switching must not send the prepared prompt')
       await control.command('click', `${DIALOG} [data-testid="question-discussion-close"]`)
       await control.command('click', '[data-testid="workspace-tab-add"]')
       await control.command('click', '[data-testid="workspace-tab-add-pending-interactions"]')
@@ -204,6 +247,7 @@ export function createDesktopScenario({
       assert.equal(discussionCalls, 0, 'Cross-entry draft editing must not send')
       await captureScreenshot(control, 'question-discussion-02b-shared-unsent-prompt.png', 'body')
       await control.command('click', `${DIALOG} [data-testid="question-discussion-close"]`)
+      await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
       await control.command('click', `${PAGE} [data-testid="interaction-open-original"]`)
       await control.command('waitFor', CARD, { text: QUESTION, visible: true })
       await control.command('click', `${CARD} [data-testid="request-user-input-discuss"]`)
@@ -280,14 +324,18 @@ export function createDesktopScenario({
           y: fillButton.top + fillButton.height / 2,
         }),
       })
+      await control.command('waitFor', DIALOG, { visible: false })
       await control.command(
         'waitFor',
-        `${PAGE} [data-testid="request-user-input-custom-question_1"]`,
+        `${CARD} [data-testid="request-user-input-custom-question_1"]`,
         { visible: true }
       )
       await captureScreenshot(control, 'question-discussion-04a2-narrow-answer.png', 'body')
       await control.command('setMainWindowSize', 'body', { value: previousSize })
-      await control.command('clickWhenEnabled', `${PAGE} [data-testid="interaction-discuss"]`)
+      await control.command(
+        'clickWhenEnabled',
+        `${CARD} [data-testid="request-user-input-discuss"]`
+      )
       await waitForElementWidth(
         control,
         DIALOG,
@@ -309,20 +357,25 @@ export function createDesktopScenario({
         value: SELECTED,
       })
       await control.command('clickWhenEnabled', FILL_SELECTION)
-      const answer = `${PAGE} [data-testid="request-user-input-custom-question_1"]`
+      // The earlier fill already has SELECTED; only closing proves the async revalidation finished.
+      await control.command('waitFor', DIALOG, { visible: false })
+      const answer = `${CARD} [data-testid="request-user-input-custom-question_1"]`
       await control.command('waitFor', answer, { visible: true })
       assert.equal(await control.command('getValue', answer), SELECTED)
       await control.command('fill', answer, { value: CONCLUSION })
+      assert.equal(await control.command('getValue', `${ACTIVE} ${answer}`), CONCLUSION)
       assert.equal(finalAnswers, 0, 'Filling a draft cannot submit it')
       await captureScreenshot(control, 'question-discussion-05-editable-answer.png', 'body')
       await control.command(
         'clickWhenEnabled',
-        `${PAGE} [data-testid="request-user-input-submit-button"]`
+        `${CARD} [data-testid="request-user-input-submit-button"]`
       )
+      await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
       await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
         text: '0',
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
-      await control.command('click', `${PAGE} [data-testid="interaction-open-original"]`)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command(
         'waitFor',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -350,7 +403,10 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
       )
       await control.command('waitFor', CARD, { text: QUESTION, visible: true })
-      await control.command('click', `${CARD} [data-testid="request-user-input-discuss"]`)
+      await control.command(
+        'clickWhenEnabled',
+        `${CARD} [data-testid="request-user-input-discuss"]`
+      )
       const multiSize = await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 480, height: 760 }),
       })

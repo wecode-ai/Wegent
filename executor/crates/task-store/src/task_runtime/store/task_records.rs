@@ -21,17 +21,22 @@ impl LocalTaskStore {
                AND deleted_at IS NULL
              ORDER BY sort_order, updated_at DESC, id",
         )?;
-        let rows = statement.query_map([project_id], |row| map_loop_item(&connection, row))?;
+        let rows = statement.query_map([project_id], projections::map_loop_item_fields)?;
         let mut items = collect_items(rows)?;
         drop(statement);
+        crate::task_runtime::runner_history::enrich_project_tasks(
+            &connection,
+            project_id,
+            &mut items,
+        )?;
         let executions = latest_executions_for_project(&connection, project_id)?;
-        for item in &mut items {
-            if let Some((id, status)) = executions.get(&item.id) {
-                item.execution_id = Some(*id);
-                item.execution_state = Some(status.clone());
-            }
-        }
-        Ok(items)
+        Ok(items
+            .into_iter()
+            .map(|item| {
+                let projection = executions.get(&item.id).cloned();
+                attach_execution(item, projection)
+            })
+            .collect())
     }
 
     pub fn get_task(&self, project_id: &str, task_id: &str) -> Result<LoopItem, TaskRuntimeError> {
@@ -51,6 +56,7 @@ impl LocalTaskStore {
         project_id: &str,
         task_id: &str,
         activity_sequence: Option<i64>,
+        content_revision: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let connection = self.connection()?;
         let item = get_item_from(&connection, task_id, "task")?
@@ -66,7 +72,9 @@ impl LocalTaskStore {
                  SET metadata = json_set(
                     metadata,
                     '$.is_unread',
-                    json('false'),
+                    json(CASE WHEN ?3 IS NULL OR version <= ?3 THEN 'false'
+                         WHEN json_extract(metadata, '$.is_unread') THEN 'true'
+                         ELSE 'false' END),
                     '$.activity_read_sequence',
                     MAX(
                         COALESCE(json_extract(metadata, '$.activity_read_sequence'), 0),
@@ -74,7 +82,7 @@ impl LocalTaskStore {
                     )
                  )
                  WHERE id = ?1",
-                params![task_id, activity_sequence.unwrap_or(0)],
+                params![task_id, activity_sequence.unwrap_or(0), content_revision],
             )?;
         }
         drop(connection);

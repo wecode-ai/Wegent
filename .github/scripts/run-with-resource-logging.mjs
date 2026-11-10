@@ -7,6 +7,15 @@ import { diskRootMetadata, openDeletedDiskFiles } from './runner-process-disk.mj
 const [command, ...args] = process.argv.slice(2)
 if (!command) throw new Error('A command is required')
 
+const sampleIntervalMs = Number(process.env.RUNNER_RESOURCE_SAMPLE_INTERVAL_MS ?? 15_000)
+if (
+  !Number.isSafeInteger(sampleIntervalMs) ||
+  sampleIntervalMs < 100 ||
+  sampleIntervalMs > 2_147_483_647
+) {
+  throw new Error('RUNNER_RESOURCE_SAMPLE_INTERVAL_MS must be an integer from 100 to 2147483647')
+}
+
 const logPath = resolve(
   process.env.RUNNER_RESOURCE_LOG_PATH ?? 'wework/test-results/desktop-e2e/runner-resources.jsonl'
 )
@@ -83,7 +92,7 @@ function diskUsage(depth) {
   }
 }
 
-function sample(phase, exitCode) {
+function sample(phase, exitCode, schedulingDelayMs) {
   const sampledAt = Date.now()
   initialSampleAt ??= sampledAt
   const currentCpu = cpuTimes()
@@ -94,6 +103,8 @@ function sample(phase, exitCode) {
     timestamp: new Date(sampledAt).toISOString(),
     elapsedMs: sampledAt - initialSampleAt,
     phase,
+    sampleIntervalMs,
+    schedulingDelayMs,
     exitCode,
     commandPid: child?.pid,
     parallelCheckpoints: process.env.WEWORK_E2E_PARALLEL_CHECKPOINTS,
@@ -161,7 +172,10 @@ function sample(phase, exitCode) {
       ].map(([name, path]) => [name, readMetric(path)])
     )
   }
-  if (process.env.RUNNER_PROCESS_DIAGNOSTICS === '1') {
+  if (
+    process.env.RUNNER_PROCESS_DIAGNOSTICS === '1' &&
+    (phase !== 'interval' || sampleIntervalMs >= 1000)
+  ) {
     try {
       record.processes = execFileSync('ps', ['-eo', 'pid,ppid,ni,pri,pcpu,stat,etime,comm'], {
         encoding: 'utf8',
@@ -180,7 +194,12 @@ function sample(phase, exitCode) {
 
 sample('start')
 child = spawn(command, args, { stdio: 'inherit' })
-const timer = setInterval(() => sample('interval'), 15_000)
+let expectedSampleAt = performance.now() + sampleIntervalMs
+const timer = setInterval(() => {
+  const sampledAt = performance.now()
+  sample('interval', undefined, Math.max(0, sampledAt - expectedSampleAt))
+  expectedSampleAt = sampledAt + sampleIntervalMs
+}, sampleIntervalMs)
 const signalHandlers = new Map(
   ['SIGINT', 'SIGTERM'].map(signal => {
     const handler = () => child.kill(signal)

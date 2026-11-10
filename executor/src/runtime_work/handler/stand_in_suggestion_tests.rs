@@ -1,30 +1,31 @@
 use super::*;
 
 #[tokio::test]
-async fn unassigned_connections_are_assessed_without_delaying_or_dispatching_work() {
-    for (prompt, preferences, dispatches) in [
-        ("", "", false),
-        ("  ", "\n", false),
-        ("Draft deployment answers for this group", "", true),
-        (
-            "",
-            "Track important questions and prepare factual answers",
-            true,
-        ),
+async fn connection_processing_follows_explicit_policy_not_optional_duties() {
+    for (prompt, preferences) in [
+        ("", ""),
+        ("  ", "\n"),
+        ("Draft deployment answers for this group", ""),
+        ("", "Track important questions and prepare factual answers"),
     ] {
-        let root = tempfile::tempdir().unwrap();
-        let (handler, store, mut settings, _) = fixture(root.path());
-        settings["roles"][0]["prompt"] = json!(prompt);
-        settings["roles"][0]["preferences"] = json!(preferences);
-        settings["roles"][0]["connections"][0]["policy"]["immediate"] = json!(true);
-        let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
-        let snapshot = handler.coordination_rpc("runtime.coordination.snapshot",json!({
+        for immediate in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let (handler, store, mut settings, _) = fixture(root.path());
+            settings["roles"][0]["prompt"] = json!(prompt);
+            settings["roles"][0]["preferences"] = json!(preferences);
+            settings["roles"][0]["connections"][0]["policy"]["immediate"] = json!(immediate);
+            let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+            let snapshot = handler.coordination_rpc("runtime.coordination.snapshot",json!({
             "contextId":"personal:7","revision":LocalTaskStore::coordination_configuration_version(&settings)
         })).await.unwrap();
-        assert_eq!(snapshot["events"][0]["processingMode"], "immediate");
-        assert_eq!(!snapshot["events"][0]["dispatch"].is_null(), dispatches);
-        assert!(handler.local_task_links(true).is_empty());
-        assert!(store.stand_in_processing_state(7).unwrap()["batchId"].is_null());
+            assert_eq!(
+                snapshot["events"][0]["processingMode"],
+                if immediate { "immediate" } else { "silent" }
+            );
+            assert_eq!(!snapshot["events"][0]["dispatch"].is_null(), immediate);
+            assert!(handler.local_task_links(true).is_empty());
+            assert!(store.stand_in_processing_state(7).unwrap()["batchId"].is_null());
+        }
     }
 }
 
@@ -44,6 +45,13 @@ fn provider_fixture(
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
     handler.store = RuntimeWorkStore::new(root.join("runtime.json"));
+    handler.turn_queue_path = Arc::new(root.join("turn-queue.json"));
+    handler.command_journal = Arc::new(Mutex::new(Default::default()));
+    handler.turn_scheduler = Arc::new(Mutex::new(RuntimeTurnScheduler::new(
+        RuntimeSettings::default(),
+        VecDeque::new(),
+    )));
+    handler.active_goal_turns = Arc::new(Mutex::new(Default::default()));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
     settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});

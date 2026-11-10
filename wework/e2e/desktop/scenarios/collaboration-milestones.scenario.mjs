@@ -8,8 +8,11 @@ import {
   configureFirstProjectExecutionEnvironment,
   reloadMainWindow,
   selectCollaborationDomain,
-  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
+import {
+  selectCollaborationProjectView,
+  collaborationProjectViewSelector,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = testId => `${CONTENT} [data-testid="${testId}"]`
@@ -40,7 +43,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     return text ? JSON.parse(text) : null
   }
   const openMilestones = async control => {
-    await selectCollaborationProjectView(control, CONTENT, 'milestones', uiTimeoutMs)
+    await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'milestones'), {
+      timeoutMs: uiTimeoutMs,
+    })
+    await selectCollaborationProjectView(control, CONTENT, 'milestones')
     await control.command('waitFor', scoped('milestones-page'), { timeoutMs: uiTimeoutMs })
   }
   const deleteMilestone = async (control, id) => {
@@ -307,7 +313,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('openWeworkScheme', 'body', { value: `wework://boards/${project.id}` })
-      await selectCollaborationProjectView(control, CONTENT, 'board', workbenchReadyTimeoutMs)
+      await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board'), {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await openMilestones(control)
       await control.command('waitFor', scoped(`milestone-${milestone.id}`), {
         text: '100%',

@@ -1,9 +1,11 @@
-import { verifyIssueRuntimeTitleIsolation } from './issue-runtime-title-isolation.mjs'
+import {
+  verifyIssueRuntimeReply,
+  verifyIssueRuntimeTitleIsolation,
+} from './issue-runtime-title-isolation.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
   assert,
-  CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
   DEFAULT_STEP_TIMEOUT_MS,
   join,
@@ -14,8 +16,16 @@ import {
 } from './shared.mjs'
 
 async function verifyAssociationDialogLayout(control, existingItem) {
+  const dialog = '[data-testid="task-board-association-dialog"]'
   const search = '[data-testid="task-board-association-search"]'
   const item = `[data-testid="task-board-association-item-${existingItem.id}"]`
+  await control.command('waitFor', `body > .z-modal > ${dialog}`, { visible: true })
+  const [dialogBounds] = JSON.parse(await control.command('getElementMetrics', dialog))
+  const [viewportBounds] = JSON.parse(await control.command('getElementMetrics', 'body'))
+  assert.ok(
+    Math.abs(dialogBounds.left + dialogBounds.width / 2 - viewportBounds.width / 2) <= 1,
+    'The association dialog must be centered above all workbench panes'
+  )
   await control.command(
     'waitFor',
     '[data-testid="task-board-association-list"][aria-busy="false"]',
@@ -69,22 +79,29 @@ async function verifyAssociationDialogLayout(control, existingItem) {
   }
 }
 
-async function waitForBinding(control, projectId, itemId) {
+export async function waitForBinding(control, projectId, itemId) {
   const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
   let binding
+  let lastError
   while (Date.now() < deadline) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     const task = snapshot.workbench?.currentRuntimeTask ?? snapshot.pane?.currentRuntimeTask
     if (task) {
-      binding = await requestExecutor(
-        control,
-        'runtime_tasks.context',
-        {
-          device_id: task.deviceId,
-          task_id: task.taskId,
-        },
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      try {
+        binding = await requestExecutor(
+          control,
+          'runtime_tasks.context',
+          {
+            device_id: task.deviceId,
+            task_id: task.taskId,
+          },
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+      } catch (error) {
+        // The renderer exposes the new task before the Runtime persists its link.
+        lastError = error
+        binding = undefined
+      }
       if (
         binding?.cloud_project_id === projectId &&
         binding.loop_item_id &&
@@ -94,7 +111,32 @@ async function waitForBinding(control, projectId, itemId) {
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  assert.fail(`First message did not persist the draft binding: ${JSON.stringify(binding)}`)
+  assert.fail(
+    `First message did not persist the draft binding: ${JSON.stringify(binding)}` +
+      (lastError ? ` (last error: ${lastError.message})` : '')
+  )
+}
+
+export async function waitForViewedIssueRead(control, projectName, issueTitle) {
+  const rpc = (method, params) => requestExecutor(control, method, params, DEFAULT_STEP_TIMEOUT_MS)
+  const projects = await rpc('projects.list', {})
+  const project = projects.find(row => row.name === projectName)
+  assert.ok(project, 'The viewed Issue project must exist')
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let issue
+  while (Date.now() < deadline) {
+    const items = await rpc('todos.list', { project_id: project.id })
+    issue = items.find(row => row.title === issueTitle)
+    assert.ok(issue, 'The previously viewed Issue must still exist')
+    if (issue.metadata.is_unread !== true) {
+      console.log(
+        `[e2e] Viewed Issue read confirmed before draft baseline: ${issue.id}, version=${issue.version}`
+      )
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`The visible Issue did not persist its automatic read: ${JSON.stringify(issue)}`)
 }
 
 async function verifyDraft(control, project, existingItem) {
@@ -128,7 +170,7 @@ async function verifyDraft(control, project, existingItem) {
       { text: project.name, value: 'draft-target-project', timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
     )
     if (verifyLayout) {
-      await control.command('startElementMetricsSampling', content, {
+      await control.command('startElementMetricsSampling', 'body', {
         value: String(DEFAULT_STEP_TIMEOUT_MS),
         target: ['dialog', 'search', 'create']
           .map(id => `[data-testid="task-board-association-${id}"]`)
@@ -181,10 +223,8 @@ async function verifyDraft(control, project, existingItem) {
   const marker = existingItem ? 'LINK_EXISTING_DRAFT' : 'CREATE_NEW_DRAFT'
   const prompt = `${marker}: ${CHECKPOINT_TASK_PROMPT}`
   await sendPromptUntilScenarioRequest(control, composer, prompt, 'checkpoint_task')
-  await control.command('waitFor', `${content} [data-testid="message-assistant"]`, {
-    text: CHECKPOINT_TASK_COMPLETION_TEXT,
-  })
   const binding = await waitForBinding(control, project.id, existingItem?.id)
+  await verifyIssueRuntimeReply(control, content, binding)
   const persisted = await rpc('todos.get', {
     project_id: project.id,
     task_id: binding.loop_item_id,

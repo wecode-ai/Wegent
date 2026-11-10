@@ -28,6 +28,7 @@ import { getRuntimeTaskReminderKey } from '@/features/workbench/runtimeTaskRemin
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import { useTranslation } from '@/hooks/useTranslation'
+import { createCollaborationTranslator } from '@wegent/collaboration'
 import { Tooltip } from '@/components/ui/tooltip'
 import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
@@ -138,7 +139,11 @@ export function TaskBoardView({
   onMarkRuntimeTaskRead,
   onOpenRuntimeTask,
 }: TaskBoardViewProps) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const boardTranslate = useMemo(
+    () => createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
+    [i18n.language]
+  )
   const [activeLocalProjectFilter, setActiveLocalProjectFilter] = useState('all')
   const [taskContexts, setTaskContexts] = useState<Map<string, RuntimeTaskContextSource>>(
     () => new Map()
@@ -287,8 +292,8 @@ export function TaskBoardView({
       createStandardCloudBoardColumns({
         getDotClass: (nextGroupBy, value) =>
           nextGroupBy === 'status' || nextGroupBy === 'priority'
-            ? (columnDotClasses[value] ?? 'bg-zinc-400')
-            : 'bg-zinc-400',
+            ? (columnDotClasses[value] ?? 'bg-text-muted wework:bg-zinc-400')
+            : 'bg-text-muted wework:bg-zinc-400',
         groupBy,
         items,
         labels: {
@@ -450,6 +455,7 @@ export function TaskBoardView({
   return (
     <div className="contents" data-testid="task-board-surface">
       <ProjectBoardBody<RuntimeMyWorkItem>
+        translate={boardTranslate}
         state={board.state}
         activeDragItemId={board.activeDragItemId}
         boardError={null}
@@ -736,7 +742,7 @@ export function TaskBoardView({
                 data-testid="task-board-batch-archive-completed-confirm"
                 disabled={batchArchiveBusy}
                 onClick={() => void archiveCompletedTasks(batchArchiveItems)}
-                className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-50 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
               >
                 {batchArchiveBusy
                   ? t('todo.archiving', '归档中…')

@@ -27,6 +27,10 @@ await cp(resolve(root, 'src/shell'), resolve(root, 'dist/shell'), {
 })
 await mkdir(resolve(root, 'dist/host/browser-runtime'), { recursive: true })
 await cp(
+  resolve(root, 'src/host/macos-quit-workaround.mjs'),
+  resolve(root, 'dist/host/macos-quit-workaround.mjs')
+)
+await cp(
   resolve(root, 'src/host/browser-runtime/embedded_browser_inspect.js'),
   resolve(root, 'dist/host/browser-runtime/embedded_browser_inspect.js')
 )

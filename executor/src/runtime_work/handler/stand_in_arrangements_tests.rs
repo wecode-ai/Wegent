@@ -5,6 +5,13 @@ fn handler(root: &Path) -> RuntimeWorkRpcHandler {
     let mut handler = RuntimeWorkRpcHandler::new("device", "unused");
     handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
     handler.store = RuntimeWorkStore::new(root.join("runtime.json"));
+    handler.turn_queue_path = Arc::new(root.join("turn-queue.json"));
+    handler.command_journal = Arc::new(Mutex::new(Default::default()));
+    handler.turn_scheduler = Arc::new(Mutex::new(RuntimeTurnScheduler::new(
+        RuntimeSettings::default(),
+        VecDeque::new(),
+    )));
+    handler.active_goal_turns = Arc::new(Mutex::new(Default::default()));
     handler.automation_store =
         crate::runtime_work::automations::AutomationStore::new(root.join("automations.json"));
     handler
@@ -313,6 +320,117 @@ async fn manual_calendar_run_routes_immediately_and_reuses_its_original_receipt(
     assert_eq!(handler.command_journal.lock().unwrap().len(), 1);
     assert_eq!(store.stand_in_actions(7).unwrap().len(), 1);
     assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "succeeded");
+}
+
+#[tokio::test]
+async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
+    let root = tempfile::tempdir().unwrap();
+    let handler = handler(root.path());
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store.materialize_implicit_primary(7, "device").unwrap();
+    handler.ensure_memory_review_arrangements().unwrap();
+    let entry = handler.automation_store.list().pop().unwrap();
+    let mut settings = store.personal_stand_in(7, "device").unwrap();
+    settings["primary"]["enabled"] = json!(false);
+    store.save_personal_stand_in(7, "device", settings).unwrap();
+    let prepared = handler
+        .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+        .await
+        .unwrap();
+    assert_eq!(prepared["origin"]["memoryReview"], true);
+    let request: ExecutionRequest =
+        serde_json::from_value(prepared["executionRequest"].clone()).unwrap();
+    handler
+        .validate_stand_in_schedule_start(&request, "unused")
+        .unwrap();
+    assert!(handler
+        .prepare_stand_in_schedule(&automation(), json!({"message":"External work"}))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn memory_review_due_skips_empty_history_and_routes_changed_history_independently() {
+    for changed_history in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let handler = handler(root.path());
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        store.materialize_implicit_primary(7, "device").unwrap();
+        handler.ensure_memory_review_arrangements().unwrap();
+        let mut settings = store.personal_stand_in(7, "device").unwrap();
+        settings["primary"]["enabled"] = json!(false);
+        store.save_personal_stand_in(7, "device", settings).unwrap();
+        let entries = handler.automation_store.list();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(
+            entry.task_request["standInCalendar"]["template"],
+            "memory_review"
+        );
+        assert!(matches!(
+            entry.conversation_mode,
+            ConversationMode::Independent
+        ));
+        if changed_history {
+            handler.upsert_local_task(RuntimeTaskLink {
+                local_task_id: "original-user-conversation".into(),
+                runtime_handle: json!({
+                    "origin":{"type":"stand_in_identity","userId":7,"deviceId":"device","standInId":"@primary"},
+                    "executionRequest":{"user_id":7}
+                }),
+                ..Default::default()
+            });
+        }
+        let run = handler
+            .automation_store
+            .due(entry.next_run_at.unwrap())
+            .unwrap()
+            .pop()
+            .unwrap()
+            .1;
+        let contexts = handler.arrangement_contexts(&store).unwrap();
+        let events = store.stand_in_events(7).unwrap();
+        let saved = handler
+            .automation_store
+            .list_runs(Some(&entry.id))
+            .pop()
+            .unwrap();
+        if !changed_history {
+            assert!(contexts.is_empty());
+            assert!(events.is_empty());
+            assert_eq!(saved.status, AutomationRunStatus::Succeeded);
+            assert!(saved.task_id.is_none());
+            assert!(handler.local_task_links(true).is_empty());
+            continue;
+        }
+        assert_eq!(saved.status, AutomationRunStatus::Pending);
+        assert!(events.is_empty());
+        assert_eq!(contexts.len(), 1);
+        let snapshot = handler
+            .coordination_rpc(
+                "runtime.coordination.snapshot",
+                json!({"contextId":contexts[0]["id"],"revision":contexts[0]["revision"]}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot["events"][0]["id"], run.id);
+        assert_eq!(snapshot["events"][0]["kind"], "schedule_due");
+        assert_eq!(snapshot["events"][0]["arrangement"], true);
+        let prepared = handler
+            .prepare_stand_in_schedule(entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap();
+        assert_eq!(prepared["origin"]["memoryReview"], true);
+        assert_eq!(prepared["origin"]["type"], "stand_in_schedule");
+        assert_eq!(prepared["origin"]["automationId"], entry.id);
+        assert_eq!(handler.local_task_links(true).len(), 1);
+        assert_ne!(
+            run.coordination.unwrap().task_id,
+            "original-user-conversation"
+        );
+        handler.arrangement_contexts(&store).unwrap();
+        assert!(store.stand_in_events(7).unwrap().is_empty());
+    }
 }
 
 #[tokio::test]

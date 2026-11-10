@@ -286,6 +286,34 @@ def execution_display_state(execution: LoopItemExecution) -> str:
     return "waiting_runtime"
 
 
+def execution_human_waiting_since(execution: LoopItemExecution | None) -> str | None:
+    """A finished attempt returns work to people; execution timestamps are UTC."""
+    if execution is None or execution_display_state(execution) not in {
+        "succeeded",
+        "failed",
+        "cancelled",
+    }:
+        return None
+    completed_at = _optional_datetime(execution.completed_at)
+    if not isinstance(completed_at, datetime):
+        return None
+    if completed_at.tzinfo is None:
+        completed_at = completed_at.replace(tzinfo=timezone.utc)
+    return completed_at.astimezone(timezone.utc).isoformat()
+
+
+def execution_processing_actor(
+    execution: LoopItemExecution | None, ai_state: object
+) -> dict[str, str] | None:
+    """Only an observed running execution identifies the current AI actor."""
+    if execution is None or execution_display_state(execution) != "running":
+        return None
+    name = ai_state.get("agent_name") if isinstance(ai_state, dict) else None
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return {"kind": "agent", "name": name.strip()}
+
+
 def execution_ai_state(
     db: Session,
     execution: LoopItemExecution,
@@ -3212,17 +3240,17 @@ class LoopItemExecutionService:
         return str(error)
 
     @staticmethod
-    def _lock_terminal_event_execution(
+    def _lock_runtime_event_execution(
         db: Session,
         *,
         execution_id: int,
         event_seq: int | None,
     ) -> LoopItemExecution | None:
-        """Serialize Runtime terminal events with cancellation acknowledgements.
+        """Serialize Runtime observations with lease and cancellation writes.
 
-        Runtime terminal events also update their activity projection. Lock the
-        execution aggregate first so every terminal writer uses the same
-        execution -> activity lock order.
+        Refresh the execution under its lock so an acknowledgement cannot make
+        an observed event fail a stale version check. All activity writers keep
+        the execution -> activity lock order.
         """
 
         execution = (
@@ -3310,14 +3338,14 @@ class LoopItemExecutionService:
             )
             return None
         now = utcnow()
+        row = self._lock_runtime_event_execution(
+            db,
+            execution_id=row.id,
+            event_seq=event_seq,
+        )
+        if row is None:
+            return None
         if terminal is not None:
-            row = self._lock_terminal_event_execution(
-                db,
-                execution_id=row.id,
-                event_seq=event_seq,
-            )
-            if row is None:
-                return None
             self.open_execution_activity(
                 db,
                 execution=row,
@@ -3449,7 +3477,17 @@ class LoopItemExecutionService:
         # Any accepted observation identifies the current turn, even when the
         # created event lost a concurrent lease update or arrived out of order.
         self._bind_activity_runtime_turn(db, row, payload)
-        db.commit()
+        from app.services.project_chat.execution_snapshot import (
+            runtime_event_client_message_id,
+        )
+        from app.services.project_chat.human_requests import settle_execution_reply
+
+        settle_execution_reply(
+            db, row, observed_message_id=runtime_event_client_message_id(payload)
+        )
+        from app.services.project_chat.service import project_chat_service
+
+        project_chat_service._commit(db)
         db.refresh(row)
         return row
 

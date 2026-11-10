@@ -455,13 +455,15 @@ const workbenchValue: WorkbenchContextValue = {
   markRuntimeTaskSettled: vi.fn(),
   listImPrivateSessions: vi.fn(),
   bindRuntimeTaskToImSessions: vi.fn(),
-  getImNotificationSettings: vi.fn(),
+  getImNotificationSettings: vi.fn().mockResolvedValue({
+    global: { enabled: false, sessionKey: null, session: null },
+    runtimeTaskSubscriptions: [],
+  }),
   updateGlobalImNotification: vi.fn(),
   subscribeRuntimeTaskNotifications: vi.fn(),
   unsubscribeRuntimeTaskNotifications: vi.fn(),
   refreshWorkLists: vi.fn(),
   refreshDevices: vi.fn(),
-  getRemoteDeviceStartupCommand: vi.fn(),
   upgradeDevice: vi.fn(),
   createProject: vi.fn(),
   createGitWorkspaceProject: vi.fn(),
@@ -805,10 +807,14 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   },
 }))
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => workbenchValue,
-  useWorkbenchPaneContext: () => workbenchValue,
-}))
+vi.mock('@/features/workbench/useWorkbench', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/features/workbench/useWorkbench')>()
+  return {
+    ...actual,
+    useWorkbench: () => workbenchValue,
+    useWorkbenchPaneContext: () => workbenchValue,
+  }
+})
 
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: () => mockViewport.isMobile,

@@ -468,15 +468,24 @@ const CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES = MODEL_PROTOCOL_MATRIX_CASES.
   ...model,
   execution: 'cloud',
 }))
-const LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
-  model => model.source === 'local'
-)
+const LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES = [
+  ...LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source === 'local'),
+  {
+    execution: 'local',
+    source: 'local',
+    protocol: 'responses',
+    providerProfileId: 'deepseek',
+    optionIds: ['local-model:desktop-e2e-vision-main'],
+    labels: ['Desktop E2E DeepSeek Pro Vision Main'],
+    modelId: 'deepseek-v4-pro',
+  },
+]
 const MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.filter(
   model => model.protocol === 'chat' || model.protocol === 'anthropic'
 )
 const LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES =
   LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source !== 'local')
-const MODEL_PROTOCOL_MATRIX_TOTAL = MODEL_PROTOCOL_MATRIX_CASES.length * 2
+const MODEL_PROTOCOL_MATRIX_TOTAL = MODEL_PROTOCOL_MATRIX_CASES.length * 2 + 1
 const MODEL_PROTOCOL_MATRIX_TEXT_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TEXT'
 const MODEL_PROTOCOL_MATRIX_TOOL_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TOOL'
 const LOCAL_MODEL_SWITCH_INITIAL_PROMPT =
@@ -551,6 +560,7 @@ const CLOUD_PUBLIC_MODEL_OPTIONS = {
   weworkCloudModelUpstreamApiFormat: 'openai-responses',
 }
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
+const CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION = '999.0.0'
 const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
@@ -1937,6 +1947,7 @@ export {
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_DEVICE_ID,
+  CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
   REMOTE_DOCKER_DEVICE_ID,
   FRESH_CHAT_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,

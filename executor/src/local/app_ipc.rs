@@ -83,11 +83,18 @@ const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
 const TRANSCRIPT_EXPORT_TIMEOUT_SECONDS: u64 = 10 * 60;
+// Python provisioning (uv + CPython) precedes the adapter's own action deadline.
+const PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS: u64 =
+    crate::python_runtime::PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS + 5 * 60;
 
 fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
     match method {
-        Some("executor.plugin_auth.migrate") => 280,
-        Some("executor.plugin_auth.run") => 200,
+        Some(
+            "executor.plugin_auth.migrate" | "executor.plugin_auth.run" | "runtime.connections.cli",
+        ) => PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS,
+        Some(method) if method.starts_with("runtime.local_connector_auth.") => {
+            PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS
+        }
         Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
         // Context compaction waits for the Codex app-server to finish the
         // compaction turn, so the request deadline must outlive that budget.
@@ -1522,6 +1529,16 @@ impl AppIpcServer {
         .round() as usize;
         let native_args = string_list(params.get("args")).unwrap_or_default();
         let native_result = match command_key {
+            "git_clone" => Some(
+                super::git_access::execute_clone(
+                    &native_args,
+                    native_path.as_deref().map(Path::new),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
             "environment_prepare" => {
                 Some(execute_environment_prepare(&native_args, native_timeout).await)
             }
@@ -2311,9 +2328,10 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;
             let activity_sequence = params.get("activity_sequence").and_then(Value::as_i64);
+            let content_revision = params.get("content_revision").and_then(Value::as_i64);
             serialize_task_value(
                 runtime
-                    .mark_task_read(project_id, task_id, activity_sequence)
+                    .mark_task_read(project_id, task_id, activity_sequence, content_revision)
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -2414,6 +2432,48 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             serialize_task_value(
                 runtime
                     .list_comments(project_id, task_id, after_sequence)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.humanRequests.inbox" => {
+            let default = if params.get("user_ids").is_some() {
+                Vec::new()
+            } else {
+                vec![params["user_id"]
+                    .as_i64()
+                    .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?]
+            };
+            let users = human_request_viewer_ids(&params, "user_ids", &default)?;
+            serialize_task_value(
+                json!({"items":runtime.stand_in_store().issue_human_request_inbox(&users).map_err(task_runtime_error)?}),
+            )
+        }
+        "todos.humanRequests.list" => {
+            let project = required_task_string(&params, "project_id")?;
+            let issue = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                json!({"items":runtime.stand_in_store().list_issue_human_requests(project,issue).map_err(task_runtime_error)?}),
+            )
+        }
+        "todos.humanRequests.assign" => {
+            let project = required_task_string(&params, "project_id")?;
+            let issue = required_task_string(&params, "task_id")?;
+            let question = required_task_string(&params, "request_id")?;
+            let name = required_task_string(&params, "recipient_name")?;
+            serialize_task_value(
+                runtime
+                    .stand_in_store()
+                    .assign_issue_human_request(
+                        crate::task_runtime::IssueHumanRequestScope {
+                            project_id: project,
+                            issue_id: issue,
+                        },
+                        question,
+                        params["version"].as_i64().unwrap_or(0),
+                        params["recipient_user_id"].as_i64().unwrap_or(0),
+                        name,
+                        params["blocks_progress"].as_bool(),
+                    )
                     .map_err(task_runtime_error)?,
             )
         }
@@ -2951,6 +3011,40 @@ fn task_input<T: serde::de::DeserializeOwned>(
     .map_err(|error| AppIpcError::new("bad_request", error.to_string()))
 }
 
+pub(crate) fn human_request_viewer_ids(
+    params: &Value,
+    key: &str,
+    default: &[i64],
+) -> Result<Vec<i64>, AppIpcError> {
+    let mut users = match params.get(key) {
+        None => default.to_vec(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| {
+                AppIpcError::new("bad_request", format!("{key} must be an integer array"))
+            })?
+            .iter()
+            .map(|value| {
+                value.as_i64().filter(|user| *user >= 0).ok_or_else(|| {
+                    AppIpcError::new(
+                        "bad_request",
+                        format!("{key} must contain non-negative integers"),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    if users.iter().any(|user| *user < 0) {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "Question viewer IDs must be non-negative",
+        ));
+    }
+    users.sort_unstable();
+    users.dedup();
+    Ok(users)
+}
+
 fn required_task_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, AppIpcError> {
     params
         .get(key)
@@ -2992,6 +3086,7 @@ fn task_runtime_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcErr
         crate::task_runtime::TaskRuntimeError::ProjectNotFound
         | crate::task_runtime::TaskRuntimeError::TaskNotFound => "not_found",
         crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
+        crate::task_runtime::TaskRuntimeError::MemorySuppressed => "memory_suppressed",
         crate::task_runtime::TaskRuntimeError::UnsupportedProvider(_) => "provider_unavailable",
         crate::task_runtime::TaskRuntimeError::ProviderRequest(_) => "provider_request_failed",
         crate::task_runtime::TaskRuntimeError::Invalid(_) => "bad_request",
@@ -3627,6 +3722,9 @@ fn error_message(request_id: Option<&str>, error: &AppIpcError) -> Value {
     if let Some(delay) = error.retry_after_ms {
         response["error"]["retryAfterMs"] = json!(delay);
     }
+    if let Some(code) = &error.provider_code {
+        response["error"]["providerCode"] = json!(code);
+    }
     if error.code == "runtime_read_busy" {
         response["error"]["retryable"] = json!(true);
     }
@@ -3798,6 +3896,18 @@ mod tests {
     use crate::runtime_work::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
 
     #[test]
+    fn connection_cli_error_response_preserves_structured_cause_and_read_delay() {
+        let mut error =
+            super::AppIpcError::new("connection_cli_request_unavailable", "Read failed")
+                .with_retry_after_ms(30_000);
+        error.provider_code = Some("request_failed".to_owned());
+        let response = super::error_message(Some("read"), &error);
+        assert_eq!(response["error"]["providerCode"], "request_failed");
+        assert_eq!(response["error"]["retryAfterMs"], 30_000);
+        assert!(response["error"]["retryable"].is_null());
+    }
+
+    #[test]
     fn transcript_export_allows_large_snapshot_packaging() {
         assert_eq!(
             app_ipc_request_timeout_seconds(Some("runtime.tasks.transcript.export")),
@@ -3807,6 +3917,25 @@ mod tests {
             app_ipc_request_timeout_seconds(Some("runtime.tasks.list")),
             75
         );
+    }
+
+    #[test]
+    fn python_auth_requests_allow_provisioning_before_execution() {
+        for method in [
+            "executor.plugin_auth.migrate",
+            "executor.plugin_auth.run",
+            "runtime.connections.cli",
+            "runtime.local_connector_auth.health",
+            "runtime.local_connector_auth.start",
+            "runtime.local_connector_auth.poll",
+            "runtime.local_connector_auth.logout",
+        ] {
+            assert!(
+                app_ipc_request_timeout_seconds(Some(method))
+                    > crate::python_runtime::PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS + 280
+            );
+        }
+        assert_eq!(app_ipc_request_timeout_seconds(Some("executor.health")), 75);
     }
 
     #[test]

@@ -17,6 +17,7 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use wegent_filesystem::atomic_file::replace_file;
 
 use super::local_execution::PersistedLocalExecution;
 use super::response::{RuntimeTaskLink, RuntimeWorkspaceLink};
@@ -43,6 +44,9 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "standInOwnerRequest",
     "standInResult",
     "standInResultReceipt",
+    "standInIssueWakeups",
+    "standInPublicTurn",
+    "standInIssueReplies",
     "overloadRecoveryTurnIds",
     "runtime",
     "supersededTranscriptTurnIds",
@@ -51,6 +55,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "turnIdsBySubtask",
     "userMessagePresentations",
     "changeRequests",
+    "conversationSessions",
 ];
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -74,6 +79,8 @@ struct RuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, RuntimeTaskLink>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
+    issue_conversations: HashMap<String, String>,
+    deleted_issue_wakeups: HashMap<String, Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -84,6 +91,8 @@ struct PersistedRuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, PersistedRuntimeTask>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
+    issue_conversations: HashMap<String, String>,
+    deleted_issue_wakeups: HashMap<String, Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -453,6 +462,15 @@ impl RuntimeWorkStore {
         read: impl FnOnce(&RuntimeTaskLink) -> T,
     ) -> Option<T> {
         self.refresh_index_from_disk_if_changed();
+        self.read_loaded_task(local_task_id, read)
+    }
+
+    /// Read the live index after an explicit refresh outside another subsystem's lock.
+    pub(super) fn read_loaded_task<T>(
+        &self,
+        local_task_id: &str,
+        read: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
         self.index.lock().ok()?.tasks.get(local_task_id).map(read)
     }
 
@@ -483,20 +501,21 @@ impl RuntimeWorkStore {
         deleted
     }
 
-    pub fn mark_deleted_archived_task_ids(&self, task_ids: impl IntoIterator<Item = String>) {
-        self.refresh_index_from_disk_if_changed();
-        let Some(mut index) = self.index.lock().ok() else {
-            return;
-        };
+    pub fn mark_deleted_archived_task_ids(
+        &self,
+        task_ids: impl IntoIterator<Item = String>,
+    ) -> io::Result<()> {
         let now_ms = current_time_ms();
-        for task_id in task_ids {
-            if !task_id.trim().is_empty() {
-                index.deleted_archived_task_ids.insert(task_id, now_ms);
+        self.change_issue_index(|index| {
+            for task_id in task_ids {
+                if !task_id.trim().is_empty() {
+                    snapshot_deleted_issue_wakeups(index, &task_id);
+                    index.deleted_archived_task_ids.insert(task_id, now_ms);
+                }
             }
-        }
-        prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
-        drop(index);
-        self.persist_current_index();
+            prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
+            Ok(true)
+        })
     }
 
     pub fn unmark_deleted_archived_task_ids(&self, task_ids: &[String]) {
@@ -696,7 +715,7 @@ impl RuntimeWorkStore {
         self.update_index_signature();
     }
 
-    fn refresh_index_from_disk_if_changed(&self) {
+    pub(super) fn refresh_index_from_disk_if_changed(&self) {
         let Ok(_write_guard) = self.write_lock.lock() else {
             return;
         };
@@ -752,6 +771,8 @@ fn persisted_index_into_runtime(persisted: PersistedRuntimeWorkIndex) -> Runtime
             .map(|(task_id, task)| (task_id, task.into_runtime()))
             .collect(),
         workspaces: persisted.workspaces,
+        issue_conversations: persisted.issue_conversations,
+        deleted_issue_wakeups: persisted.deleted_issue_wakeups,
         deleted_archived_task_ids: persisted.deleted_archived_task_ids,
     }
 }
@@ -769,6 +790,8 @@ fn merge_persisted_index(current: &mut RuntimeWorkIndex, persisted: PersistedRun
     }
     current.version = persisted.version;
     current.workspaces = persisted.workspaces;
+    current.issue_conversations = persisted.issue_conversations;
+    current.deleted_issue_wakeups = persisted.deleted_issue_wakeups;
     current.deleted_archived_task_ids = persisted.deleted_archived_task_ids;
 }
 
@@ -783,6 +806,8 @@ fn serialize_index(index: &RuntimeWorkIndex) -> Result<Vec<u8>, serde_json::Erro
             .map(|(task_id, task)| (task_id.clone(), PersistedRuntimeTask::from_runtime(task)))
             .collect(),
         workspaces: index.workspaces.clone(),
+        issue_conversations: index.issue_conversations.clone(),
+        deleted_issue_wakeups: index.deleted_issue_wakeups.clone(),
         deleted_archived_task_ids,
     })
 }
@@ -923,63 +948,6 @@ fn index_parent(index_path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::rename(source, destination)
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle};
-    use windows_sys::Win32::Storage::FileSystem::{
-        FileRenameInfoEx, SetFileInformationByHandle, DELETE, FILE_RENAME_INFO,
-    };
-    use windows_sys::Win32::System::WindowsProgramming::{
-        FILE_RENAME_FLAG_POSIX_SEMANTICS, FILE_RENAME_FLAG_REPLACE_IF_EXISTS,
-    };
-
-    let source = OpenOptions::new().access_mode(DELETE).open(source)?;
-    // Rust's filesystem layer expands long paths, but this direct Win32 call
-    // needs the canonical parent's verbatim prefix even for a new index.
-    let destination =
-        fs::canonicalize(index_parent(destination))?.join(destination.file_name().ok_or_else(
-            || io::Error::new(io::ErrorKind::InvalidInput, "index path has no file name"),
-        )?);
-    let name = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let buffer_size = std::mem::size_of::<FILE_RENAME_INFO>() + name.len() * 2;
-    // Word storage aligns the variable-length FILE_RENAME_INFO and owns its tail.
-    let mut buffer = vec![0usize; buffer_size.div_ceil(std::mem::size_of::<usize>())];
-    let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
-    // POSIX replacement keeps existing readers on the old file while new opens
-    // see the new index. MoveFileExW rejects an open destination even when its
-    // handles share DELETE access.
-    let result = unsafe {
-        (*information).Anonymous.Flags =
-            FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
-        (*information).FileNameLength = ((name.len() - 1) * 2) as u32;
-        std::ptr::copy_nonoverlapping(
-            name.as_ptr(),
-            std::ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
-            name.len(),
-        );
-        SetFileInformationByHandle(
-            source.as_raw_handle(),
-            FileRenameInfoEx,
-            information.cast(),
-            buffer_size as u32,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
 #[cfg(unix)]
 fn sync_parent_directory(parent: &Path) -> io::Result<()> {
     fs::File::open(parent)?.sync_all()
@@ -1025,3 +993,6 @@ fn executor_home() -> PathBuf {
 
 #[cfg(test)]
 mod tests;
+
+mod issue_conversations;
+use issue_conversations::snapshot_deleted_issue_wakeups;

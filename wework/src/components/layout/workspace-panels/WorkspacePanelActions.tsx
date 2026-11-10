@@ -86,7 +86,6 @@ interface WorkspacePanelActionsProps {
   onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
   rightPanelOpen: boolean
   rightPanelExpanded: boolean
-  rightPanelDisabled?: boolean
   bottomPanelOpen: boolean
   onToggleRightPanel: () => void
   onToggleRightPanelExpanded: () => void
@@ -127,7 +126,6 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onRunSupervisorNow,
   rightPanelOpen,
   rightPanelExpanded,
-  rightPanelDisabled = false,
   bottomPanelOpen,
   onToggleRightPanel,
   onToggleRightPanelExpanded,
@@ -448,7 +446,6 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
               <button
                 type="button"
                 data-testid="toggle-right-workspace-panel-expanded-button"
-                disabled={rightPanelDisabled}
                 onClick={onToggleRightPanelExpanded}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
@@ -491,7 +488,6 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
               <button
                 type="button"
                 data-testid="toggle-right-workspace-panel-button"
-                disabled={rightPanelDisabled}
                 onClick={onToggleRightPanel}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
@@ -528,7 +524,7 @@ function CodeServerErrorDialog({ message, onClose }: { message: string; onClose:
         onClick={event => event.stopPropagation()}
       >
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-red-500/10 text-red-500">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive wework:bg-red-500/10 wework:text-red-500">
             <AlertCircle className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">

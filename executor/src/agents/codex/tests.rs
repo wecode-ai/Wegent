@@ -2238,7 +2238,7 @@ fn custom_model_without_catalog_entry_uses_upstream_id() {
 }
 
 #[test]
-fn explicit_responses_upstream_preserves_native_app_tools_by_default() {
+fn explicit_responses_upstream_defaults_to_ordinary_function_tools() {
     let upstream = explicit_codex_upstream(
         &json!({
             "model_id": "gpt-5.6-sol",
@@ -2248,9 +2248,9 @@ fn explicit_responses_upstream_preserves_native_app_tools_by_default() {
         "secret",
     );
 
-    assert!(!upstream.convert_custom_tools);
-    assert!(upstream.native_tool_search);
-    assert!(upstream.native_namespace_tools);
+    assert!(upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
 }
 
 #[test]
@@ -2722,7 +2722,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
 }
 
 #[test]
-fn user_configured_responses_provider_preserves_native_app_tools_by_default() {
+fn user_configured_responses_provider_defaults_to_functions_and_honors_native_opt_in() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("configured-provider-native-responses");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
@@ -2745,9 +2745,19 @@ fn user_configured_responses_provider_preserves_native_app_tools_by_default() {
         Some("http://127.0.0.1:3456/v1/responses")
     );
     assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
-    assert!(!upstream.convert_custom_tools);
-    assert!(upstream.native_tool_search);
-    assert!(upstream.native_namespace_tools);
+    assert!(upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
+    let config_path = root.join("config.toml");
+    let config = fs::read_to_string(&config_path).expect("read test configuration");
+    fs::write(
+        &config_path,
+        format!("{config}tool_profile = \"custom\"\nnative_tool_search = true\nnative_namespace_tools = true\n"),
+    ).expect("enable native tool capabilities");
+    let native = configured_codex_provider("wework-e2e", None).expect("native provider");
+    assert!(!native.convert_custom_tools);
+    assert!(native.native_tool_search);
+    assert!(native.native_namespace_tools);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -3502,6 +3512,10 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     };
 
     let launch_config = persistent_codex_app_server_launch_config(&request_launch_config);
+
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.multi_agent_v2.non_code_mode_only=false".to_owned()));
 
     assert_eq!(
         launch_config.env.get("HTTP_PROXY").map(String::as_str),
@@ -4299,11 +4313,50 @@ fn single_collaboration_mode_disables_codex_native_subagents() {
 
     assert!(launch_config
         .config_overrides
+        .contains(&"agents.enabled=false".to_owned()));
+    assert!(launch_config
+        .config_overrides
         .contains(&"features.multi_agent=false".to_owned()));
     assert!(launch_config
         .config_overrides
         .contains(&"features.multi_agent_v2=false".to_owned()));
     assert!(codex_collaboration_mode_payload(&request, &CodexLaunchConfig::default()).is_none());
+}
+
+#[test]
+fn stand_in_identity_uses_native_v2_without_changing_other_task_defaults() {
+    for origin_type in ["stand_in_identity", "stand_in_task", "project_coordinator"] {
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("origin".to_owned(), json!({"type": origin_type}));
+        let overrides = codex_collaboration_config_overrides(&request);
+        if origin_type == "stand_in_identity" {
+            assert_eq!(overrides, vec![CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]);
+        } else {
+            assert!(overrides.is_empty());
+        }
+    }
+    assert!(codex_collaboration_config_overrides(&ExecutionRequest::default()).is_empty());
+}
+
+#[test]
+fn single_stand_in_identity_still_disables_both_native_agent_families() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("origin".to_owned(), json!({"type":"stand_in_identity"}));
+    request
+        .extra
+        .insert("collaboration_model".to_owned(), json!("single"));
+    assert_eq!(
+        codex_collaboration_config_overrides(&request),
+        vec![
+            CODEX_DISABLE_AGENTS_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE
+        ]
+    );
 }
 
 #[test]
@@ -5407,6 +5460,60 @@ fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
 }
 
 #[test]
+fn python_plugin_routing_is_present_only_on_managed_desktop_executors() {
+    let _lock = crate::test_env::lock();
+    let _url = EnvRestore::capture("WEWORK_PYTHON_RUNTIME_URL");
+    let _token = EnvRestore::capture("WEWORK_PYTHON_RUNTIME_TOKEN");
+    env::remove_var("WEWORK_PYTHON_RUNTIME_URL");
+    env::remove_var("WEWORK_PYTHON_RUNTIME_TOKEN");
+    assert!(
+        !codex_thread_developer_instructions("", "").contains(crate::plugin_python::INSTRUCTIONS)
+    );
+    let mut request = ExecutionRequest::default();
+    assert!(!crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
+    env::set_var(
+        "WEWORK_PYTHON_RUNTIME_URL",
+        "http://127.0.0.1:1234/runtime/python/ensure",
+    );
+    let instructions = codex_thread_developer_instructions("", "");
+    assert!(instructions.contains(crate::plugin_python::INSTRUCTIONS));
+    assert!(instructions.contains(host_skills::INSTRUCTIONS));
+    assert!(host_skills::INSTRUCTIONS.contains("visualization"));
+    assert!(crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
+    request
+        .extra
+        .insert("runtimeDeviceId".into(), json!("python-control"));
+    request
+        .extra
+        .insert("runtimeLocalTaskId".into(), json!("caller"));
+    let claude = crate::agents::build_claude_command(&request, "claude");
+    for instructions in [
+        crate::plugin_python::INSTRUCTIONS,
+        crate::workbench_control::INSTRUCTIONS,
+        crate::artifact_cli::AGENT_INSTRUCTIONS,
+    ] {
+        assert!(claude.args().iter().any(|arg| arg.contains(instructions)));
+    }
+    request
+        .extra
+        .insert("enable_tools".to_owned(), json!(false));
+    assert!(!crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
+    assert!(!crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::workbench_control::INSTRUCTIONS)));
+}
+
+#[test]
 fn turn_input_binds_managed_plugin_mentions_to_the_plugin_entry_skill() {
     let root = unique_test_path("managed-plugin-skill-input");
     let codex_home = root.join("codex");
@@ -5546,6 +5653,13 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         .expect("skills config override should be valid TOML");
     assert_eq!(parsed_override["skills"]["config"], config["skills.config"]);
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
+    assert_eq!(config["features.multi_agent_v2.non_code_mode_only"], false);
+    let collaboration_hint = config["features.multi_agent_v2.root_agent_usage_hint_text"]
+        .as_str()
+        .expect("Code Mode collaboration hint");
+    assert!(collaboration_hint.contains("Use Code Mode to discover collaboration tools"));
+    assert!(collaboration_hint.contains("delegation is explicitly requested"));
+    assert!(!collaboration_hint.contains("cannot be called from inside"));
     assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
         config["mcp_servers.wework_browser.url"],

@@ -26,6 +26,11 @@ import type {
 } from '@/types/api'
 import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import {
+  clearWorkbenchWorkspaceLaunch,
+  consumeWorkbenchWorkspaceLaunch,
+} from '@/features/workbench/workspaceLaunchRequest'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 
 const attachment: Attachment = {
   id: -1,
@@ -44,6 +49,9 @@ const address: RuntimeTaskAddress = {
 }
 
 const mocks = vi.hoisted(() => ({
+  markRead: vi.fn(),
+  windowFocused: true,
+  focusListener: undefined as undefined | ((focused: boolean) => void),
   renderToolBlocks: false,
   inputHost: undefined as
     | undefined
@@ -57,6 +65,7 @@ const mocks = vi.hoisted(() => ({
       },
   catalogBindings: new Map<string, ComposerCatalogBinding>(),
   readCatalog: vi.fn(),
+  readTask: vi.fn(),
   mainListApps: vi.fn(),
   usageHandlers: [] as Array<{ onContextUsageUpdated?: (usage: RuntimeContextUsage) => void }>,
   resetAttachments: vi.fn(),
@@ -81,6 +90,7 @@ const mocks = vi.hoisted(() => ({
     blocks?: WorkbenchMessage['blocks']
   }>,
   lifecycleSnapshot: null as {
+    unread?: boolean
     turn?: { id: string | null }
     derived: {
       isRunning: boolean
@@ -96,6 +106,16 @@ const mocks = vi.hoisted(() => ({
   } | null,
   inputByScope: {} as Record<string, string>,
   setInputForScope: vi.fn(),
+}))
+
+vi.mock('@/desktop/windowFocus', () => ({
+  isMainWindowFocused: () => mocks.windowFocused,
+  subscribeMainWindowFocus: (listener: (focused: boolean) => void) => {
+    mocks.focusListener = listener
+    return () => {
+      mocks.focusListener = undefined
+    }
+  },
 }))
 
 function CatalogBindingProbe({ scope }: { scope?: string }) {
@@ -136,7 +156,7 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     }>
     onRetryFailedMessage?: (message: unknown) => void
     onSwitchModelForFailedMessage?: (message: unknown) => void
-    onOpenWorkspaceFile?: (path: string) => void
+    onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
     onOpenFileChangesReview?: () => void
     onOpenAssistantPlan?: () => void
     onRequestUserInputSubmit?: (response: {
@@ -208,7 +228,9 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
         <button
           type="button"
           data-testid="mock-open-file"
-          onClick={() => onOpenWorkspaceFile('/tmp/workspace/file.ts')}
+          onClick={() =>
+            onOpenWorkspaceFile('cart-fixture/cart-review.md', { lineStart: 3, lineEnd: 7 })
+          }
         >
           打开文件
         </button>
@@ -369,6 +391,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
     services: {
+      standInApi: { readTask: mocks.readTask },
       deviceApi: { readWorkspaceFileChunk: vi.fn() },
       composerCatalogApi: { readCatalog: mocks.readCatalog },
     },
@@ -456,6 +479,11 @@ vi.mock('@/features/workbench/runtimePaneStatus', () => ({
 }))
 
 vi.mock('@/features/workbench/runtimeConversationCache', () => ({
+  appendOptimisticRuntimeConversationGuidance: (
+    _address: RuntimeTaskAddress,
+    _turn: string,
+    message: { id: string; content: string }
+  ) => [{ ...message, role: 'user', status: 'pending', runtimeGuidance: true }],
   abortRuntimeConversationHydration: vi.fn(),
   getRuntimeConversationTurnIds: () => new Set<string>(),
   appendAcceptedRuntimeConversationMessage: (_address: RuntimeTaskAddress, message: unknown) => [
@@ -486,6 +514,7 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
     return revision
   }
   let store = {
+    markRead: mocks.markRead,
     getTask: () => mocks.lifecycleSnapshot,
     getTaskRevision: taskRevision,
     syncTranscript: mocks.syncTranscript,
@@ -499,6 +528,7 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
         revision = 0
         previousSnapshot = mocks.lifecycleSnapshot
         store = {
+          markRead: mocks.markRead,
           getTask: () => mocks.lifecycleSnapshot,
           getTaskRevision: taskRevision,
           syncTranscript: mocks.syncTranscript,
@@ -510,12 +540,73 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 })
 
 describe('TemporaryChatPanel', () => {
+  it('keeps the stand-in usable and steers new messages while native subagents are running', async () => {
+    mocks.busy = true
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    mocks.lifecycleSnapshot = {
+      turn: { id: 'parent-turn' },
+      derived: { isRunning: true, isTurnActive: true },
+    }
+    mocks.sendRuntimePaneGuidance.mockResolvedValue({ sent: true, turnId: 'parent-turn' })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="native-chat"
+        nativeConversation
+      />
+    )
+    await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(mocks.sendRuntimePaneGuidance).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(mocks.sendRuntimePaneGuidance).toHaveBeenCalledTimes(2))
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('mock-queue-row')).not.toBeInTheDocument()
+  })
+  it('acknowledges visible stand-in messages only while the main window is focused', async () => {
+    mocks.windowFocused = false
+    mocks.lifecycleSnapshot = {
+      unread: true,
+      turn: { id: null },
+      derived: { isRunning: false, isTurnActive: false },
+    }
+    const panel = (active: boolean) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="read-stand-in"
+        markReadWhenActive
+        active={active}
+      />
+    )
+    const view = render(panel(false))
+    expect(mocks.markRead).not.toHaveBeenCalled()
+    view.rerender(panel(true))
+    expect(mocks.markRead).not.toHaveBeenCalled()
+    act(() => {
+      mocks.windowFocused = true
+      mocks.focusListener?.(true)
+    })
+    expect(mocks.markRead).toHaveBeenCalledExactlyOnceWith(address)
+    view.rerender(panel(false))
+    expect(mocks.focusListener).toBeUndefined()
+  })
   beforeEach(() => {
+    mocks.markRead.mockClear()
+    mocks.windowFocused = true
+    mocks.cancelRuntimePaneTask.mockClear()
+    clearWorkbenchWorkspaceLaunch()
     mocks.renderToolBlocks = false
     mocks.inputHost = undefined
     mocks.catalogBindings.clear()
     mocks.mainListApps.mockClear()
     mocks.readCatalog.mockReset()
+    mocks.readTask.mockReset()
     mocks.readCatalog.mockImplementation(async (target: RuntimeTaskAddress) => ({
       taskId: target.taskId,
       workspacePath: '/side',
@@ -567,6 +658,74 @@ describe('TemporaryChatPanel', () => {
       if (value) mocks.inputByScope[scope] = value
       else delete mocks.inputByScope[scope]
     })
+  })
+
+  it('preserves the first file action and line range while navigating to its owning task', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'delivery',
+        role: 'assistant',
+        content: 'cart-review.md',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    const onOpenRuntimeTask = vi.fn(async () => {
+      expect(
+        consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, 'wrong-task')
+      ).toBeNull()
+      expect(
+        consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, address.taskId)
+      ).toEqual({
+        taskId: address.taskId,
+        openFile: {
+          path: 'cart-fixture/cart-review.md',
+          options: { lineStart: 3, lineEnd: 7 },
+        },
+      })
+    })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="primary-deliverable"
+        initialAddress={address}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-open-file'))
+    await waitFor(() => expect(onOpenRuntimeTask).toHaveBeenCalledExactlyOnceWith(address))
+  })
+
+  it('does not guess a workspace or attach another task metadata when opening a file', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'delivery',
+        role: 'assistant',
+        content: 'cart-review.md',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    mocks.readTask.mockResolvedValue({ success: true, task: { ...address, taskId: 'other' } })
+    const onOpenRuntimeTask = vi.fn()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="unresolved-deliverable"
+        initialAddress={{ deviceId: address.deviceId, taskId: address.taskId }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-open-file'))
+    await waitFor(() =>
+      expect(mocks.readTask).toHaveBeenCalledWith(address.deviceId, address.taskId)
+    )
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(
+      consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, address.taskId)
+    ).toBeNull()
   })
 
   it('places contextual configuration decisions beside the composer and hides them when inactive', () => {

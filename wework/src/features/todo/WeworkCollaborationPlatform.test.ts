@@ -1524,6 +1524,90 @@ describe('Wework collaboration workspace API', () => {
     ).toHaveAttribute('data-refresh-key', '0')
   })
 
+  it('does not refresh a local board for unrelated tasks or unchanged execution status', async () => {
+    vi.useFakeTimers()
+    const lifecycleStore = new RuntimeTaskLifecycleStore('local-board-refresh-scope')
+    const project = { projectStore: 'local' as const, projectId: 'local-refresh-scope' }
+    const address = { deviceId: 'local-device', taskId: 'local-refresh-task' }
+    rememberProjectSpaceTaskBinding(address, project)
+    lifecycleStore.syncRuntimeTask(
+      address,
+      runtimeTask({ taskId: address.taskId, running: true, status: 'running' })
+    )
+    const props = {
+      api: { projects: {}, issues: {} } as unknown as SharedWorkspaceApi,
+      localProjects: [],
+      locale: 'zh-CN' as const,
+      location: {
+        platformView: 'project' as const,
+        workspaceId: 'local-workspace',
+        workspaceView: 'projects' as const,
+        projectId: project.projectId,
+        projectView: 'board' as const,
+        issueId: null,
+      },
+      project: { id: project.projectId, name: 'Local', project_store: 'local' } as never,
+      services: {} as never,
+      setLocation: vi.fn(),
+      userId: 1,
+      workspace: { id: 'local-workspace', name: 'Local' } as never,
+    }
+    const view = () =>
+      createElement(WeworkSharedProject, {
+        ...props,
+        runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
+      })
+    const { rerender } = render(view())
+    await act(async () => {
+      vi.runAllTimers()
+    })
+    const refreshKey = () =>
+      screen
+        .getByTestId(`collaboration-app-refresh-probe-${project.projectId}`)
+        .getAttribute('data-refresh-key')
+    const initialKey = refreshKey()
+
+    lifecycleStore.syncRuntimeTask(
+      { deviceId: 'local-device', taskId: 'unrelated-task' },
+      runtimeTask({ taskId: 'unrelated-task', running: true, status: 'running' })
+    )
+    rerender(view())
+    await act(async () => {
+      vi.runAllTimers()
+    })
+    expect(refreshKey()).toBe(initialKey)
+
+    lifecycleStore.syncRuntimeTask(
+      address,
+      runtimeTask({
+        taskId: address.taskId,
+        running: true,
+        status: 'running',
+        updatedAt: '2026-11-07T15:00:00Z',
+      })
+    )
+    rerender(view())
+    await act(async () => {
+      vi.runAllTimers()
+    })
+    expect(refreshKey()).toBe(initialKey)
+
+    lifecycleStore.syncRuntimeTask(
+      address,
+      runtimeTask({
+        taskId: address.taskId,
+        running: false,
+        status: 'done',
+        completedAt: '2026-11-07T15:01:00Z',
+      })
+    )
+    rerender(view())
+    await act(async () => {
+      vi.runAllTimers()
+    })
+    expect(Number(refreshKey())).toBe(Number(initialKey) + 3)
+  })
+
   it('reconciles removed snapshot bindings without deleting another project mapping', async () => {
     const removedTask = {
       deviceId: 'snapshot-reconcile-device',
@@ -2294,6 +2378,31 @@ describe('Wework collaboration workspace API', () => {
       api.workspaces!.listCollaborationGroups('wework-local-workspace')
     ).resolves.toEqual([group])
     expect(cloudAdd).not.toHaveBeenCalled()
+  })
+
+  it('preserves the unresolved identity of a visible local device placeholder', async () => {
+    const detailServices = createLocalDetailServices()
+    vi.mocked(detailServices.deviceApi.listDevices).mockResolvedValueOnce([
+      {
+        id: 0,
+        device_id: 'local-device',
+        name: 'Local Executor',
+        device_type: 'local',
+        status: 'offline',
+        is_default: true,
+        bind_shell: 'claudecode',
+        local_identity_unresolved: true,
+      },
+    ])
+    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)!
+
+    await expect(api.resources?.devices.local?.()).resolves.toEqual([
+      expect.objectContaining({
+        device_key: 'local-device',
+        status: 'offline',
+        local_identity_unresolved: true,
+      }),
+    ])
   })
 
   it('keeps the local resource catalog available when default-Agent provisioning fails', async () => {

@@ -1,5 +1,6 @@
 import type { BrowserWindow, NativeImage, Rectangle } from 'electron'
 import { centeredWindowBounds } from './window-layout.js'
+import { finishStartupAnimation } from './startup-tasks.js'
 
 type GeometryWindow = Pick<
   BrowserWindow,
@@ -169,7 +170,11 @@ function maximizedAtBounds(main: MainWindow, bounds?: Rectangle): boolean {
   )
 }
 
-export async function maximizeStartupWindow(main: MainWindow, bounds?: Rectangle): Promise<void> {
+export async function maximizeStartupWindow(
+  main: MainWindow,
+  bounds?: Rectangle,
+  shouldContinue: () => boolean = () => true
+): Promise<void> {
   if (main.isDestroyed()) throw new Error('The startup destination closed before maximizing')
   await new Promise<void>((resolve, reject) => {
     const cleanup = () => {
@@ -182,6 +187,11 @@ export async function maximizeStartupWindow(main: MainWindow, bounds?: Rectangle
     }
     const changed = () => {
       try {
+        if (!shouldContinue()) {
+          cleanup()
+          resolve()
+          return true
+        }
         if (main.isDestroyed()) {
           closed()
           return true
@@ -217,7 +227,8 @@ export async function maximizeStartupWindow(main: MainWindow, bounds?: Rectangle
     main.on('move', changed)
     main.on('closed', closed)
     try {
-      if (main.isDestroyed()) closed()
+      if (!shouldContinue()) changed()
+      else if (main.isDestroyed()) closed()
       else {
         main.maximize()
         changed()
@@ -235,8 +246,13 @@ export async function prepareStartupMainWindow(
   splash: SplashWindow,
   show: boolean,
   displays: StartupWindowDisplays,
-  onTrace?: (event: StartupWindowHandoffTrace) => void
+  onTrace?: (event: StartupWindowHandoffTrace) => void,
+  shouldContinue: () => boolean = () => true
 ): Promise<StartupWindowBounds> {
+  const assertActive = () => {
+    if (!shouldContinue()) throw new Error('Startup window preparation was cancelled')
+  }
+  assertActive()
   const bounds = splash.getBounds()
   const trace = createGeometryTracer(main, splash, bounds, onTrace)
   try {
@@ -252,37 +268,42 @@ export async function prepareStartupMainWindow(
       if (show && splash.isMaximized()) {
         if (displays.main !== displays.splash) {
           trace.record('before-relocation')
+          assertActive()
           main.setBounds(centeredWindowBounds(splash.getNormalBounds(), bounds))
           trace.record('after-relocation')
         }
         trace.record('before-maximize')
-        await maximizeStartupWindow(main, bounds)
+        assertActive()
+        await maximizeStartupWindow(main, undefined, shouldContinue).catch(error => {
+          if (main.isDestroyed()) throw error
+          console.warn('[startup-window-handoff] could not maximize the main window', error)
+        })
+        assertActive()
         trace.record('after-maximize')
       } else {
         trace.record('before-set-bounds')
+        assertActive()
         main.setBounds(bounds)
         trace.record('after-set-bounds')
       }
       if (show) {
+        assertActive()
         trace.record('before-stack')
         splash.moveAbove(main.getMediaSourceId())
         trace.record('after-stack')
       }
       // Capturing forces a composited frame even when Windows suspends rAF in an occluded window.
       trace.record('before-capture')
-      const frame = await main.webContents.capturePage().catch(error => {
-        trace.record('capture-failed', error)
-        throw error
-      })
+      assertActive()
+      const frame = await finishStartupAnimation(() => main.webContents.capturePage()).catch(
+        error => {
+          trace.record('capture-failed', error)
+          console.warn('[startup-window-handoff] could not capture the main window', error)
+          return undefined
+        }
+      )
       trace.record('after-capture', undefined, frame)
-      if (frame.isEmpty()) throw new Error('The startup destination did not produce a frame')
       return { splash: bounds, main: main.getBounds() }
-    } catch (error) {
-      if (!main.isDestroyed()) {
-        main.hide()
-        trace.record('destination-hidden', error)
-      }
-      throw error
     } finally {
       if (!main.isDestroyed()) {
         trace.record('before-opacity-restore')

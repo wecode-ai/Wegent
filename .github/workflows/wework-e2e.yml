@@ -92,11 +92,11 @@ jobs:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
         run: node .github/scripts/balance-wework-windows-e2e.mjs >> "$GITHUB_OUTPUT"
 
-      - name: Balance Linux Core checkpoints across additional runners
+      - name: Balance Linux Core checkpoints within existing runners
         id: linux-matrix
         env:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
-          CORE_RUNNER_SCALE: "1.5"
+          CORE_RUNNER_SCALE: "1"
         run: node .github/scripts/order-wework-linux-e2e.mjs --balance-core >> "$GITHUB_OUTPUT"
 
       - name: Resolve Wework E2E image
@@ -397,8 +397,7 @@ jobs:
       - name: Prepare real mailbox server runtime
         if: contains(matrix.segments, 'stand-in-email')
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends openjdk-21-jre-headless
+          bash .github/scripts/install-e2e-apt-packages.sh openjdk-21-jre-headless
           java -version
           keytool -help >/dev/null
 
@@ -436,14 +435,19 @@ jobs:
       - name: Install the native log-folder opener
         if: contains(matrix.segments, 'native-window-startup')
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends file xdg-utils pcmanfm
+          bash .github/scripts/install-e2e-apt-packages.sh file xdg-utils pcmanfm
           XDG_CONFIG_HOME=/etc/xdg xdg-mime default pcmanfm.desktop inode/directory
           test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default inode/directory)" = pcmanfm.desktop
           test "$(xdg-mime query filetype /tmp)" = inode/directory
 
+      - name: Restore verified Electron installer cache
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        uses: ./.github/actions/prepare-electron-installer-cache
+
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        env:
+          WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: |
           pnpm --dir wework prepare:electron
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
@@ -455,6 +459,7 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
+          WEWORK_E2E_EXTERNAL_BROWSER_PREREAD: ${{ contains(matrix.segments, 'browser-toolbar-actions') && '1' || '0' }}
           RUNNER_PROCESS_DIAGNOSTICS: ${{ contains(matrix.segments, 'background-terminals') && '1' || '0' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
@@ -464,6 +469,7 @@ jobs:
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"
           WEWORK_E2E_PARALLEL_SCOPE: core
+          WEWORK_E2E_RELEASE_ASSET_TOKEN: ${{ contains(matrix.segments, 'harness-app-') && github.token || '' }}
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
@@ -474,8 +480,7 @@ jobs:
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
           if [[ ",$WEWORK_E2E_SEGMENTS," == *",plugin-development,"* ]]; then
-            apt-get update
-            apt-get install -y --no-install-recommends gdb
+            bash .github/scripts/install-e2e-apt-packages.sh gdb
             WEWORK_E2E_EXECUTOR_REAL_BIN=/usr/bin/test \
               WEGENT_APP_IPC_ENDPOINT=diagnostic-fd-check \
               .github/scripts/run-wework-executor-with-gdb.sh \
@@ -784,6 +789,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk reply protocol fixture" }
             "WEWORK_E2E_DWS_REPLY_FIXTURE_BIN=$replyBinary" |
               Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            $recoveryBinary = Join-Path $directory "direct-recovery-dws.exe"
+            rustc wework/e2e/desktop/fixtures/direct-recovery-dingtalk-cli.rs --edition 2021 -o $recoveryBinary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk recovery protocol fixture" }
+            "WEWORK_E2E_DWS_RECOVERY_FIXTURE_BIN=$recoveryBinary" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
       - name: Run Windows Wework desktop Core shard E2E
@@ -941,13 +951,12 @@ jobs:
           source .github/scripts/lib/apt-packages.sh
           mapfile -t missing < <(find_missing_apt_packages gh)
           if ((${#missing[@]} > 0)); then
-            apt-get update
-            apt-get install -y --no-install-recommends "${missing[@]}"
+            bash .github/scripts/install-e2e-apt-packages.sh "${missing[@]}"
           fi
           gh --version
 
-      - name: Prepare the pinned native DWS compiler for account authentication E2E
-        if: contains(matrix.segments, 'plugin-account-auth-dws')
+      - name: Prepare the pinned native compiler for account authentication E2E
+        if: contains(matrix.segments, 'plugin-account-auth-dws') || contains(matrix.segments, 'plugin-account-auth-password')
         uses: actions/setup-go@v6
         with:
           go-version: "1.25.9"
@@ -966,6 +975,7 @@ jobs:
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
+          WEWORK_E2E_RELEASE_ASSET_TOKEN: ${{ contains(matrix.segments, 'plugin-legacy-upgrade') && github.token || '' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
           WEWORK_E2E_DWS_FIXTURE_DIR: ${{ github.workspace }}/.ci-artifacts/dws-account-auth
         run: |

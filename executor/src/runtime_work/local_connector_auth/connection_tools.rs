@@ -109,23 +109,53 @@ async fn run_tool_json(
     plugin_key: &str,
     connector_slug: &str,
 ) -> Result<Value, AppIpcError> {
-    let mut command = Command::new(tool);
+    let requires_python = tool
+        .to_str()
+        .is_some_and(crate::python_runtime::is_python_program);
+    let selected = if requires_python && crate::python_runtime::managed_python_bridge_configured() {
+        Some(
+            crate::python_runtime::prepare_plugin_python(root, true)
+                .await
+                .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?,
+        )
+    } else {
+        None
+    };
+    let mut command = Command::new(
+        selected
+            .as_ref()
+            .map_or(tool, |python| python.path.as_path()),
+    );
+    if let Some(selected) = &selected {
+        selected
+            .configure(&mut command)
+            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+        if tool
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("py"))
+        {
+            command.arg(tool);
+        }
+    }
     crate::process::hide_windows_console(&mut command);
-    let mut child = command
+    command
         .args(args)
         .current_dir(root)
         .envs(crate::plugin_account_auth::broker::environment())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| {
-            AppIpcError::new(
-                "connection_cli_unavailable",
-                "Plugin tool could not be started",
-            )
-        })?;
+        .kill_on_drop(true);
+    if requires_python && selected.is_none() {
+        crate::python_runtime::isolate_python_environment(&mut command)
+            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+    }
+    let mut child = command.spawn().map_err(|_| {
+        AppIpcError::new(
+            "connection_cli_unavailable",
+            "Plugin tool could not be started",
+        )
+    })?;
     let stdout = child.stdout.take().expect("piped plugin stdout");
     let stderr = child.stderr.take().expect("piped plugin stderr");
     let output = tokio::time::timeout(Duration::from_secs(40), async {
@@ -325,8 +355,10 @@ fn parse_connection_tool_output(
             ));
         }
         let declared_failure = declared_tool_failure(&value);
-        return Err(AppIpcError::new(
-            if declared_failure {
+        let mut error = AppIpcError::new(
+            if declared_failure && retryable_tool_request(code) {
+                "connection_cli_request_unavailable"
+            } else if declared_failure {
                 "connection_cli_request_failed"
             } else {
                 "connection_cli_failed"
@@ -336,14 +368,90 @@ fn parse_connection_tool_output(
             } else {
                 "Plugin tool request failed".to_owned()
             },
-        ));
+        );
+        error.provider_code = super::diagnostics::identifier(code).then(|| code.to_owned());
+        return Err(error);
     }
     Ok(value)
+}
+
+fn retryable_tool_request(code: &str) -> bool {
+    matches!(
+        code,
+        "request_failed"
+            | "NETWORK_ERROR"
+            | "SERVER_ERROR"
+            | "ECONNRESET"
+            | "ECONNREFUSED"
+            | "ETIMEDOUT"
+            | "EHOSTUNREACH"
+            | "ENETUNREACH"
+            | "EAI_AGAIN"
+    )
 }
 
 #[cfg(test)]
 mod connection_tool_tests {
     use super::*;
+
+    #[test]
+    fn generic_and_transport_failures_retain_structured_causes_and_only_reads_get_retry_hints() {
+        for code in [
+            "request_failed",
+            "NETWORK_ERROR",
+            "SERVER_ERROR",
+            "ECONNRESET",
+            "ECONNREFUSED",
+            "ETIMEDOUT",
+            "EHOSTUNREACH",
+            "ENETUNREACH",
+            "EAI_AGAIN",
+        ] {
+            for stderr in [false, true] {
+                let bytes = serde_json::to_vec(
+                    &json!({"success":false,"error":{"code":code,"message":"private-token"}}),
+                )
+                .unwrap();
+                let error = parse_connection_tool_streams(
+                    if stderr { b"" } else { &bytes },
+                    if stderr { &bytes } else { b"" },
+                    false,
+                    "plugin",
+                    "account",
+                )
+                .unwrap_err();
+                assert_eq!(error.code, "connection_cli_request_unavailable");
+                assert_eq!(error.provider_code.as_deref(), Some(code));
+                assert_eq!(
+                    error.retry_after_ms, None,
+                    "An action outcome cannot authorize replay"
+                );
+                assert!(!error.message.contains("private-token"));
+                let read = crate::runtime_work::connection_cli::collection_read_error(error);
+                assert_eq!(read.retry_after_ms, Some(30_000));
+                assert_eq!(read.provider_code.as_deref(), Some(code));
+            }
+        }
+        let bytes = br#"{"success":false,"error":{"message":"private-token"}}"#;
+        let error = parse_connection_tool_output(bytes, false, "plugin", "account").unwrap_err();
+        assert_eq!(error.provider_code.as_deref(), Some("request_failed"));
+        assert_eq!(error.code, "connection_cli_request_unavailable");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn structured_generic_action_failure_is_never_replayed() {
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("tool");
+        fs::write(&script, "#!/bin/sh\nprintf x >> attempts\nprintf '%s' '{\"success\":false,\"error\":{\"code\":\"request_failed\"}}'\nexit 1\n").unwrap();
+        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "connection_cli_request_unavailable");
+        assert_eq!(error.retry_after_ms, None);
+        assert_eq!(fs::read(temp.path().join("attempts")).unwrap(), b"x");
+    }
 
     #[test]
     fn failed_process_output_is_not_classified_as_a_successful_malformed_response() {
@@ -374,7 +482,16 @@ mod connection_tool_tests {
 
     #[test]
     fn structured_stderr_rejections_never_become_retryable_reads_or_successes() {
-        for code in ["FORBIDDEN", "403", "PERMISSION_DENIED", "NETWORK_ERROR"] {
+        for code in [
+            "FORBIDDEN",
+            "403",
+            "PERMISSION_DENIED",
+            "EPERM",
+            "EACCES",
+            "CERTIFICATE_VERIFY_FAILED",
+            "INVALID_ARGUMENT",
+            "unknown_failure",
+        ] {
             let stderr = serde_json::to_vec(
                 &json!({"success":false,"error":{"code":code,"message":"private-token"}}),
             )
@@ -382,6 +499,7 @@ mod connection_tool_tests {
             let error = parse_connection_tool_streams(b"", &stderr, false, "plugin", "account")
                 .unwrap_err();
             assert_eq!(error.code, "connection_cli_request_failed");
+            assert_eq!(error.provider_code.as_deref(), Some(code));
             assert!(error.message.contains(code));
             assert!(!error.message.contains("private-token"));
             assert_eq!(
@@ -620,7 +738,7 @@ mod connection_tool_tests {
                 "pluginKey=existing-plugin connectorSlug=original-slug"
             );
         }
-        for code in ["NETWORK_ERROR", "FORBIDDEN", "403", "SERVER_ERROR"] {
+        for code in ["FORBIDDEN", "403"] {
             let bytes = serde_json::to_vec(
                 &json!({"success":false,"error":{"code":code,"message":"secret"}}),
             )

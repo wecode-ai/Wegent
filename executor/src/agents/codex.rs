@@ -79,6 +79,8 @@ const CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE: &str =
     "features.default_mode_request_user_input=true";
 const CODEX_DISABLE_MULTI_AGENT_OVERRIDE: &str = "features.multi_agent=false";
 const CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE: &str = "features.multi_agent_v2=false";
+const CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE: &str = "features.multi_agent_v2=true";
+const CODEX_DISABLE_AGENTS_OVERRIDE: &str = "agents.enabled=false";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
@@ -129,6 +131,7 @@ mod auth_mode;
 mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
+mod memory_review;
 mod stand_in_approval;
 mod stand_in_plugin_cli;
 use stand_in_approval::stand_in_mcp_approval_overrides;
@@ -142,6 +145,7 @@ mod startup;
 use child::CodexAppServerChild;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
+mod thread_resume;
 
 use debug_stdout::CodexStdout;
 use diagnostics::{json_scalar_field, json_string_field};
@@ -165,6 +169,8 @@ pub(crate) use effective_instructions::turn_context_for_test;
 mod effective_instructions_tests;
 mod github_cli;
 mod host_skills;
+#[cfg(test)]
+mod task_artifact_env_tests;
 
 mod skill_config;
 pub(crate) use skill_config::reload_skill_configuration;
@@ -411,19 +417,8 @@ impl CodexAppServerClient {
     }
 
     async fn request_once(&self, method: &str, params: Value) -> Result<Value, String> {
-        let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self
-            .prepare_request_with_process(true, None, method, &params)
-            .await?;
-        Self::send_request_and_wait(
-            method,
-            params,
-            timeout_seconds,
-            request_id,
-            handle,
-            response_rx,
-        )
-        .await
+        self.request_with_thread_admission(method, params, None)
+            .await
     }
 
     pub(crate) async fn mutate_thread_goal(
@@ -456,19 +451,8 @@ impl CodexAppServerClient {
         params: Value,
         launch_config: &CodexLaunchConfig,
     ) -> Result<Value, String> {
-        let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self
-            .prepare_request_with_process(true, Some(launch_config), method, &params)
-            .await?;
-        Self::send_request_and_wait(
-            method,
-            params,
-            timeout_seconds,
-            request_id,
-            handle,
-            response_rx,
-        )
-        .await
+        self.request_with_thread_admission(method, params, Some(launch_config))
+            .await
     }
 
     /// Restarts the shared app-server without the managed ChatGPT auth when a
@@ -690,7 +674,7 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        let active_turn_count = state.active_threads_snapshot().values().sum::<usize>();
+        let active_turn_count = state.protected_turn_count();
         if active_turn_count > 0 || pending_request_count > 0 {
             return Err((active_turn_count, pending_request_count));
         }
@@ -702,8 +686,10 @@ impl CodexAppServerClient {
     where
         F: FnOnce() -> Result<(), String>,
     {
-        self.mutate_configuration_if_idle(|| async { mutation().map(|_| ((), true)) })
-            .await
+        self.mutate_if_idle(Some(CodexAuthMode::default()), || async {
+            mutation().map(|_| ((), true))
+        })
+        .await
     }
 
     /// Serialize file mutations with turn admission, then invalidate the idle process if needed.
@@ -715,12 +701,24 @@ impl CodexAppServerClient {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<(T, bool), String>>,
     {
+        self.mutate_if_idle(None, mutation).await
+    }
+
+    async fn mutate_if_idle<F, Fut, T>(
+        &self,
+        auth_mode: Option<CodexAuthMode>,
+        mutation: F,
+    ) -> Result<T, CodexIdleMutationError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<(T, bool), String>>,
+    {
         let mut state = self.state.lock().await;
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        let active_turn_count = state.active_threads_snapshot().values().sum::<usize>();
+        let active_turn_count = state.protected_turn_count();
         if active_turn_count > 0 || pending_request_count > 0 {
             return Err(CodexIdleMutationError::Busy {
                 active_turn_count,
@@ -729,7 +727,9 @@ impl CodexAppServerClient {
         }
         let (result, changed) = mutation().await.map_err(CodexIdleMutationError::Update)?;
         if changed {
-            state.auth_mode = CodexAuthMode::default();
+            if let Some(auth_mode) = auth_mode {
+                state.auth_mode = auth_mode;
+            }
             state.thread_generations.clear();
             state.idle_thread_generations.clear();
             stop_codex_app_server_process(&mut state, None).await;
@@ -1916,16 +1916,24 @@ fn persistent_codex_app_server_launch_config(
     launch_config
         .config_overrides
         .extend(codex_router_provider_overrides());
-    launch_config.config_overrides.extend([
-        "features.goals=true".to_owned(),
-        "features.code_mode_host=true".to_owned(),
-        "features.code_mode_only=true".to_owned(),
-        "features.code_mode_only_strict_3p_tools=true".to_owned(),
-    ]);
+    launch_config
+        .config_overrides
+        .push("features.goals=true".to_owned());
+    launch_config
+        .config_overrides
+        .extend(codex_tool_orchestration_overrides());
     launch_config
         .config_overrides
         .extend(codex_runtime_default_config_overrides());
     launch_config
+}
+
+fn codex_tool_orchestration_overrides() -> Vec<String> {
+    vec![
+        "features.code_mode_host=true".to_owned(),
+        "features.code_mode_only=true".to_owned(),
+        "features.code_mode_only_strict_3p_tools=true".to_owned(),
+    ]
 }
 
 fn codex_router_provider_overrides() -> Vec<String> {
@@ -2273,6 +2281,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     // establish a no-tools boundary through thread overrides alone.
     if super::instance_home::request_home(&request).is_some()
         || request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false)
+        || memory_review::applies(&request)
     {
         let mut options = options;
         if let Some(thread_id) = options.direct_thread_id.take() {
@@ -4151,6 +4160,11 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_HUMAN_INPUT_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
         host_skills::INSTRUCTIONS,
+        if crate::python_runtime::managed_python_bridge_configured() {
+            crate::plugin_python::INSTRUCTIONS
+        } else {
+            ""
+        },
         external_work::SOURCE_CONTENT_INSTRUCTIONS,
     ]
     .into_iter()
@@ -4652,13 +4666,21 @@ fn build_codex_launch_config_with_route_scope(
 
     if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
         configure_text_generation(&mut launch_config);
+    } else {
+        external_work::configure(request, &mut launch_config, &codex_home)?;
+    }
+
+    if memory_review::applies(request) {
+        memory_review::configure(&mut launch_config)?;
+    }
+    if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false)
+        || memory_review::applies(request)
+    {
         if let Some(path) = request.extra.get("weworkTextModelCatalog") {
             launch_config
                 .config_overrides
                 .push(format!("model_catalog_json={path}"));
         }
-    } else {
-        external_work::configure(request, &mut launch_config, &codex_home)?;
     }
 
     effective_instructions::publish(request, &launch_config)?;
@@ -4847,18 +4869,27 @@ fn explicit_codex_upstream(
 }
 
 pub(crate) fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
-    if crate::runtime_work::external_work_kind(request).is_some() {
-        return external_work::permission_config(request);
-    }
-    task_identity_env(request)
-        .into_iter()
-        .map(|(key, value)| {
-            (
-                toml_key_path(&["shell_environment_policy", "set", &key]),
-                Value::String(value),
-            )
-        })
-        .collect()
+    let restricted = crate::runtime_work::external_work_kind(request).is_some();
+    let mut config = external_work::permission_config(request);
+    config.extend(
+        task_identity_env(request)
+            .into_iter()
+            // External work can declare local files without inheriting account credentials.
+            .filter(|(key, _)| {
+                !restricted
+                    || matches!(
+                        key.as_str(),
+                        "WEGENT_EXECUTOR_BINARY" | "WEGENT_TASK_ID" | "WEGENT_TASK_WORKSPACE"
+                    )
+            })
+            .map(|(key, value)| {
+                (
+                    toml_key_path(&["shell_environment_policy", "set", &key]),
+                    Value::String(value),
+                )
+            }),
+    );
+    config
 }
 
 fn codex_streaming_patch_config_overrides() -> Vec<String> {
@@ -4871,6 +4902,22 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
 
 fn codex_runtime_default_config_overrides() -> Vec<String> {
     let mut overrides = codex_streaming_patch_config_overrides();
+    // Apply this to both process startup and per-thread feature configuration.
+    // Keep V2 collaboration discoverable through Code Mode, not expanded at bootstrap.
+    overrides.push("features.multi_agent_v2.non_code_mode_only=false".to_owned());
+    // Native's direct-only root hint contradicts the Code Mode tool exposure.
+    overrides.push(format!(
+        "features.multi_agent_v2.root_agent_usage_hint_text={}",
+        toml_value(concat!(
+            "You are the primary agent in a team sharing one workspace. ",
+            "Use Code Mode to discover collaboration tools when delegation is explicitly ",
+            "requested by the user or applicable project/skill instructions. Keep delegated ",
+            "tasks independent and scoped, preserve shared edits, review agent results, ",
+            "and verify the combined outcome. Use inherited model and reasoning settings ",
+            "unless an explicit user or applicable instruction requires an override. ",
+            "Child agents share your filesystem."
+        ))
+    ));
     // Native request_user_input has one waiter per turn. Keep MCP approvals on
     // their separately correlated elicitation channel so they cannot replace it.
     overrides.push(CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
@@ -4894,9 +4941,21 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
 fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     if codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single")) {
         return vec![
+            // Feature toggles alone do not override a resumed thread's persisted agent family.
+            CODEX_DISABLE_AGENTS_OVERRIDE.to_owned(),
             CODEX_DISABLE_MULTI_AGENT_OVERRIDE.to_owned(),
             CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE.to_owned(),
         ];
+    }
+    if request
+        .extra
+        .get("origin")
+        .and_then(|origin| origin.get("type"))
+        .and_then(Value::as_str)
+        == Some("stand_in_identity")
+    {
+        // Stand-in chat needs the native mailbox wait that also wakes on user input.
+        return vec![CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE.to_owned()];
     }
     Vec::new()
 }
@@ -5074,23 +5133,22 @@ fn configured_codex_provider(
         .filter(|value| !value.is_empty())
         .unwrap_or("openai-responses")
         .to_owned();
-    let native_by_default = api_format == "openai-responses";
     let convert_custom_tools = api_format != "openai-responses"
         || provider_config
             .get("tool_profile")
             .or_else(|| provider_config.get("toolProfile"))
             .and_then(|value| value.as_str())
-            .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+            .map_or(true, |profile| !profile.eq_ignore_ascii_case("custom"));
     let native_tool_search = provider_config
         .get("native_tool_search")
         .or_else(|| provider_config.get("nativeToolSearch"))
         .and_then(|value| value.as_bool())
-        .unwrap_or(native_by_default);
+        .unwrap_or(false);
     let native_namespace_tools = provider_config
         .get("native_namespace_tools")
         .or_else(|| provider_config.get("nativeNamespaceTools"))
         .and_then(|value| value.as_bool())
-        .unwrap_or(native_by_default);
+        .unwrap_or(false);
     let request_path = match api_format.as_str() {
         "openai-chat-completions" => "/chat/completions",
         "anthropic-messages" => "/messages",

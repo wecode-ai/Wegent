@@ -7,6 +7,28 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<(), AppIpcError> {
+        let connection = self.backend_connection_snapshot()?.ok_or_else(|| {
+            AppIpcError::new("cloud_unavailable", "Cloud connection is unavailable")
+        })?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let id = store
+            .queue_stand_in_dispatch(&json!({
+                "backendUrl":connection.backend_url,"deviceId":self.device_id,
+                "userId":payload["recipientUserId"],"notification":payload
+            }))
+            .map_err(settings_error)?;
+        let result = self.process_stand_in_assignment(payload).await;
+        self.settle_stand_in_dispatches(&[id], result.as_ref().err());
+        result
+    }
+
+    pub(super) async fn process_stand_in_assignment(
+        &self,
+        payload: Value,
+    ) -> Result<(), AppIpcError> {
+        if payload["commentId"].is_string() {
+            return self.process_stand_in_issue_mention(payload).await;
+        }
         let (Some(project), Some(issue_id), Some(assignment)) = (
             payload["projectId"].as_str(),
             payload["itemId"].as_str(),
@@ -65,8 +87,11 @@ impl RuntimeWorkRpcHandler {
         if super::personal_stand_in::matching_personal_roles(&configs, &issue)
             .iter()
             .all(|role| {
-                self.local_task_link(&self.stand_in_task_id(role, &issue["human_task_binding"]))
-                    .is_some()
+                self.stand_in_assignment_is_handled(
+                    role,
+                    &self.stand_in_task_id(role, &issue),
+                    &issue["human_task_binding"],
+                )
             })
         {
             return Ok(());
@@ -256,6 +281,7 @@ mod tests {
         fixture.handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: "stand-in-human-default".into(),
             status: "failed".into(),
+            runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"default","userId":7,"projectStore":"cloud","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"}}),
             ..RuntimeTaskLink::default()
         });
         fixture

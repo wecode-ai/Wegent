@@ -13,7 +13,8 @@ import {
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { Automation, AutomationSchedule } from '@/types/automation'
+import type { Automation } from '@/types/automation'
+import { formatScheduleSummary } from './formatScheduleSummary'
 import type { AutomationDraft } from './automationDraft'
 export type StatusFilter = 'all' | 'active' | 'paused'
 
@@ -206,7 +207,7 @@ export function AutomationEmptyState({
             data-testid="stand-in-weekly-review-template"
             onClick={onReviewTemplate}
           >
-            {t('standIn.onboarding.review')}
+            {t('standIn.onboarding.review_add')}
           </Button>
         ) : null}
         {error ? <AutomationError error={error} onClear={onClearError} /> : null}
@@ -268,7 +269,7 @@ function AutomationError({ error, onClear }: { error: string; onClear: () => voi
       type="button"
       data-testid="automation-error"
       onClick={onClear}
-      className="mb-4 flex w-full items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2 text-left text-sm text-red-600 dark:text-red-400"
+      className="mb-4 flex w-full items-start gap-2 rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-left text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/5 wework:text-red-600 wework:dark:text-red-400"
     >
       <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
       <span className="min-w-0 flex-1">{error}</span>
@@ -297,7 +298,7 @@ function AutomationSuggestions({
       cronExpression: '0 8 * * 1-5',
       cronTime: '08:00',
       icon: Bell,
-      iconClassName: 'text-blue-500',
+      iconClassName: 'text-focus wework:text-blue-500',
     },
     {
       name: t('todo.automation_weekly_review', '每周回顾'),
@@ -309,7 +310,7 @@ function AutomationSuggestions({
       cronExpression: '0 16 * * 5',
       cronTime: '16:00',
       icon: ClipboardList,
-      iconClassName: 'text-violet-500',
+      iconClassName: 'text-primary wework:text-violet-500',
     },
     {
       name: t('todo.automation_follow_up', '跟进监控'),
@@ -321,7 +322,7 @@ function AutomationSuggestions({
       cronExpression: '0 9 * * 1-5',
       cronTime: '09:00',
       icon: FileSearch,
-      iconClassName: 'text-emerald-600',
+      iconClassName: 'text-success wework:text-emerald-600',
     },
   ]
   return (
@@ -428,46 +429,6 @@ function AutomationRow({
       </button>
     </article>
   )
-}
-
-function formatScheduleSummary(
-  schedule: AutomationSchedule,
-  locale: string,
-  t: ReturnType<typeof useTranslation>['t'],
-  timezone: string
-): string {
-  if (schedule.type === 'interval') {
-    return locale.startsWith('zh')
-      ? `每 ${schedule.value} ${schedule.unit === 'minutes' ? '分钟' : schedule.unit === 'hours' ? '小时' : '天'}`
-      : `Every ${schedule.value} ${schedule.unit}`
-  }
-  if (schedule.type === 'one_time') {
-    return new Intl.DateTimeFormat(locale, {
-      dateStyle: 'short',
-      timeStyle: 'short',
-      timeZone: timezone,
-    }).format(new Date(schedule.executeAt))
-  }
-  const parts = schedule.expression.trim().split(/\s+/)
-  if (
-    parts.length === 5 &&
-    /^\d+$/.test(parts[0]) &&
-    /^\d+$/.test(parts[1]) &&
-    parts[2] === '*' &&
-    parts[3] === '*'
-  ) {
-    const time = `${String(Number(parts[1])).padStart(2, '0')}:${String(Number(parts[0])).padStart(2, '0')}`
-    if (parts[4] === '1-5') return locale.startsWith('zh') ? `工作日 ${time}` : `Weekdays ${time}`
-    if (parts[4] === '*') return locale.startsWith('zh') ? `每天 ${time}` : `Daily ${time}`
-    if (/^[0-7]$/.test(parts[4])) {
-      const day = new Intl.DateTimeFormat(locale, {
-        weekday: locale.startsWith('zh') ? 'short' : 'long',
-        timeZone: 'UTC',
-      }).format(new Date(Date.UTC(2023, 0, 1 + (Number(parts[4]) % 7))))
-      return t('todo.automation_weekly_at', { day, time })
-    }
-  }
-  return t('todo.automation_custom_schedule')
 }
 
 function formatNextRun(

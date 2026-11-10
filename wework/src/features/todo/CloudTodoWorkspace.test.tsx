@@ -204,10 +204,10 @@ vi.mock('./AiChatModal', () => ({
       localProject: { id: number; name: string; tasks: [] } | null,
       deviceWorkspaceId: number | null
     ) => void | Promise<void>
-    prepareTask?: (address: {
-      deviceId: string
-      taskId: string
-    }) => void | Promise<void | (() => void | Promise<void>)>
+    prepareTask?: (
+      address: { deviceId: string; taskId: string },
+      localProject: { id: number; name: string; tasks: [] } | null
+    ) => void | Promise<void | (() => void | Promise<void>)>
     initialTaskRequest?: {
       projectId?: number
       modelId?: string
@@ -241,7 +241,7 @@ vi.mock('./AiChatModal', () => ({
         onClick={() => {
           const address = { deviceId: 'local-device', taskId: 'runtime-created' }
           const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
-          void Promise.resolve(prepareTask?.(address)).then(() => {
+          void Promise.resolve(prepareTask?.(address, localProject)).then(() => {
             onAddressChange?.(address)
             return onTaskCreated?.(address, localProject, 201)
           })
@@ -265,7 +265,7 @@ vi.mock('./AiChatModal', () => ({
             },
           }
           const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
-          void Promise.resolve(prepareTask?.(address)).then(() => {
+          void Promise.resolve(prepareTask?.(address, localProject)).then(() => {
             onAddressChange?.(address)
             return onTaskCreated?.(address, localProject, 201)
           })
@@ -2026,6 +2026,50 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
+  it('finishes the Issue start before creating its runtime task without a later Issue write', async () => {
+    const workbenchServices = services()
+    const pendingItem = { ...item, tags: [], status: 'pending' as const }
+    const startedItem = { ...item, tags: [], version: item.version + 1 }
+    let finishUpdate!: (value: typeof startedItem) => void
+    const update = new Promise<typeof startedItem>(resolve => {
+      finishUpdate = resolve
+    })
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => pendingItem)
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [pendingItem] }))
+    workbenchServices.deliveryApi!.updateLoopItem = vi.fn(() => update)
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
+      />
+    )
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith(item.id, {
+        version: item.version,
+        status: 'in_progress',
+      })
+    )
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-runtime-task-id')
+    await act(async () => {
+      finishUpdate(startedItem)
+      await update
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+        'data-runtime-task-id',
+        'runtime-created'
+      )
+    )
+    expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledOnce()
+  })
+
   it('preserves the selected model when a new runtime task becomes the task conversation', async () => {
     const workbenchServices = services()
 
@@ -3656,6 +3700,95 @@ describe('CloudTodoWorkspace', () => {
       ).toBe(childLevel ? item.id : undefined)
     }
   )
+
+  it('does not reload My Tasks when only Runtime snapshot metadata changes', async () => {
+    const defaultProject = {
+      ...project,
+      id: 'default-work-items',
+      project_key: 'WORK',
+      project_store: 'local' as const,
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const address = { deviceId: 'local-device', taskId: 'runtime-metadata-refresh' }
+    const lifecycleStore = new RuntimeTaskLifecycleStore('my-tasks-metadata-refresh')
+    const task = {
+      taskId: address.taskId,
+      workspacePath: '/tmp/project',
+      title: 'Running task',
+      runtime: 'codex' as const,
+      running: true,
+      status: 'running',
+      executionState: {
+        revision: '1',
+        epoch: 'executor-1',
+        phase: 'running' as const,
+        turnId: 'native-turn',
+        latestTurnId: 'native-turn',
+        outcome: null,
+      },
+    }
+    lifecycleStore.syncRuntimeTask(address, task)
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [defaultProject],
+    })
+    const getBoardSnapshot = vi.fn(async () => ({
+      items: [],
+      task_bindings: [],
+      members: [],
+      agents: [],
+    }))
+    workbenchServices.deliveryApi!.getBoardSnapshot = getBoardSnapshot
+    workbenchServices.projectSpaceApis = {
+      local: workbenchServices.deliveryApi!,
+      defaultLocation: 'local',
+    }
+    const view = () => (
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        runtimeTaskLifecycle={lifecycleStore.getSnapshot()}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'local', projectId: defaultProject.id }}
+      />
+    )
+    const rendered = render(view())
+    await waitFor(() => expect(getBoardSnapshot).toHaveBeenCalled())
+    await act(async () => {})
+    const initialReads = getBoardSnapshot.mock.calls.length
+    const previousVersion = lifecycleStore.getSnapshot().version
+
+    for (const revision of ['2', '3', '4', '5', '6']) {
+      lifecycleStore.syncRuntimeTask(address, {
+        ...task,
+        executionState: { ...task.executionState, revision },
+      })
+      expect(lifecycleStore.getSnapshot().version).toBeGreaterThan(previousVersion)
+      await act(async () => {
+        rendered.rerender(view())
+      })
+      expect(getBoardSnapshot).toHaveBeenCalledTimes(initialReads)
+    }
+
+    lifecycleStore.syncRuntimeTask(address, {
+      ...task,
+      running: false,
+      status: 'done',
+      completedAt: '2026-11-07T15:01:00Z',
+      executionState: {
+        ...task.executionState,
+        revision: '7',
+        phase: 'idle',
+        turnId: null,
+        outcome: 'succeeded',
+      },
+    })
+    await act(async () => {
+      rendered.rerender(view())
+    })
+    expect(getBoardSnapshot).toHaveBeenCalledTimes(initialReads + 1)
+  })
 
   it('projects active Runtime Task lifecycle without bypassing persisted Issue review', async () => {
     const defaultProject = {

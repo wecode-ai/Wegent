@@ -295,8 +295,20 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         });
         let verify_root = root.clone();
         let verifying_lease = lease.clone();
+        let verifying_store = store.clone();
+        let verifying_spec = spec.clone();
+        let verifying_manifest = manifest.clone();
         let cached = tokio::task::spawn_blocking(move || {
             let _lease = verifying_lease;
+            if verifying_store.shared_packages {
+                verifying_store
+                    .validate_marketplace_occupancy(
+                        &verifying_spec,
+                        &verifying_manifest["plugins"][&verifying_spec.key],
+                        &verifying_manifest,
+                    )
+                    .map_err(PluginSyncFailure::runtime_metadata)?;
+            }
             let cached =
                 verify_root
                     .as_ref()
@@ -304,10 +316,10 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     .and_then(|(root, checksum)| {
                         verify_published_package(root, PackageKind::Plugin, checksum).ok()
                     });
-            cached
+            Ok::<_, PluginSyncFailure>(cached)
         })
         .await
-        .map_err(preparation_task_failure)?;
+        .map_err(preparation_task_failure)??;
         let verify_ms = verify_started.elapsed().as_millis();
         let cache_hit = cached.is_some();
         self.plugin_sync_binding

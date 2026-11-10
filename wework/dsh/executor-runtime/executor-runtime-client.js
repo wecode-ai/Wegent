@@ -4,12 +4,14 @@ import { isCancellableRuntimeRead } from './read-cancellation.js'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 export class ExecutorRuntimeError extends Error {
-  constructor(code, message, retryable = false, details = {}, retryAfterMs) {
+  constructor(code, message, retryable = false, details = {}, retryAfterMs, providerCode) {
     super(message)
     this.name = 'ExecutorRuntimeError'
     this.code = code
     this.retryable = retryable
     this.details = details
+    if (typeof providerCode === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(providerCode))
+      this.providerCode = providerCode
     if (Number.isSafeInteger(retryAfterMs) && retryAfterMs >= 1 && retryAfterMs <= 3600000)
       this.retryAfterMs = retryAfterMs
   }
@@ -72,7 +74,8 @@ export class ExecutorRuntimeClient {
     return this.description
   }
 
-  request(method, params = {}, timeoutMs = this.requestTimeoutMs, requestId, options = {}) {
+  request(method, params = {}, timeoutMs, requestId, options = {}) {
+    timeoutMs ??= executorRequestTimeoutMs(method, this.requestTimeoutMs)
     if (method !== 'executor.protocol.describe') {
       if (!this.description && this.negotiationPromise) {
         return this.negotiationPromise.then(() =>
@@ -207,7 +210,8 @@ export class ExecutorRuntimeClient {
             message.error?.message ?? 'Executor request failed',
             message.error?.retryable ?? false,
             message.error?.details ?? {},
-            message.error?.retryAfterMs
+            message.error?.retryAfterMs,
+            message.error?.providerCode
           )
         )
       }
@@ -248,6 +252,15 @@ export class ExecutorRuntimeClient {
     }
     this.pending.clear()
   }
+}
+
+export function executorRequestTimeoutMs(method, defaultTimeoutMs) {
+  const preparesPython =
+    method === 'executor.plugin_auth.migrate' ||
+    method === 'executor.plugin_auth.run' ||
+    method === 'runtime.connections.cli' ||
+    method.startsWith('runtime.local_connector_auth.')
+  return preparesPython ? 21 * 60_000 + 5_000 : defaultTimeoutMs
 }
 
 function validRendererMethods(methods) {

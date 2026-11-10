@@ -6,6 +6,7 @@ import { Editor } from '@pierre/diffs/edit'
 import type { ReactNode } from 'react'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { SELECTED_TEXT_CHANGED_EVENT } from '@/lib/selected-text-drag'
+import { WEWORK_CODE_THEME } from '@/lib/code-theme'
 
 vi.mock('@/components/code/PierreCodeProvider', () => ({
   PierreCodeProvider: ({ children }: { children: ReactNode }) => children,
@@ -27,7 +28,7 @@ const props = { file, loading: false, onRetry: vi.fn(), onSave: vi.fn() }
 beforeAll(async () => {
   await getSharedHighlighter({
     langs: ['typescript', 'text'],
-    themes: ['pierre-light', 'pierre-dark'],
+    themes: [WEWORK_CODE_THEME, 'pierre-light', 'pierre-dark'],
     preferredHighlighter: 'highlights',
   })
 })

@@ -119,7 +119,7 @@ export function AppReleaseNotesDialog({ open, releaseNotes, onClose }: AppReleas
                   return (
                     <a
                       href={externalHref}
-                      className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-300 dark:hover:text-blue-200"
+                      className="font-medium text-link underline underline-offset-2 hover:text-link/80 wework:text-blue-600 wework:hover:text-blue-700 wework:dark:text-blue-300 wework:dark:hover:text-blue-200"
                       onClick={event => {
                         event.preventDefault()
                         if (externalHref) void openExternalUrl(externalHref)

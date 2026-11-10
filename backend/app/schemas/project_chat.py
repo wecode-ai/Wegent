@@ -465,6 +465,7 @@ class ProjectChatCommentExecution(ProjectChatSchema):
     runner_selection: RunnerSelection | None = None
     trigger_message_id: str = Field(min_length=1, max_length=64)
     attachment_ids: list[int] = Field(default_factory=list, max_length=64)
+    human_request_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class ProjectChatMessageView(ProjectChatSchema):

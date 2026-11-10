@@ -425,7 +425,7 @@ function localModelSwitchCommand() {
 }
 
 function matrixCaseId(model) {
-  return `${model.execution}-${model.source}-${model.protocol}${model.requestMode ? `-${model.requestMode}` : ''}`
+  return `${model.execution}-${model.source}-${model.protocol}${model.requestMode ? `-${model.requestMode}` : ''}${model.providerProfileId ? `-${model.providerProfileId}` : ''}`
 }
 
 function matrixTextPrompt(model) {
@@ -598,15 +598,17 @@ function requestAdvertisesViewImageTool(request) {
 
 function selectTool(request, name, argumentsValue) {
   const tools = wireDeclarations(request, 'responses')
-  if (requestAdvertisesProgrammaticExec(request) && !tools.some(tool => tool.name === name))
+  const matches = tools.filter(
+    tool => tool.name === name || (!tool.namespace && tool.name === `functions__${name}`)
+  )
+  if (requestAdvertisesProgrammaticExec(request) && matches.length === 0)
     return programmaticSelection(request, name, argumentsValue)
-  const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
-  assert.ok(names.has(name), `Real Codex did not advertise ${name}: ${[...names].join(', ')}`)
-  const entry = tools.find(tool => tool.name === name)
+  assert.equal(matches.length, 1, `Real Codex must advertise exactly one ${name}`)
+  const [entry] = matches
   return {
-    name,
+    name: entry.name,
     arguments: argumentsValue,
-    ...(entry?.namespace ? { namespace: entry.namespace } : {}),
+    ...(entry.namespace ? { namespace: entry.namespace } : {}),
   }
 }
 
@@ -772,7 +774,7 @@ function selectToolSearch(request, query) {
   assert.equal(
     searchTools.length,
     1,
-    `Real Codex did not advertise exactly one deferred tool search: ${toolNames.join(', ')}`
+    `Real Codex did not advertise exactly one deferred tool search: ${toolNames.join(', ')} (request_kind=${codexRequestKind(request) ?? 'unknown'})`
   )
   assert.equal(
     tools.some(

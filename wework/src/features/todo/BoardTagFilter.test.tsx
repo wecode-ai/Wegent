@@ -76,6 +76,14 @@ function Harness({
 afterEach(cleanup)
 
 describe('quick board tag filtering', () => {
+  it('preserves the filter name and icon when its visible label is collapsed', () => {
+    render(<Harness />)
+    const filter = screen.getByRole('button', { name: '按标签筛选' })
+    expect(filter).toHaveClass('project-board-compact-action')
+    expect(filter.querySelector('svg')).not.toBeNull()
+    expect(filter.querySelector('.project-board-action-label')).toHaveTextContent('全部标签')
+  })
+
   it('matches any selected tag, preserves grouping and clears including untagged issues', async () => {
     const user = userEvent.setup()
     render(<Harness />)

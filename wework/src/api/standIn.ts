@@ -20,6 +20,18 @@ export interface StandInOnboardingResult {
   reviewTemplate: Omit<Automation, 'source'>
 }
 
+export interface StandInBindingTarget {
+  userId: number
+  deviceId: string
+  backendUrl?: string
+}
+
+export interface StandInInstanceBinding {
+  version: number
+  status: 'unbound' | 'active' | 'stopping' | 'stopped'
+  target: StandInBindingTarget | null
+}
+
 export interface ConnectionProviderDescriptor {
   id: string
   displayName: string
@@ -121,7 +133,26 @@ export interface StandInMemory {
   createdAt: string
   updatedAt: string
   sourceTaskId?: string | null
+  evidence?: {
+    taskId?: string
+    messageId?: string
+    role?: string | null
+    excerpt?: string
+    observedAt?: string | number | null
+    readAt?: string
+  } | null
 }
+
+export type StandInMemoryRule =
+  | (Pick<StandInMemory, 'id' | 'content' | 'scope' | 'version' | 'createdAt' | 'updatedAt'> & {
+      kind: 'forgetting_rule'
+    })
+  | {
+      kind: 'legacy_fingerprint'
+      id: string
+      version: number
+      updatedAt: string
+    }
 
 type Request = <T>(method: string, payload: Record<string, unknown>, deviceId: string) => Promise<T>
 type ProjectStore = 'local' | 'cloud'
@@ -198,6 +229,17 @@ export interface StandInExecutorApi {
     update?: ProjectCoordinationUpdate
   ): Promise<ProjectCoordinationState>
   processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
+  binding(
+    deviceId: string,
+    operation?: 'get' | 'bind' | 'beginStop' | 'completeStop',
+    version?: number,
+    target?: StandInBindingTarget
+  ): Promise<StandInInstanceBinding>
+  lifecycle(
+    userId: number,
+    deviceId: string,
+    operation: 'start' | 'stop'
+  ): Promise<PersonalStandInSettings>
   taskCommands: RuntimeTaskCommandsApi
   checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
@@ -223,6 +265,14 @@ export interface StandInExecutorApi {
     telemetryAction?: 'split' | 'merge' | 'move' | 'undo'
   ): Promise<StandInInboxWork>
   memories(userId: number, deviceId: string): Promise<StandInMemory[]>
+  memoryRules(userId: number, deviceId: string): Promise<StandInMemoryRule[]>
+  deleteMemoryRule(
+    userId: number,
+    deviceId: string,
+    id: string,
+    version: number,
+    expectedUpdatedAt?: string
+  ): Promise<void>
   saveMemory(
     userId: number,
     deviceId: string,
@@ -452,6 +502,21 @@ export function createStandInExecutorApi(
       ).items,
     saveMemory: (userId, deviceId, memory) =>
       request('runtime.stand_in.memory.save', { userId, memory }, deviceId),
+    memoryRules: async (userId, deviceId) =>
+      (
+        await request<{ items: StandInMemoryRule[] }>(
+          'runtime.stand_in.memory.rules.list',
+          { userId },
+          deviceId
+        )
+      ).items,
+    deleteMemoryRule: async (userId, deviceId, id, version, expectedUpdatedAt) => {
+      await request(
+        'runtime.stand_in.memory.rules.delete',
+        { userId, id, version, ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}) },
+        deviceId
+      )
+    },
     deleteMemory: async (userId, deviceId, id, version) => {
       await request('runtime.stand_in.memory.delete', { userId, id, version }, deviceId)
     },
@@ -530,6 +595,17 @@ export function createStandInExecutorApi(
     },
     personalGet: (userId, deviceId) =>
       request('runtime.stand_in.personal.get', { userId }, deviceId),
+    binding: (deviceId, operation = 'get', version, target) =>
+      request('runtime.stand_in.binding', { operation, version, target }, deviceId),
+    lifecycle: async (userId, deviceId, operation) => {
+      const saved = await request<PersonalStandInSettings>(
+        'runtime.stand_in.personal.lifecycle',
+        { userId, operation },
+        deviceId
+      )
+      publishPersonalStandIn(saved)
+      return saved
+    },
     personalSave: async (userId, settings, deviceId) => {
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',

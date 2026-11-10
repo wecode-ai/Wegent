@@ -1636,7 +1636,6 @@ describe('DesktopWorkbenchLayout', () => {
       runtimeTaskReminders: props.runtimeTaskReminders,
       refreshWorkLists: vi.fn().mockResolvedValue(undefined),
       refreshDevices: props.onRefreshDevices ?? vi.fn().mockResolvedValue(undefined),
-      getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
       upgradeDevice: props.onUpgradeDevice ?? vi.fn().mockResolvedValue(undefined),
       createProject:
         props.onCreateProject ?? baseProps.onCreateProject ?? vi.fn().mockResolvedValue({}),
@@ -2470,6 +2469,38 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('continue-in-im-button')).toBeInTheDocument()
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
+  })
+
+  test('retains the stand-in workspace when navigating away and back', async () => {
+    window.history.replaceState({}, '', '/stand-in')
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    const workspace = screen.getByTestId('personal-stand-in-workspace')
+    act(() => navigateTo('/'))
+    expect(workspace).toBeInTheDocument()
+    expect(workspace).not.toBeVisible()
+    act(() => navigateTo('/stand-in'))
+    expect(screen.getByTestId('personal-stand-in-workspace')).toBe(workspace)
+    expect(workspace).toBeVisible()
+  })
+
+  test('mounts stand-in on first entry and retains it across route changes', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    expect(screen.queryByTestId('personal-stand-in-workspace')).not.toBeInTheDocument()
+
+    act(() => navigateTo('/stand-in?deviceId=device-1'))
+    const workspace = screen.getByTestId('personal-stand-in-workspace')
+    expect(workspace).toBeVisible()
+    act(() => navigateTo('/stand-in?deviceId=device-2'))
+    expect(screen.getByTestId('personal-stand-in-workspace')).toBe(workspace)
+    expect(workspace).toBeVisible()
+
+    act(() => navigateTo('/'))
+    act(() => navigateTo('/todo'))
+    expect(workspace).toBeInTheDocument()
+    expect(workspace).not.toBeVisible()
+    act(() => navigateTo('/stand-in?deviceId=device-2'))
+    expect(screen.getByTestId('personal-stand-in-workspace')).toBe(workspace)
+    expect(workspace).toBeVisible()
   })
 
   test.each(['button', 'menu'])('opens My Tasks from stand-in using the board %s', async entry => {
@@ -3799,8 +3830,8 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
-    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('启动脚本')
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('添加设备')
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('远程 Docker 设备')
     expect(screen.getByTestId('standalone-remote-device-select')).toHaveTextContent(
       'Remote Docker Device'
     )
@@ -3860,7 +3891,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('添加设备')
     expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
     expect(screen.queryByText('Remote Device')).not.toBeInTheDocument()
   })
@@ -4075,6 +4106,107 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }, 15_000)
 
+  test('clones a Git repository before opening the remote project', async () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
+    const onListDeviceDirectories = vi.fn().mockResolvedValue(['projects'])
+    const cloneResult = createDeferred<void>()
+    const firstOpenResult = createDeferred<void>()
+    const onCloneGitRepository = vi.fn().mockReturnValue(cloneResult.promise)
+    const onOpenStandaloneWorkspace = vi
+      .fn()
+      .mockReturnValueOnce(firstOpenResult.promise)
+      .mockResolvedValueOnce(undefined)
+    const remoteDevice = {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Remote device',
+      status: 'online' as const,
+      is_default: true,
+      bind_shell: 'claudecode',
+      device_type: 'remote' as const,
+      executor_version: '1.8.5',
+    }
+    const renderLayout = (device: typeof remoteDevice) => (
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCloneGitRepository={onCloneGitRepository}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        state={{
+          ...baseProps.state,
+          devices: [device],
+        }}
+      />
+    )
+    const { rerender } = render(renderLayout(remoteDevice))
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await userEvent.click(screen.getByTestId('remote-project-source-git'))
+    await waitFor(() =>
+      expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue('/home/ubuntu')
+    )
+    await userEvent.click(screen.getByTestId('remote-project-git-parent-browse'))
+    await waitFor(() =>
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu')
+    )
+    await userEvent.click(await screen.findByText('projects'))
+    await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
+    expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue(
+      '/home/ubuntu/projects'
+    )
+    rerender(renderLayout({ ...remoteDevice, name: 'Remote device refreshed' }))
+    expect(onGetDeviceHomeDirectory).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue(
+      '/home/ubuntu/projects'
+    )
+    await userEvent.type(
+      screen.getByTestId('remote-project-git-url-input'),
+      'git@github.com:owner/repository.git'
+    )
+    await userEvent.click(screen.getByTestId('remote-project-git-advanced-toggle'))
+    await userEvent.type(screen.getByTestId('remote-project-git-branch-input'), 'develop')
+    await userEvent.click(screen.getByTestId('remote-project-git-submit'))
+
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('remote-project-git-status')).toHaveTextContent('克隆中')
+    expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
+    expect(screen.getByTestId('close-standalone-folder-project-dialog')).toBeDisabled()
+    expect(screen.getByTestId('standalone-remote-device-select')).toBeDisabled()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    expect(onOpenStandaloneWorkspace).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(onCloneGitRepository).toHaveBeenCalledWith('device-1', {
+        url: 'git@github.com:owner/repository.git',
+        branch: 'develop',
+        targetPath: '/home/ubuntu/projects/repository',
+      })
+    )
+    cloneResult.resolve()
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
+        'device-1',
+        '/home/ubuntu/projects/repository',
+        'repository'
+      )
+    )
+    expect(screen.getByTestId('remote-project-git-status')).toHaveTextContent('添加中')
+    firstOpenResult.reject(new Error('Failed to register runtime workspace'))
+    await waitFor(() =>
+      expect(screen.getByTestId('remote-project-git-error')).toHaveTextContent(
+        'Failed to register runtime workspace'
+      )
+    )
+    await userEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(onCloneGitRepository).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onOpenStandaloneWorkspace).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+    )
+  }, 15_000)
+
   test('refreshes an offline device before retrying a Git clone', async () => {
     const refreshResult = createDeferred<void>()
     const onRefreshDevices = vi.fn().mockReturnValue(refreshResult.promise)
@@ -4119,13 +4251,13 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(
       () =>
-        expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent(
-          'repository设备离线'
+        expect(screen.getByTestId('remote-project-git-error')).toHaveTextContent(
+          'executor-offline'
         ),
       { timeout: 5_000 }
     )
     const refreshCountBeforeRetry = onRefreshDevices.mock.calls.length
-    await userEvent.click(screen.getByRole('button', { name: '重试' }))
+    await userEvent.click(screen.getByTestId('remote-project-git-submit'))
 
     await waitFor(() => expect(onRefreshDevices).toHaveBeenCalledTimes(refreshCountBeforeRetry + 1))
     expect(onCloneGitRepository).toHaveBeenCalledTimes(1)
@@ -4139,7 +4271,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     await waitFor(() =>
-      expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
     )
   }, 15_000)
 
@@ -4190,7 +4322,9 @@ describe('DesktopWorkbenchLayout', () => {
       await userEvent.type(screen.getByTestId('remote-project-git-branch-input'), 'develop')
       await userEvent.click(screen.getByTestId('remote-project-git-submit'))
       await waitFor(() =>
-        expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent('设备不可用')
+        expect(screen.getByTestId('remote-project-git-error')).toHaveTextContent(
+          'executor-not-found'
+        )
       )
       expect(
         diagnostic.mock.calls.some(
@@ -4205,6 +4339,10 @@ describe('DesktopWorkbenchLayout', () => {
       const newDevice = { ...oldDevice, id: 2, device_id: 'new-device', name: 'New remote device' }
       rerender(renderLayout([newDevice]))
       await userEvent.click(screen.getByRole('button', { name: '重新选择设备' }))
+      await userEvent.selectOptions(
+        screen.getByTestId('standalone-remote-device-select'),
+        'new-device'
+      )
       expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('new-device')
       expect(screen.getByTestId('remote-project-git-url-input')).toHaveValue(
         'https://git.example/owner/repository.git'
@@ -4216,7 +4354,7 @@ describe('DesktopWorkbenchLayout', () => {
 
       if (action === 'cancel') {
         await userEvent.click(screen.getByRole('button', { name: '取消' }))
-        expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent('设备不可用')
+        expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
         expect(onCloneGitRepository).toHaveBeenCalledTimes(1)
         return
       }
@@ -4236,7 +4374,7 @@ describe('DesktopWorkbenchLayout', () => {
         )
       )
       await waitFor(() =>
-        expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
       )
     },
     15_000
@@ -4732,8 +4870,8 @@ describe('DesktopWorkbenchLayout', () => {
       'h-[18px]',
       'w-[18px]',
       'rounded-full',
-      'hover:bg-black/70',
-      'hover:text-white'
+      'hover:bg-text-primary/70',
+      'hover:text-background'
     )
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(closeButton).not.toHaveClass('border', 'bg-muted')
@@ -5329,8 +5467,8 @@ describe('DesktopWorkbenchLayout', () => {
       'h-[18px]',
       'w-[18px]',
       'rounded-full',
-      'hover:bg-black/70',
-      'hover:text-white'
+      'hover:bg-text-primary/70',
+      'hover:text-background'
     )
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(closeButton).not.toHaveClass('border', 'bg-muted')
@@ -5392,6 +5530,107 @@ describe('DesktopWorkbenchLayout', () => {
       '设备暂时不可用，请稍后重试'
     )
   })
+
+  test.each(['workspace', 'worktree'])(
+    'preserves the owner boundary for a queued unlisted %s subdirectory deliverable',
+    async workspaceKind => {
+      const { queueWorkbenchWorkspaceLaunch } =
+        await import('@/features/workbench/workspaceLaunchRequest')
+      const workspace = createCloudWorkspacePanelState()
+      const task = {
+        deviceId: workspace.devices[0].device_id,
+        taskId: 'stand-in-chat-7-primary',
+        workspacePath: '/workspace/project/fixtures',
+        workspaceKind,
+        ...(workspaceKind === 'worktree' ? { worktreeId: 'ancestor-worktree' } : {}),
+      }
+      const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+        path: '/workspace/project/fixtures/cart-fixture/cart-review.md',
+        name: 'cart-review.md',
+        content: 'Persisted zero quantity regression passes.',
+        truncated: false,
+        size: 42,
+        modifiedAt: null,
+      })
+      queueWorkbenchWorkspaceLaunch(task.deviceId, task.workspacePath, {
+        taskId: task.taskId,
+        openFile: { path: 'cart-fixture/cart-review.md', options: { lineStart: 2, lineEnd: 4 } },
+      })
+      render(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          state={{ ...baseProps.state, ...workspace, currentRuntimeTask: task }}
+          workspaceFileApi={{
+            listWorkspaceEntries: vi
+              .fn()
+              .mockResolvedValue({ path: task.workspacePath, entries: [] }),
+            readWorkspaceTextFile,
+          }}
+          projectWork={{
+            ...baseProps.projectWork,
+            projects: workspace.projects,
+            devices: workspace.devices,
+            currentProjectId: workspace.currentProject.id,
+          }}
+        />
+      )
+      if (workspaceKind === 'worktree') {
+        await act(async () => {})
+        const { getWorkbenchWorkspaceLaunch, clearWorkbenchWorkspaceLaunch } =
+          await import('@/features/workbench/workspaceLaunchRequest')
+        expect(getWorkbenchWorkspaceLaunch()?.options.taskId).toBe(task.taskId)
+        expect(readWorkspaceTextFile).not.toHaveBeenCalled()
+        expect(screen.queryByTestId('workspace-file-path')).not.toBeInTheDocument()
+        act(() => clearWorkbenchWorkspaceLaunch())
+        return
+      }
+      await waitFor(() =>
+        expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+          task.deviceId,
+          '/workspace/project/fixtures/cart-fixture/cart-review.md',
+          task.workspacePath
+        )
+      )
+      expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'Persisted zero quantity regression passes.'
+      )
+      const followupFile = {
+        path: '/workspace/project/fixtures/cart-fixture/followup.md',
+        name: 'followup.md',
+        content: 'A second click on the same open task.',
+        truncated: false,
+        size: 36,
+        modifiedAt: null,
+      }
+      const followupRead = createDeferred<typeof followupFile>()
+      readWorkspaceTextFile.mockReturnValueOnce(followupRead.promise)
+      act(() => {
+        queueWorkbenchWorkspaceLaunch(task.deviceId, task.workspacePath, {
+          taskId: task.taskId,
+          openFile: { path: 'cart-fixture/followup.md' },
+        })
+      })
+      await waitFor(() =>
+        expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+          task.deviceId,
+          '/workspace/project/fixtures/cart-fixture/followup.md',
+          task.workspacePath
+        )
+      )
+      expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'Persisted zero quantity regression passes.'
+      )
+      expect(screen.getByTestId('workspace-markdown-preview')).not.toHaveTextContent(
+        followupFile.content
+      )
+      await act(async () => followupRead.resolve(followupFile))
+      await waitFor(() =>
+        expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent(
+          'A second click on the same open task.'
+        )
+      )
+    }
+  )
 
   test('right workspace panel shows file tree and read-only preview', async () => {
     const user = userEvent.setup()
@@ -6149,7 +6388,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('workspace file panel directly edits and autosaves a writable text file', async () => {
+  test('workspace file panel previews markdown before editing and autosaves it', async () => {
     const user = userEvent.setup()
     const listWorkspaceEntries = vi.fn().mockResolvedValue({
       path: '/workspace/project',
@@ -6202,6 +6441,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('README.md'))
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('hello')
+    expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('workspace-file-markdown-mode-button'))
     const editor = await screen.findByTestId('workspace-file-editor')
     expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
@@ -6300,6 +6542,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('README.md'))
+    await user.click(screen.getByTestId('workspace-file-markdown-mode-button'))
     await replaceWorkspaceEditorText(
       await screen.findByTestId('workspace-file-editor'),
       'hello world'

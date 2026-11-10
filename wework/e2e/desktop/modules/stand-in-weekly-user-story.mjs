@@ -1,3 +1,4 @@
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
@@ -218,11 +219,14 @@ export function createWeeklyUserStory(options) {
           'The owner receives the actual report once, without another prompt'
         )
         await options.captureScreenshot(control, 'weekly-story-result-in-primary.png')
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-        await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+        await openStandInSettings(control)
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-connections-open"]'
+        )
         await openConnectionTypePicker(control)
         await control.command('click', '[data-testid="stand-in-time-connections"]')
-        await control.command('click', `[data-testid="automation-open-${schedule.id}"]`)
+        await control.command('clickWhenEnabled', `[data-testid="automation-open-${schedule.id}"]`)
         await control.command('click', `[data-testid="automation-detail-toggle-${schedule.id}"]`)
         await control.command('waitFor', '[data-testid="automation-detail-panel"]', {
           text: '已暂停',

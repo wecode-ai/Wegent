@@ -32,6 +32,7 @@ import {
   scheduleFilePreviewMainThreadProbe,
 } from '@/lib/file-preview-diagnostics'
 import { installCodeViewTextDrag } from './codeViewTextDrag'
+import { useCodeTheme } from '@/features/appearance/useCodeTheme'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { useWorkspaceCodeEditor } from './useWorkspaceCodeEditor'
@@ -337,19 +338,46 @@ function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
   )
 }
 
-function WorkspaceMarkdownPreview({ file }: { file: WorkspaceTextFileResponse }) {
+function WorkspaceMarkdownPreview({
+  file,
+  targetLineStart,
+}: {
+  file: WorkspaceTextFileResponse
+  targetLineStart?: number
+}) {
   const { t } = useTranslation('common')
+  const containerRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    if (!Number.isInteger(targetLineStart) || Number(targetLineStart) < 1) return
+    const container = containerRef.current
+    if (!container) return
+    const target = Array.from(container.querySelectorAll<HTMLElement>('[data-source-line]'))
+      .filter(anchor => Number(anchor.dataset.sourceLine) <= Number(targetLineStart))
+      .at(-1)
+    if (!target) return
+    target.dataset.sourceLineTarget = 'true'
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    const timeoutId = window.setTimeout(() => {
+      target.removeAttribute('data-source-line-target')
+    }, 1_200)
+    return () => {
+      window.clearTimeout(timeoutId)
+      target.removeAttribute('data-source-line-target')
+    }
+  }, [file.path, file.revision, targetLineStart])
 
   return (
     <section
+      ref={containerRef}
       data-testid="workspace-markdown-preview"
       className="scrollbar-soft min-w-0 flex-1 overflow-y-scroll bg-background"
     >
-      <div className="mx-auto max-w-4xl px-8 py-6 text-base leading-7 text-text-primary">
-        <AssistantMarkdown content={file.content} variant="document" />
+      <div className="mx-auto max-w-4xl px-8 py-6 text-base leading-7 text-text-primary [&_[data-source-line-target=true]]:rounded-md [&_[data-source-line-target=true]]:bg-amber-100 [&_[data-source-line-target=true]]:ring-2 [&_[data-source-line-target=true]]:ring-amber-300 [&_[data-source-line-target=true]]:transition-colors [&_[data-source-line-target=true]]:duration-700 dark:[&_[data-source-line-target=true]]:bg-amber-900/30 dark:[&_[data-source-line-target=true]]:ring-amber-600/60">
+        <AssistantMarkdown content={file.content} variant="document" sourceLineAnchors />
       </div>
       {file.truncated && (
-        <div className="sticky bottom-0 border-t border-border bg-background/95 px-4 py-2 text-xs text-amber-700 backdrop-blur-sm">
+        <div className="sticky bottom-0 border-t border-border bg-background/95 px-4 py-2 text-xs text-warning backdrop-blur-sm wework:text-amber-700">
           {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
         </div>
       )}
@@ -404,6 +432,7 @@ function WorkspaceFilePreviewContent({
   onEditedContentChange,
   onSave,
 }: WorkspaceFilePreviewContentProps & { codeFontSize: number }) {
+  const codeTheme = useCodeTheme()
   const { t } = useTranslation('common')
   const codeViewRef = useRef<CodeViewHandle<undefined, undefined>>(null)
   const codeViewHostRef = useRef<HTMLDivElement>(null)
@@ -539,11 +568,11 @@ function WorkspaceFilePreviewContent({
       stickyHeaders: false,
       itemMetrics: { lineHeight: codeLineHeight },
       layout: { paddingTop: 0, paddingBottom: codeLineHeight, gap: 0 },
-      theme: { dark: 'pierre-dark', light: 'pierre-light' },
+      theme: codeTheme,
       themeType,
       unsafeCSS: PIERRE_WORKSPACE_CODE_VIEW_CSS,
     }),
-    [codeLineHeight, editing, themeType]
+    [codeLineHeight, codeTheme, editing, themeType]
   )
 
   const addComment = () => {
@@ -653,7 +682,7 @@ function WorkspaceFilePreviewContent({
         </PierreCodeProvider>
       </div>
       {file.truncated && (
-        <div className="shrink-0 border-t border-border bg-background px-4 py-2 text-xs text-amber-700">
+        <div className="shrink-0 border-t border-border bg-background px-4 py-2 text-xs text-warning wework:text-amber-700">
           {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
         </div>
       )}
@@ -761,7 +790,7 @@ export function WorkspaceFilePreview({
 
   if (error) {
     return (
-      <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-red-500">
+      <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-destructive wework:text-red-500">
         <p>{error}</p>
         <button
           type="button"
@@ -791,7 +820,7 @@ export function WorkspaceFilePreview({
   }
 
   if (!editing && isMarkdownFile(file.name) && markdownMode === 'preview') {
-    return <WorkspaceMarkdownPreview file={file} />
+    return <WorkspaceMarkdownPreview file={file} targetLineStart={targetLineStart} />
   }
 
   return (

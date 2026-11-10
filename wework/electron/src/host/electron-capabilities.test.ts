@@ -287,6 +287,23 @@ describe('showElectronNotification', () => {
     expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
   })
 
+  test('opens only the fixed platform notification settings destination', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.shellOpenExternal.mockClear()
+    const result = await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.openSettings', {
+      url: 'https://untrusted.invalid',
+    })
+    const expected =
+      process.platform === 'darwin'
+        ? 'x-apple.systempreferences:com.apple.preference.notifications'
+        : process.platform === 'win32'
+          ? 'ms-settings:notifications'
+          : null
+    expect(result).toEqual({ supported: Boolean(expected) })
+    if (expected) expect(electronMocks.shellOpenExternal).toHaveBeenCalledExactlyOnceWith(expected)
+    else expect(electronMocks.shellOpenExternal).not.toHaveBeenCalled()
+  })
+
   test('uses the production click action for desktop regression activation', async () => {
     const { router, notificationNavigation } = createIsolatedClipboardRouter()
     const url = 'wework://tasks/device-1/task-1'
@@ -500,6 +517,48 @@ describe('Process explorer capabilities', () => {
   test('stays read-only', () => {
     expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')
   })
+})
+
+describe('inline visualization window targeting', () => {
+  test.each([undefined, 'workspace-visualization'])(
+    'inspects the frame in the requested window: %s',
+    async windowLabel => {
+      const original = {
+        VITE_WEWORK_E2E: process.env.VITE_WEWORK_E2E,
+        WEWORK_E2E_CONTROL_URL: process.env.WEWORK_E2E_CONTROL_URL,
+      }
+      try {
+        process.env.VITE_WEWORK_E2E = 'true'
+        process.env.WEWORK_E2E_CONTROL_URL = 'http://127.0.0.1:1234'
+        const url = 'blob:http://127.0.0.1/visualization'
+        const frame = { url, executeJavaScript: vi.fn(async () => '249.32') }
+        const captureTarget = vi.fn(
+          () =>
+            ({
+              isDestroyed: () => false,
+              mainFrame: { executeJavaScript: vi.fn(async () => true), frames: [frame] },
+            }) as unknown as WebContents
+        )
+        const { router } = createIsolatedClipboardRouter(true, { captureTarget })
+
+        await expect(
+          router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.inlineVisualizationFrame', {
+            url,
+            action: 'text',
+            selector: '#interest',
+            ...(windowLabel ? { windowLabel } : {}),
+          })
+        ).resolves.toBe('249.32')
+        expect(captureTarget).toHaveBeenCalledExactlyOnceWith(windowLabel ?? 'main')
+        expect(frame.executeJavaScript).toHaveBeenCalledOnce()
+      } finally {
+        for (const [key, value] of Object.entries(original)) {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+      }
+    }
+  )
 })
 
 describe('renderer heap debugger ownership', () => {
@@ -942,7 +1001,12 @@ describe('registerAppUpdateCapabilities', () => {
 
     expect(appUpdates.check).toHaveBeenCalledWith('stable')
     expect(appUpdates.download).toHaveBeenCalledOnce()
-    expect(appUpdates.download).toHaveBeenCalledWith('stable')
+    expect(appUpdates.download).toHaveBeenCalledWith('stable', undefined)
+    await handlers.get('appUpdate.download')?.(
+      { channel: 'stable', retryToken: 'confirmed-attempt' },
+      context
+    )
+    expect(appUpdates.download).toHaveBeenLastCalledWith('stable', 'confirmed-attempt')
     expect(appUpdates.downloadProgress).toHaveBeenCalledOnce()
     expect(appUpdates.createInstallAction).toHaveBeenCalledOnce()
     expect(appUpdates.createInstallAction).toHaveBeenCalledWith('0.2.7')

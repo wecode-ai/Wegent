@@ -141,17 +141,20 @@ function WorkspaceTabButton({
   const { t } = useTranslation('common')
   const { selectTab, closeTab } = useWorkspaceTabs()
   const interactions = useRuntimeInteractions()
+  const pendingTab = tab.contentRoute.split('?', 1)[0] === INTERACTIONS_PATH
   const pendingCount =
-    interactions && tab.contentRoute.split('?', 1)[0] === INTERACTIONS_PATH
-      ? interactions.pending.length
+    interactions &&
+    pendingTab &&
+    (!interactions.projectItemsSupported || interactions.pendingProjectCount != null)
+      ? interactions.pending.length + (interactions.pendingProjectCount ?? 0)
       : null
-  const label = pendingCount === null ? tab.title : t('interactions.title', '待你处理')
+  const label = pendingTab ? t('interactions.title', '待你处理') : tab.title
   const title =
     pendingCount !== null
       ? t('interactions.tab_title_with_count', '待你处理（{{count}}）', {
           count: pendingCount,
         })
-      : tab.title
+      : label
   const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title })
   const unavailable = tab.kind === 'agent' && !agentAvailable
   const tabTitle = unavailable ? t('workbench.app_wegent_requires_cloud', '连接云端后可用') : title
@@ -181,8 +184,8 @@ function WorkspaceTabButton({
         pendingCount !== null && 'w-40',
         tab.contentRoute.startsWith('/app/harness-') && 'smart-app-workspace-tab-enter',
         active
-          ? 'border border-border/70 bg-white text-text-primary shadow-sm dark:bg-white/[0.09]'
-          : 'border border-transparent text-text-secondary hover:bg-black/[0.045] hover:text-text-primary dark:hover:bg-white/[0.06]',
+          ? 'border border-border/70 bg-surface text-text-primary shadow-sm wework:bg-white wework:dark:bg-white/[0.09]'
+          : 'border border-transparent text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.045] wework:dark:hover:bg-white/[0.06]',
         draggedTabId === tab.id && 'opacity-55'
       )}
     >
@@ -191,6 +194,25 @@ function WorkspaceTabButton({
         role="tab"
         aria-selected={active}
         data-testid={`workspace-tab-select-${tab.id}`}
+        data-pending-question-count={pendingTab ? interactions?.pending.length : undefined}
+        data-project-pending-count={
+          pendingTab
+            ? interactions?.projectItemsSupported
+              ? (interactions.pendingProjectCount ?? undefined)
+              : 0
+            : undefined
+        }
+        data-project-count-state={
+          pendingTab
+            ? !interactions
+              ? 'loading'
+              : !interactions.projectItemsSupported
+                ? 'unsupported'
+                : interactions.pendingProjectCount == null
+                  ? 'unknown'
+                  : 'known'
+            : undefined
+        }
         data-tab-kind={tab.kind}
         data-unavailable={unavailable || undefined}
         onClick={() => {
@@ -216,7 +238,7 @@ function WorkspaceTabButton({
             tab.id
           )
         }}
-        className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-left outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500"
+        className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-left outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus wework:keyboard:focus-visible:ring-blue-500"
         title={tabTitle}
       >
         {tabKindIcon(tab, unavailable)}
@@ -247,7 +269,7 @@ function WorkspaceTabButton({
             closeTab(tab.id)
           }}
           className={cn(
-            'mr-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-black/[0.06] keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500 dark:hover:bg-white/[0.08]',
+            'mr-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus wework:hover:bg-black/[0.06] wework:keyboard:focus-visible:ring-blue-500 wework:dark:hover:bg-white/[0.08]',
             active
               ? 'text-text-secondary'
               : 'opacity-0 text-text-muted group-hover:opacity-100 group-hover:text-text-secondary group-focus-within:opacity-100'
@@ -538,7 +560,7 @@ export function WorkspaceTabStrip({
             setContextMenu(null)
             setAddMenuPosition(current => (current ? null : menuPosition(trigger, 220)))
           }}
-          className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-black/[0.04] hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500"
+          className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus wework:hover:bg-black/[0.04] wework:keyboard:focus-visible:ring-blue-500"
           aria-label={t('workbench.workspace_tab_new', '新建标签页')}
           title={t('workbench.workspace_tab_new', '新建标签页')}
         >
@@ -569,7 +591,7 @@ export function WorkspaceTabStrip({
                     }
                     openNewTab(kind)
                   }}
-                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
                 >
                   {kind === 'agent' && !agentAvailable ? (
                     <CloudOff aria-hidden="true" className="h-4 w-4 text-text-muted" />
@@ -591,7 +613,7 @@ export function WorkspaceTabStrip({
                     )
                     setAddMenuPosition(null)
                   }}
-                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
                 >
                   <CheckSquare2 aria-hidden="true" className="h-4 w-4 text-text-secondary" />
                   {t('interactions.title', '待你处理')}
@@ -606,7 +628,7 @@ export function WorkspaceTabStrip({
                       role="menuitem"
                       data-testid={`workspace-tab-add-smart-app-${installation.id}`}
                       onClick={() => openInstalledSmartApp(installation)}
-                      className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                      className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
                     >
                       <Boxes aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
                       <span className="truncate">{installation.manifest.displayName}</span>
@@ -617,7 +639,7 @@ export function WorkspaceTabStrip({
                     role="menuitem"
                     data-testid="workspace-tab-add-smart-app"
                     onClick={openSmartApps}
-                    className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                    className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
                   >
                     <Boxes aria-hidden="true" className="h-4 w-4 text-text-secondary" />
                     {t('workbench.smart_apps_manage', '管理智能工作台')}
@@ -638,7 +660,7 @@ export function WorkspaceTabStrip({
                         role="menuitem"
                         data-testid={`workspace-tab-add-dsh-${descriptor.id}`}
                         onClick={() => openDshWorkspaceTab(descriptor.id, descriptor.title)}
-                        className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                        className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
                       >
                         <Boxes
                           aria-hidden="true"

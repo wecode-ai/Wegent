@@ -171,6 +171,7 @@ export function useConversationSearchTarget({
     let matchTimer = 0
     let navigationFinished = false
     let navigationScrolling = false
+    let navigationDestination = 0
     let navigationCancelled = navigationPausedRef.current
     let disposed = false
     let preparationStarted = false
@@ -199,6 +200,22 @@ export function useConversationSearchTarget({
       navigationFrame = 0
       clearTimeout(matchTimer)
       onNavigationTargetChange(null)
+    }
+    const finishNavigationOnFrame = () => {
+      if (navigationFrame || navigationFinished) return
+      navigationFrame = requestAnimationFrame(() => {
+        navigationFrame = 0
+        if (
+          isCurrent() &&
+          !navigationCancelled &&
+          Math.abs(scroller.scrollTop - navigationDestination) < 1
+        )
+          finishNavigation()
+      })
+    }
+    const onNativeScroll = () => {
+      // The virtualizer must receive the native offset before anchoring resumes.
+      if (behavior === 'auto' && navigationScrolling) finishNavigationOnFrame()
     }
     const timeoutNavigation = () => {
       matchTimer = 0
@@ -314,20 +331,14 @@ export function useConversationSearchTarget({
         navigationScrolling = true
         scroller.addEventListener('scrollend', finishNavigation)
         const previousTop = scroller.scrollTop
+        navigationDestination = Math.min(
+          top,
+          Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+        )
         scrollToContentPosition(scroller, top, behavior)
         recordLayout(startedAt)
-        // Instant writes also need native read-back before resize anchoring resumes.
-        if (behavior === 'smooth' || scroller.scrollTop === previousTop) {
-          const destination = Math.min(
-            top,
-            Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-          )
-          navigationFrame = requestAnimationFrame(() => {
-            navigationFrame = 0
-            // A no-op or clamped scroll does not dispatch scrollend.
-            if (Math.abs(scroller.scrollTop - destination) < 1) finishNavigation()
-          })
-        }
+        // A no-op or clamped scroll does not dispatch a native scroll event.
+        if (behavior === 'smooth' || scroller.scrollTop === previousTop) finishNavigationOnFrame()
         return
       }
       scheduleNavigation()
@@ -455,6 +466,7 @@ export function useConversationSearchTarget({
     const inputTargets = [scroller, interactionRef?.current].filter(
       (element): element is HTMLElement => element !== null && element !== undefined
     )
+    scroller.addEventListener('scroll', onNativeScroll, { passive: true })
     for (const element of inputTargets)
       for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
         element.addEventListener(type, cancelForInput, {
@@ -479,6 +491,7 @@ export function useConversationSearchTarget({
       cancelAnimationFrame(navigationFrame)
       clearTimeout(mutationTimer)
       clearTimeout(matchTimer)
+      scroller.removeEventListener('scroll', onNativeScroll)
       for (const element of inputTargets)
         for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
           element.removeEventListener(type, cancelForInput, true)

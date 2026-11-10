@@ -57,13 +57,14 @@ pub(super) fn apply_stand_in_workspace(
     payload["workspacePath"] = workspace["workspacePath"].clone();
     payload["runtimeProjectKey"] = workspace["projectKey"].clone();
     payload["runtimeWorkspaceRoots"] = json!([workspace["workspacePath"]]);
-    payload.as_object_mut().unwrap().remove("execution");
-    payload["executionRequest"]
-        .as_object_mut()
-        .unwrap()
-        .remove("workspace_source");
-    if workspace["executionMode"] == "git_worktree" {
-        let mut target = json!({"source":"git_worktree"});
+    let isolated = workspace["executionMode"] == "git_worktree";
+    let source = if isolated {
+        "git_worktree"
+    } else {
+        "local_path"
+    };
+    let mut target = json!({"source":source});
+    if isolated {
         if let Some(branch) = workspace["branch"]
             .as_str()
             .map(str::trim)
@@ -71,8 +72,8 @@ pub(super) fn apply_stand_in_workspace(
         {
             target["branch"] = json!(branch);
         }
-        payload["execution"] = json!({"workspace":target});
-        payload["executionRequest"]["workspace_source"] = json!("git_worktree");
     }
+    payload["execution"] = json!({"workspace":target});
+    payload["executionRequest"]["workspace_source"] = json!(source);
     Ok(())
 }

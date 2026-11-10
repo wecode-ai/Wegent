@@ -165,6 +165,7 @@ export interface RuntimeProjectWork {
 }
 
 export interface RuntimeWorkListResponse {
+  localIssueQuestionsPending?: boolean
   projects: RuntimeProjectWork[]
   chats: RuntimeDeviceWorkspace[]
   totalTasks: number

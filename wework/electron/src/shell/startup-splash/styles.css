@@ -1,6 +1,5 @@
 :root {
   color-scheme: dark;
-  --text-code-sm: 11px;
   --text-xs: 12px;
   --text-base: 14px;
   --text-lg: 16px;
@@ -10,7 +9,7 @@
   --startup-muted: #b3b9c6;
   --startup-activity: #8e96a6;
   --startup-border: rgb(255 255 255 / 14%);
-  --startup-track: rgb(132 177 224 / 18%);
+  --startup-track: rgb(74 155 221 / 12%);
   --startup-button-background: #212121;
   --startup-primary-text: #181818;
   --startup-primary-background: #ececec;
@@ -19,19 +18,22 @@
   --startup-error-background: #25191c;
   --startup-error-border: #633137;
   --startup-link: #83baff;
-  --startup-progress-start: #4a91ff;
-  --startup-progress-middle: #8ed6ff;
-  --startup-progress-end: #e2f6ff;
-  --startup-progress-filter: drop-shadow(0 0 3px rgb(94 186 255 / 65%));
+  --startup-progress-start: #398fdb;
+  --startup-progress-middle: #4aaef0;
+  --startup-progress-end: #9bdfff;
+  --startup-progress-glow: rgb(74 174 240 / 28%);
   --startup-logo-angle: 110deg;
   --startup-logo-highlight: 47%;
+  --startup-logo-band-start: 36%;
+  --startup-logo-band-end: 58%;
+  --startup-logo-base: #1764bd;
   --startup-logo-gradient: linear-gradient(
     var(--startup-logo-angle),
-    #1764bd 0%,
-    #187ad0 36%,
+    var(--startup-logo-base) var(--startup-logo-band-start),
+    #187ad0 41%,
     #459fe8 var(--startup-logo-highlight),
-    #187ad0 58%,
-    #1764bd 100%
+    #187ad0 53%,
+    var(--startup-logo-base) var(--startup-logo-band-end)
   );
   font-family:
     ui-sans-serif,
@@ -49,7 +51,7 @@
   --startup-muted: #4f4f4f;
   --startup-activity: #5d5d5d;
   --startup-border: rgb(26 28 31 / 12%);
-  --startup-track: rgb(26 28 31 / 18%);
+  --startup-track: rgb(35 123 193 / 12%);
   --startup-button-background: #ededed;
   --startup-primary-text: #fff;
   --startup-primary-background: #1a1c1f;
@@ -58,18 +60,21 @@
   --startup-error-background: #fef2f2;
   --startup-error-border: #fecaca;
   --startup-link: #0867b5;
-  --startup-progress-start: #247dcc;
-  --startup-progress-middle: #147bd1;
-  --startup-progress-end: #1456b8;
-  --startup-progress-filter: none;
+  --startup-progress-start: #287ac5;
+  --startup-progress-middle: #278bd4;
+  --startup-progress-end: #58b9ef;
+  --startup-progress-glow: rgb(39 139 212 / 20%);
   --startup-logo-highlight: 48%;
+  --startup-logo-band-start: 43%;
+  --startup-logo-band-end: 53%;
+  --startup-logo-base: #165bb8;
   --startup-logo-gradient: linear-gradient(
     var(--startup-logo-angle),
-    #165bb8 0%,
-    #1962bf 43%,
+    var(--startup-logo-base) var(--startup-logo-band-start),
+    #1962bf 46%,
     #2e8fe3 var(--startup-logo-highlight),
-    #1962bf 53%,
-    #165bb8 100%
+    #1962bf 50%,
+    var(--startup-logo-base) var(--startup-logo-band-end)
   );
 }
 
@@ -79,6 +84,18 @@
 
 [hidden] {
   display: none !important;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 html,
@@ -140,7 +157,9 @@ body {
   content: '';
   pointer-events: none;
   opacity: var(--startup-logo-opacity, 0);
-  background: var(--startup-logo-gradient);
+  background-color: var(--startup-logo-base);
+  background-image: var(--startup-logo-gradient);
+  background-repeat: no-repeat;
   background-position: var(--startup-logo-position, var(--startup-logo-sweep-start));
   background-size: 200% 100%;
   mask-image: var(--startup-logo-mask);
@@ -158,10 +177,13 @@ body {
 
 .startup-status {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   grid-row: 2;
   width: 100%;
   max-height: 60vh;
-  padding: 16px max(28px, calc((100% - 48rem) / 2 + 28px)) 24px;
+  padding: 12px 20px 16px;
   overflow-y: auto;
   background: var(--startup-status-background);
   scrollbar-width: thin;
@@ -170,10 +192,20 @@ body {
 
 .splash-copy {
   display: flex;
+  order: 1;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
   text-align: left;
+}
+
+.startup-status > .inline-note,
+.startup-timeout-actions,
+.startup-recovery,
+.startup-confirmation {
+  align-self: flex-end;
+  width: min(560px, 100%);
 }
 
 #splash-percentage {
@@ -183,11 +215,10 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.splash h1 {
-  margin: 0;
-  font-size: var(--text-base);
-  font-weight: 500;
-  line-height: 21px;
+#splash-percentage::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--startup-activity);
 }
 
 .splash p {
@@ -198,38 +229,19 @@ body {
 }
 
 .progress-block {
-  margin-top: 8px;
-}
-
-.progress-meta {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 4px;
-  color: var(--startup-muted);
-  font-size: var(--text-xs);
-  line-height: 16px;
-}
-
-.progress-meta > span:first-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.elapsed {
-  flex: 0 0 auto;
-  font-family: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  font-variant-numeric: tabular-nums;
+  position: fixed;
+  inset: auto 0 0;
+  height: 4px;
+  pointer-events: none;
 }
 
 .startup-progress {
-  height: 8px;
+  position: relative;
+  height: 4px;
 }
 
 .startup-progress-svg {
+  position: relative;
   display: block;
   width: 100%;
   height: 100%;
@@ -239,7 +251,7 @@ body {
 .startup-progress-track,
 .startup-progress-fill {
   fill: none;
-  stroke-width: 1;
+  stroke-width: 4;
   stroke-linecap: round;
 }
 
@@ -249,7 +261,7 @@ body {
 
 .startup-progress-fill {
   stroke: url('#startup-progress-gradient');
-  filter: var(--startup-progress-filter);
+  filter: drop-shadow(0 -1px 3px var(--startup-progress-glow));
 }
 
 .startup-progress-stop-start {
@@ -270,11 +282,11 @@ body {
 }
 
 .splash .activity-line {
-  margin-top: 4px;
+  min-width: 0;
+  margin: 0;
   overflow: hidden;
-  color: var(--startup-activity);
-  font-family: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  font-size: var(--text-code-sm);
+  color: var(--startup-muted);
+  font-size: var(--text-xs);
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -284,7 +296,6 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin-top: 12px;
   padding: 12px;
   border: 1px solid var(--startup-border);
   border-radius: 8px;
@@ -330,12 +341,7 @@ body {
 }
 
 .startup-recovery {
-  width: 100%;
-  margin-top: 12px;
-}
-
-.startup-timeout-actions {
-  margin-top: 8px;
+  flex-shrink: 0;
 }
 
 .startup-actions,
@@ -432,7 +438,6 @@ body {
 .startup-toast {
   pointer-events: none;
   position: fixed;
-  pointer-events: none;
   bottom: 24px;
   left: 50%;
   z-index: 30;
@@ -453,6 +458,7 @@ body {
     background-position: var(--startup-logo-sweep-start);
   }
 
+  90%,
   to {
     background-position: var(--startup-logo-sweep-end);
   }

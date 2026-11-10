@@ -917,7 +917,7 @@ export interface RuntimeTaskExecutionConfig {
 export interface RuntimeTaskCreateRequest extends RuntimeTaskCreateIntent {
   /** Identity that owns this scheduled work; checked again when it executes. */
   standInOwner?: { userId: number; roleId: string }
-  standInCalendar?: { template?: 'weekly_review' }
+  standInCalendar?: { template?: 'weekly_review' | 'memory_review' }
   forceStart?: boolean
   /** Logical route used to bind this task to a project Issue. */
   executionDeviceId?: string
@@ -1111,16 +1111,6 @@ export interface CloneGitRepositoryInput {
   url: string
   branch?: string
   targetPath: string
-}
-
-export interface GitCloneProjectOperation extends CloneGitRepositoryInput {
-  id: string
-  deviceId: string
-  name: string
-  status: 'cloning' | 'opening' | 'failed'
-  failureStage?: 'clone' | 'open'
-  failureReason?: 'executor-offline' | 'executor-not-found' | 'clone-failed' | 'open-failed'
-  error?: string
 }
 
 export interface TaskContextData {

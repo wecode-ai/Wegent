@@ -12,6 +12,8 @@ mod journal;
 use journal::RecoveryJournal;
 #[path = "runtime_legacy_sources.rs"]
 pub(super) mod legacy_sources;
+#[path = "marketplace_sources.rs"]
+pub(super) mod marketplace_sources;
 #[path = "runtime_materialization.rs"]
 mod materialization;
 #[path = "runtime_recovery_ownership.rs"]
@@ -165,6 +167,7 @@ impl GlobalCapabilityStore {
                 .insert(next.clone(), json!({"key":key,"path":old}));
             ensure_object_field(manifest, "plugin_runtime_owners").remove(&old);
             ensure_object_field(manifest, "plugin_runtime_owners").insert(next, json!(key));
+            marketplace_sources::rebase(manifest, key, field, path, &target);
         }
     }
 
@@ -474,13 +477,7 @@ impl GlobalCapabilityStore {
         let spec = checked_spec(key, entry)?;
         if let Some(hash) = entry.get("checksum").and_then(Value::as_str) {
             let package = self.verified_plugin_package(hash)?;
-            let stage = tempfile::tempdir()?;
-            let template = stage.path().join("runtime");
-            copy_dir_atomic(&package.path, &template)?;
-            ensure_dual_plugin_manifests(&template)?;
-            ensure_plugin_hook_permissions(&template)?;
-            return Ok(same_runtime_contents(target, &template)?
-                || self.matches_verified_legacy_contents(&spec, target, &package.path)?);
+            return self.matches_managed_package_copy(target, &spec, &package.path);
         }
         for (runtime, field) in self.plugin_runtime_targets(&spec) {
             if entry_owns_path(entry, &runtime, field) {
@@ -493,7 +490,22 @@ impl GlobalCapabilityStore {
         Ok(false)
     }
 
-    fn validate_marketplace_occupancy(
+    fn matches_managed_package_copy(
+        &self,
+        target: &Path,
+        spec: &PluginSyncSpec,
+        package: &Path,
+    ) -> Result<bool, CapabilitySyncError> {
+        let stage = tempfile::tempdir()?;
+        let template = stage.path().join("runtime");
+        copy_dir_atomic(package, &template)?;
+        ensure_dual_plugin_manifests(&template)?;
+        ensure_plugin_hook_permissions(&template)?;
+        Ok(same_runtime_contents(target, &template)?
+            || self.matches_verified_legacy_contents(spec, target, package)?)
+    }
+
+    pub(super) fn validate_marketplace_occupancy(
         &self,
         spec: &PluginSyncSpec,
         entry: &Value,
@@ -563,6 +575,9 @@ impl GlobalCapabilityStore {
                 continue;
             }
             if self.owns_legacy_marketplace_source(spec, &target, entry, manifest)? {
+                continue;
+            }
+            if self.owns_managed_marketplace_copy(spec, &target, field, manifest)? {
                 continue;
             }
             // Existing personal sources and directories are not implicitly managed.

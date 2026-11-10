@@ -1,3 +1,4 @@
+import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { verifyCloudAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
 import { verifyLocalCloudStandInReceipt } from '../modules/stand-in-local-cloud-receipts.mjs'
 import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
@@ -6,6 +7,12 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import {
+  bindStoppedStandIn,
+  finishStandInOnboarding,
+  readStandInBinding,
+  stopBoundStandIn,
+} from '../modules/stand-in-instance-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   reloadMainWindow,
@@ -241,19 +248,23 @@ export function createDesktopScenario({
         await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
           requirements: false,
         })
-        await control.command('click', '[data-testid="stand-in-advanced-open"]')
-        await control.command('waitFor', '[data-testid="stand-in-device"]')
-        const currentDevice = await control.command('getValue', '[data-testid="stand-in-device"]')
+        const currentDevice = (await readStandInBinding(control, uiTimeoutMs)).target.deviceId
         assert.ok(currentDevice)
         assert.notEqual(currentDevice, REMOTE_DOCKER_DEVICE_ID)
-        await control.command('select', '[data-testid="stand-in-device"]', {
-          value: REMOTE_DOCKER_DEVICE_ID,
+        await stopBoundStandIn(control, uiTimeoutMs)
+        await bindStoppedStandIn(control, user.id, REMOTE_DOCKER_DEVICE_ID, uiTimeoutMs)
+        await finishStandInOnboarding(control)
+        const remoteDraft = await rpc('runtime.stand_in.get', settingsParams())
+        await control.command('navigate', 'body', {
+          value: `/stand-in?${new URLSearchParams({ deviceId: REMOTE_DOCKER_DEVICE_ID, profileId: remoteDraft.id, settingsRequest: crypto.randomUUID() })}`,
         })
-        await control.command('waitFor', '[data-testid="stand-in-device"]')
-        await control.command('click', '[data-testid="stand-in-back"]')
-        await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+        await control.command('waitFor', '[data-testid="stand-in-settings"]', {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', '[data-testid="stand-in-role-name"]', {
+          timeoutMs: uiTimeoutMs,
+        })
         await verifyRemoteStandInProjectScope(control, localProject.id, String(project.id))
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         assert.equal(
           await control.command('getElementCount', '[data-testid="stand-in-agent"]'),
           '0'
@@ -279,12 +290,15 @@ export function createDesktopScenario({
           false,
           'Cloud configuration leaked into the desktop Executor'
         )
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await openStandInSettings(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-advanced-open"]')
-        await control.command('waitFor', '[data-testid="stand-in-device"]')
         assert.equal(
-          await control.command('getValue', '[data-testid="stand-in-device"]'),
+          (await readStandInBinding(control, uiTimeoutMs)).target.deviceId,
           REMOTE_DOCKER_DEVICE_ID
+        )
+        assert.equal(
+          await control.command('getElementCount', '[data-testid="stand-in-device"]'),
+          '0'
         )
         await control.command('click', '[data-testid="stand-in-close"]')
         await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
@@ -300,6 +314,15 @@ export function createDesktopScenario({
         await request(`/v1/cloud-projects/${project.id}/execution-environments`, {
           device_id: desktop.id,
         })
+        // Return this App to its local profile before enabling local intake.
+        // The independent cloud Executor then resumes its own profile so the
+        // existing cross-device deduplication assertions remain concurrent.
+        await control.command('navigate', 'body', { value: '/stand-in' })
+        await stopBoundStandIn(control, uiTimeoutMs)
+        await bindStoppedStandIn(control, user.id, localSettings.executionDeviceId, uiTimeoutMs)
+        await finishStandInOnboarding(control)
+        await rpc('runtime.stand_in.personal.lifecycle', { userId: user.id, operation: 'start' })
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         const localEnabled = await requestExecutor(
           control,
           'runtime.stand_in.save',

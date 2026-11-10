@@ -1,6 +1,6 @@
 # Wegent
 
-> 一套跨越本地桌面、云端智能体与远程工作机的开源 AI 工作系统。
+> 人与 AI 共同推进项目的开源工作系统。
 
 [English](README.md) | 简体中文
 
@@ -11,103 +11,62 @@
 <img alt="LINUX DO"
             src="https://img.shields.io/badge/LINUX-DO-FFB003.svg?logo=data:image/svg%2bxml;base64,DQo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiPjxwYXRoIGQ9Ik00Ni44Mi0uMDU1aDYuMjVxMjMuOTY5IDIuMDYyIDM4IDIxLjQyNmM1LjI1OCA3LjY3NiA4LjIxNSAxNi4xNTYgOC44NzUgMjUuNDV2Ni4yNXEtMi4wNjQgMjMuOTY4LTIxLjQzIDM4LTExLjUxMiA3Ljg4NS0yNS40NDUgOC44NzRoLTYuMjVxLTIzLjk3LTIuMDY0LTM4LjAwNC0yMS40M1EuOTcxIDY3LjA1Ni0uMDU0IDUzLjE4di02LjQ3M0MxLjM2MiAzMC43ODEgOC41MDMgMTguMTQ4IDIxLjM3IDguODE3IDI5LjA0NyAzLjU2MiAzNy41MjcuNjA0IDQ2LjgyMS0uMDU2IiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZWNlY2VjO2ZpbGwtb3BhY2l0eToxIi8+PHBhdGggZD0iTTQ3LjI2NiAyLjk1N3EyMi41My0uNjUgMzcuNzc3IDE1LjczOGE0OS43IDQ5LjcgMCAwIDEgNi44NjcgMTAuMTU3cS00MS45NjQuMjIyLTgzLjkzIDAgOS43NS0xOC42MTYgMzAuMDI0LTI0LjM4N2E2MSA2MSAwIDAgMSA5LjI2Mi0xLjUwOCIgc3R5bGU9InN0cm9rZTpub25lO2ZpbGwtcnVsZTpldmVub2RkO2ZpbGw6IzE5MTkxOTtmaWxsLW9wYWNpdHk6MSIvPjxwYXRoIGQ9Ik03Ljk4IDcwLjkyNmMyNy45NzctLjAzNSA1NS45NTQgMCA4My45My4xMTNRODMuNDI2IDg3LjQ3MyA2Ni4xMyA5NC4wODZxLTE4LjgxIDYuNTQ0LTM2LjgzMi0xLjg5OC0xNC4yMDMtNy4wOS0yMS4zMTctMjEuMjYyIiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZjlhZjAwO2ZpbGwtb3BhY2l0eToxIi8+PC9zdmc+" /></a>
 
-Wegent 包含桌面工作台和可自托管的 Web 平台。Wegent Desktop 用于处理本地项目、文件、命令、测试和代码变更；Wegent Web 提供网页端智能体、知识库、自动化和管理功能；Wegent Backend 为这些应用提供共享项目空间、模型和执行设备。
+Wegent 让团队成员、AI 智能体和个人分身围绕同一个 Issue 协作：提出需求、分派工作、执行任务并交付成果，让讨论、执行记录与交付物保持关联。你既可以独自在本地项目中编码，也可以与团队在共享项目空间中接力推进工作。
 
-[下载最新版 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) · [查看文档](https://wecode-ai.github.io/wegent-docs/zh/) · [参与贡献](CONTRIBUTING.md)
+[下载最新版 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) · [快速开始](#快速开始) · [查看文档](https://wecode-ai.github.io/wegent-docs/zh/) · [参与贡献](CONTRIBUTING.md)
 
-## Wegent Desktop
+## 一个 Issue，连接整支团队
 
-Wegent Desktop 按项目和任务组织本地编码工作。任务界面集中展示会话、工具活动、测试、变更文件和 Diff；项目空间界面提供任务看板、共享文件、自动化和执行状态。
+[![观看 90 秒宣传片：一个 Issue，连接整支团队](https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-ai-collaboration-zh-20261109.jpg)](https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-ai-collaboration-zh-20261109.mp4)
 
-<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-desktop-workbench.png" width="100%" alt="Wegent Desktop 中真实执行的编码任务，在同一个工作台展示验证结果、变更文件和展开的源码 Diff" />
+[观看完整视频（90 秒，中文）](https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-ai-collaboration-zh-20261109.mp4)
 
-<p align="center"><sub>在 Wegent Desktop 中执行并审查本地编码任务。</sub></p>
+从一句“做一个可交互的三列迭代看板”开始，一项工作可以这样推进：
 
-<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-project-workspace.png" width="100%" alt="Wegent Desktop 中真实的项目工作空间，展示任务看板、项目导航和正在由远程工作机推进的测试任务" />
+1. **提出需求**：创建 Issue，说明目标，并选择接手的成员、智能体或协作小组。
+2. **分派工作**：配置好的 AI 负责人可以将方案与实现工作分派给相应角色；成员收到通知后进入同一个 Issue。
+3. **执行并交付**：成员在 Wework 中创建关联任务，借助 AI 处理文件、运行命令和测试，选择成果交付回 Issue。
+4. **讨论与接力**：在评论中补充反馈并转派，下一位成员或智能体结合已有方案和文件继续处理。
+5. **分身接手，本人确认**：已配置的个人分身按接收范围和处理方式代为处理工作，完成后交回本人确认。
 
-<p align="center"><sub>Wegent Desktop 中的项目空间，包括任务看板、共享文件、自动化和执行状态。</sub></p>
+**分派不等于完成，AI 产出也不等于本人确认。** Issue 将责任人、执行过程、讨论和交付物关联起来，团队可以查看进展、追问和继续处理。
 
-## 核心功能
+<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-project-workspace.png" width="100%" alt="Wegent Desktop 中的项目空间，展示任务看板、项目导航和远程工作机正在推进的任务" />
 
-- **桌面工作台**：组织本地项目、任务、会话、文件、工具活动、测试和 Diff。
-- **可复用智能体**：组合模型、提示词、Skills、知识、工具和协作配置。
-- **项目空间**：共享任务看板、文件、讨论、自动化、执行记录和交付物。
-- **多种执行位置**：在本机、远程工作机或服务端执行器中运行任务。
-- **自托管服务**：部署 Wegent Web 和 Backend，管理团队访问、API、权限、调度和知识服务。
+<p align="center"><sub>在项目空间中组织工作，查看任务看板、共享文件和执行状态。</sub></p>
 
-## 为什么选择 Wegent
+## 核心能力
 
-**基于 Codex 的本地编码体验是 Wegent Desktop 的基础。**它直接在你的项目中使用本地代码、文件、命令和开发环境；当编码工作需要跨越一台电脑或一个人时，再连接 Wegent Backend。连接后，本地工作台和 Web 使用同一套项目、任务和设备资源。
+- **人与 AI 协作**：围绕 Issue 分派、评论和转派，让成员、智能体和协作小组参与同一个项目。
+- **任务执行与成果交付**：从 Issue 创建关联任务，查看执行过程，将选定的文件和说明交付回项目。
+- **个人分身（Beta）**：按已授权的项目来源、职责和处理方式接收工作，保留执行记录与人工介入入口。
+- **项目管理与自动化**：通过任务看板、共享文件、执行记录和交付物组织项目，配置自动处理规则与执行队列。
+- **本地编码工作台**：基于 Codex 直接使用项目代码、文件、命令和开发环境，集中审查工具活动、测试和 Diff。
+- **可复用智能体与多种执行位置**：组合模型、提示词、Skills、知识和工具，在本机、远程工作机或服务端执行器中运行任务。
+- **自托管服务**：部署 Wegent Web 和 Backend，由团队管理访问、权限、模型、调度、知识服务和远程设备。
 
-- **让任务在合适的设备上运行**：继续使用本地已有的代码、文件、命令和开发环境，也可以选择远程工作机或服务端执行器运行同一个项目的任务。
-- **让团队围绕同一个项目推进**：项目空间将任务看板、共享文件、讨论、执行状态和交付物关联起来，而不只是在各自的电脑上保存会话和代码变更。
-- **把重复流程交给自动化**：项目空间可配置自动化与执行队列，用于持续推进项目中的例行工作。
-- **由团队掌握服务和数据**：Web 和 Backend 可以自托管，用于共享访问、权限、模型配置、调度、知识服务和远程设备管理。
-
-如果工作始终只在一台电脑上完成，Wegent Desktop 提供熟悉的 Codex 编码体验；当任务需要在多人、多设备或自托管环境之间流转时，连接 Wegent 可在此基础上继续扩展。
-
-## Wegent Web
-
-Wegent Web 提供远程智能体的网页界面。智能体使用配置好的模型、知识、Skills 和工具，Wegent Backend 负责管理任务和执行。
-
-<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-remote-agent.png" width="100%" alt="Wegent 远程智能体调用工具生成并展示甘特图" />
-
-<p align="center"><sub>Wegent 远程智能体调用工具生成甘特图。</sub></p>
-
-## 工作方式
-
-Wework 是 Wegent 的桌面工作台。Electron 负责桌面窗口、系统能力和进程管理；DeepSeek Harness（DSH）是内嵌的应用与插件运行时，Wework 的产品界面由一组 DSH 插件组合而成。Executor 负责管理任务与会话，并驱动 Codex 在本地项目中完成实际工作。
-
-```mermaid
-flowchart LR
-    Electron["Electron<br/>桌面宿主"]
-
-    subgraph DSH["DSH Runtime"]
-        direction TB
-        Core["DSH Core<br/>插件发现、依赖注入与生命周期"]
-        App["dsh-app-wework<br/>Wework 产品外壳与 UI 扩展点"]
-        UI["dsh-ui-*<br/>任务、项目空间、设置、应用与自动化"]
-        ElectronPlugin["dsh-electron-host<br/>Electron 能力桥接"]
-        ExecutorPlugin["dsh-executor-runtime<br/>任务执行与事件适配"]
-        TerminalPlugin["dsh-terminal-runtime<br/>本地交互式终端"]
-
-        Core --> App
-        Core --> UI
-        Core --> ElectronPlugin
-        Core --> ExecutorPlugin
-        Core --> TerminalPlugin
-        App --> UI
-    end
-
-    Executor["Executor<br/>任务与会话执行"]
-    Codex["Codex<br/>编码 Agent"]
-    Workspace["本地项目<br/>文件与命令"]
-
-    Electron -->|"启动并托管"| Core
-    Electron -->|"启动并监管"| Executor
-    ElectronPlugin <-->|"受限桌面能力"| Electron
-    UI <-->|"用户操作与界面更新"| ExecutorPlugin
-    ExecutorPlugin -->|"创建、追问、审批、取消"| Executor
-    Executor -->|"状态、消息、工具事件、结果"| ExecutorPlugin
-    Executor <-->|"启动、控制与事件"| Codex
-    Codex <-->|"读取、修改与执行"| Workspace
-    TerminalPlugin <-->|"PTY"| Workspace
-```
-
-DSH 不直接执行编码任务。`dsh-app-wework` 定义产品外壳和扩展点，`dsh-ui-*` 提供具体产品模块，`dsh-electron-host` 桥接受限的 Electron 能力，`dsh-executor-runtime` 在执行过程中与 Executor 双向通信，`dsh-terminal-runtime` 管理本地交互式终端。Executor 是任务执行层，Codex 是由它驱动的具体编码 Agent。
-
-Wework 也可以连接 Wegent Backend 使用共享项目空间、模型和远程执行设备。Wegent Web 是基于同一 Backend 的独立网页界面。
+个人分身需要先配置来源授权、模型及可用执行设备；自动处理受项目权限和操作确认约束，不代表电脑关机后仍可执行。AI 负责人对话及自动处理的使用条件见[项目负责人指南](docs/zh/wework/personal-stand-in.md#project-lead-controls)，负责人对话目前需开启实验性功能。更多设置见[我的分身与场景角色](docs/zh/wework/personal-stand-in.md)。
 
 ## 快速开始
 
-### Wegent Desktop
+### 个人使用：在本地项目中完成一个任务
 
-1. 从 [最新版本页下载 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) 并安装。
-2. 打开应用，添加或选择一个本地项目。
-3. 创建任务并描述需要执行的工作。
-4. 查看智能体活动、命令输出和文件变更。
+1. 从[最新版本页下载 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) 并安装。
+2. 打开应用，按引导配置模型，添加或选择本地项目；本地工作无需登录 Wegent Backend。
+3. 创建任务，描述需要分析、修改或验证的内容。
+4. 查看智能体活动、命令输出、测试结果和文件 Diff，审查成果。
 
-### Wegent Web 和 Backend
+### 团队协作：从一个 Issue 开始接力
+
+1. 在协作中创建项目；需要多人共享时，先连接 Wegent Backend，再创建或加入云端协作项目。
+2. 添加项目成员；需要 AI 执行时，显式添加智能体，并配置可用的执行环境和模型。
+3. 创建 Issue，填写目标并分配给成员、智能体或协作小组。
+4. 从 Issue 创建关联任务，执行后交付成果；在评论中反馈并转派给下一位处理者。
+5. 需要个人分身接手时，在“我的分身”中配置项目来源、职责与处理方式，按需处理人工问题和确认。
+
+新项目不会自动加入智能体，也不会自动启用分身。具体入口见[协作中的新建 Issue](docs/zh/wegent/user-guide/coding/collaboration-issue-home.md)与[个人分身指南](docs/zh/wework/personal-stand-in.md)。
+
+### 自托管 Wegent Web 和 Backend
 
 使用 Docker 以 Standalone 模式启动自托管 Web 应用和 Backend：
 
@@ -115,7 +74,25 @@ Wework 也可以连接 Wegent Backend 使用共享项目空间、模型和远程
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
 ```
 
-启动后打开 http://localhost:3000，按页面引导设置管理员密码并配置模型。更多部署方式见 [安装指南](docs/zh/wegent/getting-started/installation.md) 和 [Standalone 模式](docs/zh/wegent/deployment/standalone-mode.md)。
+启动后打开 http://localhost:3000，按页面引导设置管理员密码并配置模型。更多部署方式见[安装指南](docs/zh/wegent/getting-started/installation.md)和 [Standalone 模式](docs/zh/wegent/deployment/standalone-mode.md)。
+
+## 产品组成
+
+### Wework / Wegent Desktop
+
+Wework 是 Wegent 的桌面工作台，连接项目协作与实际执行。它保留完整的本地编码能力：按项目和任务组织会话，直接处理文件、运行命令和测试，在同一个工作台审查变更与 Diff。连接 Backend 后，还可使用共享项目空间、云端模型和远程执行设备。
+
+<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-desktop-workbench.png" width="100%" alt="Wegent Desktop 中真实执行的编码任务，在同一个工作台展示验证结果、变更文件和展开的源码 Diff" />
+
+<p align="center"><sub>在 Wegent Desktop 中执行并审查本地编码任务。</sub></p>
+
+### Wegent Web 和 Backend
+
+Wegent Web 提供浏览器端项目协作、远程智能体、知识库、自动化和管理入口。智能体使用配置好的模型、知识、Skills 和工具；Backend 提供共享项目资源、访问权限、API、调度和执行设备管理。团队可以自托管 Web 和 Backend，管理服务与数据。
+
+<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-remote-agent.png" width="100%" alt="Wegent 远程智能体调用工具生成并展示甘特图" />
+
+<p align="center"><sub>Wegent 远程智能体调用工具生成甘特图。</sub></p>
 
 ## 开发
 
@@ -133,6 +110,8 @@ pnpm --filter wework dev:mac
 ```
 
 桌面端的开发、构建和发布说明见 [wework/README.md](wework/README.md)；`wework/` 是当前桌面应用源码目录。
+
+桌面架构中，Electron 提供系统能力并管理进程，DeepSeek Harness（DSH）托管产品界面与插件，Executor 管理任务和会话并驱动 Codex 执行。插件扩展点见 [DSH 应用宿主](wework/dsh/app-wework/README.md)，多人协作的资源与执行边界见[云项目协作架构](docs/zh/wegent/developer-guide/cloud-project-collaboration.md)。
 
 ## 仓库结构
 
@@ -256,17 +235,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/cc-yafei">
-                    <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
-                    <br />
-                    <sub><b>YaFei Liu</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/luckjun529-lang">
                     <img src="https://avatars.githubusercontent.com/u/224970532?v=4" width="80;" alt="luckjun529-lang"/>
                     <br />
                     <sub><b>junlong chen</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/cc-yafei">
+                    <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
+                    <br />
+                    <sub><b>YaFei Liu</b></sub>
                 </a>
             </td>
 		</tr>
@@ -337,6 +316,13 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/sleetdrop">
+                    <img src="https://avatars.githubusercontent.com/u/88603?v=4" width="80;" alt="sleetdrop"/>
+                    <br />
+                    <sub><b>sleetdrop</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/lvmowei">
                     <img src="https://avatars.githubusercontent.com/u/5328905?v=4" width="80;" alt="lvmowei"/>
                     <br />
@@ -348,13 +334,6 @@ pnpm --filter wework dev:mac
                     <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
                     <br />
                     <sub><b>Xuemin</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/sleetdrop">
-                    <img src="https://avatars.githubusercontent.com/u/88603?v=4" width="80;" alt="sleetdrop"/>
-                    <br />
-                    <sub><b>sleetdrop</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -453,6 +432,13 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/WangZhuo2015">
+                    <img src="https://avatars.githubusercontent.com/u/12570477?v=4" width="80;" alt="WangZhuo2015"/>
+                    <br />
+                    <sub><b>wang zhuo</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/Qinxl0921">
                     <img src="https://avatars.githubusercontent.com/u/79916629?v=4" width="80;" alt="Qinxl0921"/>
                     <br />
@@ -494,6 +480,8 @@ pnpm --filter wework dev:mac
                     <sub><b>Jasper Zhong</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/rayzhang0603">
                     <img src="https://avatars.githubusercontent.com/u/2917437?v=4" width="80;" alt="rayzhang0603"/>
@@ -501,8 +489,6 @@ pnpm --filter wework dev:mac
                     <sub><b>Ray</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/RichardoMrMu">
                     <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
@@ -552,6 +538,8 @@ pnpm --filter wework dev:mac
                     <sub><b>Graindt</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/haohaitao">
                     <img src="https://avatars.githubusercontent.com/u/26541344?v=4" width="80;" alt="haohaitao"/>
@@ -559,8 +547,6 @@ pnpm --filter wework dev:mac
                     <sub><b>haohaitao</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/qingchengliu">
                     <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>
@@ -573,13 +559,6 @@ pnpm --filter wework dev:mac
                     <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
                     <br />
                     <sub><b>Salt-hai</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/WangZhuo2015">
-                    <img src="https://avatars.githubusercontent.com/u/12570477?v=4" width="80;" alt="WangZhuo2015"/>
-                    <br />
-                    <sub><b>wang zhuo</b></sub>
                 </a>
             </td>
             <td align="center">

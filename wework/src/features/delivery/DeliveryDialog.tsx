@@ -405,7 +405,11 @@ export function DeliveryDialog({
         </div>
 
         <footer className="flex h-14 shrink-0 items-center border-t border-border px-5">
-          {error && <p className="min-w-0 flex-1 truncate text-xs text-red-600">{error}</p>}
+          {error && (
+            <p className="min-w-0 flex-1 truncate text-xs text-destructive wework:text-red-600">
+              {error}
+            </p>
+          )}
           {!error && (
             <p className="min-w-0 flex-1 text-xs text-text-muted">{t('delivery.immutable_hint')}</p>
           )}
