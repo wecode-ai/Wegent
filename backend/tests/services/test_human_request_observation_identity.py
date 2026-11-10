@@ -2,16 +2,26 @@
 
 import json
 from copy import deepcopy
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import insert, select
 
 from app.models.delivery import LoopItem
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.wework_notification import WeworkNotification
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.human_requests import settle_reply
 from tests.services.test_issue_human_requests import claim, handoff
 from tests.services.test_loop_item_executions import _make_bot, _make_execution
+
+
+@pytest.fixture(autouse=True)
+def isolated_notification_delivery(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.wework_notifications.deliver_notification", AsyncMock()
+    )
 
 
 def test_settlement_acknowledges_only_recipient_and_responsible_inboxes(
@@ -48,10 +58,8 @@ def test_settlement_acknowledges_only_recipient_and_responsible_inboxes(
     assert not test_db.get(WeworkNotification, "scope-2").is_read
 
 
-@pytest.mark.parametrize("old_message_id", [None, "previous-turn-message"])
-def test_old_observation_cannot_settle_new_answer(
-    test_db, test_user, handoff, old_message_id
-):
+@pytest.fixture
+def claimed_answer_execution(test_db, test_user, handoff):
     project, item, message = handoff
     bot = _make_bot(test_db, project, test_user)
     execution = _make_execution(test_db, item, bot, test_user)
@@ -76,6 +84,16 @@ def test_old_observation_cannot_settle_new_answer(
     )
     assert claimed is not None
     claim(test_db, test_user, handoff)
+    test_db.commit()
+    return claimed
+
+
+@pytest.mark.parametrize("old_message_id", [None, "previous-turn-message"])
+def test_old_observation_cannot_settle_new_answer(
+    test_db, test_user, handoff, claimed_answer_execution, old_message_id
+):
+    project, item, message = handoff
+    claimed = claimed_answer_execution
     table = LoopItem.__table__
     test_db.execute(
         insert(table).values(
@@ -120,3 +138,75 @@ def test_old_observation_cannot_settle_new_answer(
             select(table.c.id).where(table.c.id == "answer-question-index")
         ).scalar_one_or_none()
         assert index == ("answer-question-index" if sequence == 1 else None)
+
+
+@pytest.mark.parametrize("ack_sequence", [1, 3])
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "exact",
+        "other-message",
+        "other-turn",
+        "other-owner",
+        "other-execution",
+        "unfinished",
+    ],
+)
+def test_late_answer_acknowledgement_preserves_terminal_execution(
+    test_db, test_user, handoff, claimed_answer_execution, ack_sequence, identity
+):
+    project, item, message = handoff
+    execution = claimed_answer_execution
+    # Completion was already elected using the native turn, before the exact
+    # input acknowledgement arrived. Keep the earlier lifecycle transition out
+    # of this regression's database precondition.
+    test_db.add(
+        ProjectChatMessage(
+            message_id="late-ack-result",
+            project_id=project.id,
+            task_id=item.id,
+            sender_type="agent",
+            sender_id=execution.agent_id,
+            sender_name="Test agent",
+            content="Finished reply",
+            status="running" if identity == "unfinished" else "completed",
+            runtime_device_id=execution.runtime_device_id,
+            runtime_task_id=execution.runtime_task_id,
+            trigger_message_id=message.message_id,
+            metadata_json={
+                "execution_id": -1 if identity == "other-execution" else execution.id,
+                "runtime_turn_id": "accepted-turn",
+                "runtime_completed_at": datetime.now(UTC).isoformat(),
+            },
+        )
+    )
+    execution.status = "completed"
+    execution.last_event_seq = 2
+    test_db.commit()
+    test_db.refresh(execution)
+    assert execution.status == "completed"
+    version, sequence = execution.version, execution.last_event_seq
+
+    observed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        event_name="response.created",
+        payload={
+            "eventSeq": ack_sequence,
+            "subtaskId": "other-turn" if identity == "other-turn" else "accepted-turn",
+            "clientUserMessageId": (
+                "previous-turn-message"
+                if identity == "other-message"
+                else message.message_id
+            ),
+        },
+        owner_user_id=test_user.id + (1 if identity == "other-owner" else 0),
+    )
+    assert observed is None, "Late acceptance must not reopen a completed execution"
+    test_db.expire_all()
+    question = test_db.get(LoopItem, item.id).metadata_json["human_requests"][0]
+    assert question["status"] == ("resolved" if identity == "exact" else "answering")
+    assert question["answer_message_id"] == message.message_id
+    assert execution.status == "completed"
+    assert (execution.version, execution.last_event_seq) == (version, sequence)

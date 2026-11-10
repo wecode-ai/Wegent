@@ -1994,6 +1994,7 @@ class LoopItemExecutionService:
         runtime_task_id: str,
         owner_user_id: int | None = None,
         include_initial_manager: bool = False,
+        include_completed: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Resolve a Runtime identity; activity recovery may include its manager.
 
@@ -2014,7 +2015,9 @@ class LoopItemExecutionService:
         query = db.query(LoopItemExecution).filter(
             LoopItemExecution.runtime_device_id.in_(device_ids),
             LoopItemExecution.runtime_task_id.in_(task_ids),
-            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            LoopItemExecution.status.in_(
+                CAPACITY_STATUSES | ({STATUS_COMPLETED} if include_completed else set())
+            ),
         )
         if owner_user_id is not None:
             query = query.filter(
@@ -3295,6 +3298,14 @@ class LoopItemExecutionService:
             runtime_task_id=runtime_task_id,
             owner_user_id=owner_user_id,
         )
+        if row is None and event_name == "response.created":
+            row = self.execution_for_runtime(
+                db,
+                runtime_device_id=device_id,
+                runtime_task_id=runtime_task_id,
+                owner_user_id=owner_user_id,
+                include_completed=True,
+            )
         if row is None:
             return None
         terminal = self._terminal_status(event_name, payload)
@@ -3317,22 +3328,25 @@ class LoopItemExecutionService:
                 event_name,
             )
             return None
+        if row.status in TERMINAL_STATUSES:
+            from app.services.project_chat.human_requests import settle_terminal_reply
+
+            settle_terminal_reply(db, row, event_name=event_name, payload=payload)
+            logger.info(
+                "[LoopItemExecution] Ignored Runtime event after terminal truth "
+                "execution=%s status=%s incoming_seq=%s event=%s",
+                row.id,
+                row.status,
+                event_seq,
+                event_name,
+            )
+            return None
         if event_seq is not None and event_seq <= row.last_event_seq:
             logger.info(
                 "[LoopItemExecution] Ignored duplicate or reordered Runtime event "
                 "execution=%s current_seq=%s incoming_seq=%s event=%s",
                 row.id,
                 row.last_event_seq,
-                event_seq,
-                event_name,
-            )
-            return None
-        if row.status in TERMINAL_STATUSES:
-            logger.info(
-                "[LoopItemExecution] Ignored Runtime event after terminal truth "
-                "execution=%s status=%s incoming_seq=%s event=%s",
-                row.id,
-                row.status,
                 event_seq,
                 event_name,
             )
