@@ -1,7 +1,6 @@
-import { execFile, type ExecFileOptionsWithStringEncoding } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
+import { spawnReleaseProcess } from './release-preparation-progress.mjs'
 import {
   atomicReleaseWrite,
   optionalText,
@@ -10,7 +9,6 @@ import {
 } from './release-store.js'
 import { terminateProcessTree } from './runtime-supervisor.js'
 
-const execute = promisify(execFile)
 const RECEIPT = 'after-stop-ready.json'
 
 export interface AfterStopMetadata {
@@ -107,18 +105,10 @@ export async function prepareReleaseAfterStop(
     'LC_ALL',
   ])
     if (process.env[key] !== undefined) environment[key] = process.env[key]
-  const executionOptions: ExecFileOptionsWithStringEncoding & { detached: boolean } = {
-    env: environment,
-    detached: process.platform !== 'win32',
-    timeout: 0,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024,
-    windowsHide: true,
-  }
-  const execution = execute(
+  const execution = spawnReleaseProcess(
     release.macosInstallation?.payloadExecutable ?? release.executable,
     [join(release.resources, 'app.asar', 'dist', 'runtime', 'release-after-stop-cli.js'), request],
-    executionOptions
+    { env: environment, maxBuffer: 64 * 1024 }
   )
   try {
     const { stdout } = await execution
@@ -145,7 +135,7 @@ export async function prepareReleaseAfterStop(
       })
     )
   } catch {
-    await terminateProcessTree(execution.child, 10_000)
+    if (execution.child.pid) await terminateProcessTree(execution.child, 10_000)
     // Child diagnostics can contain private session metadata.
     throw new Error('Stopped-release preparation failed; the healthy release will recover')
   }
