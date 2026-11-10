@@ -2,6 +2,7 @@ import { parseDocument, type Document } from 'yaml'
 
 import {
   MODEL_API_FORMATS,
+  MODEL_CUSTOM_TOOL_CONVERSIONS,
   type ModelApiFormat,
   type ModelProvider,
   type ProviderModel,
@@ -17,7 +18,7 @@ export type {
   ModelConfigurationSnapshot,
   ResolvedProviderModel,
 } from './model-configuration-contract.js'
-export { MODEL_API_FORMATS } from './model-configuration-contract.js'
+export { MODEL_API_FORMATS, MODEL_CUSTOM_TOOL_CONVERSIONS } from './model-configuration-contract.js'
 
 const PROVIDER_FIELDS = new Set([
   'id',
@@ -42,6 +43,7 @@ const MODEL_FIELDS = new Set([
   'context_window',
   'max_output_tokens',
   'tool_profile',
+  'custom_tool_conversion',
   'codex_tool_compatibility',
   'web_search_mode',
   'image_generation_enabled',
@@ -129,6 +131,7 @@ function validateModel(value: unknown, path: string, provider: ModelProvider): P
   optionalBoolean(item, 'image_generation_enabled', path)
   optionalEnum(item, 'api_format', MODEL_API_FORMATS, path)
   optionalEnum(item, 'tool_profile', ['custom', 'function', 'shell'], path)
+  optionalEnum(item, 'custom_tool_conversion', MODEL_CUSTOM_TOOL_CONVERSIONS, path)
   optionalEnum(item, 'codex_tool_compatibility', ['native', 'standard'], path)
   optionalEnum(item, 'web_search_mode', ['disabled', 'cached', 'live'], path)
   validatePath(item.request_path, `${path}.request_path`)

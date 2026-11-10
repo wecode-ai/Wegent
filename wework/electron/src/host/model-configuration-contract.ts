@@ -6,6 +6,9 @@ export const MODEL_API_FORMATS = [
 ] as const
 export type ModelApiFormat = (typeof MODEL_API_FORMATS)[number]
 
+export const MODEL_CUSTOM_TOOL_CONVERSIONS = ['none', 'all', 'except_apply_patch'] as const
+export type ModelCustomToolConversion = (typeof MODEL_CUSTOM_TOOL_CONVERSIONS)[number]
+
 export interface ProviderModel {
   id: string
   model_id: string
@@ -16,6 +19,7 @@ export interface ProviderModel {
   context_window?: number
   max_output_tokens?: number
   tool_profile?: 'custom' | 'function' | 'shell'
+  custom_tool_conversion?: ModelCustomToolConversion
   codex_tool_compatibility?: 'native' | 'standard'
   web_search_mode?: 'disabled' | 'cached' | 'live'
   image_generation_enabled?: boolean

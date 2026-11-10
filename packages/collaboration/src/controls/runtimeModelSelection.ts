@@ -36,6 +36,8 @@ export const CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION =
   "weworkCloudModelNativeNamespaceTools";
 export const CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION =
   "weworkCloudModelCodexRequestMode";
+export const CLOUD_MODEL_CUSTOM_TOOL_CONVERSION_OPTION =
+  "weworkCloudModelCustomToolConversion";
 
 const CLOUD_VISION_SIDECAR_CONFIG_KEY = "visionSidecarModel";
 
@@ -304,6 +306,15 @@ export function selectedModelExecutionFields(
       requestMode === "passthrough"
     ) {
       modelOptions[CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION] = requestMode;
+    }
+    const customToolConversion = selectedModel.config?.custom_tool_conversion;
+    if (
+      customToolConversion === "none" ||
+      customToolConversion === "all" ||
+      customToolConversion === "except_apply_patch"
+    ) {
+      modelOptions[CLOUD_MODEL_CUSTOM_TOOL_CONVERSION_OPTION] =
+        customToolConversion;
     }
     if (executionModel.modelNamespace) {
       modelOptions[CLOUD_MODEL_NAMESPACE_OPTION] =

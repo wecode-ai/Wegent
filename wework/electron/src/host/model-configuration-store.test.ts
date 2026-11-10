@@ -46,6 +46,25 @@ describe('Provider YAML schema', () => {
     config.providers[0].models[1].api_format = 'anthropic-messages'
     expect(validateModelConfiguration(config).providers[0].models).toHaveLength(2)
   })
+  test('accepts every custom tool conversion mode and rejects unknown ones', () => {
+    for (const value of ['none', 'all', 'except_apply_patch']) {
+      const config = parseModelConfiguration(
+        YAML.replace(
+          'model_id: upstream-a',
+          `model_id: upstream-a\n        custom_tool_conversion: ${value}`
+        )
+      ).config
+      expect(config.providers[0].models[0].custom_tool_conversion).toBe(value)
+    }
+    expect(() =>
+      parseModelConfiguration(
+        YAML.replace(
+          'model_id: upstream-a',
+          'model_id: upstream-a\n        custom_tool_conversion: sometimes'
+        )
+      )
+    ).toThrow(/custom_tool_conversion/)
+  })
   test('rejects unknown fields, duplicate IDs, incompatible tools and unsafe URLs', () => {
     for (const source of [
       YAML.replace('base_url:', 'base_urll:'),

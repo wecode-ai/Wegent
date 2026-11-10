@@ -28,6 +28,9 @@ export function createPresetProviderModel(presetId: string, modelId: string): Pr
     model_id: modelId,
     provider_profile_id: profile.id,
     tool_profile: profile.toolProfile,
+    ...(profile.customToolConversion
+      ? { custom_tool_conversion: profile.customToolConversion }
+      : {}),
     context_window: contextWindow,
     web_search_mode: profile.webSearchMode,
     image_generation_enabled: profile.imageGenerationEnabled,

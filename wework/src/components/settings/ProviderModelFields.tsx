@@ -191,6 +191,34 @@ export function ProviderModelFields({
           </label>
           {format === 'openai-responses' && (
             <label className="space-y-1 text-sm text-text-secondary">
+              {common('workbench.local_model_custom_tool_conversion_label')}
+              <select
+                className={INPUT}
+                data-testid={`provider-model-custom-tool-conversion-${model.id}`}
+                value={model.custom_tool_conversion ?? ''}
+                onChange={event =>
+                  onChange({
+                    custom_tool_conversion:
+                      (event.target.value as ProviderModel['custom_tool_conversion']) || undefined,
+                  })
+                }
+              >
+                <option value="">
+                  {common('workbench.local_model_custom_tool_conversion_auto')}
+                </option>
+                {(['none', 'all', 'except_apply_patch'] as const).map(value => (
+                  <option key={value} value={value}>
+                    {common(`workbench.local_model_custom_tool_conversion_${value}`)}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-text-tertiary">
+                {common('workbench.local_model_custom_tool_conversion_hint')}
+              </span>
+            </label>
+          )}
+          {format === 'openai-responses' && (
+            <label className="space-y-1 text-sm text-text-secondary">
               {t('toolCompatibility')}
               <select
                 className={INPUT}

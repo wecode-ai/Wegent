@@ -9,7 +9,10 @@ import {
 } from './localModelSettings'
 import { createDefaultLocalModelCatalogEntry } from './localModelCatalog'
 import { codexCatalogModelIdForUpstream } from './codexCatalog'
-import { modelInterfaceToolProfile } from '../../../electron/src/host/model-interface-runtime'
+import {
+  modelInterfaceCustomToolConversion,
+  modelInterfaceToolProfile,
+} from '../../../electron/src/host/model-interface-runtime'
 import { getProviderModelConfigs, replaceProviderModelConfigs } from './providerModelState'
 import type {
   ModelConfigurationSnapshot,
@@ -61,6 +64,12 @@ export function resolveProviderModel(
     providerProfileId: model.provider_profile_id,
     toolProfile: model.tool_profile,
   })
+  const customToolConversion = modelInterfaceCustomToolConversion({
+    apiFormat,
+    providerProfileId: model.provider_profile_id,
+    toolProfile,
+    customToolConversion: model.custom_tool_conversion,
+  })
   const displayName = model.display_name || model.model_id
   const profileId = model.provider_profile_id ?? 'custom'
   const catalogEntry =
@@ -94,6 +103,7 @@ export function resolveProviderModel(
     apiKey: provider.api_key,
     apiKeyConfigured: Boolean(provider.api_key),
     toolProfile,
+    customToolConversion,
     codexToolCompatibility:
       apiFormat === 'openai-responses' ? (model.codex_tool_compatibility ?? 'native') : 'standard',
     contextWindow: model.context_window,
@@ -250,6 +260,7 @@ function modelToFile(config: LocalModelConfig): ProviderModel {
     context_window: config.contextWindow,
     max_output_tokens: config.maxOutputTokens,
     tool_profile: config.toolProfile,
+    custom_tool_conversion: config.customToolConversion,
     codex_tool_compatibility: config.codexToolCompatibility,
     web_search_mode: config.webSearchMode,
     image_generation_enabled: config.imageGenerationEnabled,

@@ -7,6 +7,7 @@ import {
   KIMI_K3_CONTEXT_WINDOW,
   type LocalModelApiFormat,
   type LocalModelConfig,
+  type LocalModelCustomToolConversion,
   type LocalModelToolProfile,
   type LocalModelWebSearchMode,
 } from './localModelSettings'
@@ -34,6 +35,7 @@ export interface LocalModelProviderProfile {
   connectionTest?: LocalModelProviderConnectionTest
   allowedModelIds?: readonly string[]
   toolProfile: LocalModelToolProfile
+  customToolConversion?: LocalModelCustomToolConversion
   group?: string
   contextWindow?: number
   webSearchMode: LocalModelWebSearchMode
@@ -180,6 +182,8 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
       DEEPSEEK_V4_PRO_MODEL_ID,
     ],
     toolProfile: 'function',
+    // DeepSeek accepts apply_patch as its only native custom tool.
+    customToolConversion: 'except_apply_patch',
     group: 'DeepSeek',
     contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
     webSearchMode: 'live',

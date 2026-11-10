@@ -40,8 +40,10 @@ describe('localModelSettings', () => {
     })
 
     expect(responses.toolProfile).toBe('custom')
+    expect(responses.customToolConversion).toBe('none')
     expect(responses.codexToolCompatibility).toBe('native')
     expect(chat.toolProfile).toBe('function')
+    expect(chat.customToolConversion).toBe('all')
     expect(chat.codexToolCompatibility).toBe('standard')
     expect(() =>
       saveLocalModelConfig({
@@ -58,6 +60,21 @@ describe('localModelSettings', () => {
       toolProfile: 'function',
     })
     expect(functionResponses.toolProfile).toBe('function')
+    expect(functionResponses.customToolConversion).toBe('all')
+  })
+
+  test('keeps an explicit custom tool conversion independent of the tool mode', () => {
+    const model = saveLocalModelConfig({
+      modelId: 'deepseek-model',
+      baseUrl: 'https://api.deepseek.com',
+      apiFormat: 'openai-responses',
+      toolProfile: 'function',
+      customToolConversion: 'except_apply_patch',
+    })
+
+    expect(model.toolProfile).toBe('function')
+    expect(model.customToolConversion).toBe('except_apply_patch')
+    expect(listLocalModelConfigs()[0].customToolConversion).toBe('except_apply_patch')
   })
 
   test('persists an explicit standard Responses compatibility override', () => {

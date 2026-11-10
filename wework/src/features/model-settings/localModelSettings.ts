@@ -4,7 +4,11 @@ import {
   type LocalModelCatalogEntry,
 } from './localModelCatalog'
 import { builtinCodexCatalogModel, codexCatalogModelIdForUpstream } from './codexCatalog'
-import { modelInterfaceToolProfile } from '../../../electron/src/host/model-interface-runtime'
+import type { ModelCustomToolConversion } from '../../../electron/src/host/model-configuration-contract'
+import {
+  modelInterfaceCustomToolConversion,
+  modelInterfaceToolProfile,
+} from '../../../electron/src/host/model-interface-runtime'
 
 export const KIMI_CODING_CONTEXT_WINDOW = 262_144
 export const KIMI_K3_CONTEXT_WINDOW = 1_048_576
@@ -24,6 +28,7 @@ export interface LocalModelConfig {
   apiFormat: LocalModelApiFormat
   codexToolCompatibility?: LocalModelCodexToolCompatibility
   toolProfile: LocalModelToolProfile
+  customToolConversion: LocalModelCustomToolConversion
   requestPath?: string
   apiKey?: string
   apiKeyConfigured?: boolean
@@ -49,6 +54,8 @@ export type LocalModelWebSearchMode = 'disabled' | 'cached' | 'live'
 
 export type LocalModelToolProfile = 'custom' | 'function' | 'shell'
 
+export type LocalModelCustomToolConversion = ModelCustomToolConversion
+
 export type LocalModelCodexToolCompatibility = 'native' | 'standard'
 
 export interface SaveLocalModelConfigInput {
@@ -61,6 +68,7 @@ export interface SaveLocalModelConfigInput {
   apiFormat?: LocalModelApiFormat | null
   codexToolCompatibility?: LocalModelCodexToolCompatibility | null
   toolProfile?: LocalModelToolProfile | null
+  customToolConversion?: LocalModelCustomToolConversion | null
   requestPath?: string | null
   apiKey?: string | null
   contextWindow?: number | string | null
@@ -125,6 +133,21 @@ export function normalizeLocalModelToolProfile(
   return modelInterfaceToolProfile({ apiFormat, toolProfile: value })
 }
 
+/** Derive the wire-level conversion default from the model and provider configuration. */
+export function normalizeLocalModelCustomToolConversion(
+  value: string | null | undefined,
+  toolProfile: LocalModelToolProfile,
+  providerProfileId?: string,
+  apiFormat: LocalModelApiFormat = 'openai-responses'
+): LocalModelCustomToolConversion {
+  return modelInterfaceCustomToolConversion({
+    apiFormat,
+    providerProfileId,
+    toolProfile,
+    customToolConversion: value,
+  })
+}
+
 function validateLocalModelToolProfile(
   toolProfile: LocalModelToolProfile,
   apiFormat: LocalModelApiFormat
@@ -167,6 +190,10 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
       record.toolProfile === 'custom' ||
       record.toolProfile === 'function' ||
       record.toolProfile === 'shell') &&
+    (record.customToolConversion === undefined ||
+      record.customToolConversion === 'none' ||
+      record.customToolConversion === 'all' ||
+      record.customToolConversion === 'except_apply_patch') &&
     (record.apiKeyConfigured === undefined || typeof record.apiKeyConfigured === 'boolean') &&
     (record.requestPath === undefined || typeof record.requestPath === 'string') &&
     (record.requestUrlMode === undefined ||
@@ -229,13 +256,18 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
           requestPath: normalizeLocalModelRequestPath(preferredRequestPath, apiFormat),
         }
   const isCustomProvider = (providerProfileId ?? 'custom') === 'custom'
+  const toolProfile = modelInterfaceToolProfile({
+    apiFormat,
+    providerProfileId,
+    toolProfile: legacyConfig.toolProfile,
+  })
   const catalogEntry =
     legacyConfig.catalogEntry ??
     (isCustomProvider
       ? createDefaultLocalModelCatalogEntry({
           id: legacyConfig.id,
           displayName: legacyConfig.displayName,
-          toolProfile: normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
+          toolProfile,
           contextWindow: legacyConfig.contextWindow,
         })
       : undefined)
@@ -268,11 +300,13 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       legacyConfig.codexToolCompatibility,
       apiFormat
     ),
-    toolProfile: modelInterfaceToolProfile({
-      apiFormat,
+    toolProfile,
+    customToolConversion: normalizeLocalModelCustomToolConversion(
+      legacyConfig.customToolConversion,
+      toolProfile,
       providerProfileId,
-      toolProfile: legacyConfig.toolProfile,
-    }),
+      apiFormat
+    ),
     ...(legacyConfig.apiKey ? { apiKey: legacyConfig.apiKey } : {}),
     apiKeyConfigured: legacyConfig.apiKeyConfigured ?? Boolean(legacyConfig.apiKey),
     ...(providerContextWindow
@@ -530,6 +564,12 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     providerProfileId: input.providerProfileId ?? previous?.providerProfileId,
     toolProfile: input.toolProfile ?? previous?.toolProfile,
   })
+  const customToolConversion = normalizeLocalModelCustomToolConversion(
+    input.customToolConversion ?? previous?.customToolConversion,
+    toolProfile,
+    input.providerProfileId ?? previous?.providerProfileId,
+    apiFormat
+  )
   const codexToolCompatibility = normalizeLocalModelCodexToolCompatibility(
     input.codexToolCompatibility ?? previous?.codexToolCompatibility,
     apiFormat
@@ -597,6 +637,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     apiFormat,
     codexToolCompatibility,
     toolProfile,
+    customToolConversion,
     requestPath,
     apiKey,
     apiKeyConfigured: Boolean(apiKey),

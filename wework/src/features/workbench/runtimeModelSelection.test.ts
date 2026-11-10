@@ -17,6 +17,7 @@ describe('runtimeModelSelection', () => {
           protocol: 'openai-responses',
           reasoning: { effort: 'high', summary: 'detailed' },
           codex_request_mode: mode,
+          custom_tool_conversion: 'except_apply_patch',
           native_tool_search: true,
         },
       }
@@ -25,6 +26,7 @@ describe('runtimeModelSelection', () => {
         reasoning: 'high',
         summary: 'detailed',
         weworkCloudModelCodexRequestMode: mode,
+        weworkCloudModelCustomToolConversion: 'except_apply_patch',
         weworkCloudModelNativeToolSearch: String(mode === 'passthrough'),
         weworkCloudModelNativeNamespaceTools: String(mode === 'passthrough'),
       })

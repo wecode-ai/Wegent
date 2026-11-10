@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { ResolvedProviderModel } from './model-configuration-contract.js'
 import {
+  modelInterfaceCustomToolConversion,
   modelInterfaceRunnerModels,
   modelInterfaceRuntimeConfig,
   modelInterfaceToolProfile,
@@ -66,21 +67,60 @@ describe('device-owned model interfaces', () => {
       ])
       expect(foreground.tool_profile).toBe('function')
       expect(background.modelConfig.tool_profile).toBe('function')
+      expect(foreground.custom_tool_conversion).toBe('except_apply_patch')
+      expect(background.modelConfig.custom_tool_conversion).toBe('except_apply_patch')
       expect(foreground.upstream_api_format).toBe('openai-responses')
     }
   )
 
   test('does not change native custom tools for other providers', () => {
+    const config = modelInterfaceRuntimeConfig({
+      id: 'native',
+      modelId: 'native',
+      displayName: 'Native',
+      baseUrl: 'https://example.com',
+      apiFormat: 'openai-responses',
+      toolProfile: 'custom',
+    })
+    expect(config.tool_profile).toBe('custom')
+    expect(config.custom_tool_conversion).toBe('none')
+  })
+
+  test.each([
+    ['none', 'function', 'none'],
+    ['all', 'custom', 'all'],
+    ['except_apply_patch', 'custom', 'except_apply_patch'],
+    [undefined, 'function', 'all'],
+    [undefined, 'custom', 'none'],
+  ] as const)(
+    'resolves %s custom tool conversion with the %s tool profile',
+    (customToolConversion, toolProfile, expected) => {
+      expect(
+        modelInterfaceCustomToolConversion({
+          apiFormat: 'openai-responses',
+          toolProfile,
+          customToolConversion,
+        })
+      ).toBe(expected)
+    }
+  )
+
+  test('keeps the DeepSeek model default explicit and endpoint independent', () => {
     expect(
-      modelInterfaceRuntimeConfig({
-        id: 'native',
-        modelId: 'native',
-        displayName: 'Native',
-        baseUrl: 'https://example.com',
+      modelInterfaceCustomToolConversion({
         apiFormat: 'openai-responses',
+        providerProfileId: 'deepseek',
         toolProfile: 'custom',
-      }).tool_profile
-    ).toBe('custom')
+      })
+    ).toBe('except_apply_patch')
+    expect(
+      modelInterfaceCustomToolConversion({
+        apiFormat: 'openai-responses',
+        providerProfileId: 'deepseek',
+        toolProfile: 'custom',
+        customToolConversion: 'except_apply_patch',
+      })
+    ).toBe('except_apply_patch')
   })
 
   test('materializes the same upstream configuration for ordinary and background work', () => {

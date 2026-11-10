@@ -21,6 +21,22 @@ export function modelInterfaceToolProfile(config: {
     : profile
 }
 
+/** Resolve the custom-tool wire format from explicit configuration or the model default. */
+export function modelInterfaceCustomToolConversion(config: {
+  apiFormat: string
+  providerProfileId?: string
+  toolProfile?: string | null
+  customToolConversion?: string | null
+}): NonNullable<ProviderModel['custom_tool_conversion']> {
+  const value = config.customToolConversion
+  if (value === 'none' || value === 'all' || value === 'except_apply_patch') return value
+  // DeepSeek accepts custom apply_patch, but not Code Mode's custom exec.
+  if (config.providerProfileId === 'deepseek' && config.apiFormat === 'openai-responses') {
+    return 'except_apply_patch'
+  }
+  return modelInterfaceToolProfile(config) === 'function' ? 'all' : 'none'
+}
+
 /** Normalized settings shared by ordinary tasks and device-owned runner models. */
 export interface ModelInterfaceRuntimeInput {
   id: string
@@ -32,6 +48,7 @@ export interface ModelInterfaceRuntimeInput {
   requestUrl?: string
   apiKey?: string
   toolProfile?: string
+  customToolConversion?: string
   providerProfileId?: string
   codexToolCompatibility?: string
   codexCatalogModelId?: string
@@ -73,6 +90,7 @@ export function modelInterfaceRuntimeConfig(
     native_tool_search: nativeTools,
     native_namespace_tools: nativeTools,
     tool_profile: modelInterfaceToolProfile(config),
+    custom_tool_conversion: modelInterfaceCustomToolConversion(config),
     protocol: 'openai-responses',
     base_url: config.baseUrl,
     responses_url: config.requestUrl ?? `${config.baseUrl.replace(/\/+$/, '')}${requestPath}`,
@@ -109,6 +127,7 @@ export function modelInterfaceRunnerModels(entries: ResolvedProviderModel[]) {
         : provider.request_path),
     apiKey: provider.api_key,
     toolProfile: model.tool_profile,
+    customToolConversion: model.custom_tool_conversion,
     providerProfileId: model.provider_profile_id,
     codexToolCompatibility: model.codex_tool_compatibility,
     codexCatalogModelId:

@@ -245,6 +245,7 @@ import {
   CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
   CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
   CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION,
+  CLOUD_MODEL_CUSTOM_TOOL_CONVERSION_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
@@ -1170,6 +1171,13 @@ function localRuntimeModelConfig(
       modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION] == null
         ? nativeByDefault
         : modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
+    const customToolConversion = modelOptions?.[CLOUD_MODEL_CUSTOM_TOOL_CONVERSION_OPTION]
+    if (
+      customToolConversion != null &&
+      !['none', 'all', 'except_apply_patch'].includes(customToolConversion)
+    ) {
+      throw new Error('Invalid custom tool conversion for the selected model protocol')
+    }
     const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
     const primaryCodexCatalogModelId =
       modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_CODEX_CATALOG_MODEL_ID
@@ -1180,6 +1188,7 @@ function localRuntimeModelConfig(
       native_tool_search: nativeToolSearch,
       native_namespace_tools: nativeNamespaceTools,
       tool_profile: 'custom',
+      ...(customToolConversion ? { custom_tool_conversion: customToolConversion } : {}),
       ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
@@ -1260,7 +1269,9 @@ async function harnessProxyUpstream(
     base_url: baseUrl,
     request_url: requestUrl,
     api_format: apiFormat,
-    convert_custom_tools: config.tool_profile === 'function',
+    custom_tool_conversion:
+      recordString(config.custom_tool_conversion) ??
+      (config.tool_profile === 'function' ? 'all' : 'none'),
     native_tool_search: nativeToolSearch,
     native_namespace_tools: nativeNamespaceTools,
     codex_request_mode: recordString(config.codex_request_mode) ?? 'auto',
