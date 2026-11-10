@@ -43,7 +43,7 @@ IM Channel Integration connects Wegent agents to instant messaging platforms, al
 | **DingTalk** | ✅ Available | Stream mode, AI Card streaming, multi-turn conversations |
 | **Telegram** | ✅ Available | Private chat, command flow, chat/stand-in modes, streaming message updates |
 | **Discord** | ✅ Available | Private chat, command flow, chat/stand-in modes |
-| **Weibo DM** | ✅ Available | Private chat, WebSocket connection, streaming message accumulation, Wework local task continuation |
+| **Weibo DM** | ✅ Available | Private chat, WebSocket connection, streaming message accumulation, chat/stand-in modes |
 | **Feishu/Lark** | 🔜 Planned | Coming soon |
 | **WeChat Work** | 🔜 Planned | Coming soon |
 
