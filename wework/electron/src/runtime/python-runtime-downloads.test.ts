@@ -144,7 +144,9 @@ test.each(['headers', 'body'] as const)(
         )
     )
     const pending = fetchPythonRuntimeDownloads(input)
-    const rejected = expect(pending).rejects.toThrow('timed out after 200ms')
+    const rejected = expect(pending).rejects.toThrow(
+      `timed out after 200ms; phase=${stage}, elapsedMs=200, phaseElapsedMs=200`
+    )
     await vi.advanceTimersByTimeAsync(199)
     expect(input.fetch.mock.calls[0][1].signal.aborted).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
@@ -152,6 +154,20 @@ test.each(['headers', 'body'] as const)(
     expect(input.fetch.mock.calls[0][1].signal.aborted).toBe(true)
   }
 )
+
+test('distinguishes a stalled backend identity check from stalled HTTP transport', async () => {
+  vi.useFakeTimers()
+  const input = options()
+  input.connection
+    .mockResolvedValueOnce({ apiBaseUrl: 'https://backend.example.invalid/custom/api/' })
+    .mockResolvedValueOnce({ apiBaseUrl: 'https://backend.example.invalid/custom/api/' })
+    .mockImplementationOnce(() => new Promise(() => {}))
+  const pending = fetchPythonRuntimeDownloads(input)
+  const rejected = expect(pending).rejects.toThrow('phase=backend-check')
+  await vi.advanceTimersByTimeAsync(200)
+  await rejected
+  expect(input.fetch.mock.calls[0][1].signal.aborted).toBe(true)
+})
 
 test('accepts both artifact addresses arriving before the deadline and clears its timer', async () => {
   vi.useFakeTimers()
