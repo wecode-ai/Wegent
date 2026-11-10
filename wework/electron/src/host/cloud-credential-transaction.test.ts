@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CloudCredentialService } from './cloud-credential-service.js'
 import { createTestSecretProtection } from '../../test/secret-protection.js'
+import { protectedCredentialDirectory } from './credential-storage-paths.js'
 
 const protection = createTestSecretProtection()
 
@@ -28,7 +29,9 @@ async function fixture() {
   const request = vi.fn<typeof fetch>()
   const service = new CloudCredentialService(root, request, protection)
   const stored = async () => {
-    const envelope = JSON.parse(await readFile(join(root, 'cloud-credentials.json'), 'utf8'))
+    const envelope = JSON.parse(
+      await readFile(join(protectedCredentialDirectory(root), 'cloud-credentials.json'), 'utf8')
+    )
     return envelope.version === 3
       ? protection.decrypt(envelope.ciphertext)
       : JSON.stringify(envelope)
@@ -48,7 +51,11 @@ async function fixture() {
   }
   await service.commitAuthorization(await stage(backend, 'active-refresh'), 7)
   const expectCleared = async () => {
-    expect(JSON.parse(await readFile(join(root, 'cloud-credentials.json'), 'utf8'))).toEqual({
+    expect(
+      JSON.parse(
+        await readFile(join(protectedCredentialDirectory(root), 'cloud-credentials.json'), 'utf8')
+      )
+    ).toEqual({
       version: 3,
       ciphertext: null,
     })
@@ -198,7 +205,13 @@ describe('native cloud authorization transaction', () => {
       const { root, service, stored, request } = await fixture()
       const credential = JSON.parse(await stored())
       delete credential.ownerUserId
-      await writeFile(join(root, 'cloud-credentials.json'), JSON.stringify(credential))
+      await writeFile(
+        join(protectedCredentialDirectory(root), 'cloud-credentials.json'),
+        JSON.stringify({
+          version: 3,
+          ciphertext: await protection.encrypt(JSON.stringify(credential)),
+        })
+      )
       request.mockResolvedValueOnce(json({ access_token: 'verified-access', expires_in: 3600 }))
       request.mockResolvedValueOnce(json({ id: actualOwner }))
       const refresh = service.refreshAccessToken(backend, 7)
@@ -227,7 +240,13 @@ describe('native cloud authorization transaction', () => {
     const { root, service, stored, request, expectCleared } = await fixture()
     const credential = JSON.parse(await stored())
     delete credential.ownerUserId
-    await writeFile(join(root, 'cloud-credentials.json'), JSON.stringify(credential))
+    await writeFile(
+      join(protectedCredentialDirectory(root), 'cloud-credentials.json'),
+      JSON.stringify({
+        version: 3,
+        ciphertext: await protection.encrypt(JSON.stringify(credential)),
+      })
+    )
     request.mockResolvedValueOnce(json({ access_token: 'verified-access', expires_in: 3600 }))
     request.mockResolvedValueOnce(json({ id: 7 }))
     const entered = deferred()

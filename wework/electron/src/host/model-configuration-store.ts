@@ -51,7 +51,8 @@ export class ModelConfigurationStore {
   /** Use an application configuration directory and the existing encrypted credential store. */
   constructor(
     private readonly directory: string,
-    private readonly secrets: Pick<SecureValueStore, 'get' | 'set' | 'delete'>
+    private readonly secrets: Pick<SecureValueStore, 'get' | 'set' | 'delete'>,
+    private readonly legacyDirectory?: string
   ) {}
 
   /** Serialize mutations and reads while allowing later operations after a rejected request. */
@@ -75,8 +76,39 @@ export class ModelConfigurationStore {
       return binding.path
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      if (this.legacyDirectory) await this.importLegacyConfiguration()
       return join(this.directory, 'model.yml')
     }
+  }
+
+  /** Copy the selected legacy file once; old releases keep their file and binding unchanged. */
+  private async importLegacyConfiguration(): Promise<void> {
+    const path = join(this.directory, 'model.yml')
+    let missing = false
+    try {
+      await stat(path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      missing = true
+    }
+    if (missing) {
+      const directory = this.legacyDirectory!
+      let legacyPath = join(directory, 'model.yml')
+      try {
+        const binding = JSON.parse(await readFile(join(directory, 'model-binding.json'), 'utf8'))
+        if (typeof binding.path !== 'string' || !binding.path)
+          throw new Error('Invalid legacy model file binding')
+        legacyPath = binding.path
+      } catch (bindingError) {
+        if ((bindingError as NodeJS.ErrnoException).code !== 'ENOENT') throw bindingError
+      }
+      await this.protectInlineCredentials(
+        await this.load(legacyPath, legacyPath === join(directory, 'model.yml')),
+        path
+      )
+    }
+    // The binding is also a durable import marker for an intentionally empty configuration.
+    await atomicWrite(join(this.directory, 'model-binding.json'), JSON.stringify({ path }))
   }
 
   /** Read and validate a bounded file, allowing an empty initial configuration only when requested. */
@@ -100,10 +132,11 @@ export class ModelConfigurationStore {
 
   /** Remove inline credentials only when accepting the file, never during a stale save check. */
   private async protectInlineCredentials(
-    loaded: LoadedConfiguration
+    loaded: LoadedConfiguration,
+    path = loaded.path
   ): Promise<LoadedConfiguration> {
     let { source } = loaded
-    const { path, config } = loaded
+    const { config } = loaded
     if (config.providers.some(provider => provider.api_key)) {
       const references: string[] = []
       try {
@@ -118,7 +151,7 @@ export class ModelConfigurationStore {
         const { document } = parseModelConfiguration(source)
         patchProviders(document, config.providers)
         const protectedSource = document.toString({ lineWidth: 100 })
-        if ((await readFile(path, 'utf8')) !== source)
+        if ((await readFile(loaded.path, 'utf8')) !== source)
           throw new Error('model.yml changed while securing credentials')
         await atomicWrite(path, protectedSource)
         source = protectedSource
@@ -129,7 +162,7 @@ export class ModelConfigurationStore {
         }
         throw error
       }
-    }
+    } else if (path !== loaded.path) await atomicWrite(path, source)
     return { path, source, revision: digest(path, source), config }
   }
 

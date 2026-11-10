@@ -155,10 +155,11 @@ export function createDesktopScenario({
         const yaml = await readFile(before.path, 'utf8')
         assert.ok(!yaml.includes(SECRET), 'Inline credentials must leave the model file')
         assert.ok(yaml.includes('api_key_ref'))
-        const stored = await readFile(join(electronUserDataDirectory, 'secure-values.json'), 'utf8')
+        const protectedDirectory = join(electronUserDataDirectory, 'protected-credentials')
+        const stored = await readFile(join(protectedDirectory, 'secure-values.json'), 'utf8')
         assert.equal(JSON.parse(stored).version, 3)
         assert.ok(!stored.includes(SECRET))
-        await assert.rejects(readFile(join(electronUserDataDirectory, 'secure-values.key')), {
+        await assert.rejects(readFile(join(protectedDirectory, 'secure-values.key')), {
           code: 'ENOENT',
         })
         await restartDesktopApp()

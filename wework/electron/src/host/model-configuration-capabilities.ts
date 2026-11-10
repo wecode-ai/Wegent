@@ -4,6 +4,7 @@ import type { HostCapabilityRouter } from './capability-router.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
 import type { SecureValueStore } from './secure-value-store.js'
 import { ModelConfigurationStore } from './model-configuration-store.js'
+import { protectedCredentialDirectory } from './credential-storage-paths.js'
 import { probeModelConnection } from '../shared/model-connection-probe.js'
 import { findLocalModelProviderProfile } from '../shared/model-provider-profiles.js'
 
@@ -20,8 +21,9 @@ export function registerModelConfigurationCapabilities(
   /** Lazily share one serialized model configuration service across host capability requests. */
   const store = () =>
     (instance ??= new ModelConfigurationStore(
-      join(app.getPath('userData'), 'model-connections'),
-      secrets
+      join(protectedCredentialDirectory(app.getPath('userData')), 'model-connections'),
+      secrets,
+      join(app.getPath('userData'), 'model-connections')
     ))
   router.register('modelConfiguration.read', async () => {
     const result = await store().read()

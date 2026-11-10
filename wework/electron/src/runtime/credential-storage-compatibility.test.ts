@@ -30,6 +30,12 @@ test('blocks irreversible credential migration unless the actual rollback packag
     store.activation = vi.fn().mockResolvedValue({ from: 'rollback-host' })
     await expect(assertCredentialStorageCompatibility(store, target)).rejects.toThrow('bridge')
     expect(store.read).toHaveBeenCalledWith('rollback-host')
+    await write(target, {
+      version: '0.6.8',
+      weworkCredentialStorageVersion: 3,
+      weworkCredentialStorageMode: 'isolated-copy-once',
+    })
+    await expect(assertCredentialStorageCompatibility(store, target)).resolves.toBeUndefined()
     await write(target, { version: '0.6.7', weworkCredentialStorageVersion: 2 })
     await expect(assertCredentialStorageCompatibility(store, target)).resolves.toBeUndefined()
   } finally {

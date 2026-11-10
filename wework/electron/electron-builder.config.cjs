@@ -34,6 +34,7 @@ module.exports = {
   afterPack: require('./scripts/verify-windows-migration-lock.cjs'),
   extraMetadata: {
     weworkCredentialStorageVersion: 3,
+    weworkCredentialStorageMode: 'isolated-copy-once',
     weworkReadableCredentialStorageVersions: [2, 3],
     weworkDataSchema: 1,
     weworkReadableDataSchemas: [1],

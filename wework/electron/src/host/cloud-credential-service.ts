@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync, randomUUID, sign as signBytes } from '
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { systemSecretProtection, type SecretProtection } from './secret-protection.js'
+import { protectedCredentialDirectory } from './credential-storage-paths.js'
 
 const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS = 30_000
 
@@ -275,8 +276,17 @@ export class CloudCredentialService {
 
   private async readCredential(): Promise<StoredCloudCredential | null> {
     try {
-      const envelope = await this.readEnvelope()
-      if (!envelope) return null
+      let envelope = await this.readEnvelope()
+      const importing = envelope === null
+      if (importing) {
+        envelope = await this.readEnvelope(join(this.dataDirectory, 'cloud-credentials.json'))
+      } else if (envelope?.version !== 3) {
+        throw new CloudCredentialError('credentials_unavailable', 'Invalid protected storage')
+      }
+      if (!envelope) {
+        await this.writeCredential(null, () => {})
+        return null
+      }
       const value =
         envelope.version === 3
           ? envelope.ciphertext === null
@@ -284,7 +294,7 @@ export class CloudCredentialService {
             : JSON.parse(await this.protection.decrypt(envelope.ciphertext ?? ''))
           : envelope
       const credential = normalizeStoredCredential(value)
-      if (credential && envelope.version === 2) {
+      if (importing) {
         await this.writeCredential(credential, () => {})
       }
       return credential
@@ -312,9 +322,11 @@ export class CloudCredentialService {
     }
   }
 
-  private async readEnvelope(): Promise<{ version?: number; ciphertext?: string | null } | null> {
+  private async readEnvelope(
+    path = this.path()
+  ): Promise<{ version?: number; ciphertext?: string | null } | null> {
     try {
-      const envelope = JSON.parse(await readFile(this.path(), 'utf8'))
+      const envelope = JSON.parse(await readFile(path, 'utf8'))
       if (
         !envelope ||
         ![2, 3].includes(envelope.version) ||
@@ -335,11 +347,8 @@ export class CloudCredentialService {
   }
 
   private async removeCredential(): Promise<void> {
-    if ((await this.readEnvelope())?.version === 3) {
-      await this.writeCredential(null, () => {})
-    } else {
-      await rm(this.path(), { force: true })
-    }
+    // A tombstone prevents a later launch from importing a signed-out legacy credential.
+    await this.writeCredential(null, () => {})
   }
 
   private async bindCredentialOwner(
@@ -377,7 +386,7 @@ export class CloudCredentialService {
   }
 
   private path(): string {
-    return join(this.dataDirectory, 'cloud-credentials.json')
+    return join(protectedCredentialDirectory(this.dataDirectory), 'cloud-credentials.json')
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {

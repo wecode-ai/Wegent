@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ReleaseStore } from './release-store.js'
 
-/** Credentials are never restored from snapshots, so the rollback host must read the new format. */
+/** In-place migrations need compatible readers; isolated stores leave the rollback data intact. */
 export async function assertCredentialStorageCompatibility(
   store: ReleaseStore,
   targetResources: string
@@ -11,6 +11,7 @@ export async function assertCredentialStorageCompatibility(
   const written = target.weworkCredentialStorageVersion ?? 2
   if (written === 2) return
   if (written !== 3) throw new Error('Unsupported target credential storage format')
+  if (target.weworkCredentialStorageMode === 'isolated-copy-once') return
   const activation = await store.activation()
   const source = activation ? await store.read(activation.from) : await store.active()
   if (!source || source.resources === targetResources) return
@@ -26,6 +27,7 @@ export async function assertCredentialStorageCompatibility(
 async function packageMetadata(resources: string): Promise<{
   version: string
   weworkCredentialStorageVersion?: number
+  weworkCredentialStorageMode?: string
   weworkReadableCredentialStorageVersions?: number[]
 }> {
   return JSON.parse(await readFile(join(resources, 'app.asar', 'package.json'), 'utf8'))

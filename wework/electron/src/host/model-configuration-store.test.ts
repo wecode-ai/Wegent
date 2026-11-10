@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { stringify } from 'yaml'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -71,6 +71,48 @@ describe('Provider YAML schema', () => {
 })
 
 describe('Provider configuration file store', () => {
+  test.each([false, true])(
+    'imports legacy configuration once and preserves rollback data (bound: %s)',
+    async bound => {
+      const legacy = join(directory, 'legacy')
+      const protectedDirectory = join(directory, 'protected')
+      await mkdir(legacy)
+      const legacyPath = join(legacy, bound ? 'selected.yml' : 'model.yml')
+      await writeFile(legacyPath, YAML)
+      const binding = JSON.stringify({ path: legacyPath })
+      if (bound) await writeFile(join(legacy, 'model-binding.json'), binding)
+      const store = new ModelConfigurationStore(protectedDirectory, secrets, legacy)
+      const snapshot = await store.read()
+      expect(snapshot.error).toBeUndefined()
+      expect(snapshot.path).toBe(join(protectedDirectory, 'model.yml'))
+      expect(await readFile(legacyPath, 'utf8')).toBe(YAML)
+      if (bound) expect(await readFile(join(legacy, 'model-binding.json'), 'utf8')).toBe(binding)
+      expect(await readFile(snapshot.path, 'utf8')).not.toContain('secret-not-for-output')
+      expect((await store.runtime()).models[0].provider.api_key).toBe('secret-not-for-output')
+      const providers = parseModelConfiguration(await readFile(snapshot.path, 'utf8')).config
+        .providers
+      delete providers[0].api_key_ref
+      providers[0].api_key = 'new-store-secret'
+      await store.save(snapshot.revision, providers)
+      expect(await readFile(legacyPath, 'utf8')).toBe(YAML)
+      await rm(legacy, { recursive: true })
+      const reopened = new ModelConfigurationStore(protectedDirectory, secrets, legacy)
+      expect((await reopened.read()).error).toBeUndefined()
+      expect((await reopened.runtime()).models[0].provider.api_key).toBe('new-store-secret')
+    }
+  )
+
+  test('does not import a legacy file created after an empty first initialization', async () => {
+    const legacy = join(directory, 'legacy')
+    const protectedDirectory = join(directory, 'protected')
+    const first = new ModelConfigurationStore(protectedDirectory, secrets, legacy)
+    expect((await first.read()).providers).toEqual([])
+    await mkdir(legacy)
+    await writeFile(join(legacy, 'model.yml'), YAML)
+    const reopened = new ModelConfigurationStore(protectedDirectory, secrets, legacy)
+    expect((await reopened.read()).providers).toEqual([])
+  })
+
   test('resolves draft credentials from its saved provider without persisting changes', async () => {
     const store = new ModelConfigurationStore(directory, secrets)
     const empty = await store.read()

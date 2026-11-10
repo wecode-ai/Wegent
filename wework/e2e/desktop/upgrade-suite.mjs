@@ -1,6 +1,6 @@
 // Increment when the upgrade/rollback acceptance contract changes. Release proof
 // from an older suite cannot authorize a new edge under the current contract.
-export const UPGRADE_SUITE_VERSION = 19
+export const UPGRADE_SUITE_VERSION = 20
 export { RELEASE_PREPARATION_PHASE_TIMEOUT_MS as UPGRADE_PREPARATION_PHASE_TIMEOUT_MS } from '../../electron/src/runtime/release-preparation-progress.mjs'
 export const UPGRADE_CHECKPOINTS = ['app-rollback', 'app-rollback-recovery', 'app-upgrade-recovery']
 export const UPGRADE_PACKAGE_CHECKPOINTS = UPGRADE_CHECKPOINTS
@@ -12,7 +12,7 @@ export const UPGRADE_DIAGNOSTIC_CHECKPOINTS = [
 ]
 export const UPGRADE_CHECKPOINT_GROUP = 'upgrade-and-rollback'
 
-/** Protected credentials must survive the bridge writing and the next target activation. */
+/** Protected credentials must survive rollback and the next target activation. */
 export function credentialsRequireReupgrade(credentials) {
   return credentials.some(entry => entry.format === 3 || entry.storageVersion === 3)
 }
@@ -33,20 +33,28 @@ export function credentialRoundTripPassed(evidence) {
       protection.downloadPrevented !== true)
   )
     return false
-  let format = 2
+  const formats = { shared: 2, 'isolated-copy-once': 3 }
   return (
     evidence.credentials.length === expected.length &&
     evidence.credentials.every((entry, index) => {
+      const mode = entry.storageMode ?? 'shared'
+      if (!Object.hasOwn(formats, mode)) return false
+      const isolated = mode === 'isolated-copy-once'
       if (
         entry.stage !== expected[index] ||
         ![2, 3].includes(entry.storageVersion) ||
-        entry.format !== Math.max(format, entry.storageVersion) ||
+        entry.format !== Math.max(formats[mode], entry.storageVersion) ||
+        (isolated && entry.storageVersion !== 3) ||
+        (isolated &&
+          entry.stage === 'upgraded' &&
+          (entry.legacyFilesPreserved !== true || entry.writeAuthenticated !== true)) ||
+        (isolated && entry.stage === 're-upgraded' && entry.newStoreIndependent !== true) ||
         (entry.stage === 'rolled-back' && entry.writeAuthenticated !== true) ||
         entry.modelAuthenticated !== true ||
         entry.cloudDeviceSignature !== true
       )
         return false
-      format = entry.format
+      formats[mode] = entry.format
       return true
     })
   )

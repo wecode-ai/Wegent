@@ -74,3 +74,29 @@ test('both contracts reject lost writes, failed authentication, downgrades and m
   downgraded.credentials[2].format = 2
   assert.equal(credentialRoundTripPassed(downgraded), false)
 })
+
+test('isolated migration preserves rollback files and keeps subsequent writes independent', () => {
+  const value = evidence(true)
+  value.credentials[2].format = 2
+  for (const index of [1, 3]) {
+    Object.assign(value.credentials[index], {
+      storageMode: 'isolated-copy-once',
+      writeAuthenticated: true,
+      legacyFilesPreserved: true,
+      newStoreIndependent: true,
+    })
+  }
+  assert.equal(credentialRoundTripPassed(value), true)
+  for (const [index, field] of [
+    [1, 'legacyFilesPreserved'],
+    [1, 'writeAuthenticated'],
+    [3, 'newStoreIndependent'],
+  ]) {
+    const invalid = structuredClone(value)
+    invalid.credentials[index][field] = false
+    assert.equal(credentialRoundTripPassed(invalid), false)
+  }
+  const invalid = structuredClone(value)
+  invalid.credentials[3].storageMode = 'unknown'
+  assert.equal(credentialRoundTripPassed(invalid), false)
+})

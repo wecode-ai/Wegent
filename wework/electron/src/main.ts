@@ -213,6 +213,7 @@ import {
   type LocalWorkspaceOpenRequest,
 } from './runtime/local-workspace-cli.js'
 import { SecureValueStore } from './host/secure-value-store.js'
+import { protectedCredentialDirectory } from './host/credential-storage-paths.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { installedMacosReleaseResources } from './runtime/macos-release-installation.js'
 import { syncDockBadge } from './host/dock-badge.js'
@@ -2353,8 +2354,9 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
   const modelConfiguration = new ModelConfigurationStore(
-    join(app.getPath('userData'), 'model-connections'),
-    secureStorage
+    join(protectedCredentialDirectory(app.getPath('userData')), 'model-connections'),
+    secureStorage,
+    join(app.getPath('userData'), 'model-connections')
   )
   embeddedBrowser = new EmbeddedBrowserManager(
     app.getPath('userData'),

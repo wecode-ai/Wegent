@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { HostCapabilityError } from './capability-router.js'
 import { systemSecretProtection, type SecretProtection } from './secret-protection.js'
+import { protectedCredentialDirectory } from './credential-storage-paths.js'
 
 interface StoredValues {
   version: 2 | 3
@@ -77,13 +78,42 @@ export class SecureValueStore {
   }
 
   private async read(): Promise<Record<string, string>> {
+    try {
+      const stored = this.parse(await readFile(this.path(), 'utf8'))
+      if (stored.version !== 3)
+        throw new HostCapabilityError('secure_storage_corrupted', 'Invalid protected storage')
+      return Object.assign(Object.create(null), stored.values)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    return this.importLegacyValues()
+  }
+
+  /** Publish the complete protected copy before leaving legacy files to the rollback host. */
+  private async importLegacyValues(): Promise<Record<string, string>> {
     let source: string
     try {
-      source = await readFile(this.path(), 'utf8')
+      source = await readFile(join(this.dataDirectory, 'secure-values.json'), 'utf8')
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Object.create(null)
-      throw error
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      const values = Object.create(null) as Record<string, string>
+      await this.write(values)
+      return values
     }
+    const stored = this.parse(source)
+    const values: Record<string, string> = Object.create(null)
+    const key =
+      stored.version === 2 ? await readFile(join(this.dataDirectory, 'secure-values.key')) : null
+    if (key && key.length !== 32)
+      throw new HostCapabilityError('secure_storage_corrupted', 'Invalid legacy key')
+    for (const [name, value] of Object.entries(stored.values)) {
+      values[name] = key ? await this.protection.encrypt(this.decryptLegacy(value, key)) : value
+    }
+    await this.write(values)
+    return values
+  }
+
+  private parse(source: string): StoredValues {
     const stored = JSON.parse(source) as StoredValues
     if (
       ![2, 3].includes(stored.version) ||
@@ -94,21 +124,7 @@ export class SecureValueStore {
     ) {
       throw new HostCapabilityError('secure_storage_corrupted', 'Invalid encrypted storage')
     }
-    if (stored.version === 2) {
-      const key = await readFile(join(this.dataDirectory, 'secure-values.key'))
-      if (key.length !== 32)
-        throw new HostCapabilityError('secure_storage_corrupted', 'Invalid legacy key')
-      const protectedValues: Record<string, string> = Object.create(null)
-      for (const [name, value] of Object.entries(stored.values)) {
-        protectedValues[name] = await this.protection.encrypt(this.decryptLegacy(value, key))
-      }
-      await this.write(protectedValues)
-      await rm(join(this.dataDirectory, 'secure-values.key'), { force: true })
-      return protectedValues
-    }
-    // Reclaim a legacy key left behind by an interrupted successful migration.
-    await rm(join(this.dataDirectory, 'secure-values.key'), { force: true })
-    return Object.assign(Object.create(null), stored.values)
+    return stored
   }
 
   private async write(values: Record<string, string>): Promise<void> {
@@ -129,7 +145,7 @@ export class SecureValueStore {
   }
 
   private path(): string {
-    return join(this.dataDirectory, 'secure-values.json')
+    return join(protectedCredentialDirectory(this.dataDirectory), 'secure-values.json')
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {

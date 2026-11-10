@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CloudCredentialError, CloudCredentialService } from './cloud-credential-service.js'
 import { createTestSecretProtection } from '../../test/secret-protection.js'
+import { protectedCredentialDirectory } from './credential-storage-paths.js'
 
 const protection = createTestSecretProtection()
 
@@ -21,7 +22,8 @@ describe('CloudCredentialService', () => {
   test('clears credentials without OS access while retaining v3 for compatible rollback', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
     roots.push(root)
-    const path = join(root, 'cloud-credentials.json')
+    await mkdir(protectedCredentialDirectory(root))
+    const path = join(protectedCredentialDirectory(root), 'cloud-credentials.json')
     await writeFile(
       path,
       JSON.stringify({ version: 3, ciphertext: await protection.encrypt('null') })
@@ -48,7 +50,7 @@ describe('CloudCredentialService', () => {
     electronMocks.netFetch.mockReset()
   })
 
-  test('protects a legacy plaintext credential before completing a read-only authorization preparation', async () => {
+  test('imports a legacy credential once without changing the rollback file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
     roots.push(root)
     const source = JSON.stringify({
@@ -75,12 +77,28 @@ describe('CloudCredentialService', () => {
     await new CloudCredentialService(root, request, protection).prepareAuthorization(
       'https://cloud.example.com/api'
     )
-    const raw = await readFile(path, 'utf8')
+    const protectedPath = join(protectedCredentialDirectory(root), 'cloud-credentials.json')
+    const raw = await readFile(protectedPath, 'utf8')
+    expect(await readFile(path, 'utf8')).toBe(source)
     expect(raw).not.toContain('legacy-private-key')
     expect(raw).not.toContain('legacy-refresh-token')
     const envelope = JSON.parse(raw)
     expect(envelope.version).toBe(3)
     expect(await protection.decrypt(envelope.ciphertext)).toBe(source)
+    await writeFile(path, 'unreadable legacy credential')
+    await expect(
+      new CloudCredentialService(root, request, protection).prepareAuthorization(
+        'https://cloud.example.com/api'
+      )
+    ).resolves.toMatchObject({ publicKey: { x: 'x', y: 'y' } })
+    await new CloudCredentialService(root, request, protection).clear()
+    await writeFile(path, source)
+    await expect(
+      new CloudCredentialService(root, request, protection).refreshAccessToken(
+        'https://cloud.example.com/api',
+        7
+      )
+    ).rejects.toMatchObject({ code: 'credentials_unavailable' })
     expect(request).not.toHaveBeenCalled()
   })
 
@@ -209,7 +227,7 @@ describe('CloudCredentialService', () => {
     const refreshRequest = JSON.parse(String(request.mock.calls[1][1]?.body))
     expect(refreshRequest.refresh_token).toBe('refresh-secret')
     expect(refreshRequest.proof.split('.')).toHaveLength(3)
-    const credentialPath = join(root, 'cloud-credentials.json')
+    const credentialPath = join(protectedCredentialDirectory(root), 'cloud-credentials.json')
     const raw = await readFile(credentialPath, 'utf8')
     expect(raw).not.toContain('refresh-secret')
     expect(raw).not.toContain('PRIVATE KEY')

@@ -5,6 +5,7 @@ import { describe, expect, test } from 'vitest'
 import { createCipheriv, randomBytes } from 'node:crypto'
 import { SecureValueStore } from './secure-value-store.js'
 import { createTestSecretProtection } from '../../test/secret-protection.js'
+import { protectedCredentialDirectory } from './credential-storage-paths.js'
 
 const protection = createTestSecretProtection()
 
@@ -41,13 +42,20 @@ describe('SecureValueStore', () => {
     }
   })
 
-  test('keeps an empty protected store so bridge rollback cannot downgrade future writes', async () => {
+  test('keeps an empty protected store so later reads cannot reimport legacy values', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-secure-values-'))
     try {
       const store = new SecureValueStore(directory, protection)
       await store.set('last', 'secret')
       await store.delete('last')
-      expect(JSON.parse(await readFile(join(directory, 'secure-values.json'), 'utf8'))).toEqual({
+      expect(
+        JSON.parse(
+          await readFile(
+            join(protectedCredentialDirectory(directory), 'secure-values.json'),
+            'utf8'
+          )
+        )
+      ).toEqual({
         version: 3,
         values: {},
       })
@@ -60,21 +68,31 @@ describe('SecureValueStore', () => {
     }
   })
 
-  test('migrates every legacy value before deleting the adjacent decryption key', async () => {
+  test('imports every legacy value once while preserving the rollback files unchanged', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-secure-values-'))
     try {
-      await legacyFixture(directory)
+      const legacy = await legacyFixture(directory)
       const store = new SecureValueStore(directory, protection)
       await expect(store.get('first')).resolves.toBe('legacy-one')
       await expect(store.get('second')).resolves.toBe('legacy-two')
-      const source = await readFile(join(directory, 'secure-values.json'), 'utf8')
+      const source = await readFile(
+        join(protectedCredentialDirectory(directory), 'secure-values.json'),
+        'utf8'
+      )
       expect(JSON.parse(source).version).toBe(3)
       expect(source).not.toContain('legacy-one')
-      await expect(readFile(join(directory, 'secure-values.key'))).rejects.toMatchObject({
-        code: 'ENOENT',
-      })
+      expect(await readFile(join(directory, 'secure-values.key'))).toEqual(legacy.key)
+      expect(await readFile(join(directory, 'secure-values.json'), 'utf8')).toBe(legacy.source)
+      await store.set('first', 'new-store-value')
+      await writeFile(join(directory, 'secure-values.json'), 'unreadable legacy data')
+      await rm(join(directory, 'secure-values.key'))
+      const reopened = new SecureValueStore(directory, protection)
+      await expect(reopened.get('first')).resolves.toBe('new-store-value')
+      await expect(reopened.get('second')).resolves.toBe('legacy-two')
+      await reopened.delete('first')
+      await expect(new SecureValueStore(directory, protection).get('first')).resolves.toBeNull()
       await expect(
-        new SecureValueStore(directory, createTestSecretProtection()).get('first')
+        new SecureValueStore(directory, createTestSecretProtection()).get('second')
       ).rejects.toThrow()
     } finally {
       await rm(directory, { recursive: true, force: true })
@@ -118,6 +136,28 @@ describe('SecureValueStore', () => {
     }
   })
 
+  test('never falls back to legacy data after the protected store exists', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-secure-values-'))
+    try {
+      const legacy = await legacyFixture(directory)
+      const store = new SecureValueStore(directory, protection)
+      await store.get('first')
+      await store.delete('first')
+      await store.delete('second')
+      await expect(new SecureValueStore(directory, protection).get('first')).resolves.toBeNull()
+      await writeFile(
+        join(protectedCredentialDirectory(directory), 'secure-values.json'),
+        legacy.source
+      )
+      await expect(new SecureValueStore(directory, protection).get('first')).rejects.toMatchObject({
+        code: 'secure_storage_corrupted',
+      })
+      expect(await readFile(join(directory, 'secure-values.json'), 'utf8')).toBe(legacy.source)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('persists encrypted values without a recoverable local key', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-secure-values-'))
     const store = new SecureValueStore(directory, protection)
@@ -135,7 +175,7 @@ describe('SecureValueStore', () => {
     await expect(
       new SecureValueStore(directory, protection).get('plugin.credential')
     ).resolves.toBe('secret-value')
-    const valuesPath = join(directory, 'secure-values.json')
+    const valuesPath = join(protectedCredentialDirectory(directory), 'secure-values.json')
     const keyPath = join(directory, 'secure-values.key')
     expect(await readFile(valuesPath, 'utf8')).not.toContain('secret-value')
     await expect(readFile(keyPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -148,7 +188,7 @@ describe('SecureValueStore', () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-secure-values-'))
     const store = new SecureValueStore(directory, protection)
     await store.set('plugin.credential', 'secret-value')
-    const valuesPath = join(directory, 'secure-values.json')
+    const valuesPath = join(protectedCredentialDirectory(directory), 'secure-values.json')
     const stored = JSON.parse(await readFile(valuesPath, 'utf8')) as {
       version: number
       values: Record<string, string>
