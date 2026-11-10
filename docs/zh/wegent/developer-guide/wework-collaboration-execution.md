@@ -35,6 +35,8 @@ flowchart LR
 路由任务向满足当前授权、模型和 Issue 绑定的设备发送通知，并使用设备所有者的连接身份。
 `LOCAL_RUNTIME_WORK_POLL_INTERVAL` 可覆盖默认 5 秒间隔；连接恢复和通知仍触发立即领取。
 
+Runtime 运行态和终态事件在写回前都锁定并刷新同一执行记录，按“执行 → 活动”顺序更新投影。接收确认或租约更新不能使已经收到的 `response.created` 因旧版本而丢失；设备与所有者匹配、事件序列单调性和终态保护保持不变。
+
 ## 分身接单身份
 
 普通人工分配的 `human_task_binding.assignmentId` 是 Issue 分配事件 ID。

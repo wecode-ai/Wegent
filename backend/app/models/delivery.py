@@ -190,6 +190,16 @@ class LoopItemActiveAssignment(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "assignment_index"}
 
 
+class StandInIssueInbox(LoopNode):
+    """Recipient-owned sequence for durable Issue wakeups, not human reminders."""
+
+    __mapper_args__ = {"polymorphic_identity": "stand_in_issue_inbox"}
+
+
+class StandInIssueEvent(LoopNode):
+    __mapper_args__ = {"polymorphic_identity": "stand_in_issue_event"}
+
+
 class CloudProject(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "project"}
 

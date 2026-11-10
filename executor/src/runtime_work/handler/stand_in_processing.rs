@@ -704,6 +704,18 @@ impl RuntimeWorkRpcHandler {
         role: &Value,
         link: &RuntimeTaskLink,
     ) -> Result<(), AppIpcError> {
+        self.validate_stand_in_work_authority(store, user, role, link, false)
+            .await
+    }
+
+    pub(super) async fn validate_stand_in_work_authority(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        role: &Value,
+        link: &RuntimeTaskLink,
+        manual_issue_request: bool,
+    ) -> Result<(), AppIpcError> {
         let origin = &link.runtime_handle["origin"];
         if origin["type"] == "stand_in_task" {
             if role["id"] != "@primary" || origin["userId"] != user {
@@ -761,7 +773,11 @@ impl RuntimeWorkRpcHandler {
         } else {
             let project = origin["cloudProjectId"].as_str().unwrap_or_default();
             let kind = origin["projectStore"].as_str().unwrap_or_default();
-            if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind) {
+            if !manual_issue_request
+                && !crate::task_runtime::personal_stand_in::role_project_matches(
+                    role, project, kind,
+                )
+            {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Work project is no longer connected",
@@ -785,33 +801,40 @@ impl RuntimeWorkRpcHandler {
             }
             let config =
                 crate::task_runtime::personal_stand_in::project_role(role, user, project, kind);
-            if super::personal_stand_in::matching_personal_roles(
-                std::slice::from_ref(&config),
-                &issue,
-            )
-            .is_empty()
+            if !manual_issue_request
+                && super::personal_stand_in::matching_personal_roles(
+                    std::slice::from_ref(&config),
+                    &issue,
+                )
+                .is_empty()
             {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Issue no longer matches this role",
                 ));
             }
-            if issue["assignee_user_id"] != user {
+            let mention = origin["trigger"] == "mention";
+            if mention {
+                self.read_stand_in_issue_mention(origin).await?;
+            }
+            if !mention && issue["assignee_user_id"] != user {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Issue is no longer assigned to you",
                 ));
             }
-            if crate::task_runtime::personal_stand_in::project_policy(role, project, kind)
-                ["automatic"]
-                == false
+            if !manual_issue_request
+                && crate::task_runtime::personal_stand_in::project_policy(role, project, kind)
+                    ["automatic"]
+                    == false
             {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Automatic project handling is disabled",
                 ));
             }
-            if kind == "cloud"
+            if !mention
+                && kind == "cloud"
                 && issue["human_task_binding"]["humanAssignmentId"] != origin["humanAssignmentId"]
             {
                 return Err(AppIpcError::new(
@@ -819,7 +842,7 @@ impl RuntimeWorkRpcHandler {
                     "Work assignment changed",
                 ));
             }
-            if kind == "local" {
+            if !mention && kind == "local" {
                 let history = issue["metadata"]["assignment_history"]
                     .as_array()
                     .ok_or_else(|| {
@@ -918,8 +941,8 @@ impl RuntimeWorkRpcHandler {
                 self.start_cloud_stand_in_with_roles(&[config], &issue)
                     .await?;
             } else {
-                let task_id = self.stand_in_task_id(&config, &binding);
-                if self.local_task_link(&task_id).is_none() {
+                let task_id = self.stand_in_task_id(&config, &issue);
+                if !self.stand_in_assignment_is_handled(&config, &task_id, &binding) {
                     self.start_local_stand_in(&config, &issue, &binding).await?;
                 }
             }

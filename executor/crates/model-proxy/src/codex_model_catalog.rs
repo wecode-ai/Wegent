@@ -61,11 +61,11 @@ const WEWORK_GPT_56_TERRA_MODEL: &str = "wework-gpt-5.6-terra";
 #[cfg(test)]
 const WEWORK_GPT_56_LUNA_MODEL: &str = "wework-gpt-5.6-luna";
 const UPSTREAM_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
-// Identify the exact retired shared default without embedding Wework plugin resources.
-const LEGACY_BASE_INSTRUCTIONS_SHA256: &str =
-    "81d7c736138e000597c4d01a3fa2a309671650d52679c1db1fb0d33331eb5321";
-const DEFAULT_BASE_INSTRUCTIONS: &str =
-    include_str!("../../../../shared/assets/codexProgressiveInstructions.md");
+// Only exact retired defaults are inherited; user-authored instructions remain explicit.
+const LEGACY_BASE_INSTRUCTIONS_SHA256: &[&str] = &[
+    "81d7c736138e000597c4d01a3fa2a309671650d52679c1db1fb0d33331eb5321",
+    "2c623ccaea48cba3b5c43d3b0bc917a168f86d1615b74b541926baf481a4277b",
+];
 const KIMI_CODEX_MODELS: &str = include_str!("../../../../shared/assets/codex-models/kimi.json");
 const DEEPSEEK_CODEX_MODELS: &str =
     include_str!("../../../../shared/assets/codex-models/deepseek.json");
@@ -121,10 +121,6 @@ fn upstream_model_matches(model: &Value, model_id: &str) -> bool {
         || strings("upstream_model_id_contains")
             .iter()
             .any(|value| model_id.contains(value))
-}
-
-fn default_base_instructions() -> String {
-    DEFAULT_BASE_INSTRUCTIONS.to_owned()
 }
 
 #[derive(Clone)]
@@ -483,7 +479,8 @@ struct CodexCatalogModel {
     visibility: String,
     supported_in_api: bool,
     priority: i64,
-    base_instructions: String,
+    #[serde(default)]
+    base_instructions: Option<String>,
     support_verbosity: bool,
     truncation_policy: Value,
     #[serde(default)]
@@ -692,8 +689,7 @@ async fn load_baseline_catalog(client_version: Option<&str>) -> Result<Value, St
             bundled_catalog().await?.clone()
         }
     };
-    merge_base_models(&mut catalog)?;
-    apply_progressive_base_instructions(&mut catalog);
+    merge_base_models(&mut catalog, None).await?;
     Ok(catalog)
 }
 
@@ -757,57 +753,96 @@ fn validate_catalog(catalog: &Value) -> Result<(), String> {
 }
 
 fn is_legacy_base_instructions(instructions: &str) -> bool {
-    format!("{:x}", Sha256::digest(instructions.as_bytes())) == LEGACY_BASE_INSTRUCTIONS_SHA256
+    LEGACY_BASE_INSTRUCTIONS_SHA256
+        .contains(&format!("{:x}", Sha256::digest(instructions.as_bytes())).as_str())
 }
 
-fn apply_progressive_base_instructions(catalog: &mut Value) {
-    let custom_slugs: std::collections::HashSet<String> = read_custom_models()
-        .iter()
-        .filter_map(|model| model["slug"].as_str().map(str::to_owned))
-        .collect();
-    for model in catalog
-        .get_mut("models")
-        .and_then(Value::as_array_mut)
+fn native_default_model(catalog: &Value) -> Result<&Value, String> {
+    // Codex sorts by priority and marks the first picker-visible model as default.
+    catalog["models"]
+        .as_array()
         .into_iter()
         .flatten()
-    {
-        let legacy_default = model["base_instructions"]
-            .as_str()
-            .is_some_and(is_legacy_base_instructions);
-        if legacy_default
-            || !model["slug"]
-                .as_str()
-                .is_some_and(|slug| custom_slugs.contains(slug))
-        {
-            model["base_instructions"] = Value::String(default_base_instructions());
-            if let Some(messages) = model
-                .get_mut("model_messages")
-                .and_then(Value::as_object_mut)
-            {
-                messages.insert(
-                    "instructions_template".into(),
-                    Value::String(default_base_instructions()),
-                );
-            }
-            model["include_skills_usage_instructions"] = Value::Bool(false);
-        }
-    }
+        .min_by_key(|model| {
+            (
+                model["visibility"] != "list",
+                model["priority"].as_i64().unwrap_or(i64::MAX),
+            )
+        })
+        .ok_or_else(|| "Codex bundled catalog has no default model".to_owned())
 }
 
-fn merge_base_models(catalog: &mut Value) -> Result<(), String> {
+fn inherit_native_instructions(model: &mut Value, native: &Value) -> Result<(), String> {
+    for key in [
+        "include_skills_usage_instructions",
+        "include_plugin_usage_instructions",
+        "include_apps_usage_instructions",
+    ] {
+        if model.get(key).and_then(Value::as_bool).is_none() {
+            if let Some(value) = native.get(key) {
+                model[key] = value.clone();
+            }
+        }
+    }
+    let template = model["model_messages"]["instructions_template"].as_str();
+    let base = model["base_instructions"].as_str();
+    if template.is_some_and(is_legacy_base_instructions)
+        && base.is_some_and(|text| !is_legacy_base_instructions(text))
+    {
+        model["model_messages"]["instructions_template"] = json!(base);
+        return Ok(());
+    }
+    if template
+        .or(base)
+        .is_some_and(|text| !is_legacy_base_instructions(text))
+    {
+        return Ok(());
+    }
+    let instructions = native["model_messages"]["instructions_template"]
+        .as_str()
+        .or_else(|| native["base_instructions"].as_str())
+        .ok_or_else(|| "Codex default model has no native instructions".to_owned())?;
+    model["base_instructions"] = native
+        .get("base_instructions")
+        .cloned()
+        .unwrap_or_else(|| json!(instructions));
+    let mut messages = native["model_messages"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(existing) = model["model_messages"].as_object() {
+        messages.extend(existing.clone());
+    }
+    messages.insert("instructions_template".into(), json!(instructions));
+    model["model_messages"] = Value::Object(messages);
+    Ok(())
+}
+
+async fn merge_base_models(catalog: &mut Value, bundled: Option<&Value>) -> Result<(), String> {
     validate_catalog(catalog)?;
     let upstream_models = catalog
         .get_mut("models")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| "Codex model catalog must contain a models array".to_owned())?;
-    for capability_model in base_models() {
-        let slug = capability_model.get("slug").and_then(Value::as_str);
-        if !upstream_models
-            .iter()
-            .any(|model| model.get("slug").and_then(Value::as_str) == slug)
-        {
-            upstream_models.push(capability_model);
-        }
+    let missing: Vec<_> = base_models()
+        .into_iter()
+        .filter(|capability| {
+            !upstream_models
+                .iter()
+                .any(|model| model["slug"] == capability["slug"])
+        })
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let bundled = match bundled {
+        Some(catalog) => catalog,
+        None => bundled_catalog().await?,
+    };
+    let native = native_default_model(bundled)?;
+    for mut capability_model in missing {
+        inherit_native_instructions(&mut capability_model, native)?;
+        upstream_models.push(capability_model);
     }
     Ok(())
 }
@@ -919,9 +954,7 @@ fn model_entry(slug: &str, display_name: &str, apply_patch_tool_type: Option<&st
         "default_service_tier": null,
         "availability_nux": null,
         "upgrade": null,
-        "base_instructions": default_base_instructions(),
         "model_messages": null,
-        "include_skills_usage_instructions": false,
         "supports_reasoning_summaries": true,
         "supports_reasoning_summary_parameter": true,
         "default_reasoning_summary": "auto",

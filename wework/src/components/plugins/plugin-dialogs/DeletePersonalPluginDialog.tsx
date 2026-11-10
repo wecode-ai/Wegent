@@ -108,7 +108,7 @@ export function DeletePersonalPluginDialog({
             type="button"
             disabled={deleting || (published && !impact)}
             data-testid="plugin-delete-confirm-button"
-            className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-40"
+            className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-40 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
             onClick={onConfirm}
           >
             {deleting

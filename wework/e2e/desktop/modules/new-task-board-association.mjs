@@ -117,6 +117,28 @@ export async function waitForBinding(control, projectId, itemId) {
   )
 }
 
+export async function waitForViewedIssueRead(control, projectName, issueTitle) {
+  const rpc = (method, params) => requestExecutor(control, method, params, DEFAULT_STEP_TIMEOUT_MS)
+  const projects = await rpc('projects.list', {})
+  const project = projects.find(row => row.name === projectName)
+  assert.ok(project, 'The viewed Issue project must exist')
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let issue
+  while (Date.now() < deadline) {
+    const items = await rpc('todos.list', { project_id: project.id })
+    issue = items.find(row => row.title === issueTitle)
+    assert.ok(issue, 'The previously viewed Issue must still exist')
+    if (issue.metadata.is_unread !== true) {
+      console.log(
+        `[e2e] Viewed Issue read confirmed before draft baseline: ${issue.id}, version=${issue.version}`
+      )
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`The visible Issue did not persist its automatic read: ${JSON.stringify(issue)}`)
+}
+
 async function verifyDraft(control, project, existingItem) {
   const rpc = (method, params) => requestExecutor(control, method, params, DEFAULT_STEP_TIMEOUT_MS)
   const beforeItems = await rpc('todos.list', { project_id: project.id })

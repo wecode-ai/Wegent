@@ -182,6 +182,8 @@ mod stand_in_events;
 mod stand_in_execution;
 mod stand_in_history;
 mod stand_in_ingress;
+mod stand_in_issue_mentions;
+mod stand_in_issue_replies;
 mod stand_in_lifecycle;
 mod stand_in_memory;
 mod stand_in_memory_progress;
@@ -1029,6 +1031,7 @@ impl RuntimeWorkRpcHandler {
         self.resume_cloud_collaboration_rounds();
         for link in self.local_task_links(false) {
             self.sync_issue_human_requests(&link.local_task_id);
+            self.sync_stand_in_issue_replies(&link.local_task_id);
         }
         self.start_supervisor_scheduler();
         self

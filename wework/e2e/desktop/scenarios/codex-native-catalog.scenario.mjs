@@ -1,12 +1,14 @@
 import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import { createCodexProtocolGate } from '../modules/codex-protocol-gate.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { startModelRequestCapture } from '../modules/model-request-capture.mjs'
+import { assertNativeModelContext } from '../modules/model-context-audit.mjs'
 import {
   createCatalogContextVerification,
   saveCatalogAndWaitForRestart,
@@ -23,12 +25,16 @@ export function createDesktopScenario(options) {
   const discoveryGate = createCodexProtocolGate(options)
   let bundledModels
   let overridePath
+  let capture
+  let unusedSkillBodies
+  const captureDirectory = options.resultDir
 
   return {
     modelProviderId: 'openai',
     modelId: MODEL_ID,
     handleHttp: context.handleHttp,
     attachServer: context.attachServer,
+    close: () => capture?.close(),
     async prepareApp({ appEnvironment, codexHome, control }) {
       const { stdout } = await promisify(execFile)(
         appEnvironment.CODEX_BINARY_PATH,
@@ -37,13 +43,25 @@ export function createDesktopScenario(options) {
       )
       bundledModels = JSON.parse(stdout).models
       assert.ok(bundledModels.some(model => model.slug === MODEL_ID))
+      capture = await startModelRequestCapture({ target: control.url, resultDir: captureDirectory })
+      const skillRoot = new URL(
+        '../../../resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/',
+        import.meta.url
+      )
+      unusedSkillBodies = await Promise.all(
+        (await readdir(skillRoot)).map(async name =>
+          (await readFile(new URL(`${name}/SKILL.md`, skillRoot), 'utf8'))
+            .replace(/^---[\s\S]*?---\s*/, '')
+            .trim()
+        )
+      )
       // Reproduce the default OpenAI provider selected without a config override.
       const configPath = join(codexHome, 'config.toml')
       const config = await readFile(configPath, 'utf8')
       // Route only the model service to the fixture; keep the default provider selection.
       await writeFile(
         configPath,
-        `openai_base_url = "${control.url}/v1"\n${config.replace(/^model_provider = .*\n/m, '')}`
+        `openai_base_url = "${capture.url}/v1"\n${config.replace(/^model_provider = .*\n/m, '')}`
       )
       overridePath = join(
         appEnvironment.WEGENT_EXECUTOR_HOME,
@@ -68,21 +86,10 @@ export function createDesktopScenario(options) {
         return result.result.models
       }
       const entries = await readCatalog()
-      const progressive = await readFile(
-        new URL('../../../../shared/assets/codexProgressiveInstructions.md', import.meta.url),
-        'utf8'
-      )
       for (const model of bundledModels) {
         const entry = entries.find(entry => entry.slug === model.slug)
         assert.ok(entry, `Missing native Catalog: ${model.slug}`)
-        const expected = {
-          ...model,
-          base_instructions: progressive,
-          include_skills_usage_instructions: false,
-        }
-        if (model.model_messages)
-          expected.model_messages = { ...model.model_messages, instructions_template: progressive }
-        assert.deepEqual(entry.baseline, expected, `Native Catalog changed: ${model.slug}`)
+        assert.deepEqual(entry.baseline, model, `Native Catalog changed: ${model.slug}`)
       }
       const baseline = entries.find(entry => entry.slug === MODEL_ID).baseline
       await control.command('navigate', 'body', { value: '/settings/personal/models' })
@@ -174,6 +181,26 @@ export function createDesktopScenario(options) {
       assert.deepEqual(JSON.parse(await readFile(overridePath, 'utf8')), [])
       await context.verify(control, baseline.display_name)
       await context.verifyActiveRestartProtection(control)
+      const requests = (await readFile(join(captureDirectory, 'model-requests.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map(JSON.parse)
+        .filter(
+          body =>
+            body.model === MODEL_ID && JSON.stringify(body).includes('WEWORK_CATALOG_CONTEXT_500K')
+        )
+      assert.ok(requests.length >= 3, 'The independent model service missed the real conversation')
+      const audits = requests.map(body =>
+        assertNativeModelContext(body, baseline.base_instructions, unusedSkillBodies)
+      )
+      await writeFile(
+        join(captureDirectory, 'model-context-audit.json'),
+        JSON.stringify(
+          { model: MODEL_ID, mockProcessId: capture.pid, requests: requests.length, audits },
+          null,
+          2
+        )
+      )
     },
   }
 }
