@@ -242,6 +242,22 @@ export async function executeVerificationControlCommand(
         value: JSON.stringify(await bridge.requestRuntime(JSON.parse(command.value ?? '{}'))),
       }
     }
+    case 'configurePluginNativeAuthorization': {
+      const { configurePluginNativeAuthorization } =
+        await import('@/features/plugins/pluginNativeAuthorization')
+      const config = getDesktopE2ERuntimeConfig()
+      if (!config.cloudToken || !config.cloudBackendUrl)
+        throw new Error('Cloud fixture is unavailable')
+      return {
+        handled: true,
+        value: JSON.stringify(
+          await configurePluginNativeAuthorization(
+            `${config.cloudBackendUrl}/api`,
+            config.cloudToken
+          )
+        ),
+      }
+    }
     case 'localConnectorAuth':
       return { handled: true, value: await localConnectorAuth(command) }
     case 'clickAt':

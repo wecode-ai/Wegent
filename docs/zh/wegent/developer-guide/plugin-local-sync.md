@@ -4,7 +4,7 @@ sidebar_position: 59
 
 # 插件本机执行与设备注册解耦
 
-本机安装、卸载、版本更新和完整对账使用账号 HTTP 与本机 IPC，不要求 Device 注册、设备号、Socket 在线或其他设备 ACK。仍需要登录和访问 Backend。账号托管认证及退出认证继续使用原有安全路由，不在此次解耦范围内。
+本机安装、卸载、版本更新和完整对账使用账号 HTTP 与本机 IPC，不要求 Device 注册、设备号、Socket 在线或其他设备 ACK。仍需要登录和访问 Backend。本机对话的普通插件命令保留原本机认证路径；托管账号调用使用下面的 Native 插件授权通道。云设备及旧客户端仍走原有 Device／Socket 安全路由。
 
 ## 状态与职责
 
@@ -38,3 +38,32 @@ sidebar_position: 59
 关闭受理开关时保留当前 HTTP/IPC 恢复能力；已受理标记可重放，已有实例可继续对账，未知新操作不能受理。本机旧 journal 的 pending 原样保留，已删除协议的回执不再补报。
 
 聚焦回归覆盖无 Device 安装/更新/卸载、最新标记容量、重复请求、摘要冲突、原子回滚、旧接口变更后迟到重试、标记压缩后防乱序、账号/实例隔离、恢复与对账互不阻塞。真实 HTTP/MySQL/Redis 测试及桌面 `plugin-write-coordination` checkpoint 接入现有 CI；本地执行情况以 PR 记录为准。尚无 1.0.0、1.1.0、1.1.1 实际发行制品的完整兼容验证。
+
+## 本机对话中的托管账号调用
+
+新增 Rust `POST /api/plugins/native-auth/exchange`。桌面主进程用原桌面 refresh token
+及其绑定私钥签名的请求证明换取一小时以内的 `plugin_native` 会话；证明绑定此接口、
+请求方法、时间和 refresh token，Redis 的短 TTL 标记拒绝证明重放。该会话只能访问
+插件接口，不能作为共享用户、设备、任务或工作区 API 的凭据。私钥和会话不进入 renderer。
+没有新接口的旧 Backend 返回 404 时保留原 Socket 通道；新 HTTP 请求失败不隐式改用 Socket。
+
+Executor 复用现有 Broker、统一适配器及后台认证循环。Broker 随账号／Backend 切换取消；
+同账号 access token 轮换保留业务端口。Native 会话绑定当前 Backend 和账号 token，迟到的
+旧账号响应不会交给适配器。设备注册状态仍如实返回失败，不伪造在线状态；云设备授权
+仍检查原 `deviceGrants` 和 Runtime 绑定。
+
+复用 `ConnectorConnection`、`ConnectorMigration`、`ConnectorTransfer`、本机认证策略及
+原账号写锁，不新增表、列或独立执行账本。现有 JSON 增加本机密钥授权 `localGrants`、
+来源观察值 `nativeAuthSources`、待登录 generation 和 Native 刷新／撤销租约归属。
+旧接口写凭证时保留适用的本机字段，认证定义变化或退出认证时撤销本机授权。
+独占转移先持久化原 escrow，再由统一适配器确认本机 detach；丢失受理响应不得覆盖 escrow。
+OAuth 刷新结果不确定时要求重新登录，不重复消费可能已旋转的 refresh token。
+
+没有新增定时器：认证及撤销复用现有 15 秒循环，失败冷却和撤销退避保持原机制；
+无已安装插件时自动导出直接结束。原凭证交换由 Socket 改为小型账号 HTTP 查询，
+业务读取、状态查询及 prepare 不推进数据库 revision；会话续期复用桌面现有刷新定时器，
+临时失败复用 30 秒重试。安装 pending 的原请求、顺序保护和完整对账调度不变。
+
+真实 HTTP／MySQL／Redis 回归覆盖无 Device 会话、跨用户／密钥隔离、Python 密文格式、
+刷新与撤销、独占 escrow 重放；现有 `plugin-account-auth-password` CI checkpoint 追加
+真实 Backend 拒绝注册后本机对话执行及安装／更新／卸载，保留旧协议原测试断言。

@@ -125,6 +125,18 @@ export function LocalExecutorCloudBridge({
         ) {
           scheduleRefresh(result.runtimeAuthTokenExpiresIn)
         }
+        // Provision in parallel: a slow plugin endpoint cannot delay unrelated
+        // cloud setup. Reuse the existing refresh/retry timer for its lifetime.
+        if (result.connected && result.pluginAuthorization) {
+          void result.pluginAuthorization.then(auth => {
+            if (!isCurrentConnectionAttempt()) return
+            if (!auth.ready) scheduleRetry()
+            else if (auth.expiresIn)
+              scheduleRefresh(
+                Math.min(result.runtimeAuthTokenExpiresIn ?? Infinity, auth.expiresIn)
+              )
+          })
+        }
         if (!result.connected) {
           setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
         } else if (needsConnectorResync) {

@@ -1001,3 +1001,31 @@ test(
     assert.ok(proxy.requests.every(entry => entry.fault === null && entry.delivered))
   }
 )
+
+test('registration fault changes only the ID and observes the real upstream ACK', async t => {
+  const { proxy } = await fixture(t)
+  const fault = proxy.rejectDeviceRegistration()
+  const frames = []
+  const output = { push: frame => frames.push(frame) }
+  const original = [
+    'device:register',
+    { device_id: 'normal-id', name: 'test', runtime_instance_id: 'keep-binding' },
+  ]
+  assert.equal(fault.rewrite(`42/local-executor,23${JSON.stringify(original)}`, output), true)
+  const frame = frames[0]
+  const wide = (frame[1] & 127) === 126
+  const offset = wide ? 4 : 2
+  const mask = frame.subarray(offset, offset + 4)
+  const payload = Buffer.from(frame.subarray(offset + 4))
+  for (let index = 0; index < payload.length; index += 1) payload[index] ^= mask[index % 4]
+  assert.equal(
+    payload.toString(),
+    `42/local-executor,23${JSON.stringify(['device:register', { ...original[1], device_id: '' }])}`
+  )
+  assert.equal(fault.submitted, 1)
+  assert.equal(fault.rejected, 0, 'Sending a fault is not evidence that Backend rejected it')
+  assert.equal(fault.rewrite('42/local-executor,24["plugin.auth.execute",{}]', output), false)
+  fault.observe('43/local-executor,23[{"success":false,"error":"invalid payload"}]')
+  assert.equal(fault.rejected, 1)
+  assert.ok(!JSON.stringify(fault).includes('keep-binding'))
+})

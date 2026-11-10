@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   request: vi.fn().mockResolvedValue({}),
   notifySkillsChanged: vi.fn(),
   backendConnected: true,
+  pluginAuth: vi.fn(),
 }))
 
 vi.mock('./cloudConnectionAvailability', () => ({
@@ -47,6 +48,10 @@ vi.mock('@/desktop/localExecutor', () => ({
   requestLocalExecutor: mocks.request,
 }))
 
+vi.mock('@/features/plugins/pluginNativeAuthorization', () => ({
+  configurePluginNativeAuthorization: mocks.pluginAuth,
+}))
+
 vi.mock('@/features/plugins/pluginTrial', () => ({
   notifyLocalPluginSkillsChanged: mocks.notifySkillsChanged,
 }))
@@ -56,6 +61,7 @@ describe('LocalExecutorCloudBridge', () => {
     vi.clearAllMocks()
     resetLocalExecutorCloudConnectionStatus()
     mocks.backendConnected = true
+    mocks.pluginAuth.mockResolvedValue({ ready: true, expiresIn: null })
     mocks.connect.mockResolvedValue({ running: true, ready: true })
     mocks.request.mockImplementation((method: string) =>
       Promise.resolve(
@@ -122,6 +128,77 @@ describe('LocalExecutorCloudBridge', () => {
       </span>
     )
   }
+
+  test('a pending plugin session does not delay unrelated cloud initialization', async () => {
+    const pending = deferred<{ ready: boolean; expiresIn: number | null }>()
+    mocks.pluginAuth.mockReturnValue(pending.promise)
+    const view = render(
+      <>
+        {connectedCloudBridge()}
+        <ConnectionStatusProbe />
+      </>
+    )
+    try {
+      await waitFor(() => expect(mocks.issueToken).toHaveBeenCalledTimes(1))
+      expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveTextContent(
+        'connected:'
+      )
+      expect(mocks.disconnect).not.toHaveBeenCalled()
+      pending.resolve({ ready: true, expiresIn: 600 })
+      await flushAsyncEffects()
+    } finally {
+      view.unmount()
+    }
+  })
+
+  test('retries plugin provisioning through the existing timer without offlining the device', async () => {
+    vi.useFakeTimers()
+    mocks.pluginAuth
+      .mockResolvedValueOnce({ ready: false, expiresIn: null })
+      .mockResolvedValue({ ready: true, expiresIn: 600 })
+    const view = render(
+      <>
+        {connectedCloudBridge()}
+        <ConnectionStatusProbe />
+      </>
+    )
+    try {
+      await flushAsyncEffects()
+      expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveTextContent(
+        'connected:'
+      )
+      expect(mocks.connect).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(29_999)
+      })
+      expect(mocks.pluginAuth).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(mocks.pluginAuth).toHaveBeenCalledTimes(2)
+      expect(mocks.disconnect).not.toHaveBeenCalled()
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  test('renews a shorter plugin session with the existing runtime refresh timer', async () => {
+    vi.useFakeTimers()
+    mocks.pluginAuth.mockResolvedValue({ ready: true, expiresIn: 2 })
+    const view = render(connectedCloudBridge())
+    try {
+      await flushAsyncEffects()
+      expect(mocks.pluginAuth).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(mocks.pluginAuth).toHaveBeenCalledTimes(2)
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
 
   test('publishes whether the executor WebSocket connection succeeded', async () => {
     const view = render(
@@ -336,6 +413,7 @@ describe('LocalExecutorCloudBridge', () => {
       mocks.connect.mockImplementationOnce(async () => {
         configured = true
         mocks.backendConnected = true
+        mocks.pluginAuth.mockResolvedValue({ ready: true, expiresIn: null })
         return { running: true, ready: true }
       })
       await act(async () => {

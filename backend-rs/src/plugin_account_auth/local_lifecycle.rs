@@ -353,6 +353,7 @@ async fn logout<T: MysqlTransaction>(
                 json!({"state":"unsupported"})
             };
         }
+        connections::revoke_native_fields(spec);
         spec["status"] = json!("disconnected");
         spec["credential"] = Value::Null;
         spec["deviceGrants"] = json!({});

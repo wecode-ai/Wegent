@@ -1151,3 +1151,7 @@ path = "/api/im/private-sessions/:session_key/stand-in"
 [[routes]]
 methods = ["POST"]
 path = "/api/plugins/local-sync"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/native-auth/exchange"

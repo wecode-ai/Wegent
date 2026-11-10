@@ -4,7 +4,7 @@ sidebar_position: 59
 
 # Local plugin execution without device registration
 
-Local install, uninstall, update and reconciliation use authenticated account HTTP and local IPC. Device registration, a device ID, Socket connectivity and other-device acknowledgements are not prerequisites. Managed account authentication keeps its existing secure routing.
+Local install, uninstall, update and reconciliation use authenticated account HTTP and local IPC. Device registration, a device ID, Socket connectivity and other-device acknowledgements are not prerequisites. Ordinary local plugin commands keep their local authentication flow; managed account commands use the Native authorization below. Cloud and legacy clients retain Device/Socket permission checks.
 
 ## State ownership
 
@@ -34,3 +34,43 @@ Pending recovery runs independently from full snapshot HTTP/application and merg
 Deploy all Backend, gateway and Runtime replicas before enabling `PLUGIN_LOCAL_SYNC_ENABLED` (default false). Legacy requests without the mode preserve their original behavior. Contract 3 does not mix with contract 2 from earlier PR revisions. Disabling new acceptance retains replay and reconciliation for existing instances. Old local pending requests are preserved; obsolete receipt entries are no longer sent.
 
 Focused tests cover no-device lifecycle, bounded acceptance slots, request hashing, rollback, compacted and legacy-write supersession, isolation and independent recovery. Existing CI invokes real HTTP/MySQL/Redis coverage and the desktop `plugin-write-coordination` checkpoint. Actual release-package compatibility for 1.0.0, 1.1.0 and 1.1.1 remains unverified.
+
+## Managed account commands in local conversations
+
+The Rust `POST /api/plugins/native-auth/exchange` endpoint issues a restricted
+`plugin_native` session after the main process proves possession of the private
+key bound to its existing desktop refresh token. Proofs bind the exact request
+path, method, token and time; short Redis TTL markers reject replays. Sessions
+expire within one hour and cannot authorize shared user, Device, Task or
+Workspace APIs. Neither the private key nor the Native session enters renderer.
+Older Backends returning 404 retain the existing Socket transport. HTTP failures
+do not silently fall back to Socket.
+
+Executor reuses the existing Broker and adapter pipeline. Account/Backend
+switches cancel the Broker; same-account access-token rotation preserves its
+endpoint. Sessions bind the current profile and late previous-profile responses
+are discarded. Device registration status remains accurate, and cloud Device
+grants and Runtime checks are unchanged. Ordinary local SDK commands retain their
+existing local authentication flow.
+
+No new tables, columns or execution ledger are added. Existing connection,
+migration, transfer and policy records share the account write lease. Optional
+JSON fields hold Native key grants (`localGrants`), keyed source observations
+(`nativeAuthSources`), pending login generations and Native lease ownership.
+Legacy credential writes preserve applicable Native grants; definition changes
+and logout revoke them. Exclusive transfers keep escrow until durable adapter
+detach, including lost acceptance replies. Uncertain OAuth refreshes require
+reconnection rather than reusing a potentially consumed refresh token.
+
+No new timers are introduced. Existing 15-second auth/revocation workers use
+small HTTP exchanges instead of Socket, preserving cooldown/backoff. Empty
+installed-plugin discovery returns immediately. Business reads, status and
+prepare calls do not advance database revisions. Session renewal and transient
+failures reuse the existing desktop refresh and 30-second retry scheduling.
+Installation pending requests, ordering fences and reconciliation remain intact.
+
+Real HTTP/MySQL/Redis tests cover no-Device sessions, user/key isolation, Python
+ciphertext compatibility, refresh/revocation and escrow replay. The existing
+CI-covered `plugin-account-auth-password` checkpoint also exercises local chat
+and install/update/uninstall after a real Backend registration rejection,
+without weakening its legacy assertions.

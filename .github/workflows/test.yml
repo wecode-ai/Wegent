@@ -267,6 +267,8 @@ jobs:
         working-directory: backend-rs
         env:
           PLUGIN_LOCAL_SYNC_ENABLED: 'true'
+          WEWORK_PLUGIN_CREDENTIAL_KEYS: '{"native-test":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+          WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: native-test
           SECRET_KEY: plugin-local-contract-test
           DATABASE_URL: mysql://root@127.0.0.1:3306/mysql
           REDIS_URL: redis://127.0.0.1:6379/0
@@ -276,6 +278,8 @@ jobs:
           set -o pipefail
           cargo test --locked --lib plugins_installed::local_sync::mysql_tests -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-local-sync-mysql.log
+          cargo test --locked --lib plugin_account_auth::local_http::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-native-auth-mysql.log
 
       - name: Verify plugin write leases with real Redis replication and MySQL
         working-directory: backend-rs

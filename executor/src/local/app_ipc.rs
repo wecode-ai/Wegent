@@ -785,6 +785,16 @@ impl AppIpcServer {
             return Ok(Value::String(saved));
         }
 
+        // Native host configuration is intentionally absent from renderer_methods.
+        if method == "executor.plugin_auth.configure" {
+            let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
+                AppIpcError::new(
+                    "plugin_auth_http_unsupported",
+                    "Native plugin authorization is unavailable",
+                )
+            })?;
+            return handler.configure_plugin_auth(params).await;
+        }
         if method == "executor.plugin_auth.migrate" || method == "executor.plugin_auth.run" {
             let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
                 AppIpcError::new(
@@ -3904,9 +3914,17 @@ mod tests {
 
     use super::{
         app_ipc_request_metadata, app_ipc_request_timeout_seconds, is_bulk_app_ipc_event,
-        local_app_command, AppIpcServer, BlockingSingleFlight, APP_IPC_REQUEST_TIMEOUT_SECONDS,
+        local_app_command, AppIpcServer, BlockingSingleFlight, APP_IPC_RENDERER_METHODS,
+        APP_IPC_REQUEST_TIMEOUT_SECONDS,
     };
     use crate::runtime_work::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
+
+    #[test]
+    fn native_plugin_sessions_are_not_renderer_capabilities() {
+        assert!(!APP_IPC_RENDERER_METHODS.contains(&"executor.plugin_auth.configure"));
+        assert!(!APP_IPC_RENDERER_METHODS.contains(&"executor.plugin_auth.*"));
+        assert!(APP_IPC_RENDERER_METHODS.contains(&"executor.plugin_auth.run"));
+    }
 
     #[test]
     fn connection_cli_error_response_preserves_structured_cause_and_read_delay() {

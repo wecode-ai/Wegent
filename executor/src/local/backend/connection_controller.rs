@@ -43,6 +43,7 @@ pub struct LocalBackendConnectionController {
     connection_status: Arc<AtomicBool>,
     device_route_id: Arc<StdMutex<Option<String>>>,
     local_sync_lock: Arc<Mutex<()>>,
+    plugin_auth: crate::plugin_account_auth::local_http::LocalAuthContext,
 }
 
 #[derive(Default)]
@@ -52,6 +53,8 @@ struct LocalBackendConnectionState {
     transport: Option<SocketIoTransport>,
     task: Option<JoinHandle<()>>,
     plugin_sync: Option<Arc<dyn super::capability::CapabilitySyncRpcHandler>>,
+    plugin_broker: Option<crate::plugin_account_auth::broker::RunningBroker>,
+    plugin_broker_owner: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,19 +64,20 @@ struct LocalBackendConnectionProfile {
 }
 
 impl LocalBackendConnectionController {
-    async fn auth_transport(&self) -> Result<SocketIoTransport, AppIpcError> {
-        if !self.connection_status.load(Ordering::Acquire) {
+    async fn auth_transport(
+        &self,
+    ) -> Result<crate::plugin_account_auth::local_http::LocalAuthContext, AppIpcError> {
+        use crate::plugin_account_auth::PluginAuthTransport;
+        if !self
+            .plugin_auth
+            .available(self.connection_status.load(Ordering::Acquire))
+        {
             return Err(AppIpcError::new(
                 "backend_connection_unavailable",
                 "Connect this device before using account authentication",
             ));
         }
-        self.state.lock().await.transport.clone().ok_or_else(|| {
-            AppIpcError::new(
-                "backend_connection_unavailable",
-                "Backend connection is unavailable",
-            )
-        })
+        Ok(self.plugin_auth.clone())
     }
 
     pub async fn start(config: DeviceConfig) -> Self {
@@ -123,6 +127,9 @@ impl LocalBackendConnectionController {
             runtime_work_handler,
             runtime_event_hub,
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
+            plugin_auth: crate::plugin_account_auth::local_http::LocalAuthContext::new(Arc::clone(
+                &connection_snapshot,
+            )),
             connection_snapshot,
             connection_status: Arc::new(AtomicBool::new(false)),
             device_route_id,
@@ -149,6 +156,20 @@ impl LocalBackendConnectionController {
         if let Ok(mut snapshot) = self.connection_snapshot.lock() {
             *snapshot = profile.as_ref().map(|value| value.connection.clone());
         }
+        let owner = profile.as_ref().map(|p| {
+            format!(
+                "{}:{:?}",
+                crate::plugin_account_auth::local_http::account_scope(&p.connection),
+                plugin_auth_cloud_mode(&self.base_config, p)
+            )
+        });
+        if state.plugin_broker_owner != owner {
+            state.plugin_broker.take();
+            state.plugin_broker_owner = owner;
+        }
+        if profile.is_none() {
+            self.plugin_auth.clear();
+        }
         // Runtime credentials are consumed through the live connection snapshot;
         // rotating them must not disconnect the device's in-flight RPC route.
         if state
@@ -170,6 +191,7 @@ impl LocalBackendConnectionController {
         if let Some(handler) = state.plugin_sync.take() {
             handler.invalidate_connection();
         }
+        self.plugin_auth.socket(None, false);
         if let Some(task) = state.task.take() {
             self.connection_status.store(false, Ordering::Release);
             // Stop the old route producer before clearing the shared slot.
@@ -216,7 +238,25 @@ impl LocalBackendConnectionController {
                 .expect("default capability handler")
                 .clone();
             state.plugin_sync = Some(handler);
-            let runner = runner.with_device_route_id_slot(Arc::clone(&self.device_route_id));
+            let runner = runner
+                .with_device_route_id_slot(Arc::clone(&self.device_route_id))
+                .with_external_plugin_auth_broker();
+            let cloud_plugin_auth = plugin_auth_cloud_mode(&self.base_config, profile);
+            self.plugin_auth
+                .socket(Some(transport.clone()), cloud_plugin_auth);
+            if state.plugin_broker.is_none() {
+                match crate::plugin_account_auth::broker::start(
+                    self.plugin_auth.clone(),
+                    crate::config::paths::executor_home(),
+                    self.connection_status.clone(),
+                    cloud_plugin_auth,
+                )
+                .await
+                {
+                    Ok(broker) => state.plugin_broker = Some(broker),
+                    Err(_) => write_executor_error_line("plugin auth broker unavailable"),
+                }
+            }
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {
@@ -265,6 +305,12 @@ impl LocalBackendConnectionController {
 }
 
 impl BackendConnectionHandler for LocalBackendConnectionController {
+    fn configure_plugin_auth<'a>(
+        &'a self,
+        params: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move { self.plugin_auth.configure(params) })
+    }
     fn plugin_local_sync<'a>(
         &'a self,
         params: Value,
@@ -401,6 +447,16 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
             Ok(payload)
         })
     }
+}
+
+fn plugin_auth_cloud_mode(base: &DeviceConfig, profile: &LocalBackendConnectionProfile) -> bool {
+    matches!(
+        profile
+            .registration_device_type
+            .as_deref()
+            .unwrap_or(&base.device_type),
+        "cloud" | "remote"
+    )
 }
 
 fn device_config_for_profile(
@@ -761,6 +817,21 @@ mod tests {
         assert_eq!(quota["data"]["remaining"], 845.21);
         assert_eq!(quota["quota_source"], "AIGC额度");
         server.abort();
+    }
+
+    #[test]
+    fn plugin_broker_inherits_the_configured_cloud_mode_without_an_ipc_override() {
+        let mut base = DeviceConfig::default();
+        base.device_type = "cloud".into();
+        let mut profile = super::LocalBackendConnectionProfile {
+            connection: Default::default(),
+            registration_device_type: None,
+        };
+        assert!(super::plugin_auth_cloud_mode(&base, &profile));
+        profile.registration_device_type = Some("app".into());
+        assert!(!super::plugin_auth_cloud_mode(&base, &profile));
+        profile.registration_device_type = Some("remote".into());
+        assert!(super::plugin_auth_cloud_mode(&base, &profile));
     }
 
     #[test]

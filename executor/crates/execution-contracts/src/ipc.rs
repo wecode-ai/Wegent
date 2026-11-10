@@ -28,6 +28,17 @@ pub trait RuntimeWorkHandler: Send + Sync {
 }
 
 pub trait BackendConnectionHandler: Send + Sync {
+    fn configure_plugin_auth<'a>(
+        &'a self,
+        _params: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+        Box::pin(async {
+            Err(AppIpcError::new(
+                "plugin_auth_http_unsupported",
+                "Native plugin authorization is unavailable",
+            ))
+        })
+    }
     fn plugin_local_sync<'a>(
         &'a self,
         _params: Value,
