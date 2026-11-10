@@ -18,6 +18,17 @@ const profile = (
   roles,
 })
 
+it('discovers a role created directly on another available device without a source forwarding record', async () => {
+  const role = { ...newStandInRole('remote', 'review'), name: 'Remote review' }
+  const api = {
+    personalGet: vi.fn(async (_user, device) => profile(device, device === 'remote' ? [role] : [])),
+  } as unknown as StandInExecutorApi
+  const { result } = renderHook(() =>
+    useStandInRoleDirectory(api, 7, 'mac', true, 'mac', 0, ['remote'])
+  )
+  await waitFor(() => expect(result.current?.roles).toEqual([{ deviceId: 'remote', role }]))
+})
+
 it('refreshes native configuration changes when the workspace is explicitly reopened', async () => {
   const role = { ...newStandInRole('mac', 'review'), name: 'Review' }
   let settings = profile('mac', [role])

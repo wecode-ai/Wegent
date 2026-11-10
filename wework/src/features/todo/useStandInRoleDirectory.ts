@@ -8,17 +8,19 @@ export interface StandInRoleLocation {
   deviceId: string
 }
 
-/** Follow saved role locations without changing the primary conversation's device. */
+/** Discover available role locations without changing the primary conversation's device. */
 export function useStandInRoleDirectory(
   api: StandInExecutorApi | undefined,
   userId: number,
   rootDevice: string | undefined,
   active: boolean,
   localDevice?: string,
-  entryRequestKey?: number
+  entryRequestKey?: number,
+  availableDevices: readonly string[] = []
 ) {
   const [revision, setRevision] = useState(0)
   const scope = JSON.stringify([userId, rootDevice, localDevice])
+  const devicesKey = JSON.stringify([...new Set(availableDevices)].sort())
   const [data, setData] = useState<{
     scope: string
     roles: StandInRoleLocation[]
@@ -37,7 +39,11 @@ export function useStandInRoleDirectory(
     void (async () => {
       const visited = new Set<string>()
       const pending = [
-        ...new Set([rootDevice, localDevice].filter((device): device is string => !!device)),
+        ...new Set(
+          [rootDevice, localDevice, ...(JSON.parse(devicesKey) as string[])].filter(
+            (device): device is string => !!device
+          )
+        ),
       ]
       const roles = new Map<string, StandInRoleLocation>()
       const loadedRoles = new Map<string, Set<string>>()
@@ -93,6 +99,6 @@ export function useStandInRoleDirectory(
     return () => {
       current = false
     }
-  }, [api, userId, rootDevice, active, revision, scope, localDevice, entryRequestKey])
+  }, [api, userId, rootDevice, active, revision, scope, localDevice, entryRequestKey, devicesKey])
   return data?.scope === scope ? data : undefined
 }

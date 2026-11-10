@@ -123,7 +123,8 @@ function AccountStandInWorkspace({
     deviceId,
     active && ownerAvailable && binding?.status === 'active',
     localDeviceId,
-    refreshKey
+    refreshKey,
+    cloud?.isConnected ? availableStandInDevices(devices).map(device => device.device_id) : []
   )
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
   const [error, setError] = useState<{ message: string; cause?: unknown } | null>(null)
