@@ -9,12 +9,29 @@ from sqlalchemy import event
 
 from app.models.kind import Kind
 from app.services import plugin_device_sync
-from app.services.plugin_local_sync_state import (
-    LOCAL_SYNC_NAMESPACE,
-    local_operations,
-    lookup_operation,
-    operation_name,
-)
+from app.services.plugin_local_sync import _lookup_operation as lookup_operation
+
+
+def markers(db, user):
+    row = (
+        db.query(Kind)
+        .filter_by(
+            user_id=user,
+            kind="PluginSyncState",
+            namespace="plugin-sync",
+            name="account",
+        )
+        .one_or_none()
+    )
+    assert (
+        db.query(Kind).filter_by(user_id=user, namespace="plugin-local-sync").count()
+        == 0
+    )
+    return (row.json.get("spec", {}).get("localIntents", {}) if row else {}).get(
+        "local:one", {}
+    )
+
+
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from tests.api.test_plugin_write_operations import plugin_requests  # noqa: F401
 
@@ -57,7 +74,7 @@ def test_legacy_writes_do_not_create_local_recovery_records(
         assert "X-Plugin-Delivery-Mode" not in response.headers
         c.run_background()
         with c.sessions() as db:
-            assert local_operations(db, c.user_id).count() == 0
+            assert len(markers(db, c.user_id)) == 0
     finally:
         event.remove(engine, "before_cursor_execute", reject_new_tables)
 
@@ -94,16 +111,9 @@ def install(context, operation="install:1"):
     )
 
 
-def test_kind_identity_matches_rust_and_does_not_conflate_delimited_ids():
-    assert operation_name("local:one", "install:1") == (
-        "3d16bf5618f292c6f8e1f364babdab4bef3fb8ca12e4edf797d0012952e0fe26"
-    )
-    assert operation_name("a:b", "c") != operation_name("a", "b:c")
-
-
-def test_long_identifiers_use_existing_kind_names_and_preserve_isolation(local_context):
-    from sqlalchemy import inspect
-
+def test_long_identifiers_reuse_existing_account_state_and_preserve_isolation(
+    local_context,
+):
     c = local_context
     instance, operation = "i" * 128, "o" * 128
     accepted = c.client.post(
@@ -113,37 +123,11 @@ def test_long_identifiers_use_existing_kind_names_and_preserve_isolation(local_c
     assert accepted.status_code == 200
     with c.sessions() as db:
         saved = lookup_operation(db, c.user_id, instance, operation)
-        assert len(saved.name) == 64
-        assert saved.kind == "PluginSyncState"
-        assert saved.namespace == LOCAL_SYNC_NAMESPACE
+        assert saved["operationId"] == operation
+        assert "plugin" not in saved
         assert lookup_operation(db, c.user_id + 1, instance, operation) is None
         assert lookup_operation(db, c.user_id, "other-instance", operation) is None
-        assert not inspect(db.bind).has_table("plugin_local_sync_operations")
-
-
-def test_duplicate_kind_identity_fails_closed_without_rejecting_uncertain_work(
-    local_context,
-):
-    from copy import deepcopy
-
-    c = local_context
-    assert install(c).status_code == 200
-    with c.sessions.begin() as db:
-        original = local_operations(db, c.user_id).one()
-        db.add(
-            Kind(
-                user_id=c.user_id,
-                kind=original.kind,
-                namespace=original.namespace,
-                name=original.name,
-                json=deepcopy(original.json),
-                is_active=True,
-            )
-        )
-    replay = install(c)
-    assert replay.status_code == 409
-    assert replay.json()["detail"] == "plugin_write_conflict"
-    assert "X-Plugin-Operation-State" not in replay.headers
+        assert not db.query(Kind).filter_by(namespace="plugin-local-sync").count()
 
 
 def test_install_update_remove_without_device_and_without_rpc(local_context):
@@ -171,7 +155,7 @@ def test_install_update_remove_without_device_and_without_rpc(local_context):
         for task in c.background_tasks
     )
     with c.sessions() as db:
-        assert local_operations(db, c.user_id).count() == 3
+        assert len(markers(db, c.user_id)) == 1
         assert not db.get(Kind, installed).is_active
 
 
@@ -188,27 +172,31 @@ def test_replay_is_idempotent_and_different_payload_conflicts(local_context):
         and response.json()["detail"] == "IDEMPOTENCY_CONFLICT"
     )
     with c.sessions() as db:
-        assert local_operations(db, c.user_id).count() == 1
+        assert len(markers(db, c.user_id)) == 1
 
 
 def test_operation_failure_rolls_back_account_and_intent(local_context):
     c = local_context
 
-    def fail(mapper, connection, target):
-        if (
-            target.kind == "PluginSyncState"
-            and target.namespace == LOCAL_SYNC_NAMESPACE
+    from app.services import plugin_local_sync
+
+    original_commit = plugin_local_sync.Session.commit
+
+    def fail_commit(db):
+        if any(
+            isinstance(row, Kind) and row.namespace == "plugin-sync"
+            for row in db.new | db.dirty
         ):
             raise RuntimeError("operation storage failed")
+        return original_commit(db)
 
-    event.listen(Kind, "before_insert", fail)
-    try:
+    from unittest.mock import patch
+
+    with patch.object(plugin_local_sync.Session, "commit", fail_commit):
         with pytest.raises(RuntimeError, match="operation storage failed"):
             install(c)
-    finally:
-        event.remove(Kind, "before_insert", fail)
     with c.sessions() as db:
-        assert local_operations(db, c.user_id).count() == 0
+        assert len(markers(db, c.user_id)) == 0
         assert (
             db.query(Kind)
             .filter_by(user_id=c.user_id, kind="InstalledPlugin", is_active=True)
@@ -269,10 +257,7 @@ def test_builtin_install_uses_the_same_atomic_local_path(local_context):
     assert c.remote_calls == []
     assert c.background_tasks
     with c.sessions() as db:
-        assert (
-            local_operations(db, c.user_id).one().json["spec"]["action"]
-            == "ensure_builtin"
-        )
+        assert next(iter(markers(db, c.user_id).values()))["action"] == "ensure_builtin"
 
 
 def seed_cloud_device(context, device_id="write-regression-device"):
@@ -343,9 +328,8 @@ def test_cloud_failure_does_not_rollback_local_acceptance(local_context, monkeyp
     failure.assert_awaited_once()
     assert install(c).json() == accepted.json()
     with c.sessions() as db:
-        saved = local_operations(db, c.user_id).one()
-        assert saved.json["spec"]["operationId"] == "install:1"
-        assert saved.json["spec"]["document"]["state"] == "intent_saved"
+        saved = next(iter(markers(db, c.user_id).values()))
+        assert saved["operationId"] == "install:1"
 
 
 @pytest.mark.asyncio
@@ -394,7 +378,7 @@ def test_rollback_allows_only_already_accepted_replay(local_context, monkeypatch
     assert install(c).json() == accepted.json()
     assert install(c, "new-operation").status_code == 409
     with c.sessions() as db:
-        assert local_operations(db, c.user_id).count() == 1
+        assert len(markers(db, c.user_id)) == 1
 
 
 def test_first_arrival_old_remove_cannot_reverse_a_newer_update(local_context):
@@ -407,7 +391,21 @@ def test_first_arrival_old_remove_cannot_reverse_a_newer_update(local_context):
     assert updated.status_code == 200, updated.text
     with c.sessions.begin() as db:
         # The ordering watermark must survive operation retention/archival.
-        local_operations(db, c.user_id).delete()
+        state = (
+            db.query(Kind)
+            .filter_by(
+                user_id=c.user_id,
+                kind="PluginSyncState",
+                namespace="plugin-sync",
+                name="account",
+            )
+            .one()
+        )
+        from copy import deepcopy
+
+        document = deepcopy(state.json)
+        document["spec"].pop("localIntents")
+        state.json = document
     late = c.client.delete(url, params=query("old:remove", 1))
     assert late.status_code == 409 and late.json()["detail"] == "INTENT_SUPERSEDED"
     assert c.account().json["spec"]["releaseId"] == c.upgraded_release_id
@@ -479,16 +477,15 @@ def test_accepted_old_replay_does_not_rewrite_new_intent_or_reuse_its_order(
     )
     assert update.status_code == 200
     replay = install(c)
-    assert replay.json() == initial.json()
+    assert replay.status_code == 409
+    assert replay.headers["X-Plugin-Operation-State"] == "superseded"
     assert replay.headers["X-Plugin-Intent-Order"] == "1"
     assert c.account().json["spec"]["releaseId"] == c.upgraded_release_id
     conflict = c.client.post(
-        f"/plugins/marketplace/{c.plugin_id}/install", params=query("install:1", 3)
+        f"/plugins/marketplace/{c.plugin_id}/install", params=query("new:update", 3)
     )
-    assert (
-        conflict.status_code == 409
-        and conflict.json()["detail"] == "IDEMPOTENCY_CONFLICT"
-    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == "IDEMPOTENCY_CONFLICT"
 
 
 def test_missing_catalog_is_explicitly_rejected_without_accepting_work(local_context):
@@ -501,7 +498,7 @@ def test_missing_catalog_is_explicitly_rejected_without_accepting_work(local_con
     assert response.headers["X-Plugin-Operation-Id"] == "deleted:catalog"
     assert response.headers["X-Plugin-Intent-Order"] == "1"
     with c.sessions() as db:
-        assert local_operations(db, c.user_id).count() == 0
+        assert len(markers(db, c.user_id)) == 0
 
 
 @pytest.mark.parametrize(
@@ -561,7 +558,7 @@ def test_previously_accepted_request_cannot_be_marked_unaccepted(
     assert response.status_code == 403
     assert "X-Plugin-Operation-State" not in response.headers
     with c.sessions() as db:
-        assert local_operations(db, c.user_id).count() == 1
+        assert len(markers(db, c.user_id)) == 1
 
 
 def test_rejection_without_write_coordination_is_still_uncertain(
@@ -588,3 +585,87 @@ def test_rejection_without_write_coordination_is_still_uncertain(
     assert response.status_code == 503
     assert response.json()["detail"] == "plugin_write_busy"
     assert "X-Plugin-Operation-State" not in response.headers
+
+
+def test_latest_marker_is_bounded_and_legacy_change_fences_lost_response(local_context):
+    c = local_context
+    accepted = install(c)
+    installed = int(accepted.json()["plugin"]["metadata"]["labels"]["id"])
+    for order in range(2, 12):
+        result = c.client.put(
+            f"/plugins/installed/{installed}",
+            params=query(f"update:{order}", order),
+            json={"enabled": bool(order % 2)},
+        )
+        assert result.status_code == 200
+    with c.sessions() as db:
+        slots = markers(db, c.user_id)
+        assert len(slots) == 1
+        assert slots[str(installed)]["operationId"] == "update:11"
+        assert "plugin" not in slots[str(installed)]
+    legacy = c.client.put(f"/plugins/installed/{installed}", json={"enabled": False})
+    assert legacy.status_code == 200
+    replay = c.client.put(
+        f"/plugins/installed/{installed}",
+        params=query("update:11", 11),
+        json={"enabled": True},
+    )
+    assert replay.status_code == 409
+    assert replay.headers["X-Plugin-Operation-State"] == "superseded"
+    assert c.account().json["spec"]["enabled"] is False
+    # Even after compaction, an old install must not undo an uninstall.
+    assert (
+        c.client.delete(
+            f"/plugins/installed/{installed}", params=query("remove:12", 12)
+        ).status_code
+        == 204
+    )
+    stale = install(c)
+    assert stale.status_code == 409
+    assert stale.headers["X-Plugin-Operation-State"] == "superseded"
+    assert c.account() is None
+
+
+def test_disabled_rollout_still_confirms_compacted_request_supersession(
+    local_context, monkeypatch
+):
+    c = local_context
+    installed = int(install(c).json()["plugin"]["metadata"]["labels"]["id"])
+    assert (
+        c.client.delete(
+            f"/plugins/installed/{installed}", params=query("new:remove", 3)
+        ).status_code
+        == 204
+    )
+    monkeypatch.setenv("PLUGIN_LOCAL_SYNC_ENABLED", "false")
+    late = install(c)
+    assert late.status_code == 409
+    assert late.headers["X-Plugin-Operation-State"] == "superseded"
+    assert c.account() is None
+
+
+def test_compacted_acceptance_cannot_be_reported_as_unaccepted(
+    local_context, monkeypatch
+):
+    c = local_context
+    initial = install(c)
+    installed = int(initial.json()["plugin"]["metadata"]["labels"]["id"])
+    assert (
+        c.client.put(
+            f"/plugins/installed/{installed}",
+            params=query("new:update", 2),
+            json={"enabled": False},
+        ).status_code
+        == 200
+    )
+
+    def fail(*args, **kwargs):
+        raise HTTPException(403, "Catalog temporarily inaccessible")
+
+    monkeypatch.setattr(
+        plugin_marketplace_service, "reconcile_stale_installed_catalog_refs", fail
+    )
+    replay = install(c)
+    assert replay.status_code == 403
+    assert "X-Plugin-Operation-State" not in replay.headers
+    assert c.account().json["spec"]["enabled"] is False

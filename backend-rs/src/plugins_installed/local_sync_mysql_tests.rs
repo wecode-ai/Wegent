@@ -1,22 +1,19 @@
-//! Real MySQL/Redis/HTTP coverage, invoked by the existing Backend Rust CI job.
+//! Real HTTP/MySQL/Redis contract; invoked by the existing Backend Rust CI job.
 use super::*;
 use crate::{Application, auth::AppAuthenticator, config::AuthConfig};
 use std::sync::Arc;
 
 #[tokio::test]
 #[ignore = "requires disposable MySQL/Redis and PLUGIN_LOCAL_SYNC_ENABLED=true"]
-async fn http_without_device_isolation_generation_and_receipts() -> anyhow::Result<()> {
-    assert!(
-        enabled(),
-        "set PLUGIN_LOCAL_SYNC_ENABLED=true for this contract test"
-    );
+async fn http_without_device_reuses_account_state_without_ledgers() -> anyhow::Result<()> {
+    assert!(enabled());
     crate::migrations::mysql_tests::isolated(verify).await
 }
 
 async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     crate::migrations::upgrade(mysql).await?;
     for id in [81001, 81002] {
-        mysql.execute("INSERT INTO users (id,user_name,password_hash,email,is_active,role,auth_source,preferences,git_info,created_at,updated_at) VALUES (?,?,'unused','',1,'user','password','{}','{}',NOW(),NOW())", (id,format!("local-sync-{id}"))).await?;
+        mysql.execute("INSERT INTO users (id,user_name,password_hash,email,is_active,role,auth_source,preferences,git_info,created_at,updated_at) VALUES (?,?,'unused','',1,'user','password','{}','{}',NOW(),NOW())",(id,format!("local-sync-{id}"))).await?;
     }
     let mut state = crate::build_app_state().await?;
     state.mysql = mysql.clone();
@@ -44,17 +41,14 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             .await
     });
     let client = brz_http::Client::new();
-    let token = |id| {
-        jsonwebtoken::encode(
+    let post = |id, path: &'static str, body: Value| {
+        let client = client.clone();
+        let token = jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
             &json!({"sub":format!("local-sync-{id}"),"exp":chrono::Utc::now().timestamp()+300}),
             &jsonwebtoken::EncodingKey::from_secret(b"local-sync-contract-test"),
         )
-        .unwrap()
-    };
-    let post = |id, path: &'static str, body: Value| {
-        let client = client.clone();
-        let token = token(id);
+        .unwrap();
         async move {
             client
                 .post(format!("http://{address}{path}"))
@@ -71,19 +65,21 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         "/api/plugins/local-sync",
         json!({"protocolVersion":1,"instanceId":"native","probeOnly":true}),
     )
-    .await;
-    assert_eq!(probe.status().as_u16(), 200);
-    let capabilities = probe.json::<Value>().await?;
-    assert_eq!(capabilities["accountId"], 81001);
-    assert_eq!(capabilities["contractRevision"], 2);
+    .await
+    .json::<Value>()
+    .await?;
+    assert_eq!(probe["contractRevision"], 3);
     #[derive(FromMysqlRow)]
     struct Count {
         n: i64,
     }
-    let rows: Count = mysql
-        .fetch_one("SELECT COUNT(*) AS n FROM kinds WHERE user_id=81001", ())
-        .await?;
-    assert_eq!(rows.n, 0, "Probe created dispatch metadata or a Device");
+    assert_eq!(
+        mysql
+            .fetch_one::<_, _, Count>("SELECT COUNT(*) AS n FROM kinds WHERE user_id=81001", ())
+            .await?
+            .n,
+        0
+    );
     let read = || {
         post(
             81001,
@@ -91,140 +87,61 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             json!({"protocolVersion":1,"instanceId":"native"}),
         )
     };
-    let snapshot = read().await.json::<Value>().await?;
-    assert_eq!(snapshot["generation"], 1);
-    assert_eq!(snapshot["payload"]["plugins"], json!([]));
-    let unchanged=post(81001,"/api/plugins/local-sync",json!({"protocolVersion":1,"instanceId":"native","knownRevision":snapshot["revision"],"actualRevision":snapshot["revision"]})).await.json::<Value>().await?;
+    let plan = read().await.json::<Value>().await?;
+    assert_eq!(plan["generation"], 1);
+    assert!(plan.get("snapshotId").is_none());
+    let unchanged=post(81001,"/api/plugins/local-sync",json!({"protocolVersion":1,"instanceId":"native","knownRevision":plan["revision"],"actualRevision":plan["revision"]})).await.json::<Value>().await?;
     assert_eq!(unchanged["unchanged"], true);
-    let body = json!({"protocolVersion":1,"instanceId":"native","snapshotId":snapshot["snapshotId"],"generation":1,"result":{"success":true,"scope":"plugins","plugin_sync":snapshot["payload"]["plugin_sync"],"plugins":[]}});
-    assert_eq!(
-        post(81002, "/api/plugins/local-sync/receipts", body.clone())
-            .await
-            .status()
-            .as_u16(),
-        403
-    );
-    let mut other_instance = body.clone();
-    other_instance["instanceId"] = json!("other-native");
-    assert_eq!(
-        post(81001, "/api/plugins/local-sync/receipts", other_instance)
-            .await
-            .status()
-            .as_u16(),
-        403
-    );
-    let newer = read().await.json::<Value>().await?;
-    assert_eq!(newer["generation"], 2);
-    let receipt = post(81001, "/api/plugins/local-sync/receipts", body.clone()).await;
-    assert_eq!(receipt.status().as_u16(), 200);
-    assert_eq!(receipt.json::<Value>().await?["state"], "superseded");
-    assert_eq!(
-        post(81001, "/api/plugins/local-sync/receipts", body)
-            .await
-            .status()
-            .as_u16(),
-        200
-    );
-    mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) VALUES (81001,'InstalledPlugin','default','old-client-write',?,1,NOW(),NOW())", (json!({"spec":{"installState":"installed","version":"1.0","enabled":true,"source":{"pluginKey":"old-client-write"}}}),)).await?;
-    let latest_body = json!({"protocolVersion":1,"instanceId":"native","snapshotId":newer["snapshotId"],"generation":2,"result":{"success":true,"scope":"plugins","plugin_sync":newer["payload"]["plugin_sync"],"plugins":[]}});
-    assert_eq!(
-        post(81001, "/api/plugins/local-sync/receipts", latest_body)
-            .await
-            .json::<Value>()
-            .await?["state"],
-        "superseded",
-        "A legacy account write must supersede an old receipt even without a new instance snapshot"
-    );
-    let rows: Count = mysql
-        .fetch_one(
-            "SELECT COUNT(*) AS n FROM kinds WHERE user_id=81001 AND kind='Device'",
-            (),
+    assert_eq!(read().await.json::<Value>().await?["generation"], 2);
+    mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) VALUES (81001,'InstalledPlugin','default','target',?,1,NOW(),NOW())",(json!({"metadata":{"name":"target","namespace":"default"},"spec":{"revision":1,"installState":"installed","version":"1.0","enabled":true,"source":{"pluginKey":"target"}}}),)).await?;
+    let target:StateRow=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND kind='InstalledPlugin' AND name='target'",()).await?;
+    let slot = json!({"operationId":"target-operation","requestHash":"hash","installedId":target.id,"installedRevision":1,"intentOrder":7,"action":"install"});
+    let mut account:StateRow=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?;
+    account.json["spec"]["localIntents"] = json!({"native":{target.id.to_string():slot}});
+    mysql
+        .execute(
+            "UPDATE kinds SET json=? WHERE id=?",
+            (account.json, account.id),
         )
         .await?;
-    assert_eq!(rows.n, 0);
-    let target: StateRow=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND name='old-client-write' AND namespace='default' AND kind='InstalledPlugin'",()).await?;
-    mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) VALUES (81001,'InstalledPlugin','default','unrelated-plugin',?,1,NOW(),NOW())", (json!({"spec":{"installState":"installed","version":"bad-historical-package","source":{"pluginKey":"unrelated-plugin"},"packageRef":{"checksum":"invalid"}}}),)).await?;
-    let unrelated:StateRow=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND name='unrelated-plugin' AND kind='InstalledPlugin' AND namespace='default'",()).await?;
-    for (operation, id, doc) in [
-        ("target-operation", target.id, target.json.clone()),
-        ("unrelated-operation", unrelated.id, unrelated.json.clone()),
-    ] {
-        let name = state::operation_name("native", operation);
-        let saved = json!({"spec":{"instanceId":"native","operationId":operation,"requestHash":"","action":"install","installedId":id,"document":{"state":"intent_saved","plugin":doc}}});
-        mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) VALUES (81001,'PluginSyncState','plugin-local-sync',?,?,1,NOW(),NOW())",(name,saved)).await?;
+    // An unrelated bad package must not enter the targeted execution plan.
+    mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) VALUES (81001,'InstalledPlugin','default','unrelated',?,1,NOW(),NOW())",(json!({"spec":{"installState":"installed","version":"bad","source":{"pluginKey":"unrelated"},"packageRef":{"checksum":"invalid"}}}),)).await?;
+    let plan=post(81001,"/api/plugins/local-sync",json!({"protocolVersion":1,"instanceId":"native","targeted":true,"operationId":"target-operation"})).await.json::<Value>().await?;
+    assert_eq!(plan["operation"]["state"], "intent_saved");
+    assert_eq!(
+        plan["operation"]["plugin"]["metadata"]["labels"]["id"],
+        target.id.to_string()
+    );
+    assert_eq!(plan["payload"]["plugins"].as_array().unwrap().len(), 1);
+    assert_eq!(plan["payload"]["scope"], "plugin_delta");
+    for (user, instance) in [(81002, "native"), (81001, "other-native")] {
+        let isolated = post(
+            user,
+            "/api/plugins/local-sync",
+            json!({"protocolVersion":1,"instanceId":instance,"operationId":"target-operation"}),
+        )
+        .await
+        .json::<Value>()
+        .await?;
+        assert_eq!(isolated["operation"]["state"], "unknown");
+        assert!(isolated["operation"]["plugin"].is_null());
     }
-    let accepted = mysql
-        .with_transaction(async |tx| {
-            read_operation(tx, 81001, "native", Some("target-operation")).await
-        })
-        .await?;
-    assert_eq!(accepted["state"], "intent_saved", "{accepted}");
-    let targeted=post(81001,"/api/plugins/local-sync",json!({"protocolVersion":1,"instanceId":"native","targeted":true,"operationId":"target-operation","operationIds":["target-operation"],"installedPluginId":target.id})).await.json::<Value>().await?;
-    assert_eq!(targeted["payload"]["scope"], "plugin_delta", "{targeted}");
-    assert_eq!(targeted["payload"]["plugin_sync"]["complete"], false);
-    assert_eq!(
-        targeted["payload"]["plugins"].as_array().unwrap().len(),
-        1,
-        "A single mutation included an unrelated historical plugin"
-    );
-    assert_eq!(
-        targeted["payload"]["plugins"][0]["installed_plugin_id"],
-        target.id
-    );
-    let ack = json!({"protocolVersion":1,"instanceId":"native","snapshotId":targeted["snapshotId"],"generation":targeted["generation"],"result":{"success":true,"scope":"plugin_delta","plugin_sync":targeted["payload"]["plugin_sync"],"plugins":[{"id":target.id,"generation":targeted["generation"],"operation":"upsert","status":"synced","version":targeted["payload"]["plugins"][0]["version"],"checksum":targeted["payload"]["plugins"][0]["checksum"]}]}});
-    assert_eq!(
-        post(81001, "/api/plugins/local-sync/receipts", ack)
-            .await
-            .status()
-            .as_u16(),
-        200
-    );
-    let (ended, waiting) = mysql
-        .with_transaction(async |tx| {
-            Ok((
-                state::load(tx, 81001, "native", "target-operation")
-                    .await?
-                    .unwrap(),
-                state::load(tx, 81001, "native", "unrelated-operation")
-                    .await?
-                    .unwrap(),
-            ))
-        })
-        .await?;
-    assert_eq!(ended.document["state"], "reconciled");
-    assert_eq!(
-        waiting.document["state"], "intent_saved",
-        "A receipt ended an unrelated pending operation"
-    );
     assert_eq!(post(81002,"/api/plugins/local-sync",json!({"protocolVersion":1,"instanceId":"native","targeted":true,"installedPluginId":target.id})).await.status().as_u16(),403);
     mysql
         .execute(
-            "UPDATE kinds SET is_active=0 WHERE id=? AND user_id=81001",
+            "UPDATE kinds SET json=JSON_SET(json,'$.spec.revision',2),is_active=0 WHERE id=?",
             (target.id,),
         )
         .await?;
-    let removal=post(81001,"/api/plugins/local-sync",json!({"protocolVersion":1,"instanceId":"native","targeted":true,"installedPluginId":target.id})).await.json::<Value>().await?;
-    assert_eq!(removal["payload"]["plugins"], json!([]));
+    let removed=post(81001,"/api/plugins/local-sync",json!({"protocolVersion":1,"instanceId":"native","targeted":true,"operationId":"target-operation"})).await.json::<Value>().await?;
+    assert_eq!(removed["operation"]["state"], "superseded");
     assert_eq!(
-        removal["payload"]["removed_plugins"][0]["installed_plugin_id"],
+        removed["payload"]["removed_plugins"][0]["installed_plugin_id"],
         target.id
     );
-    let mut body = json!({"protocolVersion":1,"instanceId":"native","snapshotId":removal["snapshotId"],"generation":removal["generation"],"result":{"success":true,"scope":"plugin_delta","plugin_sync":removal["payload"]["plugin_sync"],"plugins":[]}});
-    assert_eq!(
-        post(81001, "/api/plugins/local-sync/receipts", body.clone())
-            .await
-            .status()
-            .as_u16(),
-        422
-    );
-    body["result"]["plugins"] = json!([{"id":target.id,"generation":removal["generation"],"operation":"remove","status":"removed"}]);
-    assert_eq!(
-        post(81001, "/api/plugins/local-sync/receipts", body)
-            .await
-            .status()
-            .as_u16(),
-        200
-    );
+    assert_eq!(removed["payload"]["plugins"], json!([]));
+    assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM kinds WHERE namespace='plugin-local-sync' OR kind='Device'",()).await?.n,0);
+    assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM kinds WHERE user_id=81001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?.n,1);
     stop.send(()).unwrap();
     task.await??;
     Ok(())

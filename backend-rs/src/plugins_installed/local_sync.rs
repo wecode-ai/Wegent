@@ -1,5 +1,4 @@
-//! Account-scoped HTTP snapshots and receipts. No Device lookup or Socket RPC.
-mod state;
+//! Account-scoped execution plans reuse the existing generation and latest intent slots.
 use super::{
     desired_capabilities::{build_local_plugins, capability_snapshot, restrict_local_plugin},
     write_coordination::{PluginWriteLease, coordination_error, http_error},
@@ -26,18 +25,6 @@ struct SyncRequest {
     #[serde(default)]
     targeted: bool,
     installed_plugin_id: Option<i64>,
-    #[serde(default)]
-    operation_ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ReceiptRequest {
-    protocol_version: u32,
-    instance_id: String,
-    snapshot_id: String,
-    generation: u64,
-    result: Value,
 }
 
 #[derive(FromMysqlRow)]
@@ -74,8 +61,6 @@ fn map_error(error: MysqlError) -> FastApiError {
     if let MysqlError::InvalidQuery { reason } = &error {
         let status = match reason.as_str() {
             "SNAPSHOT_NOT_OWNED" => Some(StatusCode::FORBIDDEN),
-            "SNAPSHOT_EXPIRED" => Some(StatusCode::GONE),
-            "INVALID_RECEIPT" => Some(StatusCode::UNPROCESSABLE_ENTITY),
             "LOCAL_SYNC_DISABLED" => Some(StatusCode::CONFLICT),
             _ => None,
         };
@@ -93,12 +78,6 @@ async fn local_sync(
     body: SyncRequest,
 ) -> Result<Value, FastApiError> {
     validate(body.protocol_version, &body.instance_id)?;
-    if body.operation_ids.len() > 64 || body.operation_ids.iter().any(|id| !valid_id(id)) {
-        return Err(FastApiError::detail(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "INVALID_OPERATION_IDS",
-        ));
-    }
     if body.installed_plugin_id.is_some_and(|id| id <= 0) {
         return Err(FastApiError::detail(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -113,7 +92,7 @@ async fn local_sync(
     }
     if body.probe_only {
         return Ok(
-            json!({"enabled":enabled(),"protocolVersion":1,"contractRevision":2,"accountId":i64::from(user.id),"supports":["install","update","uninstall","reconcile"],"snapshotTtlSeconds":86400}),
+            json!({"enabled":enabled(),"protocolVersion":1,"contractRevision":3,"accountId":i64::from(user.id),"supports":["install","update","uninstall","reconcile"]}),
         );
     }
     let mysql = state.mysql.clone();
@@ -130,7 +109,7 @@ async fn local_sync(
                 })?;
                 let desired_revision = hash(&capability_snapshot(&payload));
                 let operation = read_operation(tx, i64::from(user.id), &body.instance_id, body.operation_id.as_deref()).await?;
-                if !enabled() && !state::has_instance(tx, i64::from(user.id), &body.instance_id).await? {
+                if !enabled() && !has_instance(tx, i64::from(user.id), &body.instance_id).await? {
                     return Err(coordination_error("LOCAL_SYNC_DISABLED"));
                 }
                 if body.known_revision.as_deref() == Some(&desired_revision) && body.actual_revision.as_deref() == Some(&desired_revision) && !body.recovery_pending && !body.targeted {
@@ -141,18 +120,10 @@ async fn local_sync(
                     let mut query=&mut *tx;
                     restrict_local_plugin(&mut query,i64::from(user.id),target,&mut payload).await.map_err(|error|match error { super::desired_capabilities::BuildError::Mysql(error)=>error, _=>coordination_error("plugin_write_unavailable") })?;
                 }
-                for id in &body.operation_ids {
-                    let accepted = read_operation(tx, i64::from(user.id), &body.instance_id, Some(id)).await?;
-                    if accepted["state"] == "unknown" { return Err(coordination_error("SNAPSHOT_NOT_OWNED")); }
-                    if body.targeted && accepted["installedPluginId"] != operation["installedPluginId"] { return Err(coordination_error("INVALID_RECEIPT")); }
-                }
                 let generation = next_generation(tx, i64::from(user.id)).await?;
                 payload["plugin_sync"] = json!({"version":2,"generation":generation,"complete":!body.targeted});
-                let snapshot_id = new_snapshot_id()?;
-                let document = json!({"state":"issued","revision":desired_revision,"generation":generation,"payload":payload,"operationIds":body.operation_ids,"operationState":operation["state"],"expiresAt":chrono::Utc::now().timestamp()+86400});
-                state::save_snapshot(tx, i64::from(user.id), &body.instance_id, &snapshot_id, document).await?;
                 lease.commit_revision(tx, revision).await?;
-                Ok(json!({"enabled":enabled(),"protocolVersion":1,"revision":desired_revision,"unchanged":false,"snapshotId":snapshot_id,"generation":generation,"payload":payload,"operation":operation}))
+                Ok(json!({"enabled":enabled(),"protocolVersion":1,"revision":desired_revision,"unchanged":false,"generation":generation,"payload":payload,"operation":operation}))
             })).await.unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))
         }.await;
         lease.release().await;
@@ -169,30 +140,55 @@ async fn read_operation(
     let Some(operation) = operation else {
         return Ok(Value::Null);
     };
-    let row = state::load(tx, user, instance, operation)
-        .await?
-        .filter(|row| row.action != "snapshot");
-    let Some(row) = row else {
+    let rows: Vec<StateRow> = tx.fetch_all("SELECT id,json FROM kinds WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND is_active=1 LIMIT 2", (user,)).await?;
+    if rows.len() > 1 {
+        return Err(coordination_error("plugin_write_conflict"));
+    }
+    let slot = rows
+        .first()
+        .and_then(|row| row.json["spec"]["localIntents"][instance].as_object())
+        .and_then(|slots| slots.values().find(|slot| slot["operationId"] == operation));
+    let Some(slot) = slot else {
         return Ok(json!({"operationId":operation,"state":"unknown"}));
     };
+    let id = slot["installedId"]
+        .as_i64()
+        .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
     #[derive(FromMysqlRow)]
     struct Current {
+        id: i64,
         json: Value,
         is_active: bool,
     }
-    let current: Option<Current> = tx.fetch_optional("SELECT json, is_active FROM kinds WHERE id = ? AND user_id = ? AND kind = 'InstalledPlugin' AND namespace = 'default'", (row.installed_id, user)).await?;
-    let matches = current.as_ref().is_some_and(|current| {
-        if row.action == "uninstall" {
-            return !current.is_active;
-        }
-        current.is_active
-            && ["releaseId", "version", "enabled", "componentStates"]
-                .iter()
-                .all(|key| current.json["spec"][key] == row.document["plugin"]["spec"][key])
+    let current:Option<Current> = tx.fetch_optional("SELECT id,json,is_active FROM kinds WHERE id=? AND user_id=? AND kind='InstalledPlugin' AND namespace='default'",(id,user)).await?;
+    let matches = current.as_ref().is_some_and(|row| {
+        row.json["spec"]["revision"].as_i64().unwrap_or(0)
+            == slot["installedRevision"].as_i64().unwrap_or(-1)
+            && row.is_active != (slot["action"] == "uninstall")
+    });
+    let plugin = current.filter(|row| row.is_active).and_then(|row| {
+        super::kind_to_item(&super::KindRow {
+            id: row.id,
+            json: row.json,
+        })
     });
     Ok(
-        json!({"operationId":operation,"installedPluginId":row.installed_id,"state":if matches {"intent_saved"} else {"superseded"},"plugin":row.document["plugin"]}),
+        json!({"operationId":operation,"installedPluginId":id,"state":if matches {"intent_saved"} else {"superseded"},"plugin":plugin}),
     )
+}
+
+async fn has_instance(
+    tx: &mut impl MysqlTransaction,
+    user: i64,
+    instance: &str,
+) -> MysqlResult<bool> {
+    let rows:Vec<StateRow>=tx.fetch_all("SELECT id,json FROM kinds WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND is_active=1 LIMIT 2",(user,)).await?;
+    if rows.len() > 1 {
+        return Err(coordination_error("plugin_write_conflict"));
+    }
+    Ok(rows
+        .first()
+        .is_some_and(|row| row.json["spec"]["localIntentOrders"][instance].is_object()))
 }
 
 async fn next_generation(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResult<u64> {
@@ -228,203 +224,9 @@ async fn next_generation(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResu
     }
 }
 
-#[brz_http_server::post("/api/plugins/local-sync/receipts")]
-async fn local_sync_receipts(
-    #[inject(state)] state: &AppState,
-    #[auth] user: SessionUser,
-    body: ReceiptRequest,
-) -> Result<Value, FastApiError> {
-    validate(body.protocol_version, &body.instance_id)?;
-    if !valid_id(&body.snapshot_id) {
-        return Err(FastApiError::detail(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "INVALID_RECEIPT",
-        ));
-    }
-    let mysql = state.mysql.clone();
-    let redis = state.redis.clone();
-    super::auto_update::complete_auto_update(async move {
-        let lease = PluginWriteLease::acquire(redis.as_ref(), i64::from(user.id)).await?;
-        let result = async {
-            lease.ensure_policy(&mysql).await?;
-            mysql
-                .with_transaction(async |tx| {
-                    let revision = lease.read_revision(tx).await?;
-                    let row =
-                        state::load(tx, i64::from(user.id), &body.instance_id, &body.snapshot_id)
-                            .await?
-                            .filter(|row| row.action == "snapshot")
-                            .ok_or_else(|| coordination_error("SNAPSHOT_NOT_OWNED"))?;
-                    let mut document = row.document;
-                    if document["generation"].as_u64() != Some(body.generation)
-                        || !valid_receipt(&document["payload"], &body.result)
-                    {
-                        return Err(coordination_error("INVALID_RECEIPT"));
-                    }
-                    if let Some(previous) = document.get("result") {
-                        if previous != &body.result {
-                            return Err(coordination_error("INVALID_RECEIPT"));
-                        }
-                        return Ok(json!({"state":document["state"]}));
-                    }
-                    if document["expiresAt"].as_i64().unwrap_or(0) < chrono::Utc::now().timestamp()
-                    {
-                        return Err(coordination_error("SNAPSHOT_EXPIRED"));
-                    }
-                    let newer = state::has_newer_snapshot(
-                        tx,
-                        i64::from(user.id),
-                        &body.instance_id,
-                        row.id,
-                    )
-                    .await?;
-                    let mut query = &mut *tx;
-                    let current = build_local_plugins(&mut query, i64::from(user.id))
-                        .await
-                        .map_err(|_| coordination_error("plugin_write_unavailable"))?;
-                    let obsolete = document["revision"] != hash(&capability_snapshot(&current));
-                    let state = if newer || obsolete || document["operationState"] == "superseded" {
-                        "superseded"
-                    } else if body.result["success"] == true {
-                        "local_completed"
-                    } else {
-                        "failed"
-                    };
-                    document["state"] = json!(state);
-                    document["result"] = body.result;
-                    state::update_document(
-                        tx,
-                        i64::from(user.id),
-                        &body.instance_id,
-                        &body.snapshot_id,
-                        document.clone(),
-                    )
-                    .await?;
-                    if document["result"]["success"] == true
-                        || document["operationState"] == "superseded"
-                    {
-                        for operation in document["operationIds"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(Value::as_str)
-                        {
-                            if let Some(intent) =
-                                state::load(tx, i64::from(user.id), &body.instance_id, operation)
-                                    .await?
-                                && intent.action != "snapshot"
-                                && intent.id < row.id
-                            {
-                                let mut saved = intent.document;
-                                saved["state"] = json!("reconciled");
-                                state::update_document(
-                                    tx,
-                                    i64::from(user.id),
-                                    &body.instance_id,
-                                    operation,
-                                    saved,
-                                )
-                                .await?;
-                            }
-                        }
-                    }
-                    lease.commit_revision(tx, revision).await?;
-                    Ok(json!({"state":state}))
-                })
-                .await
-        }
-        .await;
-        lease.release().await;
-        result
-    })
-    .await
-    .map_err(map_error)
-}
-
-fn valid_receipt(payload: &Value, result: &Value) -> bool {
-    if !result["success"].is_boolean()
-        || result["plugin_sync"] != payload["plugin_sync"]
-        || result["scope"] != payload["scope"]
-    {
-        return false;
-    }
-    let Some(items) = result["plugins"].as_array() else {
-        return false;
-    };
-    let Some(expected) = payload["plugins"].as_array() else {
-        return false;
-    };
-    if result["success"] == true
-        && items
-            .iter()
-            .any(|item| !matches!(item["status"].as_str(), Some("synced" | "removed")))
-    {
-        return false;
-    }
-    let removed = payload["removed_plugins"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let mut seen = std::collections::HashSet::new();
-    for item in items {
-        let id = item["id"]
-            .as_i64()
-            .map(|id| id.to_string())
-            .or_else(|| item["id"].as_str().map(str::to_owned));
-        let Some(id) = id else {
-            return false;
-        };
-        if !seen.insert(id.clone()) || item["generation"] != payload["plugin_sync"]["generation"] {
-            return false;
-        }
-        let target = expected
-            .iter()
-            .find(|target| target["installed_plugin_id"].to_string().trim_matches('"') == id);
-        let status = item["status"].as_str().unwrap_or_default();
-        if let Some(target) = target {
-            if item["operation"] != "upsert"
-                || !matches!(status, "synced" | "failed" | "superseded")
-            {
-                return false;
-            }
-            if status == "synced"
-                && (item["version"] != target["version"] || item["checksum"] != target["checksum"])
-            {
-                return false;
-            }
-        } else {
-            let requested = removed
-                .iter()
-                .any(|target| target["installed_plugin_id"].to_string().trim_matches('"') == id);
-            if (!requested && payload["plugin_sync"]["complete"] != true)
-                || item["operation"] != "remove"
-                || !matches!(status, "removed" | "failed" | "superseded")
-            {
-                return false;
-            }
-        }
-    }
-    expected
-        .iter()
-        .chain(removed.iter())
-        .all(|item| seen.contains(item["installed_plugin_id"].to_string().trim_matches('"')))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn delta_removals_require_the_exact_requested_acknowledgement() {
-        let payload = json!({"scope":"plugin_delta","plugin_sync":{"version":2,"generation":3,"complete":false},"plugins":[],"removed_plugins":[{"installed_plugin_id":7}]});
-        let mut result = json!({"success":true,"scope":"plugin_delta","plugin_sync":payload["plugin_sync"],"plugins":[]});
-        assert!(!valid_receipt(&payload, &result));
-        result["plugins"] =
-            json!([{"id":7,"generation":3,"operation":"remove","status":"removed"}]);
-        assert!(valid_receipt(&payload, &result));
-        result["plugins"][0]["id"] = json!(8);
-        assert!(!valid_receipt(&payload, &result));
-    }
-
     #[test]
     fn validates_identifiers_and_protocol() {
         assert!(validate(1, "instance:1").is_ok());
@@ -433,22 +235,6 @@ mod tests {
         }
         assert!(validate(2, "instance").is_err());
     }
-    #[test]
-    fn receipt_cannot_change_target_generation_or_package() {
-        let payload = json!({"scope":"plugins","plugin_sync":{"version":2,"generation":3,"complete":true},"plugins":[{"installed_plugin_id":7,"version":"1","checksum":"sha256:abc"}]});
-        let mut result = json!({"success":true,"scope":"plugins","plugin_sync":payload["plugin_sync"],"plugins":[{"id":7,"generation":3,"operation":"upsert","status":"synced","version":"1","checksum":"sha256:abc"}]});
-        assert!(valid_receipt(&payload, &result));
-        result["plugins"][0]["checksum"] = json!("wrong");
-        assert!(!valid_receipt(&payload, &result));
-        result["plugins"] = json!([]);
-        assert!(!valid_receipt(&payload, &result));
-    }
-}
-
-fn new_snapshot_id() -> MysqlResult<String> {
-    let mut bytes = [0_u8; 16];
-    getrandom::getrandom(&mut bytes).map_err(|_| coordination_error("plugin_write_unavailable"))?;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 #[cfg(test)]

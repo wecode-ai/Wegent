@@ -14,7 +14,6 @@ interface LocalSyncResult {
   enabled: boolean
   protocolVersion: number
   localCompleted?: boolean
-  receiptPending?: boolean
   recoveryPending?: boolean
   unchanged?: boolean
   operation?: { plugin?: InstalledPlugin | null }

@@ -29,7 +29,6 @@ function success() {
     enabled: true,
     protocolVersion: 1,
     localCompleted: true,
-    receiptPending: true,
     operation: { plugin },
     result: { plugins: [{ id: 12, status: 'synced', version: '1.0.0', checksum: 'sha256:abc' }] },
   }
@@ -39,7 +38,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn())
 })
 describe('HTTP local plugin execution', () => {
-  test('installs without a cloud Device and finishes before remote receipts', async () => {
+  test('installs without a cloud Device and finishes without Device receipts', async () => {
     request
       .mockResolvedValueOnce({ enabled: true, protocolVersion: 1 })
       .mockResolvedValueOnce(success())

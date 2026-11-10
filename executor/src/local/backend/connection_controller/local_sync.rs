@@ -35,23 +35,22 @@ fn load(path: &Path) -> Result<Value, AppIpcError> {
         Ok(bytes) => {
             serde_json::from_slice(&bytes).map_err(|_| error("plugin_local_journal_invalid"))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok(json!({"version":1,"pending":[],"receipts":[]}))
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({"version":1,"pending":[]})),
         Err(_) => Err(error("plugin_local_journal_unavailable")),
     }
 }
 fn load_journal(path: &Path) -> Result<Value, AppIpcError> {
-    let journal = load(path)?;
+    let mut journal = load(path)?;
+    journal
+        .as_object_mut()
+        .ok_or_else(|| error("plugin_local_journal_invalid"))?
+        .remove("receipts");
     let valid = journal["version"] == 1
         && journal["pending"].as_array().is_some_and(|items| {
             items.iter().all(|item| {
                 item.is_object() && item["operationId"].is_string() && item["action"].is_string()
             })
-        })
-        && journal["receipts"]
-            .as_array()
-            .is_some_and(|items| items.iter().all(Value::is_object));
+        });
     if !valid {
         return Err(error("plugin_local_journal_invalid"));
     }
@@ -95,11 +94,7 @@ async fn post(
         ))
         .bearer_auth(&connection.auth_token)
         .json(body)
-        .timeout(Duration::from_secs(if path.ends_with("/receipts") {
-            5
-        } else {
-            30
-        }))
+        .timeout(Duration::from_secs(30))
         .send()
         .await
         .map_err(|_| error("plugin_local_http_unavailable"))?;
@@ -163,6 +158,7 @@ fn retire_superseded(journal: &mut Value, operation: &str) {
 enum SubmitOutcome {
     Accepted,
     Rejected { failure: AppIpcError, status: u16 },
+    Superseded,
 }
 
 fn acknowledged(headers: &reqwest::header::HeaderMap, operation: &str, order: u64) -> bool {
@@ -249,16 +245,22 @@ async fn submit(
         .map_err(|_| error("plugin_local_http_unavailable"))?;
     let status = response.status();
     let ack = acknowledged(response.headers(), operation, intent_order);
-    let rejected = response
+    let terminal = response
         .headers()
         .get("X-Plugin-Operation-State")
         .and_then(|value| value.to_str().ok())
-        == Some("rejected");
+        .unwrap_or("")
+        .to_owned();
+    let rejected = terminal == "rejected";
     if !status.is_success() {
         let value = response.json::<Value>().await.unwrap_or_default();
         let code = value["detail"]
             .as_str()
             .unwrap_or("plugin_local_intent_failed");
+        if ack && terminal == "superseded" && status.as_u16() == 409 && code == "INTENT_SUPERSEDED"
+        {
+            return Ok(SubmitOutcome::Superseded);
+        }
         let definitive = matches!(status.as_u16(), 400 | 403 | 404 | 422)
             || (status.as_u16() == 409 && code == "INTENT_SUPERSEDED");
         if ack && rejected && definitive && value["detail"].is_string() {
@@ -279,9 +281,6 @@ async fn submit(
 fn valid_snapshot(snapshot: &Value) -> bool {
     snapshot["protocolVersion"] == 1
         && snapshot["generation"].as_u64().is_some_and(|g| g > 0)
-        && snapshot["snapshotId"]
-            .as_str()
-            .is_some_and(|id| !id.is_empty() && id.len() <= 128)
         && snapshot["revision"].as_str().is_some_and(|revision| {
             revision.len() == 64 && revision.bytes().all(|c| c.is_ascii_hexdigit())
         })
@@ -325,84 +324,6 @@ fn local_result(payload: &Value, result: Value) -> Value {
 }
 
 impl LocalBackendConnectionController {
-    fn schedule_local_receipts(&self, connection: &ConnectionConfig, path: &Path) {
-        let controller = self.clone();
-        let connection = connection.clone();
-        let path = path.to_path_buf();
-        tokio::spawn(async move {
-            let _ = controller.flush_local_receipts(&connection, &path).await;
-        });
-    }
-
-    async fn flush_local_receipts(
-        &self,
-        connection: &ConnectionConfig,
-        path: &Path,
-    ) -> Result<(), AppIpcError> {
-        // Receipt HTTP must never hold the foreground coordinator or file lease.
-        let receipts = load_journal(path)?["receipts"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let mut acknowledged = Vec::new();
-        let mut rejected = Vec::new();
-        let mut reconcile = false;
-        for receipt in receipts.into_iter().take(16) {
-            {
-                let state = self.state.lock().await;
-                if state.profile.as_ref().map(|p| &p.connection) != Some(connection) {
-                    return Err(error("plugin_route_profile_mismatch"));
-                }
-            }
-            match post(connection, "/api/plugins/local-sync/receipts", &receipt).await {
-                Ok(_) => acknowledged.push(receipt["snapshotId"].clone()),
-                Err(e) if e.code == "SNAPSHOT_EXPIRED" => {
-                    acknowledged.push(receipt["snapshotId"].clone());
-                    reconcile = true;
-                }
-                Err(e) if matches!(e.code.as_str(), "SNAPSHOT_NOT_OWNED" | "INVALID_RECEIPT") => {
-                    acknowledged.push(receipt["snapshotId"].clone());
-                    rejected.push(json!({"receipt":receipt,"errorCode":e.code,"rejectedAt":chrono::Utc::now().timestamp()}));
-                    reconcile = true;
-                }
-                Err(_) => break,
-            }
-        }
-        if acknowledged.is_empty() {
-            return Ok(());
-        }
-        let _serial = self.local_sync_lock.lock().await;
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path.with_extension("lock"))
-            .map_err(|_| error("plugin_local_journal_unavailable"))?;
-        file.try_lock_exclusive()
-            .map_err(|_| error("plugin_local_sync_busy"))?;
-        let mut journal = load_journal(path)?;
-        if reconcile {
-            journal["reconcilePending"] = json!(true);
-            journal["revision"] = Value::Null;
-        }
-        if !rejected.is_empty() {
-            if !journal["rejectedReceipts"].is_array() {
-                journal["rejectedReceipts"] = json!([]);
-            }
-            let archive = journal["rejectedReceipts"].as_array_mut().unwrap();
-            archive.extend(rejected);
-            if archive.len() > 100 {
-                archive.drain(..archive.len() - 100);
-            }
-        }
-        journal["receipts"]
-            .as_array_mut()
-            .ok_or_else(|| error("plugin_local_journal_invalid"))?
-            .retain(|receipt| !acknowledged.contains(&receipt["snapshotId"]));
-        persist(path, &journal)
-    }
-
     pub(super) async fn local_plugin_sync(&self, params: Value) -> Result<Value, AppIpcError> {
         let root = wework_codex_home().join("plugin-local-sync");
         self.local_plugin_sync_at(params, &root).await
@@ -441,7 +362,7 @@ impl LocalBackendConnectionController {
             &json!({"protocolVersion":1,"instanceId":instance,"probeOnly":true}),
         )
         .await?;
-        if capabilities["protocolVersion"] != 1 || capabilities["contractRevision"] != 2 {
+        if capabilities["protocolVersion"] != 1 || capabilities["contractRevision"] != 3 {
             return Err(error("plugin_local_sync_unsupported"));
         }
         let account = capabilities["accountId"]
@@ -465,10 +386,7 @@ impl LocalBackendConnectionController {
                 .as_array()
                 .is_some_and(|items| !items.is_empty())
                 || journal["snapshot"].is_object()
-                || journal["reconcilePending"] == true
-                || journal["receipts"]
-                    .as_array()
-                    .is_some_and(|items| !items.is_empty());
+                || journal["reconcilePending"] == true;
             let mut capabilities = capabilities;
             capabilities["recoveryPending"] = json!(recovery);
             capabilities["sourceDeviceId"] = json!(optional_origin(&self.base_config.device_id));
@@ -577,6 +495,7 @@ impl LocalBackendConnectionController {
                 persist(path, &journal)?;
                 return Err(match outcome {
                     Err(failure) | Ok(SubmitOutcome::Rejected { failure, .. }) => failure,
+                    Ok(SubmitOutcome::Superseded) => error("INTENT_SUPERSEDED"),
                     Ok(SubmitOutcome::Accepted) => unreachable!(),
                 });
             }
@@ -623,7 +542,7 @@ impl LocalBackendConnectionController {
                 }
             }
         }
-        let snapshot=post(connection,"/api/plugins/local-sync",&json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["snapshot"].is_object() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id,"operationIds":operation_ids})).await?;
+        let snapshot=post(connection,"/api/plugins/local-sync",&json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["snapshot"].is_object() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id})).await?;
         // Profile replacement fences the shared installer as well as this HTTP scope.
         {
             let state = self.state.lock().await;
@@ -644,14 +563,6 @@ impl LocalBackendConnectionController {
                 return Err(error("plugin_local_invalid_response"));
             }
 
-            let controller = self.clone();
-            let connection = connection.clone();
-            let receipt_path = path.to_path_buf();
-            tokio::spawn(async move {
-                let _ = controller
-                    .flush_local_receipts(&connection, &receipt_path)
-                    .await;
-            });
             return Ok(
                 json!({"enabled":capabilities["enabled"], "protocolVersion":1, "localCompleted":true, "unchanged":true, "result":journal["lastResult"]}),
             );
@@ -666,18 +577,12 @@ impl LocalBackendConnectionController {
             return Err(error("plugin_local_invalid_response"));
         }
         if snapshot["operation"]["state"] == "superseded" {
-            let mut result = local_result(
-                &snapshot["payload"],
-                json!({"success":false,"error":"INTENT_SUPERSEDED"}),
+            recovery::record_submission_result(
+                &mut journal,
+                operation.unwrap(),
+                &Ok(SubmitOutcome::Superseded),
             );
-            for item in result["plugins"].as_array_mut().unwrap() {
-                item["status"] = json!("superseded");
-            }
-            journal["receipts"].as_array_mut().unwrap().push(json!({"protocolVersion":1,"instanceId":instance,"snapshotId":snapshot["snapshotId"],"generation":snapshot["generation"],"result":result}));
-
-            retire_superseded(&mut journal, operation.unwrap());
             persist(path, &journal)?;
-            self.schedule_local_receipts(connection, path);
             return Err(error("INTENT_SUPERSEDED"));
         }
         journal["snapshot"] = snapshot.clone();
@@ -694,11 +599,6 @@ impl LocalBackendConnectionController {
                     .iter()
                     .all(|item| matches!(item["status"].as_str(), Some("synced" | "removed")))
             });
-        let receipt = json!({"protocolVersion":1,"instanceId":instance,"snapshotId":snapshot["snapshotId"],"generation":snapshot["generation"],"result":result});
-        journal["receipts"]
-            .as_array_mut()
-            .ok_or_else(|| error("plugin_local_journal_invalid"))?
-            .push(receipt);
         if completed {
             journal["revision"] = if targeted {
                 Value::Null
@@ -723,25 +623,11 @@ impl LocalBackendConnectionController {
             journal["snapshot"] = Value::Null;
         }
         persist(path, &journal)?;
-        let receipt_pending = !journal["receipts"].as_array().unwrap().is_empty();
-        let controller = self.clone();
-        let receipt_connection = connection.clone();
-        let receipt_path = path.to_path_buf();
-        tokio::spawn(async move {
-            let _ = controller
-                .flush_local_receipts(&receipt_connection, &receipt_path)
-                .await;
-        });
-
         if !completed {
             return Err(error("plugin_local_apply_failed"));
         }
-        crate::logging::write_executor_log_line(&crate::logging::format_executor_log(
-            "local plugin execution completed",
-            &[("receipt_pending", receipt_pending.to_string())],
-        ));
         Ok(
-            json!({"enabled":capabilities["enabled"],"protocolVersion":1,"localCompleted":true,"receiptPending":receipt_pending,"operation":snapshot["operation"],"result":result}),
+            json!({"enabled":capabilities["enabled"],"protocolVersion":1,"localCompleted":true,"operation":snapshot["operation"],"result":result}),
         )
     }
 }
@@ -864,6 +750,56 @@ mod tests {
         assert_eq!(result["plugins"][0]["id"], 7);
         assert_eq!(result["plugins"][0]["status"], "failed");
         assert_eq!(result["plugin_sync"], payload["plugin_sync"]);
+    }
+
+    #[tokio::test]
+    async fn supersession_requires_matching_backend_proof() {
+        use axum::{response::IntoResponse, routing::delete, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let connection = ConnectionConfig {
+            backend_url: format!("http://{}", listener.local_addr().unwrap()),
+            auth_token: "token".into(),
+            ..Default::default()
+        };
+        let router = Router::new().route(
+            "/api/plugins/installed/7",
+            delete(
+                |axum::extract::Query(q): axum::extract::Query<
+                    std::collections::HashMap<String, String>,
+                >| async move {
+                    let mut response = (
+                        axum::http::StatusCode::CONFLICT,
+                        axum::Json(json!({"detail":"INTENT_SUPERSEDED"})),
+                    )
+                        .into_response();
+                    if q["operation_id"] == "proven" {
+                        for (key, value) in [
+                            ("X-Plugin-Delivery-Mode", "local_pull_v1"),
+                            ("X-Plugin-Operation-Id", "proven"),
+                            ("X-Plugin-Intent-Order", "7"),
+                            ("X-Plugin-Operation-State", "superseded"),
+                        ] {
+                            response.headers_mut().insert(key, value.parse().unwrap());
+                        }
+                    }
+                    response
+                },
+            ),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        for operation in ["proven", "unconfirmed"] {
+            let request =
+                json!({"operationId":operation,"intentOrder":7,"action":"uninstall","targetId":7});
+            let result = submit(&connection, "native", &request, "").await;
+            if operation == "proven" {
+                assert!(matches!(result, Ok(SubmitOutcome::Superseded)));
+            } else {
+                assert!(result.is_err());
+            }
+        }
+        server.abort();
     }
 
     #[test]

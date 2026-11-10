@@ -86,7 +86,7 @@ impl Fixture {
                     async move {
                         if body["probeOnly"] == true {
                             probe_entered.notify_one();
-                            return Json(json!({"enabled":true,"protocolVersion":1,"contractRevision":2,"accountId":1})).into_response();
+                            return Json(json!({"enabled":true,"protocolVersion":1,"contractRevision":3,"accountId":1})).into_response();
                         }
                         if matches!(plan, Plan::HeldHttp) {
                             entered.notify_one();

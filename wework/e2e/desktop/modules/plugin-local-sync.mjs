@@ -41,7 +41,6 @@ export async function verifyPluginLocalSync({
     cloud.backendEnv = {
       ...flags,
       PLUGIN_LOCAL_SYNC_ENABLED: 'true',
-      PLUGIN_LOCAL_SYNC_WORKER_ENABLED: 'true',
     }
     apiProxy.disconnectWebSockets(true)
     await cloud.launchBackend()
@@ -49,8 +48,7 @@ export async function verifyPluginLocalSync({
       await cloud.executeDatabase('UPDATE kinds SET is_active = 0 WHERE user_id = 1 AND id = %s', [
         row.id,
       ])
-    apiProxy.rule = request =>
-      request.path === '/api/plugins/local-sync/receipts' ? 'hold-response' : null
+    apiProxy.rule = request => null
     const invoke = async params => {
       const response = await requestPluginExecutor(control, 'executor.plugins.local_sync', {
         backend_url: apiProxy.url,
@@ -94,7 +92,7 @@ export async function verifyPluginLocalSync({
         request.path === `/api/plugins/installed/${id}`
       )
         return 'disconnect'
-      return request.path === '/api/plugins/local-sync/receipts' ? 'hold-response' : null
+      return null
     }
     const pendingRemoval = await requestPluginExecutor(control, 'executor.plugins.local_sync', {
       backend_url: apiProxy.url,
@@ -137,11 +135,7 @@ export async function verifyPluginLocalSync({
     await until(
       journal,
       state =>
-        state.rejectedOperations?.some(
-          entry =>
-            entry.request.operationId === obsolete.operationId &&
-            entry.errorCode === 'INTENT_SUPERSEDED'
-        ),
+        state.supersededOperations?.some(entry => entry.operationId === obsolete.operationId),
       'The obsolete pending uninstall was not retired'
     )
     assert.equal((await accountPlugin(cloud, slug)).spec.releaseId, upgraded.releaseId)
@@ -156,7 +150,7 @@ export async function verifyPluginLocalSync({
       install: true,
       update: true,
       uninstall: true,
-      receiptResponseHeld: true,
+      noReceiptRequests: true,
       olderUnsubmittedUninstallFenced: true,
       rejectedPendingDoesNotBlockReconciliation: true,
       uncertainAcceptanceRetainsOriginalOperation: true,
@@ -175,8 +169,7 @@ export async function verifyPluginLocalSync({
   }
 }
 
-const holdReceipts = entry =>
-  entry.path === '/api/plugins/local-sync/receipts' ? 'hold-response' : null
+const noFault = entry => null
 const pending = (state, action, target) =>
   state.pending.find(entry => entry.action === action && entry.targetId === target)
 
@@ -188,7 +181,7 @@ async function verifyRejectedRecovery({ request, invoke, apiProxy, journal }) {
     entry.path === `/api/plugins/marketplace/${missing}/install` &&
     disconnected
       ? 'disconnect'
-      : holdReceipts(entry)
+      : noFault(entry)
   const failed = await request({ action: 'install', targetId: missing })
   assert.equal(failed.payload.error?.code, 'plugin_local_http_unavailable')
   const original = pending(await journal(), 'install', missing)
@@ -244,7 +237,7 @@ async function verifyUncertainRecovery({ request, invoke, apiProxy, journal, clo
       entry.path === `/api/plugins/installed/${blockedId}/download`
     )
       return 'disconnect'
-    if (entry.method !== 'PUT' || entry.path !== path) return holdReceipts(entry)
+    if (entry.method !== 'PUT' || entry.path !== path) return noFault(entry)
     if (drop) {
       drop = false
       return 'drop-response'
@@ -288,13 +281,19 @@ async function verifyUncertainRecovery({ request, invoke, apiProxy, journal, clo
     'The original operation was not confirmed after response recovery'
   )
   const rows = await cloud.queryDatabase(
-    'SELECT COUNT(*) AS n FROM plugin_sync_outbox WHERE user_id = 1 AND operation_id = %s',
-    [original.operationId]
+    "SELECT json FROM kinds WHERE user_id=1 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'"
   )
-  assert.equal(Number(rows[0].n), 1, 'A lost response duplicated the account operation')
+  const accountState = typeof rows[0].json === 'string' ? JSON.parse(rows[0].json) : rows[0].json
+  const slots = Object.values(accountState.spec.localIntents).flatMap(Object.values)
+  assert.equal(slots.filter(slot => slot.operationId === original.operationId).length, 1)
+  const ledger = await cloud.queryDatabase(
+    "SELECT COUNT(*) AS n FROM kinds WHERE namespace='plugin-local-sync'"
+  )
+  assert.equal(Number(ledger[0].n), 0)
+  assert.ok(!apiProxy.requests.some(entry => entry.path === '/api/plugins/local-sync/receipts'))
   blockDownload = false
   assert.equal((await invoke({ full: true })).localCompleted, true)
   assert.ok(!(await journal()).pending.some(entry => entry.operationId === original.operationId))
   assert.equal((await invoke({ action: 'uninstall', targetId: blockedId })).localCompleted, true)
-  apiProxy.rule = holdReceipts
+  apiProxy.rule = noFault
 }

@@ -17,10 +17,6 @@ from app.models.kind import Kind
 from app.schemas.installed_plugin import InstalledPlugin, InstalledPluginUpdateRequest
 from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.installed_plugin_service import installed_plugin_service
-from app.services.plugin_local_sync_state import lookup_operation as _lookup_operation
-from app.services.plugin_local_sync_state import (
-    save_operation,
-)
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_write_coordination import acquire_plugin_write_lock
 from shared.telemetry.decorators import trace_sync
@@ -86,8 +82,32 @@ def mutate_local_plugin(
                 db, user_id, instance_id, operation_id, request_hash
             )
             if previous is None:
+                if action in {"update", "uninstall"}:
+                    target = int(target_id)
+                elif action == "install":
+                    installed = plugin_marketplace_service._find_installed(
+                        db, user_id=user_id, plugin_id=target_id
+                    )
+                    target = installed.id if installed is not None else None
+                else:
+                    installed = (
+                        db.query(Kind)
+                        .filter_by(
+                            user_id=user_id, kind="InstalledPlugin", namespace="default"
+                        )
+                        .filter(
+                            Kind.json["spec"]["source"]["pluginKey"].as_string()
+                            == str(target_id)
+                        )
+                        .first()
+                    )
+                    target = installed.id if installed is not None else None
+                if target is not None:
+                    _guard_intent_order(
+                        db, user_id, instance_id, target, intent_order, advance=False
+                    )
                 raise HTTPException(409, "LOCAL_SYNC_DISABLED")
-            return previous.json["spec"]["document"].get("plugin")
+            return _current_result(db, user_id, previous)
         if action in {"install", "ensure_builtin"}:
             # Legacy catalog repair owns its own commit; finish it before opening
             # the atomic intent/operation transaction.
@@ -99,7 +119,7 @@ def mutate_local_plugin(
             db, user_id, instance_id, operation_id, request_hash
         )
         if existing is not None:
-            return existing.json["spec"]["document"].get("plugin")
+            return _current_result(db, user_id, existing)
         if action in {"update", "uninstall"}:
             _guard_intent_order(
                 db, user_id, instance_id, int(target_id), intent_order, advance=False
@@ -166,29 +186,69 @@ def mutate_local_plugin(
         )
         _guard_intent_order(db, user_id, instance_id, int(installed_id), intent_order)
         result = installed.model_dump(mode="json") if installed else None
-        save_operation(
-            db,
-            user_id=user_id,
-            instance_id=instance_id,
-            operation_id=operation_id,
-            request_hash=request_hash,
-            action=action,
-            installed_id=installed_id,
-            document={
-                "state": "intent_saved",
-                "intentOrder": intent_order,
-                "plugin": result,
-            },
-        )
+        state = lock_plugin_sync_state(db, user_id)
+        document = deepcopy(state.json)
+        slots = document.setdefault("spec", {}).setdefault("localIntents", {})
+        local = slots.setdefault(instance_id, {})
+        row = db.get(Kind, int(installed_id))
+        local[str(installed_id)] = {
+            "operationId": operation_id,
+            "requestHash": request_hash,
+            "installedId": int(installed_id),
+            "intentOrder": intent_order,
+            "installedRevision": row.json.get("spec", {}).get("revision", 0),
+            "action": action,
+        }
+        state.json = document
         db.commit()
         return result
 
 
+def _lookup_operation(
+    db: Session, user_id: int, instance_id: str, operation_id: str
+) -> dict[str, Any] | None:
+    state = lock_plugin_sync_state(db, user_id)
+    slots = state.json.get("spec", {}).get("localIntents", {}).get(instance_id, {})
+    if not isinstance(slots, dict):
+        raise HTTPException(409, "plugin_write_conflict")
+    found = [slot for slot in slots.values() if slot.get("operationId") == operation_id]
+    if len(found) > 1:
+        raise HTTPException(409, "plugin_write_conflict")
+    return found[0] if found else None
+
+
+def _current_result(db: Session, user_id: int, slot: dict) -> dict | None:
+    row = (
+        db.query(Kind)
+        .filter_by(
+            id=slot["installedId"],
+            user_id=user_id,
+            kind="InstalledPlugin",
+            namespace="default",
+        )
+        .one_or_none()
+    )
+    if (
+        row is None
+        or row.json.get("spec", {}).get("revision", 0) != slot["installedRevision"]
+    ):
+        raise HTTPException(409, "INTENT_SUPERSEDED")
+    if slot["action"] == "uninstall":
+        if row.is_active:
+            raise HTTPException(409, "INTENT_SUPERSEDED")
+        return None
+    if not row.is_active:
+        raise HTTPException(409, "INTENT_SUPERSEDED")
+    return installed_plugin_service._kind_to_installed_plugin(row).model_dump(
+        mode="json"
+    )
+
+
 def _replay_operation(
     db: Session, user_id: int, instance_id: str, operation_id: str, request_hash: str
-) -> Kind | None:
+) -> dict[str, Any] | None:
     existing = _lookup_operation(db, user_id, instance_id, operation_id)
-    if existing is not None and existing.json["spec"]["requestHash"] != request_hash:
+    if existing is not None and existing["requestHash"] != request_hash:
         raise HTTPException(409, "IDEMPOTENCY_CONFLICT")
     return existing
 
@@ -245,12 +305,29 @@ def _rejection_context(
             acquire_plugin_write_lock(db, user_id)
             with db.no_autoflush:
                 accepted = _lookup_operation(db, user_id, instance, operation)
-            if accepted is None:
+            state = lock_plugin_sync_state(db, user_id)
+            orders = (
+                state.json.get("spec", {})
+                .get("localIntentOrders", {})
+                .get(instance, {})
+            )
+            if not isinstance(orders, dict) or any(
+                type(value) is not int for value in orders.values()
+            ):
+                raise HTTPException(409, "plugin_write_conflict") from failure
+            # A compacted ID is not proof of nonacceptance. A strictly newer
+            # order cannot have been accepted before any retained watermark.
+            unaccepted = accepted is None and order > max(orders.values(), default=0)
+            if unaccepted or failure.detail == "INTENT_SUPERSEDED":
                 failure.headers = {
                     **(failure.headers or {}),
                     "X-Plugin-Delivery-Mode": LOCAL_DELIVERY_MODE,
                     "X-Plugin-Operation-Id": operation,
                     "X-Plugin-Intent-Order": str(order),
-                    "X-Plugin-Operation-State": "rejected",
+                    "X-Plugin-Operation-State": (
+                        "superseded"
+                        if failure.detail == "INTENT_SUPERSEDED"
+                        else "rejected"
+                    ),
                 }
         raise

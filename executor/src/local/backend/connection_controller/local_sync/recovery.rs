@@ -38,6 +38,17 @@ pub(super) fn record_submission_result(
         return;
     };
     match outcome {
+        Ok(SubmitOutcome::Superseded) => {
+            let original = entry.clone();
+            if !journal["supersededOperations"].is_array() {
+                journal["supersededOperations"] = json!([]);
+            }
+            journal["supersededOperations"]
+                .as_array_mut()
+                .unwrap()
+                .push(original);
+            retire_superseded(journal, operation);
+        }
         Ok(SubmitOutcome::Accepted) => {
             entry["accepted"] = json!(true);
             entry["lastErrorCode"] = Value::Null;
@@ -155,6 +166,17 @@ mod tests {
 
     fn journal(accepted: bool) -> Value {
         json!({"version":1,"nextIntentOrder":7,"pending":[{"operationId":"request-7","intentOrder":7,"action":"install","targetId":7,"payload":{"releaseId":3},"accepted":accepted}],"receipts":[]})
+    }
+
+    #[test]
+    fn explicit_supersession_retires_accepted_or_uncertain_original_without_recreating_it() {
+        for accepted in [false, true] {
+            let mut state = journal(accepted);
+            let original = state["pending"][0].clone();
+            record_submission_result(&mut state, "request-7", &Ok(SubmitOutcome::Superseded));
+            assert_eq!(state["pending"], json!([]));
+            assert_eq!(state["supersededOperations"][0], original);
+        }
     }
 
     #[test]

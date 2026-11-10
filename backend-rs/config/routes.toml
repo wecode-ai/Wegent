@@ -1147,7 +1147,3 @@ path = "/api/v1/wework-human-requests"
 [[routes]]
 methods = ["POST"]
 path = "/api/plugins/local-sync"
-
-[[routes]]
-methods = ["POST"]
-path = "/api/plugins/local-sync/receipts"
