@@ -18,6 +18,24 @@ const profile = (
   roles,
 })
 
+it('refreshes native configuration changes when the workspace is explicitly reopened', async () => {
+  const role = { ...newStandInRole('mac', 'review'), name: 'Review' }
+  let settings = profile('mac', [role])
+  const api = {
+    personalGet: vi.fn(async () => settings),
+  } as unknown as StandInExecutorApi
+  const { result, rerender } = renderHook(
+    ({ entry }) => useStandInRoleDirectory(api, 7, 'mac', true, 'mac', entry),
+    { initialProps: { entry: 0 } }
+  )
+  await waitFor(() => expect(result.current?.roles[0].role.name).toBe('Review'))
+  settings = profile('mac', [{ ...role, name: 'Updated native configuration' }])
+  rerender({ entry: 1 })
+  await waitFor(() =>
+    expect(result.current?.roles[0].role.name).toBe('Updated native configuration')
+  )
+})
+
 it('keeps local roles available while the primary device is still loading', async () => {
   let release!: (value: PersonalStandInSettings) => void
   const pending = new Promise<PersonalStandInSettings>(resolve => {

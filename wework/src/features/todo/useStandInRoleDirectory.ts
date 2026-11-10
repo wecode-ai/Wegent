@@ -14,7 +14,8 @@ export function useStandInRoleDirectory(
   userId: number,
   rootDevice: string | undefined,
   active: boolean,
-  localDevice?: string
+  localDevice?: string,
+  entryRequestKey?: number
 ) {
   const [revision, setRevision] = useState(0)
   const scope = JSON.stringify([userId, rootDevice, localDevice])
@@ -92,6 +93,6 @@ export function useStandInRoleDirectory(
     return () => {
       current = false
     }
-  }, [api, userId, rootDevice, active, revision, scope, localDevice])
+  }, [api, userId, rootDevice, active, revision, scope, localDevice, entryRequestKey])
   return data?.scope === scope ? data : undefined
 }

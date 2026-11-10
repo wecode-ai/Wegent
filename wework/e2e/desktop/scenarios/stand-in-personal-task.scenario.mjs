@@ -34,7 +34,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let workspace
   let project
   let manualIssue
-  let currentDevice
+  let currentDeviceRoute
   const completed = []
   let savedSettings
   let assignmentDiagnostics
@@ -128,7 +128,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
       assert.ok(bindings.length <= 1, 'One Issue must not create duplicate personal tasks')
       if (bindings[0]) {
-        assert.equal(bindings[0].device_id, currentDevice)
+        assert.equal(bindings[0].device_id, currentDeviceRoute)
         const result = await requestExecutor(
           control,
           'runtime.tasks.get',
@@ -244,7 +244,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     },
     async verify(control) {
       const desktop = await environment.waitForConnectedAppDevice()
-      currentDevice = desktop.app_device_id ?? desktop.device_id
+      currentDeviceRoute = desktop.execution_target_id
+      assert.ok(currentDeviceRoute, 'The real App must expose its registered execution route')
       // A real ordinary member, with no project device binding or initialized environment.
       await request(`/admin/users/${user.id}/role`, { role: 'user' }, ownerToken, 'PUT')
       assert.equal((await request('/users/me')).role, 'user')

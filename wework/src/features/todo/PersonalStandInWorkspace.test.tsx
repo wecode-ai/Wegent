@@ -118,6 +118,7 @@ function fixture(
       } as DeviceInfo,
     ],
     active: true,
+    entryRequestKey: 0,
     contentRoute: '/stand-in',
     onClose: vi.fn(),
     onOpenTask: vi.fn(),
@@ -131,6 +132,25 @@ function fixture(
   )
   return { props, workspace, binding, lifecycle, identity, personalGet }
 }
+
+it('reads the authoritative primary binding again when the workspace is explicitly reopened', async () => {
+  const f = fixture()
+  const view = render(f.workspace())
+  await waitFor(() =>
+    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+  )
+  f.binding.mockResolvedValue({
+    version: 4,
+    status: 'active',
+    target: { userId: 7, deviceId: 'cloud-one' },
+  })
+  view.rerender(f.workspace({ entryRequestKey: 1 }))
+  await waitFor(() =>
+    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
+  )
+  expect(f.lifecycle).not.toHaveBeenCalled()
+  expect(f.binding).toHaveBeenCalledTimes(2)
+})
 
 it('does not report another account while the instance binding is still unknown', async () => {
   const backendUrl = 'https://cloud.example.test/api/v1'
@@ -208,6 +228,17 @@ async function confirmStop() {
   await userEvent.click(await screen.findByTestId('stand-in-instance-stop'))
   await userEvent.click(screen.getByTestId('stand-in-instance-stop-confirm'))
 }
+
+it('leaves the previous role location after stopping and binding a different primary device', async () => {
+  const f = fixture()
+  render(f.workspace({ contentRoute: '/stand-in?deviceId=mac&profileId=review' }))
+  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+  await confirmStop()
+  await userEvent.click(await screen.findByTestId('stand-in-instance-bind-7-cloud-one'))
+  await waitFor(() =>
+    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
+  )
+})
 
 it('keeps the primary binding while following an explicit role on another device', async () => {
   const f = fixture()

@@ -67,7 +67,8 @@ function AccountStandInWorkspace({
     !!cloud?.isConnected,
     active,
     cloud?.apiBaseUrl ?? '',
-    initialBindingDevice
+    initialBindingDevice,
+    entryRequestKey
   )
   const { binding, localDeviceId, busy } = instance
   const target = binding?.target
@@ -85,7 +86,16 @@ function AccountStandInWorkspace({
         }
       : undefined
   )
-  const selectedDevice = roleLocation?.deviceId ?? deviceId
+  const bindingScope = target
+    ? JSON.stringify([target.userId, target.deviceId, target.backendUrl ?? ''])
+    : undefined
+  const [locationBinding, setLocationBinding] = useState(bindingScope)
+  if (locationBinding !== bindingScope) {
+    setLocationBinding(bindingScope)
+    if (locationBinding && bindingScope) setRoleLocation(undefined)
+  }
+  const selectedDevice =
+    roleLocation?.roleId && roleLocation.roleId !== '@primary' ? roleLocation.deviceId : deviceId
   const ownerAvailable =
     notificationOwnerMatches &&
     (binding?.status === 'stopped' ||
@@ -97,7 +107,8 @@ function AccountStandInWorkspace({
     ownerId,
     deviceId,
     active && ownerAvailable && binding?.status === 'active',
-    localDeviceId
+    localDeviceId,
+    entryRequestKey
   )
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
   const [error, setError] = useState<{ message: string; cause?: unknown } | null>(null)

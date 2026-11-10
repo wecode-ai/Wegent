@@ -325,6 +325,18 @@ second receiver when target activation is uncertain. CP rules remain unchanged.
 stand-in conversation scenario cover success, denial, lost responses and routing
 new work separately from existing tasks.
 
+The Rust comment entry preserves existing authority checks: project and Issue
+visibility are checked for the comment and mentioned recipients, and the comment
+and stand-in wakeups commit in one transaction. Lock order is Issue, recipient,
+then recipient inbox; sequence and event identity retain the Python contract.
+Disabling human reminders or mentioning oneself does not suppress wakeups. Replies
+to a validated public stand-in message retain its role identity and recheck recipient
+visibility; ordinary user messages cannot forge a stand-in recipient. Events only
+prompt Runtime permission revalidation and grant no execution or resource authority.
+The CI stand-in conversation scenario covers self-mentions, durable events and
+direct replies; focused Rust tests cover reply identity and cross-implementation
+event deduplication.
+
 ## Verification record
 
 Final verification is rerun against the no-DDL implementation. Counts from the withdrawn migration implementation are historical. The full backend suite already includes the focused permission tests.
