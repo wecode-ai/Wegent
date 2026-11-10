@@ -21,13 +21,18 @@ pub(super) fn space_context_grant(
     let human_assignment = origin_value("humanAssignmentId", "human_assignment_id")
         .and_then(id_value)
         .is_some();
-    let stand_in_conversation = origin_value("initiatedBy", "initiated_by").and_then(Value::as_str)
+    // Match the canonical identity fields validated by the conversation handler.
+    let stand_in_conversation = origin
+        .and_then(|value| value.get("initiatedBy"))
+        .and_then(Value::as_str)
         == Some("stand_in")
-        && origin_value("publicConversation", "public_conversation") == Some(&Value::Bool(true))
-        && origin_value("standInId", "stand_in_id")
+        && origin.and_then(|value| value.get("publicConversation")) == Some(&Value::Bool(true))
+        && origin
+            .and_then(|value| value.get("standInId"))
             .and_then(id_value)
             .is_some()
-        && origin_value("userId", "user_id")
+        && origin
+            .and_then(|value| value.get("userId"))
             .and_then(Value::as_i64)
             .is_some()
         && origin.is_some_and(|value| {
@@ -255,6 +260,27 @@ mod tests {
             let mut request = ExecutionRequest::default();
             request.extra.insert("origin".into(), origin);
             assert!(space_context_grant(&request).is_err());
+        }
+    }
+
+    #[test]
+    fn stand_in_identity_aliases_cannot_bypass_conversation_authorization() {
+        for (canonical, alias) in [
+            ("initiatedBy", "initiated_by"),
+            ("publicConversation", "public_conversation"),
+            ("standInId", "stand_in_id"),
+            ("userId", "user_id"),
+        ] {
+            let mut origin = json!({
+                "type":"issue_dispatch", "initiatedBy":"stand_in", "publicConversation":true,
+                "standInId":"review", "userId":7, "cloudProjectId":"space-1", "loopItemId":"issue-1"
+            });
+            let value = origin.as_object_mut().unwrap().remove(canonical).unwrap();
+            origin[alias] = value;
+            let mut request = ExecutionRequest::default();
+            request.extra.insert("origin".into(), origin);
+            assert!(space_context_grant(&request).is_err(), "{alias}");
+            assert!(space_mcp_client_config(&request).is_err(), "{alias}");
         }
     }
 }
