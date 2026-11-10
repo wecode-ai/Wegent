@@ -71,15 +71,17 @@ export function upgradeCredentials() {
         protectedFormat,
         modelUrl: `http://127.0.0.1:${process.env.WEWORK_E2E_MODEL_SERVER_PORT}${MODEL_PATH}`,
       }
+      if (write) expectedSecret = NEXT_SECRET
       const result = await inspectRunningApp(port, applicationPid, credentialAssertionScript(input))
       assert.ok([2, 3].includes(result.format))
       protectedFormat = Math.max(protectedFormat, result.format)
-      if (write) expectedSecret = NEXT_SECRET
       stages.push({
         stage,
         format: result.format,
+        storageVersion: result.storageVersion,
         modelAuthenticated: true,
         cloudDeviceSignature: true,
+        ...(write ? { writeAuthenticated: true } : {}),
       })
     },
   }
@@ -102,7 +104,13 @@ export function credentialAssertionScript(input) {
     const store = new SecureValueStore(directory)
     const secret = await store.get(${JSON.stringify(KEY)})
     assert.ok(secret === input.expectedSecret, 'Native model credential changed across release selection')
-    const response = await fetch(input.modelUrl, {headers: {Authorization: 'Bearer ' + secret}})
+    if (input.write) {
+      await store.set(${JSON.stringify(KEY)}, ${JSON.stringify(NEXT_SECRET)})
+      assert.ok(await store.get(${JSON.stringify(KEY)}) === ${JSON.stringify(NEXT_SECRET)},
+        'Native model credential write did not persist')
+    }
+    const authenticationSecret = input.write ? ${JSON.stringify(NEXT_SECRET)} : secret
+    const response = await fetch(input.modelUrl, {headers: {Authorization: 'Bearer ' + authenticationSecret}})
     assert.ok(response.ok && (await response.json()).authenticated, 'Stored model credential could not authenticate')
     const credentials = new CloudCredentialService(directory)
     const publicKey = await (${readCloudDevicePublicKey.toString()})(credentials, 'https://upgrade-credential.invalid/api')
@@ -116,16 +124,17 @@ export function credentialAssertionScript(input) {
     const signature = crypto.sign('sha256', challenge, cloud.privateKey)
     assert.ok(crypto.verify('sha256', challenge, crypto.createPublicKey({key: input.expectedPublicKey, format: 'jwk'}), signature),
       'The retained cloud private key cannot authenticate the device')
-    if (input.write) await store.set(${JSON.stringify(KEY)}, ${JSON.stringify(NEXT_SECRET)})
     const values = JSON.parse(await fs.readFile(path.join(directory, 'secure-values.json'), 'utf8'))
     const metadata = JSON.parse(await fs.readFile(path.join(process.resourcesPath, 'app.asar/package.json'), 'utf8'))
-    const expectedFormat = Math.max(input.protectedFormat, metadata.weworkCredentialStorageVersion ?? 2)
+    const storageVersion = metadata.weworkCredentialStorageVersion ?? 2
+    assert.ok([2, 3].includes(storageVersion), 'Unknown packaged credential storage version')
+    const expectedFormat = Math.max(input.protectedFormat, storageVersion)
     assert.ok(values.version === expectedFormat && cloudEnvelope.version === expectedFormat, 'Credential format was downgraded or migration was missed')
     if (expectedFormat === 3) {
       await assert.rejects(fs.readFile(path.join(directory, 'secure-values.key')), {code: 'ENOENT'})
-      assert.ok(!JSON.stringify(values).includes(input.expectedSecret), 'Model secret remains readable on disk')
+      assert.ok(!JSON.stringify(values).includes(authenticationSecret), 'Model secret remains readable on disk')
       assert.ok(!JSON.stringify(cloudEnvelope).includes('synthetic-upgrade-refresh-token'), 'Cloud credential remains plaintext')
     }
-    return {format: expectedFormat}
+    return {format: expectedFormat, storageVersion}
   })()`
 }
