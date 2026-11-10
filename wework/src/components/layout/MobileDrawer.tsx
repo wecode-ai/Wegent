@@ -370,7 +370,7 @@ export function MobileDrawer({
             type="button"
             data-testid="mobile-settings-button"
             onClick={() => closeAfter(onOpenSettings)}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-contrast"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-contrast wework:bg-[#8E5BBE] wework:text-white"
             aria-label={t('workbench.settings', '设置')}
           >
             {getUserInitials()}
@@ -864,7 +864,7 @@ export function MobileDrawer({
               type="button"
               data-testid="mobile-remove-project-button"
               onClick={() => handleAction(() => onRemoveProject?.(projectActionTarget.id))}
-              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-destructive hover:bg-destructive/10"
+              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-destructive hover:bg-destructive/10 wework:text-red-500 wework:hover:bg-red-500/10"
             >
               <X className="h-6 w-6 shrink-0" />
               <span>{t('workbench.remove_project', '移除')}</span>

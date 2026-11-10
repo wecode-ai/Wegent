@@ -42,6 +42,15 @@ it('updates delivered content in one multipart request', async () => {
 })
 
 describe('createDeliveryApi queue and assignment routes', () => {
+  it('bounds automatic read receipts to the content actually observed', async () => {
+    const post = vi.fn().mockResolvedValue({ id: 'issue-1', is_unread: true })
+    await createDeliveryApi({ post } as unknown as HttpClient).markLoopItemRead('issue-1', 4, 7)
+    expect(post).toHaveBeenCalledWith('/v1/loop-items/issue-1/read', {
+      activity_sequence: 4,
+      content_revision: 7,
+    })
+  })
+
   it('preserves notification counts when persisting Issue read state fails', async () => {
     const failure = new Error('Read failed')
     const post = vi.fn().mockRejectedValue(failure)

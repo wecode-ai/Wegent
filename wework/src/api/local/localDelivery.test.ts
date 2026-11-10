@@ -215,7 +215,7 @@ describe('local delivery API', () => {
     await expect(api.listLoopItems('project-1')).resolves.toMatchObject({
       items: [{ id: 'LOCAL-1', is_unread: true }],
     })
-    await expect(api.markLoopItemRead('LOCAL-1', 17)).resolves.toMatchObject({
+    await expect(api.markLoopItemRead('LOCAL-1', 17, unreadTask.version)).resolves.toMatchObject({
       id: 'LOCAL-1',
       is_unread: false,
       activity_read_sequence: 17,
@@ -224,6 +224,7 @@ describe('local delivery API', () => {
       project_id: 'project-1',
       task_id: 'LOCAL-1',
       activity_sequence: 17,
+      content_revision: unreadTask.version,
     })
   })
 

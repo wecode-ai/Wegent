@@ -612,9 +612,13 @@ function modelCatalogSyncCancelled(): Error {
 
 function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
   const online = status.running && status.ready !== false && !status.error
+  const deviceId = localDeviceIdFromStatus(status)
+  const identityUnresolved =
+    !status.deviceId?.trim() || (deviceId === LOCAL_DEVICE_ID && !status.runtimeInstanceId?.trim())
   const device = {
     id: 0,
-    device_id: localDeviceIdFromStatus(status),
+    device_id: deviceId,
+    ...(identityUnresolved ? { local_identity_unresolved: true } : {}),
     name: 'Local Executor',
     status: online ? ('online' as const) : ('offline' as const),
     is_default: true,

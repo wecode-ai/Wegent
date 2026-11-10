@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { reloadMainWindow, selectCollaborationProjectView } from '../modules/workspace-flows.mjs'
+import {
+  verifyTemplateDeletion,
+  verifyTemplateDeletionPermissions,
+} from '../modules/template-deletion-flow.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -136,6 +140,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       consumerToken = (await request('/api/auth/login', 'POST', { user_name: username, password }))
         .access_token
+      await verifyTemplateDeletionPermissions({ request, source, consumerToken })
       await request(
         `/api/v1/collaboration-templates/${source.id}`,
         'GET',
@@ -427,6 +432,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         '内容创作小组'
       )
       await capture(control, '11-group-created-from-template')
+      await verifyTemplateDeletion(control, { request, captureScreenshot })
     },
   }
 }

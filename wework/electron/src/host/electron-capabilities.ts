@@ -1091,6 +1091,17 @@ export function createElectronCapabilityRouter(
       requiredIntegerParam(params, 'length')
     )
   )
+  router.register('notification.openSettings', async () => {
+    const url =
+      process.platform === 'darwin'
+        ? 'x-apple.systempreferences:com.apple.preference.notifications'
+        : process.platform === 'win32'
+          ? 'ms-settings:notifications'
+          : null
+    if (!url) return { supported: false }
+    await shell.openExternal(url)
+    return { supported: true }
+  })
   router.register('notification.show', params => {
     if (!Notification.isSupported()) {
       throw new HostCapabilityError(

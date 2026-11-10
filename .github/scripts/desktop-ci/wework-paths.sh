@@ -66,7 +66,16 @@ classify_wework_path() {
       select_target "core:split-workbench"
       return
       ;;
+    wework/e2e/desktop/modules/github-release-asset.mjs)
+      select_target "core:harness-app-development"
+      select_target "core:harness-app-lifecycle"
+      select_target "core:harness-app-models"
+      select_target "cloud:plugin-legacy-upgrade"
+      return
+      ;;
     wework/e2e/desktop/scenarios/harness-apps.scenario.mjs | \
+      wework/e2e/desktop/modules/dsh-runtime-cache.mjs | \
+      wework/electron/src/host/e2e-dsh-release-redirect.ts | \
       wework/e2e/desktop/modules/harness-app-*)
       select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"

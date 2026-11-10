@@ -33,6 +33,7 @@ beforeEach(() => {
   appearanceMock.resolvedMode = 'light'
   desktopHostMock.invokeDesktopHost.mockReset()
   document.documentElement.removeAttribute('style')
+  document.documentElement.removeAttribute('data-appearance-theme')
 })
 
 afterEach(() => {
@@ -221,8 +222,13 @@ describe('CodexInlineVisualizationHost', () => {
     const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1]
     const token = html.match(/const token="([^"]+)"/)?.[1]
     expect(script).toBeTruthy()
+    const themeStyle = { textContent: ':root { --background:rgb(26 27 38); }' }
+    const style = document.createElement('html').style
+    style.colorScheme = 'light'
+    const setProperty = vi.spyOn(style, 'setProperty')
     const frameDocument = {
-      documentElement: { style: { colorScheme: 'light', setProperty: vi.fn() } },
+      getElementById: () => themeStyle,
+      documentElement: { style },
       body: { getBoundingClientRect: () => ({ top: 0, height: 120 }), children: [] },
     }
     const parent = { postMessage: vi.fn() }
@@ -249,14 +255,21 @@ describe('CodexInlineVisualizationHost', () => {
     expect(frameDocument.documentElement.style.colorScheme).toBe('light')
     receiveTheme({ source: parent, data: message })
     expect(frameDocument.documentElement.style.colorScheme).toBe('dark')
-    expect(frameDocument.documentElement.style.setProperty).toHaveBeenCalledExactlyOnceWith(
-      '--background',
-      'rgb(26 27 38)'
-    )
+    expect(setProperty).toHaveBeenCalledExactlyOnceWith('--background', 'rgb(26 27 38)')
+    expect(themeStyle.textContent).toBe('')
+    receiveTheme({ source: parent, data: { ...message, variables: {} } })
+    expect(style.getPropertyValue('--background')).toBe('')
+    style.setProperty('--foreground', 'tomato', 'important')
+    receiveTheme({ source: parent, data: { ...message, variables: { '--foreground': 'blue' } } })
+    expect(style.getPropertyValue('--foreground')).toBe('blue')
+    receiveTheme({ source: parent, data: { ...message, variables: {} } })
+    expect(style.getPropertyValue('--foreground')).toBe('tomato')
+    expect(style.getPropertyPriority('--foreground')).toBe('important')
   })
 
   test('updates a mounted visualization when a palette changes within the same dark mode', async () => {
     appearanceMock.resolvedMode = 'dark'
+    document.documentElement.dataset.appearanceTheme = 'tokyo-night'
     document.documentElement.style.setProperty('--color-bg-base', '26 27 38')
     document.documentElement.style.setProperty('--color-terminal-blue', '122 162 247')
     desktopHostMock.invokeDesktopHost.mockResolvedValue('<input value="keep my state">')
@@ -281,6 +294,16 @@ describe('CodexInlineVisualizationHost', () => {
             '--viz-series-1': 'rgb(122 162 247)',
           }),
         }),
+        '*'
+      )
+    )
+    expect(frame).toHaveAttribute('src', 'blob:palette-visualization')
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(desktopHostMock.invokeDesktopHost).toHaveBeenCalledTimes(1)
+    document.documentElement.dataset.appearanceTheme = 'wework'
+    await waitFor(() =>
+      expect(postMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ theme: 'dark', variables: {} }),
         '*'
       )
     )

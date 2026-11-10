@@ -41,6 +41,8 @@ export interface UserViewportAnchor extends ConversationViewportAnchor {
 export interface ScrollableMessageAreaProps extends Pick<
   MessageListProps,
   | 'userMessageServices'
+  | 'assistantMessageStyle'
+  | 'showProcessingStatus'
   | 'virtualize'
   | 'useContentVisibility'
   | 'onVirtualMeasurement'

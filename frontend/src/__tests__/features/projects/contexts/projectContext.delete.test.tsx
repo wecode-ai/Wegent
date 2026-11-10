@@ -155,7 +155,9 @@ describe('ProjectContext delete project behavior', () => {
     act(() => mockTaskHandlers.onTaskCreated?.({ ...createdTask, project_id: 42 }))
 
     await waitFor(() => expect(mockedProjectApis.getProjects).toHaveBeenCalledTimes(2))
-    expect(mockedProjectApis.getProjects).toHaveBeenLastCalledWith(false)
+    expect(mockedProjectApis.getProjects).toHaveBeenLastCalledWith(false, {
+      includeTaskCount: false,
+    })
     expect(mockedProjectApis.getProjectTasks).not.toHaveBeenCalled()
     expect(mockedTaskApis.getTaskDetail).not.toHaveBeenCalled()
   })

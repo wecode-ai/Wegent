@@ -213,7 +213,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       }
       setError(null)
       try {
-        const response = await projectApis.getProjects(false)
+        const response = await projectApis.getProjects(false, { includeTaskCount: false })
         if (!isCurrent()) return
         const preserveExpansion = metadataAccountRef.current === requestAccount
         const knownProjects = new Map(projectsRef.current.map(project => [project.id, project]))

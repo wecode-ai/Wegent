@@ -68,6 +68,26 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('BackgroundTerminalPanel', () => {
+  test('applies light terminal contrast on mount and restores dark contrast without resetting', async () => {
+    const root = document.documentElement
+    const previousTheme = root.getAttribute('data-theme')
+    root.dataset.theme = 'light'
+    try {
+      render(<BackgroundTerminalPanel terminal={terminal('ready\n')} active />)
+      const xterm = records.instances[0]
+      expect(xterm.options.minimumContrastRatio).toBe(4.5)
+
+      root.dataset.theme = 'dark'
+      await new Promise<void>(resolve => queueMicrotask(resolve))
+      expect(xterm.options.minimumContrastRatio).toBe(1)
+      expect(xterm.write).toHaveBeenCalledExactlyOnceWith('ready\n')
+      expect(xterm.reset).not.toHaveBeenCalled()
+    } finally {
+      if (previousTheme === null) root.removeAttribute('data-theme')
+      else root.setAttribute('data-theme', previousTheme)
+    }
+  })
+
   test('exposes only a read-only viewport snapshot in E2E builds and removes it on disposal', () => {
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
     const { container, unmount } = render(
