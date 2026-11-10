@@ -11,12 +11,17 @@ sidebar_position: 3
 <!-- ui-source: ../packages/collaboration/src/templates/CollaborationTemplatePage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/milestones/MilestonesPage.tsx -->
 <!-- ui-source: src/features/todo/WeworkCollaborationPlatform.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx -->
 
 ## Collaboration spaces and global resource catalogs
 
 <a id="workspace-resource-controls"></a>
 
-Open **top + → Collaboration**. Global catalogs, space settings and project settings are separate levels: spaces contain projects, while code directories remain separate resources. Project AI team settings do not replace space membership management.
+Open **top + → Collaboration**. The sidebar shows accessible **Local projects** and **Remote projects** by default. Use the **+** beside either group to create a project without first choosing or creating a collaboration space. Remote projects require a cloud connection. These groups describe project storage; configure execution devices separately inside the project.
+
+Expand **Collaboration spaces** when you need shared membership, resources, and permissions across projects. Existing membership inheritance, project roles, and administration permissions continue to apply. Project-only members can open their projects directly; seeing a parent space name does not grant space access. The project picker defaults to local/remote groups; choose **Filter by collaboration space** to use space groups.
+
+Global catalogs, space settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace space membership management.
 
 | Feature                           | Entry and steps                                                                                                                              | Conditions and limits                                                                                                       |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
