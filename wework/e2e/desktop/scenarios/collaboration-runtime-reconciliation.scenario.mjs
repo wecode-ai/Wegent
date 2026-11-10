@@ -649,7 +649,6 @@ export async function createDesktopScenario({
           await settleInOrder(testCase, snapshot)
           assert.equal(testCase.initialRequests, 1)
         }
-        await verifyReconnect(reconnectCase)
         // Finish every controlled writer order before opening the fixture project.
         await control.command('navigate', 'body', { value: '/' })
         await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
@@ -657,6 +656,10 @@ export async function createDesktopScenario({
         })
         for (const testCase of cases) await verifyRefresh(control, testCase)
         await verifyStaleTerminals(control, cases.at(-1))
+        // The stale-event replay needs the original socket. Reconnect only after it finishes.
+        await control.command('navigate', 'body', { value: '/system-drag' })
+        await control.command('waitFor', '[data-testid="system-drag-panel"]')
+        await verifyReconnect(reconnectCase)
       } finally {
         model.release()
         await writeFile(
