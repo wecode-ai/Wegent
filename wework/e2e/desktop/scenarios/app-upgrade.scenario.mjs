@@ -151,6 +151,7 @@ export async function createDesktopScenario(options) {
   })
   let control
   let inspectorPort
+  let launchedAppPid
   let passed = false
   let origin
   let modelRequests = 0
@@ -326,6 +327,7 @@ export async function createDesktopScenario(options) {
               join(resultDir, 'upgrade-transport.log'),
               { followHandoffs: true }
             )
+            launchedAppPid = child.pid
           },
         }
       : {}),
@@ -639,12 +641,16 @@ export async function createDesktopScenario(options) {
         'before-update'
       )
       if (verifiesFailedActivation) await useVersionedMacosRecoveryBridge(root, pair.to.version)
-      if (verifiesEmptyManifest)
-        await armEmptyManifestUpgrade(control, inspectorPort, {
+      if (verifiesEmptyManifest) {
+        const { executorPid } = await runtimeDiagnostics()
+        // Historical source packages may not expose a process snapshot action.
+        await armEmptyManifestUpgrade(inspectorPort, launchedAppPid, {
           root,
           capabilities,
           targetVersion: pair.to.version,
+          executorPid,
         })
+      }
       const readyCount = control.readyCount
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)

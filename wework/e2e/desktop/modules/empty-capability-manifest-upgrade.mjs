@@ -57,16 +57,10 @@ export function emptyManifestRelaunchScript(options) {
   })})`
 }
 
-export async function armEmptyManifestUpgrade(control, inspectorPort, options) {
-  const { applicationPid } = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
-  const { executorPid } = JSON.parse(await control.command('getDesktopRuntimeDiagnostics', 'body'))
+export async function armEmptyManifestUpgrade(inspectorPort, applicationPid, options) {
   assert.ok(Number.isSafeInteger(applicationPid) && applicationPid > 0)
-  assert.ok(Number.isSafeInteger(executorPid) && executorPid > 0)
-  await inspectRunningApp(
-    inspectorPort,
-    applicationPid,
-    emptyManifestRelaunchScript({ ...options, executorPid })
-  )
+  assert.ok(Number.isSafeInteger(options.executorPid) && options.executorPid > 0)
+  await inspectRunningApp(inspectorPort, applicationPid, emptyManifestRelaunchScript(options))
 }
 
 export async function assertEmptyManifestBackups(capabilities) {
