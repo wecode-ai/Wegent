@@ -18,8 +18,9 @@ export function createDesktopScenario(options) {
       await control.command('fill', COMPOSER_SELECTOR, { value: GUIDANCE })
       await control.command(
         'clickWhenEnabled',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-mode-menu-button"]`
       )
+      await control.command('clickWhenEnabled', '[data-testid="guide-current-turn-option"]')
       await control.command('waitFor', '[data-testid="user-message-content"]', {
         text: GUIDANCE,
       })
