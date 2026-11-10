@@ -216,6 +216,92 @@ async fn coordination_dispatch_is_atomic_idempotent_and_version_fenced() {
     .await;
 }
 
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn issue_mention_wakeups_are_atomic_deduplicated_and_recipient_owned() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        let enqueue = |user, comment: &'static str| {
+            let mysql = mysql.clone();
+            async move {
+                mysql
+                    .with_transaction(async |tx| {
+                        crate::stand_in_issue_events::enqueue_mention_on(
+                            tx, user, "1001", "issue", comment,
+                        )
+                        .await
+                    })
+                    .await
+                    .unwrap();
+            }
+        };
+        enqueue(7, "first").await;
+        enqueue(7, "first").await;
+        enqueue(8, "first").await;
+        let ((), ()) = tokio::join!(enqueue(7, "second"), enqueue(7, "third"));
+        let rollback: brz_mysql::MysqlResult<()> = mysql
+            .with_transaction(async |tx| {
+                crate::stand_in_issue_events::enqueue_mention_on(
+                    tx,
+                    7,
+                    "1001",
+                    "issue",
+                    "rolled-back-comment",
+                )
+                .await?;
+                Err(brz_mysql::MysqlError::RowNotFound)
+            })
+            .await;
+        assert!(rollback.is_err());
+        verify_mention_inbox(&mysql, 7, 3).await;
+        verify_mention_inbox(&mysql, 8, 1).await;
+    })
+    .await;
+}
+
+async fn verify_mention_inbox(mysql: &MysqlService, user: i64, count: usize) {
+    let inbox = store::get(
+        mysql,
+        "stand_in_issue_inbox",
+        &format!("stand-in-inbox:{user}"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(inbox.next_item_number, count as i64 + 1);
+    let events: Vec<brz_mysql::MysqlRow> = mysql.fetch_all(
+        "SELECT id, CAST(sort_order AS SIGNED) AS sequence, metadata FROM loop_items WHERE resource_type='stand_in_issue_event' AND parent_id=? AND user_id=? ORDER BY sort_order",
+        (inbox.id.as_str(), user),
+    ).await.unwrap();
+    assert_eq!(events.len(), count);
+    for (index, event) in events.iter().enumerate() {
+        assert_eq!(
+            event.get_required::<i64>("sequence").unwrap(),
+            index as i64 + 1
+        );
+        let payload = event.get_required::<Json<Value>>("metadata").unwrap().0;
+        assert_eq!(payload["projectId"], "1001");
+        assert_eq!(payload["itemId"], "issue");
+        assert_ne!(payload["commentId"], "rolled-back-comment");
+        let canonical = json!({"commentId":payload["commentId"],"itemId":payload["itemId"],"projectId":payload["projectId"]});
+        let expected = crate::hex_sha256(
+            format!(
+                "stand-in:{user}:{}",
+                wegent_python_compat::py_json::python_dumps(&canonical)
+            )
+            .as_bytes(),
+        );
+        assert_eq!(event.get_required::<String>("id").unwrap(), expected);
+        if user == 7 && payload["commentId"] == "first" {
+            // hashlib.sha256 of Python json.dumps(payload, sort_keys=True).
+            assert_eq!(
+                expected,
+                "7403d5fe82dab1af8038a7b94f960b5b6d7a04f1d3ac43b1a2a16b9c237799d8"
+            );
+        }
+    }
+}
+
 async fn with_schema<F, Fut>(capacity: u32, verify: F)
 where
     F: FnOnce(MysqlService) -> Fut,

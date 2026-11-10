@@ -14,7 +14,7 @@ use crate::board_snapshot::{
 };
 use crate::state::AppState;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub(super) struct Mention {
     #[serde(rename = "type")]
     kind: MentionKind,
@@ -22,7 +22,7 @@ pub(super) struct Mention {
     label: String,
 }
 
-#[derive(Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 enum MentionKind {
     User,
@@ -30,6 +30,14 @@ enum MentionKind {
 }
 
 impl Mention {
+    pub(super) fn user(id: i64, label: String) -> Self {
+        Self {
+            kind: MentionKind::User,
+            id: id.to_string(),
+            label,
+        }
+    }
+
     pub(super) fn parse(value: Option<&Value>) -> Result<Vec<Self>, String> {
         let Some(value) = value else {
             return Ok(Vec::new());
@@ -118,7 +126,7 @@ pub(super) async fn recipients(
                 "Mentioned user is not a project member",
             ));
         }
-        if user == actor || !seen.insert(user) {
+        if !seen.insert(user) {
             continue;
         }
         if let Some(task) = task {
@@ -151,6 +159,7 @@ pub(super) async fn recipients(
         }
         recipients.push(user);
     }
+    recipients.sort_unstable();
     Ok((recipients, target))
 }
 

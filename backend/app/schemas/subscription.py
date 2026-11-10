@@ -629,6 +629,12 @@ class BackgroundExecutionInDB(BackgroundExecutionBase):
         description="Whether the current user can delete this execution. "
         "Only the subscription owner can delete executions.",
     )
+    prompt_truncated: bool = Field(
+        False, description="Whether prompt was cut short for a list preview."
+    )
+    result_summary_truncated: bool = Field(
+        False, description="Whether result_summary was cut short for a list preview."
+    )
 
     class Config:
         from_attributes = True
