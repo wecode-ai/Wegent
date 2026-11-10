@@ -400,7 +400,11 @@ async fn send_message(
                 )
                 .await?;
             let mut pending = Vec::with_capacity(recipients.len());
-            for recipient in recipients {
+            for recipient in recipients
+                .iter()
+                .copied()
+                .filter(|recipient| *recipient != user_id)
+            {
                 pending.push(
                     notifications::create_on(
                         tx,
@@ -415,28 +419,39 @@ async fn send_message(
                     .await?,
                 );
             }
-            if let Some(item_id) = request.task_id.as_deref()
-                && let Some(item) =
+            if let Some(item_id) = request.task_id.as_deref() {
+                if let Some(item) =
                     crate::background_jobs::project::store::locked(tx, "task", item_id).await?
-                && item.cloud_project_id == request.project_id
-            {
-                let mut metadata = item.meta();
-                crate::background_jobs::project::issues::update_change_request_source(
-                    &mut metadata,
-                    &format!("activity:{message_id}"),
-                    &request.content,
-                );
-                super::project_chat_snapshot::advance_content_revision(
-                    metadata
-                        .as_object_mut()
-                        .expect("issue metadata is an object"),
-                    user_id,
-                );
-                tx.execute(
-                    "UPDATE loop_items SET metadata=?, version=version+1 WHERE id=?",
-                    (brz_mysql::Json(metadata), item_id),
-                )
-                .await?;
+                    && item.cloud_project_id == request.project_id
+                {
+                    let mut metadata = item.meta();
+                    crate::background_jobs::project::issues::update_change_request_source(
+                        &mut metadata,
+                        &format!("activity:{message_id}"),
+                        &request.content,
+                    );
+                    super::project_chat_snapshot::advance_content_revision(
+                        metadata
+                            .as_object_mut()
+                            .expect("issue metadata is an object"),
+                        user_id,
+                    );
+                    tx.execute(
+                        "UPDATE loop_items SET metadata=?, version=version+1 WHERE id=?",
+                        (brz_mysql::Json(metadata), item_id),
+                    )
+                    .await?;
+                }
+                for recipient in &recipients {
+                    crate::stand_in_issue_events::enqueue_mention_on(
+                        tx,
+                        *recipient,
+                        &request.project_id,
+                        item_id,
+                        &message_id,
+                    )
+                    .await?;
+                }
             }
             let saved: super::project_chat_messages::MessageRow = tx
                 .fetch_optional(

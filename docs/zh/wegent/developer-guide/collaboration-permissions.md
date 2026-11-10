@@ -283,6 +283,8 @@ Issue 关联的个人 Runtime 任务仅向任务所有者返回，变更请求�
 
 ## 实现与验证入口
 
+Rust Socket.IO 的 Issue 评论在同一事务内写入评论、通知和分身唤醒事件。提及接收人继续通过项目成员及 Issue 读取权限校验；自提及不产生人类通知，但保留本人分身的持久唤醒。写入按 Issue、接收人、收件箱的顺序加锁，按接收人和评论内容生成与 Python 一致的去重键，事务失败时全部回滚。CP01–CP20 不变。CI 已注册的 `project_coordination::mysql_tests::issue_mention_wakeups_are_atomic_deduplicated_and_recipient_owned` 覆盖真实 MySQL 的接收人隔离、并发序号、去重及回滚；`stand-in-assignment-notifications` 桌面 E2E 覆盖实际评论唤醒与公开回执。
+
 `collaboration_permissions.py` 统一提供角色、来源及拒绝原因；`cloud_project_visibility.py` 提供同样规则的列表查询。`collaboration_revocation.py` 检查当前 Issue、智能体、小组、Runtime 配置和设备授权，并处理撤权后的持久化队列。
 
 回归入口：
