@@ -456,6 +456,7 @@
     "show_prompt": "Show prompt",
     "collapse": "Collapse",
     "expand": "Expand",
+    "load_summary_failed": "Failed to load the full summary",
     "load_more": "Load More",
     "refresh": "Refresh",
     "copy_ids": "Copy IDs",
