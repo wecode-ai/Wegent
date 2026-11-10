@@ -1,9 +1,6 @@
 import type { LocalModelToolProfile } from './localModelSettings'
-import GPT_DEFAULT_INSTRUCTIONS from '../../../../shared/assets/codexProgressiveInstructions.md?raw'
 
 export type LocalModelCatalogEntry = Record<string, unknown>
-
-export const DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS = GPT_DEFAULT_INSTRUCTIONS
 
 function catalogSlug(id: string): string {
   const normalized = id
@@ -35,9 +32,7 @@ export function createDefaultLocalModelCatalogEntry(input: {
     default_service_tier: null,
     availability_nux: null,
     upgrade: null,
-    base_instructions: DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS,
     model_messages: null,
-    include_skills_usage_instructions: false,
     supports_reasoning_summaries: true,
     supports_reasoning_summary_parameter: true,
     default_reasoning_summary: 'auto',

@@ -23,6 +23,29 @@ const provider = {
 }
 
 describe('Provider configuration runtime adapter', () => {
+  test.each(['custom', 'function', undefined] as const)(
+    'normalizes saved DeepSeek %s tools while retaining identity and keeping credentials native',
+    toolProfile => {
+      const resolved = resolveProviderModel({
+        provider,
+        model: {
+          id: 'saved-deepseek',
+          model_id: 'deepseek-v4-flash',
+          provider_profile_id: 'deepseek',
+          tool_profile: toolProfile,
+        },
+      })
+      expect(resolved).toMatchObject({
+        id: 'saved-deepseek',
+        toolProfile: 'function',
+        apiFormat: 'openai-responses',
+        apiKeyConfigured: true,
+        baseUrl: provider.base_url,
+      })
+      expect(resolved).not.toHaveProperty('apiKey')
+    }
+  )
+
   test.each(['openai-responses', 'openai-chat-completions', 'anthropic-messages'] as const)(
     'resolves managed model capabilities without an official account for %s',
     apiFormat => {

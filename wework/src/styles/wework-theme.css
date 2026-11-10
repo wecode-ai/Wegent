@@ -1,0 +1,36 @@
+/* Original Wework recipes are independent of the opt-in named palettes. */
+html[data-appearance-theme='wework'] {
+  --color-device-online: 31 214 96;
+  --color-todo-inbox: 133 142 151;
+  --color-todo-backlog: 133 142 151;
+  --color-todo-started: 245 158 11;
+  --color-todo-review: 139 92 246;
+  --color-todo-completed: 16 185 129;
+  --color-review-added: 34 197 94;
+  --color-review-removed: 239 68 68;
+  --color-review-tree-added: 57 151 75;
+  --color-review-tree-removed: 210 57 57;
+  --wework-description-link: rgb(35 121 232);
+  --wework-lightbox-close-bg: rgb(255 255 255 / 0.16);
+  --wework-lightbox-close-text: #fff;
+  --wework-lightbox-close-hover: rgb(255 255 255 / 0.26);
+  --wework-source-official-bg: rgb(241 245 251);
+  --wework-source-official-text: rgb(53 104 169);
+  --wework-source-workspace-bg: rgb(240 246 243);
+  --wework-source-workspace-text: rgb(37 112 82);
+  --wework-source-personal-bg: rgb(245 242 250);
+  --wework-source-personal-text: rgb(114 89 163);
+  --wework-source-external-bg: rgb(245 245 245);
+  --wework-source-external-text: rgb(82 82 82);
+  --wework-source-public-bg: rgb(250 245 237);
+  --wework-source-public-text: rgb(151 103 45);
+  --wework-plugin-logo-bg: rgb(245 245 247);
+  --wework-plugin-error-border: rgb(220 38 38 / 0.2);
+  --wework-plugin-error-bg: rgb(220 38 38 / 0.07);
+  --wework-plugin-placeholder: rgb(124 58 237);
+  --wework-plugin-error-text: rgb(220 38 38);
+  --wework-plugin-menu-text: rgb(76 77 73);
+  --wework-plugin-menu-hover-bg: rgb(236 236 234);
+  --wework-plugin-menu-hover-text: rgb(21 21 21);
+  --wework-task-shimmer-highlight: rgb(255 255 255 / 0.34);
+}

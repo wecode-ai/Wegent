@@ -178,11 +178,23 @@ export function templateRoutingResolver(
   location: 'local' | 'cloud',
   projectId?: string,
   locale: 'zh-CN' | 'en' = 'en',
-  environmentId?: string
+  environmentId?: string,
+  models: Partial<
+    Record<TemplateAgent['runtime'], import('../agent-form/runnerRouting').RunnerModelIdentity>
+  > = {}
 ): TemplateRoutingResolver {
   return async runtime => {
     try {
       if (!host?.resolveTemplateAgentRouting) throw new Error('template_model_default_unavailable')
+      const model = models[runtime]
+      if (model !== undefined)
+        return await host.resolveTemplateAgentRouting(
+          runtime,
+          location,
+          projectId,
+          environmentId,
+          model
+        )
       return await (environmentId === undefined
         ? host.resolveTemplateAgentRouting(runtime, location, projectId)
         : host.resolveTemplateAgentRouting(runtime, location, projectId, environmentId))
@@ -191,6 +203,7 @@ export function templateRoutingResolver(
         cause instanceof Error &&
         [
           'template_model_default_unavailable',
+          'template_model_unavailable',
           'template_environment_unavailable',
           'template_environment_ambiguous',
         ].includes(cause.message)

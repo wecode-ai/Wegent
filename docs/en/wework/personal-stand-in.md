@@ -4,8 +4,30 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
+## Ongoing Issue collaboration
+
+Assigning an Issue or mentioning a member wakes their enabled, project-connected stand-ins that match its tags and allow automatic handling.
+You can mention yourself: eligible stand-ins receive the event without a human self-reminder.
+The same stand-in reuses its conversation for the same Issue. Reassignment retains history but still requires fresh authorization.
+Acknowledgment and result appear as separate comments. You can keep writing and sending while subagents work; follow-up wakeups are handled in order.
+Reply directly to a stand-in comment without another mention to continue with that role. Private chats, reasoning and tool activity are not published.
+
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
+
+<a id="stand-in-chat-and-desktop-notifications"></a>
+
+## Stand-in chat and desktop notifications
+
+This presentation applies only to primary and role conversations on the **My Stand-in** page. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
+
+Only stand-in identity conversations enable native subagent v2 for mailbox waits that wake on new user input. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents, including when resuming an existing v2 conversation. Native permission, source-scope and approval constraints remain unchanged.
+
+Open **Left sidebar → My Stand-in**, then select the primary identity or a scenario role. AI replies use left-aligned bubbles and your messages appear on the right. While native subagents work in the background, send another message in the same main conversation without cancelling the children or waiting in the ordinary task queue. Failed sends retain their content and attachments. Resolve pending questions and permission requests through their original cards; chat messages never substitute for authorization. Independently tracked tasks are reserved for work that actually needs a separate conversation, workspace or lifecycle, not merely to keep chat available.
+
+The desktop prompt above the composer offers **Notification settings**, **Don't show again**, and **Dismiss for now**. Notification settings opens the OS notification settings on macOS and Windows and the bell's unified Wework settings. Allow OS notifications and check the system channel under **Stand-in alerts**. On Linux, enable notifications manually in your desktop environment. Opening settings does not establish that permission was granted. Temporary dismissal lasts for the app session; permanent dismissal is account-scoped on this device and hides only the prompt, without disabling notifications. You can always use **Top-right bell → Notification settings → Stand-in alerts**.
+
+The number beside **My Stand-in** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. Each new message triggers at most one desktop notification. Clicking opens the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
 
 ## Individual role-profile operations
 
@@ -28,6 +50,8 @@ A **scenario role** continuously handles a particular information flow. Both pri
 Saving a new role enables it. Explicitly adding or enabling a source starts intake for the primary identity or role on Save, without a second intake switch. Renaming or editing duties alone does not resume a paused identity. Stopping the entire stand-in still requires native confirmation; source grants and operation approvals are unchanged.
 
 ## Instance binding and stopping
+
+If **My stand-in** encounters incompatible versions, it first shows an error with upgrade guidance without automatically navigating away. Select **View device status** beside the error to open **Cloud work**, inspect device status and versions, and follow the upgrade procedure supported by that device. For local issues, the desktop device section offers **View local version**, which opens About to check for updates even when there are no cloud devices. This action does not install or restart anything automatically. After resolving the issue, return to the stand-in page and select **Reload**. Other loading errors retain reload without this device guidance action.
 
 Each Wework instance binds one local or cloud stand-in at a time. Scenario roles belong to that stand-in, rather than being separate instance bindings. The page and settings have no direct execution-device switch. Reopening the page, device inventory changes, or changing accounts never replaces an existing binding.
 
@@ -54,6 +78,12 @@ Edit responsibilities and shared preferences in the primary profile, and role re
 You can also describe a role or configuration change in conversation. The confirmation card appears directly in that conversation with the affected roles, source scopes, and handling policies. Choose **Confirm and apply** to save and activate the changes. After success, the conversation shows **Settings applied** and the actual changes; failure retains the card and an error. A group's addition to a role updates that role's connections, not the primary identity's source scope; switch to that role's settings to inspect it. **Stand-in details → Pending settings** opens the same proposal. Closing that dialog neither accepts nor rejects it, and the conversation card remains available. Continue discussing to revise it, or choose **Dismiss**. A stale proposal cannot overwrite newer settings.
 
 The main surface keeps the conversation, composer, identity switcher and adjacent **＋**, with **Stand-in details** at the top right. Connection or processing issues appear as one compact status entry; open **Connection and processing status** for complete records and retry. The question-mark icon at the top right of the details popover opens **Usage examples**; the arrow beside Recent activity opens all activity. Settings show **Memory** directly, without those extra entries. Stopping is separate at the bottom left of the settings panel. Settings, Connections and source details have explicit entry and parent-return controls; clickable **Settings navigation** paths return to Settings or Connections without bypassing unsaved-change confirmation. Proactive background updates retain their own marker.
+
+## Proactive background notifications
+
+All connected sources share the same notification policy: surface important information relevant to you, urgent matters, or evidence-backed possible progress anomalies, even when no user action is required. Explain what happened, why it matters now, its source and timing, distinguishing facts, inference and uncertainty. A possible anomaly need not be confirmed, but must have a concrete signal relative to known expectations. Missing updates, unknown current status of an old problem, or urgent wording alone do not justify a notification. Never resurface resolved or superseded problems as active risks; important new milestones or outcomes can still merit a finding.
+
+Assess related events together and consult recent notifications across batches; notify again only when new evidence changes significance, urgency, the progress assessment or the required response. Routine updates and redeliveries remain quiet; never broaden access or create verification tasks merely to manufacture a notification. Preserve account/source identity and source-provided topic identifiers for correlation; never invent missing identifiers, and use available evidence for semantic assessment. This is a model-driven policy, not an independent guarantee of live state verification. Explicitly requested reports, reminders, scheduled arrangements and authorized work execution retain their existing flows.
 
 ## Inspect, edit and forget stand-in memories
 

@@ -4,6 +4,7 @@ import {
   type LocalModelCatalogEntry,
 } from './localModelCatalog'
 import { builtinCodexCatalogModel, codexCatalogModelIdForUpstream } from './codexCatalog'
+import { modelInterfaceToolProfile } from '../../../electron/src/host/model-interface-runtime'
 
 export {
   KIMI_CODING_CONTEXT_WINDOW,
@@ -122,16 +123,14 @@ export function normalizeLocalModelCodexToolCompatibility(
 export function defaultLocalModelToolProfile(
   apiFormat: LocalModelApiFormat
 ): LocalModelToolProfile {
-  return apiFormat === 'openai-responses' ? 'custom' : 'function'
+  return modelInterfaceToolProfile({ apiFormat })
 }
 
 export function normalizeLocalModelToolProfile(
   value: string | null | undefined,
   apiFormat: LocalModelApiFormat
 ): LocalModelToolProfile {
-  return value === 'custom' || value === 'function' || value === 'shell'
-    ? value
-    : defaultLocalModelToolProfile(apiFormat)
+  return modelInterfaceToolProfile({ apiFormat, toolProfile: value })
 }
 
 function validateLocalModelToolProfile(
@@ -277,9 +276,11 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       legacyConfig.codexToolCompatibility,
       apiFormat
     ),
-    toolProfile: migrateDeepSeekResponses
-      ? 'custom'
-      : normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
+    toolProfile: modelInterfaceToolProfile({
+      apiFormat,
+      providerProfileId,
+      toolProfile: legacyConfig.toolProfile,
+    }),
     ...(legacyConfig.apiKey ? { apiKey: legacyConfig.apiKey } : {}),
     apiKeyConfigured: legacyConfig.apiKeyConfigured ?? Boolean(legacyConfig.apiKey),
     ...(providerContextWindow
@@ -532,10 +533,11 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const id = input.id?.trim() || createLocalModelConfigId()
   const existing = readStoredConfigs()
   const previous = existing.find(config => config.id === id)
-  const toolProfile = normalizeLocalModelToolProfile(
-    input.toolProfile ?? previous?.toolProfile,
-    apiFormat
-  )
+  const toolProfile = modelInterfaceToolProfile({
+    apiFormat,
+    providerProfileId: input.providerProfileId ?? previous?.providerProfileId,
+    toolProfile: input.toolProfile ?? previous?.toolProfile,
+  })
   const codexToolCompatibility = normalizeLocalModelCodexToolCompatibility(
     input.codexToolCompatibility ?? previous?.codexToolCompatibility,
     apiFormat

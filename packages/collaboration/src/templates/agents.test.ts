@@ -51,6 +51,37 @@ it.each(['zh-CN', 'en'] as const)('explains ambiguous project environments in %s
   )
 })
 
+it.each([
+  ['template_environment_unavailable', 'destinationDeviceRequired'],
+  ['template_environment_ambiguous', 'destinationEnvironmentAmbiguous'],
+  ['template_model_unavailable', 'modelUnavailable'],
+] as const)(
+  'preserves localized %s guidance with an explicit model selection',
+  async (code, message) => {
+    const model = { runtime: 'codex' as const, provider: 'company', model_id: 'selected' }
+    const resolveTemplateAgentRouting = vi.fn(async () => {
+      throw new Error(code)
+    })
+    const resolve = templateRoutingResolver(
+      { renderDialog: () => null, resolveTemplateAgentRouting },
+      'cloud',
+      undefined,
+      'zh-CN',
+      undefined,
+      { codex: model }
+    )
+    await expect(resolve('codex')).rejects.toBeInstanceOf(TemplateConfigurationError)
+    await expect(resolve('codex')).rejects.toThrow(templateMessages['zh-CN'][message])
+    expect(resolveTemplateAgentRouting).toHaveBeenLastCalledWith(
+      'codex',
+      'cloud',
+      undefined,
+      undefined,
+      model
+    )
+  }
+)
+
 function fixture() {
   const document = structuredClone(builtinCollaborationTemplates()[0].document)
   const drafts = bindTemplate(document, templateAgentBindings(document))

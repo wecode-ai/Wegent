@@ -23,7 +23,7 @@ import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { WEWORK_CODE_THEME } from '@/lib/code-theme'
+import { useCodeTheme } from '@/features/appearance/useCodeTheme'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import type { GitPatchAction } from '@/api/environment'
 import { parseUnifiedDiff, type DiffFileSection } from './parseUnifiedDiff'
@@ -72,10 +72,10 @@ const PIERRE_DIFF_CSS = `
     font-weight: 500;
   }
   [data-diffs-line-addition], [data-diffs-line-added] {
-    background: rgb(var(--color-diff-added) / 0.12);
+    background: rgb(var(--color-review-added, var(--color-diff-added)) / 0.12);
   }
   [data-diffs-line-deletion], [data-diffs-line-deleted] {
-    background: rgb(var(--color-diff-removed) / 0.12);
+    background: rgb(var(--color-review-removed, var(--color-diff-removed)) / 0.12);
   }
 `
 interface FileChangesReviewPanelProps {
@@ -251,7 +251,9 @@ export function FileChangesReviewPanel({
       {loading ? (
         <p className="py-8 text-center text-sm text-text-muted">{t('file_changes.loading_diff')}</p>
       ) : error ? (
-        <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
+        <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive wework:bg-red-50 wework:text-red-700">
+          {error}
+        </p>
       ) : (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
           <ReviewToolbar
@@ -281,7 +283,7 @@ export function FileChangesReviewPanel({
             <p
               role="alert"
               data-testid="file-changes-review-action-error"
-              className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive wework:border-red-200 wework:bg-red-50 wework:text-red-700"
             >
               {actionError}
             </p>
@@ -493,10 +495,10 @@ function ReviewToolbar({
               <span className="shrink-0">{toolbarTitle}</span>
             )}
           </div>
-          <span className="shrink-0 font-normal text-diff-added">
+          <span className="shrink-0 font-normal text-diff-added wework:text-green-600">
             +{additions.toLocaleString()}
           </span>
-          <span className="shrink-0 font-normal text-diff-removed">
+          <span className="shrink-0 font-normal text-diff-removed wework:text-red-600">
             -{deletions.toLocaleString()}
           </span>
         </div>
@@ -776,6 +778,7 @@ function FileDiffSection({
   onCommentSelectionChange: (selection: DiffCommentSelection | null) => void
   themeType: 'light' | 'dark'
 }) {
+  const codeTheme = useCodeTheme()
   const stats = useMemo(() => getDiffStats(section.lines), [section.lines])
   const patchChunks = useMemo(() => getPierrePatchChunks([section]), [section])
   const actionLabel = collapsed ? expandFileLabel : collapseFileLabel
@@ -817,8 +820,12 @@ function FileDiffSection({
         >
           {section.path}
         </button>
-        <span className="shrink-0 font-normal text-diff-added">+{stats.additions}</span>
-        <span className="shrink-0 font-normal text-diff-removed">-{stats.deletions}</span>
+        <span className="shrink-0 font-normal text-diff-added wework:text-green-600">
+          +{stats.additions}
+        </span>
+        <span className="shrink-0 font-normal text-diff-removed wework:text-red-600">
+          -{stats.deletions}
+        </span>
         {fileActions.length > 0 ? (
           <div
             data-testid="file-changes-review-file-actions"
@@ -913,7 +920,7 @@ function FileDiffSection({
                   },
                   overflow: wrapLines ? 'wrap' : 'scroll',
                   stickyHeader: false,
-                  theme: WEWORK_CODE_THEME,
+                  theme: codeTheme,
                   themeType,
                   tokenizeMaxLength: 250_000,
                   tokenizeMaxLineLength: 2_000,

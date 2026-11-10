@@ -69,6 +69,22 @@ async function installSpeechModel(control, resultDir) {
     join(directory, 'index.js'),
     `export const inject = ['speechToText']
 export function apply(ctx) {
+  const speech = ctx.speechToText
+  const originalConfigure = speech.configure
+  const observedConfigure = async function (patch) {
+    const startedAt = Date.now()
+    console.log('[voice-selection]', { phase: 'started', pid: process.pid })
+    try {
+      const result = await originalConfigure.call(this, patch)
+      console.log('[voice-selection]', { phase: 'completed', elapsedMs: Date.now() - startedAt, selection: this.snapshot().selection })
+      return result
+    } catch (error) {
+      console.error('[voice-selection]', { phase: 'failed', elapsedMs: Date.now() - startedAt, message: String(error?.message ?? error) })
+      throw error
+    }
+  }
+  speech.configure = observedConfigure
+  ctx.effect(() => () => { if (speech.configure === observedConfigure) speech.configure = originalConfigure })
   ctx.effect(() => ctx.speechToText.register({
     info: { id: '${PROVIDER}', name: 'Toolbar speech model', location: 'cloud', languages: ['auto'] },
     transcribe: async () => { throw new Error('Cancelled recordings must never reach inference') },

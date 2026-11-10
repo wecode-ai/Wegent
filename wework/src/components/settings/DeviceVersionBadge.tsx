@@ -43,7 +43,7 @@ export function DeviceVersionBadge({
             aria-label={updateLabel}
             onClick={onUpgrade}
             disabled={disabled}
-            className="inline-flex items-center gap-1 rounded-full bg-focus/10 px-2 py-0.5 text-xs font-medium text-focus hover:bg-focus/15 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/60 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-full bg-focus/10 px-2 py-0.5 text-xs font-medium text-focus hover:bg-focus/15 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/60 disabled:cursor-not-allowed disabled:opacity-50 wework:bg-blue-500/10 wework:text-blue-600 wework:hover:bg-blue-500/15 wework:keyboard:focus-visible:ring-blue-500/60 wework:dark:text-blue-400"
           >
             <ArrowUpCircle className="h-3 w-3" aria-hidden="true" />
             {t('workbench.connection_upgrade_available')}

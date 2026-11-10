@@ -333,8 +333,13 @@ def test_pages_apply_sql_bounds_and_break_timestamp_ties_by_id(
 
 
 @pytest.mark.parametrize("mutation", ["update", "insert", "delete_anchor"])
+@pytest.mark.parametrize("include_total", [True, False])
 def test_cursor_pages_remain_stable_when_tasks_change(
-    client: TestClient, test_db: Session, project: Project, mutation: str
+    client: TestClient,
+    test_db: Session,
+    project: Project,
+    mutation: str,
+    include_total: bool,
 ) -> None:
     timestamp = datetime(2026, 1, 1)
     tasks = [
@@ -342,7 +347,12 @@ def test_cursor_pages_remain_stable_when_tasks_change(
         for index in range(6)
     ]
     expected_ids = [task.id for task in reversed(tasks)]
-    first = client.get(f"/api/projects/{project.id}/tasks?limit=2").json()
+    params: dict[str, str | int] = {"limit": 2}
+    if not include_total:
+        params["include_total"] = "false"
+    with _selects(test_db) as first_statements:
+        first = client.get(f"/api/projects/{project.id}/tasks", params=params).json()
+    assert first["total"] == (6 if include_total else None)
 
     if mutation == "update":
         tasks[0].updated_at = timestamp + timedelta(days=30)
@@ -361,12 +371,16 @@ def test_cursor_pages_remain_stable_when_tasks_change(
         with _selects(test_db) as statements:
             response = client.get(
                 f"/api/projects/{project.id}/tasks",
-                params={"limit": 2, "page": 99, "cursor": cursor},
+                params={**params, "page": 99, "cursor": cursor},
             )
         assert response.status_code == 200
         result = response.json()
-        assert result["total"] == expected_total
-        assert len(statements) == 3
+        assert result["total"] == (expected_total if include_total else None)
+        assert len(statements) == (3 if include_total else 2)
+        if not include_total:
+            assert all(
+                "COUNT(" not in sql.upper() for sql in first_statements + statements
+            )
         assert "tasks.created_at <" in statements[-1]
         collected_ids.extend(item["task_id"] for item in result["items"])
         cursor = result["next_cursor"]
@@ -390,25 +404,34 @@ def test_empty_or_exactly_full_last_page_has_no_next_cursor(
     assert response["next_cursor"] is None
 
 
-@pytest.mark.parametrize("page", [3, 2**128])
+@pytest.mark.parametrize(
+    ("page", "include_total"), [(3, True), (2**128, True), (2**128, False)]
+)
 def test_out_of_range_page_does_not_query_task_rows(
-    client: TestClient, test_db: Session, project: Project, page: int
+    client: TestClient,
+    test_db: Session,
+    project: Project,
+    page: int,
+    include_total: bool,
 ) -> None:
     for _ in range(3):
         _task(test_db, project)
     url = f"/api/projects/{project.id}/tasks"
 
+    params: dict[str, str | int] = {"page": page, "limit": 2}
+    if not include_total:
+        params["include_total"] = "false"
     with _selects(test_db) as statements:
-        response = client.get(url, params={"page": page, "limit": 2})
+        response = client.get(url, params=params)
 
     assert response.status_code == 200
     assert response.json() == {
-        "total": 3,
+        "total": 3 if include_total else None,
         "items": [],
         "has_more": False,
         "next_cursor": None,
     }
-    assert len(statements) == 2
+    assert len(statements) == (2 if include_total else 1)
 
 
 def test_cursor_takes_precedence_over_out_of_range_page(

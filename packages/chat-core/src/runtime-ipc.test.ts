@@ -515,6 +515,39 @@ describe("createCloudRuntimeIpcClient", () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
+  it("keeps the event subscription across an initial connection timeout", async () => {
+    socket.connected = false;
+    ensureConnected.mockRejectedValueOnce(
+      new Error("Socket.IO connection timed out"),
+    );
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+    const handler = vi.fn();
+    const subscription = client.subscribe(handler);
+    await expect(subscription).resolves.toEqual(expect.any(Function));
+    const unsubscribe = await subscription;
+    expect(ensureConnected).not.toHaveBeenCalled();
+    expect(connect).toHaveBeenCalledOnce();
+    expect(socket.on.mock.invocationCallOrder[0]).toBeLessThan(
+      connect.mock.invocationCallOrder[0],
+    );
+
+    socket.connected = true;
+    const [name, listener] = socket.on.mock.calls[0];
+    const event = {
+      event: "response.completed",
+      payload: { taskId: "task-1" },
+    };
+    listener(event);
+    expect(handler).toHaveBeenCalledWith(event);
+    unsubscribe();
+    expect(socket.off).toHaveBeenCalledWith(name, listener);
+    client.dispose();
+  });
+
   it("requires an actual device address before connecting or sending", async () => {
     const client = createCloudRuntimeIpcClient({
       socketBaseUrl: "https://cloud.example.com",

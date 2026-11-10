@@ -4463,6 +4463,7 @@ describe("CollaborationPlatformApp real component flow", () => {
         save: vi.fn(),
         install: vi.fn(),
         publish: vi.fn(),
+        delete: vi.fn(),
       };
       const templateStore = new CollaborationTemplateStore({
         scope: "backend:7",

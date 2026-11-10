@@ -105,10 +105,10 @@ export function SubagentStatusIndicator({
 
 function SubagentStatusIcon({ status }: { status: RuntimeSubagentStatus['status'] }) {
   if (status === 'done') {
-    return <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+    return <CheckCircle2 className="h-4 w-4 shrink-0 text-success wework:text-emerald-600" />
   }
   if (status === 'interrupted') {
-    return <CircleAlert className="h-4 w-4 shrink-0 text-warning" />
+    return <CircleAlert className="h-4 w-4 shrink-0 text-warning wework:text-amber-600" />
   }
   return <CompositedSpinner icon={Loader2} className="h-4 w-4 text-primary" />
 }

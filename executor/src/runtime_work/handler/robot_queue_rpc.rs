@@ -53,6 +53,7 @@ impl RuntimeWorkRpcHandler {
                 if ticks % LOCAL_ISSUE_HEARTBEAT_TICKS == 0 {
                     handler.heartbeat_local_issue_executions();
                     for link in handler.local_task_links(false) {
+                        handler.sync_stand_in_issue_replies(&link.local_task_id);
                         if link.runtime_handle["issueHumanRequestOutbox"]
                             .as_object()
                             .is_some_and(|outbox| !outbox.is_empty())

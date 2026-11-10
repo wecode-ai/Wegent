@@ -420,7 +420,7 @@ export function WorkspaceFileToolbar({
         <div
           role="alert"
           data-testid="workspace-file-action-error"
-          className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-sm text-destructive"
+          className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-sm text-destructive wework:text-red-600"
         >
           <span className="min-w-0 flex-1 break-words">{actionError}</span>
           <button

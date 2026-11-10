@@ -126,12 +126,10 @@ export default function SearchDialog({
         let more: boolean
         let nextCursor: string | undefined
         if (projectId !== undefined) {
-          const result = await projectApis.getProjectTasks(
-            projectId,
-            SEARCH_PAGE_SIZE,
-            cursor,
-            term || undefined
-          )
+          const result = await projectApis.getProjectTasks(projectId, SEARCH_PAGE_SIZE, cursor, {
+            title: term || undefined,
+            includeTotal: false,
+          })
           items = result.items.map(projectTaskSearchResult)
           more = result.has_more
           nextCursor = result.next_cursor ?? undefined

@@ -127,6 +127,7 @@ export const HOST_CAPABILITIES = [
   'maintenance.cleanupTemporaryImages',
   'maintenance.getSystemPressure',
   'notification.show',
+  'notification.openSettings',
   'notification.pendingReplies',
   'notification.acknowledgeReply',
   'modelConfiguration.read',

@@ -3503,6 +3503,10 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
 
     let launch_config = persistent_codex_app_server_launch_config(&request_launch_config);
 
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.multi_agent_v2.non_code_mode_only=false".to_owned()));
+
     assert_eq!(
         launch_config.env.get("HTTP_PROXY").map(String::as_str),
         Some("http://127.0.0.1:7890")
@@ -4299,11 +4303,50 @@ fn single_collaboration_mode_disables_codex_native_subagents() {
 
     assert!(launch_config
         .config_overrides
+        .contains(&"agents.enabled=false".to_owned()));
+    assert!(launch_config
+        .config_overrides
         .contains(&"features.multi_agent=false".to_owned()));
     assert!(launch_config
         .config_overrides
         .contains(&"features.multi_agent_v2=false".to_owned()));
     assert!(codex_collaboration_mode_payload(&request, &CodexLaunchConfig::default()).is_none());
+}
+
+#[test]
+fn stand_in_identity_uses_native_v2_without_changing_other_task_defaults() {
+    for origin_type in ["stand_in_identity", "stand_in_task", "project_coordinator"] {
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("origin".to_owned(), json!({"type": origin_type}));
+        let overrides = codex_collaboration_config_overrides(&request);
+        if origin_type == "stand_in_identity" {
+            assert_eq!(overrides, vec![CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]);
+        } else {
+            assert!(overrides.is_empty());
+        }
+    }
+    assert!(codex_collaboration_config_overrides(&ExecutionRequest::default()).is_empty());
+}
+
+#[test]
+fn single_stand_in_identity_still_disables_both_native_agent_families() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("origin".to_owned(), json!({"type":"stand_in_identity"}));
+    request
+        .extra
+        .insert("collaboration_model".to_owned(), json!("single"));
+    assert_eq!(
+        codex_collaboration_config_overrides(&request),
+        vec![
+            CODEX_DISABLE_AGENTS_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE
+        ]
+    );
 }
 
 #[test]
@@ -5600,6 +5643,13 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         .expect("skills config override should be valid TOML");
     assert_eq!(parsed_override["skills"]["config"], config["skills.config"]);
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
+    assert_eq!(config["features.multi_agent_v2.non_code_mode_only"], false);
+    let collaboration_hint = config["features.multi_agent_v2.root_agent_usage_hint_text"]
+        .as_str()
+        .expect("Code Mode collaboration hint");
+    assert!(collaboration_hint.contains("Use Code Mode to discover collaboration tools"));
+    assert!(collaboration_hint.contains("delegation is explicitly requested"));
+    assert!(!collaboration_hint.contains("cannot be called from inside"));
     assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
         config["mcp_servers.wework_browser.url"],

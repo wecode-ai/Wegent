@@ -5,6 +5,13 @@ fn handler(root: &Path) -> RuntimeWorkRpcHandler {
     let mut handler = RuntimeWorkRpcHandler::new("device", "unused");
     handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
     handler.store = RuntimeWorkStore::new(root.join("runtime.json"));
+    handler.turn_queue_path = Arc::new(root.join("turn-queue.json"));
+    handler.command_journal = Arc::new(Mutex::new(Default::default()));
+    handler.turn_scheduler = Arc::new(Mutex::new(RuntimeTurnScheduler::new(
+        RuntimeSettings::default(),
+        VecDeque::new(),
+    )));
+    handler.active_goal_turns = Arc::new(Mutex::new(Default::default()));
     handler.automation_store =
         crate::runtime_work::automations::AutomationStore::new(root.join("automations.json"));
     handler

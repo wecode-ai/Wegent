@@ -134,6 +134,7 @@ class LoopItemPermissions(BaseModel):
 
 class LoopItemRead(BaseModel):
     activity_sequence: int | None = Field(default=None, ge=0)
+    content_revision: int | None = Field(default=None, ge=0)
 
 
 class IssueBadge(BaseModel):
@@ -451,6 +452,10 @@ class LoopItemCollaboratorResponse(BaseModel):
 
 class LoopItemTaskBind(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+
+    stand_in_conversation_id: str | None = Field(
+        default=None, alias="standInConversationId", min_length=1, max_length=255
+    )
 
     device_id: str = Field(alias="deviceId", min_length=1, max_length=100)
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)

@@ -300,9 +300,10 @@ export function DesktopAppSwitcher({
               className={cn(
                 'flex h-8 items-center rounded-lg px-2 text-sm font-medium leading-none transition-colors',
                 active
-                  ? 'bg-muted text-text-primary'
-                  : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-                option.disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent'
+                  ? 'bg-muted text-text-primary wework:bg-black/[0.045]'
+                  : 'text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]',
+                option.disabled &&
+                  'cursor-not-allowed opacity-50 hover:bg-transparent wework:hover:bg-transparent'
               )}
             >
               {option.label}
@@ -408,7 +409,9 @@ export function DesktopAppSwitcher({
                     key={option.key}
                     className={cn(
                       'relative z-10 flex min-h-10 w-full items-center rounded-lg py-1 pl-2 pr-2 text-left transition-[background-color,opacity,transform] duration-200 ease-out',
-                      active ? 'bg-muted' : 'hover:bg-muted',
+                      active
+                        ? 'bg-muted wework:bg-black/[0.03]'
+                        : 'hover:bg-muted wework:hover:bg-black/[0.035]',
                       open ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
                     )}
                     style={{ transitionDelay: open ? `${index * 28}ms` : '0ms' }}
@@ -455,7 +458,7 @@ export function DesktopAppSwitcher({
                             closeMenu()
                             dispatchOpenSettingsShortcut()
                           }}
-                          className="rounded-md p-1 text-text-muted transition-colors hover:bg-muted hover:text-text-primary"
+                          className="rounded-md p-1 text-text-muted transition-colors hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.06]"
                         >
                           <Settings aria-hidden="true" className="h-3.5 w-3.5" />
                         </button>
@@ -465,7 +468,7 @@ export function DesktopAppSwitcher({
                           data-testid="app-switcher-collapse"
                           aria-label={t('workbench.app_navigation', '应用导航')}
                           onClick={closeMenu}
-                          className="rounded-md p-1 text-text-muted transition-colors hover:bg-muted hover:text-text-primary"
+                          className="rounded-md p-1 text-text-muted transition-colors hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.06]"
                         >
                           <ChevronDown aria-hidden="true" className="h-3 w-3 rotate-180" />
                         </button>

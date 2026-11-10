@@ -43,7 +43,6 @@
 //! `task_store.clear_project_for_owned_tasks` unless the origin is `wework`,
 //! then flushes the soft delete (`is_active = False`) and commits; it responds
 //! `204` with an empty body.
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use brz_http_server::{Response, StatusCode};
@@ -399,7 +398,7 @@ struct ProjectItem {
     user_id: i64,
     sort_order: i64,
     is_expanded: bool,
-    task_count: i64,
+    task_count: Option<i64>,
     created_at: String,
     updated_at: String,
     tasks: Vec<ProjectTaskItem>,
@@ -415,19 +414,17 @@ struct ProjectListResponse {
     items: Vec<ProjectItem>,
 }
 
-/// Validated `include_tasks` / `client_origin` query parameters (the
-/// source `Query` constraints: boolean parse for `include_tasks`, default
-/// `true`; pattern `^(frontend|wework)$` for `client_origin`, default
-/// `frontend`).
+/// Validated project-list options. The boolean flags default to true.
 struct ListProjectsParams {
     include_tasks: bool,
+    include_task_count: bool,
     client_origin: String,
 }
 
-/// Parse `include_tasks` with pydantic's boolean rules: `true`, `false`,
+/// Parse a project-list option with pydantic's boolean rules: `true`, `false`,
 /// `1`, `0`, `yes`, `no`, `on`, `off` (case-insensitive) — anything else
 /// is a 422 `bool_parsing` error.
-fn parse_include_tasks(raw: Option<&str>) -> Result<bool, FastApiError> {
+fn parse_include_flag(raw: Option<&str>, field: &str) -> Result<bool, FastApiError> {
     let Some(raw) = raw else {
         return Ok(true);
     };
@@ -435,7 +432,7 @@ fn parse_include_tasks(raw: Option<&str>) -> Result<bool, FastApiError> {
         "true" | "1" | "yes" | "on" => Ok(true),
         "false" | "0" | "no" | "off" => Ok(false),
         _ => Err(validation_error(
-            "include_tasks",
+            field,
             "bool_parsing",
             "Input should be a valid boolean, unable to interpret input",
             raw,
@@ -578,12 +575,17 @@ async fn list_projects(
     #[auth] current_user: crate::auth::SessionUser,
     include_tasks: Option<String>,
     client_origin: Option<String>,
+    include_task_count: Option<String>,
 ) -> Result<ProjectListResponse, FastApiError> {
     // FastAPI validates the query parameters before the endpoint body
     // runs; invalid values surface as 422 without any dependency
     // traffic.
     let params = ListProjectsParams {
-        include_tasks: parse_include_tasks(include_tasks.as_deref())?,
+        include_tasks: parse_include_flag(include_tasks.as_deref(), "include_tasks")?,
+        include_task_count: parse_include_flag(
+            include_task_count.as_deref(),
+            "include_task_count",
+        )?,
         client_origin: parse_client_origin(client_origin.as_deref())?,
     };
     projects_list(state, &current_user, &params).await
@@ -601,22 +603,21 @@ async fn projects_list(
         .await
         .map_err(dependency_error)?;
 
-    // `include_tasks=false` counts each project's active tasks in one grouped
-    // query (`task_store.count_active_tasks_by_project`) instead of listing
-    // them. The source issues it before building the items, and an empty
-    // project list issues no count statement at all.
-    let task_counts = if params.include_tasks {
-        HashMap::new()
-    } else {
+    // Only query counts when requested and task details cannot provide them.
+    let task_counts = if params.include_task_count && !params.include_tasks {
         let owners: Vec<(i64, i64)> = projects
             .iter()
             .map(|project| (project.projects_id, project.projects_user_id))
             .collect();
-        state
-            .task_store
-            .count_active_tasks_by_project(&owners, Some(&params.client_origin))
-            .await
-            .map_err(dependency_error)?
+        Some(
+            state
+                .task_store
+                .count_active_tasks_by_project(&owners, Some(&params.client_origin))
+                .await
+                .map_err(dependency_error)?,
+        )
+    } else {
+        None
     };
 
     let mut items = Vec::with_capacity(projects.len());
@@ -632,17 +633,19 @@ async fn projects_list(
             )
             .await
             .map_err(dependency_error)?;
-            let count = merged.len() as i64;
+            let count = params.include_task_count.then_some(merged.len() as i64);
             let items = merged
                 .iter()
                 .map(|task| task_item(task, project.projects_id))
                 .collect();
             (items, count)
         } else {
-            let count = task_counts
-                .get(&project.projects_id)
-                .copied()
-                .unwrap_or_default();
+            let count = task_counts.as_ref().map(|counts| {
+                counts
+                    .get(&project.projects_id)
+                    .copied()
+                    .unwrap_or_default()
+            });
             (Vec::new(), count)
         };
 

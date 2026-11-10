@@ -13,7 +13,7 @@ export const codeThemeCSS = `
   .pierre-code-block { ${toCSS(pierreLight)} }
   [data-theme='dark'] .pierre-code-block:not([data-theme='light']),
   .pierre-code-block[data-theme='dark'] { ${toCSS(pierreDark)} }
-  html[data-appearance-theme][data-theme] .pierre-code-block {
+  html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))[data-theme] .pierre-code-block {
     --hls-foreground: rgb(var(--color-text-primary));
     --hls-background: rgb(var(--color-code-bg));
     --hls-diff-plus: rgb(var(--color-diff-added));
