@@ -328,6 +328,7 @@ classify_workbench_path() {
       ;;
     wework/e2e/desktop/scenarios/runtime-input-answer-persistence.scenario.mjs | \
       wework/e2e/desktop/scenarios/consecutive-questions.scenario.mjs | \
+      wework/e2e/desktop/modules/native-reply-recovery.mjs | \
       wework/e2e/desktop/modules/pending-interactions-tab.mjs)
       select_target "core:runtime-input-answer-persistence"
       return

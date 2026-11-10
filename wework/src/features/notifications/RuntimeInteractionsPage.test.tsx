@@ -83,6 +83,7 @@ function interactionValue(
     history: [],
     errors: {},
     drafts: {},
+    replyDrafts: [],
     busy: new Set(),
     loading: false,
     setDraft: vi.fn(),
@@ -194,16 +195,21 @@ it.each([true, false])(
       { [approval.id]: 'interactions.failed' },
       {
         pending: [],
-        history: [
+        history: [],
+        drafts: { [approval.id]: 'Unsent native reply', unrelated: 'Another task draft' },
+        replyDrafts: [
           {
-            id: approval.id,
-            title: interactionTask.task.title,
-            question: approval.question,
-            address: interactionTask.address,
-            answeredAt: Date.now(),
+            text: 'Unsent native reply',
+            nativeReplyIds: ['native-reply'],
+            interaction: {
+              id: approval.id,
+              title: interactionTask.task.title,
+              question: approval.question,
+              address: interactionTask.address,
+              answeredAt: Date.now(),
+            },
           },
         ],
-        drafts: { [approval.id]: 'Unsent native reply', unrelated: 'Another task draft' },
         setDraft,
       }
     )

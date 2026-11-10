@@ -245,6 +245,7 @@ done
 for runtime_input_path in \
   "wework/e2e/desktop/scenarios/runtime-input-answer-persistence.scenario.mjs" \
   "wework/e2e/desktop/scenarios/consecutive-questions.scenario.mjs" \
+  "wework/e2e/desktop/modules/native-reply-recovery.mjs" \
   "wework/e2e/desktop/modules/pending-interactions-tab.mjs"; do
   assert_desktop_case "Runtime input answer scenario dependency selects only its checkpoint: $runtime_input_path" \
     'wework_desktop_e2e=true
@@ -260,6 +261,10 @@ for pending_answer_path in \
   "wework/src/features/notifications/RuntimeInteractionsProvider.liveSettlement.test.tsx" \
   "wework/src/features/notifications/runtimeInteractions.ts" \
   "wework/src/features/notifications/useRuntimeInteractionSettlements.ts" \
+  "wework/src/features/notifications/useInteractionDrafts.ts" \
+  "wework/src/features/notifications/useNativeInteractionReplies.ts" \
+  "wework/src/features/notifications/interactionArchive.ts" \
+  "wework/src/features/notifications/interactionStorage.ts" \
   "wework/src/features/notifications/RuntimeInteractionsPage.tsx" \
   "wework/src/features/notifications/InteractionDraftRecovery.tsx"; do
   pending_answer_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$pending_answer_path")"

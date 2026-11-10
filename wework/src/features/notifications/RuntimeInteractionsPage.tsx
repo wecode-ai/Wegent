@@ -328,7 +328,8 @@ export function RuntimeInteractionsPage({
             .filter(
               ([key]) =>
                 !pending.some(request => request.id === key) &&
-                !interactions.history.some(item => item.id === key)
+                !interactions.history.some(item => item.id === key) &&
+                !interactions.replyDrafts.some(draft => draft.interaction.id === key)
             )
             .map(([key, error]) => (
               <p key={key} role="alert" className="px-3 py-2 text-sm text-status-error">

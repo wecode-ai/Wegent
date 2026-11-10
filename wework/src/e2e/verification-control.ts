@@ -10,6 +10,8 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { applyLocalExecutorCloudConnection } from '@/features/cloud-connection/localExecutorCloudConnection'
 import { getDesktopE2ERuntimeConfig } from './runtime-config'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import {
   localConnectorAuthHealth,
   localConnectorAuthLogout,
@@ -213,6 +215,25 @@ export async function executeVerificationControlCommand(
   dependencies: VerificationControlDependencies
 ): Promise<DesktopControlExtensionResult> {
   switch (command.action) {
+    case 'enqueueNativeNotificationReply':
+      return {
+        handled: true,
+        value: JSON.stringify(
+          await invokeDesktopHost('e2e.enqueueNotificationReply', JSON.parse(command.value ?? '{}'))
+        ),
+      }
+    case 'getNativeNotificationReplies':
+      return {
+        handled: true,
+        value: JSON.stringify(
+          await invokeDesktopHost('notification.pendingReplies', {
+            accountKey: command.value ?? '',
+          })
+        ),
+      }
+    case 'flushRendererStorage':
+      await flushDesktopLocalStoragePersistence()
+      return { handled: true, value: '' }
     case 'reconnectLocalExecutorCloud':
       return { handled: true, value: await reconnectLocalExecutorCloud() }
     case 'disconnectLocalExecutorCloud': {

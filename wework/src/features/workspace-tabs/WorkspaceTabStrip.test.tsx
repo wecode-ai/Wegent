@@ -382,6 +382,7 @@ describe('WorkspaceTabStrip', () => {
       history: [],
       errors: {},
       drafts: {},
+      replyDrafts: [],
       busy: new Set(),
       loading: false,
       setDraft: vi.fn(),

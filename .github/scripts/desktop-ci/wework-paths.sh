@@ -468,6 +468,10 @@ classify_wework_path() {
       if [[ "$path" == wework/src/features/notifications/RuntimeInteractions* || \
         "$path" == wework/src/features/notifications/runtimeInteractions* || \
         "$path" == wework/src/features/notifications/useRuntimeInteraction* || \
+        "$path" == wework/src/features/notifications/useInteractionDrafts* || \
+        "$path" == wework/src/features/notifications/useNativeInteractionReplies* || \
+        "$path" == wework/src/features/notifications/interactionArchive* || \
+        "$path" == wework/src/features/notifications/interactionStorage* || \
         "$path" == wework/src/features/notifications/InteractionDraftRecovery* ]]; then
         select_target "core:runtime-input-answer-persistence"
       fi

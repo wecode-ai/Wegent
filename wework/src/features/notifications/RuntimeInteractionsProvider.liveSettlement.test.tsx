@@ -23,6 +23,7 @@ import { interactionResponse } from './runtimeInteractions'
 import * as diagnostics from './interactionDiagnostics'
 import { issueHumanInteraction } from './issueHumanInteractions'
 import { useRuntimeInteractionSettlements } from './useRuntimeInteractionSettlements'
+import { archiveInteraction } from './interactionStorage'
 
 const historyKey = 'wework.interactions:test:1:history'
 
@@ -259,6 +260,74 @@ it.each(['before', 'after'])(
     expect(harness.send).not.toHaveBeenCalled()
   }
 )
+
+it.each(['delayed', 'failed'])(
+  'does not acknowledge a settled native reply before its recovery text is durably saved (%s)',
+  async storage => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    harness.desktop = true
+    let replies = [{ id: 'native-durable', interactionId: '', text: 'Keep until disk commits' }]
+    harness.host.mockImplementation(async (command: string) => {
+      if (command === 'notification.pendingReplies') return replies[0]?.interactionId ? replies : []
+      if (command === 'notification.acknowledgeReply') replies = []
+    })
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    await act(async () => cacheQuestion({ ...interactionQuestion, interactionStatus: 'answered' }))
+    await waitFor(() => expect(context!.pending).toHaveLength(0))
+    const gate = deferred<void>()
+    if (storage === 'delayed') harness.flushStorage.mockReturnValue(gate.promise)
+    else harness.flushStorage.mockRejectedValue(new Error('Disk unavailable'))
+    replies[0].interactionId = item.id
+    await act(async () =>
+      harness.hostListeners.forEach(listener => listener({ type: 'notification-reply' }))
+    )
+    expect(replies).toHaveLength(1)
+    expect(harness.host).not.toHaveBeenCalledWith(
+      'notification.acknowledgeReply',
+      expect.anything()
+    )
+    expect(localStorage.getItem('wework.interactions:test:1:native-replies') ?? '').not.toContain(
+      'native-durable'
+    )
+    harness.flushStorage.mockResolvedValue(undefined)
+    await act(async () => gate.resolve())
+    if (storage === 'failed') {
+      await act(async () =>
+        harness.hostListeners.forEach(listener => listener({ type: 'notification-reply' }))
+      )
+    }
+    await waitFor(() => expect(replies).toEqual([]))
+    expect(screen.getByTestId('interaction-unsent-text')).toHaveValue('Keep until disk commits')
+  }
+)
+
+it('keeps unsent text reachable after more than 100 subsequent archives and a reload', async () => {
+  const first = view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const item = context!.pending[0]
+  act(() => context!.setDraft(item.id, 'Older unsent text'))
+  await act(async () => cacheQuestion({ ...interactionQuestion, interactionStatus: 'answered' }))
+  await waitFor(() => expect(context!.pending).toHaveLength(0))
+  const newer = Array.from({ length: 101 }, (_, index) => ({
+    ...context!.history[0],
+    id: `newer-${index}`,
+    answeredAt: Date.now() + index + 1,
+  })).reduce((history, entry) => archiveInteraction(history, entry), context!.history)
+  localStorage.setItem(historyKey, JSON.stringify(newer))
+  first.unmount()
+  clearRuntimeConversationCacheForTests()
+  view()
+  await waitFor(() => expect(context!.loading).toBe(false))
+  expect(context!.history).toHaveLength(100)
+  expect(context!.history.some(row => row.id === item.id)).toBe(false)
+  expect(screen.getByTestId('interaction-unsent-text')).toHaveValue('Older unsent text')
+  fireEvent.click(screen.getByTestId('interaction-discard-unsent'))
+  await waitFor(() =>
+    expect(screen.queryByTestId('interaction-unsent-text')).not.toBeInTheDocument()
+  )
+})
 
 it.each(['inventory', 'transcript'])(
   'settles a restored native cache from conversation evidence when %s discovery fails',

@@ -41,6 +41,7 @@ function show(item: RuntimeInteraction) {
         history: [],
         errors: {},
         drafts: {},
+        replyDrafts: [],
         busy: new Set(),
         loading: false,
         setDraft: vi.fn(),

@@ -22,6 +22,11 @@ import {
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
+import {
+  answerWithNativeReplyStorageFailure,
+  NATIVE_RECOVERY_TEXT,
+  verifyNativeReplyRecoveryAfterReload,
+} from '../modules/native-reply-recovery.mjs'
 
 const PROMPT = 'WEWORK_CONSECUTIVE_ASYNC_QUESTIONS'
 const COMPLETE = 'WEWORK_CONSECUTIVE_ANSWERS_ACCEPTED'
@@ -37,6 +42,8 @@ export function createDesktopScenario({
   workspacePath,
   resultDir,
   workbenchReadyTimeoutMs,
+  electronUserDataDirectory,
+  restartDesktopApp,
 }) {
   let active = false
   let releaseSecond
@@ -54,6 +61,10 @@ export function createDesktopScenario({
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       if (!JSON.stringify(body).includes(PROMPT)) return false
+      assert.ok(
+        !JSON.stringify(body).includes(NATIVE_RECOVERY_TEXT),
+        'A failed native reply was resent to the model'
+      )
       const id = `consecutive-${Date.now()}`
       let events
       if (!requestContainsToolOutput(body, 'consecutive-first')) {
@@ -186,7 +197,23 @@ export function createDesktopScenario({
         )
         // Two async requests contain three questions; draft selection does not settle either.
         await verifyPendingInteractionsTab(control, 2)
-        await control.command('click', `${CARD} [data-testid="request-user-input-submit-button"]`)
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot => snapshot.pane?.status?.isBusy === false,
+          'The native reply fixture requires a completed question-producing turn'
+        )
+        const recovery = await answerWithNativeReplyStorageFailure(control, {
+          electronUserDataDirectory,
+          question: FIRST,
+          submit: () =>
+            control.command('click', `${CARD} [data-testid="request-user-input-submit-button"]`),
+          waitForTaskAnswer: () =>
+            control.command(
+              'waitFor',
+              `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-question-reply"]`,
+              { text: THIRD, visible: true }
+            ),
+        })
         await verifyPendingInteractionsTab(control, 0)
         await control.command(
           'waitFor',
@@ -232,6 +259,7 @@ export function createDesktopScenario({
             'Reopening pending work must not restore an answered question'
           )
         }
+        await verifyNativeReplyRecoveryAfterReload(control, recovery, restartDesktopApp)
       } finally {
         active = false
         releaseSecond()

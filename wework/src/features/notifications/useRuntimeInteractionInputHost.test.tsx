@@ -23,6 +23,7 @@ function host(overrides: Partial<RuntimeInteractionsValue> = {}, taskId = 'revie
     history: [],
     errors: {},
     drafts: { [item.id]: 'Saved reply' },
+    replyDrafts: [],
     busy: new Set(),
     loading: false,
     setDraft: vi.fn(),
