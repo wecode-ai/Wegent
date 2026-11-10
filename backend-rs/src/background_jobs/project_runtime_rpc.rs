@@ -126,7 +126,7 @@ pub(crate) async fn call(
     })
 }
 
-async fn direct_execution(
+pub(crate) async fn direct_execution(
     state: &AppState,
     user: &UserRow,
     task_id: &str,
@@ -178,6 +178,17 @@ pub(crate) fn sign(state: &AppState, claims: &Value) -> Result<String> {
     )?)
 }
 
+#[derive(Debug)]
+pub(crate) struct IncompleteCloudModelIdentity;
+
+impl std::fmt::Display for IncompleteCloudModelIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Cloud model identity is incomplete")
+    }
+}
+
+impl std::error::Error for IncompleteCloudModelIdentity {}
+
 pub(crate) async fn runtime_model_config(
     state: &AppState,
     user: &UserRow,
@@ -199,10 +210,10 @@ pub(crate) async fn runtime_model_config(
         let namespace = options["weworkCloudModelNamespace"]
             .as_str()
             .filter(|value| !value.is_empty())
-            .context("Cloud model identity is incomplete")?;
+            .ok_or(IncompleteCloudModelIdentity)?;
         let owner = super::authority::integer(&options["weworkCloudModelResourceUserId"])
             .filter(|value| *value >= 0)
-            .context("Cloud model identity is incomplete")?;
+            .ok_or(IncompleteCloudModelIdentity)?;
         let config = crate::llm_proxy::resolve_model_config(
             state,
             user,
@@ -223,9 +234,10 @@ pub(crate) async fn runtime_model_config(
             }
             crate::llm_proxy::model_config::Protocol::AnthropicMessages => "anthropic-messages",
         };
-        let base = crate::config::env_or_dotenv("WEGENT_BACKEND_PUBLIC_URL")
-            .filter(|value| !value.trim().is_empty())
-            .context("Cloud model gateway is not configured")?;
+        let base = crate::attachments::public_link::public_base_url();
+        if base.trim().is_empty() {
+            bail!("Cloud model gateway is not configured");
+        }
         let access = sign(
             state,
             &json!({"sub":user.user_name,"user_id":user.id,"exp":chrono::Utc::now().timestamp()+30*60}),

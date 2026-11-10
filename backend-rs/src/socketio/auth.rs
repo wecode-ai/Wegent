@@ -14,11 +14,11 @@
 //! `Invalid or expired API key`, `Invalid or expired token`, and
 //! `Authentication service unavailable` when the API-key read fails.
 
-use brz_mysql::Mysql;
 use sha2::{Digest, Sha256};
 
-use crate::auth::{USER_BY_NAME_QUERY, UserRow};
+use crate::auth::USER_BY_NAME_QUERY;
 use crate::state::AppState;
+use crate::user_reader::USER_BY_ID_QUERY;
 
 /// Authenticated connection identity stored on the namespace socket.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,15 +47,17 @@ const API_KEY_BY_HASH_QUERY: &str = "SELECT api_keys.id AS api_keys_id, \
      WHERE api_keys.key_hash = ? AND api_keys.key_type = ? AND api_keys.is_active = true \
      LIMIT 1";
 
-const USER_BY_ID_QUERY: &str = "SELECT users.id AS users_id, users.user_name AS users_user_name, \
-     users.password_hash AS users_password_hash, users.email AS users_email, \
-     users.git_info AS users_git_info, users.is_active AS users_is_active, \
-     users.`role` AS users_role, users.auth_source AS users_auth_source, \
-     users.preferences AS users_preferences, users.created_at AS users_created_at, \
-     users.updated_at AS users_updated_at \
-     FROM users \
-     WHERE users.id = ? \
-     LIMIT 1";
+#[derive(Debug, brz_mysql::FromMysqlRow)]
+struct SocketUser {
+    #[mysql(rename = "users_id")]
+    id: i64,
+    #[mysql(rename = "users_user_name")]
+    user_name: String,
+    #[mysql(rename = "users_email")]
+    email: Option<String>,
+    #[mysql(rename = "users_is_active")]
+    is_active: i8,
+}
 
 const RUNNER_DEVICE_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
      kinds.kind AS kinds_kind, kinds.name AS kinds_name, kinds.namespace AS kinds_namespace, \
@@ -168,12 +170,20 @@ async fn verify_api_key(state: &AppState, token: &str) -> Result<Identity, AuthE
         return Err(AuthError::Refused("Invalid or expired API key"));
     };
     let unknown = AuthError::Refused("Invalid or expired API key");
-    let Some(user) = active_user(&state.mysql, USER_BY_ID_QUERY, key.user_id).await else {
+    let user: Option<SocketUser> = state
+        .mysql
+        .fetch_optional(USER_BY_ID_QUERY, (key.user_id,))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "Socket.IO API key user lookup failed");
+            AuthError::StorageUnavailable
+        })?;
+    let Some(user) = user.filter(|user| user.is_active != 0) else {
         return Err(unknown);
     };
     let _ = key.id;
     Ok(Identity {
-        user_id: i64::from(user.id),
+        user_id: user.id,
         user_name: user.user_name,
         auth_type: "api_key",
         email: user.email,
@@ -183,11 +193,19 @@ async fn verify_api_key(state: &AppState, token: &str) -> Result<Identity, AuthE
 pub(super) async fn verify_jwt(state: &AppState, token: &str) -> Result<Identity, AuthError> {
     let user_name = crate::auth::verify_token(&state.auth, token)
         .map_err(|_| AuthError::Refused("Invalid or expired token"))?;
-    let Some(user) = active_user_by_name(state, &user_name).await else {
+    let user: Option<SocketUser> = state
+        .mysql
+        .fetch_optional(USER_BY_NAME_QUERY, (user_name.as_str(),))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "Socket.IO JWT user lookup failed");
+            AuthError::StorageUnavailable
+        })?;
+    let Some(user) = user.filter(|user| user.is_active != 0) else {
         return Err(AuthError::Refused("Invalid or expired token"));
     };
     Ok(Identity {
-        user_id: i64::from(user.id),
+        user_id: user.id,
         user_name: user.user_name,
         auth_type: "jwt",
         email: user.email,
@@ -248,29 +266,6 @@ async fn verify_runner(state: &AppState, token: &str) -> Result<Identity, AuthEr
         auth_type: "workspace_runner",
         email: None,
     })
-}
-
-async fn active_user<M>(mysql: &M, query: &str, id: i64) -> Option<UserRow>
-where
-    M: Mysql,
-{
-    let user: Option<UserRow> = mysql.fetch_optional(query, (id,)).await.ok()?;
-    match user {
-        Some(user) if user.is_active != 0 => Some(user),
-        _ => None,
-    }
-}
-
-async fn active_user_by_name(state: &AppState, user_name: &str) -> Option<UserRow> {
-    let user: Option<UserRow> = state
-        .mysql
-        .fetch_optional(USER_BY_NAME_QUERY, (user_name,))
-        .await
-        .ok()?;
-    match user {
-        Some(user) if user.is_active != 0 => Some(user),
-        _ => None,
-    }
 }
 
 fn hex_sha256(value: &str) -> String {

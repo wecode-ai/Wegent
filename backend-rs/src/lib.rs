@@ -34,7 +34,9 @@ pub use attachments::external_media::{
     ExternalPlayback, ExternalPlaybackResolver, MediaStream, NoExternalPlaybackResolver,
     PlaybackDeliveryMode,
 };
-pub use attachments::minio_client::{MinioConfig, encode_object_path, ensure_bucket_exists};
+pub use attachments::minio_client::{
+    MinioConfig, encode_object_path, ensure_bucket_exists, stat_object,
+};
 pub use attachments::s3_signing::{
     EMPTY_BODY_SHA256, SignedRequest, amz_timestamp_now, hex_sha256, sign_headers,
 };
@@ -226,6 +228,7 @@ use wegent_runtime_check as runtime_check;
 mod runtime_profiles;
 mod runtime_transcript_search;
 mod runtime_work;
+mod runtime_work_im_notification_sessions;
 mod runtime_work_im_notifications;
 mod runtime_work_projection;
 mod runtime_work_transcript;
@@ -254,6 +257,8 @@ mod stripe_webhook_probe;
 mod subscription_developer_settings;
 mod subscription_executions;
 mod subscriptions_item;
+
+pub use subscriptions_item::crypto::decrypt_sensitive_data;
 mod subscriptions_list;
 pub use subscriptions_item::random_token_urlsafe;
 pub use subscriptions_list::workspaces as subscription_workspaces;

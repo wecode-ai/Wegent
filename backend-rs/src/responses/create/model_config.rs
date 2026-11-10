@@ -14,6 +14,92 @@
 //! in the recorded header/API-key placeholders) and render as `""`.
 use serde_json::{Map, Value};
 
+/// Apply request-scoped options to a direct image or video execution model.
+pub(super) fn apply_generation_params(
+    model: &mut Map<String, Value>,
+    params: Option<&Value>,
+) -> Result<(), String> {
+    let Some(params) = params else {
+        return Ok(());
+    };
+    let selected = |key: &str| params.get(key).filter(|value| !value.is_null());
+    let truthy = |key: &str| selected(key).filter(|value| crate::json_compat::python_truthy(value));
+    match model
+        .get("modelType")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "image" => {
+            let unsupported: Vec<_> = ["resolution", "ratio", "duration", "generation_mode_id"]
+                .into_iter()
+                .filter(|key| selected(key).is_some())
+                .collect();
+            if !unsupported.is_empty() {
+                return Err(format!(
+                    "Image generation does not support options: {}",
+                    unsupported.join(", ")
+                ));
+            }
+            if let Some(size) = truthy("size") {
+                let mut image = model
+                    .get("imageConfig")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                image.insert("size".into(), size.clone());
+                model.insert("imageConfig".into(), Value::Object(image));
+            }
+        }
+        "video" => {
+            if selected("size").is_some() {
+                return Err("Video generation does not support option: size".to_owned());
+            }
+            let mut video = model
+                .get("videoConfig")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let capabilities = video.get("capabilities").cloned().unwrap_or_default();
+            for (key, capability, field) in [
+                ("resolution", "resolutions", "value"),
+                ("ratio", "aspect_ratios", "value"),
+                ("duration", "durations_sec", ""),
+                ("generation_mode_id", "generation_modes", "id"),
+            ] {
+                let Some(value) = truthy(key) else { continue };
+                if capabilities[capability].as_array().is_some_and(|allowed| {
+                    !allowed.is_empty()
+                        && !allowed.iter().any(|option| {
+                            let candidate = if field.is_empty() {
+                                option
+                            } else if key == "resolution"
+                                && !crate::json_compat::python_truthy(&option[field])
+                            {
+                                &option["label"]
+                            } else {
+                                &option[field]
+                            };
+                            candidate == value
+                        })
+                }) {
+                    return Err(format!("Unsupported video {key}: {value}"));
+                }
+                if key == "generation_mode_id" {
+                    model.insert(key.into(), value.clone());
+                } else {
+                    video.insert(key.into(), value.clone());
+                }
+            }
+            model.insert("videoConfig".into(), Value::Object(video));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// `replace_placeholders_with_sources`: replace every `${…}` in `template`.
 pub fn replace_placeholders_with_sources(template: &str, sources: &Map<String, Value>) -> String {
     let bytes = template.as_bytes();
@@ -310,6 +396,12 @@ pub fn extract_model_config(model_spec: &Value) -> Result<Map<String, Value>, Mo
         "modelType".into(),
         model_spec.get("modelType").cloned().unwrap_or(Value::Null),
     );
+    if let Some(image) = model_spec
+        .get("imageConfig")
+        .filter(|value| !value.is_null())
+    {
+        result.insert("imageConfig".into(), image.clone());
+    }
     result.insert(
         "videoConfig".into(),
         model_spec
@@ -767,5 +859,59 @@ mod tests {
             replace_placeholders_with_sources("${env.flag}", &sources),
             "True"
         );
+    }
+}
+
+#[cfg(test)]
+mod generation_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn image_applies_size_and_rejects_video_options() {
+        let mut model = Map::from_iter([
+            ("modelType".into(), json!("image")),
+            ("imageConfig".into(), json!({"quality": "high"})),
+        ]);
+        apply_generation_params(&mut model, Some(&json!({"size":"1024x1024"}))).unwrap();
+        assert_eq!(
+            model["imageConfig"],
+            json!({"size":"1024x1024","quality":"high"})
+        );
+        assert!(apply_generation_params(&mut model, Some(&json!({"duration":5}))).is_err());
+    }
+
+    #[test]
+    fn video_applies_supported_options_and_rejects_invalid_selections() {
+        let mut model = Map::from_iter([
+            ("modelType".into(), json!("video")),
+            (
+                "videoConfig".into(),
+                json!({"capabilities":{
+                    "resolutions":[{"label":"1080p"}],
+                    "aspect_ratios":[{"value":"16:9"}],
+                    "durations_sec":[5],
+                    "generation_modes":[{"id":"text-to-video"}]
+                }}),
+            ),
+        ]);
+        let selected = json!({
+            "resolution":"1080p","ratio":"16:9","duration":5,
+            "generation_mode_id":"text-to-video"
+        });
+        apply_generation_params(&mut model, Some(&selected)).unwrap();
+        for key in ["resolution", "ratio", "duration"] {
+            assert_eq!(model["videoConfig"][key], selected[key]);
+        }
+        assert_eq!(model["generation_mode_id"], selected["generation_mode_id"]);
+        for invalid in [
+            json!({"size":"1024x1024"}),
+            json!({"resolution":"4k"}),
+            json!({"ratio":"1:1"}),
+            json!({"duration":10}),
+            json!({"generation_mode_id":"image-to-video"}),
+        ] {
+            assert!(apply_generation_params(&mut model, Some(&invalid)).is_err());
+        }
     }
 }

@@ -53,6 +53,7 @@ use serde_json::json;
 
 use crate::http_compat::FastApiError;
 use crate::json_compat::python_json_value;
+use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
 
 /// `projects` columns as rendered by `db.query(Project)` (labeled
@@ -68,6 +69,31 @@ pub(crate) const PROJECT_COLUMNS: &str = "projects.id AS projects_id, \
      projects.is_active AS projects_is_active, \
      projects.created_at AS projects_created_at, \
      projects.updated_at AS projects_updated_at";
+
+/// `_extract_project_device_id`'s project read
+/// (`app/services/chat/task_device_resolution.py:195`): the owner's active
+/// project with this client origin, rendered as its stored `config` JSON.
+///
+/// Runs on the caller's session handle because `chat:send` resolves the task
+/// device target inside its pinned transaction.
+pub(crate) async fn project_config_on<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    project_id: i64,
+    client_origin: &str,
+) -> MysqlResult<Option<serde_json::Value>> {
+    let sql = format!(
+        "SELECT {PROJECT_COLUMNS} \nFROM projects \n\
+         WHERE projects.id = ? AND projects.user_id = ? \
+         AND projects.is_active = true AND projects.client_origin = ? \n LIMIT 1"
+    );
+    let row: Option<ProjectRow> = query
+        .fetch_optional(sql, (project_id, user_id, client_origin))
+        .await?;
+    Ok(row
+        .and_then(|row| row.projects_config)
+        .and_then(|config| serde_json::to_value(config.0).ok()))
+}
 
 /// The `projects` row (the full labeled projection so the prepared
 /// statement matches the recorded exchange; `is_active` is filtered in

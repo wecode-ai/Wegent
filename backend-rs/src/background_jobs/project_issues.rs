@@ -422,6 +422,61 @@ async fn create_external(
     })
 }
 
+/// `_require_issue`'s carrier read on the execution path: a local project
+/// resolves the issue through the labeled `loop_items` point query
+/// (`db.get(LoopItem, ...)`), while an external provider keeps [`load`]'s
+/// provider branch (and its credential/API work).
+pub(crate) async fn load_execution_issue(
+    state: &AppState,
+    project: &Node,
+    id: &str,
+    user: i64,
+) -> Result<Node> {
+    if matches!(
+        project.metadata.0["task_provider"].as_str(),
+        Some("github" | "gitlab")
+    ) {
+        return load(state, project, id, user).await;
+    }
+    let row = crate::loop_tasks::loop_repository::LoopItemRepository::new(&state.mysql)
+        .get_loop_item_raw(id, "task")
+        .await?
+        .context("Automation task carrier is unavailable")?;
+    Ok(Node {
+        id: row.id,
+        cloud_project_id: row.cloud_project_id,
+        created_by_user_id: row.created_by_user_id.unwrap_or(0),
+        assignee_user_id: row.assignee_user_id.unwrap_or(0),
+        metadata: Json(
+            row.metadata
+                .map(|metadata| metadata.0)
+                .unwrap_or_else(|| json!({})),
+        ),
+        resource_type: "task".into(),
+        parent_id: String::new(),
+        loop_item_id: String::new(),
+        name: String::new(),
+        project_key: String::new(),
+        next_item_number: 1,
+        local_project_id: 0,
+        assignee_team_id: 0,
+        priority: String::new(),
+        title: String::new(),
+        description: String::new(),
+        status: String::new(),
+        source: String::new(),
+        user_id: 0,
+        task_user_id: 0,
+        task_id: String::new(),
+        task_title: String::new(),
+        device_id: String::new(),
+        backend_task_id: 0,
+        assignee_agent_id: String::new(),
+        due_at: None,
+        version: 1,
+    })
+}
+
 pub(crate) async fn load(state: &AppState, project: &Node, id: &str, user: i64) -> Result<Node> {
     if !matches!(
         project.metadata.0["task_provider"].as_str(),
