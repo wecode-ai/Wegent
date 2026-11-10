@@ -786,30 +786,6 @@ class RuntimeWorkspaceSearchResponse(BaseModel):
     files: list[RuntimeWorkspaceSearchItem] = Field(default_factory=list)
 
 
-class BindRuntimeTaskIMSessionsRequest(BaseModel):
-    """Bind private IM sessions to a device-local runtime task."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    address: RuntimeTaskAddress
-    task_title: str = Field(..., alias="taskTitle", min_length=1, max_length=255)
-    session_keys: list[str] = Field(..., alias="sessionKeys", min_length=1)
-    model_selection: Optional[RuntimeModelSelection] = Field(
-        default=None,
-        alias="modelSelection",
-    )
-
-
-class BindRuntimeTaskIMSessionsResponse(BaseModel):
-    """Acknowledgement for binding private IM sessions to a runtime task."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    address: RuntimeTaskAddress
-    bound_session_keys: list[str] = Field(..., alias="boundSessionKeys")
-    notified_count: int = Field(..., alias="notifiedCount")
-
-
 class RuntimeIMNotificationSession(BaseModel):
     """Private IM session metadata used for notification target selection."""
 

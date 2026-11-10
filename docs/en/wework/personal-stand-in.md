@@ -69,6 +69,18 @@ Click **Board** in the Tasks sidebar, or select **Board** from its task view men
 
 The **My stand-in** button in collaboration project headers also carries a **Beta** badge. Both entries are available without enabling experimental features.
 
+<a id="im-conversations"></a>
+
+## Connect IM conversations
+
+Open **My stand-in** in the sidebar, select the primary identity or a scenario role, then click **Stand-in details** at the top right. Click **DingTalk, Telegram, Discord, or Weibo** directly in the details popover to open that channel’s connection dialog. It names the destination stand-in and execution device and lists only private conversations from that channel. When there are multiple conversations, select one, then choose **Connect to “stand-in name”**. After success, choose **Done** to return to the original popover. Connections take effect immediately without opening Manage stand-in or saving profile settings. Cloud sign-in is required to connect.
+
+If that channel has no registered private conversations, the dialog explains how to send **`/bind`** to your configured bot, then select **Refresh conversations**. This does not install a bot or authorize a platform account. Refresh to retry a failed list request, or use the connect action to retry a failed save. A failed refresh preserves conversations already loaded. An offline execution device has a separate notice; Connected means the routing configuration has been saved.
+
+Private IM conversations default to the existing **Wegent chat mode**, retaining its Agent, model, device and new-conversation commands. Send **`/standin`** (or **`/mode standin`**) to enter **Wework stand-in mode**; send **`/chat`** (or **`/mode chat`**) to return to Wegent. **`/mode`** shows the current mode. Without an explicit identity binding, stand-in mode uses the primary stand-in on your account’s default execution device. If no default is configured, the device is offline, or the selected role has been deleted, IM explains how to check the connection in the details popover. It never chooses another device or role automatically. To rebind a conversation, switch to the destination role, open the same channel in its details popover, select the private conversation, and confirm the connection.
+
+New messages enter the selected stand-in’s existing persistent conversation. Old task mode migrates to stand-in mode. Its task bindings are removed while tasks and their history are preserved; task titlebars no longer offer Continue in private chat. In stand-in mode, quoted task notifications and task-card follow-ups provide context to the current stand-in without changing its binding or model. Task notification subscriptions and notification channels remain separate settings.
+
 <a id="conversational-configuration"></a>
 
 ## Manual and conversational configuration

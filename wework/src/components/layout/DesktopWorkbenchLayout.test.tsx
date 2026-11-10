@@ -1310,7 +1310,6 @@ describe('DesktopWorkbenchLayout', () => {
     onCancelRuntimePaneTask?: WorkbenchContextValue['cancelRuntimePaneTask']
     onForkCurrentRuntimeTask?: WorkbenchContextValue['forkCurrentRuntimeTask']
     onListImPrivateSessions?: () => Promise<unknown>
-    onBindRuntimeTaskToImSessions?: (...args: unknown[]) => Promise<unknown>
     onGetImNotificationSettings?: () => Promise<unknown>
     onUpdateGlobalImNotification?: (...args: unknown[]) => Promise<unknown>
     onSubscribeRuntimeTaskNotifications?: (...args: unknown[]) => Promise<unknown>
@@ -1618,9 +1617,7 @@ describe('DesktopWorkbenchLayout', () => {
         props.onForkCurrentRuntimeTask ?? vi.fn().mockResolvedValue(undefined),
       listImPrivateSessions:
         props.onListImPrivateSessions ?? vi.fn().mockResolvedValue({ total: 0, items: [] }),
-      bindRuntimeTaskToImSessions:
-        props.onBindRuntimeTaskToImSessions ??
-        vi.fn().mockRejectedValue(new Error('Missing bind handler')),
+
       getImNotificationSettings:
         props.onGetImNotificationSettings ??
         vi.fn().mockResolvedValue(createDefaultImNotificationSettings()),
@@ -2386,70 +2383,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('automatically continues to the only private IM session from the topbar', async () => {
-    const onListImPrivateSessions = vi.fn().mockResolvedValue({
-      total: 1,
-      items: [
-        {
-          session_key: 'session-1',
-          channel_type: 'wecom',
-          channel_label: 'WeCom',
-          channel_id: 101,
-          conversation_id: 'conversation-1',
-          sender_id: 'sender-1',
-          display_name: 'Alice',
-          mode: 'chat',
-          state: 'idle',
-          active_task_id: null,
-          last_seen_at: '2026-06-20T00:00:00.000Z',
-        },
-      ],
-    })
-    const onBindRuntimeTaskToImSessions = vi.fn().mockResolvedValue(undefined)
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          currentRuntimeTask: {
-            deviceId: 'device-1',
-            workspacePath: '/workspace/project-alpha',
-            taskId: 'runtime-1',
-          },
-        }}
-        messages={[
-          {
-            id: 'message-1',
-            role: 'assistant',
-            content: 'Ready',
-            status: 'done',
-            createdAt: '2026-06-20T00:00:00.000Z',
-          },
-        ]}
-        onListImPrivateSessions={onListImPrivateSessions}
-        onBindRuntimeTaskToImSessions={onBindRuntimeTaskToImSessions}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('continue-in-im-button'))
-
-    expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
-    await waitFor(() =>
-      expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledWith(
-        {
-          deviceId: 'device-1',
-          workspacePath: '/workspace/project-alpha',
-          taskId: 'runtime-1',
-        },
-        ['session-1']
-      )
-    )
-    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('已发送到私聊')
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-  })
-
-  test('keeps IM actions available while experimental features are disabled', () => {
+  test('does not offer task-to-IM binding while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
 
     render(
@@ -2467,7 +2401,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('continue-in-im-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
 
@@ -2999,177 +2933,6 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(onListImPrivateSessions).not.toHaveBeenCalled()
-  })
-
-  test('ignores stale private session responses when reopening the dialog', async () => {
-    type PrivateSessionResponse = {
-      total: number
-      items: Array<{
-        session_key: string
-        channel_type: string
-        channel_label: string
-        channel_id: number
-        conversation_id: string
-        sender_id: string
-        display_name: string
-        mode: 'chat' | 'task'
-        state: 'idle'
-        active_task_id: null
-        last_seen_at: string
-      }>
-    }
-    const firstRequest = createDeferred<PrivateSessionResponse>()
-    const secondRequest = createDeferred<PrivateSessionResponse>()
-    const onListImPrivateSessions = vi
-      .fn()
-      .mockReturnValueOnce(firstRequest.promise)
-      .mockReturnValueOnce(secondRequest.promise)
-    const onBindRuntimeTaskToImSessions = vi.fn().mockResolvedValue(undefined)
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          currentRuntimeTask: {
-            deviceId: 'device-1',
-            workspacePath: '/workspace/project-alpha',
-            taskId: 'runtime-1',
-          },
-        }}
-        messages={[
-          {
-            id: 'message-1',
-            role: 'assistant',
-            content: 'Ready',
-            status: 'done',
-            createdAt: '2026-06-20T00:00:00.000Z',
-          },
-        ]}
-        onListImPrivateSessions={onListImPrivateSessions}
-        onBindRuntimeTaskToImSessions={onBindRuntimeTaskToImSessions}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('continue-in-im-button'))
-    await userEvent.click(screen.getByTestId('continue-im-cancel-button'))
-    await userEvent.click(screen.getByTestId('continue-in-im-button'))
-
-    secondRequest.resolve({
-      total: 1,
-      items: [
-        {
-          session_key: 'session-2',
-          channel_type: 'wecom',
-          channel_label: 'WeCom',
-          channel_id: 102,
-          conversation_id: 'conversation-2',
-          sender_id: 'sender-2',
-          display_name: 'Fresh session',
-          mode: 'task',
-          state: 'idle',
-          active_task_id: null,
-          last_seen_at: '2026-06-20T00:00:00.000Z',
-        },
-      ],
-    })
-
-    await waitFor(() =>
-      expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledWith(
-        {
-          deviceId: 'device-1',
-          workspacePath: '/workspace/project-alpha',
-          taskId: 'runtime-1',
-        },
-        ['session-2']
-      )
-    )
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-
-    await act(async () => {
-      firstRequest.resolve({
-        total: 1,
-        items: [
-          {
-            session_key: 'session-1',
-            channel_type: 'wecom',
-            channel_label: 'WeCom',
-            channel_id: 101,
-            conversation_id: 'conversation-1',
-            sender_id: 'sender-1',
-            display_name: 'Stale session',
-            mode: 'chat',
-            state: 'idle',
-            active_task_id: null,
-            last_seen_at: '2026-06-20T00:00:00.000Z',
-          },
-        ],
-      })
-      await firstRequest.promise
-    })
-
-    expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledTimes(1)
-    expect(onBindRuntimeTaskToImSessions).not.toHaveBeenCalledWith(expect.anything(), ['session-1'])
-  })
-
-  test('keeps the dialog open for manual retry when automatic binding fails', async () => {
-    const onBindRuntimeTaskToImSessions = vi
-      .fn()
-      .mockRejectedValue(new Error('Missing bind handler'))
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          currentRuntimeTask: {
-            deviceId: 'device-1',
-            workspacePath: '/workspace/project-alpha',
-            taskId: 'runtime-1',
-          },
-        }}
-        messages={[
-          {
-            id: 'message-1',
-            role: 'assistant',
-            content: 'Ready',
-            status: 'done',
-            createdAt: '2026-06-20T00:00:00.000Z',
-          },
-        ]}
-        onListImPrivateSessions={vi.fn().mockResolvedValue({
-          total: 1,
-          items: [
-            {
-              session_key: 'session-1',
-              channel_type: 'wecom',
-              channel_label: 'WeCom',
-              channel_id: 101,
-              conversation_id: 'conversation-1',
-              sender_id: 'sender-1',
-              display_name: 'Alice',
-              mode: 'chat',
-              state: 'idle',
-              active_task_id: null,
-              last_seen_at: '2026-06-20T00:00:00.000Z',
-            },
-          ],
-        })}
-        onBindRuntimeTaskToImSessions={onBindRuntimeTaskToImSessions}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('continue-in-im-button'))
-    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('继续到私聊失败')
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('continue-im-session-session-1')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-    expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledTimes(1)
-
-    await userEvent.click(screen.getByTestId('continue-im-submit-button'))
-    await waitFor(() => expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledTimes(2))
   })
 
   test('restores and stores sidebar width in localStorage', () => {

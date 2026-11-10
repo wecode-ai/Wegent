@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -19,6 +19,7 @@ import { useStandInProfileSchedules } from './useStandInProfileData'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import type { StandInInboxWork, StandInSourceError } from '@/api/standIn'
 import { AnchorPopover } from './AnchorPopover'
+import { StandInImConnections } from './StandInImConnections'
 
 export function StandInDetailsPopover({
   anchor,
@@ -43,6 +44,7 @@ export function StandInDetailsPopover({
   roleId,
   onSchedule,
   suspended = false,
+  imConnections,
 }: {
   anchor: HTMLElement
   name: string
@@ -66,9 +68,11 @@ export function StandInDetailsPopover({
   roleId?: string
   onSchedule?: (schedule: Automation, trigger: HTMLButtonElement) => void
   suspended?: boolean
+  imConnections?: Omit<ComponentProps<typeof StandInImConnections>, 'name' | 'onOpenChange'>
 }) {
   const { t, i18n } = useTranslation('common')
   const [selected, setSelected] = useState<RuntimeTaskReminderItem | null>(null)
+  const [imOpen, setImOpen] = useState(false)
   const [visibleCount, setVisibleCount] = useState(4)
   const [identityHeight, setIdentityHeight] = useState<number | null>(null)
   const identityRef = useRef<HTMLDivElement | null>(null)
@@ -125,7 +129,7 @@ export function StandInDetailsPopover({
       title={t('standIn.workspace.details_title')}
       testId="stand-in-details-popover"
       profile
-      suspended={suspended}
+      suspended={suspended || imOpen}
       bodyRef={bodyRef}
       onBodyScroll={scrollTop => {
         if (!selected) {
@@ -209,6 +213,9 @@ export function StandInDetailsPopover({
           </div>
         </div>
         <div className="space-y-5 px-4 pb-4 pt-4">
+          {imConnections && (
+            <StandInImConnections {...imConnections} name={name} onOpenChange={setImOpen} />
+          )}
           <section aria-label={t('standIn.workspace.details_device')}>
             <h3 className="mb-2 text-sm font-medium text-text-secondary">
               {t('standIn.workspace.details_device')}

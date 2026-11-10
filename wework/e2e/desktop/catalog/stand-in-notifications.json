@@ -2,6 +2,7 @@
   "order": 56000,
   "scenario": "./scenarios/stand-in-notifications.scenario.mjs",
   "scenarioOnly": true,
+  "resources": ["macos-inspector-foreground"],
   "ci": {
     "core": {
       "order": 46000,

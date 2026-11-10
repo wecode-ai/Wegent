@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 
 from app.models.subtask import SubtaskStatus
 from app.services.channels.callback import ChannelType
@@ -1032,51 +1031,6 @@ class TestTelegramChannelHandler:
 
         assert trigger_mock.await_args.kwargs["device_id"] == "hw-4e4bfa88fa25"
         assert trigger_mock.await_args.kwargs["result_emitter"] is None
-
-    @pytest.mark.asyncio
-    async def test_private_im_continue_task_reports_running_task(self, handler):
-        message_context = _message_context()
-        db = MagicMock()
-        user = SimpleNamespace(id=1)
-        im_session = SimpleNamespace(active_task_id=33)
-        task = SimpleNamespace(id=33)
-
-        with (
-            patch(
-                "app.services.channels.handler.im_task_continuation_service.validate_personal_wework_task",
-                return_value=task,
-            ),
-            patch(
-                "app.services.channels.handler.im_task_continuation_service.get_task_team",
-                return_value=SimpleNamespace(id=38),
-            ),
-            patch.object(
-                handler,
-                "_build_private_im_message_source",
-                return_value=EXPECTED_IM_SOURCE,
-            ),
-            patch(
-                "app.services.channels.handler.im_task_continuation_service.append_message_to_task",
-                new=AsyncMock(
-                    side_effect=HTTPException(
-                        status_code=400,
-                        detail="Task is still running",
-                    )
-                ),
-            ),
-            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
-        ):
-            await handler._execute_private_im_continue_task(
-                db=db,
-                user=user,
-                im_session=im_session,
-                task_id=33,
-                message="我刚才说的啥",
-                message_context=message_context,
-            )
-
-        send_reply.assert_awaited_once()
-        assert "当前任务仍在执行" in send_reply.await_args.args[1]
 
     @pytest.mark.asyncio
     async def test_model_command_hides_models_blocked_by_agent(self, handler):
