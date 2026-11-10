@@ -144,6 +144,8 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
 
     async def _get_or_create_emitter(self, task_id, subtask_id):
         info = await self.get_callback_info(task_id)
+        if info and info.delivered:
+            return None
         if not self._is_current_card_round(info, subtask_id):
             return None
         active = self._active_emitters.get(task_id)

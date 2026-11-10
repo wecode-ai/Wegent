@@ -204,6 +204,11 @@ export function createMemoryConsolidation({
           'Evidence must be committed before the held model response is released',
           modelResponseTimeoutMs
         )
+        const runningRun = (
+          await rpc('runtime.automation_runs.list', { automationId: schedule.id })
+        ).items.find(item => item.id === started.run.id)
+        assert.ok(runningRun?.taskId)
+        await assertMemoryReviewHiddenFromSidebar(control, rpc, runningRun.taskId)
         releaseFinalResponse()
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: 'Memory consolidation evidence committed.',
@@ -222,6 +227,7 @@ export function createMemoryConsolidation({
         )
         assert.equal(run.status, 'succeeded', JSON.stringify(run))
         assert.notEqual(run.taskId, SOURCE, 'Consolidation uses a separate conversation')
+        await assertMemoryReviewHiddenFromSidebar(control, rpc, run.taskId)
         assert.ok(committed)
         const memories = (await rpc('runtime.stand_in.memory.list', { userId: USER })).items
         assert.deepEqual(
@@ -235,4 +241,22 @@ export function createMemoryConsolidation({
       }
     },
   }
+}
+
+async function assertMemoryReviewHiddenFromSidebar(control, rpc, taskId) {
+  const stored = await rpc('runtime.tasks.get', { taskId })
+  assert.equal(stored.task.runtimeHandle.origin.type, 'stand_in_schedule')
+  assert.equal(stored.task.runtimeHandle.origin.memoryReview, true)
+  const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  assert.equal(
+    debug.workbench?.currentRuntimeTask?.taskId,
+    taskId,
+    'Run history must open the original memory task even though its sidebar row is hidden'
+  )
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(snapshot.testIds.includes('personal-stand-in-button'), 'The sidebar must be mounted')
+  assert.ok(
+    !snapshot.testIds.includes(`runtime-local-task-row-${taskId}`),
+    'Memory maintenance must not appear in the task sidebar, including when selected'
+  )
 }

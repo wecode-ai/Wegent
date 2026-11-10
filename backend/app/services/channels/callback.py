@@ -14,6 +14,7 @@ its own callback logic while sharing common infrastructure.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -41,9 +42,14 @@ RUNTIME_LOCAL_TASK_CALLBACK_PREFIX = "runtime"
 TaskCallbackKey = int | str
 
 
-def runtime_local_task_callback_key(device_id: str, local_task_id: str) -> str:
+def runtime_local_task_callback_key(
+    device_id: str, local_task_id: str, callback_id: str | None = None
+) -> str:
     """Build the IM callback key for a device-local runtime task."""
-    return f"{RUNTIME_LOCAL_TASK_CALLBACK_PREFIX}:{device_id}:{local_task_id}"
+    key = f"{RUNTIME_LOCAL_TASK_CALLBACK_PREFIX}:{device_id}:{local_task_id}"
+    if callback_id:
+        key += ":" + hashlib.sha256(callback_id.encode()).hexdigest()
+    return key
 
 
 class ChannelType(str, Enum):
@@ -389,14 +395,13 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         if not await self.has_callback_info(task_id):
             return False
 
-        # A run that keeps emitting is demonstrably alive; keep its address
-        # valid instead of letting the 1h TTL expire mid-stream.
-        await self._refresh_callback_info_ttl(task_id)
-
         try:
             emitter = await self._get_or_create_emitter(task_id, subtask_id)
             if not emitter:
                 return False
+            # Refresh only after this worker accepts the current round. Stale
+            # events and completed callbacks must not extend the busy window.
+            await self._refresh_callback_info_ttl(task_id)
 
             logger.debug(
                 f"[{self._channel_type.value}Callback] Emitting event to "
@@ -411,6 +416,56 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             logger.exception(
                 f"[{self._channel_type.value}Callback] Failed to emit event "
                 f"{event.type} for task {task_id}"
+            )
+            return False
+
+    async def send_progress(
+        self,
+        task_id: TaskCallbackKey,
+        subtask_id: int,
+        content: str,
+        offset: int,
+        thinking: Optional[Any] = None,
+    ) -> bool:
+        """Send only the new response text and the latest thinking state."""
+        try:
+            emitter = await self._get_or_create_emitter(task_id, subtask_id)
+            if not emitter:
+                return False
+
+            last_offset = self._last_emitted_offsets.get(task_id, 0)
+            thinking_text = self._extract_thinking_display(thinking) if thinking else ""
+            delta_content = content[last_offset:] if len(content) > last_offset else ""
+            if not delta_content and not thinking_text:
+                return False
+
+            chunk_to_send = ""
+            if last_offset == 0 and thinking_text:
+                chunk_to_send = f"{thinking_text}\n\n"
+                if delta_content:
+                    chunk_to_send += "**回复:**\n"
+                    chunk_to_send += delta_content
+            elif delta_content:
+                chunk_to_send = delta_content
+            elif thinking_text:
+                chunk_to_send = f"{thinking_text}\n\n"
+
+            if not chunk_to_send:
+                return False
+
+            if content:
+                self._last_emitted_offsets[task_id] = len(content)
+            await emitter.emit_chunk(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                content=chunk_to_send,
+                offset=offset,
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                f"[{self._channel_type.value}Callback] Failed to send progress "
+                f"for task {task_id}: {e}"
             )
             return False
 

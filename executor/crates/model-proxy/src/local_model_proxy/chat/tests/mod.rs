@@ -51,3 +51,5 @@ async fn convert_responses_stream(input: &str, context: ToolContext) -> String {
 mod cases_1;
 
 mod cases_2;
+
+mod custom_namespaces;

@@ -770,6 +770,56 @@ async def test_rejected_runtime_continuation_leaves_previous_callback_untouched(
 
 
 @pytest.mark.asyncio
+async def test_runtime_continuation_send_error_closes_new_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transport failures leave the active callback and reject only this card."""
+    from app.services import runtime_work_service
+
+    previous = DingTalkCallbackInfo(
+        channel_id=77,
+        conversation_id="conv-private",
+        card_instance_id="old-card",
+        incoming_message_data={"msgId": "old-message"},
+    )
+    service = _CallbackService(previous)
+    emitter = SimpleNamespace(
+        card_instance_id="new-card",
+        emit_error=AsyncMock(),
+        close=AsyncMock(),
+    )
+    handler = DingTalkChannelHandler(channel_id=77)
+    handler.send_text_reply = AsyncMock(return_value=True)
+    handler.get_callback_service = Mock(return_value=service)
+    handler._create_private_im_runtime_streaming_emitter = AsyncMock(
+        return_value=emitter
+    )
+    send = AsyncMock(side_effect=ConnectionError("connection lost"))
+    monkeypatch.setattr(runtime_work_service, "send_runtime_message", send)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "canonical_runtime_event_address",
+        Mock(side_effect=lambda db, *, user_id, address: address),
+    )
+
+    with pytest.raises(ConnectionError, match="connection lost"):
+        await handler._execute_private_im_continue_runtime_task(
+            db=Mock(),
+            user=SimpleNamespace(id=9),
+            im_session=_runtime_session(),
+            message="继续",
+            message_context=_message_context(),
+            runtime_task={"deviceId": "device-a", "localTaskId": "task-a"},
+        )
+
+    assert service.info is previous
+    assert service.saved == []
+    assert service.deleted == []
+    emitter.emit_error.assert_awaited_once()
+    emitter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_rejected_runtime_continuation_falls_back_to_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

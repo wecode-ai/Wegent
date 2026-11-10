@@ -312,3 +312,46 @@ async def test_failed_callback_ttl_refresh_retries_on_next_event(monkeypatch):
     await service.emit_event(101, 1, event)
 
     assert expire.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stale_round_event_does_not_refresh_callback_ttl(monkeypatch):
+    """An event rejected as stale cannot keep an old callback alive."""
+    service = DingTalkCallbackService()
+    expire = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "has_callback_info", AsyncMock(return_value=True))
+    monkeypatch.setattr(service, "_get_or_create_emitter", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "app.services.channels.callback.cache_manager.expire_or_raise", expire
+    )
+
+    event = SimpleNamespace(type="CHUNK", content="old answer")
+
+    assert not await service.emit_event(101, 42, event)
+    expire.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delivered_callback_rejects_late_stream_event_without_refresh(
+    monkeypatch,
+):
+    """Late chunks cannot update a card whose terminal result was delivered."""
+    service = DingTalkCallbackService()
+    info = DingTalkCallbackInfo(
+        channel_id=77,
+        conversation_id="private-a",
+        delivered=True,
+        card_instance_id="card-a",
+    )
+    monkeypatch.setattr(service, "has_callback_info", AsyncMock(return_value=True))
+    monkeypatch.setattr(service, "get_callback_info", AsyncMock(return_value=info))
+    monkeypatch.setattr(service, "_active_emitters", {101: object()})
+    expire = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "app.services.channels.callback.cache_manager.expire_or_raise", expire
+    )
+
+    event = SimpleNamespace(type="CHUNK", content="late answer")
+
+    assert not await service.emit_event(101, 42, event)
+    expire.assert_not_awaited()

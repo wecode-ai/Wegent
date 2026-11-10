@@ -318,7 +318,10 @@ describe('EmbeddedBrowserBridge', () => {
       if (expression.includes('"previewOnly":true')) {
         return {
           ok: true,
-          target: { rect: { x: 40, y: 30, width: 120, height: 40 } },
+          target: {
+            rect: { x: 40, y: 30, width: 120, height: 40 },
+            viewportRect: { x: 200, y: 100, width: 50, height: 20 },
+          },
         }
       }
       return { ok: true, action: 'click' }
@@ -347,7 +350,7 @@ describe('EmbeddedBrowserBridge', () => {
     })
 
     await vi.waitFor(() => {
-      expect(browser.showAgentCursor).toHaveBeenCalledWith('workspace-browser', 100, 50)
+      expect(browser.showAgentCursor).toHaveBeenCalledWith('workspace-browser', 225, 110)
     })
     expect(browser.waitForAgentCursorArrival).toHaveBeenCalledWith(
       'workspace-browser',
@@ -363,6 +366,9 @@ describe('EmbeddedBrowserBridge', () => {
       data: { ok: true, action: 'click' },
     })
     expect(browser.evaluate).toHaveBeenCalledTimes(2)
+    for (const call of browser.evaluate.mock.calls) {
+      expect(call[2]).toEqual({ awaitPromise: false })
+    }
     expect(browser.hideAgentCursor).not.toHaveBeenCalled()
   })
 

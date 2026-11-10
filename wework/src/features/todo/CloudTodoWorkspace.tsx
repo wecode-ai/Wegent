@@ -3862,7 +3862,10 @@ export function CloudTodoWorkspace({
     closeIssuePanelStack()
   }
 
-  async function prepareSelectedItemTask(address: RuntimeTaskAddress) {
+  async function prepareSelectedItemTask(
+    address: RuntimeTaskAddress,
+    localProject: ProjectWithTasks | null
+  ) {
     if (!selectedItem || !selectedItemProject) return
     const localApi = apiForProject(selectedItemProject)
     const runtimeBindingApi =
@@ -3911,6 +3914,8 @@ export function CloudTodoWorkspace({
       rememberProjectTaskStore(address, selectedItem.project_store ?? 'backend')
       const project = projectSpaceRef(selectedItemProject)
       publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'bound' })
+      // Finish UI-owned writes before the runtime can mutate the same Issue version.
+      await updateSelectedItemWhenTaskStarts(localProject)
       setBoardRefreshNonce(value => value + 1)
       return async () => {
         await runtimeBindingApi.unbindTask(latest.id, address)
@@ -3924,7 +3929,7 @@ export function CloudTodoWorkspace({
     }
   }
 
-  async function handleSelectedItemTaskCreated(
+  function handleSelectedItemTaskCreated(
     _address: RuntimeTaskAddress,
     localProject: ProjectWithTasks | null,
     deviceWorkspaceId: number | null
@@ -3936,6 +3941,10 @@ export function CloudTodoWorkspace({
         deviceWorkspaceId,
       })
     }
+  }
+
+  async function updateSelectedItemWhenTaskStarts(localProject: ProjectWithTasks | null) {
+    if (!selectedItem || !selectedItemProject) return
     const localApi = apiForProject(selectedItemProject)
     if (selectedItemProject.location === 'cloud' ? !cloudWorkspaceApi : !localApi) return
     try {

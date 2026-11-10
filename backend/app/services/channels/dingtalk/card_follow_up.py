@@ -425,6 +425,13 @@ class DingTalkCardCallbackHandler(CallbackHandler):
                         "不同钉钉用户映射到了同一个账号，请检查用户映射配置"
                     )
                 context.sender_name = user.user_name
+                if context.conversation_type == "private":
+                    if await self._uses_stand_in(user.id, context):
+                        return await self._continue_stand_in(db, user, binding, context)
+                    if binding.runtime_task:
+                        raise ValueError(
+                            "Wework 任务私聊已改为分身模式，请先发送 /standin。"
+                        )
                 if binding.runtime_task:
                     return await self._continue_runtime(db, user, binding, context)
                 else:
@@ -504,6 +511,8 @@ class DingTalkCardCallbackHandler(CallbackHandler):
         task, _ = get_task_with_access_check(db, binding.task_id, binding.user_id)
         if task is None:
             raise ValueError("原任务已不可用或无权访问")
+        if context.conversation_type == "private" and task.client_origin == "wework":
+            raise ValueError("Wework 任务私聊已改为分身模式，请先发送 /standin。")
         check_task_status(db, task)
         await self._load_images(context)
         task, joined = join_card_task(db, binding, user.id)
@@ -545,6 +554,52 @@ class DingTalkCardCallbackHandler(CallbackHandler):
             context=context,
             params=params,
         )
+
+    async def _uses_stand_in(self, user_id: int, context: Any) -> bool:
+        from app.models.im_session import IMSessionMode
+        from app.services.im.session_service import im_session_service
+
+        key = im_session_service.build_session_key(
+            user_id=user_id,
+            channel_type="dingtalk",
+            channel_id=self.handler.channel_id,
+            conversation_id=context.conversation_id,
+        )
+        session = await im_session_service.get_session(key)
+        return (
+            session is not None
+            and await im_session_service.get_mode(session) == IMSessionMode.STAND_IN
+        )
+
+    async def _continue_stand_in(
+        self, db: Any, user: Any, binding: CardBinding, context: Any
+    ) -> bool:
+        from app.services.im.session_service import im_session_service
+        from app.services.im.stand_in_service import send_stand_in_message
+
+        await self._load_images(context)
+        session = await im_session_service.get_or_create_private_session(
+            db=db,
+            user_id=user.id,
+            channel_type="dingtalk",
+            channel_id=self.handler.channel_id,
+            conversation_id=context.conversation_id,
+            sender_id=context.sender_id,
+            proactive_recipient_id=context.proactive_recipient_id,
+            display_name=context.sender_name or "",
+        )
+        if binding.runtime_task:
+            context.extra_data["im_card_task_reference"] = {
+                "deviceId": binding.runtime_task.get("deviceId"),
+                "taskId": binding.runtime_task.get("localTaskId")
+                or binding.runtime_task.get("taskId"),
+            }
+        elif isinstance(binding.task_id, int):
+            context.extra_data["im_card_task_reference"] = {
+                "storage": "backend",
+                "taskId": binding.task_id,
+            }
+        return await send_stand_in_message(db, user, session, context, self.handler)
 
     async def _continue_runtime(
         self, db: Any, user: Any, binding: CardBinding, context: Any

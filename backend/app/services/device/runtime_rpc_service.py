@@ -212,6 +212,7 @@ class RuntimeRpcService:
         allow_app_device_task_messaging: bool = False,
         allow_app_device_task_reading: bool = False,
         allow_app_device_catalog_reading: bool = False,
+        allow_app_device_stand_in: bool = False,
     ) -> dict[str, Any]:
         """Call `runtime:rpc` on an online local executor and return its result."""
 
@@ -244,11 +245,18 @@ class RuntimeRpcService:
             and route.device_type == DeviceType.APP
             and method == "runtime.runner.catalog"
         )
+        app_stand_in_allowed = (
+            allow_app_device_stand_in
+            and route.device_type == DeviceType.APP
+            and method == "runtime.stand_in.conversation"
+            and payload.get("userId") == user_id
+        )
         if (
             not remote_control_is_enabled(route.device_type)
             and not app_task_messaging_allowed
             and not app_task_reading_allowed
             and not app_catalog_reading_allowed
+            and not app_stand_in_allowed
         ):
             raise RuntimeRpcError(
                 REMOTE_CONTROL_DISABLED_MESSAGE,
