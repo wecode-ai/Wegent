@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEventHandler } from 'react'
 import type { ProjectCreateMode } from '@/components/chat/ChatInput'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
 import type {
-  CloneGitRepositoryInput,
-  GitCloneProjectOperation,
   IMPrivateSession,
   ProjectWithTasks,
   RuntimeTaskAddress,
@@ -65,11 +63,6 @@ import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
-import {
-  gitCloneFailureReason,
-  isGitCloneDeviceMissing,
-} from '@/components/projects/gitCloneProjectRecovery'
-import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   consumeNewChatComposerRequest,
   requestWorkbenchComposerFocus,
@@ -306,20 +299,23 @@ export function DesktopWorkbenchLayout({
   const standInContentRoute =
     ownedWorkspaceTab?.contentRoute ?? `${currentPath}${window.location.search}`
   const standInOpen = !routeWorkItemsOpen && standInContentRoute.split('?')[0] === '/stand-in'
-  const [standInVisited, setStandInVisited] = useState(standInOpen)
-  const [standInEntryKey, setStandInEntryKey] = useState(0)
-  const standInWasOpen = useRef(standInOpen)
-  const retainedStandInRoute = useRef(standInContentRoute)
-  useEffect(() => {
-    if (standInOpen) {
-      setStandInVisited(true)
-      if (!standInWasOpen.current || retainedStandInRoute.current !== standInContentRoute) {
-        setStandInEntryKey(value => value + 1)
-      }
-      retainedStandInRoute.current = standInContentRoute
-    }
-    standInWasOpen.current = standInOpen
-  }, [standInOpen, standInContentRoute])
+  const [standInRetention, setStandInRetention] = useState({
+    open: standInOpen,
+    visited: standInOpen,
+    contentRoute: standInContentRoute,
+    entryKey: 0,
+  })
+  if (
+    standInRetention.open !== standInOpen ||
+    (standInOpen && standInRetention.contentRoute !== standInContentRoute)
+  ) {
+    setStandInRetention({
+      open: standInOpen,
+      visited: standInRetention.visited || standInOpen,
+      contentRoute: standInOpen ? standInContentRoute : standInRetention.contentRoute,
+      entryKey: standInRetention.entryKey + (standInOpen ? 1 : 0),
+    })
+  }
   const taskBoardOpen = !standInOpen && taskView === 'default-work-items'
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
@@ -334,110 +330,6 @@ export function DesktopWorkbenchLayout({
   const [activeLocalHarnessSessionId, setActiveLocalHarnessSessionId] = useState<string | null>(
     null
   )
-  const [gitCloneOperations, setGitCloneOperations] = useState<GitCloneProjectOperation[]>([])
-  const [gitCloneRecovery, setGitCloneRecovery] = useState<GitCloneProjectOperation | null>(null)
-  const runGitCloneOperation = useCallback(
-    (
-      operation: GitCloneProjectOperation,
-      options: {
-        refreshDevice?: boolean
-      } = {}
-    ) => {
-      const resumeOpening = operation.failureStage === 'open'
-      setGitCloneOperations(current =>
-        current.map(item =>
-          item.id === operation.id
-            ? {
-                ...item,
-                status: resumeOpening ? 'opening' : 'cloning',
-                failureStage: undefined,
-                failureReason: undefined,
-                error: undefined,
-              }
-            : item
-        )
-      )
-      void (async () => {
-        let stage: 'clone' | 'open' = resumeOpening ? 'open' : 'clone'
-        logRuntimeTaskCreateStage('git-project-operation-started', {
-          operationId: operation.id,
-          deviceId: operation.deviceId,
-          targetPath: operation.targetPath,
-          operationStage: stage,
-        })
-        try {
-          if (options.refreshDevice) {
-            await onRefreshDevices?.()
-          }
-          if (!resumeOpening) {
-            await onCloneGitRepository(operation.deviceId, {
-              url: operation.url,
-              ...(operation.branch ? { branch: operation.branch } : {}),
-              targetPath: operation.targetPath,
-            })
-            stage = 'open'
-            setGitCloneOperations(current =>
-              current.map(item =>
-                item.id === operation.id ? { ...item, status: 'opening' } : item
-              )
-            )
-          }
-          await onOpenStandaloneWorkspace(operation.deviceId, operation.targetPath, operation.name)
-          setGitCloneOperations(current => current.filter(item => item.id !== operation.id))
-        } catch (error) {
-          const failureReason = gitCloneFailureReason(error, stage)
-          logRuntimeTaskCreateStage('git-project-operation-failed', {
-            operationId: operation.id,
-            operationStage: stage,
-            deviceId: operation.deviceId,
-            targetPath: operation.targetPath,
-            failureReason,
-          })
-          setGitCloneOperations(current =>
-            current.map(item =>
-              item.id === operation.id
-                ? {
-                    ...item,
-                    status: 'failed',
-                    failureStage: stage,
-                    failureReason,
-                    error:
-                      error instanceof Error
-                        ? error.message
-                        : stage === 'clone'
-                          ? 'Failed to clone repository'
-                          : 'Failed to add project',
-                  }
-                : item
-            )
-          )
-        }
-      })()
-    },
-    [onCloneGitRepository, onOpenStandaloneWorkspace, onRefreshDevices]
-  )
-  const startGitCloneProject = useCallback(
-    (deviceId: string, input: CloneGitRepositoryInput) => {
-      const name = input.targetPath.split(/[\\/]/).filter(Boolean).at(-1) || 'repository'
-      const operation: GitCloneProjectOperation = {
-        ...input,
-        id: crypto.randomUUID(),
-        deviceId,
-        name,
-        status: 'cloning',
-      }
-      setGitCloneOperations(current => [
-        operation,
-        ...current.filter(item => item.id !== gitCloneRecovery?.id),
-      ])
-      setGitCloneRecovery(null)
-      runGitCloneOperation(operation)
-    },
-    [gitCloneRecovery, runGitCloneOperation]
-  )
-  const dismissGitCloneOperation = useCallback((operationId: string) => {
-    setGitCloneOperations(current => current.filter(item => item.id !== operationId))
-  }, [])
   const loadLocalHarnessSessions = useCallback(async () => {
     const sessions = await listLocalHarnessSessions()
     return sessions.map(session => ({
@@ -574,18 +466,20 @@ export function DesktopWorkbenchLayout({
     setActiveLocalHarnessSessionId(sessionId)
     navigateTo('/')
   }, [])
+  const localHarnessModelApi = services?.localHarnessModelApi
+  const runtimeWorkApi = services?.runtimeWorkApi
   const removeLocalHarnessSession = useCallback(
     (sessionId: string) => {
       const proxyToken = localHarnessSessions.find(
         session => session.sessionId === sessionId
       )?.proxyToken
       if (proxyToken) {
-        void services?.localHarnessModelApi?.unregisterProxy(proxyToken)
+        void localHarnessModelApi?.unregisterProxy(proxyToken)
       }
       setLocalHarnessSessions(current => current.filter(session => session.sessionId !== sessionId))
       setActiveLocalHarnessSessionId(current => (current === sessionId ? null : current))
     },
-    [localHarnessSessions, services?.localHarnessModelApi]
+    [localHarnessSessions, localHarnessModelApi]
   )
   const handleLocalHarnessSessionExit = useCallback(
     (sessionId: string) => {
@@ -593,7 +487,7 @@ export function DesktopWorkbenchLayout({
         session => session.sessionId === sessionId
       )?.proxyToken
       if (proxyToken) {
-        void services?.localHarnessModelApi?.unregisterProxy(proxyToken)
+        void localHarnessModelApi?.unregisterProxy(proxyToken)
       }
       // DSH retains exited terminal snapshots until the user closes the session.
       setLocalHarnessSessions(current =>
@@ -602,7 +496,7 @@ export function DesktopWorkbenchLayout({
         )
       )
     },
-    [localHarnessSessions, services?.localHarnessModelApi]
+    [localHarnessSessions, localHarnessModelApi]
   )
   const closeLocalHarnessSession = useCallback(
     async (sessionId: string) => {
@@ -627,7 +521,6 @@ export function DesktopWorkbenchLayout({
       sourcePath: string
       name: string
     }) => {
-      const runtimeWorkApi = services?.runtimeWorkApi
       if (!runtimeWorkApi) {
         throw new Error(t('workbench.create_permanent_worktree_unavailable'))
       }
@@ -656,7 +549,7 @@ export function DesktopWorkbenchLayout({
         throw error
       }
     },
-    [onOpenStandaloneWorkspace, services?.runtimeWorkApi, t]
+    [onOpenStandaloneWorkspace, runtimeWorkApi, t]
   )
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState(false)
@@ -665,7 +558,9 @@ export function DesktopWorkbenchLayout({
   const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
   const settingsReturnPathRef = useRef(initialPath === '/todo' ? '/todo' : '/')
   const routeActiveRef = useRef(routeActive)
-  routeActiveRef.current = routeActive
+  useLayoutEffect(() => {
+    routeActiveRef.current = routeActive
+  }, [routeActive])
   const activeTabRouteRef = useRef(
     ownedWorkspaceTab?.contentRoute ??
       `${stripAppBasePath(window.location.pathname)}${window.location.search}`
@@ -759,11 +654,9 @@ export function DesktopWorkbenchLayout({
     async (
       mode: StandaloneWorkspaceDialogMode,
       intent: StandaloneRemoteDialogIntent = 'project',
-      options: ProjectCreateRequestOptions | null = null,
-      cloneRecovery: GitCloneProjectOperation | null = null
+      options: ProjectCreateRequestOptions | null = null
     ) => {
       setBlankProjectDialogOpen(false)
-      setGitCloneRecovery(cloneRecovery)
       setProjectWorkEditProject(null)
       setStandaloneRemoteDialogIntent(intent)
       scopedProjectCreateRequestRef.current = options
@@ -788,25 +681,11 @@ export function DesktopWorkbenchLayout({
   )
 
   const closeStandaloneFolderProject = useCallback(() => {
-    setGitCloneRecovery(null)
     scopedProjectCreateRequestRef.current = null
     setStandaloneWorkspaceDialogMode(null)
     setStandaloneRemoteDialogIntent('project')
     setStandalonePreferNativeLocalPicker(true)
   }, [])
-
-  const retryGitCloneOperation = useCallback(
-    (operation: GitCloneProjectOperation) => {
-      if (isGitCloneDeviceMissing(operation)) {
-        void openStandaloneFolderProject('remote', 'project', null, operation)
-        return
-      }
-      runGitCloneOperation(operation, {
-        refreshDevice: operation.failureReason === 'executor-offline',
-      })
-    },
-    [openStandaloneFolderProject, runGitCloneOperation]
-  )
 
   const openProjectFromWorkMenu = useCallback(
     (mode: ProjectCreateMode, options?: ProjectCreateRequestOptions) => {
@@ -923,20 +802,23 @@ export function DesktopWorkbenchLayout({
   }, [onListImPrivateSessions, t])
 
   const refreshImNotificationSettings = useCallback(async () => {
-    if (!onGetImNotificationSettings) {
-      setImNotificationSettings(null)
-      return null
-    }
-
-    const settings = await onGetImNotificationSettings()
+    const settings = (await onGetImNotificationSettings?.()) ?? null
     setImNotificationSettings(settings)
     return settings
   }, [onGetImNotificationSettings])
 
   useEffect(() => {
-    if (workItemSurfaceOpen) return
-    void refreshImNotificationSettings().catch(() => undefined)
-  }, [refreshImNotificationSettings, workItemSurfaceOpen])
+    if (workItemSurfaceOpen || !onGetImNotificationSettings) return
+    let active = true
+    void onGetImNotificationSettings()
+      .then(settings => {
+        if (active) setImNotificationSettings(settings)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [onGetImNotificationSettings, workItemSurfaceOpen])
 
   const openImNotificationTargetDialog = useCallback(
     (mode: ImNotificationDialogMode) => {
@@ -1051,7 +933,6 @@ export function DesktopWorkbenchLayout({
       runtimeWork={state.runtimeWork}
       runtimeWorkLoad={state.runtimeWorkLoad}
       onRetryRuntimeWork={refreshWorkLists}
-      gitCloneOperations={gitCloneOperations}
       currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
       splitGroupMemberships={splitGroups.memberships}
       standaloneDeviceId={state.standaloneDeviceId}
@@ -1116,9 +997,6 @@ export function DesktopWorkbenchLayout({
       onListDeviceDirectories={onListDeviceDirectories}
       onCreateDeviceDirectory={onCreateDeviceDirectory}
       onCloneGitRepository={onCloneGitRepository}
-      onStartGitCloneProject={startGitCloneProject}
-      onRetryGitCloneOperation={retryGitCloneOperation}
-      onDismissGitCloneOperation={dismissGitCloneOperation}
       projectDevicePluginApi={services.projectDevicePluginApi}
       projectSpaceApis={availableProjectSpaceApis}
       models={projectChat.models}
@@ -1183,7 +1061,7 @@ export function DesktopWorkbenchLayout({
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-          {(standInOpen || standInVisited) && (
+          {(standInOpen || standInRetention.visited) && (
             <div
               className="min-h-0 min-w-0 flex-1 flex-col"
               style={{ display: standInOpen ? 'flex' : 'none' }}
@@ -1191,8 +1069,8 @@ export function DesktopWorkbenchLayout({
               inert={!standInOpen}
             >
               <PersonalStandInWorkspace
-                contentRoute={standInOpen ? standInContentRoute : retainedStandInRoute.current}
-                entryRequestKey={standInEntryKey}
+                contentRoute={standInRetention.contentRoute}
+                entryRequestKey={standInRetention.entryKey}
                 services={services}
                 user={state.user ?? LOCAL_USER}
                 devices={state.devices}
@@ -1513,11 +1391,10 @@ export function DesktopWorkbenchLayout({
         onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
       />
       <StandaloneFolderProjectDialog
-        key={gitCloneRecovery?.id ?? standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
+        key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
         open={standaloneWorkspaceDialogMode !== null}
         mode={standaloneWorkspaceDialogMode ?? 'existing'}
         remoteIntent={standaloneRemoteDialogIntent}
-        initialGitClone={gitCloneRecovery}
         preferNativeLocalPicker={standalonePreferNativeLocalPicker}
         devices={state.devices}
         preferredDeviceId={
@@ -1528,7 +1405,6 @@ export function DesktopWorkbenchLayout({
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}
         onCloneGitRepository={onCloneGitRepository}
-        onStartGitCloneProject={startGitCloneProject}
         onOpenStandaloneWorkspace={async (deviceId, workspacePath, name, projectRoots) => {
           const scopedRequest = scopedProjectCreateRequestRef.current
           if (!scopedRequest?.preserveCurrentSurface) {

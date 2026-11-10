@@ -4,6 +4,20 @@ import { describe, expect, test } from 'vitest'
 import { parseChatError } from './chat-error'
 
 describe('parseChatError', () => {
+  test('uses executor Git diagnostics instead of classifying them as model errors', () => {
+    const failure = {
+      code: 'credentials-required',
+      domain: 'git.example:8443',
+      message: 'Configure Git',
+    }
+    const parsed = parseChatError(
+      `Checkout failed: git-access:${JSON.stringify(failure)}`,
+      'container_error'
+    )
+    expect(parsed.gitFailure).toEqual(failure)
+    expect(parsed.descriptionKey).toBe('assistant_error.git_access.credentials-required')
+  })
+
   test.each([
     ['context_length_exceeded', 'context_length_exceeded'],
     ['quota_exceeded', 'quota_exceeded'],
