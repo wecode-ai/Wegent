@@ -9,6 +9,10 @@ import { currentCoreProfile, selectReleaseProfile } from './runtime/release-prof
 import { releaseBridgeUserData } from './runtime/release-handoff.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { enterInstalledMacosRelease } from './runtime/macos-release-installation.js'
+import {
+  assertReleaseAfterStopReady,
+  prepareReleaseAfterStop,
+} from './runtime/release-after-stop.js'
 
 const pendingUrls: string[] = []
 const captureUrl = (event: Electron.Event, url: string): void => {
@@ -134,6 +138,7 @@ async function routeRelease(): Promise<boolean> {
   if (supervised) {
     if (metadata.version !== active.version)
       throw new Error('The installed host does not match the selected release version')
+    await assertReleaseAfterStopReady(store, active, metadata)
     await store.repairMacosActivationSource(active)
     if (
       process.platform === 'darwin' &&
@@ -271,6 +276,27 @@ async function launchSelectedRelease(
   }
   const active = await store.active()
   if (!active) throw new Error('Active release is missing')
+  try {
+    const paths = resolveWorkbenchPaths({
+      environment: process.env,
+      metadata,
+      homeDirectory: app.getPath('home'),
+    })
+    await prepareReleaseAfterStop(store, active, dataDirectory, {
+      workbenchRoot: paths.root,
+      codexHome: process.env.WEGENT_CODEX_HOME?.trim() || paths.codexHome,
+    })
+  } catch (error) {
+    const pending = await store.activation()
+    if (!pending || pending.to !== active.id) throw error
+    recordReleaseDiagnostic('after-stop-preparation-failed', { releaseId: active.id }, true)
+    const { atomicReleaseWrite } = await import('./runtime/release-store.js')
+    await atomicReleaseWrite(join(root, 'attempted'), pending.token)
+    await atomicReleaseWrite(join(root, 'failed'), pending.token)
+    // Reuse the existing compatible rollback / explicit restore-consent flow.
+    await launchSelectedRelease(store, dataDirectory, root)
+    return
+  }
   // Legacy Windows entries resolve the release root above user-data and compare
   // its lexical path with the launcher's handoff. Pass the selected store owner
   // explicitly on every platform, including interrupted rollback recovery.
