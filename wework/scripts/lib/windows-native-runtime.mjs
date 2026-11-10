@@ -13,9 +13,10 @@ export function windowsStaticCrtEnvironment(environment, target) {
   if (!target?.includes('windows')) return environment
   const targetKey = `CARGO_TARGET_${target.toUpperCase().replaceAll('-', '_')}_RUSTFLAGS`
   const encoded = environment.CARGO_ENCODED_RUSTFLAGS
-  const effective = encoded
-    ? encoded.split('\x1f')
-    : (environment.RUSTFLAGS || environment[targetKey] || '').split(/\s+/)
+  const effective =
+    encoded !== undefined
+      ? encoded.split('\x1f')
+      : (environment.RUSTFLAGS ?? environment[targetKey] ?? '').split(/\s+/)
   const flags = effective.filter(Boolean)
   flags.push('-C', 'target-feature=+crt-static')
   return { ...environment, CARGO_ENCODED_RUSTFLAGS: flags.join('\x1f') }
