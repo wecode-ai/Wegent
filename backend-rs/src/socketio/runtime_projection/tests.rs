@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlError, MysqlExecution};
 
 use super::*;
+use crate::loop_tasks::loop_repository::EXECUTION_COLUMNS;
 
 #[test]
 fn statements_bind_every_value_instead_of_inlining_literals() {

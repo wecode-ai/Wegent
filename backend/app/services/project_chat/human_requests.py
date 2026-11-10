@@ -148,45 +148,6 @@ def settle_execution_reply(
         )
 
 
-def settle_terminal_reply(
-    db: Session, execution: LoopItemExecution, *, event_name: str, payload: dict
-) -> None:
-    """Accept an exact late input acknowledgement without reopening its execution."""
-    from app.services.project_chat.execution_snapshot import (
-        completed_activity_for_turn,
-        runtime_event_client_message_id,
-    )
-
-    if event_name != "response.created" or execution.status != "completed":
-        return
-    message_id = runtime_event_client_message_id(payload)
-    context = execution.runtime_origin_context
-    if (
-        not message_id
-        or not context.get("human_request_id")
-        or context.get("comment_trigger_message_id") != message_id
-    ):
-        return
-    db.refresh(execution, with_for_update=True)
-    if execution.status != "completed":
-        return
-    activity = completed_activity_for_turn(
-        db,
-        device_ids=[execution.runtime_device_id],
-        task_id=execution.runtime_task_id,
-        turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
-        client_user_message_id=message_id if execution.attempt_no == 1 else None,
-    )
-    if activity is None or str(
-        (activity.metadata_json or {}).get("execution_id")
-    ) != str(execution.id):
-        return
-    settle_execution_reply(db, execution, observed_message_id=message_id)
-    from app.services.project_chat.service import project_chat_service
-
-    project_chat_service._commit(db)
-
-
 def record_delivery_failure(
     db: Session, *, issue_id: str, request_id: str, message_id: str, rejected: bool
 ) -> None:
