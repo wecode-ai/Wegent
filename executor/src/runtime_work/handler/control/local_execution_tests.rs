@@ -33,7 +33,7 @@ fn run_native_control(cloud_bound: bool) {
             .collect();
             let log = root.path().join("native-calls.jsonl");
             let binary = root.path().join("codex-test.sh");
-            fs::write(&binary, format!(r#"#!/bin/sh
+            fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(&format!(r#"#!/bin/sh
         active_thread=thread-target
         while IFS= read -r line; do
           printf '%s\n' "$line" >> '{}'
@@ -53,7 +53,7 @@ fn run_native_control(cloud_bound: bool) {
             *) [ -z "$request_id" ] || printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}' ;;
           esac
         done
-        "#, log.display())).unwrap();
+        "#, log.display()))).unwrap();
             fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
             let attachment = root.path().join("resource.txt");
             fs::write(&attachment, "owned resource").unwrap();

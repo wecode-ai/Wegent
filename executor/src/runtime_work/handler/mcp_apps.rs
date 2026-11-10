@@ -469,7 +469,7 @@ mod session_tests {
                     {"name":"broken","toolsError":"disconnected"}
                 ]});
                 let binary = root.path().join("codex-app.sh");
-                fs::write(&binary, format!(r#"#!/bin/sh
+                fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(&format!(r#"#!/bin/sh
 while IFS= read -r line; do
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   [ -n "$id" ] || continue
@@ -482,7 +482,7 @@ while IFS= read -r line; do
   printf '{{"id":%s,"result":%s}}\n' "$id" "$result"
   case "$line" in *'"method":"test/stop"'*) exit 0;; esac
 done
-"#)).unwrap();
+"#))).unwrap();
                 fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
                 let handler = RuntimeWorkRpcHandler::new("device", binary.to_str().unwrap());
                 let mut task = RuntimeTaskLink::new_pending("task".into(),
@@ -530,7 +530,7 @@ done
                     }).collect();
                 let binary = root.path().join("codex-app.sh");
                 let log = root.path().join("requests.jsonl");
-                fs::write(&binary, format!(r#"#!/bin/sh
+                fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(&format!(r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> '{}'
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -544,7 +544,7 @@ while IFS= read -r line; do
   printf '{{"id":%s,"result":%s}}\n' "$id" "$result"
   case "$line" in *'"method":"test/stop"'*) exit 0;; esac
 done
-"#, log.display())).unwrap();
+"#, log.display()))).unwrap();
                 fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
                 let handler = RuntimeWorkRpcHandler::new("device", binary.to_str().unwrap());
                 let mut task = RuntimeTaskLink::new_pending("task".into(),

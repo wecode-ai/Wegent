@@ -10,6 +10,11 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     next_cursor: Option<&str>,
 ) {
     fs::create_dir_all(root).unwrap();
+    fs::write(
+        root.join("bundled_models.json"),
+        crate::agents::CodexLaunchEnvironment::BUNDLED_CATALOG,
+    )
+    .unwrap();
     let terminal_boundary = |turn: &Value| {
         matches!(
             turn["status"].as_str(),
@@ -104,7 +109,7 @@ pub(in crate::runtime_work::handler) fn install_native_history(
         )
         .unwrap();
         let binary = root.join("native-history.cmd");
-        fs::write(&binary, "@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0native-history.ps1\"\r\n").unwrap();
+        fs::write(&binary, "@echo off\r\nif \"%~1\"==\"debug\" (\r\n  type \"%~dp0bundled_models.json\"\r\n  exit /b 0\r\n)\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0native-history.ps1\"\r\n").unwrap();
         binary
     };
     handler.codex_app_server =

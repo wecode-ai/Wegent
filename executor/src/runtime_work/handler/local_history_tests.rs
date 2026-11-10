@@ -25,7 +25,7 @@ fn history_resume_restores_task_shell_identity_before_the_next_turn() {
             );
             let binary = root.path().join("codex-history.sh");
             let log = root.path().join("requests.jsonl");
-            fs::write(&binary, format!(r#"#!/bin/sh
+            fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(&format!(r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> '{}'
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -33,7 +33,7 @@ while IFS= read -r line; do
   printf '{{"id":%s,"result":{{"thread":{{"id":"thread-1","turns":[]}},"data":[],"nextCursor":null}}}}\n' "$id"
   case "$line" in *'"method":"test/stop"'*) exit 0;; esac
 done
-"#, log.display())).unwrap();
+"#, log.display()))).unwrap();
             fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
             let handler = RuntimeWorkRpcHandler::new("device-1", binary.to_str().unwrap())
                 .with_backend_connection(Arc::new(Mutex::new(Some(ConnectionConfig {
@@ -194,7 +194,7 @@ fn named_home_transcript_refresh_does_not_acquire_a_writer() {
     .collect();
     let binary = root.path().join("codex-reader.sh");
     let log = root.path().join("requests.jsonl");
-    fs::write(&binary, format!(r#"#!/bin/sh
+    fs::write(&binary, crate::agents::CodexLaunchEnvironment::with_bundled_catalog(&format!(r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> '{}'
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -202,7 +202,7 @@ while IFS= read -r line; do
   printf '{{"id":%s,"result":{{"thread":{{"id":"thread-1","turns":[]}},"data":[],"nextCursor":null}}}}\n' "$id"
   case "$line" in *'"method":"test/stop"'*) exit 0;; esac
 done
-"#, log.display())).unwrap();
+"#, log.display()))).unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("device-1", binary.to_str().unwrap());
     handler.store = RuntimeWorkStore::new(root.path().join("index.json"));

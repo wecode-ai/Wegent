@@ -329,7 +329,7 @@ done
 "#;
     fs::write(
         &binary,
-        script
+        crate::agents::CodexLaunchEnvironment::with_bundled_catalog(script)
             .replace("__LOG__", &log.to_string_lossy())
             .replace("__METADATA__", &metadata.to_string_lossy()),
     )
