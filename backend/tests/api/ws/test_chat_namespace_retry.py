@@ -24,6 +24,14 @@ from app.api.ws import chat_namespace
 from app.api.ws.chat_namespace import ChatNamespace
 
 
+@pytest.fixture(autouse=True)
+def chat_shell_type(monkeypatch):
+    # Keep this unit boundary independent of other modules' import order.
+    monkeypatch.setattr(
+        chat_namespace, "get_team_first_bot_shell_type", Mock(return_value="Chat")
+    )
+
+
 def test_retry_restores_image_generation_size() -> None:
     user_subtask = SimpleNamespace(
         result={"image_config": {"model": "gpt-image", "size": "1512x648"}}

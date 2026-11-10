@@ -41,6 +41,7 @@ def test_database_handler_updates_subtask_status_through_store():
         status=SubtaskStatus.PENDING,
         result=None,
         executor_name="",
+        answer_generation_id=None,
     )
     handler = DatabaseHandler()
 

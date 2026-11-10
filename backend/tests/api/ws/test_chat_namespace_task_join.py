@@ -163,10 +163,11 @@ async def test_chat_cancel_waits_for_runtime_ack_without_faking_terminal_state()
                 "task_id": 101,
                 "status": SubtaskStatus.RUNNING,
                 "executor_name": "device-local-device",
+                "answer_generation_id": "a" * 32,
             }
         if func.__name__ == "_mark_task_and_board_cancelling":
             mark_cancelling_calls.append(args)
-            return None
+            return True
         raise AssertionError(f"Unexpected sync function: {func.__name__}")
 
     with (
@@ -193,9 +194,10 @@ async def test_chat_cancel_waits_for_runtime_ack_without_faking_terminal_state()
         )
 
     assert result == {"success": True}
-    assert mark_cancelling_calls == [(55,)]
+    assert mark_cancelling_calls == [(55, "a" * 32)]
     cancel_request, device_id = cancel_mock.await_args.args
     assert cancel_request.executor_name == "device-local-device"
+    assert cancel_request.answer_generation_id == "a" * 32
     assert device_id == "local-device"
 
 
@@ -213,9 +215,11 @@ async def test_chat_cancel_reports_runtime_rejection() -> None:
                 "task_id": 101,
                 "status": SubtaskStatus.RUNNING,
                 "executor_name": None,
+                "answer_generation_id": "a" * 32,
             }
         if func.__name__ == "_mark_task_and_board_cancelling":
-            return None
+            assert args == (55, "a" * 32)
+            return True
         raise AssertionError(f"Unexpected sync function: {func.__name__}")
 
     with (
@@ -255,10 +259,13 @@ async def test_chat_cancel_finalizes_when_stream_runtime_is_gone() -> None:
                 "task_id": 101,
                 "status": SubtaskStatus.RUNNING,
                 "executor_name": None,
+                "answer_generation_id": "a" * 32,
             }
         if func.__name__ == "_mark_task_and_board_cancelling":
-            return None
+            assert args == (55, "a" * 32)
+            return True
         if func.__name__ == "_finalize_stuck_cancellation":
+            assert args == (55, "a" * 32)
             return [55]
         raise AssertionError(f"Unexpected sync function: {func.__name__}")
 
@@ -344,6 +351,7 @@ async def test_finalize_failed_ai_trigger_persists_failed_terminal_state() -> No
             assistant_subtask_id=55,
             error_message="database failed",
             error_code="generic_error",
+            generation_id="a" * 32,
         )
 
     collect_completed_result.assert_awaited_once_with(
@@ -353,6 +361,8 @@ async def test_finalize_failed_ai_trigger_persists_failed_terminal_state() -> No
         error_code="generic_error",
     )
     persist_completed_result.assert_awaited_once_with(
+        generation_id="a" * 32,
+        expected_status="PENDING",
         subtask_id=55,
         task_id=101,
         status="FAILED",
