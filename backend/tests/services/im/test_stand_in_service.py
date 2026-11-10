@@ -172,6 +172,33 @@ async def test_failed_turn_only_deletes_its_own_callback(setup):
     s.port._delete_private_im_runtime_callback.assert_awaited_once_with(failed)
 
 
+async def test_dingtalk_failure_cleans_only_failed_turn_with_real_handler(setup):
+    from app.services.channels.dingtalk.handler import DingTalkChannelHandler
+
+    s = setup
+    callback_service = SimpleNamespace(
+        delete_callback_info=AsyncMock(), _remove_emitter=AsyncMock()
+    )
+    port = DingTalkChannelHandler(channel_id=3)
+    port.get_callback_service = Mock(return_value=callback_service)
+    port._create_private_im_runtime_streaming_emitter = AsyncMock()
+    port._register_private_im_runtime_callback = AsyncMock()
+    port._emit_private_im_runtime_stream_error = AsyncMock()
+    s.rpc.side_effect = RuntimeRpcError("Device offline", code="device_offline")
+
+    assert (
+        await service.send_stand_in_message(s.db, s.user, s.session, s.context, port)
+        is False
+    )
+
+    callback_key = port._register_private_im_runtime_callback.await_args.kwargs[
+        "callback_key"
+    ]
+    callback_service.delete_callback_info.assert_awaited_once_with(callback_key)
+    callback_service._remove_emitter.assert_awaited_once_with(callback_key)
+    port._emit_private_im_runtime_stream_error.assert_awaited_once()
+
+
 async def test_quoted_notification_is_context_without_changing_the_identity(setup):
     import json
 
