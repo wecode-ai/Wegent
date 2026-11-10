@@ -71,15 +71,50 @@ export async function inspectBeforeStart(child, expression, log = console.log) {
 
 /** Reconnect only to the current host belonging to this isolated release store. */
 export async function inspectRunningApp(port, expectedPid, expression, log = console.log) {
+  if (Array.isArray(port)) port = await currentInspectorPort(port, expectedPid, log)
+  const socketUrl = await inspectorTarget(port)
+  return withInspector(
+    socketUrl,
+    async command => {
+      const pid = await evaluate(command, 'process.pid')
+      if (pid !== expectedPid)
+        throw new Error('The inspector is connected to another release process')
+      return evaluate(
+        command,
+        typeof expression === 'function' ? expression(port) : expression,
+        true
+      )
+    },
+    log
+  )
+}
+
+/** Supervisors can retain an earlier handoff's arguments after a driver restart. */
+async function currentInspectorPort(ports, expectedPid, log) {
+  const matches = []
+  for (const port of new Set(ports)) {
+    const target = await inspectorTarget(port, true)
+    if (!target) continue
+    const pid = await withInspector(target, command => evaluate(command, 'process.pid'), log)
+    if (pid === expectedPid) matches.push(port)
+  }
+  if (matches.length !== 1)
+    throw new Error(
+      `Expected exactly one registered inspector for host PID ${expectedPid}; found ${matches.length}`
+    )
+  return matches[0]
+}
+
+async function inspectorTarget(port, allowClosed = false) {
+  if (!/^\d+$/.test(String(port)) || Number(port) < 1 || Number(port) > 65535)
+    throw new Error('The isolated inspector requires a registered TCP port')
   const origin = `http://127.0.0.1:${port}`
   let response
   try {
     response = await fetch(`${origin}/json/list`, { signal: AbortSignal.timeout(10_000) })
   } catch (cause) {
-    throw new Error(
-      `The isolated inspector at port ${port} is unavailable for host PID ${expectedPid}`,
-      { cause }
-    )
+    if (allowClosed && cause.cause?.code === 'ECONNREFUSED') return null
+    throw new Error(`The isolated inspector at port ${port} is unavailable`, { cause })
   }
   if (!response.ok) throw new Error(`The isolated inspector returned HTTP ${response.status}`)
   const targets = await response.json()
@@ -88,16 +123,7 @@ export async function inspectRunningApp(port, expectedPid, expression, log = con
   const target = new URL(socketUrl)
   if (target.protocol !== 'ws:' || target.hostname !== '127.0.0.1' || target.port !== String(port))
     throw new Error('The isolated inspector escaped its loopback endpoint')
-  return withInspector(
-    socketUrl,
-    async command => {
-      const pid = await evaluate(command, 'process.pid')
-      if (pid !== expectedPid)
-        throw new Error('The inspector is connected to another release process')
-      return evaluate(command, expression, true)
-    },
-    log
-  )
+  return socketUrl
 }
 
 async function evaluate(command, expression, awaitPromise = false) {

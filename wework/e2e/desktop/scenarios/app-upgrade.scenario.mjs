@@ -33,7 +33,7 @@ import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-hando
 import { assertReleaseComposition } from '../modules/release-composition.mjs'
 import { waitForInterruptedRollback } from '../modules/interrupted-rollback.mjs'
 import { upgradeCredentials } from '../modules/upgrade-credentials.mjs'
-import { reservePort } from '../port-reservation.mjs'
+import { readConnectedApplicationPid } from '../modules/inspect-before-start.mjs'
 import { reupgradeAfterRollback } from '../modules/reupgrade-after-rollback.mjs'
 import { verifyRollbackProtection } from '../modules/rollback-protection.mjs'
 import {
@@ -126,9 +126,7 @@ export async function createDesktopScenario(options) {
     channel,
   })
   let control
-  // The surviving release supervisor retains its original forwarded arguments.
-  // Every driver restart must use that same endpoint, including recovery handoffs.
-  const inspectorPort = await reservePort()
+  const inspectorPorts = []
   let passed = false
   let origin
   let modelRequests = 0
@@ -240,7 +238,7 @@ export async function createDesktopScenario(options) {
   const verifyCredentials = (stage, options) =>
     credentials.verify(
       control,
-      inspectorPort,
+      inspectorPorts,
       stage,
       [electronUserDataDirectory, legacyDataDirectory].filter(Boolean),
       options
@@ -250,8 +248,8 @@ export async function createDesktopScenario(options) {
     await assertReleaseComposition(control, root, version, compositions)
     await assertMacosUpgradeIdentity(macosIdentity, root, resultDir, version)
     if (process.platform === 'darwin') {
-      const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
-      await assertMacosStatusItem(control, pid, resultDir, version)
+      const pid = await readConnectedApplicationPid(control)
+      await assertMacosStatusItem(control, pid, resultDir, version, inspectorPorts)
     }
   }
   const about = async () => {
@@ -273,7 +271,7 @@ export async function createDesktopScenario(options) {
     usesReleasePackageRuntimeAssets: true,
     ...(!options.preparationOnly
       ? {
-          electronLaunchArguments: [`--inspect-brk=127.0.0.1:${inspectorPort}`],
+          electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
           appProcessStarted: async child => {
             const port = await routeUpgradeRequests(
               child,
@@ -281,7 +279,7 @@ export async function createDesktopScenario(options) {
               join(resultDir, 'upgrade-transport.log'),
               { followHandoffs: true }
             )
-            assert.equal(port, String(inspectorPort))
+            inspectorPorts.push(port)
           },
         }
       : {}),
@@ -646,7 +644,7 @@ export async function createDesktopScenario(options) {
             assertSelectedComposition,
             captureScreenshot: options.captureScreenshot,
             routeCurrentUpdateRequests: () =>
-              routeRunningUpgradeRequests(inspectorPort, control, origin),
+              routeRunningUpgradeRequests(inspectorPorts, control, origin),
           })
         passed = true
         return
@@ -823,7 +821,7 @@ export async function createDesktopScenario(options) {
           await reupgradeAfterRollback({
             control,
             routeCurrentUpdateRequests: () =>
-              routeRunningUpgradeRequests(inspectorPort, control, origin),
+              routeRunningUpgradeRequests(inspectorPorts, control, origin),
             about,
             version: pair.to.version,
             installedVersion,
@@ -840,7 +838,7 @@ export async function createDesktopScenario(options) {
             preparedTarget,
             requests,
             about,
-            route: () => routeRunningUpgradeRequests(inspectorPort, control, origin),
+            route: () => routeRunningUpgradeRequests(inspectorPorts, control, origin),
           })
         }
       }
