@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
@@ -6,8 +7,9 @@ import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 export function InteractionDraftRecovery() {
   const interactions = useRuntimeInteractions()
   const { t } = useTranslation('common')
+  const [discardFailure, setDiscardFailure] = useState<string | null>(null)
   if (!interactions) return null
-  const { replyDrafts, pending, busy, setDraft } = interactions
+  const { replyDrafts, pending, busy, discardDraft } = interactions
   const unsent = replyDrafts.filter(
     draft =>
       draft.text &&
@@ -15,6 +17,10 @@ export function InteractionDraftRecovery() {
       !pending.some(item => item.id === draft.interaction.id)
   )
   if (!unsent.length) return null
+  const discard = async (id: string) => {
+    setDiscardFailure(null)
+    if (!(await discardDraft(id))) setDiscardFailure(id)
+  }
   return (
     <section aria-label={t('interactions.unsent_reply')} className="space-y-4 px-3 py-3">
       <h2 className="text-sm font-medium">{t('interactions.unsent_reply')}</h2>
@@ -35,10 +41,15 @@ export function InteractionDraftRecovery() {
             data-testid="interaction-discard-unsent"
             variant="secondary"
             className="min-h-11 md:min-h-7"
-            onClick={() => setDraft(item.id, '')}
+            onClick={() => void discard(item.id)}
           >
             {t('interactions.discard_unsent_reply')}
           </Button>
+          {discardFailure === item.id && (
+            <p role="alert" className="text-sm text-destructive">
+              {t('interactions.discard_unsent_reply_failed')}
+            </p>
+          )}
         </div>
       ))}
     </section>

@@ -310,6 +310,8 @@ describe('unified human response', () => {
     expect(harness.send).toHaveBeenCalledTimes(1)
     expect(context!.errors).toEqual({})
     expect(context!.drafts[item.id]).toBe('stale second answer')
+    expect(context!.replyDrafts).toEqual([expect.objectContaining({ text: 'stale second answer' })])
+    expect(screen.getByTestId('interaction-unsent-text')).toHaveValue('stale second answer')
   })
 
   it('bounds unchanged history scans while forcing explicit refresh and summary changes', async () => {
@@ -563,6 +565,11 @@ describe('unified human response', () => {
     act(() => harness.hostListeners.forEach(listener => listener({ type: 'notification-reply' })))
     await waitFor(() => expect(failedAcknowledgement).toBe(true))
     act(() => context!.setDraft(id, 'edited before reload'))
+    await waitFor(() =>
+      expect(localStorage.getItem('wework.interactions:test:1:drafts')).toContain(
+        'edited before reload'
+      )
+    )
     first.unmount()
     view()
     await waitFor(() => expect(replies).toEqual([]))
@@ -611,6 +618,11 @@ describe('unified human response', () => {
     })
     act(() => context!.setDraft('request-a', 'private answer'))
     expect(context!.drafts).toEqual({ 'request-a': 'private answer' })
+    await waitFor(() =>
+      expect(localStorage.getItem('wework.interactions:cloud-a:1:drafts')).toContain(
+        'private answer'
+      )
+    )
     const setOldAccountDraft = context!.setDraft
 
     rendered.rerender(tree('cloud-b:1'))
@@ -619,7 +631,7 @@ describe('unified human response', () => {
     expect(screen.getByRole('textbox', { name: 'Connection address' })).toHaveValue(
       'http://127.0.0.1:1'
     )
-    expect(localStorage.getItem('wework.interactions:cloud-b:1:drafts')).not.toContain(
+    expect(localStorage.getItem('wework.interactions:cloud-b:1:drafts') ?? '').not.toContain(
       'private answer'
     )
 
@@ -692,6 +704,11 @@ describe('unified human response', () => {
     await waitFor(() => expect(context!.pending).toHaveLength(1))
     const id = context!.pending[0].id
     act(() => context!.setDraft(id, 'Keep existing behavior'))
+    await waitFor(() =>
+      expect(localStorage.getItem('wework.interactions:test:1:drafts')).toContain(
+        'Keep existing behavior'
+      )
+    )
     first.unmount()
     harness.list.mockRejectedValue(new Error('Device offline'))
     view(interactionQuestion, interactionTask, false, new Error('Device offline'), false)

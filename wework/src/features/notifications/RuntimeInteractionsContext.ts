@@ -26,6 +26,7 @@ export interface RuntimeInteractionsValue {
   busy: ReadonlySet<string>
   loading: boolean
   setDraft: (id: string, text: string) => void
+  discardDraft: (id: string) => Promise<boolean>
   respond: (
     item: RuntimeInteraction,
     answer: string,

@@ -217,8 +217,13 @@ it('preserves a failed native reply visibly after concurrent task settlement and
   await waitFor(() => expect(context!.pending).toHaveLength(0))
   expect(context!.history).toEqual([expect.objectContaining({ id: item.id })])
   expect(context!.drafts[item.id]).toBe('Do not lose this reply')
+  expect(context!.replyDrafts).toEqual([
+    expect.objectContaining({ text: 'Do not lose this reply' }),
+  ])
   expect(context!.errors[item.id]).toBe('interactions.failed')
-  expect(screen.getByTestId('interaction-unsent-text')).toHaveValue('Do not lose this reply')
+  await waitFor(() =>
+    expect(screen.getByTestId('interaction-unsent-text')).toHaveValue('Do not lose this reply')
+  )
   rendered.unmount()
   clearRuntimeConversationCacheForTests()
   view()

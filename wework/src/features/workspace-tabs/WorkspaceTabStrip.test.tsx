@@ -386,6 +386,7 @@ describe('WorkspaceTabStrip', () => {
       busy: new Set(),
       loading: false,
       setDraft: vi.fn(),
+      discardDraft: vi.fn().mockResolvedValue(true),
       respond: vi.fn(),
       refresh: vi.fn(),
       open: vi.fn(),

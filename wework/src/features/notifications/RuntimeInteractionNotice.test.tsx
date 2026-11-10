@@ -45,6 +45,7 @@ function show(item: RuntimeInteraction) {
         busy: new Set(),
         loading: false,
         setDraft: vi.fn(),
+        discardDraft: vi.fn().mockResolvedValue(true),
         respond,
         dismiss: vi.fn(),
         refresh: vi.fn(),

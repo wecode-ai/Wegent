@@ -68,7 +68,7 @@ import {
 
 type RuntimeInteractionSnapshot = Omit<
   RuntimeInteractionsValue,
-  'drafts' | 'replyDrafts' | 'setDraft'
+  'drafts' | 'replyDrafts' | 'setDraft' | 'discardDraft'
 >
 
 export function RuntimeInteractionsProvider({
@@ -82,7 +82,7 @@ export function RuntimeInteractionsProvider({
     accountKey: string
     value: RuntimeInteractionSnapshot
   } | null>(null)
-  const { drafts, replyDrafts, setDraft, retainDraft, retainedReply } =
+  const { drafts, replyDrafts, setDraft, discardDraft, retainDraft, retainedReply } =
     useInteractionDrafts(accountKey)
   const publish = useCallback(
     (value: RuntimeInteractionSnapshot) => setSnapshot({ accountKey, value }),
@@ -92,7 +92,7 @@ export function RuntimeInteractionsProvider({
     <RuntimeInteractionsContext.Provider
       value={
         snapshot?.accountKey === accountKey
-          ? { ...snapshot.value, drafts, replyDrafts, setDraft }
+          ? { ...snapshot.value, drafts, replyDrafts, setDraft, discardDraft }
           : null
       }
     >
@@ -641,7 +641,10 @@ function RuntimeInteractionsState({
             row.resolvedIssueQuestion && matchesIssueResolution(item, row.resolvedIssueQuestion)
         )
       try {
-        if (confirmedResolved()) return false
+        if (confirmedResolved()) {
+          await retainDraft(interactionHistoryEntry(item, Date.now())).catch(console.error)
+          return false
+        }
         if (item.sharedRequest) {
           const services = sourceRef.current?.services
           if (!services) return false
@@ -664,7 +667,10 @@ function RuntimeInteractionsState({
         if (!api) return false
         return await navigator.locks.request(historyKey + ':' + item.id, async () => {
           if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
-          if (confirmedResolved()) return false
+          if (confirmedResolved()) {
+            await retainDraft(interactionHistoryEntry(item, Date.now())).catch(console.error)
+            return false
+          }
           // The request lock and persisted acceptance are shared by every workbench window.
           if (
             submittedRef.current.has(item.id) ||
@@ -675,6 +681,7 @@ function RuntimeInteractionsState({
           ) {
             submittedRef.current = new Set(submittedRef.current).add(item.id)
             setSubmitted(submittedRef.current)
+            await retainDraft(interactionHistoryEntry(item, Date.now())).catch(console.error)
             return false
           }
           // Revalidate the exact request before answering; old notifications are not authority.
@@ -779,6 +786,7 @@ function RuntimeInteractionsState({
       historyKey,
       markHandled,
       refresh,
+      retainDraft,
       setDraft,
       t,
       refreshIssueInteractions,
