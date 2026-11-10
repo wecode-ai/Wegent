@@ -19,7 +19,7 @@
       "sql": [
         "ALTER TABLE share_links MODIFY COLUMN token_hash VARCHAR(64) NOT NULL COMMENT 'SHA-256 hash of the share token'",
         "UPDATE share_links SET is_active = FALSE, updated_at = NOW() WHERE is_active = TRUE",
-        "ALTER TABLE share_links ADD CONSTRAINT uniq_share_links_token_hash UNIQUE (token_hash)"
+        "CREATE UNIQUE INDEX uniq_share_links_token_hash ON share_links (token_hash)"
       ]
     }
   ],
