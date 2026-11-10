@@ -684,8 +684,7 @@ async fn execute_device_command(
         "max_output_bytes".to_string(),
         Value::from(max_output_bytes),
     );
-
-    add_executor_command_key(&mut payload, &command_key);
+    add_executor_command_key(&mut payload, &command_key, definition.native_git);
     let result = call_device_command(
         app,
         user_id,

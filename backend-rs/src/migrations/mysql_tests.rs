@@ -64,7 +64,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     crate::background_jobs::robot::verify_issue_activity_projection(mysql).await?;
     crate::socketio::verify_reconnect_projection(mysql).await?;
     crate::socketio::verify_late_human_reply_projection(mysql).await?;
-    crate::socketio::verify_issue_mention_wakeups(mysql).await?;
+    crate::stand_in_issue_events::verify_mentions(mysql).await?;
     Ok(())
 }
 

@@ -58,9 +58,6 @@ pub mod project_chat_events;
 mod project_chat_mentions;
 pub(crate) mod project_chat_messages;
 pub(crate) mod project_chat_snapshot;
-mod project_chat_wakeups;
-#[cfg(test)]
-pub(crate) use project_chat_wakeups::verify as verify_issue_mention_wakeups;
 pub mod runner_catalog;
 pub mod runtime;
 pub mod runtime_event_order;
