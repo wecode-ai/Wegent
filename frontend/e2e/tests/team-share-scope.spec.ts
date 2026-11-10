@@ -21,6 +21,7 @@ interface ShareScopeFixture {
   groupName: string
   groupTeamId: number
   groupTeamBotId: number
+  developerToken: string
   reporterTeamId: number
   reporterUserId: number
   developerApi: ApiClient
@@ -165,6 +166,7 @@ async function createShareScopeFixture(
       groupName,
       groupTeamId: groupTeam.teamId,
       groupTeamBotId: groupTeam.botId,
+      developerToken: developerLogin.data!.access_token,
       reporterTeamId: reporterTeam.teamId,
       reporterUserId,
       developerApi,
@@ -398,7 +400,7 @@ test.describe('Agent share scope', () => {
   }) => {
     const prefix = `e2e-share-scope-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const fixture = await createShareScopeFixture(request, prefix)
-    const page = await openUserPage(browser, fixture.reporterToken)
+    const page = await openUserPage(browser, fixture.developerToken)
 
     try {
       await page.goto(
