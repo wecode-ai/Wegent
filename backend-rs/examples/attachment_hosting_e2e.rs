@@ -6,10 +6,13 @@
 //! ffprobe validates media and S3StorageBackend writes to an actual MinIO bucket.
 //! The ordinary store deliberately points at a missing bucket: hosted uploads
 //! can succeed only when the production handler bypasses its default path.
+use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
+use anyhow::{Context, ensure};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -17,8 +20,61 @@ use wegent_backend_rs::{
     Application, AttachmentUploadBackend, BoxError, ExternalAttachmentStorageResult,
     ExternalAttachmentUploadError, ExternalAttachmentUploadRequest, HybridConfig, ImagePid,
     ImageUploadRequest, MinioConfig, S3StorageBackend, StoreObjectRequest, UploadBackendError,
-    build_app_state, run_hybrid,
+    build_app_state, encode_object_path, run_hybrid, stat_object,
 };
+
+use wegent_backend_rs::background_jobs::video::VideoExtensions;
+
+struct VideoHosting {
+    http: brz_http::Client,
+    storage: MinioConfig,
+    resolution_log: PathBuf,
+}
+
+#[async_trait]
+impl VideoExtensions for VideoHosting {
+    async fn resolve_uploaded_material(
+        &self,
+        type_data: &Value,
+        media_type: &str,
+        user_id: i64,
+        attachment_id: i64,
+    ) -> anyhow::Result<Option<Value>> {
+        let hosted = &type_data["hosted_media"];
+        let Some(key) = hosted["media_id"]
+            .as_str()
+            .or_else(|| type_data["legacy_fid"].as_str())
+        else {
+            return Ok(None);
+        };
+        let owner_prefix = format!("media/{user_id}/");
+        ensure!(
+            key.strip_prefix(&owner_prefix).is_some_and(|hash| {
+                hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }) && hosted["owner_id"]
+                .as_i64()
+                .is_none_or(|owner| owner == user_id),
+            "Hosted media owner does not match the current user",
+        );
+        stat_object(&self.http, &self.storage, key)
+            .await
+            .map_err(|_| anyhow::anyhow!("Hosted media object is unavailable"))?;
+        let evidence = json!({
+            "hosted_media_id": key, "attachment_id": attachment_id, "user_id": user_id,
+            "media_type": media_type,
+        });
+        let mut log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.resolution_log)?;
+        writeln!(log, "{evidence}")?;
+        Ok(Some(json!({
+            "hosted_media_id": key,
+            "url": format!("{}/{}/{}", self.storage.endpoint.trim_end_matches('/'),
+                self.storage.bucket, encode_object_path(key)),
+        })))
+    }
+}
 
 struct MediaHosting {
     media: S3StorageBackend,
@@ -133,6 +189,12 @@ fn main() -> Result<(), BoxError> {
         let mut state = build_app_state().await?;
         let config = MinioConfig::from_env()
             .ok_or_else(|| std::io::Error::other("MinIO configuration is required"))?;
+        let report = std::env::var_os("E2E_REPORT_DIR").context("E2E_REPORT_DIR is required")?;
+        state.video_extensions = Arc::new(VideoHosting {
+            http: state.attachment_http.clone(),
+            storage: config.clone(),
+            resolution_log: PathBuf::from(report).join("resolution.jsonl"),
+        });
         let mut ordinary_config = config.clone();
         ordinary_config.bucket = format!("{}-missing", config.bucket);
         state.attachment_upload = Arc::new(MediaHosting {

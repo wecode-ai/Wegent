@@ -49,7 +49,11 @@ pub(super) async fn create(
         continuation: None,
         team_id: team.id,
         bot_ids: &bots.bot_ids,
+        create_assistant: true,
+        model_override_type: None,
+        model_options: None,
         input_text: prompt,
+        additional_skills: &[],
         crd: TaskCrdInput {
             task_id: 0,
             team_name: &team.name,
@@ -149,6 +153,8 @@ pub(super) async fn create(
             new_session: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
+            web_runtime_guidance: false,
+            subtask_bot_resolved: false,
         },
     )
     .await

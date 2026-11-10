@@ -4,10 +4,10 @@ use brz_mysql::FromMysqlRow;
 use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 
-pub(super) const COLUMNS: &str = "id,COALESCE(loop_item_id,'') AS loop_item_id,COALESCE(cloud_project_id,'') AS cloud_project_id,COALESCE(executor_owner_user_id,0) AS executor_owner_user_id,COALESCE(assigner_user_id,0) AS assigner_user_id,COALESCE(agent_id,'') AS agent_id,COALESCE(team_id,0) AS team_id,COALESCE(automation_run_id,'') AS automation_run_id,COALESCE(execution_environment,'') AS execution_environment,COALESCE(execution_device_id,'') AS execution_device_id,COALESCE(runtime_device_id,'') AS runtime_device_id,COALESCE(runtime_task_id,'') AS runtime_task_id,COALESCE(status,'') AS status,COALESCE(approval_status,'') AS approval_status,COALESCE(execution_payload,'') AS execution_payload,COALESCE(error_message,'') AS error_message,COALESCE(execution_note,'') AS execution_note,COALESCE(version,0) AS version,lease_expires_at,start_requested_at,started_at,completed_at";
+pub(crate) const COLUMNS: &str = "id,COALESCE(loop_item_id,'') AS loop_item_id,COALESCE(cloud_project_id,'') AS cloud_project_id,COALESCE(executor_owner_user_id,0) AS executor_owner_user_id,COALESCE(assigner_user_id,0) AS assigner_user_id,COALESCE(agent_id,'') AS agent_id,COALESCE(team_id,0) AS team_id,COALESCE(automation_run_id,'') AS automation_run_id,COALESCE(execution_environment,'') AS execution_environment,COALESCE(execution_device_id,'') AS execution_device_id,COALESCE(runtime_device_id,'') AS runtime_device_id,COALESCE(runtime_task_id,'') AS runtime_task_id,COALESCE(status,'') AS status,COALESCE(approval_status,'') AS approval_status,COALESCE(execution_payload,'') AS execution_payload,COALESCE(error_message,'') AS error_message,COALESCE(execution_note,'') AS execution_note,COALESCE(version,0) AS version,lease_expires_at,start_requested_at,started_at,completed_at";
 
 #[derive(Clone, Debug, FromMysqlRow)]
-pub(super) struct Execution {
+pub(crate) struct Execution {
     pub id: i64,
     pub loop_item_id: String,
     pub cloud_project_id: String,
@@ -81,7 +81,21 @@ impl Execution {
     }
 }
 
-pub(super) fn unset(value: Option<NaiveDateTime>) -> bool {
+/// The root route and each collaboration member's persisted runner policy.
+pub(crate) fn runner_routes<'a>(
+    root_agent: &'a str,
+    selection: &'a Value,
+) -> impl Iterator<Item = (&'a str, &'a Value)> {
+    std::iter::once((root_agent, &selection["runner_routing"])).chain(
+        selection["group_runner_requirements"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(agent, route)| (agent.as_str(), route)),
+    )
+}
+
+pub(crate) fn unset(value: Option<NaiveDateTime>) -> bool {
     value.is_none_or(|value| value.and_utc().timestamp() <= 1)
 }
 

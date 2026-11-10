@@ -611,9 +611,12 @@ where
         }
     }
 
-    if changed > 0 {
-        mysql.execute("COMMIT", ()).await?;
-    }
+    // The typed transaction owned by the caller is the commit boundary. The
+    // source's mid-function `db.commit()` here cannot be expressed as a raw
+    // `COMMIT` on this handle: on a transaction it would end the enclosing
+    // typed transaction early (`brz-mysql` rejects transaction control through
+    // `execute`), and on the pooled caller autocommit already persisted each
+    // write. Returning `changed` lets the caller keep the source's outcome.
     Ok(changed)
 }
 

@@ -315,9 +315,9 @@ dependencies = [
 
 [[package]]
 name = "brz-engineioxide"
-version = "0.17.7-brz.1"
+version = "0.17.7-brz.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4707c5941490d2130c4086aab42f0ed7dae4d20f01b88154c4e565906c4da465"
+checksum = "c8326a1f3f4d5f671e5bdd79e744c49f78bb2b6579240fb2830ccbb220a0fed2"
 dependencies = [
  "bytes",
  "engineioxide-core",
@@ -642,9 +642,9 @@ dependencies = [
 
 [[package]]
 name = "brz-socket-io"
-version = "0.0.4"
+version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65e85a12a9092fc1a3d17213f56e1373a4fa243129d6c940e348f7223a867495"
+checksum = "730e25cfb37ec033fa1054e607eef62044726535abb50e3e9694f177c7b140e4"
 dependencies = [
  "brz-engineioxide",
  "brz-http-server",
@@ -661,9 +661,9 @@ dependencies = [
 
 [[package]]
 name = "brz-socket-io-macros"
-version = "0.0.4"
+version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9f337720f2b8342358489a7600c295f384c8297b8792bedc4c0492e5bb35b4a"
+checksum = "90fe64eaeb843e3e03eefc2df6ef7b6242c44d0f36f4c973aade3c4ae0d48da9"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -673,9 +673,9 @@ dependencies = [
 
 [[package]]
 name = "brz-socketioxide"
-version = "0.18.7-brz.1"
+version = "0.18.7-brz.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ada33481bb826bcbc39c6eb16d445a3ecb4cd14658980c9eab62689a921c0334"
+checksum = "2f3627944df4a00d6d36030a0360cd34a726ea654eae0ba48af0c7effe5ce620"
 dependencies = [
  "brz-engineioxide",
  "bytes",
@@ -1235,7 +1235,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2636,7 +2636,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4889,6 +4889,7 @@ dependencies = [
  "tokio",
  "tracing",
  "wegent-backend-config",
+ "wegent-python-compat",
 ]
 
 [[package]]

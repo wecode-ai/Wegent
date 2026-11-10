@@ -27,6 +27,24 @@ pub trait UserGitInfoProvider: Send + Sync {
     }
 }
 
+/// Deployment hook for the execution request's `user` metadata.
+///
+/// Internal deployments patch `_build_user_info` to inject provider-specific
+/// fields into the `user` object of an execution request. The public build has
+/// no such patch and leaves the object unchanged.
+#[async_trait]
+pub trait UserInfoExtension: Send + Sync {
+    /// Add deployment fields to the built `user` object. Implementations must
+    /// not log the values they add.
+    async fn decorate(&self, _preferences: Option<&str>, _user_info: &mut Value) {}
+}
+
+/// No application `user` metadata patch is registered.
+pub struct NoUserInfoExtension;
+
+#[async_trait]
+impl UserInfoExtension for NoUserInfoExtension {}
+
 /// No application Git token service is registered.
 pub struct StoredGitInfo;
 
