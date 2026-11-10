@@ -787,6 +787,7 @@ export async function createDesktopScenario(options) {
         if (process.platform === 'darwin' && checkpoint === 'app-rollback-recovery') {
           await assertDelayedRecoveryHandoffs({
             root,
+            inspectorPorts,
             targetId: targetReleaseId,
             control,
             environment: launchEnvironment,
