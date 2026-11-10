@@ -59,7 +59,7 @@ on:
         default: ""
 
 concurrency:
-  group: ${{ ((inputs.build_only && !inputs.publish_release) || inputs.verification_run_id != '' || (inputs.verification_source_run_id != '' && !inputs.publish_release)) && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id || inputs.verification_source_run_id) || github.workflow }}
+  group: ${{ ((inputs.build_only && !inputs.publish_release) || inputs.verification_run_id != '' || (inputs.verification_source_run_id != '' && !inputs.publish_release)) && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id || inputs.verification_source_run_id || github.run_id) || github.workflow }}
   cancel-in-progress: false
 
 permissions:
