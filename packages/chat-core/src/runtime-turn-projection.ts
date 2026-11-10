@@ -1,4 +1,5 @@
 import { processingBlocks, turnStatus } from "./runtime-turn-helpers";
+import { nestWorkbenchProcessingBlocks } from "./workbench-message-reducer";
 
 import { parseCodeCommentContexts } from "./code-comment-context";
 import type {
@@ -11,6 +12,28 @@ import type {
 
 export function projectRuntimeConversationTurn(
   turn: RuntimeConversationTurn,
+): WorkbenchMessage[] {
+  return projectRuntimeConversationTurns([turn]);
+}
+
+export function projectRuntimeConversationTurns(
+  turns: RuntimeConversationTurn[],
+): WorkbenchMessage[] {
+  // A child can keep streaming after guidance splits its parent's display
+  // message, or after the root starts another turn. Resolve ownership first.
+  const blocksById = new Map(
+    nestWorkbenchProcessingBlocks(
+      turns.flatMap((turn) => processingBlocks(turn.items)),
+    )
+      .filter((block) => block.type === "subagent")
+      .map((block) => [block.id, block]),
+  );
+  return turns.flatMap((turn) => projectTurn(turn, blocksById));
+}
+
+function projectTurn(
+  turn: RuntimeConversationTurn,
+  blocksById: ReadonlyMap<string, ProcessingBlock>,
 ): WorkbenchMessage[] {
   const messages: WorkbenchMessage[] = [];
   let assistantItems: RuntimeConversationItem[] = [];
@@ -110,7 +133,17 @@ export function projectRuntimeConversationTurn(
       }
       continue;
     }
-    assistantItems.push(item);
+    if (item.type === "block") {
+      // An unloaded parent does not turn a child into root output. The flat
+      // canonical items retain it until its parent is available.
+      if (item.block.parentToolUseId) continue;
+      assistantItems.push({
+        ...item,
+        block: blocksById.get(item.block.id) ?? item.block,
+      });
+    } else {
+      assistantItems.push(item);
+    }
   }
   flushAssistant(true, false);
   return messages;

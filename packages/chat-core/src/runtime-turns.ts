@@ -41,7 +41,7 @@ import {
   mergeProcessingBlockUpdate,
   replaceAt,
 } from "./runtime-turn-updates";
-import { projectRuntimeConversationTurn } from "./runtime-turn-projection";
+export { projectRuntimeConversationTurns } from "./runtime-turn-projection";
 import { insertMissingOrderedEntries } from "./ordered-conversation-entries";
 
 /** Materialize in-flight deltas against their observed base, then atomically publish native order.
@@ -540,12 +540,6 @@ export function reduceRuntimeConversationTurns(
         };
       });
   }
-}
-
-export function projectRuntimeConversationTurns(
-  turns: RuntimeConversationTurn[],
-): WorkbenchMessage[] {
-  return turns.flatMap(projectRuntimeConversationTurn);
 }
 
 export function appendRuntimeConversationGuidance(
