@@ -81,10 +81,14 @@ impl RuntimeWorkRpcHandler {
             return Err("Issue conversation owner does not match".into());
         }
         issue_reply_role(&roles, origin).ok_or("Issue stand-in is unavailable")?;
-        self.read_stand_in_issue(&store, user, origin)
+        let issue = self
+            .read_stand_in_issue(&store, user, origin)
             .await
-            .map(|_| ())
-            .map_err(|error| error.message)
+            .map_err(|error| error.message)?;
+        if origin["projectStore"] != "local" && issue["permissions"]["execute"] != true {
+            return Err("Issue execution permission is unavailable".into());
+        }
+        Ok(())
     }
 
     pub(super) fn persist_stand_in_issue_reply(&self, task: &str, message: &CodexNotification) {
@@ -436,6 +440,63 @@ mod tests {
             ..Default::default()
         });
         (handler, store, origin, settings)
+    }
+
+    #[tokio::test]
+    async fn queued_stand_in_turns_recheck_current_issue_execution_permission() {
+        use axum::{routing::get, Json, Router};
+
+        let root = tempfile::tempdir().unwrap();
+        let (mut handler, _, mut origin, _) = paused_issue_fixture(root.path());
+        origin["projectStore"] = json!("cloud");
+        handler.store.update_task("issue-chat", |link| {
+            link.runtime_handle["origin"] = origin.clone()
+        });
+        let mut request = ExecutionRequest::default();
+        request.extra.insert("origin".into(), origin.clone());
+        let issue = Arc::new(Mutex::new(json!({
+            "cloud_project_id":origin["cloudProjectId"],"permissions":{"execute":true}
+        })));
+        let current = issue.clone();
+        let router = Router::new()
+            .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+            .route(
+                &format!(
+                    "/api/v1/loop-items/{}",
+                    origin["loopItemId"].as_str().unwrap()
+                ),
+                get(move || {
+                    let value = current.lock().unwrap().clone();
+                    async move { Json(value) }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: format!("http://{}", listener.local_addr().unwrap()),
+            auth_token: "test".into(),
+            ..Default::default()
+        })));
+        let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+        handler
+            .validate_project_coordinator_request(&request)
+            .await
+            .unwrap();
+        for permission in [json!(false), Value::Null] {
+            issue.lock().unwrap()["permissions"]["execute"] = permission;
+            assert_eq!(
+                handler
+                    .validate_project_coordinator_request(&request)
+                    .await
+                    .unwrap_err(),
+                "Issue execution permission is unavailable"
+            );
+        }
+        issue.lock().unwrap()["permissions"]["execute"] = json!(true);
+        handler
+            .validate_project_coordinator_request(&request)
+            .await
+            .unwrap();
+        server.abort();
     }
 
     #[tokio::test]

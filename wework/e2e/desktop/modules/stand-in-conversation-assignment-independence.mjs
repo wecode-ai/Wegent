@@ -32,18 +32,22 @@ export async function verifyStandInConversationAssignmentIndependence({
   })
   const comments = target =>
     request(`/v1/cloud-projects/${project.id}/loop-items/${target.id}/activity-comments`)
-  await control.command('openWeworkScheme', 'body', {
-    value: `wework://tasks/${encodeURIComponent(deviceId)}/${encodeURIComponent(taskId)}`,
-  })
-  for (const assignee of [null, user.id]) {
-    const current = await request(`/v1/loop-items/${issue.id}`)
-    const updated = await fetch(`${cloud.backendUrl}/api/v1/loop-items/${issue.id}`, {
+  const changeAssignment = async (target, assignee) => {
+    const current = await request(`/v1/loop-items/${target.id}`)
+    const updated = await fetch(`${cloud.backendUrl}/api/v1/loop-items/${target.id}`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${cloud.authToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ version: current.version, assignee_user_id: assignee }),
       signal: AbortSignal.timeout(timeoutMs),
     })
     assert.ok(updated.ok, `Changing assignment failed: ${updated.status} ${await updated.text()}`)
+    assert.equal((await request(`/v1/loop-items/${target.id}`)).assignee_user_id, assignee)
+  }
+  await control.command('openWeworkScheme', 'body', {
+    value: `wework://tasks/${encodeURIComponent(deviceId)}/${encodeURIComponent(taskId)}`,
+  })
+  for (const assignee of [null, user.id]) {
+    await changeAssignment(issue, assignee)
     const before = (await comments(issue)).filter(row => row.body === '已完成本次指派。').length
     await sendStandInNotificationFollowUp(
       control,
@@ -67,6 +71,7 @@ export async function verifyStandInConversationAssignmentIndependence({
     title: `${marker} automatic role flags manual unassigned`,
     notify_assignee: false,
   })
+  await changeAssignment(unassigned, null)
   const address = await rpc('runtime.stand_in.run', {
     projectId: project.id,
     issueId: unassigned.id,

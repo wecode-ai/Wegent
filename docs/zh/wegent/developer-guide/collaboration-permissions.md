@@ -4,6 +4,8 @@ sidebar_position: 36
 
 # 协作权限架构与不可破坏的规则
 
+分身 Issue 消息从排队进入执行时，重新读取服务端当前 Issue 的 `permissions.execute`；角色降为只读或缺少执行权限信息时不启动模型。该检查不依赖负责人或接收开关，权限恢复后原会话仍可使用。`queued_stand_in_turns_recheck_current_issue_execution_permission` 覆盖权限撤销、缺失和恢复，CP15 不变。
+
 已读确认仍先验证当前 Issue 访问，仅推进当前用户游标，不改 Issue 版本或时间。自动确认携带已观测内容版本，云端单次原子更新限制到 `min(当前版本, 观测版本)` 并保持游标单调，本地以相同观测版本限制清除未读；旧请求不清除后来内容及提醒。`test_delayed_read_acknowledges_only_the_observed_public_content`、API 游标回归和真实 MySQL 桌面场景保护该事务，CP 不变量不变。
 
 显式手动委托和持久会话不依赖自动接收条件：角色接收开关、项目订阅、标签、当前负责人及旧指派或提及均不限制用户启动、继续、重试会话或发布公开回复。未指定角色时沿用已有项目角色，没有项目配置也可使用默认角色；启动不自动改变 Issue 指派。当前确有本人指派时保留接收回执，缺少指派不阻止执行，也不代替其他人确认接收。请求来源仍与持久会话身份逐项核对，执行及公开仍验证当前角色存在、账号、项目和 Issue 访问权限。自动接收及后台跟进继续按用户配置选择工作。`issue_conversations_do_not_depend_on_intake_or_current_assignment`、`manual_issue_work_needs_no_assignment_or_intake_subscription` 和既有分身会话桌面场景覆盖该边界；CP 不变量不变。
