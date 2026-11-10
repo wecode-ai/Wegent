@@ -309,9 +309,6 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
-      await control.command('setLocalStorageItem', 'body', {
-        value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
-      })
       active = true
       let issueReference = null
       if (CLOUD_ONLY) {
