@@ -136,6 +136,29 @@ impl DeviceType {
     }
 }
 
+/// Source `app/services/device/identity.py::device_kind_type`.
+pub(crate) fn is_app_device(device: &DeviceKindRow) -> bool {
+    DeviceType::from_spec(&device.spec()) == DeviceType::App
+}
+
+/// `device_connection_route_id`: the transport identity used by the device's
+/// heartbeat connection (`app/services/device/identity.py:57`).
+pub(crate) fn device_connection_route_id(device: &DeviceKindRow) -> String {
+    if DeviceType::from_spec(&device.spec()) == DeviceType::Cloud {
+        let spec = device.spec();
+        let cloud = spec
+            .cloud_config
+            .as_ref()
+            .and_then(|config| config.device_id.clone());
+        return spec
+            .device_id
+            .filter(|value| !value.is_empty())
+            .or_else(|| cloud.filter(|value| !value.is_empty()))
+            .unwrap_or_else(|| device.name.clone());
+    }
+    record_route_id(device)
+}
+
 /// Source `app/services/device/identity.py::record_route_id`.
 pub(crate) fn record_route_id(device: &DeviceKindRow) -> String {
     if DeviceType::from_spec(&device.spec()) == DeviceType::App {

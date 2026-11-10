@@ -418,3 +418,75 @@ async fn a_snapshot_terminal_keeps_the_version_predicate() {
     // SET (7 + note) + updated_at/id/status/version.
     assert_eq!(*args, 12, "{sql}");
 }
+
+pub(crate) async fn verify_reconnect_projection(
+    mysql: &impl brz_mysql::Mysql,
+) -> anyhow::Result<()> {
+    const PROJECT: &str = "reconnect-fixture-project";
+    const ISSUE: &str = "reconnect-fixture-issue";
+    const AGENT: &str = "reconnect-fixture-agent";
+    mysql.execute(
+        "INSERT INTO loop_items(id, resource_type, description, metadata, created_at, updated_at) VALUES (?, 'project', '', JSON_OBJECT(), NOW(), NOW())",
+        (PROJECT,),
+    ).await?;
+    mysql.execute(
+        "INSERT INTO loop_items(id, resource_type, cloud_project_id, title, description, metadata, status, assignee_agent_id, created_at, updated_at) VALUES (?, 'task', ?, 'Reconnect issue', '', JSON_OBJECT(), 'in_progress', ?, NOW(), NOW()), (?, 'chat_agent', ?, 'Reconnect agent', '', JSON_OBJECT(), 'active', '', NOW(), NOW())",
+        (ISSUE, PROJECT, AGENT, AGENT, PROJECT),
+    ).await?;
+    let inserted = mysql.execute(
+        "INSERT INTO loop_item_executions(loop_item_id, cloud_project_id, agent_id, executor_owner_user_id, status, observed_state, runtime_device_id, runtime_task_id, execution_payload, error_message) VALUES (?, ?, ?, 7, 'running', 'running', 'fixture-device', 'fixture-conversation', '{}', '')",
+        (ISSUE, PROJECT, AGENT),
+    ).await?;
+    let execution_id = inserted.last_insert_id as i64;
+    let effects = mysql
+        .with_transaction(async |tx| {
+            let execution = runtime_projection::reload_execution(tx, execution_id)
+                .await?
+                .unwrap();
+            assert!(
+                runtime_projection::linked_activity(tx, &execution)
+                    .await?
+                    .is_none()
+            );
+            let snapshots = reported_snapshots(&json!({"success": true, "workspaces": [{"tasks": [
+                {"taskId": "fixture-conversation", "status": "completed", "running": false}
+            ]}]}))
+            .unwrap();
+            let status = truthy_text(snapshots["fixture-conversation"].get("status"));
+            apply_snapshot(tx, &execution, &status, false, None).await
+        })
+        .await?
+        .expect("the snapshot wins the terminal transition");
+    assert!(effects.changed);
+    assert_eq!(
+        effects.matched.as_ref().unwrap().status_or_empty(),
+        "completed"
+    );
+    assert_eq!(effects.messages.len(), 1);
+    assert_eq!(effects.messages[0].status, "completed");
+    assert!(effects.messages[0].metadata.0["runtime_completed_at"].is_string());
+    let issue = crate::background_jobs::project::store::get(mysql, "task", ISSUE)
+        .await?
+        .unwrap();
+    assert_eq!(issue.status, "in_review");
+    assert_eq!(issue.metadata.0["ai_state"]["status"], "completed");
+
+    let repeat = mysql
+        .with_transaction(async |tx| {
+            let execution = runtime_projection::reload_execution(tx, execution_id)
+                .await?
+                .unwrap();
+            let activity = runtime_projection::linked_activity(tx, &execution)
+                .await?
+                .unwrap();
+            assert_eq!(activity.message_id, effects.messages[0].message_id);
+            assert_eq!(activity.status, "completed");
+            apply_snapshot(tx, &execution, "completed", false, None).await
+        })
+        .await?;
+    assert!(
+        repeat.is_none(),
+        "duplicate snapshots must not produce lifecycle effects"
+    );
+    Ok(())
+}

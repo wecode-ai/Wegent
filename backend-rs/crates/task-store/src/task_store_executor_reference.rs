@@ -262,6 +262,9 @@ pub async fn create_subtask_pair_with_resolved_executor(
             let user_subtask_id =
                 insert_subtask_row_on(nested, subtasks_table, with_id, &request.user_subtask)
                     .await?;
+            if !request.has_assistant() {
+                return Ok((user_subtask_id, 0, None));
+            }
             let assistant_subtask_id =
                 insert_subtask_row_on(nested, subtasks_table, with_id, &assistant_subtask).await?;
             // `after_flush_postexec` reads the new assistant subtask's

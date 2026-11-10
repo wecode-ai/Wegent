@@ -72,7 +72,11 @@ pub fn bot_refs(team_json: &serde_json::Value) -> Vec<BotRef> {
         .filter_map(|member| {
             let bot_ref = member.get("botRef")?;
             let name = bot_ref.get("name")?.as_str()?.to_string();
-            let namespace = bot_ref.get("namespace")?.as_str()?.to_string();
+            let namespace = match bot_ref.get("namespace") {
+                Some(namespace) => namespace.as_str()?,
+                None => "default",
+            }
+            .to_string();
             Some(BotRef { namespace, name })
         })
         .collect()
@@ -624,6 +628,30 @@ pub async fn resolve_model_for_bot_with_override<R: Redis>(
     bot_name: &str,
     override_model_name: Option<&str>,
 ) -> Result<Option<KindRow>, ModelResolutionError> {
+    check_model_override(
+        mysql,
+        resolvers,
+        redis,
+        user_id,
+        bot_spec,
+        bot_name,
+        override_model_name,
+    )
+    .await?;
+    find_model_with_namespace(mysql, resolvers, redis, user_id, name, true)
+        .await
+        .map_err(ModelResolutionError::Mysql)
+}
+
+pub(super) async fn check_model_override<R: Redis>(
+    mysql: &MysqlService,
+    resolvers: &EntityResolvers<R>,
+    redis: Option<&R>,
+    user_id: i64,
+    bot_spec: &Value,
+    bot_name: &str,
+    override_model_name: Option<&str>,
+) -> Result<(), ModelResolutionError> {
     if let Some(override_name) = override_model_name.filter(|value| !value.is_empty())
         && let Some(allowed) =
             resolve_allowed_model_names(mysql, resolvers, redis, user_id, bot_spec).await?
@@ -633,9 +661,7 @@ pub async fn resolve_model_for_bot_with_override<R: Redis>(
             "Model '{override_name}' is not in the allowed models list for bot '{bot_name}'"
         )));
     }
-    find_model_with_namespace(mysql, resolvers, redis, user_id, name, true)
-        .await
-        .map_err(ModelResolutionError::Mysql)
+    Ok(())
 }
 
 /// `_resolve_allowed_model_names` (`model_resolver.py:569-614`): the bot's

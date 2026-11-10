@@ -340,7 +340,8 @@ fn automatic_next_stage(
     Some(stage + 1)
 }
 
-fn handoff_message(mode: &str, original: &str, result: &Value) -> String {
+/// Compose the selected pipeline handoff from the original request and stage output.
+pub fn handoff_message(mode: &str, original: &str, result: &Value) -> String {
     let mut parts = Vec::new();
     if matches!(mode, "original_user" | "original_and_previous") && !original.trim().is_empty() {
         parts.push(format!("Original user request:\n{}", original.trim()));
