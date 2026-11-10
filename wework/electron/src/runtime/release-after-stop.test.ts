@@ -7,23 +7,21 @@ import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release
 
 vi.mock('node:child_process', async importOriginal => {
   const original = await importOriginal<typeof import('node:child_process')>()
-  const { promisify } = await import('node:util')
   const { testNodeEnvironment } = await import('./test-helpers.js')
-  const execFile = Object.assign(vi.fn(), {
-    [promisify.custom]: (
-      command: string,
-      args: string[],
-      options: import('node:child_process').ExecFileOptions
-    ) => {
-      expect(options.timeout).toBe(0)
-      expect(options.env?.OPENAI_API_KEY).toBeUndefined()
-      return promisify(original.execFile)(process.execPath, [command, ...args], {
-        ...options,
-        env: testNodeEnvironment(options.env),
-      })
-    },
-  })
-  return { ...original, execFile }
+  const spawn = vi.fn(
+    (command: string, args: string[], options: import('node:child_process').SpawnOptions) => {
+      if (args[0]?.endsWith('release-after-stop-cli.js')) {
+        expect(options.detached).toBe(process.platform !== 'win32')
+        expect(options.env?.OPENAI_API_KEY).toBeUndefined()
+        return original.spawn(process.execPath, [command, ...args], {
+          ...options,
+          env: testNodeEnvironment(options.env),
+        })
+      }
+      return original.spawn(command, args, options)
+    }
+  )
+  return { ...original, spawn }
 })
 
 const roots: string[] = []
@@ -173,3 +171,45 @@ test('unacknowledged output cannot admit a trial or leak child diagnostics', asy
     assertReleaseAfterStopReady(store, target, { weworkAfterStopPreparation: 1 })
   ).rejects.toThrow('bridge updater')
 })
+
+test.skipIf(process.platform === 'win32')(
+  'failed preparation stops descendants after their leader exits',
+  async () => {
+    const { root, store, target, homes } = await fixture()
+    const workerFile = join(root, 'worker.json')
+    await writeFile(
+      target.executable,
+      `
+    const fs = require('node:fs')
+    const { spawn } = require('node:child_process')
+    const worker = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      env: process.env, stdio: 'ignore'
+    })
+    worker.on('spawn', () => {
+      fs.writeFileSync(${JSON.stringify(workerFile)}, JSON.stringify({pid: worker.pid, group: process.pid}))
+      process.stdout.write('invalid private acknowledgment')
+      worker.unref()
+    })
+  `
+    )
+    try {
+      await expect(prepareReleaseAfterStop(store, target, root, homes)).rejects.toThrow(
+        'healthy release will recover'
+      )
+      const worker = JSON.parse(await readFile(workerFile, 'utf8'))
+      expect(() => process.kill(worker.pid, 0)).toThrow()
+      await expect(readFile(join(store.root, 'after-stop-ready.json'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    } finally {
+      const worker = JSON.parse(await readFile(workerFile, 'utf8'))
+      for (const pid of [-worker.group, worker.pid]) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch (error) {
+          expect(error).toMatchObject({ code: 'ESRCH' })
+        }
+      }
+    }
+  }
+)
