@@ -183,6 +183,9 @@ pub(crate) enum DispatchOutcome {
     /// The dispatch never reached or never answered the device; the value is
     /// the source's `str(exc)` replacement.
     Failure(&'static str),
+    /// Shutdown interrupted the source's pending callback wait, so the source
+    /// never produces (or persists) a sync result for this registration.
+    Cancelled,
 }
 
 /// Dispatch one `device:sync_capabilities` payload to a live socket.
@@ -204,7 +207,9 @@ pub(crate) trait CapabilityDispatch {
 ///
 /// Returns `None` when a desired-state build failed (the source's outer
 /// best-effort handler logs and stops); `include_plugins` chooses the payload
-/// shape and whether the round trip is persisted.
+/// shape and whether the round trip is persisted. A device that advertises the
+/// versioned plugin protocol receives a `plugin_sync` snapshot instead of the
+/// legacy desired-state payload.
 pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
     state: &AppState,
     user_id: i64,
@@ -212,13 +217,14 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
     include_plugins: bool,
     dispatch: &D,
 ) -> Option<SyncResult> {
-    if include_plugins {
-        // `sync_current_device_capabilities` resolves the route once before the
-        // build to negotiate the plugin protocol.
-        supports_plugin_delta(state, user_id, device_id).await;
-    }
+    // `sync_current_device_capabilities`: the route is resolved once before
+    // the build to negotiate the plugin protocol; the result selects the
+    // versioned loader for every build and reload in this round trip.
+    let versioned = include_plugins && supports_plugin_delta(state, user_id, device_id).await;
     let mut payload =
-        match build_registration_payload(state, user_id, device_id, include_plugins).await {
+        match build_registration_payload(state, user_id, device_id, include_plugins, versioned)
+            .await
+        {
             Ok(payload) => payload,
             Err(()) => return None,
         };
@@ -227,13 +233,44 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
         let route = match resolve_online_route(state, user_id, device_id).await {
             Ok(OnlineRouteResolution::Ready(route)) => route,
             Ok(OnlineRouteResolution::Unavailable(reason)) => {
-                return Some(SyncResult::failure(device_id, None, reason));
+                return Some(snapshot_failure(device_id, &payload, versioned, reason));
             }
             Err(error) => {
                 tracing::error!(?error, user_id, "registration capability route read failed");
                 return None;
             }
         };
+        if versioned
+            && !super::plugin_sync_protocol::supports_plugin_sync_v2(
+                route.online.get("runtime_features"),
+            )
+        {
+            return Some(snapshot_failure(
+                device_id,
+                &payload,
+                versioned,
+                "Device plugin sync capability changed; retry synchronization",
+            ));
+        }
+        if versioned
+            && let Err(error) = super::plugin_sync_protocol::register_plugin_snapshot_intent(
+                state, user_id, device_id, &payload,
+            )
+            .await
+        {
+            tracing::error!(
+                %error,
+                user_id,
+                device_id,
+                "plugin snapshot intent registration failed"
+            );
+            return Some(snapshot_failure(
+                device_id,
+                &payload,
+                versioned,
+                &error.to_string(),
+            ));
+        }
         let mut dispatch_payload = payload.clone();
         if let Value::Object(object) = &mut dispatch_payload {
             object.insert(
@@ -241,7 +278,7 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
                 Value::String(route.runtime_device_id),
             );
         }
-        let result = match dispatch
+        let mut result = match dispatch
             .dispatch(
                 &route.socket_id,
                 &dispatch_payload,
@@ -249,14 +286,31 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
             )
             .await
         {
-            DispatchOutcome::Ack(args) => SyncResult::from_ack(device_id, ack_argument(&args)),
+            DispatchOutcome::Ack(args) => {
+                let ack = ack_argument(&args);
+                if versioned
+                    && let Some(error) =
+                        super::plugin_sync_protocol::validate_plugin_ack(&payload, ack)
+                {
+                    return Some(snapshot_failure(device_id, &payload, versioned, error));
+                }
+                SyncResult::from_ack(device_id, ack)
+            }
             DispatchOutcome::Failure(reason) => SyncResult::failure(device_id, None, reason),
+            // The process is stopping, so the source's callback wait never
+            // reaches a result and nothing may be persisted.
+            DispatchOutcome::Cancelled => return None,
         };
+        if versioned {
+            result.desired_plugin_snapshot = Some(payload.clone());
+        }
         if !result.acknowledged {
             return Some(result);
         }
         let latest =
-            match build_registration_payload(state, user_id, device_id, include_plugins).await {
+            match build_registration_payload(state, user_id, device_id, include_plugins, versioned)
+                .await
+            {
                 Ok(payload) => payload,
                 Err(()) => return None,
             };
@@ -278,21 +332,43 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
     ))
 }
 
+/// One failed versioned round trip; the source keeps the desired snapshot so
+/// the result recording can still fence the acknowledged generation.
+fn snapshot_failure(device_id: &str, payload: &Value, versioned: bool, error: &str) -> SyncResult {
+    let mut result = SyncResult::failure(device_id, None, error);
+    if versioned {
+        result.desired_plugin_snapshot = Some(payload.clone());
+    }
+    result
+}
+
 /// One registration-time desired-state build; a failure stops the follow-up.
 async fn build_registration_payload(
     state: &AppState,
     user_id: i64,
     device_id: &str,
     include_plugins: bool,
+    versioned: bool,
 ) -> Result<Value, ()> {
-    match build_desired_capabilities_for_registration(
-        &state.mysql,
-        user_id,
-        device_id,
-        include_plugins,
-    )
-    .await
-    {
+    let built = if versioned {
+        super::plugin_sync_protocol::load_versioned_registration_payload(
+            state,
+            user_id,
+            device_id,
+            include_plugins,
+            true,
+        )
+        .await
+    } else {
+        build_desired_capabilities_for_registration(
+            &state.mysql,
+            user_id,
+            device_id,
+            include_plugins,
+        )
+        .await
+    };
+    match built {
         Ok(payload) => Ok(payload),
         Err(error) => {
             log_build_error(user_id, &error);

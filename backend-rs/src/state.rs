@@ -34,6 +34,8 @@ pub struct AppState {
     /// application whose deployment keeps placeholder Git credentials registers
     /// its own implementation before route construction.
     pub user_git_info_mask: Arc<dyn crate::user_profile::UserGitInfoMasker>,
+    /// Deployment patch applied to the execution request's `user` object.
+    pub user_info_extension: Arc<dyn crate::user_profile::UserInfoExtension>,
     pub media_policy: Arc<dyn crate::media_policy::MediaPolicy>,
     /// `_stream_external_attachment`: the registered external media playback
     /// resolvers and their relay. The public default resolves nothing.

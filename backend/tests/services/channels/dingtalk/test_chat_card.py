@@ -729,8 +729,6 @@ async def test_runtime_follow_up_uses_original_address_without_switching_session
         "get_or_create_private_session",
         AsyncMock(return_value=session),
     )
-    clear = AsyncMock()
-    monkeypatch.setattr(im_session_service, "clear_active_task", clear)
     monkeypatch.setattr(
         handler,
         "_create_private_im_runtime_streaming_emitter",
@@ -758,7 +756,6 @@ async def test_runtime_follow_up_uses_original_address_without_switching_session
         assert upload.call_args.kwargs["subtask_id"] == 0
         assert upload.call_args.kwargs["user_id"] == 9
     assert context.extra_data["card_runtime_task"] == binding.runtime_task
-    clear.assert_not_called()
     assert session.active_runtime_task["localTaskId"] == "new-task"
 
 
@@ -998,3 +995,140 @@ def test_each_custom_card_has_separate_shared_content(config, binding):
     a.set_shared_content_key("channel:streaming_content:101")
     b.set_shared_content_key("channel:streaming_content:101")
     assert a._shared_content_key != b._shared_content_key
+
+
+@pytest.mark.asyncio
+async def test_private_card_run_uses_stand_in_and_does_not_report_a_second_failure(
+    monkeypatch, binding
+):
+    from unittest.mock import MagicMock
+
+    binding.incoming_data["conversationType"] = "1"
+    handler = DingTalkChannelHandler(channel_id=77)
+    handler.resolve_user = AsyncMock(
+        return_value=SimpleNamespace(id=9, user_name="Alice")
+    )
+    receiver = DingTalkCardCallbackHandler(handler)
+    receiver._uses_stand_in = AsyncMock(return_value=True)
+    receiver._continue_stand_in = AsyncMock(return_value=False)
+    receiver._continue_runtime = AsyncMock()
+    receiver._continue_task = AsyncMock()
+    receiver._report_error = AsyncMock()
+    lock = SimpleNamespace(acquire=AsyncMock(return_value=True), release=AsyncMock())
+    redis = SimpleNamespace(lock=Mock(return_value=lock), aclose=AsyncMock())
+    monkeypatch.setattr(
+        card_follow_up,
+        "cache_manager",
+        SimpleNamespace(_get_client=AsyncMock(return_value=redis)),
+    )
+    db = MagicMock()
+    monkeypatch.setattr(card_follow_up, "SessionLocal", lambda: db)
+    result = await receiver._run(
+        binding, card_follow_up.CardFollowUp("continue", []), "event-private"
+    )
+    assert result is False
+    receiver._continue_stand_in.assert_awaited_once()
+    receiver._continue_runtime.assert_not_awaited()
+    receiver._continue_task.assert_not_awaited()
+    receiver._report_error.assert_not_awaited()
+    lock.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime", [False, True])
+async def test_private_card_preserves_server_owned_task_as_context_only(
+    monkeypatch, binding, runtime
+):
+    from app.services.im import stand_in_service
+    from app.services.im.session_service import im_session_service
+
+    binding.incoming_data["conversationType"] = "1"
+    if runtime:
+        binding.runtime_task = {
+            "deviceId": "original",
+            "localTaskId": "original-task",
+            "modelSelection": {"modelName": "old-model"},
+        }
+    handler = DingTalkChannelHandler(channel_id=77)
+    receiver = DingTalkCardCallbackHandler(handler)
+    receiver._load_images = AsyncMock()
+    context = receiver._context(binding, "continue", "card-event")
+    session = SimpleNamespace(session_key="private")
+    monkeypatch.setattr(
+        im_session_service,
+        "get_or_create_private_session",
+        AsyncMock(return_value=session),
+    )
+    send = AsyncMock(return_value=False)
+    monkeypatch.setattr(stand_in_service, "send_stand_in_message", send)
+    assert (
+        await receiver._continue_stand_in(
+            Mock(), SimpleNamespace(id=9), binding, context
+        )
+        is False
+    )
+    expected = (
+        {"deviceId": "original", "taskId": "original-task"}
+        if runtime
+        else {"storage": "backend", "taskId": 101}
+    )
+    assert context.extra_data["im_card_task_reference"] == expected
+    assert "modelSelection" not in context.extra_data["im_card_task_reference"]
+    send.assert_awaited_once()
+
+
+def test_private_wegent_pending_submission_is_recoverable(monkeypatch, binding):
+    from unittest.mock import MagicMock
+
+    from app.models.subtask import SubtaskStatus
+    from app.models.task import TaskResource
+    from app.services.channels.dingtalk.card_execution import CardTaskExecution
+    from app.stores.tasks import subtask_store, task_store
+
+    binding.incoming_data["conversationType"] = "1"
+    handler = DingTalkChannelHandler(channel_id=77)
+    receiver = DingTalkCardCallbackHandler(handler)
+    db = MagicMock()
+    monkeypatch.setattr(card_follow_up, "SessionLocal", lambda: db)
+    message = SimpleNamespace(
+        id=301,
+        task_id=101,
+        prompt="continue",
+        message_id="user-message",
+        sender_user_id=9,
+        user_id=9,
+        result={"source": {"source": "im"}},
+    )
+    pending = SimpleNamespace(id=202, status=SubtaskStatus.PENDING)
+    task = TaskResource(
+        id=101,
+        user_id=9,
+        kind="Task",
+        name="wegent-chat",
+        namespace="default",
+        client_origin="frontend",
+        is_group_chat=False,
+        json={
+            "metadata": {"labels": {}},
+            "spec": {"title": "Wegent chat", "taskType": "chat"},
+        },
+    )
+    lookup = Mock(return_value=message)
+    monkeypatch.setattr(subtask_store, "get_user_by_task_source_message", lookup)
+    monkeypatch.setattr(
+        subtask_store, "get_by_task_parent_id_and_role", Mock(return_value=pending)
+    )
+    monkeypatch.setattr(task_store, "get_by_id", Mock(return_value=task))
+    record = CardActionRecord(
+        event_id="private-event",
+        track_id="card-a",
+        binding=binding,
+        text="continue",
+        image_urls=[],
+        state="running",
+    )
+    execution = receiver._recover_submission(record)
+    assert isinstance(execution, CardTaskExecution)
+    assert execution.task_id == 101 and execution.subtask_id == 202
+    assert execution.params.client_origin == "frontend"
+    assert lookup.call_args.kwargs["message_id"] == "private-event"

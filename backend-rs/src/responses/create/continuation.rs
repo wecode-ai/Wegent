@@ -224,7 +224,9 @@ mod tests {
     }
 
     /// `resolve` reads the previous Task through the caller's request handle:
-    /// the `tasks`-shard active-owned statement with `(task_id, owner)`.
+    /// the `tasks`-shard active-owned ORM projection with `(task_id, owner)`.
+    /// The transaction renders the recorded labelled projection since the chat
+    /// transaction moved onto it (`get_active_task_owned_on`).
     #[tokio::test]
     async fn continuation_lookup_uses_the_request_transaction_handle() {
         let store = crate::task_store::DefaultTaskStore::new(
@@ -249,7 +251,9 @@ mod tests {
         );
         assert_eq!(
             calls[0].1,
-            crate::task_store::active_task_owned_statement(crate::task_store::TASKS_TABLE)
+            crate::task_store_statements::active_task_owned_labeled_statement(
+                crate::task_store::TASKS_TABLE
+            )
         );
         assert_eq!(calls[0].2, 2, "binds (task_id, owner_user_id)");
     }

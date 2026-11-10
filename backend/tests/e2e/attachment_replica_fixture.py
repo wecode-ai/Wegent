@@ -316,6 +316,7 @@ def gateway(fixture: ReplicaFixture, report: Path) -> Iterator[httpx.Client]:
         "EMBEDDED_CELERY_ENABLED": "false",
         "SCHEDULED_TASKS_ENABLED": "false",
         "ATTACHMENT_STORAGE_BACKEND": "mysql",
+        "MEMORY_ENABLED": "true",
         "RUST_LOG": "info",
     }
     with (report / "gateway.log").open("w") as log:
