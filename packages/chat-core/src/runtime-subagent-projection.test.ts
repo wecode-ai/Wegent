@@ -3,7 +3,10 @@ import type {
   RuntimeConversationItem,
   RuntimeConversationTurn,
 } from "./runtime-conversation";
-import { projectRuntimeConversationTurns } from "./runtime-turns";
+import {
+  projectRuntimeConversationTurns,
+  reduceRuntimeConversationTurns,
+} from "./runtime-turns";
 import { nestWorkbenchProcessingBlocks } from "./workbench-message-reducer";
 
 const parent: RuntimeConversationItem = {
@@ -60,6 +63,58 @@ const turn = (
   id,
   status: "streaming",
   items,
+});
+
+test("parent completion preserves a child thread that is still running after guidance", () => {
+  const completed = reduceRuntimeConversationTurns(
+    [turn("root", [parent, guidance])],
+    {
+      type: "assistant_done",
+      subtaskId: "root",
+      content: "Root reply",
+    },
+  );
+  expect(completed[0].status).toBe("done");
+  expect(
+    projectRuntimeConversationTurns(completed)[0].blocks?.[0],
+  ).toMatchObject({
+    id: "subagent-worker",
+    agentThreadId: "worker",
+    status: "streaming",
+  });
+  const lateChild = children[0];
+  if (lateChild.type !== "block") throw new Error("Expected a child block");
+  const appended = reduceRuntimeConversationTurns(completed, {
+    type: "block_created",
+    subtaskId: "root",
+    block: lateChild.block,
+  });
+  expect(appended[0].status).toBe("done");
+  const updated = reduceRuntimeConversationTurns(appended, {
+    type: "block_updated",
+    subtaskId: "root",
+    blockId: lateChild.block.id,
+    updates: { status: "streaming", contentDelta: " continues" },
+  });
+  expect(updated[0].status).toBe("done");
+  expect(projectRuntimeConversationTurns(updated)[0].blocks?.[0]).toMatchObject(
+    {
+      children: [
+        expect.objectContaining({ content: "child text output continues" }),
+      ],
+    },
+  );
+  const childCompleted = reduceRuntimeConversationTurns(completed, {
+    type: "block_updated",
+    subtaskId: "root",
+    blockId: "subagent-worker",
+    updates: { status: "done" },
+  });
+  expect(
+    projectRuntimeConversationTurns(childCompleted)[0].blocks?.[0],
+  ).toMatchObject({
+    status: "done",
+  });
 });
 
 test.each(["same turn", "next turn"])(

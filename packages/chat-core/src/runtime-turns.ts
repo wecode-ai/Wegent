@@ -473,13 +473,15 @@ export function reduceRuntimeConversationTurns(
         return {
           ...turn,
           ...boundVisibleRuntimeProcessingBlocks(turn, items),
-          ...(!isTerminalProcessingBlockStatus(action.block.status) && {
-            status: "streaming" as const,
-            completedAt: undefined,
-            error: undefined,
-            errorType: undefined,
-            stoppedNotice: undefined,
-          }),
+          ...(!action.block.parentToolUseId &&
+            !(action.block.type === "subagent" && action.block.agentThreadId) &&
+            !isTerminalProcessingBlockStatus(action.block.status) && {
+              status: "streaming" as const,
+              completedAt: undefined,
+              error: undefined,
+              errorType: undefined,
+              stoppedNotice: undefined,
+            }),
           streamingThinkingContent:
             action.block.type === "thinking" || action.block.type === "tool"
               ? getLatestThinkingContent(processingBlocks(items))
@@ -519,7 +521,10 @@ export function reduceRuntimeConversationTurns(
           ...(action.updates.status !== undefined &&
             !(
               previousBlock?.type === "block" &&
-              commandExecutionPayload(previousBlock.block)
+              (commandExecutionPayload(previousBlock.block) ||
+                previousBlock.block.parentToolUseId ||
+                (previousBlock.block.type === "subagent" &&
+                  previousBlock.block.agentThreadId))
             ) &&
             !isTerminalProcessingBlockStatus(action.updates.status) && {
               status: "streaming" as const,

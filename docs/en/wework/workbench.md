@@ -250,6 +250,8 @@ After a parent agent starts a subagent, the subagent activity remains anchored a
 
 If you send another message to the main conversation or start the next turn while a subagent is running, its later output still belongs to the original subagent activity and does not appear as the parent agent's prose. When history loads in pages, child content joins its owning activity after that activity loads.
 
+A subagent with its own thread finishes on its own completion event and can keep streaming after the parent reply ends. Later child output does not restart the completed parent reply; the panel loads its complete history after the child finishes.
+
 Click a subagent activity to view its execution in the right workspace. The panel shows model-provided reasoning summaries, progress messages, tool calls, and results in order. Content updates live while the subagent runs, and saved process content remains available after completion or reloading the task.
 
 ## Navigate long conversations

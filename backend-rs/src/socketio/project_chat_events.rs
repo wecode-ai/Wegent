@@ -15,11 +15,6 @@
 //! targets a missing project task, and the AI comment-execution pipeline
 //! (loop item assignments, robot queue) remains a documented remainder.
 //!
-//! Additional remainders, none exercised by the recorded case: mention
-//! validation/notification rows for non-empty `mentions`, loop-item
-//! `change_request`/`ai_state` side effects for task-thread messages, the
-//! subscribe catch-up pagination loop, and `_reconcile_ai_run_projection`.
-
 use std::sync::Arc;
 
 use brz_mysql::MysqlTransaction;
@@ -29,10 +24,9 @@ use serde_json::{Map, Value, json};
 use super::project_chat_mentions::{self, Mention};
 use super::project_chat_messages::{
     InsertMessage, existing_agent_response, existing_client_message, insert_message,
-    load_active_agent_response, load_agent, load_message_by_id, load_message_by_message_id,
-    load_messages, load_trigger, load_user_message, message_view, metadata_map,
-    project_task_exists, runtime_activity_key, update_message, utc_isoformat_micros, uuid4,
-    validate_agent,
+    load_active_agent_response, load_agent, load_message_by_id, load_messages, load_trigger,
+    load_user_message, message_view, metadata_map, project_task_exists, runtime_activity_key,
+    update_message, utc_isoformat_micros, uuid4, validate_agent,
 };
 use crate::background_jobs::project::notifications;
 use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectAccess, has_permission};
@@ -44,6 +38,9 @@ use crate::socketio::device_runtime_event::{
 };
 use crate::socketio::runtime::SocketRuntime;
 use crate::state::AppState;
+
+#[path = "project_chat_reply.rs"]
+mod reply;
 
 /// `PROJECT_CHAT_SEND`'s defaults and bounds.
 const CONTENT_MAX: usize = 100_000;
@@ -338,18 +335,20 @@ async fn send_message(
         }
         return Ok((message_view(&existing), false));
     }
-    let reply = resolve_reply(state, request).await?;
+    let reply = reply::resolve(state, request).await?;
+    let mut mentions = request.mentions.clone();
+    let mut metadata = Map::new();
+    reply.apply_stand_in(&mut mentions, &mut metadata);
     let (recipients, mut target) = project_chat_mentions::recipients(
         state,
         user_id,
         access,
         request.task_id.as_deref(),
-        &request.mentions,
+        &mentions,
     )
     .await?;
-    let mut metadata = Map::new();
-    metadata.insert("mentions".into(), json!(request.mentions));
-    if !request.mentions.is_empty() && request.mentions.iter().all(Mention::is_user) {
+    metadata.insert("mentions".into(), json!(mentions));
+    if !mentions.is_empty() && mentions.iter().all(Mention::is_user) {
         metadata.insert("execution_dispatch".into(), json!("comment_only"));
     }
     if let Some(model) = &request.model {
@@ -368,8 +367,8 @@ async fn send_message(
         content: &request.content,
         metadata: Value::Object(metadata),
         trigger_message_id: "",
-        reply_to_message_id: reply.0.as_deref().unwrap_or_default(),
-        thread_root_message_id: reply.1.as_deref().unwrap_or_default(),
+        reply_to_message_id: reply.reply_to.as_deref().unwrap_or_default(),
+        thread_root_message_id: reply.root.as_deref().unwrap_or_default(),
         agent_id: "",
         runtime_device_id: "",
         runtime_task_id: "",
@@ -387,7 +386,7 @@ async fn send_message(
     target["actorName"] = json!(user_name);
     target["commentId"] = json!(message_id);
     target["commentPreview"] = json!(preview);
-    if let Some(reply_preview) = reply.2.filter(|preview| !preview.is_empty()) {
+    if let Some(reply_preview) = reply.preview.filter(|preview| !preview.is_empty()) {
         target["replyPreview"] = json!(reply_preview);
     }
     let (saved, pending) = state
@@ -476,39 +475,6 @@ async fn send_message(
         notifications::deliver(state, notification).await;
     }
     Ok((message_view(&saved), true))
-}
-
-/// The reply target's `(reply_to_message_id, thread_root_message_id)`.
-async fn resolve_reply(
-    state: &AppState,
-    request: &SendRequest,
-) -> Result<(Option<String>, Option<String>, Option<String>), Value> {
-    let Some(reply_to) = request.reply_to_message_id.as_deref() else {
-        return Ok((None, None, None));
-    };
-    let Some(target) = load_message_by_message_id(state, &request.project_id, reply_to).await?
-    else {
-        return Err(ack_error(
-            "SCOPE_NOT_FOUND",
-            "reply target message not found",
-        ));
-    };
-    if target.task_id != request.task_id.clone().unwrap_or_default() {
-        return Err(ack_error(
-            "INVALID_MESSAGE",
-            "reply target belongs to a different task thread",
-        ));
-    }
-    let root = if target.thread_root_message_id.is_empty() {
-        target.message_id.clone()
-    } else {
-        target.thread_root_message_id.clone()
-    };
-    Ok((
-        Some(reply_to.to_string()),
-        Some(root),
-        Some(project_chat_mentions::preview(&target.content)),
-    ))
 }
 
 /// `on_project_chat_agent_start`.
