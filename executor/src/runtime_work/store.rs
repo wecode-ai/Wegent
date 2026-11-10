@@ -44,6 +44,9 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "standInOwnerRequest",
     "standInResult",
     "standInResultReceipt",
+    "standInIssueWakeups",
+    "standInPublicTurn",
+    "standInIssueReplies",
     "overloadRecoveryTurnIds",
     "runtime",
     "supersededTranscriptTurnIds",
@@ -76,6 +79,8 @@ struct RuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, RuntimeTaskLink>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
+    issue_conversations: HashMap<String, String>,
+    deleted_issue_wakeups: HashMap<String, Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -86,6 +91,8 @@ struct PersistedRuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, PersistedRuntimeTask>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
+    issue_conversations: HashMap<String, String>,
+    deleted_issue_wakeups: HashMap<String, Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -494,20 +501,21 @@ impl RuntimeWorkStore {
         deleted
     }
 
-    pub fn mark_deleted_archived_task_ids(&self, task_ids: impl IntoIterator<Item = String>) {
-        self.refresh_index_from_disk_if_changed();
-        let Some(mut index) = self.index.lock().ok() else {
-            return;
-        };
+    pub fn mark_deleted_archived_task_ids(
+        &self,
+        task_ids: impl IntoIterator<Item = String>,
+    ) -> io::Result<()> {
         let now_ms = current_time_ms();
-        for task_id in task_ids {
-            if !task_id.trim().is_empty() {
-                index.deleted_archived_task_ids.insert(task_id, now_ms);
+        self.change_issue_index(|index| {
+            for task_id in task_ids {
+                if !task_id.trim().is_empty() {
+                    snapshot_deleted_issue_wakeups(index, &task_id);
+                    index.deleted_archived_task_ids.insert(task_id, now_ms);
+                }
             }
-        }
-        prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
-        drop(index);
-        self.persist_current_index();
+            prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
+            Ok(true)
+        })
     }
 
     pub fn unmark_deleted_archived_task_ids(&self, task_ids: &[String]) {
@@ -763,6 +771,8 @@ fn persisted_index_into_runtime(persisted: PersistedRuntimeWorkIndex) -> Runtime
             .map(|(task_id, task)| (task_id, task.into_runtime()))
             .collect(),
         workspaces: persisted.workspaces,
+        issue_conversations: persisted.issue_conversations,
+        deleted_issue_wakeups: persisted.deleted_issue_wakeups,
         deleted_archived_task_ids: persisted.deleted_archived_task_ids,
     }
 }
@@ -780,6 +790,8 @@ fn merge_persisted_index(current: &mut RuntimeWorkIndex, persisted: PersistedRun
     }
     current.version = persisted.version;
     current.workspaces = persisted.workspaces;
+    current.issue_conversations = persisted.issue_conversations;
+    current.deleted_issue_wakeups = persisted.deleted_issue_wakeups;
     current.deleted_archived_task_ids = persisted.deleted_archived_task_ids;
 }
 
@@ -794,6 +806,8 @@ fn serialize_index(index: &RuntimeWorkIndex) -> Result<Vec<u8>, serde_json::Erro
             .map(|(task_id, task)| (task_id.clone(), PersistedRuntimeTask::from_runtime(task)))
             .collect(),
         workspaces: index.workspaces.clone(),
+        issue_conversations: index.issue_conversations.clone(),
+        deleted_issue_wakeups: index.deleted_issue_wakeups.clone(),
         deleted_archived_task_ids,
     })
 }
@@ -979,3 +993,6 @@ fn executor_home() -> PathBuf {
 
 #[cfg(test)]
 mod tests;
+
+mod issue_conversations;
+use issue_conversations::snapshot_deleted_issue_wakeups;

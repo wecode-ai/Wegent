@@ -59,6 +59,8 @@ import {
 export function AssistantMessage({
   imageServices,
   renderVisualization,
+  assistantMessageStyle = "plain",
+  showProcessingStatus = true,
   message,
   runtimeTurn,
   conversationKey,
@@ -82,6 +84,8 @@ export function AssistantMessage({
   onFork,
 }: {
   imageServices: AttachmentImageServices<Attachment>;
+  assistantMessageStyle?: "plain" | "bubble";
+  showProcessingStatus?: boolean;
   renderVisualization?: (
     part: { file: string; mode?: "wide"; title?: string },
     message: WorkbenchMessage,
@@ -127,7 +131,7 @@ export function AssistantMessage({
   const interactions = useToolInteractionServices();
   const isCancelled = isCancelledAssistantMessage(message);
   const stoppedElapsedDuration =
-    isCancelled && message.stoppedNotice !== false
+    showProcessingStatus && isCancelled && message.stoppedNotice !== false
       ? getStoppedElapsedDuration(message, runtimeTurn)
       : null;
   const shouldShowStoppedNotice =
@@ -194,6 +198,7 @@ export function AssistantMessage({
     expandedToolDetailStateKeys,
   );
   const usesFinalProcessingShell =
+    showProcessingStatus &&
     hasBlocks &&
     !isAssistantRunning &&
     !isActiveTurn &&
@@ -303,6 +308,11 @@ export function AssistantMessage({
               data-runtime-item-id={segment.id}
               data-message-selectable-text
               data-testid="assistant-message-content"
+              className={
+                assistantMessageStyle === "bubble"
+                  ? "w-fit max-w-full rounded-3xl bg-muted px-4 py-3"
+                  : undefined
+              }
               data-search-region-id={segment.id}
             >
               <AssistantMarkdown
@@ -412,7 +422,8 @@ export function AssistantMessage({
                 : t("assistant_status.stopped")}
             </div>
           ) : null}
-          {(hasProcessingActivity ||
+          {showProcessingStatus &&
+          (hasProcessingActivity ||
             (message.status === "failed" && hasTurnDuration)) &&
           !isCancelled &&
           !usesFinalProcessingShell ? (
@@ -458,7 +469,7 @@ export function AssistantMessage({
               </Fragment>
             ) : null,
           )}
-          {shouldShowThinking && !hasVisibleContent && (
+          {showProcessingStatus && shouldShowThinking && !hasVisibleContent && (
             <AssistantThinkingIndicator content={activeThinkingContent} />
           )}
           {generatedImages.length > 0 ? (
@@ -476,6 +487,11 @@ export function AssistantMessage({
               }
               data-message-selectable-text
               data-testid="assistant-message-content"
+              className={
+                assistantMessageStyle === "bubble"
+                  ? "w-fit max-w-full rounded-3xl bg-muted px-4 py-3"
+                  : undefined
+              }
               data-search-region-id={renderProjection.finalRegion.id}
             >
               <AssistantMarkdown

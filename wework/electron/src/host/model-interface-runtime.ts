@@ -1,4 +1,14 @@
-import type { ResolvedProviderModel } from './model-configuration-contract.js'
+import type { ProviderModel, ResolvedProviderModel } from './model-configuration-contract.js'
+
+/** Default configured APIs to portable tools; native tools require an explicit selection. */
+export function modelInterfaceToolProfile(config: {
+  apiFormat: string
+  providerProfileId?: string
+  toolProfile?: string | null
+}): NonNullable<ProviderModel['tool_profile']> {
+  const value = config.toolProfile
+  return value === 'custom' || value === 'function' || value === 'shell' ? value : 'function'
+}
 
 /** Normalized settings shared by ordinary tasks and device-owned runner models. */
 export interface ModelInterfaceRuntimeInput {
@@ -11,6 +21,7 @@ export interface ModelInterfaceRuntimeInput {
   requestUrl?: string
   apiKey?: string
   toolProfile?: string
+  providerProfileId?: string
   codexToolCompatibility?: string
   codexCatalogModelId?: string
   contextWindow?: number
@@ -30,7 +41,7 @@ export function modelInterfaceRuntimeConfig(
   reasoningEffort: string | null = null
 ): Record<string, unknown> {
   const nativeTools =
-    config.apiFormat === 'openai-responses' && config.codexToolCompatibility !== 'standard'
+    config.apiFormat === 'openai-responses' && config.codexToolCompatibility === 'native'
   const requestPath =
     config.requestPath ??
     (config.apiFormat === 'anthropic-messages'
@@ -50,7 +61,7 @@ export function modelInterfaceRuntimeConfig(
     upstream_api_format: config.apiFormat,
     native_tool_search: nativeTools,
     native_namespace_tools: nativeTools,
-    tool_profile: config.toolProfile,
+    tool_profile: modelInterfaceToolProfile(config),
     protocol: 'openai-responses',
     base_url: config.baseUrl,
     responses_url: config.requestUrl ?? `${config.baseUrl.replace(/\/+$/, '')}${requestPath}`,
@@ -86,9 +97,8 @@ export function modelInterfaceRunnerModels(entries: ResolvedProviderModel[]) {
         ? undefined
         : provider.request_path),
     apiKey: provider.api_key,
-    toolProfile:
-      model.tool_profile ??
-      ((model.api_format ?? provider.api_format) === 'openai-responses' ? 'custom' : 'function'),
+    toolProfile: model.tool_profile,
+    providerProfileId: model.provider_profile_id,
     codexToolCompatibility: model.codex_tool_compatibility,
     codexCatalogModelId:
       model.codex_catalog_model_id ??

@@ -724,8 +724,14 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
+      - name: Restore verified Electron installer cache
+        if: matrix.shard == 1
+        uses: ./.github/actions/prepare-electron-installer-cache
+
       - name: Prepare Wework Electron dependencies
         if: matrix.shard == 1
+        env:
+          WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: pnpm --filter wework prepare:electron
 
       - name: Install Wework host modules for renderer fixtures

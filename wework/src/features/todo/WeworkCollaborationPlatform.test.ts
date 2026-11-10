@@ -2380,6 +2380,31 @@ describe('Wework collaboration workspace API', () => {
     expect(cloudAdd).not.toHaveBeenCalled()
   })
 
+  it('preserves the unresolved identity of a visible local device placeholder', async () => {
+    const detailServices = createLocalDetailServices()
+    vi.mocked(detailServices.deviceApi.listDevices).mockResolvedValueOnce([
+      {
+        id: 0,
+        device_id: 'local-device',
+        name: 'Local Executor',
+        device_type: 'local',
+        status: 'offline',
+        is_default: true,
+        bind_shell: 'claudecode',
+        local_identity_unresolved: true,
+      },
+    ])
+    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)!
+
+    await expect(api.resources?.devices.local?.()).resolves.toEqual([
+      expect.objectContaining({
+        device_key: 'local-device',
+        status: 'offline',
+        local_identity_unresolved: true,
+      }),
+    ])
+  })
+
   it('keeps the local resource catalog available when default-Agent provisioning fails', async () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const detailServices = {

@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { extractRuntimeArchive } from '../../../scripts/lib/extract-runtime-archive.mjs'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
+import { fetchGithubReleaseAsset } from './github-release-asset.mjs'
 import { appendProcessOutput, stopProcessGroup } from './shared.mjs'
 
 const execute = promisify(execFile)
@@ -60,7 +61,7 @@ export const HISTORICAL_PLUGIN_UPDATE = {
   },
 }
 
-async function historicalComponent(release, component, directory) {
+async function historicalComponent(release, component, directory, token) {
   const platform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform]
   assert.ok(platform)
   const sha256 =
@@ -75,10 +76,12 @@ async function historicalComponent(release, component, directory) {
     assert.equal(await hashReleaseAsset(archive), sha256, 'Historical component bytes changed')
   } catch (error) {
     if (error.code !== 'ENOENT') throw error
-    const response = await fetch(
-      `https://github.com/${repository}/releases/download/wework-v${release.version}/${asset}`,
-      { signal: AbortSignal.timeout(120_000) }
-    )
+    const response = await fetchGithubReleaseAsset({
+      repository,
+      tag: `wework-v${release.version}`,
+      name: asset,
+      token,
+    })
     assert.ok(response.ok, `Historical plugin component download failed: HTTP ${response.status}`)
     const partial = `${archive}.${randomUUID()}.partial`
     try {
@@ -98,8 +101,8 @@ async function historicalComponent(release, component, directory) {
   }
 }
 
-export async function historicalPluginExecutor(release, directory) {
-  const { installed, evidence } = await historicalComponent(release, 'executor', directory)
+export async function historicalPluginExecutor(release, directory, token) {
+  const { installed, evidence } = await historicalComponent(release, 'executor', directory, token)
   const executable = join(
     installed,
     process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
@@ -115,8 +118,13 @@ export async function historicalPluginExecutor(release, directory) {
   }
 }
 
-export async function historicalPluginPackages(release, directory) {
-  const { installed, evidence } = await historicalComponent(release, 'bundledPlugins', directory)
+export async function historicalPluginPackages(release, directory, token) {
+  const { installed, evidence } = await historicalComponent(
+    release,
+    'bundledPlugins',
+    directory,
+    token
+  )
   const packages = {}
   // Avoid conflating the disabled account install with an enabled built-in
   // marketplace installation of the same plugin key.
@@ -186,8 +194,15 @@ export async function prepareHistoricalPluginTools(directory) {
   )
 }
 
-export async function startHistoricalPluginExecutor({ release, cloud, root, userHome, directory }) {
-  const { executable, evidence } = await historicalPluginExecutor(release, directory)
+export async function startHistoricalPluginExecutor({
+  release,
+  cloud,
+  root,
+  userHome,
+  directory,
+  token,
+}) {
+  const { executable, evidence } = await historicalPluginExecutor(release, directory, token)
   const deviceId = `legacy-plugins-${release.version}`
   await mkdir(root, { recursive: true })
   const evidenceDirectory = dirname(dirname(directory))

@@ -546,6 +546,24 @@ export function WeworkSharedProject({
       project.project_store,
     ]
   )
+  const projectAgentConfiguration = useMemo(
+    () =>
+      createWeworkProjectAgentConfigurationHost(
+        services.agentResourceApi,
+        services.localProjectChatAgentApi,
+        project.project_store === 'local' ? detailServices?.modelApi : undefined,
+        services.pluginApi,
+        services.deviceApi
+      ),
+    [
+      services.agentResourceApi,
+      services.localProjectChatAgentApi,
+      project.project_store,
+      detailServices?.modelApi,
+      services.pluginApi,
+      services.deviceApi,
+    ]
+  )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
       renderBoardToolbarAction: onOpenProjectConversation
@@ -652,13 +670,7 @@ export function WeworkSharedProject({
             },
           }
         : {}),
-      projectAgentConfiguration: createWeworkProjectAgentConfigurationHost(
-        services.agentResourceApi,
-        project.project_store === 'local' ? services.localProjectChatAgentApi : undefined,
-        project.project_store === 'local' ? detailServices?.modelApi : undefined,
-        services.pluginApi,
-        services.deviceApi
-      ),
+      projectAgentConfiguration,
     }),
     [
       focusedItemId,
@@ -673,8 +685,8 @@ export function WeworkSharedProject({
       onOpenRuntimeTask,
       onFocusedItemHandled,
       services,
+      projectAgentConfiguration,
       userId,
-      detailServices?.modelApi,
       location.issueId,
       location.projectSettingsSection,
       location.projectView,

@@ -37,7 +37,9 @@ sidebar_position: 2
 | 查看流程在我这里等了多久        | 待你处理 → 选择项目事项或问题               | 有可靠本轮交接证据才显示计时；见[等待时长与流程分析](./personal-stand-in.md#等待时长与流程分析)                                                                        |
 | 配置项目执行设备、仓库、初始化  | 项目空间 → 项目设置 → 执行环境              | 与全局设置的执行环境不是同一页；AI 执行前需在线设备完成初始化                                                                                                          |
 | 项目 AI / 项目管理者            | 项目设置 → AI 团队 / 自动处理               | 当前入口与旧称差异见[项目 AI 管理者](./project-ai-manager.md)；不要寻找旧版底部按钮                                                                                    |
-| 个人分身                        | 左侧栏 → 我的分身                           | Beta 功能，见[个人分身](./personal-stand-in.md)                                                                                                                        |
+| 个人分身                        | 左侧栏 → 我的分身                           | Beta 功能；版本不兼容时可从错误提示前往云端工作查看设备情况，见[个人分身](./personal-stand-in.md)                                                                                                                        |
+| 确认分身配置调整 | 我的分身 → 当前会话中的确认卡 → 确认并应用 | 查看受影响角色和来源，成功后原会话显示实际变更；见[对话调整](./personal-stand-in.md#conversational-configuration) |
+| 分身聊天与桌面通知              | 我的分身 → 输入框上方“打开通知设置”；或顶部铃铛 → 通知设置         | 异步聊天、气泡和未读数字，见[分身聊天与桌面通知](./personal-stand-in.md#分身聊天与桌面通知)                                                                            |
 | 恢复已归档的分身来源工作 | 我的分身 → 分身详情 → 近期活动旁箭头 → 对应工作 → 取消归档 | 仅在工作已归档时显示；恢复不自动执行，见[来源会话策略](./personal-stand-in.md#stand-in-source-session-policy) |
 | 停止分身 / 更换绑定 | 左侧栏 → 我的分身 → 分身详情 → 管理分身 → 设置面板左下角“停止分身” | 整体停止并取消任务后才显示换绑选择；见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping) |
 | 换模型 / 调推理等级             | 任务输入区 → 模型选择器                     | 没有可用模型时去设置添加，见[模型设置](./user-guide/model-settings.md)                                                                                                 |
@@ -50,6 +52,8 @@ sidebar_position: 2
 | 查看版本 / 检查更新             | 左下角账户菜单 → 关于 / 检查更新            | 检查更新与关于是不同操作，见[设置与数据](./settings.md)                                                                                                                |
 
 待回答的业务问题提供 **先聊聊** 入口：从任务问题卡片或 **待你处理** 的问题详情进入，会在原任务右侧栏打开讨论标签页，与浏览器、文件并列。用途与限制见[处理 AI 的提问](./workbench.md#ai-questions)。
+
+从侧栏的 **项目 → 新建项目 → 云端项目** 可在选择远程主机时添加设备，见[项目与工作区](./projects.md#add-device-from-project)。
 
 ## 侧栏的功能入口
 
@@ -73,13 +77,17 @@ sidebar_position: 2
 | 左侧栏 → 已安排   | 查看定时任务                                                               | `/automations` |
 | 左侧栏 → 插件     | 查找、安装、管理插件及应用授权，见[插件与 Skills](./plugins-and-skills.md) | `/plugins`     |
 | 左侧栏 → 应用     | 打开应用页面                                                               | `/sites`       |
-| 左侧栏 → 云端工作 | 查看设备与云端项目；未连接时先连接云端，见[设备与云端工作](./devices.md)   | `/cloud-work`  |
+| 左侧栏 → 云端工作 | 查看设备与云端项目；桌面端可查看本机版本，见[设备与云端工作](./devices.md)   | `/cloud-work`  |
 
 ### 空间与辅助功能定位
+
+模板导入中的模型选择：[协作模板与配置共享](./projects.md#collaboration-template-models)。
 
 | 功能关键词                                           | 具体操作说明                                                    |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | 空间成员、全局智能体/小组/设备、Runner、模板、里程碑 | [协作空间及资源操作](./projects.md#workspace-resource-controls) |
+| 删除导入的个人模板 | [协作模板与配置共享](./projects.md#template-controls) |
+| 协作 → 设备 → 删除离线设备 | [清理离线设备注册](./projects.md#offline-device-cleanup) |
 | 分身记忆、来源证据、作用域、编辑、遗忘和遗忘规则     | [记忆操作](./personal-stand-in.md#stand-in-memory-controls)     |
 | 实验性负责人对话、接管、停止、发布到 Issue           | [负责人对话](./personal-stand-in.md#project-lead-controls)      |
 | 站点 PV/UV、访问日期、查看统计                       | [站点访问数据](./plugins-and-skills.md#site-analytics-controls) |

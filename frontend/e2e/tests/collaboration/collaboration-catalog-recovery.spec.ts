@@ -4,6 +4,7 @@
 import { expect, test as base, type Route } from '@playwright/test'
 import { selectCollaborationProjectView, webApi } from '../../utils/collaboration-test-support'
 import { PROVIDER_NATIVE_MOCK_URL } from '../../utils/provider-native-test-support'
+import { failRequestTransport as loseRealResponse } from '../../utils/transport-faults'
 
 interface Resource {
   id: string
@@ -161,14 +162,6 @@ const test = base.extend<{
     }
   },
 })
-
-// Cut the response only after the actual Backend has served it. No non-model
-// component or response data is replaced by a frontend mock.
-async function loseRealResponse(route: Route) {
-  const response = await route.fetch()
-  expect(response.ok(), 'The real API must succeed before its response is lost').toBe(true)
-  await route.abort('failed')
-}
 
 test('creates and persists a workspace draft after delayed account initialization', async ({
   page,

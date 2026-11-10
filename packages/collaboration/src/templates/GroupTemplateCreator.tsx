@@ -10,6 +10,8 @@ import { TemplateDialog } from './TemplateDialog'
 import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
 import type { CollaborationTemplate } from './types'
+import type { TemplateModelConfiguration } from './TemplateModelSelection'
+import type { TemplateRoutingResolver } from './types'
 
 export function GroupTemplateCreator({
   locale,
@@ -18,15 +20,18 @@ export function GroupTemplateCreator({
   existingNames,
   onApply,
   disabled,
+  modelConfiguration,
 }: {
   locale: CollaborationLocale
   candidates: TemplateParticipant[]
   currentUserId?: number
   existingNames: string[]
   disabled?: boolean
+  modelConfiguration?: TemplateModelConfiguration
   onApply(
     drafts: ProjectCreateCollaborationGroupDraft[],
-    document: CollaborationTemplate
+    document: CollaborationTemplate,
+    resolveRouting?: TemplateRoutingResolver
   ): Promise<void>
 }) {
   const store = useCollaborationTemplateStore()
@@ -66,6 +71,7 @@ export function GroupTemplateCreator({
           existingNames={existingNames}
           onClose={() => setSelected(null)}
           onApply={onApply}
+          modelConfiguration={modelConfiguration}
         />
       )}
     </>

@@ -122,12 +122,12 @@ export function SettingsSwitch({
       <span
         data-state={state}
         className={`relative inline-flex h-5 w-8 shrink-0 items-center overflow-hidden rounded-full transition-colors ${
-          checked ? 'bg-primary' : 'bg-text-muted/30'
+          checked ? 'bg-primary wework:bg-blue-500' : 'bg-text-muted/30'
         }`}
       >
         <span
           data-state={state}
-          className={`block h-4 w-4 rounded-full shadow-sm transition-transform ${
+          className={`block h-4 w-4 rounded-full shadow-sm transition-transform wework:border wework:border-white wework:bg-white ${
             checked ? 'translate-x-[14px] bg-primary-contrast' : 'translate-x-0.5 bg-background'
           }`}
         />

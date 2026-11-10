@@ -36,60 +36,60 @@ interface ChangeRequestStatusSnapshot {
 
 const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphConfig> = {
   draft: { mainClassName: 'text-text-muted' },
-  open: { mainClassName: 'text-success' },
+  open: { mainClassName: 'text-success wework:text-green-500' },
   checks_pending: {
-    mainClassName: 'text-success',
+    mainClassName: 'text-success wework:text-green-500',
     badgeIcon: Clock3,
     badgeClassName: 'text-text-muted',
   },
   checks_passed: {
-    mainClassName: 'text-success',
+    mainClassName: 'text-success wework:text-green-500',
     badgeIcon: CircleCheck,
-    badgeClassName: 'text-success',
+    badgeClassName: 'text-success wework:text-green-500',
   },
   checks_failed: {
-    mainClassName: 'text-success',
+    mainClassName: 'text-success wework:text-green-500',
     badgeIcon: CircleX,
-    badgeClassName: 'text-destructive',
+    badgeClassName: 'text-destructive wework:text-red-500',
   },
   merge_conflict: {
-    mainClassName: 'text-destructive',
+    mainClassName: 'text-destructive wework:text-red-500',
     badgeIcon: TriangleAlert,
-    badgeClassName: 'text-destructive',
+    badgeClassName: 'text-destructive wework:text-red-500',
   },
   merge_queue_queued: {
-    mainClassName: 'text-warning',
+    mainClassName: 'text-warning wework:text-amber-500',
     badgeIcon: Clock3,
-    badgeClassName: 'text-warning',
+    badgeClassName: 'text-warning wework:text-amber-500',
   },
   merge_queue_checking: {
-    mainClassName: 'text-warning',
+    mainClassName: 'text-warning wework:text-amber-500',
     badgeIcon: Loader2,
-    badgeClassName: 'text-warning',
+    badgeClassName: 'text-warning wework:text-amber-500',
     badgeIconClassName: 'animate-spin',
   },
   merge_queue_failed: {
-    mainClassName: 'text-destructive',
+    mainClassName: 'text-destructive wework:text-red-500',
     badgeIcon: CircleX,
-    badgeClassName: 'text-destructive',
+    badgeClassName: 'text-destructive wework:text-red-500',
   },
   merge_queue_timed_out: {
-    mainClassName: 'text-destructive',
+    mainClassName: 'text-destructive wework:text-red-500',
     badgeIcon: Clock3,
-    badgeClassName: 'text-destructive',
+    badgeClassName: 'text-destructive wework:text-red-500',
   },
   merge_queue_conflicting: {
-    mainClassName: 'text-destructive',
+    mainClassName: 'text-destructive wework:text-red-500',
     badgeIcon: TriangleAlert,
-    badgeClassName: 'text-destructive',
+    badgeClassName: 'text-destructive wework:text-red-500',
   },
   merge_queue_removed: {
     mainClassName: 'text-text-muted',
     badgeIcon: CircleDot,
     badgeClassName: 'text-text-muted',
   },
-  closed: { mainClassName: 'text-destructive' },
-  merged: { mainClassName: 'text-success' },
+  closed: { mainClassName: 'text-destructive wework:text-red-500' },
+  merged: { mainClassName: 'text-success wework:text-violet-500' },
 }
 
 export function ChangeRequestStatusGlyph({
@@ -253,7 +253,7 @@ export function ChangeRequestStatusIcon({
                 </span>
               ) : null}
               {snapshot?.stale ? (
-                <span className="mt-1 block text-xs text-warning">
+                <span className="mt-1 block text-xs text-warning wework:text-amber-600">
                   {t('workbench.change_request_status_stale', '状态可能已过期')}
                 </span>
               ) : null}

@@ -419,7 +419,11 @@ function ConnectedNotificationCenter({
     [taskSource]
   )
   const cloudUnreadCount = collaboration.unreadCount + (inboxes.general?.unread_count ?? 0)
-  const unreadCount = unreadTasks.length + cloudUnreadCount
+  const taskUnreadCount = unreadTasks.reduce(
+    (total, item) => total + (taskSource?.unreadMessageCounts?.get(item.key) ?? 1),
+    0
+  )
+  const unreadCount = taskUnreadCount + cloudUnreadCount
   useEffect(() => {
     if (getDesktopWindowLabel() !== 'main') return
     syncNotificationUnreadCount(unreadCount)
@@ -644,7 +648,7 @@ function ConnectedNotificationCenter({
       title: t('notifications.category_tasks'),
       preview: sortedTasks[0]?.task.title,
       timestamp: sortedTasks[0] ? taskTimestamp(sortedTasks[0]) : 0,
-      unread: unreadTasks.length,
+      unread: taskUnreadCount,
       icon: CheckCircle2,
     },
     {

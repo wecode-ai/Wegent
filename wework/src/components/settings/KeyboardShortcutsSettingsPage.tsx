@@ -267,7 +267,10 @@ export function KeyboardShortcutsSettingsPage() {
           </div>
         ) : null}
         {error ? (
-          <div data-testid="keyboard-shortcuts-error" className="mb-4 text-sm text-destructive">
+          <div
+            data-testid="keyboard-shortcuts-error"
+            className="mb-4 text-sm text-destructive wework:text-red-500"
+          >
             {error}
           </div>
         ) : null}

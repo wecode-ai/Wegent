@@ -123,6 +123,7 @@ export interface CollaborationTemplateRemote {
   }>
   get(id: number): Promise<TemplateRecord>
   save(document: CollaborationTemplate, revision: string | null): Promise<TemplateRecord>
+  delete(id: number): Promise<void>
   install(id: number): Promise<void>
   publish(id: number, version: string): Promise<void>
 }

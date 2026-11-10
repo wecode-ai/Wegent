@@ -34,6 +34,27 @@ export const TERMINAL_COLOR_NAMES = [
   'bright-white',
 ] as const
 
+// Preserve xterm's original ANSI palette when a theme has no authored terminal palette.
+// Syntax token roles do not preserve ANSI color meanings (for example, functions can be brown).
+const DEFAULT_TERMINAL_COLORS = [
+  '#2e3436',
+  '#cc0000',
+  '#4e9a06',
+  '#c4a000',
+  '#3465a4',
+  '#75507b',
+  '#06989a',
+  '#d3d7cf',
+  '#555753',
+  '#ef2929',
+  '#8ae234',
+  '#fce94f',
+  '#729fcf',
+  '#ad7fa8',
+  '#34e2e2',
+  '#eeeeec',
+] as const
+
 export interface ThemeVariant {
   mode: ResolvedAppearanceMode
   palette: ThemePalette
@@ -120,24 +141,6 @@ function variant(mode: ResolvedAppearanceMode, seed: Seed, ansi?: readonly strin
   const rgb = hexToRgbTriplet
   const dark = mode === 'dark'
   const primaryContrast = contrastForegroundColor(rgb(accent))
-  const defaultAnsi = [
-    dark ? '#24242c' : '#303038',
-    removed,
-    added,
-    warning,
-    accent,
-    keyword,
-    type,
-    foreground,
-    comment,
-    removed,
-    string,
-    number,
-    functionColor,
-    keyword,
-    operator,
-    foreground,
-  ]
   return {
     mode,
     accentColor: accent,
@@ -166,7 +169,10 @@ function variant(mode: ResolvedAppearanceMode, seed: Seed, ansi?: readonly strin
       SYNTAX_COLOR_NAMES.map(name => [name, rgb(syntaxColors[name])])
     ) as ThemeVariant['syntax'],
     terminal: Object.fromEntries(
-      TERMINAL_COLOR_NAMES.map((name, index) => [name, rgb(ansi?.[index] ?? defaultAnsi[index])])
+      TERMINAL_COLOR_NAMES.map((name, index) => [
+        name,
+        rgb(ansi?.[index] ?? DEFAULT_TERMINAL_COLORS[index]),
+      ])
     ) as ThemeVariant['terminal'],
     added: rgb(added),
     removed: rgb(removed),

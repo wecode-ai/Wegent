@@ -120,7 +120,10 @@ export function AppshotsSettingsPage() {
       </div>
 
       {error ? (
-        <div data-testid="appshots-settings-error" className="mb-4 text-sm text-destructive">
+        <div
+          data-testid="appshots-settings-error"
+          className="mb-4 text-sm text-destructive wework:text-red-500"
+        >
           {error}
         </div>
       ) : null}
