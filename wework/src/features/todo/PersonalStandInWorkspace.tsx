@@ -74,11 +74,9 @@ function AccountStandInWorkspace({
   const ownerId = target?.userId ?? Number(user.id)
   const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
   const deviceId = target?.deviceId
-  const [roleLocation, setRoleLocation] = useState<{
-    deviceId: string
-    roleId?: string
-    settings?: boolean
-  }>(() =>
+  const [roleLocation, setRoleLocation] = useState<
+    { deviceId: string; roleId?: string; settings?: boolean } | undefined
+  >(() =>
     query.get('profileId') && query.get('profileId') !== '@primary' && query.get('deviceId')
       ? {
           deviceId: query.get('deviceId')!,
