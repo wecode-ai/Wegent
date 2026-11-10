@@ -9,7 +9,8 @@ Electron 主进程和 Executor sidecar 协议。
 
 ## 环境准备
 
-安装 Node.js、pnpm、Git，以及构建 Executor 所需的 Rust 工具链。然后安装依赖：
+安装 Node.js、pnpm、Git、Visual Studio C++ 生成工具，以及构建 Executor 所需的
+Rust MSVC 工具链。然后安装依赖：
 
 ```powershell
 pnpm install --frozen-lockfile

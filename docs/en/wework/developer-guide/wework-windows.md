@@ -10,8 +10,8 @@ Linux.
 
 ## Prerequisites
 
-Install Node.js, pnpm, Git, and the Rust toolchain required to build the
-Executor. Then install dependencies:
+Install Node.js, pnpm, Git, the Visual Studio C++ Build Tools, and the Rust
+MSVC toolchain required to build the Executor. Then install dependencies:
 
 ```powershell
 pnpm install --frozen-lockfile
