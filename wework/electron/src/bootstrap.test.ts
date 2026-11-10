@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopRelease, ReleaseActivation } from './runtime/release-store.js'
 
+const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+
 const startup = vi.hoisted(() => ({
   roots: [] as string[],
   metadata: {} as { weworkExecutorNamespace?: string; version?: string },
@@ -21,6 +23,12 @@ const startup = vi.hoisted(() => ({
   enterInstalled: vi.fn(),
   rollback: vi.fn(),
   restoreData: vi.fn(),
+  acquireStartup: vi.fn(),
+  releaseStartup: vi.fn(),
+}))
+
+vi.mock('./runtime/release-startup-owner.js', () => ({
+  acquireReleaseStartup: startup.acquireStartup,
 }))
 
 vi.mock('./runtime/release-snapshot.js', () => ({ restoreReleaseData: startup.restoreData }))
@@ -81,6 +89,10 @@ vi.mock('./runtime/release-store.js', () => ({
 }))
 
 beforeEach(() => {
+  Object.defineProperty(process, 'resourcesPath', {
+    value: join(tmpdir(), 'wework-bootstrap-resources'),
+    configurable: true,
+  })
   vi.resetModules()
   vi.doMock('./main.js', () => {
     startup.main()
@@ -95,6 +107,8 @@ beforeEach(() => {
   startup.enterInstalled.mockReset()
   startup.rollback.mockReset()
   startup.restoreData.mockReset()
+  startup.releaseStartup.mockReset()
+  startup.acquireStartup.mockReset().mockResolvedValue(startup.releaseStartup)
   startup.bridgeHandoff.mockReset().mockImplementation(async () => startup.legacyUserData)
   startup.showErrorBox.mockClear()
   startup.bridge = null
@@ -117,7 +131,67 @@ beforeEach(() => {
     vi.stubEnv(name, '')
 })
 
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  if (resourcesPathDescriptor)
+    Object.defineProperty(process, 'resourcesPath', resourcesPathDescriptor)
+  else Reflect.deleteProperty(process, 'resourcesPath')
+})
+
+test('a concurrent recovery entry waits before reading or restoring the shared transaction', async () => {
+  let grant!: (release: () => Promise<void>) => void
+  startup.acquireStartup.mockImplementation(
+    () =>
+      new Promise(resolve => {
+        grant = resolve
+      })
+  )
+  startup.activation = { token: 'rollback', rollbackRequested: true }
+  const loading = import('./bootstrap.js')
+  await vi.waitFor(() => expect(startup.acquireStartup).toHaveBeenCalledOnce())
+  expect(startup.roots).toHaveLength(0)
+  expect(startup.rollback).not.toHaveBeenCalled()
+  expect(startup.restoreData).not.toHaveBeenCalled()
+  expect(startup.relaunch).not.toHaveBeenCalled()
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.releaseStartup).not.toHaveBeenCalled()
+  expect(startup.showErrorBox).not.toHaveBeenCalled()
+  grant(startup.releaseStartup)
+  await loading
+  expect(startup.roots).toHaveLength(1)
+})
+
+test('startup ownership failure cannot open application data', async () => {
+  startup.acquireStartup.mockRejectedValue(new Error('Native startup lock failed'))
+
+  await import('./bootstrap.js')
+
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.rollback).not.toHaveBeenCalled()
+  expect(startup.showErrorBox).toHaveBeenCalledWith('Wework', 'Native startup lock failed')
+})
+
+test('ordinary startup releases transaction ownership before entering the main application', async () => {
+  startup.activation = null
+  startup.main.mockImplementationOnce(() => {
+    expect(startup.releaseStartup).toHaveBeenCalledOnce()
+  })
+
+  await import('./bootstrap.js')
+
+  expect(startup.main).toHaveBeenCalledOnce()
+  expect(startup.showErrorBox).not.toHaveBeenCalled()
+})
+
+test('failed ownership release cannot enter the main application', async () => {
+  startup.activation = null
+  startup.releaseStartup.mockRejectedValue(new Error('Native startup lock was lost'))
+
+  await import('./bootstrap.js')
+
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.showErrorBox).toHaveBeenCalledWith('Wework', 'Native startup lock was lost')
+})
 
 test.each(['default', 'com.example.wework'])(
   'reads pending activation from the migrated %s userData directory',

@@ -337,7 +337,7 @@ jobs:
       - name: Verify native contracts before packaging
         shell: bash
         run: |
-          node --test wework/scripts/build-launcher.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs
+          node --test wework/scripts/build-launcher.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs wework/e2e/desktop/modules/release-startup-owner.test.mjs
           rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
           "$RUNNER_TEMP/wework-launcher-tests.exe"
 

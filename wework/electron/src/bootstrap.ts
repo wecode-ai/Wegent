@@ -9,6 +9,7 @@ import { currentCoreProfile, selectReleaseProfile } from './runtime/release-prof
 import { releaseBridgeUserData } from './runtime/release-handoff.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { enterInstalledMacosRelease } from './runtime/macos-release-installation.js'
+import { acquireReleaseStartup } from './runtime/release-startup-owner.js'
 
 const pendingUrls: string[] = []
 const captureUrl = (event: Electron.Event, url: string): void => {
@@ -20,9 +21,12 @@ const forwardedArguments = (): string[] => [...process.argv.slice(1), ...pending
 
 const metadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 const packaged = app.isPackaged
+const startupOwnership: { release: (() => Promise<void>) | null } = { release: null }
 
 try {
   if (await routeRelease()) {
+    await startupOwnership.release?.()
+    startupOwnership.release = null
     app.removeListener('open-url', captureUrl)
     process.argv.push(...pendingUrls)
     await import('./main.js')
@@ -55,6 +59,17 @@ async function routeRelease(): Promise<boolean> {
       'user-data'
     )
   const root = join(dataDirectory, 'releases')
+  startupOwnership.release = await acquireReleaseStartup(
+    root,
+    join(
+      process.resourcesPath,
+      process.platform === 'win32' ? 'wework-launcher.exe' : 'wework-launcher'
+    ),
+    error => {
+      recordReleaseDiagnostic('release-startup-lock-lost', { message: error.message }, true)
+      app.exit(1)
+    }
+  )
   const store = new ReleaseStore(root)
   const supervisedId = process.env.WEWORK_RELEASE_SUPERVISED
   const recoveryToken = process.env.WEWORK_RELEASE_RECOVERY
