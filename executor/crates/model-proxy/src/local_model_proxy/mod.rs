@@ -305,7 +305,7 @@ pub fn upstream_from_model_config(
         .or_else(|| non_empty_string(model_config, "auth_token"))
         .unwrap_or_default();
     let native_by_default = api_format == "openai-responses";
-    let custom_tool_conversion = custom_tool_conversion(model_config)?;
+    let custom_tool_conversion = resolve_custom_tool_conversion(model_config)?;
     Ok(Some(LocalModelProxyUpstream {
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_string(model_config, "responses_url")
@@ -356,7 +356,7 @@ fn model_upstream_api_format(model_config: &Value) -> String {
 /// An explicit `custom_tool_conversion` always wins. Otherwise the legacy tool
 /// profile supplies the model default: function-based providers convert every
 /// custom tool, native providers keep them unchanged.
-fn custom_tool_conversion(model_config: &Value) -> Result<CustomToolConversion, String> {
+fn resolve_custom_tool_conversion(model_config: &Value) -> Result<CustomToolConversion, String> {
     if let Some(value) = model_config
         .get("custom_tool_conversion")
         .or_else(|| model_config.get("customToolConversion"))
