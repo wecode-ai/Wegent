@@ -62,7 +62,7 @@ test('an invalid acknowledgement never proves a handle was acquired', async () =
   await rejected
 })
 
-test('the unchanged ten-second deadline includes bounded stderr diagnostics', async () => {
+test('the readiness deadline includes bounded stderr diagnostics', async () => {
   vi.useFakeTimers()
   const child = holder()
   const ready = waitForNativeFileHolder(child)
@@ -72,11 +72,11 @@ test('the unchanged ten-second deadline includes bounded stderr diagnostics', as
     settled = true
     return error
   })
-  await vi.advanceTimersByTimeAsync(9999)
+  await vi.advanceTimersByTimeAsync(29_999)
   expect(settled).toBe(false)
   await vi.advanceTimersByTimeAsync(1)
   const error = await observed
-  expect(error.message).toContain('Native file holder did not start')
+  expect(error.message).toContain('Native file holder did not start within 30000ms')
   expect(error.message.length).toBeLessThan(4300)
   expect(child.listenerCount('close')).toBe(0)
 })
