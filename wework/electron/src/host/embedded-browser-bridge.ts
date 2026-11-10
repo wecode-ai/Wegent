@@ -812,7 +812,8 @@ function actionCursorPoint(
   }
   const target = result.target
   if (!target || typeof target !== 'object' || Array.isArray(target)) return null
-  const rect = (target as Record<string, unknown>).rect
+  const targetRecord = target as Record<string, unknown>
+  const rect = targetRecord.viewportRect ?? targetRecord.rect
   if (!rect || typeof rect !== 'object' || Array.isArray(rect)) return null
   const values = rect as Record<string, unknown>
   const x = Number(values.x)
