@@ -543,10 +543,11 @@ async fn existing_manual_binding_prevents_another_device_from_creating_a_task() 
     });
     let mut manual = config;
     manual["manual"] = json!(true);
-    handler
+    let error = handler
         .start_cloud_stand_in_with_roles(std::slice::from_ref(&manual), &issue)
         .await
-        .unwrap();
+        .unwrap_err();
+    assert_eq!(error.code, "wrong_device");
     assert_eq!(bindings.load(Ordering::SeqCst), 2);
     assert_eq!(
         handler

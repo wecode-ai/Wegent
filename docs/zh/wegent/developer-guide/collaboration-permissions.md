@@ -4,6 +4,8 @@ sidebar_position: 36
 
 # 协作权限架构与不可破坏的规则
 
+云端手动启动继续复用持久派发队列，临时失败和执行器重启不能丢失已接收的请求。恢复手动请求不要求指派、项目订阅或接收开关，但仍验证当前账号、角色和 Issue 权限；已启动或已删除的工作不因恢复而重复执行。自动派发继续验证当前指派及自动接收策略。`manual_issue_startup_intent_survives_restart_without_assignment_or_intake` 和既有真实数据库故障与重启 E2E 覆盖恢复事务，CP 不变量不变。
+
 分身 Issue 消息从排队进入执行时，重新读取服务端当前 Issue 的 `permissions.execute`；角色降为只读或缺少执行权限信息时不启动模型。该检查不依赖负责人或接收开关，权限恢复后原会话仍可使用。`queued_stand_in_turns_recheck_current_issue_execution_permission` 覆盖权限撤销、缺失和恢复，CP15 不变。
 
 已读确认仍先验证当前 Issue 访问，仅推进当前用户游标，不改 Issue 版本或时间。自动确认携带已观测内容版本，云端单次原子更新限制到 `min(当前版本, 观测版本)` 并保持游标单调，本地以相同观测版本限制清除未读；旧请求不清除后来内容及提醒。`test_delayed_read_acknowledges_only_the_observed_public_content`、API 游标回归和真实 MySQL 桌面场景保护该事务，CP 不变量不变。

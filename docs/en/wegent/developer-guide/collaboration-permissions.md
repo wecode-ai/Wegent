@@ -4,6 +4,8 @@ sidebar_position: 36
 
 # Collaboration permission architecture and invariants
 
+Manual cloud startup retains the durable dispatch queue so transient failures and Executor restarts cannot lose accepted requests. Manual recovery requires no assignment, project subscription or intake enablement, while retaining current account, role and Issue authorization; accepted or deleted work is never replayed. Automatic dispatch retains current assignment and intake-policy checks. `manual_issue_startup_intent_survives_restart_without_assignment_or_intake` and the existing real database fault/restart E2E cover recovery; CP invariants are unchanged.
+
 When a queued stand-in Issue message starts execution, it rereads the server's current Issue `permissions.execute`; a read-only role or missing execution permission prevents model startup. This check is independent of assignees and intake settings, and restoring permission preserves the existing conversation. `queued_stand_in_turns_recheck_current_issue_execution_permission` covers revocation, missing permission and restoration; CP15 is unchanged.
 
 Read confirmations still validate current Issue access and advance only the reader's cursor without changing Issue version/time. Automatic receipts carry the observed content revision; one atomic cloud update is bounded by `min(current, observed)` and remains monotonic, while local unread clearing uses the same observation bound. Stale requests do not consume later content or notifications. `test_delayed_read_acknowledges_only_the_observed_public_content`, API cursor regressions and real MySQL desktop coverage protect this transaction; CP invariants remain unchanged.

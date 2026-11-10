@@ -248,34 +248,12 @@ impl RuntimeWorkRpcHandler {
                 "requestedRoleId":payload["standInId"],"enabled":config["enabled"]
             }),
         );
-        if !local {
-            let existing = self
-                .runtime_http(
-                    reqwest::Method::GET,
-                    &format!("/v1/loop-items/{issue_id}/tasks"),
-                    None,
-                )
+        if local {
+            self.start_manual_stand_in_attempt(&config, &issue).await?;
+        } else {
+            self.start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &issue)
                 .await?;
-            if !self.use_stand_in_issue_reservation(&config, &issue, &existing)? {
-                return Err(AppIpcError::new(
-                    "wrong_device",
-                    "Open the existing Issue conversation on its owning device",
-                ));
-            }
         }
-        let task_id = self.stand_in_task_id(&config, &issue);
-        if self.local_task_link(&task_id).is_some_and(|task| {
-            !self.archived_link_is_deleted(&task)
-                && !matches!(task.status.as_str(), "failed" | "archived")
-        }) {
-            return Ok(json!({"deviceId":self.device_id,"taskId":task_id}));
-        }
-        self.execute_stand_in_task(
-            &config,
-            &issue,
-            &stand_in_issue_receipt_binding(&config, &issue),
-        )
-        .await?;
         let task_id = self.stand_in_task_id(&config, &issue);
         let task = self
             .local_task_link(&task_id)
@@ -295,10 +273,53 @@ impl RuntimeWorkRpcHandler {
             );
             return Err(AppIpcError::new(
                 "assignment_already_handled",
-                "This assignment has already been handled or is no longer active",
+                "This conversation was already handled or removed",
             ));
         }
         Ok(json!({"deviceId":self.device_id,"taskId":task_id}))
+    }
+
+    pub(super) async fn start_manual_stand_in_attempt(
+        &self,
+        config: &Value,
+        issue: &Value,
+    ) -> Result<(), AppIpcError> {
+        let task_id = self.stand_in_task_id(config, issue);
+        if config["recoveringDispatch"] == true
+            && (self.local_task_link(&task_id).is_some()
+                || self.store.is_deleted_archived_task_id(&task_id))
+        {
+            return Ok(());
+        }
+        if config["projectStore"] != "local" {
+            let issue_id = issue["id"].as_str().unwrap_or_default();
+            let existing = self
+                .runtime_http(
+                    reqwest::Method::GET,
+                    &format!("/v1/loop-items/{issue_id}/tasks"),
+                    None,
+                )
+                .await?;
+            if !self.use_stand_in_issue_reservation(config, issue, &existing)? {
+                return Err(AppIpcError::new(
+                    "wrong_device",
+                    "Open the existing Issue conversation on its owning device",
+                ));
+            }
+        }
+        let task_id = self.stand_in_task_id(config, issue);
+        if self.local_task_link(&task_id).is_some_and(|task| {
+            !self.archived_link_is_deleted(&task)
+                && !matches!(task.status.as_str(), "failed" | "archived")
+        }) {
+            return Ok(());
+        }
+        self.execute_stand_in_task(
+            config,
+            issue,
+            &stand_in_issue_receipt_binding(config, issue),
+        )
+        .await
     }
 
     pub(super) async fn list_stand_in_settings(
@@ -485,12 +506,25 @@ impl RuntimeWorkRpcHandler {
         issue: &Value,
     ) -> Result<(), AppIpcError> {
         let intents = self.queue_stand_in_dispatches(configs, issue)?;
-        let result = self.start_cloud_stand_in_attempt(configs, issue).await;
+        let result = if configs
+            .first()
+            .is_some_and(|config| config["manual"] == true)
+        {
+            let mut result = Ok(());
+            for config in configs {
+                if let Err(error) = self.start_manual_stand_in_attempt(config, issue).await {
+                    result = Err(error);
+                }
+            }
+            result
+        } else {
+            self.start_cloud_assignment_attempt(configs, issue).await
+        };
         self.settle_stand_in_dispatches(&intents, result.as_ref().err());
         result
     }
 
-    pub(super) async fn start_cloud_stand_in_attempt(
+    pub(super) async fn start_cloud_assignment_attempt(
         &self,
         configs: &[Value],
         issue: &Value,
@@ -501,11 +535,7 @@ impl RuntimeWorkRpcHandler {
             config["projectId"].as_str().unwrap_or_default(),
             issue["id"].as_str().unwrap_or_default()
         ));
-        let _guard = if config["manual"] == true {
-            None
-        } else {
-            Some(gate.lock().await)
-        };
+        let _guard = gate.lock().await;
         if issue["assignee_user_id"] != config["userId"] {
             self.log_stand_in_decision(
                 config,
@@ -533,19 +563,14 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
-        let matching = if config["manual"] == true {
-            configs.iter().collect()
-        } else {
-            super::personal_stand_in::matching_personal_roles(configs, issue)
-        };
+        let matching = super::personal_stand_in::matching_personal_roles(configs, issue);
         if matching.is_empty() {
             self.log_stand_in_decision(config, issue, "no_matching_role_tags", json!({}));
             return Ok(());
         }
         if matching.iter().all(|role| {
             self.stand_in_assignment_is_handled(role, &self.stand_in_task_id(role, issue), binding)
-        }) && config["manual"] != true
-        {
+        }) {
             self.log_stand_in_decision(config, issue, "local_tasks_already_exist", json!({}));
             return Ok(());
         }
@@ -579,9 +604,7 @@ impl RuntimeWorkRpcHandler {
         };
         let eligible: Vec<&Value> = matching
             .into_iter()
-            .filter(|config| {
-                config["manual"] == true || assignment_after_enable(assignment, config)
-            })
+            .filter(|config| assignment_after_enable(assignment, config))
             .collect();
         if eligible.is_empty() {
             self.log_stand_in_decision(config, issue, "assignment_before_role_enabled", json!({
