@@ -21,6 +21,10 @@ pub(crate) fn is_identity_conversation(link: &RuntimeTaskLink) -> bool {
             link.runtime_handle["origin"]["type"].as_str(),
             Some("stand_in_identity" | "stand_in_coordinator")
         )
+        || (link.runtime == "codex"
+            && !link.ephemeral
+            && link.runtime_handle["origin"]["type"] == "issue_dispatch"
+            && link.runtime_handle["origin"]["initiatedBy"] == "stand_in")
 }
 
 pub(crate) fn closed_sessions(

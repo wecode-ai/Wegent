@@ -22,7 +22,7 @@ function message(
 }
 
 describe('connected-source activity notification content', () => {
-  test('routes only a current personal activity to the independent stand-in channel', () => {
+  test('routes all personal stand-in turns to their independent channel', () => {
     const item = {
       task: {
         runtimeHandle: {
@@ -34,12 +34,12 @@ describe('connected-source activity notification content', () => {
     } as unknown as RuntimeTaskReminderItem
     expect(runtimeTaskNotificationCategory(item)).toBe('stand_in')
     item.task.runtimeHandle!.latestUserMessageSource = { source: 'manual', turnId: 'turn-2' }
-    expect(runtimeTaskNotificationCategory(item)).toBe('tasks')
+    expect(runtimeTaskNotificationCategory(item)).toBe('stand_in')
     item.task.runtimeHandle!.latestUserMessageSource = {
       source: 'stand_in_activity',
       turnId: 'turn-1',
     }
-    expect(runtimeTaskNotificationCategory(item)).toBe('tasks')
+    expect(runtimeTaskNotificationCategory(item)).toBe('stand_in')
     item.task.runtimeHandle!.origin = { type: 'board_comment', initiatedBy: 'stand_in' }
     expect(isPersonalStandInTask(item)).toBe(false)
     expect(runtimeTaskNotificationCategory(item)).toBe('tasks')

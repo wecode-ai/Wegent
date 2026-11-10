@@ -1,4 +1,5 @@
 import type { Milestone, MilestoneInput } from '@wegent/collaboration'
+import type { IssueAttachmentContext } from '@wegent/collaboration'
 import type { CollaborationAssignmentReceipt as IssueAssignmentReceipt } from '@wegent/collaboration'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { deliveryUpdateForm } from '@wegent/collaboration'
@@ -925,11 +926,16 @@ export function createDeliveryApi(client: HttpClient) {
         { kind: 'human_read' }
       )
     },
-    async markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
+    async markLoopItemRead(
+      itemId: string,
+      activitySequence?: number,
+      contentRevision?: number
+    ): Promise<CloudLoopItem> {
       const item = await client.post<CloudLoopItem>(
         `/v1/loop-items/${encodeURIComponent(itemId)}/read`,
         {
           activity_sequence: activitySequence ?? null,
+          content_revision: contentRevision ?? null,
         }
       )
       window.dispatchEvent(new Event('wework-notifications-changed'))
@@ -1109,18 +1115,30 @@ export function createDeliveryApi(client: HttpClient) {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/attachments`, form)
     },
     accessLoopItemAttachment(
-      attachmentId: string
+      attachmentId: string,
+      _context?: IssueAttachmentContext
     ): Promise<{ url: string; expires_in_seconds: number }> {
+      void _context
       return client.get(`/v1/loop-item-attachments/${attachmentId}/access`)
     },
-    readLoopItemAttachment(attachmentId: string): Promise<Blob> {
+    readLoopItemAttachment(attachmentId: string, _context?: IssueAttachmentContext): Promise<Blob> {
+      void _context
       return client.getBlob(`/v1/loop-item-attachments/${attachmentId}/content`)
     },
-    async downloadLoopItemAttachment(attachmentId: string, filename: string): Promise<void> {
+    async downloadLoopItemAttachment(
+      attachmentId: string,
+      filename: string,
+      _context?: IssueAttachmentContext
+    ): Promise<void> {
+      void _context
       const content = await client.getBlob(`/v1/loop-item-attachments/${attachmentId}/content`)
       await saveBlobToDownloads(content, filename)
     },
-    deleteLoopItemAttachment(attachmentId: string): Promise<void> {
+    deleteLoopItemAttachment(
+      attachmentId: string,
+      _context?: IssueAttachmentContext
+    ): Promise<void> {
+      void _context
       return client.delete(`/v1/loop-item-attachments/${attachmentId}`)
     },
     listTaskBindings(itemId: string): Promise<LoopItemTaskBinding[]> {

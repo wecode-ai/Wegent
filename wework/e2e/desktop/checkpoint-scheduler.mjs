@@ -19,6 +19,16 @@ export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
   )
 }
 
+// These fixtures were starting their databases and Backends when the Python
+// descriptor request hit its 200ms deadline. Keep each separate from Python
+// on Linux Core while letting them overlap with one another and other work.
+const PYTHON_RUNTIME_STARTUP_PEERS = ['collaboration-shared-core', 'collaboration-templates']
+
+export function linuxCoreCheckpointResources(checkpoint) {
+  if (checkpoint === 'python-runtime') return PYTHON_RUNTIME_STARTUP_PEERS
+  return PYTHON_RUNTIME_STARTUP_PEERS.includes(checkpoint) ? [checkpoint] : []
+}
+
 export async function runWithCheckpointResources({
   checkpoints,
   workerCount,

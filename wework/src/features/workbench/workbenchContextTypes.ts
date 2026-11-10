@@ -64,7 +64,6 @@ import type {
 } from '@/types/api'
 import type { WorkbenchWorkspaceLaunchOptions } from './workspaceLaunchRequest'
 import type { DeviceUpgradeState } from '@/types/device-events'
-import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type {
@@ -378,7 +377,6 @@ export interface WorkbenchContextValue {
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   refreshWorkLists: RefreshWorkLists
   refreshDevices: () => Promise<void>
-  getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
   upgradeDevice: (deviceId: string) => Promise<void>
   createProject: (
     data: CreateProjectRequest,

@@ -45,6 +45,13 @@ fn provider_fixture(
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
     handler.store = RuntimeWorkStore::new(root.join("runtime.json"));
+    handler.turn_queue_path = Arc::new(root.join("turn-queue.json"));
+    handler.command_journal = Arc::new(Mutex::new(Default::default()));
+    handler.turn_scheduler = Arc::new(Mutex::new(RuntimeTurnScheduler::new(
+        RuntimeSettings::default(),
+        VecDeque::new(),
+    )));
+    handler.active_goal_turns = Arc::new(Mutex::new(Default::default()));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
     settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});

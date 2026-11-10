@@ -12,11 +12,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let environment = LaunchEnvironment::new();
-        let directory = tempfile::tempdir().unwrap();
-        let binary = directory.path().join("codex");
-        fs::write(
-            &binary,
+        Self::with_script(
             r#"#!/bin/sh
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -31,7 +27,13 @@ while IFS= read -r line; do
 done
 "#,
         )
-        .unwrap();
+    }
+
+    fn with_script(script: &str) -> Self {
+        let environment = LaunchEnvironment::new();
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("codex");
+        fs::write(&binary, script).unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
         let client = CodexAppServerClient::isolated_for_test(
             binary.to_str().unwrap(),
@@ -43,6 +45,72 @@ done
             _environment: environment,
         }
     }
+}
+
+#[tokio::test]
+async fn native_close_notification_does_not_admit_a_resume_before_teardown_finishes() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+attempts=0
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$(dirname "$0")/requests.jsonl"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/resume"'*)
+      attempts=$((attempts + 1))
+      if [ "$attempts" -eq 1 ]; then
+        printf '%s\n' '{"method":"thread/closed","params":{"threadId":"thread-1"}}'
+      fi
+      if [ "$attempts" -lt 3 ]; then
+        printf '{"id":%s,"error":{"code":-32600,"message":"thread thread-1 is closing; retry thread/resume after the thread is closed"}}\n' "$id"
+      else
+        printf '{"id":%s,"result":{"thread":{"id":"thread-1"},"pid":%s}}\n' "$id" "$$"
+      fi ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    );
+    let params = json!({
+        "threadId":"thread-1",
+        "permissions":":read-only",
+        "approvalsReviewer":"user",
+        "config":{"mcp_servers.test.http_headers.context":"current-batch"}
+    });
+    let result = fixture
+        .client
+        .request_for_launch_config(
+            "thread/resume",
+            params.clone(),
+            &CodexLaunchConfig::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["thread"]["id"], "thread-1");
+    assert_eq!(result["pid"], pid(&fixture.client).await);
+    let requests: Vec<Value> = fs::read_to_string(fixture._directory.path().join("requests.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let resumes: Vec<_> = requests
+        .iter()
+        .filter(|request| request["method"] == "thread/resume")
+        .collect();
+    assert_eq!(resumes.len(), 3);
+    assert!(resumes.iter().all(|request| request["params"] == params));
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request["method"] == "initialize")
+            .count(),
+        1
+    );
+    assert!(!requests
+        .iter()
+        .any(|request| request["method"] == "turn/start"));
+    fixture.client.restart().await;
 }
 
 impl Drop for Fixture {

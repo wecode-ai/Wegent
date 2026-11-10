@@ -194,13 +194,13 @@ export function InstalledPluginRow({
             data-testid={`installed-plugin-toggle-${plugin.id}`}
             className={[
               'relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40',
-              plugin.enabled ? 'bg-primary' : 'bg-border',
+              plugin.enabled ? 'bg-primary wework:bg-emerald-600' : 'bg-border',
             ].join(' ')}
             onClick={onToggle}
           >
             <span
               className={[
-                'absolute left-[3px] top-[3px] h-4 w-4 rounded-full shadow-sm transition-transform',
+                'absolute left-[3px] top-[3px] h-4 w-4 rounded-full shadow-sm transition-transform wework:bg-white',
                 plugin.enabled ? 'bg-primary-contrast' : 'bg-background',
                 plugin.enabled ? 'translate-x-4' : 'translate-x-0',
               ].join(' ')}
@@ -271,7 +271,7 @@ export function InstalledPluginRow({
             <button
               type="button"
               data-testid={`installed-plugin-uninstall-${plugin.id}`}
-              className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/20"
+              className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/20 wework:text-red-600 wework:hover:bg-red-50 wework:focus-visible:ring-red-500/20 wework:dark:hover:bg-red-950/30"
               onClick={() => {
                 setIsMenuOpen(false)
                 onUninstall()

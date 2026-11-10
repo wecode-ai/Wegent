@@ -1,15 +1,18 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
+import type { Readable } from 'node:stream'
 import {
   resolveWorkbenchProjectPnpmCommand,
   type WorkbenchProjectPnpmCommand,
 } from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationIssue } from './smart-app-verification-types.js'
 import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
+import { terminateProcessTree } from '../runtime/runtime-supervisor.js'
 
 const SCRIPT_NAME = /^[A-Za-z0-9:_-]+$/
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024
+const OUTPUT_DRAIN_TIMEOUT_MS = 1_000
 const SCRIPT_ORDER = ['typecheck', 'test', 'build'] as const
 const PROJECT_RUN_ARGS = ['--config.verify-deps-before-run=false', 'run']
 const SAFE_ENVIRONMENT_KEYS = new Set([
@@ -59,7 +62,7 @@ export interface SmartAppScriptCommandResult {
 export type SmartAppScriptCommandRunner = (
   command: string,
   args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv; shell: false }
+  options: { cwd: string; env: NodeJS.ProcessEnv; shell: false; signal?: AbortSignal }
 ) => Promise<SmartAppScriptCommandResult>
 
 export interface RunSmartAppProjectScriptsOptions {
@@ -67,6 +70,7 @@ export interface RunSmartAppProjectScriptsOptions {
   runtimeRoot: string
   environment: NodeJS.ProcessEnv
   scripts: SmartAppProjectScripts
+  signal?: AbortSignal
   resolveCommand?: (options: {
     runtimeRoot: string
     environment: NodeJS.ProcessEnv
@@ -86,6 +90,7 @@ export interface RunSmartAppRuntimeProbeOptions extends Omit<
 export async function runSmartAppProjectScripts(
   options: RunSmartAppProjectScriptsOptions
 ): Promise<SmartAppProjectScriptsResult> {
+  options.signal?.throwIfAborted()
   for (const key of SCRIPT_ORDER) {
     if (!SCRIPT_NAME.test(options.scripts[key])) {
       return { scripts: [], issues: [invalidScriptIssue(key, options.scripts[key])] }
@@ -104,12 +109,14 @@ export async function runSmartAppProjectScripts(
   await mkdir(logsDirectory, { recursive: true, mode: 0o700 })
   const scripts: SmartAppProjectScriptResult[] = []
   for (const key of SCRIPT_ORDER) {
+    options.signal?.throwIfAborted()
     const script = options.scripts[key]
     const result = await traceSmartAppVerification(`scripts.${key}`, () =>
       run(command.command, [...command.argsPrefix, ...PROJECT_RUN_ARGS, script], {
         cwd: options.projectRoot,
         env: environment,
         shell: false,
+        ...(options.signal ? { signal: options.signal } : {}),
       })
     )
     const log = join(logsDirectory, `${key}.log`)
@@ -127,6 +134,7 @@ export async function runSmartAppProjectScripts(
 export async function runSmartAppRuntimeProbe(
   options: RunSmartAppRuntimeProbeOptions
 ): Promise<{ issues: SmartAppVerificationIssue[] }> {
+  options.signal?.throwIfAborted()
   if (!SCRIPT_NAME.test(options.script)) {
     return {
       issues: [
@@ -157,6 +165,7 @@ export async function runSmartAppRuntimeProbe(
       cwd: options.projectRoot,
       env: environment,
       shell: false,
+      ...(options.signal ? { signal: options.signal } : {}),
     }
   )
   const log = join(options.projectRoot, 'test-results', 'smart-app', 'logs', 'runtime-probe.log')
@@ -196,19 +205,52 @@ function sanitizedEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv
   )
 }
 
-function runCommand(
+async function runCommand(
   command: string,
   args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv; shell: false }
+  options: { cwd: string; env: NodeJS.ProcessEnv; shell: false; signal?: AbortSignal }
+): Promise<SmartAppScriptCommandResult> {
+  options.signal?.throwIfAborted()
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    shell: options.shell,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    detached: process.platform !== 'win32',
+  })
+  const result = readCommandOutput(child)
+  let stop: Promise<void> | undefined
+  let dispose = () => {}
+  const aborted = new Promise<never>((_resolve, reject) => {
+    const abort = () => {
+      stop ??= child.pid ? terminateProcessTree(child, 1_000) : Promise.resolve()
+      void stop.then(() => reject(options.signal?.reason), reject)
+    }
+    options.signal?.addEventListener('abort', abort, { once: true })
+    dispose = () => options.signal?.removeEventListener('abort', abort)
+    if (options.signal?.aborted) abort()
+  })
+  try {
+    return await Promise.race([result, aborted])
+  } finally {
+    dispose()
+    await stop
+    options.signal?.throwIfAborted()
+  }
+}
+
+function readCommandOutput(
+  child: ChildProcessByStdio<null, Readable, Readable>
 ): Promise<SmartAppScriptCommandResult> {
   return new Promise(resolvePromise => {
-    const child = spawn(command, args, {
-      ...options,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
     let stdout = ''
     let stderr = ''
+    let drainTimeout: NodeJS.Timeout | undefined
+    const finish = (exitCode: number | null) => {
+      clearTimeout(drainTimeout)
+      resolvePromise({ exitCode, stdout, stderr })
+    }
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', chunk => {
@@ -218,9 +260,18 @@ function runCommand(
       stderr = appendLimited(stderr, String(chunk))
     })
     child.once('error', error => {
-      resolvePromise({ exitCode: null, stdout, stderr: appendLimited(stderr, error.message) })
+      stderr = appendLimited(stderr, error.message)
+      finish(null)
     })
-    child.once('exit', exitCode => resolvePromise({ exitCode, stdout, stderr }))
+    child.once('exit', exitCode => {
+      // Background descendants can inherit these pipes after the script has exited.
+      drainTimeout = setTimeout(() => {
+        child.stdout.destroy()
+        child.stderr.destroy()
+        finish(exitCode)
+      }, OUTPUT_DRAIN_TIMEOUT_MS)
+    })
+    child.once('close', finish)
   })
 }
 

@@ -214,7 +214,7 @@ export function LocalWorkspaceOpenerPicker({
                     onClick={() => void onChooseOther?.()}
                     className="flex h-10 w-full min-w-0 items-center gap-3 rounded-xl px-2.5 text-left text-base font-normal leading-5 text-text-secondary transition-colors hover:bg-muted"
                   >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border/50 bg-muted text-text-secondary shadow-sm">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border/50 bg-muted text-text-secondary shadow-sm wework:border-black/5">
                       <Plus className="h-3.5 w-3.5" />
                     </span>
                     <span className="min-w-0 flex-1 truncate">
@@ -249,7 +249,7 @@ export function LocalWorkspaceOpenerIcon({
   className?: string
 }) {
   const wrapperClassName = cn(
-    'inline-flex items-center justify-center overflow-hidden rounded-md border border-border/50 shadow-sm',
+    'inline-flex items-center justify-center overflow-hidden rounded-md border border-border/50 shadow-sm wework:border-black/5',
     className
   )
 

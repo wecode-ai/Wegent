@@ -63,6 +63,8 @@ import {
 } from './conversationDiagnostics'
 
 export interface MessageListProps {
+  assistantMessageStyle?: 'plain' | 'bubble'
+  showProcessingStatus?: boolean
   userMessageServices: UserMessageServices
   virtualize?: boolean
   useContentVisibility?: boolean
@@ -160,6 +162,8 @@ export const MessageList = memo(function MessageList({
   useContentVisibility = false,
   onVirtualMeasurement,
   renderVisualization,
+  assistantMessageStyle,
+  showProcessingStatus,
   messages,
   turns = EMPTY_TURNS,
   scrollElementRef,
@@ -824,6 +828,8 @@ export const MessageList = memo(function MessageList({
               )}
               userMessageServices={userMessageServices}
               renderVisualization={renderVisualization}
+              assistantMessageStyle={assistantMessageStyle}
+              showProcessingStatus={showProcessingStatus}
               conversationKey={conversationKey}
               devices={devices}
               replyQuestions={replyQuestionsByMessageId.get(message.id)}
