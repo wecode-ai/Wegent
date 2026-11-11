@@ -1548,6 +1548,9 @@ async function createWindow(
       webviewTag: true,
     },
   })
+  if (backgroundWorkbenchStartup) {
+    restoreMainWindowOnFirstShow(mainWindow, startupLayout.maximized)
+  }
   installE2ERendererCpuProfiling(mainWindow.webContents)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
@@ -1764,7 +1767,7 @@ const presentStartupWindow = createStartupReadyHandler(async (source: string) =>
     logStartupStep('startup-window-presentation', 'completed', { source, background: true })
     // An explicit activation may arrive while the hidden splash closes.
     if (!backgroundWorkbenchStartup && canPresent() && !keepE2EWindowInBackground) {
-      presentWindow(target)
+      presentMainWindow(target)
       if (deferredWorkspaceWindowRestore) await restoreFixedWorkspaceWindows()
     }
     return
@@ -1837,6 +1840,24 @@ const rendererStartupReady = createStartupReadyHandler(async (source: string) =>
   scheduleComputerUseStartup()
 })
 
+function restoreMainWindowOnFirstShow(target: BrowserWindow, maximized: boolean): void {
+  if (!maximized) return
+  target.once('show', () => {
+    if (target.isDestroyed()) return
+    try {
+      target.maximize()
+    } catch (error) {
+      console.warn('[window-state] failed to restore maximized main window', error)
+    }
+  })
+}
+
+function presentMainWindow(target: BrowserWindow): boolean {
+  if (!presentWindow(target)) return false
+  mainWindowState?.start(target)
+  return true
+}
+
 async function reactivateMainWindow(): Promise<void> {
   if (quitting) return
   workbenchForegroundRequested = true
@@ -1853,7 +1874,7 @@ async function reactivateMainWindow(): Promise<void> {
   } else {
     await setDockVisible(true)
   }
-  presentWindow(target)
+  presentMainWindow(target)
   await loadPrimaryDshView()
   if (deferredWorkspaceWindowRestore) await restoreFixedWorkspaceWindows()
 }
@@ -2740,7 +2761,10 @@ async function configureDesktopRuntime(): Promise<void> {
                 : windowLabel === 'popout-window'
                   ? popoutWindow
                   : (workspaceWindows.get(windowLabel) ?? null)
-            if (target) presentWindow(target)
+            if (target) {
+              if (windowLabel === 'main') presentMainWindow(target)
+              else presentWindow(target)
+            }
           },
           hideMainWindow: hideMainWindowToBackground,
           openProcessExplorer: () => openProcessExplorerWindow(),

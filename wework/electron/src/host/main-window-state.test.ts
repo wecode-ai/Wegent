@@ -74,6 +74,41 @@ describe('main window state persistence', () => {
     })
   })
 
+  test('repeated starts for the same window retain one set of listeners and one pending write', async () => {
+    const { controller, window, start, update } = fixture()
+    start()
+    start()
+    expect(window.listenerCount('move')).toBe(1)
+    expect(window.listenerCount('resize')).toBe(1)
+    expect(window.listenerCount('closed')).toBe(1)
+    window.bounds.width = 920
+    window.emit('resize')
+    await vi.runAllTimersAsync()
+    expect(update).toHaveBeenCalledExactlyOnceWith({
+      mainWindowState: { bounds: window.bounds, maximized: false },
+    })
+    await controller.stop()
+    expect(window.listenerCount('move')).toBe(0)
+    expect(window.listenerCount('closed')).toBe(0)
+  })
+
+  test('rejects a different active window until the tracked window is stopped', async () => {
+    const { controller, start, window, update } = fixture()
+    const next = new FakeWindow()
+    next.bounds = { x: 40, y: 60, width: 900, height: 600 }
+    start()
+    expect(() => controller.start(next)).toThrow('tracking is already active')
+    expect(next.listenerCount('move')).toBe(0)
+    expect(window.listenerCount('move')).toBe(1)
+    await controller.stop()
+    controller.start(next)
+    expect(next.listenerCount('move')).toBe(1)
+    await controller.stop()
+    expect(update).toHaveBeenLastCalledWith({
+      mainWindowState: { bounds: next.bounds, maximized: false },
+    })
+  })
+
   test.each(['minimized', 'fullScreen'] as const)(
     'retains normal bounds when quitting %s',
     async mode => {

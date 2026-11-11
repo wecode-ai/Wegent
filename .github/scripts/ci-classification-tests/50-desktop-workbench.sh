@@ -255,15 +255,23 @@ assert_desktop_case "collaboration executor runtime changes retain full coverage
   "$full_desktop_expected" \
   "executor/src/runtime_work/handler/claude_turns.rs"
 
-assert_desktop_case "workbench mode changes select their desktop regression" \
+assert_desktop_case "workbench mode changes select mode and application lifecycle regressions" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"workbench-mode"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"workbench-apps"},{"id":"core-5","name":"Core / shard 5","segments":"workbench-mode"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/workbench-mode.scenario.mjs" \
   "wework/electron/src/runtime/workbench-mode.ts" \
   "wework/src/features/workbench-mode/workbenchMode.ts"
+
+assert_desktop_case "workbench application host changes select their DSH lifecycle regression" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"workbench-apps"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/electron/src/host/workbench-app-system.ts"
 
 assert_desktop_case "Codex account login scenario selects its desktop regression" \
   'wework_desktop_e2e=true
