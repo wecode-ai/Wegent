@@ -13,6 +13,7 @@ import {
   RETRY_CONTINUATION_PROMPT as RUNTIME_RETRY_CONTINUATION_PROMPT,
 } from '../modules/shared.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { retryConversationHistory } from '../modules/stand-in-retry-history.mjs'
 import { createSubscriptionConfigRegression } from '../modules/stand-in-subscription-config.mjs'
 import {
   assistantMessage,
@@ -38,56 +39,6 @@ const INITIAL_LIMITS = { contextWindow: 512_000, maxOutputTokens: 4096 }
 const UPDATED_LIMITS = { contextWindow: 768_000, maxOutputTokens: 16_384 }
 const OFFICIAL_MODEL = 'gpt-6.1-sol'
 const ORDINARY = '[data-workspace-tab-content="fixed-task"] [data-testid="desktop-workbench-main"]'
-const RETRY_HISTORY_CALL = 'retry-previous-conversation'
-
-function retryConversationHistory(body, { marker, retryTaskId, retryThreadId }) {
-  assert.ok(retryTaskId && retryThreadId, 'Retry must retain its original logical conversation')
-  const messages = (body.input ?? []).filter(item => ['user', 'assistant'].includes(item.role))
-  const message = messages.filter(item => item.role === 'user').at(-1)
-  const text =
-    typeof message?.content === 'string'
-      ? message.content
-      : (message?.content ?? []).map(part => part.text ?? '').join('')
-  assert.ok(
-    text.includes(`read_task(${JSON.stringify({ taskId: retryTaskId })})`),
-    'A new-session retry must identify the exact authorized conversation history'
-  )
-  assert.equal(
-    JSON.stringify(messages).includes(`${marker}_CHAT_`),
-    false,
-    'Retry must send the continuation prompt rather than replaying the original request'
-  )
-  assert.equal(
-    JSON.stringify(messages).includes(`${marker}_OFFICIAL`),
-    false,
-    'A cross-provider retry must not copy the previous official native session'
-  )
-  if (!requestContainsToolOutput(body, RETRY_HISTORY_CALL)) {
-    return {
-      events: mcpToolRequestEvents(body, {
-        toolName: 'read_task',
-        directToolName: 'mcp__wework_stand_in__read_task',
-        argumentsValue: { taskId: retryTaskId },
-        searchCallId: `${RETRY_HISTORY_CALL}-search`,
-        toolCallId: RETRY_HISTORY_CALL,
-      }).events,
-    }
-  }
-  const history = JSON.parse(readMcpToolOutput(body, RETRY_HISTORY_CALL))
-  assert.equal(history.success, true, 'Retry must successfully read real authorized history')
-  assert.equal(history.taskId, retryTaskId, 'Retry must read its exact original logical task')
-  assert.ok(Array.isArray(history.messages), 'Retry must consume actual conversation messages')
-  assert.notEqual(
-    history.hasMoreBefore,
-    true,
-    'The bounded retry fixture history must fit one page'
-  )
-  assert.ok(
-    history.messages.every(message => message.contentComplete !== false),
-    'The bounded retry fixture must read complete message content'
-  )
-  return { messages: history.messages }
-}
 
 export function executionModelEvents(body, context) {
   const { marker, cases, completed } = context

@@ -29,9 +29,16 @@ const retryHistory = () => ({
     { id: 'completed-progress', role: 'assistant', content: `${marker}_PROGRESS_cloud` },
   ].map(message => ({ ...message, contentComplete: true })),
 })
-const historyOutput = history => ({
+const currentRetryHistory = () => ({
+  success: true,
+  taskId: retryTaskId,
+  hasMoreBefore: true,
+  beforeCursor: 'opaque-earlier-session',
+  messages: [{ id: 'retry-request', role: 'user', content: retryPrompt, contentComplete: true }],
+})
+const historyOutput = (history, callId = 'retry-previous-conversation') => ({
   type: 'function_call_output',
-  call_id: 'retry-previous-conversation',
+  call_id: callId,
   output: [{ type: 'input_text', text: JSON.stringify(history) }],
 })
 
@@ -222,6 +229,99 @@ describe('stand-in execution model fixture', () => {
     )
   })
 
+  test('follows the earlier native session cursor before deciding which work to continue', () => {
+    const context = { ...state(), retryTaskId, retryThreadId, retryMessageIds }
+    const body = {
+      model: 'kimi-k3',
+      input: [user(retryPrompt), historyOutput(currentRetryHistory())],
+      tools: [
+        { type: 'function', name: 'mcp__wework_stand_in__read_task', parameters: {} },
+        { type: 'function', name: 'mcp__wework_stand_in__create_task', parameters: {} },
+      ],
+    }
+    const pending = executionModelEvents(body, context)
+    const call = pending.events.find(
+      event => event.type === 'response.output_item.done' && event.item?.type === 'function_call'
+    ).item
+    expect(call.call_id).toBe('retry-previous-conversation-1')
+    expect(JSON.parse(call.arguments)).toEqual({
+      taskId: retryTaskId,
+      beforeCursor: 'opaque-earlier-session',
+    })
+    expect(JSON.stringify(pending.events)).not.toContain('create_task')
+    expect(pending.retryEvidence).toBeUndefined()
+
+    const continued = executionModelEvents(
+      { ...body, input: [...body.input, historyOutput(retryHistory(), call.call_id)] },
+      context
+    )
+    const work = continued.events.find(
+      event => event.type === 'response.output_item.done' && event.item?.type === 'function_call'
+    ).item
+    expect(work.name).toBe('mcp__wework_stand_in__create_task')
+    expect(JSON.parse(work.arguments)).toEqual({
+      requestId: 'create-cloud',
+      title: '模型调用验证 cloud',
+      message: `${marker}_WORK_cloud`,
+    })
+    expect(continued.retryEvidence).toEqual({
+      taskId: retryTaskId,
+      threadId: retryThreadId,
+      name: 'cloud',
+      requestMessageId: 'unfinished-request',
+      progressMessageId: 'completed-progress',
+    })
+  })
+
+  test.each([
+    [
+      'denied',
+      history => {
+        history.success = false
+      },
+      'successfully read real authorized history',
+    ],
+    [
+      'foreign',
+      history => {
+        history.taskId = 'unrelated-task'
+      },
+      'exact original logical task',
+    ],
+    [
+      'truncated',
+      history => {
+        history.messages[1].contentComplete = false
+      },
+      'read complete message content',
+    ],
+    [
+      'repeated cursor',
+      history => {
+        history.hasMoreBefore = true
+        history.beforeCursor = 'opaque-earlier-session'
+      },
+      'history pagination must advance',
+    ],
+  ])('rejects %s history from an earlier native session', (_name, change, error) => {
+    const history = retryHistory()
+    change(history)
+    expect(() =>
+      executionModelEvents(
+        {
+          model: 'kimi-k3',
+          input: [
+            user(retryPrompt),
+            historyOutput(currentRetryHistory()),
+            historyOutput(history, 'retry-previous-conversation-1'),
+          ],
+          tools: [{ type: 'function', name: 'mcp__wework_stand_in__read_task', parameters: {} }],
+        },
+        { ...state(), retryTaskId, retryThreadId, retryMessageIds }
+      )
+    ).toThrow(error)
+  })
+
   test.each([
     [
       'denied history',
@@ -266,11 +366,11 @@ describe('stand-in execution model fixture', () => {
       'completed progress from the failed native turn',
     ],
     [
-      'unread page',
+      'missing pagination cursor',
       history => {
         history.hasMoreBefore = true
       },
-      'history must fit one page',
+      'earlier history cursor',
     ],
     [
       'truncated message',
