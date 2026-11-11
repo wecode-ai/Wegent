@@ -4,6 +4,7 @@ import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { beginOperation } from './operationBus'
 import { TelemetryAgent } from './TelemetryAgent'
+import { setSessionTelemetryConsent } from './sessionConsent'
 
 const mocks = vi.hoisted(() => ({
   auth: {
@@ -69,6 +70,7 @@ vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
 
 describe('TelemetryAgent', () => {
   beforeEach(() => {
+    setSessionTelemetryConsent(undefined)
     mocks.auth.isLoading = false
     mocks.auth.user = { email: 'zhongyang@example.invalid', id: 7, user_name: 'zhongyang' }
     mocks.hostEventHandler = null
@@ -168,6 +170,26 @@ describe('TelemetryAgent', () => {
     await act(async () => resolveApps([]))
     expect(mocks.publish).not.toHaveBeenCalled()
   })
+
+  test.each(['resolve', 'reject'])(
+    'drops late app route metadata after session refusal: %s',
+    async outcome => {
+      vi.stubEnv('VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS', '["smart_app_name"]')
+      let finish: (() => void) | undefined
+      mocks.listApps.mockReturnValue(
+        new Promise((resolve, reject) => {
+          finish = () =>
+            outcome === 'resolve' ? resolve([]) : reject(new Error('metadata unavailable'))
+        })
+      )
+      window.history.replaceState({}, '', '/app/harness-restored')
+      render(<TelemetryAgent />)
+      await act(async () => setSessionTelemetryConsent(false))
+      expect(mocks.telemetryEnabled).toBe(true)
+      await act(async () => finish?.())
+      expect(mocks.publish).not.toHaveBeenCalled()
+    }
+  )
 
   test('automatically publishes each Smart App route transition once', async () => {
     render(<TelemetryAgent />)

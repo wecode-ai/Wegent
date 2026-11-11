@@ -15,6 +15,18 @@ const RUNTIME_PREPARATION_CAPABILITIES = new Set([
 ])
 const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
 
+function traceHostRequest(phase, requestId, capability) {
+  if (
+    process.env.VITE_WEWORK_E2E !== 'true' ||
+    process.env.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS !== '1'
+  )
+    return
+  console.debug(
+    '[host-pipe-client]',
+    JSON.stringify({ at: new Date().toISOString(), phase, requestId, capability })
+  )
+}
+
 export class ElectronHostError extends Error {
   constructor(code, message, details = {}) {
     super(message)
@@ -139,6 +151,7 @@ export class ElectronHostClient {
     const id = `dsh-${++this.sequence}`
     const response = deferred()
     this.pending.set(id, response)
+    traceHostRequest('sent', id, capability)
     this.write({ type: 'request', id, capability, params })
     try {
       return await withTimeout(
@@ -221,6 +234,7 @@ export class ElectronHostClient {
     }
     const pending = this.pending.get(message.id)
     if (!pending) return
+    traceHostRequest('received', message.id)
     if (message.ok === true) {
       pending.resolve(message.result)
       return

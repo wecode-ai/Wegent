@@ -2,17 +2,18 @@
 set -euo pipefail
 
 test "${CI:-}" = true
-test -f /.dockerenv
 
-source "$(dirname "$0")/lib/apt-packages.sh"
-trap 'apt_failure_status=$?; report_apt_network_diagnostics; exit "$apt_failure_status"' ERR
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/lib/apt-packages.sh"
+privileged=()
+if ((EUID != 0)); then privileged=(sudo); fi
 
-# Use the reachable Ubuntu mirror while retaining the image's suites and
-# signing keyring. Only disposable CI containers use this source configuration.
+# Preserve Ubuntu suites and signing keys on disposable CI hosts and containers.
 for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.{list,sources}; do
   if [[ -f "$source" ]]; then
-    sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu#https://security.ubuntu.com/ubuntu#g' "$source"
+    rewritten_source="$(rewrite_ci_ubuntu_archive < "$source")"
+    printf '%s\n' "$rewritten_source" | "${privileged[@]}" tee "$source" >/dev/null
   fi
 done
-apt-get -o APT::Update::Error-Mode=any update
-apt-get install --yes --no-install-recommends "$@"
+run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update
+run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "$@"
