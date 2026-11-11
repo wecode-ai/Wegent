@@ -502,7 +502,8 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.awaitScenarioRequestCount('pasted_workspace_paths', 1)
+  // Runtime preparation and model dispatch use the shared model-request deadline.
+  await control.awaitScenarioRequestCount('pasted_workspace_paths', 1, MODEL_REQUEST_TIMEOUT_MS)
   assertSourceAttachmentPath(control, 'pasted_workspace_paths', filePath)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: PASTED_PATH_COMPLETION_TEXT,
