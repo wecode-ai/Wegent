@@ -1,5 +1,6 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
-import type { ComponentProps, ReactNode } from 'react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useState, type ComponentProps, type ReactElement } from 'react'
+import { flushSync } from 'react-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   WorkspaceTabsContext,
@@ -8,7 +9,14 @@ import {
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import { WeworkCollaborationPlatform } from './WeworkCollaborationPlatform'
 
-const navigation = vi.hoisted(() => ({ current: null as ((search: string) => void) | null }))
+const navigation = vi.hoisted(() => ({
+  current: null as ((search: string) => void) | null,
+  route: '',
+  back: undefined as (() => void) | undefined,
+  renderProject: undefined as ComponentProps<
+    typeof import('@wegent/collaboration').CollaborationPlatformApp
+  >['renderProject'],
+}))
 
 vi.mock('@/features/collaboration/CollaborationGroupsSurface', async importOriginal => {
   const actual =
@@ -19,6 +27,7 @@ vi.mock('@/features/collaboration/CollaborationGroupsSurface', async importOrigi
       props: ComponentProps<typeof actual.CollaborationGroupsSurface>
     ) => {
       navigation.current = props.onNavigate
+      navigation.back = props.onBackToBoard
       return <actual.CollaborationGroupsSurface {...props} />
     },
   }
@@ -28,14 +37,17 @@ vi.mock('@wegent/collaboration', async importOriginal => {
   const actual = await importOriginal<typeof import('@wegent/collaboration')>()
   return {
     ...actual,
-    CollaborationPlatformApp: ({ sidebarHeader }: { sidebarHeader?: ReactNode }) => (
-      <aside>{sidebarHeader}</aside>
-    ),
+    CollaborationPlatformApp: (props: ComponentProps<typeof actual.CollaborationPlatformApp>) => {
+      navigation.renderProject = props.renderProject
+      return <aside>{props.sidebarHeader}</aside>
+    },
   }
 })
 
 afterEach(() => {
   navigation.current = null
+  navigation.back = undefined
+  navigation.renderProject = undefined
   window.history.replaceState({}, '', '/')
 })
 
@@ -79,7 +91,7 @@ function fixture(background = false) {
       />
     </WorkspaceTabsContext.Provider>
   )
-  return { owner, context, view }
+  return { owner, context, view, services }
 }
 
 describe('collaboration navigation ownership', () => {
@@ -180,4 +192,64 @@ describe('collaboration navigation ownership', () => {
     fireEvent.click(screen.getByRole('button', { name: '项目', exact: true }))
     expect(new URLSearchParams(window.location.search).get('collaborationView')).toBe('projects')
   })
+})
+
+it('keeps the originating filtered project board when its host opens a Group Thread', async () => {
+  const f = fixture()
+  const initial =
+    '/todo?collaborationView=projects&projectId=project-1&projectStore=local&view=table&search=review'
+  const project = {
+    id: 'project-1',
+    public_id: 'project-1',
+    project_store: 'local',
+    name: 'Project',
+    project_key: 'PRJ',
+    task_provider: 'local',
+    provider_config: {},
+    tags: [],
+    status: 'active',
+    version: 1,
+    created_by_user_id: 1,
+    created_at: '',
+    updated_at: '',
+  }
+  f.services.projectSpaceApis.local.listCloudProjects.mockResolvedValue({
+    items: [project],
+  } as never)
+  function ControlledTabs() {
+    const [route, setRoute] = useState(initial)
+    navigation.route = route
+    const owner = { ...f.owner, contentRoute: route }
+    return (
+      <WorkspaceTabsContext.Provider
+        value={{
+          ...f.context,
+          tabs: [owner],
+          activeTab: owner,
+          updateTab: (_id, update) => flushSync(() => setRoute(update.contentRoute!)),
+        }}
+      >
+        <WeworkCollaborationPlatform
+          workspaceTabId={owner.id}
+          user={{ id: 1, user_name: 'Member' } as never}
+          localProjects={[]}
+          services={f.services as never}
+        />
+      </WorkspaceTabsContext.Provider>
+    )
+  }
+  render(<ControlledTabs />)
+  await waitFor(() => expect(navigation.renderProject).toBeTypeOf('function'))
+  const rendered = navigation.renderProject!({
+    project,
+    workspace: { id: 'workspace', name: 'Workspace' },
+  } as never) as ReactElement<{
+    onOpenGroupThread(groupId: string, threadId: string, store: 'local'): void
+  }>
+  const sourceRoute = navigation.route
+  act(() => rendered.props.onOpenGroupThread('group-1', 'thread-1', 'local'))
+  expect(navigation.back).toBeTypeOf('function')
+  act(() => navigation.back!())
+  await waitFor(() => expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible())
+  expect(navigation.route).toBe(sourceRoute)
 })

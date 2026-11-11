@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useEffect, useMemo, useState, type ReactNode, type ComponentProps } from 'react'
+import { Activity, useEffect, useMemo, useState, type ReactNode, type ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AiChatModal } from '@/features/todo/AiChatModal'
 import type { ThreadActionContext } from './threadActions'
@@ -138,7 +138,12 @@ describe('Group private task controller', () => {
     mounted.rerender(view(true, 'another-account-store-thread'))
     expect(screen.queryByTestId('private-conversation')).toBeNull()
     expect(screen.getByTestId('stable-surface')).toBe(surface)
+    const readsBeforeReturn = vi.mocked(fixture.context!.api.issues.get).mock.calls.length
+    mounted.rerender(view(true))
     await act(async () => {})
+    expect(screen.queryByTestId('private-conversation')).toBeNull()
+    expect(vi.mocked(fixture.context!.api.issues.get).mock.calls.length).toBe(readsBeforeReturn)
+    expect(screen.getByTestId('stable-surface')).toBe(surface)
   })
 
   it('rejects revoked execution before creating the private editor', async () => {
@@ -161,4 +166,37 @@ describe('Group private task controller', () => {
     await screen.findByTestId('transient-notice')
     expect(screen.queryByTestId('private-conversation')).toBeNull()
   })
+})
+
+it('retains the existing private editor through real React Activity suspension without replaying the open intent', async () => {
+  fixture.context = context()
+  const owner = threadActionOwner(fixture.context)
+  const services = {
+    projectSpaceApis: { local: { bindTask: vi.fn(), unbindTask: vi.fn() } },
+  } as never
+  const view = (active: boolean) => (
+    <Activity mode={active ? 'visible' : 'hidden'}>
+      <GroupThreadPersonalTaskController
+        owner={owner}
+        active={active}
+        locale="en"
+        services={services}
+        localProjects={[]}
+      >
+        <GroupThreadSurface {...({} as ComponentProps<typeof GroupThreadSurface>)} />
+      </GroupThreadPersonalTaskController>
+    </Activity>
+  )
+  const mounted = render(view(true))
+  fireEvent.click(screen.getByTestId('create-personal'))
+  await screen.findByTestId('private-conversation')
+  const taskRequest = fixture.modal!.initialTaskRequest
+  const reads = vi.mocked(fixture.context.api.issues.get).mock.calls.length
+  mounted.rerender(view(false))
+  await act(async () => {})
+  mounted.rerender(view(true))
+  await act(async () => {})
+  await screen.findByTestId('private-conversation')
+  expect(fixture.modal!.initialTaskRequest).toBe(taskRequest)
+  expect(vi.mocked(fixture.context.api.issues.get).mock.calls.length).toBe(reads)
 })

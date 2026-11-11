@@ -24,6 +24,7 @@ import type {
   ChatGroupMember,
   ThreadParticipation,
 } from '@/api/chatGroups'
+import type { DeviceCommandApi } from '@/api/environment'
 import { Button } from '@/components/ui/button'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -55,6 +56,7 @@ export function GroupConversation({
   renderThreadActions,
   onThreadActionContext,
   requestLeave,
+  changeRequestApi,
   onBack,
   onBackToBoard,
   onChanged,
@@ -81,6 +83,7 @@ export function GroupConversation({
   renderThreadActions?(context: ThreadActionContext): ReactNode
   onThreadActionContext?(context: ThreadActionContext | null): void
   requestLeave?(action: () => void): void
+  changeRequestApi?: DeviceCommandApi
   onBack(): void
   onBackToBoard?(): void
   onChanged(): void
@@ -285,7 +288,12 @@ export function GroupConversation({
                 {item.title}
               </h1>
               {item.badges?.length ? (
-                <IssueChangeRequestBadges badges={item.badges} compact testId="issue-badges" />
+                <IssueChangeRequestBadges
+                  badges={item.badges}
+                  api={changeRequestApi}
+                  compact
+                  testId="issue-badges"
+                />
               ) : null}
               <p className="mt-1 text-xs text-text-muted">
                 {participation

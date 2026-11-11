@@ -2,6 +2,10 @@
 
 import assert from 'node:assert/strict'
 import { afterEach, expect, test, vi } from 'vitest'
+import { createScheduleThreadFixture } from './helpers/collaboration-schedule-thread.mjs'
+
+const executor = vi.hoisted(() => ({ request: vi.fn() }))
+vi.mock('../e2e/desktop/modules/executor-rpc.mjs', () => ({ requestExecutor: executor.request }))
 import {
   addLocalDays,
   calendarDays,
@@ -254,9 +258,13 @@ test.each([
     new Set(),
     fixture.displayedMonthOffset ?? 0
   )
+  const thread = createScheduleThreadFixture(CONTENT)
+  executor.request.mockImplementation(thread.read)
   let rangeIndex = 0
   const control = {
     async command(action, selector, options) {
+      const metadataAction = thread.command(action, selector, options)
+      if (metadataAction.handled) return metadataAction.value
       if (selector.endsWith('[data-testid^="collaboration-calendar-day-"]')) {
         return calendar.command(action, GRID_DAYS, options)
       }

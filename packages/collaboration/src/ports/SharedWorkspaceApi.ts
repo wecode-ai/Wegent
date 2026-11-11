@@ -1077,6 +1077,7 @@ export interface WeworkWorkspaceRuntimePort {
     task: WorkspaceRuntimeTaskAddress,
     title: string,
     description: string,
+    classificationProjectId?: string,
   ): Promise<{ issue: CollaborationIssue }>;
   reportExecutionLifecycle(
     projectId: string,

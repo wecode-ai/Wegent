@@ -818,13 +818,18 @@ export function createWeworkWorkspaceRuntimePort(
     unbindCloudContext(task) {
       return deliveryApi.unbindCloudContext(toRuntimeTaskAddress(task))
     },
-    async trackProjectTask(projectId, task, title, description) {
-      const result = await deliveryApi.trackProjectTask(
-        projectId,
-        toRuntimeTaskAddress(task),
-        title,
-        description
-      )
+    async trackProjectTask(projectId, task, title, description, classificationProjectId) {
+      const address = toRuntimeTaskAddress(task)
+      const result =
+        classificationProjectId === undefined
+          ? await deliveryApi.trackProjectTask(projectId, address, title, description)
+          : await deliveryApi.trackProjectTask(
+              projectId,
+              address,
+              title,
+              description,
+              classificationProjectId
+            )
       return { issue: toIssue(result.item) }
     },
     async reportExecutionLifecycle(projectId, executionId, event) {

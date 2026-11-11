@@ -340,7 +340,7 @@ export function ProjectBoardBody<TItem>({
         <div className="project-board-toolbar flex min-w-0 shrink-0 flex-wrap items-start">
           <div
             data-testid="cloud-board-toolbar"
-            className="flex min-w-0 flex-1 flex-wrap items-center gap-2 px-6 pb-3"
+            className="project-board-controls flex min-w-0 flex-1 flex-wrap items-center gap-2 px-6 pb-3"
           >
             {isMyTasksBoard && localProjectFilter && localProjectFilter.options.length > 0 ? (
               <label className="relative inline-flex h-8 min-w-40 shrink-0 cursor-pointer items-center rounded-lg border border-border bg-background pl-3 pr-8 text-xs font-medium text-text-primary hover:bg-muted">

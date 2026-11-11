@@ -23,6 +23,7 @@ import {
 } from '@wegent/collaboration'
 import type { ProjectChatClient } from '@wegent/chat-core'
 import type { ChatGroup, ChatGroupApi, ChatGroupMember } from '@/api/chatGroups'
+import type { DeviceCommandApi } from '@/api/environment'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { CollaborationViewSwitcher } from './CollaborationViewSwitcher'
@@ -63,6 +64,7 @@ export function CollaborationGroupsSurface({
   renderThreadActions,
   onThreadActionContext,
   onPrepareThreadArchive,
+  changeRequestApi,
 }: {
   sources: GroupSource[]
   search: string
@@ -72,6 +74,7 @@ export function CollaborationGroupsSurface({
   onReady(): void
   onConnectCloud?: () => void
   accountScope: string
+  changeRequestApi?: DeviceCommandApi
   onBackToBoard?(): void
   renderThreadActions?(context: ThreadActionContext): ReactNode
   onThreadActionContext?(context: ThreadActionContext | null): void
@@ -475,6 +478,7 @@ export function CollaborationGroupsSurface({
                   items={current.items}
                   api={api}
                   catalog={source.workspace}
+                  changeRequestApi={changeRequestApi}
                   members={current.members}
                   groups={source.groups}
                   chat={source.chat}
@@ -559,6 +563,7 @@ export function CollaborationGroupsSurface({
                       items={current.items}
                       api={api}
                       catalog={source.workspace}
+                      changeRequestApi={changeRequestApi}
                       members={current.members}
                       groups={source.groups}
                       chat={source.chat}

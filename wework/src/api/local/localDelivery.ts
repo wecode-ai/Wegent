@@ -30,6 +30,8 @@ import {
 import type { LocalProjectSpaceApi } from '@/features/workbench/workbenchServices'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 import { LOCAL_USER } from './localSession'
+import { createLocalChatGroupApi } from '@/api/chatGroups'
+import { groupWorkContainer } from '@/api/groupWorkContainer'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
 import type {
   Attachment,
@@ -1147,7 +1149,19 @@ export function createLocalDeliveryApi(
       invalidateProjectRecords()
     },
     async listMyWork() {
-      const projects = (await loadProjectRecords(true))
+      const groups = createLocalChatGroupApi(request)
+      const [projectResult, groupResult] = await Promise.allSettled([
+        loadProjectRecords(true),
+        groups.list(),
+      ])
+      const projectRecords = projectResult.status === 'fulfilled' ? projectResult.value : []
+      const groupRecords = groupResult.status === 'fulfilled' ? groupResult.value.items : []
+      const catalogErrors = [projectResult, groupResult].flatMap(result =>
+        result.status === 'rejected'
+          ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
+          : []
+      )
+      const projects = projectRecords
         .map(localProject)
         .filter(
           project =>
@@ -1155,8 +1169,14 @@ export function createLocalDeliveryApi(
             project.id !== DEFAULT_WORK_ITEM_PROJECT_ID &&
             project.status === 'active'
         )
+      const containers = [
+        ...projects,
+        ...groupRecords
+          .filter(group => group.status === 'active')
+          .map(group => groupWorkContainer(group, 'local')),
+      ]
       const results = await Promise.all(
-        projects.map(async project => {
+        containers.map(async project => {
           try {
             const records = await request<LocalLoopItemRecord[]>('todos.list', {
               project_id: project.id,
@@ -1181,8 +1201,14 @@ export function createLocalDeliveryApi(
         })
       )
       return {
-        items: results.flatMap(result => result.items),
-        errors: results.flatMap(result => result.errors),
+        items: [
+          ...new Map(
+            results
+              .flatMap(result => result.items)
+              .map(item => [`${item.cloud_project_id}:${item.id}`, item])
+          ).values(),
+        ],
+        errors: [...catalogErrors, ...results.flatMap(result => result.errors)],
       }
     },
     async listLoopItems(
@@ -1666,7 +1692,8 @@ export function createLocalDeliveryApi(
       projectId: CloudProjectId,
       task: RuntimeTaskAddress,
       taskTitle: string,
-      description: string
+      description: string,
+      classificationProjectId?: string
     ) {
       return trackProjectTaskOnce(projectId, task, async () => {
         try {
@@ -1689,6 +1716,9 @@ export function createLocalDeliveryApi(
           title: taskTitle,
           description,
           status: String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID ? 'inbox' : 'pending',
+          ...(classificationProjectId !== undefined
+            ? { classification_project_id: classificationProjectId }
+            : {}),
         })
         await api.bindTask(item.id, task, taskTitle)
         return { item }
@@ -1721,11 +1751,33 @@ export function createLocalDeliveryApi(
         device_id: task.deviceId,
         task_id: task.taskId,
       })
+      if (binding.task_user_id !== 0) throw new Error('Local task binding is unavailable')
+      if (binding.loop_item_id) taskProjects.set(binding.loop_item_id, binding.cloud_project_id)
+      const loopItem = binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null
+      if (loopItem) {
+        const item = loopItem
+        if (item.group_id) {
+          if (
+            item.id !== binding.loop_item_id ||
+            item.group_id !== binding.cloud_project_id ||
+            item.cloud_project_id !== binding.cloud_project_id
+          )
+            throw new Error('Local task binding is unavailable')
+          const { group } = await createLocalChatGroupApi(request).get(item.group_id)
+          if (group.id !== binding.cloud_project_id)
+            throw new Error('Local task owner is unavailable')
+          taskProjects.set(item.id, group.id)
+          return {
+            ...binding,
+            project: groupWorkContainer(group, 'local'),
+            loop_item: item,
+          }
+        }
+      }
       const projectRecords = await loadProjectRecords()
       const projectRecord = projectRecords.find(record => record.id === binding.cloud_project_id)
       if (!projectRecord) throw new Error('Local project not found')
       if (binding.loop_item_id) taskProjects.set(binding.loop_item_id, binding.cloud_project_id)
-      const loopItem = binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null
       return {
         ...binding,
         id: binding.id,

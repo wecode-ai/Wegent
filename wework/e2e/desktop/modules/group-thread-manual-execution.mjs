@@ -110,6 +110,22 @@ export async function verifyGroupManualExecution({
   assert.equal(bindings[0].task_user_id, owner.id)
   assert.equal(bindings[0].task_id, address.taskId)
   assert.equal(bindings[0].device_id, identity.backendDeviceId)
+  const contextPath = `/api/v1/runtime-tasks/cloud-context?${new URLSearchParams({
+    device_id: bindings[0].device_id,
+    task_id: bindings[0].task_id,
+  })}`
+  const context = await request(contextPath)
+  assert.equal(String(context.id), String(bindings[0].id))
+  assert.equal(String(context.cloud_project_id), String(group.id))
+  assert.equal(context.device_id, bindings[0].device_id)
+  assert.equal(context.task_id, bindings[0].task_id)
+  assert.equal(context.project.resource_type, 'chat_group')
+  assert.equal(String(context.project.id), String(group.id))
+  assert.equal(context.loop_item.id, issue.id)
+  assert.equal(context.loop_item.group_id, String(group.id))
+  assert.equal(String(context.loop_item.cloud_project_id), String(group.id))
+  assert.equal(context.loop_item_id, issue.id)
+  assert.equal(context.task_user_id, owner.id)
   const current = await request(`/api/v1/loop-items/${issue.id}`)
   assert.equal(String(current.cloud_project_id), String(group.id))
   assert.equal(current.assignee_user_id, null)
@@ -118,6 +134,7 @@ export async function verifyGroupManualExecution({
     method: 'POST',
     body: { user_id: member.id, role: 'Viewer' },
   })
+  await request(contextPath, { token: memberToken, status: 404 })
   assert.deepEqual(
     await request(`/api/v1/loop-items/${issue.id}/tasks`, { token: memberToken }),
     []

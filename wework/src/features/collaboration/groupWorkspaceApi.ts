@@ -1,42 +1,8 @@
-import {
-  collaborationMessages,
-  threadStatuses,
-  type CollaborationProject,
-  type SharedWorkspaceApi,
-} from '@wegent/collaboration'
-import type { ChatGroup, ChatGroupApi } from '@/api/chatGroups'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import type { ChatGroupApi } from '@/api/chatGroups'
 
-export function groupBoardContext(
-  group: ChatGroup,
-  store: 'local' | 'cloud'
-): CollaborationProject {
-  return {
-    id: group.id,
-    resource_type: 'chat_group',
-    public_id: group.id,
-    project_key: group.project_key,
-    name: group.name,
-    description: group.description,
-    project_store: store === 'local' ? 'local' : 'backend',
-    task_provider: 'local',
-    provider_config: {},
-    created_by_user_id: group.created_by_user_id,
-    access_role: group.role,
-    status: group.status,
-    tags: group.configuration?.tags ?? [],
-    board_config: {
-      ...group.configuration?.board_config,
-      group_by: group.configuration?.board_config?.group_by ?? 'status',
-      statuses: threadStatuses(collaborationMessages['zh-CN']),
-      processing_start_status_id: 'pending',
-    },
-    board_views: group.configuration?.board_views ?? undefined,
-    card_display: group.configuration?.card_display ?? undefined,
-    version: group.version,
-    created_at: group.created_at,
-    updated_at: group.updated_at,
-  }
-}
+export { groupWorkContainer as groupBoardContext } from '@/api/groupWorkContainer'
+import { groupWorkContainer as groupBoardContext } from '@/api/groupWorkContainer'
 
 /** A scoped board port; group identities never enter the actual project catalog. */
 export function createGroupWorkspaceApi(

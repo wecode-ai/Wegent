@@ -615,7 +615,6 @@ export function CollaborationApp({
 
   const loadingView = loading ? (
     <ProjectLoadingSkeleton
-      testId={collaborationTestIds.root}
       label={messages.loading}
       layout={
         host.location.projectId &&

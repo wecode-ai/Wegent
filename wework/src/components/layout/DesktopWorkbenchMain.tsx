@@ -145,6 +145,8 @@ import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
 import { TaskBoardAssociationDialog } from '@/features/todo/TaskBoardAssociationDialog'
+import { TaskOriginThreadCreateDialog } from '@/features/todo/TaskOriginThreadCreateDialog'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   DEFAULT_WORK_ITEM_PROJECT_KEY,
@@ -1426,6 +1428,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     activeDeliveryItem,
     associateRuntimeTaskWithExistingItem,
     associateRuntimeTaskWithNewItem,
+    taskOriginCreation,
+    openTaskOriginCreation,
+    closeTaskOriginCreation,
+    associateCreatedTaskOrigin,
+    taskOriginJoinRequest,
+    cancelTaskOriginJoin,
+    confirmTaskOriginJoin,
+    taskOriginScopeKey,
     boundCloudItem,
     boundCloudProject,
     boundRuntimeTaskAddress,
@@ -3439,6 +3449,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         currentTask={currentProjectSpaceRuntimeTask}
         projects={availableWorkItemProjects}
         onSelectProject={handleSelectCloudProject}
+        onCreateThread={openTaskOriginCreation}
         onRemoveProject={removeCloudProjectContext}
         goalPresent={Boolean(paneSession.goal && !paneSession.goalDraftActive)}
         refreshKey={`${paneSession.status.taskExecution.running}:${paneSession.status.taskExecution.status ?? ''}`}
@@ -3451,6 +3462,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         project={currentWorkItemGuideProject}
         projects={availableWorkItemProjects}
         onSelectProject={handleSelectCloudProject}
+        onCreateThread={openTaskOriginCreation}
         onRemoveProject={removeCloudProjectContext}
         goalPresent={Boolean(paneSession.goal && !paneSession.goalDraftActive)}
       />
@@ -3461,6 +3473,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         project={currentWorkItemGuideProject}
         projects={availableWorkItemProjects}
         onSelectProject={handleSelectCloudProject}
+        onCreateThread={openTaskOriginCreation}
+        onRemoveProject={clearPendingProjectContext}
+      />
+    ) : services.chatGroupApis?.local || services.chatGroupApis?.cloud ? (
+      <WorkItemComposerGuide
+        integrated
+        projects={availableWorkItemProjects}
+        onSelectProject={handleSelectCloudProject}
+        onCreateThread={openTaskOriginCreation}
         onRemoveProject={clearPendingProjectContext}
       />
     ) : null
@@ -6082,6 +6103,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     project={boundCloudProject}
                     item={boundCloudItem}
                     currentTask={currentProjectSpaceRuntimeTask}
+                    runtimeWork={state.runtimeWork}
                     currentUserId={state.user?.id}
                     localProjects={state.projects}
                     deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
@@ -6233,7 +6255,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               ? `${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
               : 'closed'
           }
-          project={taskBoardAssociation?.project ?? null}
+          project={taskOriginCreation ? null : (taskBoardAssociation?.project ?? null)}
           currentProject={boundCloudProject}
           items={taskBoardAssociation?.items ?? []}
           loading={taskBoardAssociation?.loading ?? false}
@@ -6241,6 +6263,40 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onClose={closeTaskBoardAssociation}
           onCreate={associateRuntimeTaskWithNewItem}
           onSelect={associateRuntimeTaskWithExistingItem}
+        />
+        {taskOriginCreation && (
+          <TaskOriginThreadCreateDialog
+            target={taskOriginCreation.target}
+            projects={cloudProjects}
+            services={services}
+            user={state.user}
+            scopeKey={taskOriginScopeKey}
+            onClose={closeTaskOriginCreation}
+            onCreated={associateCreatedTaskOrigin}
+          />
+        )}
+        <ConfirmDialog
+          open={Boolean(taskOriginJoinRequest)}
+          title={t('collaboration:joinAndLinkTitle')}
+          description={
+            taskOriginJoinRequest
+              ? t('collaboration:joinAndLinkDescription', {
+                  title: taskOriginJoinRequest.item.title,
+                  group: taskOriginJoinRequest.project.name,
+                })
+              : ''
+          }
+          error={taskOriginJoinRequest?.error}
+          confirmLabel={t('collaboration:joinAndLink')}
+          cancelLabel={t('cancel')}
+          dialogTestId="task-origin-join-dialog"
+          confirmTestId="task-origin-join-confirm"
+          cancelTestId="task-origin-join-cancel"
+          onConfirm={() => {
+            void confirmTaskOriginJoin()
+          }}
+          onClose={cancelTaskOriginJoin}
+          pending={taskOriginJoinRequest?.pending ?? false}
         />
         {deliveryDialogOpen && activeDeliveryItem && currentRuntimeTask && boundProjectSpaceApi && (
           <DeliveryDialog

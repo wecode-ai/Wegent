@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 import {
   createLocalCollaborationProject,
   reloadMainWindow,
@@ -44,6 +45,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await createLocalCollaborationProject(control, CONTENT, PROJECT_NAME)
       await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+      await prepareGroupThreadCreation(control, {
+        groupName: `${ISSUE_NAME} group`,
+        contentSelector: CONTENT,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
         value: ISSUE_NAME,
       })
@@ -51,18 +57,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         value: `Review ${PR_URL}`,
       })
       await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'))
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'))
-      await control.command('fill', scoped('[data-testid="cloud-task-activity-composer"]'), {
+      await control.command('waitFor', scoped('[data-testid="thread-room"]'), { text: ISSUE_NAME })
+      await control.command('fill', scoped('[data-testid="group-message-input"]'), {
         value: `Also review ${MR_URL}?view=changes and ${PR_URL}/files#diff. Ignore https://github.com/wecode-ai/Wegent/issues/1`,
       })
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="task-comment-form"] [data-testid="send-message-button"]')
-      )
-      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+      await control.command('clickWhenEnabled', scoped('[data-testid="group-message-send"]'))
+      await control.command('waitFor', scoped('[data-testid="group-message-list"]'), {
         text: 'Also review',
       })
-      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+      await control.command('click', scoped('[data-testid="thread-back-to-board"]'))
       await control.command('waitFor', scoped('[data-testid^="cloud-todo-card-badges-"]'), {
         text: '!7',
       })
@@ -98,7 +101,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const issueId = badgeSectionId.slice('cloud-todo-card-badges-'.length)
       await control.command('click', scoped(`[data-testid="cloud-todo-card-${issueId}"]`))
       await control.command('waitFor', scoped('[data-testid="issue-badges"]'), { text: '!7' })
-      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+      await control.command('waitFor', scoped('[data-testid="group-message-list"]'), {
         text: 'Also review',
       })
       assert.equal(

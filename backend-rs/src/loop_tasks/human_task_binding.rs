@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 
 use super::assignments::{ActiveEvent, active_events};
 use super::http_error::HttpError;
-use super::item_response::ProjectFacts;
 use super::loop_repository::{LoopItemRepository, TaskItemFullRow};
 use crate::state::AppState;
 
@@ -17,9 +16,9 @@ pub(crate) async fn human_task_binding(
     state: &AppState,
     item: &TaskItemFullRow,
     current_user_id: i32,
-    project: &ProjectFacts<'_>,
+    provider_is_local: bool,
 ) -> Result<Option<Value>, HttpError> {
-    if item.assignee_user_id != Some(current_user_id) || !project.provider_is_local {
+    if item.assignee_user_id != Some(current_user_id) || !provider_is_local {
         return Ok(None);
     }
     if item.metadata().is_some_and(|metadata| {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { NotificationIssueEntity } from './NotificationIssueEntity'
 import '@/i18n'
@@ -7,14 +7,20 @@ import { openWeworkScheme } from './schemeEvents'
 vi.mock('./schemeEvents', () => ({ openWeworkScheme: vi.fn() }))
 
 const host = vi.hoisted(() => ({
+  userId: 1,
+  localGroup: { get: vi.fn() },
+  cloudGroup: { get: vi.fn() },
   local: { listCloudProjects: vi.fn(), getLoopItem: vi.fn() },
   cloud: { listCloudProjects: vi.fn(), getLoopItem: vi.fn() },
   render: vi.fn(),
 }))
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
-    state: { user: { id: 1 }, devices: [], projects: [] },
-    services: { projectSpaceApis: { local: host.local, cloud: host.cloud } },
+    state: { user: { id: host.userId }, devices: [], projects: [] },
+    services: {
+      projectSpaceApis: { local: host.local, cloud: host.cloud },
+      chatGroupApis: { local: host.localGroup, cloud: host.cloudGroup },
+    },
   }),
 }))
 vi.mock('@/features/todo/WorkItemContextPanel', () => ({
@@ -41,6 +47,7 @@ const props = {
 }
 beforeEach(() => {
   vi.clearAllMocks()
+  host.userId = 1
   host.local.listCloudProjects.mockResolvedValue({ items: [project] })
   host.local.getLoopItem.mockResolvedValue(item)
 })
@@ -112,4 +119,96 @@ it('retries the same owning entity after a transient load failure', async () => 
   await screen.findByTestId('real-issue')
   expect(host.local.getLoopItem).toHaveBeenCalledTimes(2)
   expect(host.cloud.getLoopItem).not.toHaveBeenCalled()
+})
+
+it.each(['local', 'backend'] as const)(
+  'resolves a %s Group-owned Thread without querying the Project catalog',
+  async store => {
+    const api = store === 'local' ? host.local : host.cloud
+    const groups = store === 'local' ? host.localGroup : host.cloudGroup
+    const group = {
+      id: '42',
+      project_key: 'GROUP',
+      name: 'Real group',
+      description: '',
+      role: 'Viewer',
+      status: 'active',
+      version: 1,
+      created_by_user_id: 5,
+      created_at: '',
+      updated_at: '',
+    }
+    const thread = { ...item, group_id: '42', cloud_project_id: '42' }
+    api.getLoopItem.mockResolvedValue(thread)
+    groups.get.mockResolvedValue({ group, members: [] })
+    render(
+      <NotificationIssueEntity
+        {...props}
+        projectId="42"
+        store={store}
+        url={'wework://groups/' + store + '/42/threads/ISSUE-1'}
+      />
+    )
+    await screen.findByTestId('real-issue')
+    expect(groups.get).toHaveBeenCalledExactlyOnceWith('42')
+    expect(api.listCloudProjects).not.toHaveBeenCalled()
+    const panel = host.render.mock.lastCall?.[0] as { onOpenChildTask(item: typeof thread): void }
+    panel.onOpenChildTask({ ...thread, id: 'CHILD-2' })
+    expect(openWeworkScheme).toHaveBeenLastCalledWith(
+      'wework://groups/' + store + '/42/threads/CHILD-2'
+    )
+    expect(host.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        item: thread,
+        project: expect.objectContaining({
+          id: '42',
+          name: 'Real group',
+          resource_type: 'chat_group',
+          access_role: 'Viewer',
+        }),
+      })
+    )
+  }
+)
+
+it('does not fall back to a classification Project when Group membership is denied', async () => {
+  host.local.getLoopItem.mockResolvedValue({ ...item, group_id: '42', cloud_project_id: '42' })
+  host.localGroup.get.mockRejectedValue(new Error('Group access revoked'))
+  render(<NotificationIssueEntity {...props} projectId="42" />)
+  await screen.findByRole('alert')
+  expect(host.local.listCloudProjects).not.toHaveBeenCalled()
+  expect(host.render).not.toHaveBeenCalled()
+})
+
+it('rejects disagreement between Group identity and the destination owner', async () => {
+  host.local.getLoopItem.mockResolvedValue({ ...item, group_id: '42' })
+  render(<NotificationIssueEntity {...props} />)
+  await screen.findByRole('alert')
+  expect(host.localGroup.get).not.toHaveBeenCalled()
+  expect(host.local.listCloudProjects).not.toHaveBeenCalled()
+  expect(host.render).not.toHaveBeenCalled()
+})
+
+it('removes old account content immediately while reloading the same destination', async () => {
+  const mounted = render(<NotificationIssueEntity {...props} />)
+  await screen.findByTestId('real-issue')
+  let resolve!: (value: typeof item) => void
+  host.local.getLoopItem.mockReturnValueOnce(
+    new Promise<typeof item>(accept => {
+      resolve = accept
+    })
+  )
+  host.userId = 2
+  mounted.rerender(<NotificationIssueEntity {...props} />)
+  expect(screen.queryByTestId('real-issue')).toBeNull()
+  await act(async () => {
+    resolve({ ...item, title: 'Current account only' })
+  })
+  await screen.findByTestId('real-issue')
+  expect(host.render).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      currentUserId: 2,
+      item: expect.objectContaining({ title: 'Current account only' }),
+    })
+  )
 })

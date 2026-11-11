@@ -334,6 +334,7 @@ export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
 }
 
 export interface CloudProject {
+  resource_type?: 'project' | 'chat_group'
   board_views?: import('@wegent/collaboration').ProjectBoardViews | null
   id: CloudProjectId
   workspace_id?: string | null
@@ -1164,7 +1165,8 @@ export function createDeliveryApi(client: HttpClient) {
       projectId: CloudProjectIdInput,
       task: RuntimeTaskAddress,
       taskTitle: string,
-      description: string
+      description: string,
+      classificationProjectId?: string
     ): Promise<{ item: CloudLoopItem }> {
       return trackProjectTaskOnce(projectId, task, async () => {
         const trackingKey = projectTaskTrackingKey(projectId, task)
@@ -1184,6 +1186,9 @@ export function createDeliveryApi(client: HttpClient) {
             title: taskTitle,
             description,
             status: String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID ? 'inbox' : 'pending',
+            ...(classificationProjectId !== undefined
+              ? { classification_project_id: classificationProjectId }
+              : {}),
           }))
         pendingTrackedItems.set(trackingKey, item)
         await api.bindTask(item.id, task, taskTitle)

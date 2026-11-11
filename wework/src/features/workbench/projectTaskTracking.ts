@@ -15,12 +15,14 @@ export interface ProjectTaskRuntimeContext {
 export interface ProjectTaskRuntimeApi {
   findCloudContextForTask(task: RuntimeTaskAddress): Promise<ProjectTaskRuntimeContext>
   bindTask(issueId: string, task: RuntimeTaskAddress, taskTitle?: string | null): Promise<void>
+  unbindTask(issueId: string, task: RuntimeTaskAddress): Promise<void>
   unbindCloudContext(task: RuntimeTaskAddress): Promise<void>
   trackProjectTask(
     projectId: string,
     task: RuntimeTaskAddress,
     title: string,
-    description: string
+    description: string,
+    classificationProjectId?: string
   ): Promise<{ item: CloudLoopItem }>
 }
 
@@ -74,16 +76,24 @@ export function createCloudProjectTaskRuntimeApi(
     bindTask(issueId, task, taskTitle) {
       return port.bindTask(issueId, toWorkspaceRuntimeTaskAddress(task), taskTitle)
     },
+    unbindTask(issueId, task) {
+      return port.unbindTask(issueId, toWorkspaceRuntimeTaskAddress(task))
+    },
     unbindCloudContext(task) {
       return port.unbindCloudContext(toWorkspaceRuntimeTaskAddress(task))
     },
-    async trackProjectTask(projectId, task, title, description) {
-      const result = await port.trackProjectTask(
-        projectId,
-        toWorkspaceRuntimeTaskAddress(task),
-        title,
-        description
-      )
+    async trackProjectTask(projectId, task, title, description, classificationProjectId) {
+      const address = toWorkspaceRuntimeTaskAddress(task)
+      const result =
+        classificationProjectId === undefined
+          ? await port.trackProjectTask(projectId, address, title, description)
+          : await port.trackProjectTask(
+              projectId,
+              address,
+              title,
+              description,
+              classificationProjectId
+            )
       return { item: toCloudLoopItem(result.issue) }
     },
   }

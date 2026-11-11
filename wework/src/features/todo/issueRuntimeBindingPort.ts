@@ -4,7 +4,7 @@ import { toRuntimeTaskAddress } from '@/features/collaboration/weworkSharedWorks
 import type { IssueRuntimeBindingPort } from './useIssuePersonalTaskConversation'
 
 export function issueRuntimeBindingPort(
-  services: WorkbenchServices,
+  services: Pick<WorkbenchServices, 'projectSpaceApis' | 'workspaceRuntimePort'>,
   store: CollaborationProject['project_store']
 ): IssueRuntimeBindingPort | undefined {
   if (store !== 'local') return services.workspaceRuntimePort

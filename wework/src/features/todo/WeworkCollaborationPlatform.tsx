@@ -1075,6 +1075,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     origin.delete('commentId')
     origin.delete('focusRequest')
     const groupStore = store === 'local' ? 'local' : 'cloud'
+    savedProjectSearch.current = `?${origin.toString()}`
     setBoardReturn({
       scope: draftAccountScope,
       store: groupStore,
@@ -1089,7 +1090,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       threadId,
       groupTab: 'chat',
     })
-    onNavigate(`?${target.toString()}`)
+    publishSearch(`?${target.toString()}`)
   }
   const local = useMemo(
     () =>
@@ -1243,6 +1244,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
           <GroupThreadSurface
             onPrepareThreadArchive={prepareThreadArchive}
             accountScope={draftAccountScope}
+            changeRequestApi={props.services.deviceApi}
             sources={sources}
             search={search}
             locale={locale}
@@ -1260,6 +1262,14 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                   )
                 }
                 getRuntimeTranscript={props.services.runtimeWorkApi?.getRuntimeTranscript}
+                renderBadges={badges => (
+                  <IssueChangeRequestBadges
+                    badges={badges}
+                    api={props.services.deviceApi}
+                    compact
+                    testId={`cloud-todo-card-badges-${context.issue.id}`}
+                  />
+                )}
                 onOpenRuntimeTask={props.onOpenRuntimeTask}
               />
             )}

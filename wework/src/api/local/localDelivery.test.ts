@@ -200,6 +200,7 @@ describe('local delivery API', () => {
 
   test('includes native project work in My Work while isolating a failed project read', async () => {
     const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'chat_groups.list') return { items: [] }
       if (method === 'projects.list')
         return [projectRecord, { ...projectRecord, id: 'broken', name: 'Broken' }]
       if (method === 'todos.list' && params?.project_id === projectRecord.id)

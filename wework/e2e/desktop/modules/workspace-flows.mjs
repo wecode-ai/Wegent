@@ -12,6 +12,8 @@ import { waitForBoardValue } from './collaboration-board-flows.mjs'
 import {
   verifyNewTaskBoardAssociation,
   waitForViewedIssueRead,
+  confirmTaskOriginPublicThread,
+  waitForBinding,
 } from './new-task-board-association.mjs'
 import {
   waitForProjectIdentity,
@@ -1757,6 +1759,10 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const originalTask = currentRuntimeTaskFromDebugSnapshot(
+    JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  )
+  assert.ok(originalTask, 'An existing runtime task is required for reassociation')
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
   await requireActiveWorkItemsTab(
     control,
@@ -1786,32 +1792,25 @@ async function verifyExistingTaskBoardAssociation(
   )
   const existingTargetTitle = 'WEWORK_EXISTING_BOARD_CARD'
   const createIssueSelector = `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`
-  const createIssueDialog = `${activeBoardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
-  const createIssuePanel = `${createIssueDialog} [data-testid="cloud-todo-create-panel"]`
   await control.command('click', createIssueSelector)
-  await control.command('waitFor', createIssuePanel, {
+  const {
+    group: targetGroup,
+    item: existingTarget,
+    projectLink: targetProjectLink,
+  } = await confirmTaskOriginPublicThread(control, {
+    title: existingTargetTitle,
+    groupName: `${targetProjectName} group`,
+  })
+  assert.ok(
+    targetProjectLink.project,
+    'The initial Thread must retain its optional project classification'
+  )
+  assert.equal(targetProjectLink.project.name, targetProjectName)
+  await control.command('waitFor', `${activeBoardContentSelector} [data-testid="thread-room"]`, {
+    text: existingTargetTitle,
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', `${createIssueDialog} [data-testid="cloud-todo-title"]`, {
-    value: existingTargetTitle,
-  })
-  await control.command(
-    'clickWhenEnabled',
-    `${createIssueDialog} [data-testid="cloud-todo-create-confirm"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await control.command(
-    'waitFor',
-    `${activeBoardContentSelector} [data-testid="collaboration-issue-detail"]`,
-    {
-      text: existingTargetTitle,
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
 
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
@@ -1882,13 +1881,29 @@ async function verifyExistingTaskBoardAssociation(
     await captureVerificationScreenshot(control, 'workspace-08-existing-task-add-dialog.png')
   }
   await control.command('click', '[data-testid="task-board-association-create"]')
-  await control.command('waitFor', '[data-testid="task-board-move-confirm"]', {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('clickWhenEnabled', '[data-testid="task-board-move-confirm"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  // The public form is the explicit confirmation of the new group-owned link.
+  const { item: movedItem, projectLink: movedProjectLink } = await confirmTaskOriginPublicThread(
+    control,
+    {
+      title: 'WEWORK_DESKTOP_E2E_TASK',
+      description: 'Public scope explicitly reviewed before linking the original private task',
+      groupId: targetGroup.id,
+    }
+  )
+  assert.equal(movedProjectLink.project?.id, targetProjectLink.project.id)
+  const movedBinding = await waitForBinding(control, targetGroup.id, movedItem.id)
+  assert.equal(movedBinding.device_id, originalTask.deviceId)
+  assert.equal(movedBinding.task_id, originalTask.taskId)
+  const afterMoveTask = currentRuntimeTaskFromDebugSnapshot(
+    JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  )
+  assert.equal(afterMoveTask?.deviceId, originalTask.deviceId)
+  assert.equal(afterMoveTask?.taskId, originalTask.taskId)
+  assert.deepEqual(
+    afterMoveTask?.runtimeHandle?.modelSelection ?? null,
+    originalTask.runtimeHandle?.modelSelection ?? null
+  )
+  assert.equal(afterMoveTask?.workspacePath, originalTask.workspacePath)
   await control.command('waitFor', '[data-testid="task-board-association-dialog"]', {
     visible: false,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1905,16 +1920,30 @@ async function verifyExistingTaskBoardAssociation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const movedBoardContentSelector = await requireActiveCollaborationTab(
-    control,
-    'The moved work-item navigation did not open its project-space tab'
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const movedBoardTab = await control.command(
+    'getAttribute',
+    '[data-tab-kind="board"][aria-selected="true"]',
+    { value: 'data-testid' }
   )
-  await waitForProjectIdentity(
-    control,
-    movedBoardContentSelector,
-    targetProjectName,
-    DEFAULT_STEP_TIMEOUT_MS
+  assert.ok(movedBoardTab?.startsWith('workspace-tab-select-board-'))
+  const movedBoardContentSelector = `[data-testid="workspace-tab-content-${movedBoardTab.slice('workspace-tab-select-'.length)}"]`
+  const movedRoom = `${movedBoardContentSelector} [data-testid="thread-room"]`
+  await control.command('waitFor', movedRoom, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const destination = new URL(
+    JSON.parse(await control.command('snapshot', movedBoardContentSelector)).location
   )
+  assert.equal(destination.searchParams.get('groupId'), targetGroup.id)
+  assert.equal(destination.searchParams.get('threadId'), movedItem.id)
+  // A task's board action opens its actual group, independently of optional project classification.
+  await control.command('click', `${movedRoom} [data-testid="thread-back-to-group"]`)
+  await control.command('click', `${movedBoardContentSelector} [data-testid="group-tab-board"]`)
   const movedBoardSelector = `${movedBoardContentSelector} [data-testid="collaboration-board"]`
   await control.command('waitFor', movedBoardSelector, {
     text: 'WEWORK_DESKTOP_E2E_TASK',
@@ -1922,14 +1951,14 @@ async function verifyExistingTaskBoardAssociation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command(
-    'waitFor',
-    `${movedBoardContentSelector} [data-testid="collaboration-issue-detail"]`,
-    {
-      text: 'WEWORK_DESKTOP_E2E_TASK',
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+    'click',
+    `${movedBoardContentSelector} [data-testid="cloud-todo-card-${movedItem.id}"]`
   )
+  await control.command('waitFor', movedRoom, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   assert.equal(
     Number(await control.command('getElementCount', '[data-testid="work-item-context-menu"]')),
     0,
@@ -2005,14 +2034,27 @@ async function verifyExistingTaskBoardAssociation(
   await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.includes('cloud-task-activity-list') &&
-      !snapshot.text.includes('正在加载动态'),
+      snapshot.testIds.includes('group-message-list') && !snapshot.text.includes('正在加载动态'),
     'The newly associated Issue activity did not finish loading',
     DEFAULT_STEP_TIMEOUT_MS,
     linkedDetail
   )
+  const finalBinding = await waitForBinding(control, targetGroup.id, existingTarget.id)
+  assert.equal(finalBinding.task_id, originalTask.taskId)
+  assert.equal(finalBinding.device_id, originalTask.deviceId)
+  const oldBindings = await requestExecutor(
+    control,
+    'todos.bindings',
+    { task_id: movedItem.id },
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.equal(
+    oldBindings.filter(value => value.task_id === originalTask.taskId).length,
+    0,
+    'Replacing the user link left the old extra binding active'
+  )
   // The final association displays a different Issue; finish its read before the draft baseline.
-  await waitForViewedIssueRead(control, targetProjectName, existingTargetTitle)
+  await waitForViewedIssueRead(control, targetGroup.id, existingTarget.id)
   await verifyNewTaskBoardAssociation(control, targetProjectName, existingTargetTitle)
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
 }

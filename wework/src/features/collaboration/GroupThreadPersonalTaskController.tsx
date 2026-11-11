@@ -1,6 +1,5 @@
+import { ThreadActionsContext, useGroupThreadActions } from './threadActionsContext'
 import {
-  createContext,
-  useContext,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -43,20 +42,18 @@ interface PersonalTaskIntent {
   dispatch?: IssueDispatchPersonalTaskAction
 }
 interface RuntimeProps {
-  services: WorkbenchServices
+  services: Pick<
+    WorkbenchServices,
+    'standInApi' | 'projectSpaceApis' | 'workspaceRuntimePort' | 'projectSpaceDetailServices'
+  >
   localProjects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   onOpenRuntimeTask?(address: RuntimeTaskAddress): Promise<void> | void
 }
 
-interface ThreadActions {
-  renderThreadActions(context: ThreadActionContext): ReactNode
-  onThreadActionContext(context: ThreadActionContext | null): void
-}
-const ThreadActionsContext = createContext<ThreadActions | null>(null)
 export function GroupThreadSurface(props: ComponentProps<typeof CollaborationGroupsSurface>) {
-  const actions = useContext(ThreadActionsContext)
+  const actions = useGroupThreadActions()
   return <CollaborationGroupsSurface {...props} {...actions} />
 }
 
@@ -82,6 +79,13 @@ export function GroupThreadPersonalTaskController({
     message: string
     tone: 'success' | 'error'
   } | null>(null)
+  const [stateOwner, setStateOwner] = useState(owner)
+  if (stateOwner !== owner) {
+    setStateOwner(owner)
+    setIntent(null)
+    setVisibleContext(null)
+    setNotice(null)
+  }
   const currentOwner = useRef<string | null>(owner)
   useLayoutEffect(() => {
     currentOwner.current = owner
@@ -259,6 +263,7 @@ function ThreadPersonalTaskPanel({
     onClosed,
   })
   const start = useStableEvent(async (isCurrent: () => boolean) => {
+    if (state.taskComposer) return
     try {
       if (intent.binding) {
         await controller.openBoundTaskConversation(

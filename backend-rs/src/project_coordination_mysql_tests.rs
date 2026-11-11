@@ -468,6 +468,16 @@ async fn thread_classification_reads_current_permission_facts() {
 
 #[tokio::test]
 #[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn runtime_group_context_rechecks_current_authority() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        crate::loop_tasks::cloud_context_group_tests::verify_current_group_context(&mysql).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
 async fn group_management_locks_shared_accounts_in_message_order() {
     with_schema(4, |mysql| async move {
         seed(&mysql).await;

@@ -6,6 +6,7 @@ interface ConfirmDialogProps {
   open: boolean
   title: string
   description: string
+  error?: string | null
   cancelLabel: string
   confirmLabel: string
   confirmTestId: string
@@ -22,6 +23,7 @@ export function ConfirmDialog({
   open,
   title,
   description,
+  error,
   cancelLabel,
   confirmLabel,
   confirmTestId,
@@ -51,7 +53,7 @@ export function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${confirmTestId}-title`}
-        aria-describedby={`${confirmTestId}-description`}
+        aria-describedby={`${confirmTestId}-description${error ? ` ${confirmTestId}-error` : ''}`}
         className="flex max-h-[calc(100dvh-2rem)] w-full max-w-[420px] flex-col rounded-[20px] border border-border bg-popover p-5 text-text-primary shadow-lg"
       >
         <h2 id={`${confirmTestId}-title`} className="shrink-0 break-words text-lg font-medium">
@@ -63,6 +65,15 @@ export function ConfirmDialog({
         >
           {description}
         </p>
+        {error && (
+          <p
+            id={`${confirmTestId}-error`}
+            role="alert"
+            className="mt-3 break-words text-sm text-destructive"
+          >
+            {error}
+          </p>
+        )}
         <div className="mt-6 flex shrink-0 flex-wrap justify-end gap-2">
           <button
             type="button"

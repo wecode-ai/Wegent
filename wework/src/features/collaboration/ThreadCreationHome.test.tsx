@@ -24,6 +24,28 @@ const project = {
 } as CollaborationProject
 
 describe('Thread creation home', () => {
+  it('requires an explicit reclassification when the selected project becomes unavailable', () => {
+    const view = render(
+      <ThreadCreationHome
+        accountScope="user"
+        sources={[local]}
+        projects={[project]}
+        locale="zh-CN"
+      />
+    )
+    fireEvent.change(screen.getByTestId('thread-home-project'), { target: { value: project.id } })
+    view.rerender(
+      <ThreadCreationHome accountScope="user" sources={[local]} projects={[]} locale="zh-CN" />
+    )
+    expect(screen.getByTestId('thread-home-project')).toHaveValue(project.id)
+    expect(screen.getByTestId('thread-home-create')).toBeDisabled()
+    expect(screen.getByRole('alert')).toBeVisible()
+    fireEvent.change(screen.getByTestId('thread-home-project'), { target: { value: '' } })
+    fireEvent.click(screen.getByTestId('thread-home-create'))
+    expect(inspect).toHaveBeenLastCalledWith(
+      expect.objectContaining({ form: expect.objectContaining({ project: undefined }) })
+    )
+  })
   it('allows creating in a group without a project or workspace', () => {
     render(
       <ThreadCreationHome

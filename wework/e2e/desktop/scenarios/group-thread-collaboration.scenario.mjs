@@ -214,6 +214,24 @@ export function createDesktopScenario({
     await control.command('waitFor', `${pane} [data-testid="desktop-chat-scroll"]`, {
       text: 'GROUP_THREAD_MIGRATION_PRIVATE_RUNTIME',
     })
+    const summary = `${pane} [data-testid="work-item-guide-summary-title"]`
+    await control.command('waitFor', summary, { text: title, timeoutMs: uiTimeoutMs })
+    assert.equal((await control.command('getText', summary)).trim(), title)
+    await control.command(
+      'clickWhenEnabled',
+      `${pane} [data-testid="work-item-guide-open-summary"]`
+    )
+    const contextRoom = `${pane} [data-testid="work-item-context-panel"] [data-testid="thread-room"]`
+    await control.command('waitFor', contextRoom, {
+      text: title,
+      visible: true,
+      timeoutMs: uiTimeoutMs,
+    })
+    await captureScreenshot(
+      control,
+      'group-thread-native-migration-task-context-restored.png',
+      pane
+    )
     const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot'))
     assert.equal(debug.workbench.currentRuntimeTask.taskId, address.taskId)
     const beforeText = await control.command(

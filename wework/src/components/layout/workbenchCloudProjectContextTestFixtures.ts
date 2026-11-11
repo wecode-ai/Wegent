@@ -1,5 +1,7 @@
 import { renderHook } from '@testing-library/react'
 import { vi } from 'vitest'
+import type { ChatGroup } from '@/api/chatGroups'
+import { groupWorkContainer } from '@/api/groupWorkContainer'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -13,7 +15,7 @@ export function project(id: string, projectStore: 'local' | 'backend' = 'backend
     name: `${id} board`,
     description: 'Shared project context',
     project_store: projectStore,
-    task_provider: projectStore === 'local' ? 'local' : 'native',
+    task_provider: 'local',
     provider_config: {},
     created_by_user_id: 1,
     status: 'active',
@@ -21,6 +23,34 @@ export function project(id: string, projectStore: 'local' | 'backend' = 'backend
     version: 1,
     created_at: '2026-08-09T00:00:00Z',
     updated_at: '2026-08-09T00:00:00Z',
+  }
+}
+
+export function threadOwner(id: string, store: 'local' | 'backend' = 'local') {
+  const group: ChatGroup = {
+    id,
+    project_key: id.toUpperCase(),
+    name: `${id} group`,
+    description: '',
+    status: 'active',
+    role: 'Developer',
+    created_by_user_id: 1,
+    version: 1,
+    created_at: '',
+    updated_at: '',
+  }
+  return {
+    owner: groupWorkContainer(group, store === 'local' ? 'local' : 'cloud'),
+    groups: {
+      list: vi.fn().mockResolvedValue({ items: [group] }),
+      get: vi.fn().mockResolvedValue({ group, members: [] }),
+      participation: vi.fn().mockResolvedValue({
+        current_user_id: store === 'local' ? 0 : 1,
+        joined: true,
+        can_comment: true,
+        participants: [],
+      }),
+    },
   }
 }
 
@@ -52,6 +82,7 @@ interface RuntimeTestApi {
     task: RuntimeTaskAddress
   ) => Promise<{ project: CloudProject; loop_item: CloudLoopItem | null }>
   bindTask?: (issueId: string, task: RuntimeTaskAddress, taskTitle?: string | null) => Promise<void>
+  unbindTask?: (issueId: string, task: RuntimeTaskAddress) => Promise<void>
   trackProjectTask?: (
     projectId: string,
     task: RuntimeTaskAddress,
@@ -83,7 +114,9 @@ export function cloudRuntimePort(
     bindTask(issueId, task, taskTitle) {
       return api.bindTask?.(issueId, task, taskTitle) ?? Promise.resolve()
     },
-    unbindTask: vi.fn().mockResolvedValue(undefined),
+    unbindTask(issueId, task) {
+      return api.unbindTask?.(issueId, task) ?? Promise.resolve()
+    },
     unbindCloudContext: vi.fn().mockResolvedValue(undefined),
     async trackProjectTask(projectId, task, title, description) {
       if (!api.trackProjectTask) throw new Error('Tracking is not configured')

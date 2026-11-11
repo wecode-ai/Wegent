@@ -21,8 +21,10 @@ import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { shellCommandPollResponse } from '../modules/shell-command-response.mjs'
 import {
   createLocalCollaborationProject,
+  enterProjectCollaborationView,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
+import { waitForProjectIdentity } from '../modules/collaboration-project-navigation.mjs'
 import {
   assistantMessage,
   createSse,
@@ -507,6 +509,13 @@ export function createDesktopScenario({
           '---\nname: stand-in-catalog\ndescription: Verify the stand-in composer catalog.\n---\nInspect the current task.\n'
         )
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+        await enterProjectCollaborationView(control, CONTENT, uiTimeoutMs)
+        await control.command(
+          'clickWhenEnabled',
+          `${CONTENT} [data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-workspace-project-${project.id}"]`,
+          { visible: true, timeoutMs: uiTimeoutMs }
+        )
+        await waitForProjectIdentity(control, CONTENT, PROJECT, uiTimeoutMs)
         await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
           connect: true,
         })

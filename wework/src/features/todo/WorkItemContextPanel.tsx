@@ -1,3 +1,4 @@
+import { GroupThreadContextPanel } from '@/features/collaboration/GroupThreadContextPanel'
 import { mergeIssueReadConfirmation } from '@wegent/collaboration'
 import { ArrowUpRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -6,15 +7,29 @@ import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { projectStoreLocation, type ProjectSpaceApi } from './projectSpaceSelection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import { TodoEditor } from './TodoEditor'
 
-interface WorkItemContextPanelProps {
+export interface WorkItemContextPanelProps {
+  active?: boolean
+  runtimeWork?: RuntimeWorkListResponse | null
+  runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   api: ProjectSpaceApi
-  services: Pick<
-    WorkbenchServices,
-    'projectSpaceDetailServices' | 'runtimeWorkApi' | 'localParticipationIdentity'
-  >
+  services: Partial<Pick<WorkbenchServices, 'deviceApi'>> &
+    Pick<
+      WorkbenchServices,
+      | 'projectSpaceDetailServices'
+      | 'runtimeWorkApi'
+      | 'localParticipationIdentity'
+      | 'chatGroupApis'
+      | 'sharedWorkspaceApi'
+      | 'localProjectChatClient'
+      | 'projectChatClient'
+      | 'workspaceRuntimePort'
+      | 'projectSpaceApis'
+      | 'standInApi'
+    >
   project: CloudProject
   item: CloudLoopItem
   currentTask?: RuntimeTaskAddress
@@ -30,7 +45,12 @@ interface WorkItemContextPanelProps {
   readFirst?: boolean
 }
 
-export function WorkItemContextPanel({
+export function WorkItemContextPanel(props: WorkItemContextPanelProps) {
+  if (props.item.group_id) return <GroupThreadContextPanel {...props} />
+  return <ProjectWorkItemContextPanel {...props} />
+}
+
+function ProjectWorkItemContextPanel({
   api,
   services,
   project,

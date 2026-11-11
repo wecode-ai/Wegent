@@ -189,9 +189,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'Renamed title must survive reloading',
         uiTimeoutMs
       )
+      await control.command('scrollIntoView', scoped('thread-settings-milestone'))
       await control.command('waitFor', scoped('thread-settings-milestone'), {
         text: 'Searchable release',
       })
+      await captureScreenshot(control, 'issue-property-autosave-restored-milestone.png', CONTENT)
       assert.equal((await readIssue(first)).priority, 'urgent')
       await control.command('clickWhenEnabled', scoped('thread-settings-close'))
       await openBoard()

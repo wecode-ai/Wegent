@@ -3764,7 +3764,16 @@ describe("CollaborationPlatformApp real component flow", () => {
           }}
         />,
       );
-      const skeleton = byTestId("collaboration-root");
+      const skeleton = byTestId("collaboration-loading-skeleton");
+      const persistentRoot = byTestId("collaboration-root");
+      expect(
+        container.querySelectorAll('[data-testid="collaboration-root"]'),
+      ).toHaveLength(1);
+      expect(persistentRoot).not.toBe(skeleton);
+      const contentWrapper = persistentRoot.closest<HTMLElement>(
+        '[style="display: none;"]',
+      );
+      expect(contentWrapper).not.toBeNull();
       expect(skeleton.getAttribute("aria-busy")).toBe("true");
       expect(skeleton.getAttribute("role")).toBe("status");
       expect(
@@ -3786,6 +3795,11 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect(
         container.querySelector(".collaboration-loading-skeleton"),
       ).toBeNull();
+      expect(byTestId("collaboration-root")).toBe(persistentRoot);
+      expect(
+        container.querySelectorAll('[data-testid="collaboration-root"]'),
+      ).toHaveLength(1);
+      expect(contentWrapper?.style.display).toBe("contents");
       expect(byTestId("collaboration-root").textContent).toContain(issue.title);
     },
   );

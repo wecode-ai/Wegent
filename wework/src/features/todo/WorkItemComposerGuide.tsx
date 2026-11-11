@@ -19,6 +19,7 @@ interface WorkItemComposerGuideProps {
   refreshKey?: unknown
   projects?: CloudProject[]
   onSelectProject?: (project: CloudProject) => void
+  onCreateThread?: () => void
   onRemoveProject?: () => void
   onOpen?: () => void
   onOpenBoard?: () => void
@@ -47,6 +48,7 @@ function WorkItemComposerGuideContent({
   refreshKey,
   projects = [],
   onSelectProject,
+  onCreateThread,
   onRemoveProject,
   onOpen,
   onOpenBoard,
@@ -57,7 +59,8 @@ function WorkItemComposerGuideContent({
   const [open, setOpen] = useState(false)
   const [refreshedItem, setRefreshedItem] = useState<CloudLoopItem | null>(null)
   const [taskBindings, setTaskBindings] = useState<TaskBinding[] | null>(item ? null : [])
-  const canChangeProject = projects.length > 0 && Boolean(onSelectProject)
+  const canChangeProject =
+    (projects.length > 0 || Boolean(onCreateThread)) && Boolean(onSelectProject)
   const menuOpen = open && canChangeProject
   const closeMenu = useCallback(() => setOpen(false), [])
 
@@ -112,6 +115,7 @@ function WorkItemComposerGuideContent({
       onClose={closeMenu}
       onSelect={option => onSelectProject?.(option)}
       onRemoveProject={onRemoveProject}
+      onCreateThread={onCreateThread}
     />
   ) : null
 

@@ -1,4 +1,4 @@
-import { Check, Folder, LayoutDashboard, Search, X } from 'lucide-react'
+import { Check, Folder, Hash, LayoutDashboard, Plus, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { CloudProject } from '@/api/deliveries'
@@ -21,6 +21,7 @@ interface ProjectSpacePickerMenuProps {
   onClose: () => void
   onSelect: (project: CloudProject) => void
   onRemoveProject?: () => void
+  onCreateThread?: () => void
 }
 
 export function ProjectSpacePickerMenu({
@@ -31,6 +32,7 @@ export function ProjectSpacePickerMenu({
   onClose,
   onSelect,
   onRemoveProject,
+  onCreateThread,
 }: ProjectSpacePickerMenuProps) {
   const { t, i18n } = useTranslation('common')
   const menuRef = useRef<HTMLDivElement>(null)
@@ -51,10 +53,22 @@ export function ProjectSpacePickerMenu({
 
   const localLabel = t('workbench.project_picker_local', '本地项目')
   const cloudLabel = t('workbench.project_picker_cloud', '云端项目')
+  const searchLabel = onCreateThread
+    ? t('collaboration:workTargetSearch')
+    : t('workbench.project_picker_search', '搜索项目名称、空间或标识…')
+  const targetsLabel = onCreateThread
+    ? t('collaboration:workTargets')
+    : t('workbench.project_picker_projects', '项目')
   const locale = i18n.resolvedLanguage ?? i18n.language
   const entries = useMemo(
-    () => projectSpacePickerEntries(projects, { local: localLabel, cloud: cloudLabel }),
-    [cloudLabel, localLabel, projects]
+    () =>
+      projectSpacePickerEntries(projects, {
+        local: localLabel,
+        cloud: cloudLabel,
+        localGroups: `${t('collaboration:local')} · ${t('collaboration:groups')}`,
+        cloudGroups: `${t('collaboration:cloud')} · ${t('collaboration:groups')}`,
+      }),
+    [cloudLabel, localLabel, projects, t]
   )
   const groups = useMemo(
     () =>
@@ -125,7 +139,9 @@ export function ProjectSpacePickerMenu({
     >
       <header className="shrink-0 px-4 pb-3 pt-4">
         <h2 id={titleId} className="text-base font-medium">
-          {t('workbench.project_picker_title', '加入项目空间')}
+          {onCreateThread
+            ? t('collaboration:chooseWorkTarget')
+            : t('workbench.project_picker_title', '加入项目空间')}
         </h2>
         <div className="mt-3 flex gap-2">
           <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border px-2 keyboard:focus-within:ring-1 keyboard:focus-within:ring-focus/70 max-md:h-11 wework:keyboard:focus-within:ring-blue-500/70">
@@ -137,8 +153,8 @@ export function ProjectSpacePickerMenu({
               aria-autocomplete="list"
               aria-controls={listId}
               aria-activedescendant={visible.length ? `${listId}-${activeIndex}` : undefined}
-              aria-label={t('workbench.project_picker_search', '搜索项目名称、空间或标识…')}
-              placeholder={t('workbench.project_picker_search', '搜索项目名称、空间或标识…')}
+              aria-label={searchLabel}
+              placeholder={searchLabel}
               data-testid="project-space-picker-search"
               value={query}
               onChange={event => {
@@ -233,13 +249,11 @@ export function ProjectSpacePickerMenu({
           )}
         </nav>
         <div className="flex min-w-0 flex-1 flex-col px-1">
-          <div className="shrink-0 px-2 py-1 text-xs text-text-muted">
-            {t('workbench.project_picker_projects', '项目')}
-          </div>
+          <div className="shrink-0 px-2 py-1 text-xs text-text-muted">{targetsLabel}</div>
           <div
             id={listId}
             role="listbox"
-            aria-label={t('workbench.project_picker_projects', '项目')}
+            aria-label={targetsLabel}
             className={`min-h-0 overflow-y-auto ${visible.length ? 'flex-1' : ''}`}
           >
             {visible.map(({ key, project: option, group }, index) => {
@@ -261,15 +275,21 @@ export function ProjectSpacePickerMenu({
                   data-active={index === activeIndex}
                   data-group-key={group.key}
                   data-project-space-key={key}
+                  data-resource-type={option.resource_type ?? 'project'}
                   data-testid={`work-item-workspace-option-${String(option.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`}
                   onMouseDown={event => event.preventDefault()}
                   onClick={() => choose(option)}
                   className={`flex h-12 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-muted ${selected ? 'bg-muted' : ''} ${index === activeIndex ? 'ring-1 ring-inset ring-foreground/15' : ''}`}
                 >
-                  <LayoutDashboard
-                    className="h-4 w-4 shrink-0 text-text-secondary"
-                    aria-hidden="true"
-                  />
+                  {option.resource_type === 'chat_group' ? (
+                    <Hash className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+                  ) : (
+                    <LayoutDashboard
+                      className="h-4 w-4 shrink-0 text-text-secondary"
+                      aria-hidden="true"
+                    />
+                  )}
+
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm">{option.name}</span>
                     <span className="block truncate text-xs text-text-muted">
@@ -298,6 +318,20 @@ export function ProjectSpacePickerMenu({
         </div>
       </div>
       <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-border p-1">
+        {onCreateThread && (
+          <button
+            type="button"
+            data-testid="task-origin-new-thread"
+            onClick={() => {
+              close()
+              onCreateThread()
+            }}
+            className="flex min-h-9 items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+          >
+            <Plus className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {t('collaboration:newThread')}
+          </button>
+        )}
         {onRemoveProject ? (
           <button
             type="button"

@@ -52,6 +52,42 @@ const pickerProjects: CloudProject[] = [
 ]
 
 describe('WorkItemComposerGuide', () => {
+  test('offers a public Thread form with no projects and selects an independent group directly', async () => {
+    const user = userEvent.setup()
+    const onCreateThread = vi.fn()
+    const onSelectProject = vi.fn()
+    const group = {
+      ...teamProject,
+      id: 'independent',
+      name: '独立群',
+      resource_type: 'chat_group' as const,
+    }
+    const view = render(
+      <WorkItemComposerGuide
+        toolbar
+        projects={[]}
+        onCreateThread={onCreateThread}
+        onSelectProject={onSelectProject}
+      />
+    )
+    await user.click(screen.getByTestId('project-space-context-pill'))
+    await user.click(screen.getByTestId('task-origin-new-thread'))
+    expect(onCreateThread).toHaveBeenCalledOnce()
+    expect(onSelectProject).not.toHaveBeenCalled()
+    view.rerender(
+      <WorkItemComposerGuide
+        toolbar
+        projects={[group]}
+        onCreateThread={onCreateThread}
+        onSelectProject={onSelectProject}
+      />
+    )
+    await user.click(screen.getByTestId('project-space-context-pill'))
+    const option = screen.getByTestId('work-item-workspace-option-independent')
+    expect(option).toHaveAttribute('data-resource-type', 'chat_group')
+    await user.click(option)
+    expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(group)
+  })
   test('reopens Issue selection for the current draft project', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()

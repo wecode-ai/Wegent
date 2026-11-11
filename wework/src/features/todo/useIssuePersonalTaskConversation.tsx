@@ -1,3 +1,4 @@
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type {
@@ -102,7 +103,7 @@ export function useIssuePersonalTaskConversation({
   detailServices?: ProjectSpaceDetailServices
   userId: string | number
   taskOwnerUserId: string | number
-  services: WorkbenchServices
+  services: Pick<WorkbenchServices, 'standInApi'>
   runtimePort?: IssueRuntimeBindingPort
   runtimeWork?: RuntimeWorkListResponse | null
   localProjects: ProjectWithTasks[]
@@ -139,10 +140,31 @@ export function useIssuePersonalTaskConversation({
   } = state
   const openNewTaskConversation = useStableEvent(
     async (issue: CollaborationIssue, dispatch?: IssueTaskDispatchInput) => {
-      if (!active.current) return
-      if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
+      const report = (phase: string, reason?: string) =>
+        logRuntimeTaskCreateStage(
+          'issue-personal-task-open',
+          {
+            phase,
+            reason,
+            containerKind: project.resource_type ?? 'project',
+            store: project.project_store,
+            active: active.current,
+            bindingPortAvailable: Boolean(runtimePort),
+          },
+          'debug'
+        )
+      report('requested')
+      if (!active.current) {
+        report('discarded', 'inactive')
+        return
+      }
+      if (!runtimePort) {
+        report('rejected', 'binding_port_missing')
+        throw new Error('当前工作台无法打开个人任务')
+      }
       const requestSequence = ++taskComposerSequenceRef.current
       try {
+        report('dispatch-read-started')
         dispatch ??= await resolveHumanTaskDispatch(
           detailServices?.projectChatClient,
           project.id,
@@ -150,9 +172,13 @@ export function useIssuePersonalTaskConversation({
           userId,
           project.resource_type === 'chat_group' ? 'chat_group' : 'project'
         )
+        report('dispatch-read-finished')
       } catch (cause) {
-        if (requestSequence !== taskComposerSequenceRef.current || currentScope.current !== scope)
+        report('dispatch-read-failed', cause instanceof Error ? cause.name : 'unknown_error')
+        if (requestSequence !== taskComposerSequenceRef.current || currentScope.current !== scope) {
+          report('discarded', 'lookup_failure_after_scope_change')
           return
+        }
         notify(
           t('workbench.issue_task_dispatch_lookup_failed', {
             reason: cause instanceof Error ? cause.message : String(cause),
@@ -161,8 +187,13 @@ export function useIssuePersonalTaskConversation({
         )
         return
       }
-      if (requestSequence !== taskComposerSequenceRef.current || currentScope.current !== scope)
+      if (requestSequence !== taskComposerSequenceRef.current || currentScope.current !== scope) {
+        report(
+          'discarded',
+          requestSequence !== taskComposerSequenceRef.current ? 'superseded' : 'source_changed'
+        )
         return
+      }
       clearNotice()
       const humanTaskBinding = issue.human_task_binding ?? null
       const currentProject = latestProjectRef.current
@@ -206,6 +237,7 @@ export function useIssuePersonalTaskConversation({
               : {}),
         },
       })
+      report('composer-requested')
       if (locationIssueId !== issue.id) {
         onOpenIssue(issue.id)
       }
@@ -288,6 +320,21 @@ export function useIssuePersonalTaskConversation({
       throw cause
     }
   })
+
+  const composerPresent = Boolean(taskComposer)
+  const bindingPortAvailable = Boolean(runtimePort)
+  useLayoutEffect(() => {
+    logRuntimeTaskCreateStage(
+      'issue-personal-task-composer',
+      {
+        present: composerPresent,
+        bindingPortAvailable,
+        store: project.project_store,
+        containerKind: project.resource_type ?? 'project',
+      },
+      'debug'
+    )
+  }, [composerPresent, bindingPortAvailable, project.project_store, project.resource_type])
 
   const codeWorkspacePreference = loadProjectSpaceCodeWorkspacePreference(userId, {
     projectStore: project.project_store,

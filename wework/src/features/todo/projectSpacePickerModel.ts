@@ -16,7 +16,7 @@ export type ProjectSpacePickerOrder = 'name-asc' | 'name-desc'
 
 export function projectSpacePickerEntries(
   projects: CloudProject[],
-  labels: { local: string; cloud: string }
+  labels: { local: string; cloud: string; localGroups?: string; cloudGroups?: string }
 ): ProjectSpacePickerEntry[] {
   return projects.map(project => {
     const workspace = project.workspace_context
@@ -24,8 +24,18 @@ export function projectSpacePickerEntries(
       key: projectKey(project),
       project,
       group: {
-        key: workspace ? `${project.project_store}:${workspace.id}` : project.project_store,
-        label: workspace?.name ?? labels[project.project_store === 'local' ? 'local' : 'cloud'],
+        key:
+          project.resource_type === 'chat_group'
+            ? `${project.project_store}:chat-groups`
+            : workspace
+              ? `${project.project_store}:${workspace.id}`
+              : project.project_store,
+        label:
+          project.resource_type === 'chat_group'
+            ? project.project_store === 'local'
+              ? (labels.localGroups ?? labels.local)
+              : (labels.cloudGroups ?? labels.cloud)
+            : (workspace?.name ?? labels[project.project_store === 'local' ? 'local' : 'cloud']),
       },
     }
   })

@@ -1,5 +1,9 @@
-import { useState } from 'react'
-import { collaborationMessages, type CollaborationProject } from '@wegent/collaboration'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  collaborationMessages,
+  type CollaborationIssue,
+  type CollaborationProject,
+} from '@wegent/collaboration'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openWeworkScheme } from '@/features/notifications/schemeEvents'
@@ -14,35 +18,101 @@ export function ThreadCreationHome({
   locale,
   onConnectCloud,
   accountScope,
+  initialTarget,
+  renderTargetPicker,
+  onCreated,
+  onCancel,
+  draftScope,
 }: {
   sources: GroupSource[]
   projects: CollaborationProject[]
   locale: 'zh-CN' | 'en'
   onConnectCloud?(): void
   accountScope: string
+  initialTarget?: { store: 'local' | 'cloud'; projectId?: string; groupId?: string }
+  renderTargetPicker?(content: ReactNode): ReactNode
+  onCreated?(issue: CollaborationIssue, store: 'local' | 'cloud'): void | Promise<void>
+  onCancel?(): void
+  draftScope?: string
 }) {
   const { t } = useTranslation('collaboration')
   const [store, setStore] = useState<'local' | 'cloud'>(
-    sources.some(source => source.store === 'cloud') ? 'cloud' : 'local'
+    initialTarget?.store ?? (sources.some(source => source.store === 'cloud') ? 'cloud' : 'local')
   )
-  const [projectId, setProjectId] = useState('')
-  const [open, setOpen] = useState(false)
+  const [projectId, setProjectId] = useState(initialTarget?.projectId ?? '')
+  const [open, setOpen] = useState(Boolean(initialTarget))
   const [error, setError] = useState<string | null>(null)
+  const lifetime = useRef(true)
+  useEffect(() => {
+    lifetime.current = true
+    return () => {
+      lifetime.current = false
+    }
+  }, [])
   const source = sources.find(source => source.store === store)
   const options = projects.filter(
     project =>
+      project.resource_type !== 'chat_group' &&
       (project.project_store === 'local' ? 'local' : 'cloud') === store &&
       project.status === 'active' &&
       ['Owner', 'Maintainer', 'Developer'].includes(project.access_role ?? '')
   )
   const project = options.find(project => project.id === projectId)
+  const projectUnavailable = Boolean(projectId && !project)
   const field = 'rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary'
-  return (
-    <section className="mx-auto w-full max-w-2xl space-y-6 p-8" data-testid="thread-creation-home">
-      <div className="space-y-2">
-        <h1 className="heading-lg text-text-primary">{t('newThread')}</h1>
-        <p className="text-sm text-text-muted">{t('threadHomeHint')}</p>
-      </div>
+  const creation =
+    open && source && !projectUnavailable ? (
+      <ThreadCreateDialog
+        key={`${accountScope}:${store}:${project?.id ?? ''}`}
+        api={source.workspace}
+        groups={source.groups}
+        store={store}
+        locale={locale}
+        accountScope={accountScope}
+        initialGroupId={initialTarget?.store === store ? initialTarget.groupId : undefined}
+        form={{
+          api: source.workspace,
+          project,
+          allIssues: [],
+          ...(draftScope
+            ? { defaults: { status: 'inbox', tags: [], parent: null, draftScope } }
+            : {}),
+          messages: collaborationMessages[locale],
+          onClose: () => {
+            if (onCancel) onCancel()
+            else setOpen(false)
+          },
+          onError: () => setError(t('threadCreateFailed')),
+          onCreated: async issue => {
+            if (!lifetime.current) return
+            if (onCreated) {
+              await onCreated(issue, store)
+              if (lifetime.current) setOpen(false)
+              return
+            }
+            setOpen(false)
+            openWeworkScheme(
+              weworkThreadScheme(
+                issue.group_id ?? issue.cloud_project_id,
+                issue.id,
+                store === 'cloud' ? 'backend' : 'local'
+              )
+            )
+          },
+        }}
+      />
+    ) : null
+  const target = (
+    <section
+      className={renderTargetPicker ? 'space-y-6' : 'mx-auto w-full max-w-2xl space-y-6 p-8'}
+      data-testid="thread-creation-home"
+    >
+      {!renderTargetPicker && (
+        <div className="space-y-2">
+          <h1 className="heading-lg text-text-primary">{t('newThread')}</h1>
+          <p className="text-sm text-text-muted">{t('threadHomeHint')}</p>
+        </div>
+      )}
       <div className="flex flex-wrap items-end gap-4">
         <label className="flex flex-col gap-2 text-sm text-text-primary">
           {t('storage')}
@@ -68,10 +138,16 @@ export function ThreadCreationHome({
           <select
             className={field}
             data-testid="thread-home-project"
-            value={project?.id ?? ''}
+            value={projectId}
             onChange={event => setProjectId(event.target.value)}
           >
             <option value="">{t('noProject')}</option>
+            {projectUnavailable && (
+              <option value={projectId} disabled>
+                {projects.find(project => project.id === projectId)?.name ??
+                  t('threadLinkUnavailable')}
+              </option>
+            )}
             {options.map(project => (
               <option key={project.id} value={project.id}>
                 {project.name}
@@ -79,10 +155,19 @@ export function ThreadCreationHome({
             ))}
           </select>
         </label>
-        <Button data-testid="thread-home-create" disabled={!source} onClick={() => setOpen(true)}>
+        <Button
+          data-testid="thread-home-create"
+          disabled={!source || projectUnavailable}
+          onClick={() => setOpen(true)}
+        >
           {t('continue')}
         </Button>
       </div>
+      {projectUnavailable && (
+        <p role="alert" className="text-sm text-destructive">
+          {t('projectCreationUnavailable')}
+        </p>
+      )}
       {!source && (
         <div className="space-y-2">
           <p role="status" className="text-sm text-text-muted">
@@ -101,34 +186,14 @@ export function ThreadCreationHome({
           {error}
         </p>
       )}
-      {open && source && (
-        <ThreadCreateDialog
-          key={`${accountScope}:${store}:${project?.id ?? ''}`}
-          api={source.workspace}
-          groups={source.groups}
-          store={store}
-          locale={locale}
-          accountScope={store === 'local' ? 'local' : accountScope}
-          form={{
-            api: source.workspace,
-            project,
-            allIssues: [],
-            messages: collaborationMessages[locale],
-            onClose: () => setOpen(false),
-            onError: () => setError(t('threadCreateFailed')),
-            onCreated: issue => {
-              setOpen(false)
-              openWeworkScheme(
-                weworkThreadScheme(
-                  issue.group_id ?? issue.cloud_project_id,
-                  issue.id,
-                  store === 'cloud' ? 'backend' : 'local'
-                )
-              )
-            },
-          }}
-        />
-      )}
     </section>
+  )
+  return renderTargetPicker ? (
+    (creation ?? renderTargetPicker(target))
+  ) : (
+    <>
+      {target}
+      {creation}
+    </>
   )
 }
