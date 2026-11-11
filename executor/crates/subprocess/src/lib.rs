@@ -53,17 +53,22 @@ pub fn kill_windows_process_tree(pid: u32) {
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let pid = pid.to_string();
-    let status = std::process::Command::new("taskkill")
+    let output = std::process::Command::new("taskkill")
         .args(["/PID", pid.as_str(), "/T", "/F"])
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
-        .status();
-    match status {
-        Ok(status) if !status.success() => log_executor_event(
+        .output();
+    match output {
+        Ok(output) if !output.status.success() => log_executor_event(
             "windows process tree termination failed",
-            &[("pid", pid), ("exit_status", status.to_string())],
+            &[
+                ("pid", pid),
+                ("exit_status", output.status.to_string()),
+                (
+                    "stderr",
+                    String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                ),
+            ],
         ),
         Err(error) => log_executor_event(
             "windows process tree termination failed",

@@ -291,7 +291,31 @@ fn read_owned_pipe<Reader: tokio::io::AsyncRead + Unpin + Send + 'static>(
     // retain a pipe after Git exits, so keep directory access until its EOF.
     tokio::spawn(async move {
         let _access = access;
-        read_pipe(pipe, max_output_bytes).await
+        let result = read_pipe(pipe, max_output_bytes).await;
+        #[cfg(windows)]
+        crate::logging::log_executor_event(
+            "native git output pipe closed",
+            &[
+                ("ok", result.is_ok().to_string()),
+                (
+                    "bytes",
+                    result
+                        .as_ref()
+                        .map(Vec::len)
+                        .unwrap_or_default()
+                        .to_string(),
+                ),
+                (
+                    "error",
+                    result
+                        .as_ref()
+                        .err()
+                        .map(ToString::to_string)
+                        .unwrap_or_default(),
+                ),
+            ],
+        );
+        result
     })
 }
 

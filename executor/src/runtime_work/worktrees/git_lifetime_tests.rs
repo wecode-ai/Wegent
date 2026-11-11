@@ -29,6 +29,7 @@ async fn cleanup_waits_for_owned_git_in_nested_directories() {
 
 async fn assert_git_cleanup_waits(nested: bool) {
     for completion in ["exit", "timeout", "cancel"] {
+        eprintln!("Git cleanup case started completion={completion} nested={nested}");
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("source");
         super::tests::initialize_repository(&source);
@@ -96,6 +97,10 @@ async fn assert_git_cleanup_waits(nested: bool) {
                 query.abort();
                 assert!(query.await.unwrap_err().is_cancelled());
                 fs::write(&release, "release").unwrap();
+                eprintln!(
+                    "Git cleanup cancellation released alias path={}",
+                    release.display()
+                );
             }
             "timeout" => {
                 tokio::time::pause();
@@ -112,6 +117,7 @@ async fn assert_git_cleanup_waits(nested: bool) {
             .unwrap()
             .unwrap();
         assert!(!path.exists());
+        eprintln!("Git cleanup case finished completion={completion} nested={nested}");
     }
 }
 
