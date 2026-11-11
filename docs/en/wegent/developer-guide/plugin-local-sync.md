@@ -31,6 +31,8 @@ A compacted request cannot override later intent: persistent watermarks fence la
 
 Pending recovery runs independently from full snapshot HTTP/application and merges its result into the freshly loaded journal. Automatic update and reconciliation scheduling remain independent; real file publication remains serialized. Profile changes fence queued requests and publication.
 
+Pending submission starts before full content scanning. Fingerprints run on a blocking thread without the foreground execution or journal file lease. Before writing back, the coordinator revalidates the account, journal execution state and manifest revision, preserving acceptance results merged during scanning. New foreground operations or publications invalidate old scan results. A separate scan lease remains with the worker through cancellation, preventing duplicate scans from accumulating.
+
 Deploy all Backend, gateway and Runtime replicas before enabling `PLUGIN_LOCAL_SYNC_ENABLED` (default false). Legacy requests without the mode preserve their original behavior. Contract 3 does not mix with contract 2 from earlier PR revisions. Disabling new acceptance retains replay and reconciliation for existing instances. Old local pending requests are preserved; obsolete receipt entries are no longer sent.
 
 Focused tests cover no-device lifecycle, bounded acceptance slots, request hashing, rollback, compacted and legacy-write supersession, isolation and independent recovery. Existing CI invokes real HTTP/MySQL/Redis coverage and the desktop `plugin-write-coordination` checkpoint. Actual release-package compatibility for 1.0.0, 1.1.0 and 1.1.1 remains unverified.

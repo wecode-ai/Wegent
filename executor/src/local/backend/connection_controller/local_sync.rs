@@ -10,13 +10,14 @@ use fs2::FileExt;
 #[cfg(test)]
 mod execution_tests;
 mod recovery;
+mod scanning;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{path::Path, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 struct LocalSyncSession<'a> {
     connection: &'a ConnectionConfig,
-    handler: &'a dyn super::super::capability::CapabilitySyncRpcHandler,
+    handler: Arc<dyn super::super::capability::CapabilitySyncRpcHandler>,
     capabilities: &'a Value,
     instance: &'a str,
     path: &'a Path,
@@ -393,57 +394,35 @@ impl LocalBackendConnectionController {
             return Ok(capabilities);
         }
 
-        // Pure probes must remain available while a snapshot or installer is
-        // waiting. Mutating/application requests retain foreground ordering.
-        let _serial = self.local_sync_lock.lock().await;
-        {
-            let state = self.state.lock().await;
-            if state.profile.as_ref().map(|profile| &profile.connection) != Some(&connection) {
-                return Err(error("plugin_route_profile_mismatch"));
-            }
-        }
-        // Serialize sidecars sharing a home without blocking a Tokio worker.
-        let lock_path = root.join(format!("{scope}.lock"));
-        let _file = tokio::task::spawn_blocking(move || {
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .open(lock_path)
-                .map_err(|_| error("plugin_local_journal_unavailable"))?;
-            file.try_lock_exclusive()
-                .map_err(|_| error("plugin_local_sync_busy"))?;
-            Ok::<_, AppIpcError>(file)
-        })
-        .await
-        .map_err(|_| error("plugin_local_journal_unavailable"))??;
+        let mut lease = Some(self.acquire_local_sync_lease(&connection, &path).await?);
         let journal = load_journal(&path)?;
         self.apply_local_plugin_sync(
             params,
             LocalSyncSession {
                 connection: &connection,
-                handler: handler.as_ref(),
+                handler,
                 capabilities: &capabilities,
                 instance: &instance,
                 path: &path,
             },
             journal,
+            &mut lease,
         )
         .await
     }
 
-    // The caller retains foreground serialization and the ordinary journal
-    // lease. Prepared recovery submits HTTP without acquiring either again.
+    // Full scans temporarily release the lease and revalidate before continuing.
+    // Prepared recovery submits HTTP independently of both execution and scans.
     async fn apply_local_plugin_sync(
         &self,
         params: Value,
         session: LocalSyncSession<'_>,
         mut journal: Value,
+        lease: &mut Option<scanning::LocalSyncLease>,
     ) -> Result<Value, AppIpcError> {
         let LocalSyncSession {
             connection,
-            handler,
+            ref handler,
             capabilities,
             instance,
             path,
@@ -513,12 +492,22 @@ impl LocalBackendConnectionController {
             .as_u64()
             .filter(|_| selected.is_none() && params["full"] != true);
         let targeted = selected.is_some() || installed_plugin_id.is_some();
+        if !targeted && !pending.is_empty() {
+            if let Err(failure) =
+                self.schedule_local_recovery(connection, instance, path, &mut journal)
+            {
+                if failure.code != "plugin_local_sync_busy" {
+                    crate::logging::write_executor_error_line(&failure.code);
+                }
+            }
+        }
         // Only a complete reconciliation can reuse global content evidence.
         // Deltas always fetch a plan and retain the installer's target checks.
         let digest = if targeted {
             None
         } else {
-            handler.local_plugin_digest()
+            self.scan_local_plugin_content(&session, &mut journal, lease)
+                .await?
         };
         let verified = digest
             .as_ref()
@@ -527,6 +516,9 @@ impl LocalBackendConnectionController {
             .as_str()
             .filter(|_| verified)
             .map(str::to_owned);
+        // Recovery may have settled while the scan ran. Use its current status
+        // without losing original requests or replaying an old journal snapshot.
+        let pending = journal["pending"].as_array().unwrap();
         let operation_ids: Vec<String> = if let Some(operation) = operation {
             vec![operation.to_owned()]
         } else if !targeted {
@@ -539,15 +531,6 @@ impl LocalBackendConnectionController {
         } else {
             Vec::new()
         };
-        if !targeted && !pending.is_empty() {
-            if let Err(failure) =
-                self.schedule_local_recovery(connection, instance, path, &mut journal)
-            {
-                if failure.code != "plugin_local_sync_busy" {
-                    crate::logging::write_executor_error_line(&failure.code);
-                }
-            }
-        }
         let snapshot=post(connection,"/api/plugins/local-sync",&json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["snapshot"].is_object() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id})).await?;
         // Profile replacement fences the shared installer as well as this HTTP scope.
         {
@@ -611,11 +594,7 @@ impl LocalBackendConnectionController {
             } else {
                 snapshot["revision"].clone()
             };
-            journal["verifiedDigest"] = if targeted {
-                Value::Null
-            } else {
-                json!(handler.local_plugin_digest())
-            };
+            journal["verifiedDigest"] = Value::Null;
             journal["lastResult"] = result.clone();
             if let Some(operation) = operation {
                 journal["pending"]
@@ -635,6 +614,13 @@ impl LocalBackendConnectionController {
         persist(path, &journal)?;
         if !completed {
             return Err(error("plugin_local_apply_failed"));
+        }
+        if !targeted {
+            let digest = self
+                .scan_local_plugin_content(&session, &mut journal, lease)
+                .await?;
+            journal["verifiedDigest"] = json!(digest);
+            persist(path, &journal)?;
         }
         Ok(
             json!({"enabled":capabilities["enabled"],"protocolVersion":1,"localCompleted":true,"operation":snapshot["operation"],"result":result}),

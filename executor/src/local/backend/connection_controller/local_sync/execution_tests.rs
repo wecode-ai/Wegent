@@ -13,12 +13,30 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
 };
 use tokio::sync::Notify;
 
 mod digest_tests;
+mod scanning_tests;
+
+#[derive(Default)]
+struct DigestGate {
+    hold_at: AtomicUsize,
+    entered: Notify,
+    released: Mutex<bool>,
+    ready: Condvar,
+}
+
+struct HeldDigest(Arc<DigestGate>);
+
+impl Drop for HeldDigest {
+    fn drop(&mut self) {
+        *self.0.released.lock().unwrap() = true;
+        self.0.ready.notify_all();
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Plan {
@@ -38,12 +56,25 @@ struct Installer {
     digest: Arc<Mutex<Option<String>>>,
     digest_calls: Arc<AtomicUsize>,
     applications: Arc<AtomicUsize>,
+    state_revision: Arc<AtomicUsize>,
+    digest_gate: Arc<DigestGate>,
 }
 
 impl CapabilitySyncRpcHandler for Installer {
     fn local_plugin_digest(&self) -> Option<String> {
-        self.digest_calls.fetch_add(1, Ordering::SeqCst);
+        let call = self.digest_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if self.digest_gate.hold_at.load(Ordering::SeqCst) == call {
+            self.digest_gate.entered.notify_one();
+            let mut released = self.digest_gate.released.lock().unwrap();
+            while !*released {
+                released = self.digest_gate.ready.wait(released).unwrap();
+            }
+        }
         self.digest.lock().unwrap().clone()
+    }
+
+    fn local_plugin_revision(&self) -> Option<String> {
+        Some(self.state_revision.load(Ordering::SeqCst).to_string())
     }
 
     fn handle_sync_capabilities<'a>(
@@ -52,6 +83,7 @@ impl CapabilitySyncRpcHandler for Installer {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Value> + Send + 'a>> {
         Box::pin(async move {
             self.applications.fetch_add(1, Ordering::SeqCst);
+            self.state_revision.fetch_add(1, Ordering::SeqCst);
             if matches!(self.plan, Plan::HeldApplication) {
                 self.entered.notify_one();
                 self.release.notified().await;
@@ -207,6 +239,8 @@ impl Fixture {
             digest: Arc::new(Mutex::new(Some("actual".into()))),
             digest_calls: Arc::new(AtomicUsize::new(0)),
             applications: Arc::new(AtomicUsize::new(0)),
+            state_revision: Arc::new(AtomicUsize::new(0)),
+            digest_gate: Arc::new(DigestGate::default()),
         };
         controller.state.lock().await.plugin_sync = Some(Arc::new(installer.clone()));
         Self {
@@ -224,19 +258,23 @@ impl Fixture {
     }
 
     async fn sync(&self, params: Value) -> Result<Value, AppIpcError> {
-        let _serial = self.controller.local_sync_lock.lock().await;
-        let _file = recovery::lock_file(&self.path.with_extension("lock"))?;
+        let mut lease = Some(
+            self.controller
+                .acquire_local_sync_lease(&self.connection, &self.path)
+                .await?,
+        );
         self.controller
             .apply_local_plugin_sync(
                 params,
                 LocalSyncSession {
                     connection: &self.connection,
-                    handler: &self.installer,
+                    handler: Arc::new(self.installer.clone()),
                     capabilities: &json!({"enabled":true}),
                     instance: "native",
                     path: &self.path,
                 },
                 load_journal(&self.path)?,
+                &mut lease,
             )
             .await
     }

@@ -32,6 +32,9 @@ pub trait CapabilitySyncRpcHandler: Send + Sync + 'static {
     fn local_plugin_digest(&self) -> Option<String> {
         None
     }
+    fn local_plugin_revision(&self) -> Option<String> {
+        None
+    }
     fn handle_sync_capabilities<'a>(
         &'a self,
         payload: Value,
@@ -72,6 +75,9 @@ where
     }
     fn local_plugin_digest(&self) -> Option<String> {
         CapabilitySyncHandler::local_plugin_digest(self).ok()
+    }
+    fn local_plugin_revision(&self) -> Option<String> {
+        CapabilitySyncHandler::local_plugin_revision(self).ok()
     }
 
     fn handle_sync_capabilities<'a>(
