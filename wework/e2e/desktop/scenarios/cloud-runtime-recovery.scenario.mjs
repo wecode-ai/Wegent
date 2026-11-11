@@ -146,11 +146,17 @@ export function createDesktopScenario(options) {
           'Cloud recovery did not settle the mounted conversation',
           options.uiTimeoutMs
         )
-        const text = await control.command('getText', ACTIVE_WORKBENCH_SELECTOR)
+        // Turn-navigation previews repeat reply text outside the conversation rows.
+        const text = await control.command('getText', ASSISTANT)
         assert.equal(
           text.split(COMPLETED).length - 1,
           1,
           'Recovery duplicated the completed answer'
+        )
+        assert.equal(
+          Number(await control.command('getElementCount', ASSISTANT)),
+          1,
+          'Recovery duplicated the assistant message'
         )
         assert.equal(control.readyCount, readyCount, 'Cloud recovery required a renderer reload')
       } finally {

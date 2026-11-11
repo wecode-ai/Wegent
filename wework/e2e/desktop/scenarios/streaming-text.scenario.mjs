@@ -145,6 +145,8 @@ export function createDesktopScenario({
   let toolRegressionStage = 'initial'
   let reclassifiedCommentaryStage = 'initial'
   let timerStage = 'initial'
+  const timerToolReleasePath = join(resultDir, 'running-timer-tool-released')
+  const releaseTimerTool = () => writeFile(timerToolReleasePath, '')
   let releaseAppend
   let releaseLongCodeStream
   let releasePhaseFlipCompletion
@@ -280,6 +282,7 @@ export function createDesktopScenario({
     modelResponseTimeoutMs,
     uiTimeoutMs,
     capture,
+    releaseTimerTool,
     releaseTimerFinalCompletion,
     requestReceived,
     getTargetRequest: () => targetRequest,
@@ -294,6 +297,7 @@ export function createDesktopScenario({
   return {
     cleanup() {
       guidanceOrder.cleanup()
+      return releaseTimerTool()
     },
     codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
     modelProviderAuthToml: '',
@@ -668,8 +672,14 @@ export function createDesktopScenario({
 
       if (requestContainsTimerPrompt(body)) {
         if (timerStage === 'initial') {
-          // Keep the tool active while checking its timer and switching conversations.
-          const tool = selectShellTool(body, workspacePath, 'sleep 10', 20_000)
+          // Complete only after the running timer has been checked on both pages.
+          const releasePath = `'${timerToolReleasePath.replaceAll("'", "'\\''")}'`
+          const tool = selectShellTool(
+            body,
+            workspacePath,
+            `while [ ! -f ${releasePath} ]; do sleep 0.05; done`,
+            Math.max(20_000, uiTimeoutMs * 3)
+          )
           timerStage = 'awaiting-tool-output'
           response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
           response.end(
