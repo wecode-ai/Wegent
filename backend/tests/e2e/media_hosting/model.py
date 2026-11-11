@@ -52,6 +52,9 @@ class ModelHandler(BaseHTTPRequestHandler):
             self.server.jobs[job_id] = {
                 "media": media,
                 "prompt": payload["content"][0]["text"],
+                "options": {
+                    key: payload.get(key) for key in ("resolution", "ratio", "duration")
+                },
             }
             body = json.dumps({"id": job_id}).encode()
             self.send_response(200)

@@ -534,7 +534,6 @@ class DesktopE2EServer {
     this.catalogRequests = []
     this.httpRequests = []
     this.userPreferences = {}
-    this.runtimeImBindingRequests = []
     this.telemetryRequests = []
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
@@ -1499,39 +1498,6 @@ class DesktopE2EServer {
 
     if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
       json(response, 200, { apps: [] })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/im/private-sessions') {
-      json(response, 200, {
-        total: 1,
-        items: [
-          {
-            session_key: 'desktop-e2e-im-session',
-            channel_type: 'dingtalk',
-            channel_label: 'DingTalk',
-            channel_id: 77,
-            conversation_id: 'desktop-e2e-conversation',
-            sender_id: 'desktop-e2e-user',
-            display_name: 'Desktop E2E',
-            mode: 'task',
-            state: 'idle',
-            active_task_id: null,
-            last_seen_at: '2026-08-12T00:00:00.000Z',
-          },
-        ],
-      })
-      return
-    }
-
-    if (request.method === 'POST' && url.pathname === '/api/runtime-work/im-sessions') {
-      const body = await readRequestBody(request)
-      this.runtimeImBindingRequests.push(body)
-      json(response, 200, {
-        address: body.address,
-        boundSessionKeys: body.sessionKeys,
-        notifiedCount: 1,
-      })
       return
     }
 

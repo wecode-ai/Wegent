@@ -704,18 +704,6 @@ impl RuntimeWorkRpcHandler {
         role: &Value,
         link: &RuntimeTaskLink,
     ) -> Result<(), AppIpcError> {
-        self.validate_stand_in_work_authority(store, user, role, link, false)
-            .await
-    }
-
-    pub(super) async fn validate_stand_in_work_authority(
-        &self,
-        store: &LocalTaskStore,
-        user: i64,
-        role: &Value,
-        link: &RuntimeTaskLink,
-        manual_issue_request: bool,
-    ) -> Result<(), AppIpcError> {
         let origin = &link.runtime_handle["origin"];
         if origin["type"] == "stand_in_task" {
             if role["id"] != "@primary" || origin["userId"] != user {
@@ -773,40 +761,24 @@ impl RuntimeWorkRpcHandler {
         } else {
             let project = origin["cloudProjectId"].as_str().unwrap_or_default();
             let kind = origin["projectStore"].as_str().unwrap_or_default();
-            if !manual_issue_request
-                && !crate::task_runtime::personal_stand_in::role_project_matches(
-                    role, project, kind,
-                )
-            {
+            if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind) {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Work project is no longer connected",
                 ));
             }
             let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
-            let mut issue = if kind == "local" {
-                serde_json::to_value(store.get_task(project, issue_id).map_err(settings_error)?)
-                    .unwrap()
-            } else {
-                self.verify_runtime_user(&json!({"userId":user})).await?;
-                self.runtime_http(
-                    reqwest::Method::GET,
-                    &format!("/v1/loop-items/{issue_id}"),
-                    None,
-                )
-                .await?
-            };
+            let mut issue = self.read_stand_in_issue(store, user, origin).await?;
             if kind == "local" {
                 issue["tags"] = issue["metadata"]["tags"].clone();
             }
             let config =
                 crate::task_runtime::personal_stand_in::project_role(role, user, project, kind);
-            if !manual_issue_request
-                && super::personal_stand_in::matching_personal_roles(
-                    std::slice::from_ref(&config),
-                    &issue,
-                )
-                .is_empty()
+            if super::personal_stand_in::matching_personal_roles(
+                std::slice::from_ref(&config),
+                &issue,
+            )
+            .is_empty()
             {
                 return Err(AppIpcError::new(
                     "permission_denied",
@@ -823,10 +795,9 @@ impl RuntimeWorkRpcHandler {
                     "Issue is no longer assigned to you",
                 ));
             }
-            if !manual_issue_request
-                && crate::task_runtime::personal_stand_in::project_policy(role, project, kind)
-                    ["automatic"]
-                    == false
+            if crate::task_runtime::personal_stand_in::project_policy(role, project, kind)
+                ["automatic"]
+                == false
             {
                 return Err(AppIpcError::new(
                     "permission_denied",

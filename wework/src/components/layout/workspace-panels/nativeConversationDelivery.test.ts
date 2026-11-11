@@ -27,6 +27,20 @@ describe('native conversation turn boundary', () => {
     ).toBe('guidance')
     expect(guide).toHaveBeenCalledOnce()
   })
+  it('sends once after a busy rejection is followed by an explicit turn completion rejection', async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({ sent: false, error: 'busy' })
+      .mockResolvedValue({ sent: true })
+    const guide = vi.fn(async () => ({ sent: false, code: 'no_active_turn' }))
+    expect(
+      await deliverNativeConversationMessage({ busy: false, send, guide, isBusyError })
+    ).toEqual({ sent: true, delivery: 'message' })
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(guide).toHaveBeenCalledOnce()
+    expect(send.mock.invocationCallOrder[0]).toBeLessThan(guide.mock.invocationCallOrder[0])
+    expect(guide.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[1])
+  })
   it.each(['permission_denied', 'network_error'])('never resends after %s', async code => {
     const send = vi.fn()
     const guide = vi.fn(async () => ({ sent: false, code }))
@@ -35,4 +49,16 @@ describe('native conversation turn boundary', () => {
     ).toBe(false)
     expect(send).not.toHaveBeenCalled()
   })
+  it.each(['permission_denied', 'network_error'])(
+    'preserves %s after a confirmed busy rejection without a second send',
+    async code => {
+      const send = vi.fn(async () => ({ sent: false, error: 'busy' }))
+      const guide = vi.fn(async () => ({ sent: false, code }))
+      expect(
+        await deliverNativeConversationMessage({ busy: false, send, guide, isBusyError })
+      ).toEqual({ sent: false, code, delivery: 'guidance' })
+      expect(send).toHaveBeenCalledOnce()
+      expect(guide).toHaveBeenCalledOnce()
+    }
+  )
 })

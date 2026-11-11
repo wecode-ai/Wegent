@@ -14,7 +14,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering as AtomicOrdering},
-        Mutex as TestMutex, MutexGuard, OnceLock,
+        Mutex as TestMutex, MutexGuard,
     },
     time::Duration,
 };
@@ -180,10 +180,7 @@ impl RuntimeWorkHandler for BlockingCapacityRuntimeWorkHandler {
 }
 
 fn env_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<TestMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| TestMutex::new(()))
-        .lock()
-        .expect("env lock should be available")
+    crate::test_env::lock()
 }
 
 fn restore_env(key: &str, value: Option<OsString>) {

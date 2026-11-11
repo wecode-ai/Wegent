@@ -86,6 +86,8 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 ## Engineering rules
 
+- Respect diverse user workflows. Do not add restrictions based on implementation convenience, an assumed happy path, or guesses about how users should work. Every restriction must be justified by an explicit user requirement or a concrete security boundary; remove unjustified restrictions instead of making users follow a prescribed sequence.
+
 - Collaboration permission changes must follow [the permission contract](docs/en/wegent/developer-guide/collaboration-permissions.md) and preserve its CP invariants. Update the architecture transaction and contract tests together; changing an invariant requires explicit user authorization. Never weaken, skip, or delete security assertions to make an incompatible implementation pass.
 
 - Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
