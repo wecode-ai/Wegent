@@ -20,6 +20,11 @@ Wework 提供独立的 Playwright E2E 入口和测试专用前端自动化接口
 
 插件 Python 运行时的 `python-runtime,plugin-development` 检查点复用已有的 Core 10 分片，不新增 runner。Linux 和 Windows 各保持十个 Core 分片，所有检查点及断言保留；实际分组以 `.github/scripts/classify-wework-desktop-e2e.sh --all` 的输出为准。
 
+Python 下载描述的 200ms 期限只覆盖 HTTP 响应头和正文。获取凭据及请求完成后的本地
+Backend 身份校验在 HTTP 计时范围外完成，避免把串行存储等待算成网络超时；返回地址前
+仍须拒绝 Backend 切换并检查地址是否过期。父窗口日志以 `parent-python-downloads-failed` 记录安全的
+错误分类，可区分描述请求超时，不记录凭据或下载地址。
+
 ## 运行方式
 
 首次运行需要安装 Playwright 浏览器：

@@ -4374,7 +4374,10 @@ fn stand_in_identity_uses_native_v2_without_changing_other_task_defaults() {
             .insert("origin".to_owned(), json!({"type": origin_type}));
         let overrides = codex_collaboration_config_overrides(&request);
         if origin_type == "stand_in_identity" {
-            assert_eq!(overrides, vec![CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]);
+            assert_eq!(
+                overrides,
+                vec!["agents.enabled=true", CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]
+            );
         } else {
             assert!(overrides.is_empty());
         }
@@ -4399,6 +4402,31 @@ fn single_stand_in_identity_still_disables_both_native_agent_families() {
             CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE
         ]
     );
+}
+
+#[test]
+fn explicit_native_modes_restore_subagents_after_a_disabled_resume() {
+    for mode in ["default", "plan"] {
+        let mut request = ExecutionRequest::default();
+        request.extra.extend(
+            json!({"collaborationMode":mode,"collaboration_model":"single"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        assert_eq!(
+            codex_collaboration_config_overrides(&request),
+            vec!["agents.enabled=true", CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]
+        );
+        let config = CodexLaunchConfig {
+            config_overrides: codex_collaboration_config_overrides(&request),
+            ..Default::default()
+        };
+        let params = thread_resume_params("existing-thread", &request, &config);
+        assert_eq!(params["threadId"], "existing-thread");
+        assert_eq!(params["config"]["agents.enabled"], true);
+        assert_eq!(params["config"]["features.multi_agent_v2"], true);
+    }
 }
 
 #[test]

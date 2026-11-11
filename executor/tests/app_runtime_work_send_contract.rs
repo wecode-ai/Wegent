@@ -469,6 +469,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                 "taskId": "local-task-1",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
+                "collaborationMode": "default",
                 "executionRequest": {
                     "task_id": 1001,
                     "subtask_id": 2001,
