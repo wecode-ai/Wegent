@@ -46,6 +46,14 @@ struct Inventory {
     blockers: Vec<String>,
 }
 
+struct MigrationCheckpointRow {
+    kind: String,
+    parent: Option<String>,
+    source: Option<String>,
+    metadata: Option<String>,
+    status: Option<String>,
+}
+
 fn invalid(message: &str) -> TaskRuntimeError {
     TaskRuntimeError::Invalid(message.to_owned())
 }
@@ -354,18 +362,24 @@ impl LocalTaskStore {
             .ok_or_else(|| invalid("Choose project classification explicitly"))?;
         roots(&tx, &report.source_project_id, &report.target_group_id)?;
         let checkpoint = digest(&report, retain)?;
-        let existing: Option<(String,Option<String>,Option<String>,Option<String>,Option<String>)> = tx.query_row(
+        let existing: Option<MigrationCheckpointRow> = tx.query_row(
             "SELECT resource_type,parent_id,cloud_project_id,metadata,status FROM loop_items WHERE id=?1", [&checkpoint],
-            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+            |row| Ok(MigrationCheckpointRow {
+                kind: row.get(0)?,
+                parent: row.get(1)?,
+                source: row.get(2)?,
+                metadata: row.get(3)?,
+                status: row.get(4)?,
+            }),
         ).optional()?;
         let marker = json!({"inventory_id":checkpoint,"thread_ids":report.entries.iter().map(|entry|&entry.id).collect::<Vec<_>>(),"retain_source_project":retain});
         let marker = marker.to_string();
-        if let Some((kind, parent, source, metadata, status)) = existing {
-            if kind != "thread_migration"
-                || parent.as_deref() != Some(&report.target_group_id)
-                || source.as_deref() != Some(&report.source_project_id)
-                || metadata.as_deref() != Some(marker.as_str())
-                || status.as_deref() != Some("completed")
+        if let Some(existing) = existing {
+            if existing.kind != "thread_migration"
+                || existing.parent.as_deref() != Some(&report.target_group_id)
+                || existing.source.as_deref() != Some(&report.source_project_id)
+                || existing.metadata.as_deref() != Some(marker.as_str())
+                || existing.status.as_deref() != Some("completed")
             {
                 return Err(invalid("Migration checkpoint identity collision"));
             }
