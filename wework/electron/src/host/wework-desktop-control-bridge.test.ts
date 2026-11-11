@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { WeworkDesktopControlBridge } from './wework-desktop-control-bridge.js'
+import { PythonRuntimeDownloadTimeoutError } from '../runtime/python-runtime-downloads.js'
 
 const directories: string[] = []
 
@@ -58,6 +59,7 @@ describe('WeworkDesktopControlBridge', () => {
     await bridge.start()
     const env = bridge.environment()
     const endpoint = new URL('/runtime/python/downloads', env.WEWORK_PYTHON_RUNTIME_URL)
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       expect((await fetch(endpoint, { method: 'POST' })).status).toBe(401)
       expect(pythonDownloads).not.toHaveBeenCalled()
@@ -77,7 +79,19 @@ describe('WeworkDesktopControlBridge', () => {
       }).then(response => response.json())
       expect(failed.code).toBe('python_runtime_login_required')
       expect(JSON.stringify(failed)).not.toContain('private credential data')
+      pythonDownloads.mockRejectedValueOnce(new PythonRuntimeDownloadTimeoutError())
+      const timedOut = await fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${env.WEWORK_PYTHON_RUNTIME_TOKEN}` },
+      }).then(response => response.json())
+      expect(timedOut.code).toBe('python_runtime_download_unavailable')
+      expect(warning).toHaveBeenLastCalledWith('[python-runtime]', {
+        event: 'parent-python-downloads-failed',
+        reason: 'python_runtime_download_timeout',
+      })
+      expect(JSON.stringify(warning.mock.calls)).not.toContain('private credential data')
     } finally {
+      warning.mockRestore()
       await bridge.stop()
     }
   })

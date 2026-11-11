@@ -144,9 +144,7 @@ test.each(['headers', 'body'] as const)(
         )
     )
     const pending = fetchPythonRuntimeDownloads(input)
-    const rejected = expect(pending).rejects.toThrow(
-      `timed out after 200ms; phase=${stage}, elapsedMs=200, phaseElapsedMs=200`
-    )
+    const rejected = expect(pending).rejects.toThrow('timed out after 200ms')
     await vi.advanceTimersByTimeAsync(199)
     expect(input.fetch.mock.calls[0][1].signal.aborted).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
@@ -154,20 +152,6 @@ test.each(['headers', 'body'] as const)(
     expect(input.fetch.mock.calls[0][1].signal.aborted).toBe(true)
   }
 )
-
-test('distinguishes a stalled backend identity check from stalled HTTP transport', async () => {
-  vi.useFakeTimers()
-  const input = options()
-  input.connection
-    .mockResolvedValueOnce({ apiBaseUrl: 'https://backend.example.invalid/custom/api/' })
-    .mockResolvedValueOnce({ apiBaseUrl: 'https://backend.example.invalid/custom/api/' })
-    .mockImplementationOnce(() => new Promise(() => {}))
-  const pending = fetchPythonRuntimeDownloads(input)
-  const rejected = expect(pending).rejects.toThrow('phase=backend-check')
-  await vi.advanceTimersByTimeAsync(200)
-  await rejected
-  expect(input.fetch.mock.calls[0][1].signal.aborted).toBe(true)
-})
 
 test('accepts both artifact addresses arriving before the deadline and clears its timer', async () => {
   vi.useFakeTimers()
@@ -196,6 +180,52 @@ test('does not shorten the existing credential refresh budget to 200ms', async (
   await vi.advanceTimersByTimeAsync(1)
   await expect(pending).resolves.toEqual(downloads)
 })
+
+test.each(['same', 'changed', 'expired'])(
+  'keeps the slow final Backend check outside the transport deadline (state=%s)',
+  async state => {
+    vi.useFakeTimers()
+    const input = options()
+    if (state === 'expired')
+      input.fetch.mockResolvedValue(
+        Response.json({ ...payload(), expiresAt: new Date(Date.now() + 250).toISOString() })
+      )
+    const connection = { apiBaseUrl: 'https://backend.example.invalid/custom/api/' }
+    input.connection
+      .mockResolvedValueOnce(connection)
+      .mockResolvedValueOnce(connection)
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve =>
+            setTimeout(
+              () =>
+                resolve(
+                  state === 'changed'
+                    ? { apiBaseUrl: 'https://second.example.invalid/api' }
+                    : connection
+                ),
+              500
+            )
+          )
+      )
+    const result = fetchPythonRuntimeDownloads(input).then(
+      value => ({ value }),
+      error => ({ error })
+    )
+    await vi.advanceTimersByTimeAsync(500)
+    if (state === 'changed')
+      expect(await result).toEqual({
+        error: new Error('Python download configuration: Backend changed during request'),
+      })
+    else if (state === 'expired')
+      expect(await result).toEqual({
+        error: new Error('Python download configuration: expired download addresses'),
+      })
+    else expect(await result).toEqual({ value: downloads })
+    expect(input.fetch).toHaveBeenCalledOnce()
+    expect(input.fetch.mock.calls[0][1].signal.aborted).toBe(false)
+  }
+)
 
 test('rejects a backend switch during either credential resolution or the descriptor request', async () => {
   for (const changeAt of [1, 2]) {

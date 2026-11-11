@@ -10,6 +10,9 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { applyLocalExecutorCloudConnection } from '@/features/cloud-connection/localExecutorCloudConnection'
 import { getDesktopE2ERuntimeConfig } from './runtime-config'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
+import { createInteractionDraftStore } from '@/features/notifications/useInteractionDrafts'
 import {
   localConnectorAuthHealth,
   localConnectorAuthLogout,
@@ -20,6 +23,56 @@ import {
 
 interface VerificationControlDependencies {
   elementEnabled: (element: HTMLElement) => boolean
+}
+
+type InteractionDraftStore = ReturnType<typeof createInteractionDraftStore>
+
+const interactionDraftStores = new Map<string, InteractionDraftStore>()
+
+/** Reuse one production draft store for repeated commands in a renderer. */
+function interactionDraftStore(accountKey: string): InteractionDraftStore {
+  const existing = interactionDraftStores.get(accountKey)
+  if (existing) return existing
+  const store = createInteractionDraftStore(accountKey)
+  store.activate()
+  interactionDraftStores.set(accountKey, store)
+  return store
+}
+
+/** Validate the account-scoped draft selector and optional replacement text. */
+function interactionDraftCommand(command: DesktopControlCommand): {
+  accountKey: string
+  id: string
+  text?: string
+} {
+  const input = JSON.parse(command.value ?? '{}') as {
+    accountKey?: string
+    id?: string
+    text?: string
+  }
+  if (!input.accountKey?.trim()) throw new Error('An interaction draft account key is required')
+  if (typeof input.text !== 'undefined' && typeof input.text !== 'string')
+    throw new Error('An interaction draft text must be a string')
+  return { accountKey: input.accountKey, id: input.id ?? '', text: input.text }
+}
+
+/** Read the merged account draft snapshot after queued writes settle. */
+async function readInteractionDraftSnapshot(command: DesktopControlCommand): Promise<string> {
+  const { accountKey } = interactionDraftCommand(command)
+  const store = interactionDraftStore(accountKey)
+  await store.flush()
+  return JSON.stringify(store.getSnapshot())
+}
+
+/** Write one draft through the production cross-window merge path, then flush it to disk. */
+async function writeInteractionDraft(command: DesktopControlCommand): Promise<string> {
+  const { accountKey, id, text } = interactionDraftCommand(command)
+  if (!id) throw new Error('An interaction draft ID is required')
+  const store = interactionDraftStore(accountKey)
+  store.setDraft(id, text ?? '')
+  await store.flush()
+  await flushDesktopLocalStoragePersistence()
+  return JSON.stringify(store.getSnapshot())
 }
 
 function clickAt(
@@ -213,6 +266,29 @@ export async function executeVerificationControlCommand(
   dependencies: VerificationControlDependencies
 ): Promise<DesktopControlExtensionResult> {
   switch (command.action) {
+    case 'enqueueNativeNotificationReply':
+      return {
+        handled: true,
+        value: JSON.stringify(
+          await invokeDesktopHost('e2e.enqueueNotificationReply', JSON.parse(command.value ?? '{}'))
+        ),
+      }
+    case 'getNativeNotificationReplies':
+      return {
+        handled: true,
+        value: JSON.stringify(
+          await invokeDesktopHost('notification.pendingReplies', {
+            accountKey: command.value ?? '',
+          })
+        ),
+      }
+    case 'flushRendererStorage':
+      await flushDesktopLocalStoragePersistence()
+      return { handled: true, value: '' }
+    case 'interactionDraftSnapshot':
+      return { handled: true, value: await readInteractionDraftSnapshot(command) }
+    case 'interactionDraftSet':
+      return { handled: true, value: await writeInteractionDraft(command) }
     case 'reconnectLocalExecutorCloud':
       return { handled: true, value: await reconnectLocalExecutorCloud() }
     case 'disconnectLocalExecutorCloud': {
