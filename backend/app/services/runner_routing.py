@@ -1,6 +1,7 @@
 """One authorization and capability resolver for collaboration runner routing."""
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,7 +31,10 @@ from app.services.cloud_project_visibility import readable_workspace_ids
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.device.identity import resolve_owned_device_alias
 from app.services.device.runtime_route import runtime_device_route_id
+from app.services.runner_routing_diagnostics import log_environment_denial
 from app.services.workspaces.storage import workspace_id_for_project
+
+logger = logging.getLogger(__name__)
 
 
 def routing_error(code: str, message: str) -> HTTPException:
@@ -416,6 +420,7 @@ def _candidates(
     user_id: int,
     agent_id: str | None = None,
 ) -> list[Kind]:
+    """Filter authorized devices by policy and retain evidence when none match."""
     try:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
     except HTTPException as error:
@@ -423,7 +428,8 @@ def _candidates(
             "RUNNER_PROJECT_ACCESS_REVOKED",
             "The triggering user no longer has permission to execute in the project",
         ) from error
-    ids = execution_environment_ids(db, project_id, agent_id)
+    authorized_ids = execution_environment_ids(db, project_id, agent_id)
+    ids = authorized_ids.copy()
     if policy.mode == "fixed":
         ids &= {int(policy.environment_id)}
     devices = (
@@ -437,6 +443,14 @@ def _candidates(
         .all()
     )
     if not devices:
+        log_environment_denial(
+            db,
+            project_id=project_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            policy=policy,
+            authorized_ids=authorized_ids,
+        )
         raise routing_error(
             "RUNNER_ENVIRONMENT_UNAVAILABLE",
             "No execution environment is authorized for this selection",
@@ -681,11 +695,12 @@ def validate_agent_policies(
         raise routing_error(
             "RUNNER_RUNTIME_MISMATCH", "Runner policies require a native executor"
         )
-    ids = (
+    authorized_ids = (
         explicit_project_environment_ids(db, project_id)
         if project_id
         else visible_environment_ids(db, user_id)
     )
+    ids = authorized_ids.copy()
     if policy.mode == "fixed":
         ids &= {int(policy.environment_id)}
     elif policy.mode == "project_pool" and project_id:
@@ -701,6 +716,16 @@ def validate_agent_policies(
         .all()
     )
     if policy.mode == "fixed" and not candidates:
+        if project_id:
+            log_environment_denial(
+                db,
+                project_id=project_id,
+                user_id=user_id,
+                agent_id=None,
+                policy=policy,
+                authorized_ids=authorized_ids,
+                phase="configuration_validation",
+            )
         raise routing_error(
             "RUNNER_ENVIRONMENT_UNAVAILABLE",
             "The selected environment is not authorized",
@@ -748,6 +773,7 @@ def resolve_group_routing(
         .all()
     )
     routes = {}
+    member_candidates = {}
     intersection = None
     for reference in [group.get("leader"), *(group.get("members") or [])]:
         if not isinstance(reference, dict) or reference.get("kind") != "agent":
@@ -779,20 +805,60 @@ def resolve_group_routing(
                 and config["model_policy"]["mode"] == "user_select"
             )
         }
-        route = resolve_routing(
-            db,
-            config=config,
-            agent_id=agent.id,
-            project_id=project_id,
-            issue_id=issue_id,
-            user_id=user_id,
-            selection=choices,
-            automatic=automatic,
-        )
+        try:
+            route = resolve_routing(
+                db,
+                config=config,
+                agent_id=agent.id,
+                project_id=project_id,
+                issue_id=issue_id,
+                user_id=user_id,
+                selection=choices,
+                automatic=automatic,
+            )
+        except HTTPException as error:
+            logger.warning(
+                "Group member routing denied: %s",
+                json.dumps(
+                    {
+                        "event": "group_member_routing_denied",
+                        "project_id": project_id,
+                        "issue_id": issue_id,
+                        "group_id": group.get("id"),
+                        "member_reference_id": member_id,
+                        "agent_id": agent.id,
+                        "agent_name": agent.name,
+                        "user_id": user_id,
+                        "execution_policy": config.get("execution_policy"),
+                        "error_code": (
+                            error.detail.get("error_code")
+                            if isinstance(error.detail, dict)
+                            else None
+                        ),
+                    },
+                    sort_keys=True,
+                ),
+            )
+            raise
         routes[agent.id] = route.snapshot()
         candidates = {device.id for device in route.candidates}
+        member_candidates[agent.id] = sorted(candidates)
         intersection = candidates if intersection is None else intersection & candidates
     if routes and not intersection:
+        logger.warning(
+            "Group runner intersection empty: %s",
+            json.dumps(
+                {
+                    "event": "group_runner_intersection_empty",
+                    "project_id": project_id,
+                    "issue_id": issue_id,
+                    "group_id": group.get("id"),
+                    "user_id": user_id,
+                    "member_candidate_environment_ids": member_candidates,
+                },
+                sort_keys=True,
+            ),
+        )
         raise routing_error(
             "ISSUE_RUNNER_CONFLICT",
             "No authorized runner satisfies all group members' environment and model policies",
