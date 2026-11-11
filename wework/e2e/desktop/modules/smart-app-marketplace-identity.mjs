@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
-import { MODEL_LABEL } from './harness-app-fixture.mjs'
+import {
+  MODEL_LABEL,
+  confirmHarnessInstallation,
+  invokeHarnessHost,
+} from './harness-app-fixture.mjs'
 
 export async function verifySmartAppMarketplaceIdentity({
   control,
@@ -50,8 +54,14 @@ export async function verifySmartAppMarketplaceIdentity({
   await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]', {
     timeoutMs: uiTimeoutMs,
   })
+  await confirmHarnessInstallation(control, uiTimeoutMs)
   await control.command('waitFor', `[data-testid="harness-app-start-market-${marketItem.id}"]`, {
     timeoutMs: uiTimeoutMs,
+  })
+  await invokeHarnessHost(control, 'smartApps.configure', {
+    installationId: `market-${marketItem.id}`,
+    presentation: 'tab',
+    background: false,
   })
   await control.command('navigate', 'body', {
     value: '/sites?app_type=smart_app&view=owned',

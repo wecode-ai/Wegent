@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { waitForEmbeddedBrowserVisibility } from '../modules/embedded-browser-visibility.mjs'
+import { confirmHarnessInstallation } from '../modules/harness-app-fixture.mjs'
 
 const HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
 const MODEL_LABEL = 'Desktop E2E Chat'
@@ -79,15 +80,23 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
   return {
     async verify(control) {
       const origin = await control.command('getLocationOrigin', 'body')
-      const workbench = await invoke(control, origin, 'smartApps.createDirectory', {
+      const creating = invoke(control, origin, 'smartApps.createDirectory', {
         parentPath: resultDir,
         name: 'dsh-owner-capture-bridge',
         displayName: 'DSH owner capture bridge',
         description: 'Desktop E2E fixture for scoped Smart App capture',
         template: 'web',
       })
+      void creating.catch(() => {})
+      await confirmHarnessInstallation(control, uiTimeoutMs)
+      const workbench = await creating
+      assert.ok(workbench?.id, 'Native installation confirmation did not produce a workbench')
 
       try {
+        await invoke(control, origin, 'smartApps.configure', {
+          installationId: workbench.id,
+          presentation: 'tab',
+        })
         await enableExperimentalFeatures(control)
         await control.command('navigate', 'body', {
           value: '/sites?app_type=smart_app&view=owned',

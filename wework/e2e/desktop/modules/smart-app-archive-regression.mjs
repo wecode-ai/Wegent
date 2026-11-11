@@ -8,6 +8,7 @@ import {
   createHarnessPackage,
   createOfficialSource,
   waitForElementCount,
+  confirmHarnessInstallation,
 } from './harness-app-fixture.mjs'
 
 const MARKET_NAME = 'dsh-e2e-archive-regression'
@@ -64,12 +65,15 @@ export async function verifySmartAppArchiveRegression(
 
   for (const version of ['1.0.0', '2.0.0']) {
     if (version === '2.0.0') await publishUpdatedRelease(fixture.sources[1])
-    await control.command('navigate', 'body', { value: '/sites?app_type=smart_app' })
+    await control.command('navigate', 'body', {
+      value: '/sites?app_type=smart_app&view=marketplace',
+    })
     const install = `${ACTIVE} [data-testid="smart-app-marketplace-install-${market.id}"]`
     await control.command('waitFor', install, { enabled: true })
     await control.command('click', install)
     await control.command('waitFor', '[data-testid="harness-app-preview"]', { text: version })
     await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]')
+    await confirmHarnessInstallation(control, uiTimeoutMs)
     await waitForElementCount(
       control,
       '[data-testid="harness-app-preview"]',
@@ -91,6 +95,7 @@ export async function verifySmartAppArchiveRegression(
   await assertNoStagingDirectories(electronUserDataDirectory)
 
   await dropArchive(control, fixture.imported)
+  await confirmHarnessInstallation(control, uiTimeoutMs)
   await control.command(
     'waitFor',
     `${ACTIVE} [data-testid="smart-app-created-item-${IMPORT_NAME}"]`

@@ -4,7 +4,7 @@ import { pendingWorkbenchInstallationWindow } from './workbench-installation.js'
 import { evaluateWorkbenchPage } from './e2e-workbench-page.js'
 import { LIGHTWEIGHT_WORKBENCH_FRAME_NAME } from './lightweight-workbench-client.js'
 
-const NAVIGATION_TIMEOUT_MS = 10_000
+const STEP_TIMEOUT_MS = 10_000
 
 interface WorkbenchControlHost extends WorkbenchService {
   windowForId(id: string): BrowserWindow | null
@@ -27,11 +27,7 @@ export async function controlWorkbenchApp(
         throw new Error('Invalid installation choice')
       const testId =
         params.choice === 'accept' ? 'workbench-install-accept' : 'workbench-install-cancel'
-      await prompt.webContents.executeJavaScript(`(() => {
-        const button = document.querySelector('[data-testid="${testId}"]')
-        if (!button || button.disabled) throw new Error('Installation confirmation is not ready')
-        button.click()
-      })()`)
+      await clickInstallationButton(prompt, testId)
       return { clicked: true }
     }
     return {
@@ -123,6 +119,55 @@ export async function controlWorkbenchApp(
   }
 }
 
+async function clickInstallationButton(window: BrowserWindow, testId: string): Promise<void> {
+  const position = await window.webContents.executeJavaScript(`(() => {
+    const button = document.querySelector('[data-testid="${testId}"]')
+    if (!button || button.disabled || !button.checkVisibility()) return null
+    button.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+    const bounds = button.getBoundingClientRect()
+    return { x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) }
+  })()`)
+  if (!position) throw new Error('Installation confirmation is not ready')
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timeout)
+      window.removeListener('closed', closed)
+    }
+    const failed = (error: unknown) => {
+      cleanup()
+      reject(error)
+    }
+    const closed = () => {
+      cleanup()
+      resolve()
+    }
+    const timeout = setTimeout(
+      () => failed(new Error('Installation confirmation did not close after the native click')),
+      STEP_TIMEOUT_MS
+    )
+    window.on('closed', closed)
+    try {
+      if (window.isDestroyed()) throw new Error('Installation confirmation is no longer available')
+      window.focus()
+      window.webContents.sendInputEvent({ type: 'mouseMove', ...position })
+      window.webContents.sendInputEvent({
+        type: 'mouseDown',
+        button: 'left',
+        clickCount: 1,
+        ...position,
+      })
+      window.webContents.sendInputEvent({
+        type: 'mouseUp',
+        button: 'left',
+        clickCount: 1,
+        ...position,
+      })
+    } catch (error) {
+      failed(error)
+    }
+  })
+}
+
 function clickWorkbenchElement(contents: WebContents, selector: string): Promise<unknown> {
   return evaluateWorkbenchPage(
     contents,
@@ -148,7 +193,7 @@ async function clickAndWaitForBlockedNavigation(
   const blocked = new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(
       () => reject(new Error(`Workbench navigation was not observed: ${url}`)),
-      NAVIGATION_TIMEOUT_MS
+      STEP_TIMEOUT_MS
     )
     const observe = (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
       if (event.frame !== frame || event.url !== url) return
