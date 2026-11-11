@@ -199,6 +199,24 @@ async def test_dingtalk_failure_cleans_only_failed_turn_with_real_handler(setup)
     port._emit_private_im_runtime_stream_error.assert_awaited_once()
 
 
+async def test_card_error_failure_falls_back_to_text(setup):
+    s = setup
+    s.port._register_private_im_runtime_callback.side_effect = RuntimeError(
+        "callback persistence failed"
+    )
+    s.port._emit_private_im_runtime_stream_error.side_effect = RuntimeError(
+        "Redis unavailable"
+    )
+
+    assert (
+        await service.send_stand_in_message(s.db, s.user, s.session, s.context, s.port)
+        is False
+    )
+
+    assert "分身暂时无法接收消息" in s.port.send_text_reply.await_args.args[1]
+    s.rpc.assert_not_awaited()
+
+
 async def test_quoted_notification_is_context_without_changing_the_identity(setup):
     import json
 

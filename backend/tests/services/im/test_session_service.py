@@ -181,3 +181,82 @@ async def test_legacy_task_read_cannot_reactivate_stand_in_after_chat_choice(
     await im_session_service.set_mode(session, IMSessionMode.CHAT)
     await im_session_service.get_session("legacy-mode")
     assert await im_session_service.get_mode(session) == IMSessionMode.CHAT
+
+
+@pytest.mark.asyncio
+async def test_chat_task_mirror_is_stored_and_cleared(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    session = await im_session_service.get_or_create_private_session(
+        db=None,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+
+    await im_session_service.remember_chat_task(
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        task_id=42,
+    )
+
+    assert (
+        await im_session_service.get_chat_task(
+            user_id=test_user.id,
+            channel_type="dingtalk",
+            channel_id=77,
+            conversation_id="conv-private",
+        )
+        == 42
+    )
+    # The mirror lives on the session, which is stored without a TTL.
+    assert (
+        fake_im_session_cache.expires[f"channel:private_session:{session.session_key}"]
+        is None
+    )
+
+    await im_session_service.forget_chat_task(
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+    )
+    assert (
+        await im_session_service.get_chat_task(
+            user_id=test_user.id,
+            channel_type="dingtalk",
+            channel_id=77,
+            conversation_id="conv-private",
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_task_mirror_ignores_missing_session(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    await im_session_service.remember_chat_task(
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="never-seen",
+        task_id=42,
+    )
+
+    assert (
+        await im_session_service.get_chat_task(
+            user_id=test_user.id,
+            channel_type="dingtalk",
+            channel_id=77,
+            conversation_id="never-seen",
+        )
+        is None
+    )

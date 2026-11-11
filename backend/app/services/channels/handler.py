@@ -415,6 +415,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     ) -> tuple[Optional[int], bool]:
         """Get cached task_id for a conversation and user from Redis.
 
+        When the cache entry is gone, the task is restored from the private IM
+        session mirror and the cache entry is rewritten, so an expired mapping
+        does not silently start a new conversation.
+
         Also checks conversation timeout by querying task's updated_at from database.
         If the task was updated more than IM_CHANNEL_CONVERSATION_TIMEOUT_MINUTES ago,
         returns None and sets auto_new_conversation flag.
@@ -437,7 +441,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         cached_task_id = await cache_manager.get(key)
 
         if cached_task_id is None:
-            return None, False
+            restored_task_id = await self._restore_conversation_task_id(
+                conversation_id, user_id
+            )
+            if restored_task_id is None:
+                return None, False
+            await self._set_conversation_task_id(
+                conversation_id, user_id, restored_task_id
+            )
+            self.logger.info(
+                f"[{self._channel_type.value}Handler] Restored lost conversation "
+                f"mapping for user {user_id}: task_id={restored_task_id}"
+            )
+            cached_task_id = restored_task_id
 
         task_id = int(cached_task_id)
 
@@ -453,7 +469,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     elapsed_minutes = (now - task.updated_at).total_seconds() / 60
                     if elapsed_minutes > timeout_minutes:
                         # Timeout exceeded, delete old conversation and return None
-                        await cache_manager.delete(key)
+                        await self._delete_conversation_task_id(
+                            conversation_id, user_id
+                        )
                         self.logger.info(
                             f"[{self._channel_type.value}Handler] Conversation timeout for user {user_id}: "
                             f"elapsed={elapsed_minutes:.1f}min, timeout={timeout_minutes}min"
@@ -464,10 +482,44 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         return task_id, False
 
+    async def _restore_conversation_task_id(
+        self, conversation_id: str, user_id: int
+    ) -> Optional[int]:
+        """Recover the task a private conversation was continuing.
+
+        The conversation cache entry expires after CHANNEL_CONV_TASK_TTL while
+        the private IM session lives on without a TTL, so the session mirror is
+        the last known task for this chat. The task must still exist and belong
+        to the same user before it can be resumed.
+        """
+        if not conversation_id:
+            return None
+
+        task_id = await im_session_service.get_chat_task(
+            user_id=user_id,
+            channel_type=self._channel_type.value,
+            channel_id=self._channel_id,
+            conversation_id=conversation_id,
+        )
+        if task_id is None:
+            return None
+
+        db = SessionLocal()
+        try:
+            task = task_store.get_by_id(db, task_id=task_id)
+        finally:
+            db.close()
+
+        if task is None or task.user_id != user_id:
+            return None
+        return task_id
+
     async def _set_conversation_task_id(
         self, conversation_id: str, user_id: int, task_id: int
     ) -> None:
         """Cache task_id for a conversation and user in Redis.
+
+        The private session keeps a mirror so a lost cache entry stays recoverable.
 
         Args:
             conversation_id: Channel conversation ID
@@ -478,6 +530,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
         key = f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
         await cache_manager.set(key, task_id, expire=CHANNEL_CONV_TASK_TTL)
+        await im_session_service.remember_chat_task(
+            user_id=user_id,
+            channel_type=self._channel_type.value,
+            channel_id=self._channel_id,
+            conversation_id=conversation_id,
+            task_id=task_id,
+        )
 
     async def _delete_conversation_task_id(
         self, conversation_id: str, user_id: int
@@ -492,6 +551,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
         key = f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
         await cache_manager.delete(key)
+        await im_session_service.forget_chat_task(
+            user_id=user_id,
+            channel_type=self._channel_type.value,
+            channel_id=self._channel_id,
+            conversation_id=conversation_id,
+        )
 
     async def delete_conversation_task_id(
         self, conversation_id: str, user_id: int

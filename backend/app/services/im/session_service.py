@@ -436,6 +436,75 @@ class IMSessionService:
             )
         return [sessions_by_key[session_key] for session_key in ordered_keys]
 
+    async def remember_chat_task(
+        self,
+        *,
+        user_id: int,
+        channel_type: str,
+        channel_id: int,
+        conversation_id: str,
+        task_id: int,
+    ) -> None:
+        """Mirror the task a chat conversation continues for later recovery."""
+
+        session = await self.get_session(
+            self.build_session_key(
+                user_id=user_id,
+                channel_type=channel_type,
+                channel_id=channel_id,
+                conversation_id=conversation_id,
+            )
+        )
+        if session is None or session.chat_task_id == task_id:
+            return
+        session.chat_task_id = task_id
+        await self.save_session(session)
+
+    async def forget_chat_task(
+        self,
+        *,
+        user_id: int,
+        channel_type: str,
+        channel_id: int,
+        conversation_id: str,
+    ) -> None:
+        """Drop the chat task mirror so a new conversation cannot resume it."""
+
+        session = await self.get_session(
+            self.build_session_key(
+                user_id=user_id,
+                channel_type=channel_type,
+                channel_id=channel_id,
+                conversation_id=conversation_id,
+            )
+        )
+        if session is None or session.chat_task_id is None:
+            return
+        session.chat_task_id = None
+        await self.save_session(session)
+
+    async def get_chat_task(
+        self,
+        *,
+        user_id: int,
+        channel_type: str,
+        channel_id: int,
+        conversation_id: str,
+    ) -> int | None:
+        """Return the mirrored chat task for a private conversation."""
+
+        session = await self.get_session(
+            self.build_session_key(
+                user_id=user_id,
+                channel_type=channel_type,
+                channel_id=channel_id,
+                conversation_id=conversation_id,
+            )
+        )
+        if session is None:
+            return None
+        return session.chat_task_id
+
     def _session_cache_key(self, session_key: str) -> str:
         return f"{PRIVATE_SESSION_KEY_PREFIX}{session_key}"
 
