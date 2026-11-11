@@ -4616,6 +4616,15 @@ async fn runtime_tasks_send_recovers_thread_from_unique_workspace_when_visible_t
 
 #[tokio::test]
 async fn runtime_tasks_rollback_reverts_the_source_turn_before_the_replacement_turn() {
+    verify_rollback_inference_context(true).await
+}
+
+#[tokio::test]
+async fn runtime_tasks_rollback_restores_the_api_provider_after_cold_control_resume() {
+    verify_rollback_inference_context(false).await
+}
+
+async fn verify_rollback_inference_context(native: bool) {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -4649,10 +4658,11 @@ async fn runtime_tasks_rollback_reverts_the_source_turn_before_the_replacement_t
                 "message": "edited from address handle",
                 "messageId": "user-last",
                 "retrySourceTurnId": "turn-1",
-                "executionRequest": codex_execution_request(
+                "executionRequest": execution_request_with_model_config(
                     "edited from address handle",
                     "/tmp/project",
-                    "gpt-4.1"
+                    if native { json!({"model":"openai","model_id":"gpt-4.1","protocol":"openai-responses"}) }
+                    else { json!({"model":"api-provider","model_id":"api-model","protocol":"openai-responses","base_url":"http://127.0.0.1:9/v1","api_key":"test-key"}) }
                 )
             }
         }))
@@ -4684,6 +4694,20 @@ async fn runtime_tasks_rollback_reverts_the_source_turn_before_the_replacement_t
     assert!(
         resume_index < revert_index,
         "revert must run only after thread/resume has loaded the thread"
+    );
+    let inference_resume = calls
+        .iter()
+        .enumerate()
+        .find(|(index, call)| *index > revert_index && call["method"] == "thread/resume")
+        .expect("the replacement must restore its inference context after control-only revert");
+    assert_eq!(inference_resume.1["params"]["modelProvider"], "~");
+    assert_eq!(
+        inference_resume.1["params"]["config"]["model_providers.~"]["supports_websockets"],
+        native
+    );
+    assert_eq!(
+        inference_resume.1["params"]["config"]["model_providers.~"]["requires_openai_auth"],
+        native
     );
     let turn_start = calls
         .iter()
@@ -4910,6 +4934,7 @@ async fn runtime_tasks_rollback_uses_the_task_agent_home() {
         json!({
             "threadId": "thread-1",
             "executionRequest": {
+                "user_id": 1,
                 "bot": [{"id": 42, "shell_type": "codex"}],
                 "team_id": 7,
                 "team_namespace": "default",

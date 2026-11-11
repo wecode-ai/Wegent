@@ -70,6 +70,10 @@ fork 引用的位置。缺少 provider 的老格式保留原字节，使用原�
 统一身份不等于统一凭证。API-key 路由与原生账号路由分别覆盖完整的线程 provider 定义，
 进程级账号 RPC 保留 Codex 原生鉴权；合并模型目录由本机 router 提供，仅使用非秘密目录凭据，
 不携带账号令牌或任务 API Key。线程不得继承目录凭据或另一个线程的 bearer 命令。
+编辑持久化会话的最后一条消息时，`thread/revert` 后仍需走正常推理恢复流程，
+在 `turn/start` 前重新配置该请求的 provider、认证和 MCP。冷恢复历史的控制上下文不能直接用于替换回答；
+原生 OpenAI 线程保留自身的 WebSocket 与账号认证，公开 API 线程使用其 HTTP provider。
+替换请求遗漏的 Agent Home 身份从原会话补齐，不恢复旧认证令牌；未落盘的临时线程继续直接执行。
 本机目录使用独立的进程级发现配置；原生线程仍保留 Home 中明确设置的
 `features.api_key_model_discovery`，不能把本机目录开关用于开启外部 API Key 模型发现。
 共享进程启动前先取得 Home 所有权、完成离线迁移，再将完整合并目录原子写入该 Home 内的进程专属文件，

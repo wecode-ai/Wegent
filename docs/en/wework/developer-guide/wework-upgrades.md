@@ -78,6 +78,13 @@ then verifies that retirement waits for the full thread group and the actual loc
 Catalog edits use the existing idle restart and active-work confirmation flow. Explicit native
 catalog configuration in the Home remains authoritative. Local discovery adds no resident process
 and does not serialize model requests from separate threads.
+Editing a persisted conversation must use the regular inference resume after `thread/revert`,
+restoring its provider, authentication and MCP before `turn/start`. A cold history control context
+cannot serve the replacement response directly. Native OpenAI threads retain native WebSocket and
+account authentication; public API threads use their HTTP provider. Fill omitted Agent Home identity
+from the original conversation without restoring old authentication tokens. Unsaved temporary
+threads retain direct execution.
+
 Server-created tasks must also retain one stable identity for the initial visible user message
 across provisional history, the execution request and native turn presentation bindings. Reconcile
 recovered history by identity, never by text: identical prompts can belong to distinct turns.

@@ -370,6 +370,36 @@ fn runtime_task_uses_ephemeral_codex_thread(link: &RuntimeTaskLink) -> bool {
     request.uses_ephemeral_codex_thread()
 }
 
+/// Fill omitted native Home identity from the conversation's persisted request.
+fn restore_request_home_identity(request: &mut ExecutionRequest, link: &RuntimeTaskLink) {
+    let saved = runtime_event_request_from_link(link);
+    if crate::agents::instance_home::request_home(&saved).is_none() {
+        return;
+    }
+    request.user_name = request.user_name.take().or(saved.user_name);
+    request.team_namespace = request.team_namespace.take().or(saved.team_namespace);
+    for key in ["user_id", "team_id", "team_name", "team_owner", "collaboration_model"] {
+        if let Some(value) = saved.extra.get(key) {
+            request.extra.entry(key.to_owned()).or_insert_with(|| value.clone());
+        }
+    }
+    let source = saved.bot.as_array().and_then(|bots| bots.first()).unwrap_or(&saved.bot);
+    if !request.bot.is_object() && !request.bot.is_array() {
+        request.bot = json!([{}]);
+    }
+    if request.bot.as_array().is_some_and(Vec::is_empty) {
+        request.bot = json!([{}]);
+    }
+    let target = if request.bot.is_array() { &mut request.bot[0] } else { &mut request.bot };
+    if let Some(target) = target.as_object_mut() {
+        for key in ["id", "shell_type"] {
+            if let Some(value) = source.get(key) {
+                target.entry(key.to_owned()).or_insert_with(|| value.clone());
+            }
+        }
+    }
+}
+
 fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
     let mut request = link
         .runtime_handle
