@@ -7,7 +7,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.plugin_marketplace import PluginDeviceInstallation
+from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
+from app.services.device import plugin_sync_recording
 from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
+from app.services.plugin_device_installation_service import (
+    PluginDeviceInstallationService,
+)
 from app.services.plugin_kind_revision import replace_installed_kind
 from app.services.plugin_write_coordination import acquire_plugin_write_lock
 from app.services.plugin_write_errors import PluginWriteError
@@ -34,6 +40,78 @@ def installation(db: Session, name: str) -> int:
     db.add(row)
     db.commit()
     return row.id
+
+
+@pytest.mark.parametrize("single_device", [True, False])
+def test_ack_retries_metadata_conflict_without_losing_another_device(
+    scoped_db, plugin_write_backend, monkeypatch, single_device
+):
+    bind = scoped_db.get_bind()
+    PluginDeviceInstallation.__table__.create(bind)
+    installed_id = installation(scoped_db, "removed")
+    parent = scoped_db.get(Kind, installed_id)
+    parent.is_active = False
+    scoped_db.add(
+        PluginDeviceInstallation(
+            user_id=913,
+            installed_kind_id=installed_id,
+            device_id="device",
+            state="uninstalling",
+        )
+    )
+    scoped_db.commit()
+    state = lock_plugin_sync_state(scoped_db, 913)
+    scoped_db.commit()
+    state_id = state.id
+    advance = plugin_sync_recording.advance_plugin_snapshot_watermark
+    attempts = []
+
+    def concurrent_ack(state, device_id, **kwargs):
+        attempts.append(device_id)
+        if len(attempts) == 1:
+            with Session(bind) as other:
+                row = other.get(Kind, state_id)
+                document = deepcopy(row.json)
+                document["spec"].update(
+                    revision=document["spec"].get("revision", 0) + 1,
+                    devices={"peer": {"complete_generation": 11}},
+                )
+                row.json = document
+                other.commit()
+        advance(state, device_id, **kwargs)
+
+    monkeypatch.setattr(
+        plugin_sync_recording, "advance_plugin_snapshot_watermark", concurrent_ack
+    )
+    payload = {
+        "mode": "merge",
+        "scope": "plugin_delta",
+        "plugins": [],
+        "removed_plugins": [{"installed_plugin_id": installed_id}],
+        "plugin_sync": {"version": 2, "generation": 7, "complete": False},
+    }
+    result = DeviceCapabilitySyncResult(
+        device_id="device", success=True, desired_plugin_snapshot=payload
+    )
+    service = PluginDeviceInstallationService()
+    if single_device:
+        service.record_device_sync_result(scoped_db, user_id=913, result=result)
+    else:
+        service.record_sync_response(
+            scoped_db,
+            user_id=913,
+            response=DeviceCapabilitySyncResponse(results=[result]),
+        )
+
+    assert attempts == ["device", "device"]
+    assert scoped_db.query(PluginDeviceInstallation).count() == 0
+    parent = scoped_db.get(Kind, installed_id)
+    assert parent.is_active is False
+    assert parent.json["spec"]["writeRevision"] == 1
+    devices = scoped_db.get(Kind, state_id).json["spec"]["devices"]
+    assert devices["peer"]["complete_generation"] == 11
+    assert devices["device"]["plugins"][str(installed_id)] == 7
+    assert not plugin_write_backend.values
 
 
 def test_different_plugins_do_not_share_a_redis_lease(

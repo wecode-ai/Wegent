@@ -60,6 +60,42 @@ def test_record_sync_response_does_not_retry_other_database_errors(monkeypatch):
     db.commit.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "code", ["plugin_write_busy", "plugin_write_unavailable", "plugin_write_lease_lost"]
+)
+def test_record_sync_response_does_not_retry_lease_failures(monkeypatch, code):
+    service = PluginDeviceInstallationService()
+    db = Mock()
+    reconcile = Mock(side_effect=PluginWriteError(code))
+    monkeypatch.setattr(module, "reconcile_plugin_device_rows", reconcile)
+
+    with pytest.raises(PluginWriteError, match=code):
+        service.record_sync_response(
+            db, user_id=7, response=DeviceCapabilitySyncResponse(results=[])
+        )
+
+    reconcile.assert_called_once()
+    db.rollback.assert_called_once_with()
+    db.commit.assert_not_called()
+
+
+def test_record_sync_response_bounds_metadata_conflict_retries(monkeypatch):
+    service = PluginDeviceInstallationService()
+    db = Mock()
+    reconcile = Mock(side_effect=PluginWriteError("plugin_write_conflict"))
+    monkeypatch.setattr(module, "reconcile_plugin_device_rows", reconcile)
+    monkeypatch.setattr(module.time, "sleep", Mock())
+
+    with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
+        service.record_sync_response(
+            db, user_id=7, response=DeviceCapabilitySyncResponse(results=[])
+        )
+
+    assert reconcile.call_count == module.DEVICE_SYNC_WRITE_ATTEMPTS
+    assert db.rollback.call_count == module.DEVICE_SYNC_WRITE_ATTEMPTS
+    db.commit.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_device_enumeration_does_not_restore_uninstalled_plugin(
     test_db, test_user, monkeypatch, plugin_write_sessions

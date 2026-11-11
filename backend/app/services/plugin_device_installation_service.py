@@ -31,6 +31,7 @@ from app.services.plugin_write_coordination import (
     acquire_plugin_write_lock,
     acquire_plugin_write_locks,
 )
+from app.services.plugin_write_errors import PluginWriteError
 from app.services.plugin_write_operations import run_plugin_operation
 
 logger = logging.getLogger(__name__)
@@ -238,15 +239,20 @@ class PluginDeviceInstallationService:
                     )
                 db.commit()
                 return
-            except OperationalError as exc:
+            except (OperationalError, PluginWriteError) as exc:
                 db.rollback()
-                if not _is_mysql_deadlock(exc) or attempt == DEVICE_SYNC_WRITE_ATTEMPTS:
+                retryable = (
+                    isinstance(exc, PluginWriteError)
+                    and exc.code == "plugin_write_conflict"
+                ) or (isinstance(exc, OperationalError) and _is_mysql_deadlock(exc))
+                if not retryable or attempt == DEVICE_SYNC_WRITE_ATTEMPTS:
                     raise
                 logger.warning(
-                    "Retrying plugin device sync persistence after MySQL deadlock: "
-                    "user_id=%s attempt=%s",
+                    "Retrying plugin device sync persistence after transaction conflict: "
+                    "user_id=%s attempt=%s reason=%s",
                     user_id,
                     attempt,
+                    exc.code if isinstance(exc, PluginWriteError) else "mysql_deadlock",
                 )
                 time.sleep(0.05 * attempt)
 
@@ -304,8 +310,13 @@ class PluginDeviceInstallationService:
         result: DeviceCapabilitySyncResult,
     ) -> None:
         """Persist a reconnect-time sync result for one device."""
-        self._record_device_sync_result(db, user_id, result)
-        db.commit()
+        self.record_sync_response(
+            db,
+            user_id=user_id,
+            response=DeviceCapabilitySyncResponse(
+                success=result.success, results=[result]
+            ),
+        )
 
     def acknowledge_local_installs(
         self,

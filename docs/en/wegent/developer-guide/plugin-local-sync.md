@@ -64,6 +64,12 @@ revision together with generation. Desired-state mutations touch it in the same
 transaction, preventing older content from receiving a newer generation. Snapshot
 conflicts require rollback and reconstruction. No table or `FOR UPDATE` is added.
 
+Single-device and batch acknowledgements share one persistence entry point.
+Metadata CAS conflicts use the existing limit of three transaction attempts,
+rolling back, releasing leases and rereading current state each time. Only database
+writes are replayed, never remote execution. Busy locks, unavailable Redis and lost
+leases still fail directly.
+
 Authentication validates the actual account policy using a final conditional no-op
 update until commit; ordinary authentication never advances that policy revision.
 Installation/update/uninstall do not depend on the policy. Genuine policy edits
