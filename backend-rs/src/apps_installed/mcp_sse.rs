@@ -186,6 +186,7 @@ async fn open_stream(
     Ok(SseReader {
         response,
         buffer: Vec::new(),
+        scan_start: 0,
         eof: false,
     })
 }
@@ -312,10 +313,24 @@ pub(super) struct SseEvent {
 struct SseReader {
     response: HttpResponse,
     buffer: Vec<u8>,
+    scan_start: usize,
     eof: bool,
 }
 
 impl SseReader {
+    fn parse_available(&mut self, chunk: &[u8]) -> Result<Option<SseEvent>, McpError> {
+        let scan_start = self.scan_start.min(self.buffer.len().saturating_sub(3));
+        self.buffer.extend_from_slice(chunk);
+        if let Some((end, separator_len)) = find_event_end_from(&self.buffer, scan_start) {
+            let raw = self.buffer[..end].to_vec();
+            self.buffer.drain(..end + separator_len);
+            self.scan_start = 0;
+            return Ok(Some(parse_event(&raw)));
+        }
+        self.scan_start = scan_start;
+        Ok(None)
+    }
+
     async fn next_event(&mut self) -> Result<Option<SseEvent>, McpError> {
         loop {
             if let Some(event) = take_event(&mut self.buffer) {
@@ -335,7 +350,11 @@ impl SseReader {
                 .await
                 .map_err(|error| McpError::Transport(error.to_string()))?
             {
-                Some(chunk) => self.buffer.extend_from_slice(&chunk),
+                Some(chunk) => {
+                    if let Some(event) = self.parse_available(&chunk)? {
+                        return Ok(Some(event));
+                    }
+                }
                 None => self.eof = true,
             }
         }
@@ -344,15 +363,15 @@ impl SseReader {
 
 /// Remove the first complete event from `buffer`.
 pub(super) fn take_event(buffer: &mut Vec<u8>) -> Option<SseEvent> {
-    let (end, separator_len) = find_event_end(buffer)?;
+    let (end, separator_len) = find_event_end_from(buffer, 0)?;
     let raw = buffer[..end].to_vec();
     buffer.drain(..end + separator_len);
     Some(parse_event(&raw))
 }
 
 /// Byte index of the end of the first event and the length of its terminator.
-fn find_event_end(buffer: &[u8]) -> Option<(usize, usize)> {
-    let mut index = 0;
+fn find_event_end_from(buffer: &[u8], start: usize) -> Option<(usize, usize)> {
+    let mut index = start;
     while index < buffer.len() {
         if buffer[index] == b'\n' && buffer.get(index + 1) == Some(&b'\n') {
             return Some((index, 2));
@@ -453,6 +472,21 @@ mod tests {
         assert!(crlf.is_empty());
     }
 
+    #[test]
+    fn event_terminators_split_across_chunks_are_detected_incrementally() {
+        let mut buffer = b"event: message\ndata: {}\r\n\r".to_vec();
+        let scan_start = buffer.len().saturating_sub(3);
+        buffer.extend_from_slice(b"\n");
+
+        let (end, separator_len) =
+            find_event_end_from(&buffer, scan_start).expect("split terminator");
+        let raw = buffer[..end].to_vec();
+        buffer.drain(..end + separator_len);
+
+        assert_eq!(parse_event(&raw).data, "{}");
+        assert!(buffer.is_empty());
+    }
+
     #[tokio::test]
     async fn next_event_rejects_an_oversized_incomplete_event() {
         let url = serve(Mode::ClosedStream).await;
@@ -461,6 +495,7 @@ mod tests {
         let mut stream = SseReader {
             response,
             buffer: vec![b'x'; MAX_EVENT_BYTES + 1],
+            scan_start: 0,
             eof: false,
         };
 
