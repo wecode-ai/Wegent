@@ -18,6 +18,10 @@ function read(key: string): unknown {
   }
 }
 
+export function readInteractionDismissal(key: string): boolean {
+  return read(key) === 'dismissed'
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

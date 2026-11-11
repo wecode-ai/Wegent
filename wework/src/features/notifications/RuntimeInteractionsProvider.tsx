@@ -61,6 +61,7 @@ import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskRe
 import { isRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCacheStore'
 import {
   readInteractionHistory,
+  readInteractionDismissal,
   saveInteractionState,
   readPendingInteractionCache,
   pendingInteractionCache,
@@ -156,7 +157,7 @@ function RuntimeInteractionsState({
   const successfulReadApi = useRef(source?.services?.runtimeWorkApi)
   const fetching = useRef(false)
   const reportedOfflineDevices = useRef(new Set<string>())
-  const failedArchiveWrites = useRef(new Set<string>())
+  const failedArchiveWrites = useRef(new Map<string, InteractionHistory[] | null>())
   const mounted = useRef(true)
   const [loading, setLoading] = useState(false)
   const [replyNotice, setReplyNotice] = useState<string | null>(null)
@@ -449,10 +450,7 @@ function RuntimeInteractionsState({
                   stage = `archive:${answered.requestKey}`
                   await retainDraft(interactionHistoryEntry(answered, answered.createdAt))
                   await archive(answered)
-                  if (
-                    localStorage.getItem(acceptancePrefix + answered.id) !==
-                    JSON.stringify('dismissed')
-                  )
+                  if (!readInteractionDismissal(acceptancePrefix + answered.id))
                     localStorage.removeItem(acceptancePrefix + answered.id)
                 }
               } catch (error) {
@@ -516,7 +514,7 @@ function RuntimeInteractionsState({
   const isDismissed = useCallback(
     (id: string) =>
       history.some(entry => entry.id === id && entry.dismissed) ||
-      localStorage.getItem(acceptancePrefix + id) === JSON.stringify('dismissed'),
+      readInteractionDismissal(acceptancePrefix + id),
     [history, acceptancePrefix]
   )
   const pending = useMemo(() => {

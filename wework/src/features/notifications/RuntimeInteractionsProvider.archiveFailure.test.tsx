@@ -96,13 +96,14 @@ it.each(['queued', 'synchronous'])(
     expect(log.mock.calls.filter(([operation]) => operation === 'archive')).toHaveLength(2)
     expect(context!.history).toHaveLength(0)
     expect(context!.pending).toHaveLength(0)
+    expect(JSON.parse(localStorage.getItem(historyKey) ?? '[]')).toEqual([])
     storageAvailable = true
     await act(async () => {
       await context!.refresh()
     })
     await waitFor(() => expect(context!.history).toHaveLength(1))
-    expect(historyWrites).toBe(mode === 'queued' ? 3 : 1)
-    expect(historyAttempts).toBe(3)
+    expect(historyWrites).toBe(mode === 'queued' ? 5 : 1)
+    expect(historyAttempts).toBe(mode === 'queued' ? 5 : 3)
     expect(context!.pending).toHaveLength(0)
     expect(harness.send).not.toHaveBeenCalled()
     const proof = context!.history[0].resolvedIssueQuestion!
@@ -122,8 +123,8 @@ it.each(['queued', 'synchronous'])(
     await act(async () => {
       await context!.refresh()
     })
-    expect(historyWrites).toBe(mode === 'queued' ? 3 : 1)
-    expect(historyAttempts).toBe(3)
+    expect(historyWrites).toBe(mode === 'queued' ? 5 : 1)
+    expect(historyAttempts).toBe(mode === 'queued' ? 5 : 3)
     expect(context!.history).toHaveLength(1)
   }
 )

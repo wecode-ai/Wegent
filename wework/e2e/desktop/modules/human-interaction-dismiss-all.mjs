@@ -46,6 +46,11 @@ export function handleDismissAllModel(body, response) {
 /** Reuses the existing CI checkpoint and app session; leaves the inbox on history. */
 export async function verifyDismissAll(control, timeoutMs, taskId) {
   await control.command('click', `${PAGE} [data-testid="interaction-open-original"]`)
+  // Local dismissal leaves the native question unanswered; collapse its reply card first.
+  const collapse = `${ORIGINAL} [data-testid="request-user-input-ignore-button"]`
+  await control.command('waitFor', collapse, { visible: true })
+  await control.command('click', collapse)
+  await control.command('waitFor', COMPOSER, { visible: true })
   await control.command('fill', COMPOSER, { value: PROMPT })
   const send = `${ORIGINAL} [data-testid="send-message-button"]:not(:disabled)`
   await control.command('waitFor', send)

@@ -190,3 +190,40 @@ it('keeps an authoritative pending Issue visible when native handled history exi
     expect(context!.pending.some(item => item.sharedRequest?.id === question.id)).toBe(true)
   )
 })
+
+it('does not commit a failed dismissal when the next item in a batch succeeds', async () => {
+  view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const first = context!.pending[0]
+  harness.flushStorage.mockRejectedValueOnce(new Error('First flush failed'))
+  await act(async () => {
+    await expect(context!.dismiss(first)).rejects.toThrow('First flush failed')
+  })
+  const second = {
+    id: 'project-issue:local:12:ISSUE-2:untracked',
+    source: 'project' as const,
+    title: 'Project',
+    question: 'Another decision',
+    originalUrl: 'wework://boards/local/12/issues/ISSUE-2',
+    answeredAt: Date.now(),
+  }
+  await act(async () => {
+    await context!.dismiss(second)
+  })
+  expect(context!.isDismissed?.(first.id)).toBe(false)
+  expect(context!.pending.some(item => item.id === first.id)).toBe(true)
+  expect(context!.history.map(item => item.id)).toEqual([second.id])
+  expect(context!.isDismissed?.(second.id)).toBe(true)
+})
+
+it('keeps unarchived work readable when dismissal-marker storage cannot be read', async () => {
+  view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const read = Storage.prototype.getItem
+  vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (key) {
+    if (key.includes(':accepted:')) throw new Error('Storage unavailable')
+    return read.call(this, key)
+  })
+  expect(() => context!.isDismissed?.('project-issue:local:12:ISSUE-2:untracked')).not.toThrow()
+  expect(context!.isDismissed?.('project-issue:local:12:ISSUE-2:untracked')).toBe(false)
+})
