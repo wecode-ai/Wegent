@@ -71,6 +71,8 @@ node scripts/build.mjs
 | `external.open(url)`                                               | `external.open`，HTTP(S) 或 `mailto:`          |
 | `window.hide()` / `setAlwaysOnTop(boolean)`                        | 当前工作台窗口                                 |
 
+轻量页面使用 `sandbox="allow-scripts"`，不授予 `allow-forms`，并保留 CSP `form-action 'none'`。浏览器可能在触发 `submit` 回调前就拦截原生表单提交，因此不能依赖 `form.onsubmit`、`submit` 事件、`requestSubmit()` 或 `form.submit()` 执行业务操作。使用 `<button type="button">` 的点击事件直接调用操作；文本输入框的 Enter 键处理也调用同一操作，并先执行 `preventDefault()`、忽略 `isComposing` 为真的输入法事件。等待 SDK 调用完成并展示失败。验证按钮点击和 Enter 两个真实入口，不能用人工派发 `submit` 事件代替；不要为此添加 `allow-forms` 或放宽 CSP。
+
 保存完整提醒集合时，即使是 `[]` 也需要通知能力；省略则保留现有提醒。最多 100 项且 ID 唯一，新增时间必须在未来。更新数据和提醒时使用 `storage.commit`，避免只保存其中一半。
 
 ```mermaid

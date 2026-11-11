@@ -71,6 +71,8 @@ For lightweight projects, edit root `view.html` and local assets while retaining
 | `external.open(url)`                                               | `external.open`, HTTP(S) or `mailto:`                         |
 | `window.hide()` / `setAlwaysOnTop(boolean)`                        | Current workbench window                                      |
 
+Lightweight pages use `sandbox="allow-scripts"` without `allow-forms` and retain CSP `form-action 'none'`. The browser can block native form submission before a `submit` callback runs, so do not rely on `form.onsubmit`, a `submit` event, `requestSubmit()` or `form.submit()` for business actions. Call the action directly from a `<button type="button">` click handler. Handle Enter on text inputs by calling the same action after `preventDefault()`, ignoring IME events whose `isComposing` is true. Await SDK calls and show failures. Verify both real button clicks and Enter input rather than manually dispatching a `submit` event; do not add `allow-forms` or relax CSP.
+
 Supplying a complete reminders collection, including `[]`, requires notification capability; omitting it preserves existing reminders. At most 100 unique reminder IDs are allowed, and new times must be in the future. Use `storage.commit` when an edit changes state and reminders together.
 
 ```mermaid

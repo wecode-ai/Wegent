@@ -82,6 +82,16 @@ The isolated page receives `window.weworkWorkbench`. Methods are asynchronous;
 await them and show failures. The Host binds every call to the authenticated
 installation; the page cannot supply another installation ID or arbitrary paths.
 
+The page uses `sandbox="allow-scripts"` without `allow-forms`, with CSP
+`form-action 'none'`. Native form submission can be blocked before a `submit`
+callback runs. Do not depend on `form.onsubmit`, a `submit` event,
+`requestSubmit()` or `form.submit()` for business actions. Use an explicit
+`<button type="button">` click handler and an Enter key handler on text inputs
+that calls the same action after `preventDefault()`. Ignore IME events with
+`isComposing: true`, await SDK calls and show failures. Verify real button clicks
+and Enter input; manually dispatching `submit` bypasses the browser restriction
+and does not prove the interaction works. Keep the sandbox and CSP unchanged.
+
 | API                                                   | Required capability                   | Result                                                    |
 | ----------------------------------------------------- | ------------------------------------- | --------------------------------------------------------- |
 | `storage.get()`                                       | None                                  | App-owned JSON document, initially `null`                 |

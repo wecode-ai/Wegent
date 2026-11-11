@@ -33,14 +33,107 @@ function createApp(get = vi.fn(async (): Promise<unknown> => null)) {
   windows.push(dom)
   const document = dom.window.document
   const input = document.getElementById('text') as HTMLInputElement
-  const submit = () =>
-    document
-      .getElementById('add-form')!
-      .dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
-  return { dom, document, sdk, input, submit }
+  const add = document.getElementById('add') as HTMLButtonElement
+  const enter = (init: KeyboardEventInit = {}) => {
+    const event = new dom.window.KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    })
+    input.dispatchEvent(event)
+    return event
+  }
+  return { dom, document, sdk, input, add, enter }
 }
 
 describe('bundled TODO note', () => {
+  test('adds and saves through the button without a native form submission', async () => {
+    const { document, input, add, sdk } = createApp()
+    await vi.waitFor(() => expect(input.disabled).toBe(false))
+    expect(input.form).toBeNull()
+    expect(add.type).toBe('button')
+    input.value = '  Write report  '
+    add.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('#items label')?.textContent).toBe('Write report')
+    )
+    expect(sdk.storage.commit).toHaveBeenCalledExactlyOnceWith({
+      value: [{ id: expect.any(String), text: 'Write report', done: false, at: null }],
+      reminders: [],
+    })
+    expect(input.value).toBe('')
+    expect(document.activeElement).toBe(input)
+  })
+
+  test('Enter uses the same atomic save and clears the editor after success', async () => {
+    const { document, input, enter, sdk } = createApp()
+    await vi.waitFor(() => expect(input.disabled).toBe(false))
+    input.value = 'Keyboard task'
+    expect(enter().defaultPrevented).toBe(true)
+    await vi.waitFor(() =>
+      expect(document.querySelector('#items label')?.textContent).toBe('Keyboard task')
+    )
+    expect(sdk.storage.commit).toHaveBeenCalledExactlyOnceWith({
+      value: [{ id: expect.any(String), text: 'Keyboard task', done: false, at: null }],
+      reminders: [],
+    })
+    expect(input.value).toBe('')
+  })
+
+  test.each(['', ' \t '])('ignores empty text %j for both entry methods', async value => {
+    const { document, input, add, enter, sdk } = createApp()
+    await vi.waitFor(() => expect(input.disabled).toBe(false))
+    input.value = value
+    add.click()
+    enter()
+    expect(sdk.storage.commit).not.toHaveBeenCalled()
+    expect(document.querySelectorAll('#items li')).toHaveLength(0)
+  })
+
+  test.each([{ isComposing: true }, { keyCode: 229 }])(
+    'preserves IME confirmation %j until a later Enter submits the committed text',
+    async init => {
+      const { document, input, enter, sdk } = createApp()
+      await vi.waitFor(() => expect(input.disabled).toBe(false))
+      input.value = '待办事项'
+      expect(enter(init).defaultPrevented).toBe(false)
+      expect(sdk.storage.commit).not.toHaveBeenCalled()
+      expect(input.value).toBe('待办事项')
+      expect(document.querySelectorAll('#items li')).toHaveLength(0)
+      enter()
+      await vi.waitFor(() =>
+        expect(document.querySelector('#items label')?.textContent).toBe('待办事项')
+      )
+      expect(sdk.storage.commit).toHaveBeenCalledOnce()
+    }
+  )
+
+  test.each(['click', 'Enter'])('preserves the draft after %s fails to save', async method => {
+    const saved = { id: 'saved', text: 'Existing task', done: false, at: null }
+    const { document, input, add, enter, sdk } = createApp(vi.fn(async () => [saved]))
+    await vi.waitFor(() => expect(input.disabled).toBe(false))
+    sdk.storage.commit.mockRejectedValueOnce(new Error('Commit failed'))
+    input.value = 'New draft'
+    const trigger = () => (method === 'click' ? add.click() : enter())
+    trigger()
+    await vi.waitFor(() =>
+      expect(document.getElementById('status')?.textContent).toBe('Commit failed')
+    )
+    expect(document.querySelectorAll('#items li')).toHaveLength(1)
+    expect(document.querySelector('#items label')?.textContent).toBe(saved.text)
+    expect(input.value).toBe('New draft')
+    expect(input.disabled).toBe(false)
+    trigger()
+    await vi.waitFor(() => expect(document.querySelectorAll('#items li')).toHaveLength(2))
+    expect(sdk.storage.commit).toHaveBeenLastCalledWith({
+      value: [saved, { id: expect.any(String), text: 'New draft', done: false, at: null }],
+      reminders: [],
+    })
+    expect(sdk.storage.commit).toHaveBeenCalledTimes(2)
+    expect(input.value).toBe('')
+  })
+
   test('protects stored tasks while their initial read is pending', async () => {
     let resolve: ((value: unknown) => void) | undefined
     const get = vi.fn(
@@ -49,10 +142,11 @@ describe('bundled TODO note', () => {
           resolve = value
         })
     )
-    const { document, input, submit, sdk } = createApp(get)
+    const { document, input, add, enter, sdk } = createApp(get)
     expect(input.disabled).toBe(true)
     input.value = 'new task'
-    submit()
+    add.click()
+    enter()
     expect(sdk.storage.commit).not.toHaveBeenCalled()
     resolve?.([{ id: 'saved', text: 'Existing task', done: false, at: null }])
     await vi.waitFor(() => expect(input.disabled).toBe(false))
@@ -75,13 +169,13 @@ describe('bundled TODO note', () => {
   })
 
   test('saves task data and reminders through one atomic operation', async () => {
-    const { document, input, submit, sdk } = createApp()
+    const { document, input, add, sdk } = createApp()
     await vi.waitFor(() => expect(input.disabled).toBe(false))
     input.value = 'Send report'
     const time = document.getElementById('remind-at') as HTMLInputElement
     const future = new Date(Date.now() + 60_000)
     time.value = `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, '0')}-${String(future.getDate()).padStart(2, '0')}T${String(future.getHours()).padStart(2, '0')}:${String(future.getMinutes()).padStart(2, '0')}:${String(future.getSeconds()).padStart(2, '0')}`
-    submit()
+    add.click()
     await vi.waitFor(() => expect(document.querySelectorAll('#items li')).toHaveLength(1))
     expect(sdk.storage.commit).toHaveBeenCalledOnce()
     const saved = sdk.storage.commit.mock.calls[0][0]
