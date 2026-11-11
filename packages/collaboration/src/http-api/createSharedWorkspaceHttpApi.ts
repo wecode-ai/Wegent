@@ -81,7 +81,7 @@ export function workspaceHttpRequestBody(value: unknown): unknown {
       // Runtime/provider option names are opaque API values.
       return [
         wireKey,
-        wireKey === "model_options" || wireKey === "board_views"
+        ["model_options", "board_views", "mcp_servers"].includes(wireKey)
           ? nested
           : workspaceHttpRequestBody(nested),
       ];
@@ -111,7 +111,12 @@ function keysToCamelCase(value: unknown): unknown {
       const viewKey = camelCaseKey(key);
       return [
         viewKey,
-        ["modelOptions", "modelPolicy", "executionPolicy"].includes(viewKey)
+        [
+          "modelOptions",
+          "modelPolicy",
+          "executionPolicy",
+          "mcpServers",
+        ].includes(viewKey)
           ? nested
           : keysToCamelCase(nested),
       ];

@@ -139,6 +139,8 @@ async fn composer_catalog_rejects_missing_task_before_starting_the_app_server() 
         "device",
         "/bin/false",
         events,
+        None,
+        None,
     );
     let missing_id = handler
         .dispatch(

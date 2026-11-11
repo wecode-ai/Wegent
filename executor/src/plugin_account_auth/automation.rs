@@ -5,6 +5,7 @@ use super::{
     migration::{migrate_prepared, prepare_package_python},
     AuthError, NativeAuthGateway, PreparedPackage,
 };
+#[cfg(test)]
 use crate::local::backend::LocalBackendTransport;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -43,13 +44,18 @@ impl Default for Reconciler {
 }
 
 impl Reconciler {
-    pub async fn reconcile<T: LocalBackendTransport>(
+    pub async fn reconcile<T: super::PluginAuthTransport>(
         &mut self,
         transport: T,
         home: &Path,
     ) -> Result<(), AuthError> {
         self.consume_retry_signal();
         let ids = installed_ids(home)?;
+        if ids.is_empty() {
+            self.retries.clear();
+            self.cursor = 0;
+            return Ok(());
+        }
         // Rotate batches so an unavailable source never starves a later plugin.
         let selected: Vec<_> = ids
             .iter()
@@ -150,7 +156,7 @@ impl Reconciler {
     }
 }
 
-async fn reconcile_target<T: LocalBackendTransport>(
+async fn reconcile_target<T: super::PluginAuthTransport>(
     transport: T,
     home: &Path,
     package: &PreparedPackage,
