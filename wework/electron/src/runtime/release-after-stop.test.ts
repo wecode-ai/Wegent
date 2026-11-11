@@ -88,9 +88,12 @@ test('stopped preparation precedes the timed trial and admits only its matching 
     )
   ).rejects.toThrow('bridge updater')
   await store.confirm(target.id)
-  await expect(
-    assertReleaseAfterStopReady(store, source, { weworkAfterStopPreparation: 1 })
-  ).resolves.toBeUndefined()
+  await atomicReleaseWrite(join(store.root, 'active'), source.id)
+  for (const protocol of [1, 2]) {
+    await expect(
+      assertReleaseAfterStopReady(store, source, { weworkAfterStopPreparation: protocol })
+    ).resolves.toBeUndefined()
+  }
 })
 
 test('a stopped hook can restart after failure without confirming or replacing its activation', async () => {

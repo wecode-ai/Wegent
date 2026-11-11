@@ -37,9 +37,9 @@ export async function assertReleaseAfterStopReady(
   release: DesktopRelease,
   metadata: AfterStopMetadata
 ): Promise<void> {
-  if (!requiresPreparation(metadata)) return
   const activation = await store.activation()
   if (!activation || activation.to !== release.id) return
+  if (!requiresPreparation(metadata)) return
   requireImmutablePackage(release)
   let receipt
   try {
