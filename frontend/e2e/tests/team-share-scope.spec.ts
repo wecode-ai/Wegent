@@ -406,9 +406,7 @@ test.describe('Agent share scope', () => {
 
     try {
       await page.goto(
-        `/resource-library?tab=mine&type=agent&source=group&group=${encodeURIComponent(
-          fixture.groupName
-        )}`
+        `/resource-library?tab=mine&type=agent&source=group`
       )
       await expect(page.getByTestId('my-resources')).toBeVisible({ timeout: 20000 })
       const card = page.getByTestId(`team-card-${fixture.groupTeamId}`)
