@@ -46,6 +46,8 @@ Goals may be active, paused, blocked, budget/usage-limited or complete. Exhauste
 5. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
 6. Disable to suspend future scheduling or delete after confirmation. Personal schedules, project-board automation and stand-in calendars are separate flows.
 
+Personal schedules using a cloud model revalidate model access and read the current cloud connection credentials on each trigger, including manual runs. Renewing your login token does not require recreating a schedule; both new tasks and existing-task continuations use current credentials. If login has expired, the model was removed or access was revoked, the run fails. Check your cloud connection and model access before retrying.
+
 ## Write a useful request
 
 Include the goal, scope, constraints, and acceptance criteria. For complex work, ask AI to investigate and propose a plan before editing.

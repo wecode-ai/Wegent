@@ -69,6 +69,127 @@ function setRichInputValue(testId: string, value: string) {
 }
 
 describe('weworkProjectAgentConfigurationHost', () => {
+  it.each([
+    ['active', true],
+    ['archived', true],
+    ['active', false],
+    ['archived', false],
+  ] as const)(
+    'edits a %s cloud project definition with routing configured=%s without changing execution bindings',
+    async (status, hasPolicies) => {
+      const agent = {
+        id: 'cloud-native-agent',
+        name: 'Imported Agent',
+        runtime: 'codex',
+        executionPolicy: hasPolicies ? { mode: 'fixed', environment_id: '1' } : undefined,
+        modelPolicy: hasPolicies ? { mode: 'fixed', model: codexModel } : undefined,
+        model: 'existing-model',
+        modelType: 'user',
+        capabilityMode: 'manual',
+        systemPrompt: 'Original prompt',
+        additionalSkills: [{ name: 'review', namespace: 'default' }],
+        mcpServers: { ReviewServer: { command: 'review', env: { API_KEY_NAME: 'value' } } },
+        plugins: [],
+        executionEnvironment: 'cloud',
+        executionMode: 'manual_approval',
+        executionDeviceId: 'cloud-device',
+        workspacePolicy: 'git_worktree',
+        maxConcurrentExecutions: 4,
+        visibility: 'creator_admin',
+        version: 7,
+        status,
+      }
+      const update = vi.fn<
+        (
+          projectId: string,
+          agentId: string,
+          input: Record<string, unknown>
+        ) => Promise<typeof agent>
+      >(async () => agent)
+      const list = vi.fn(async () => [agent])
+      const host = createWeworkProjectAgentConfigurationHost(
+        {
+          listEnvironments: runnerCatalog(),
+          listNativeModels: async (environment: RunnerEnvironment) => environment,
+          listModels: vi.fn(async () => []),
+        } as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { agents: { list, update, create: vi.fn() }, modelApi: {} as never, name: 'Cloud project' }
+      )
+      const onSaved = vi.fn(async () => undefined)
+      render(
+        host.renderProjectAgentEditor!({
+          projectId: 'cloud-project',
+          resourceId: agent.id,
+          onClose: vi.fn(),
+          onSaved,
+        })
+      )
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-project-chat-agent-display-name')).toHaveValue(agent.name)
+      )
+      fireEvent.change(screen.getByTestId('cloud-project-chat-agent-display-name'), {
+        target: { value: 'Edited Agent' },
+      })
+      setRichInputValue('cloud-project-chat-agent-system-prompt', 'Updated prompt')
+      update.mockRejectedValueOnce(new Error('Save temporarily unavailable'))
+      fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-project-chat-agent-error')).toHaveTextContent(
+          'Save temporarily unavailable'
+        )
+      )
+      expect(onSaved).not.toHaveBeenCalled()
+      expect(screen.getByTestId('cloud-project-chat-agent-display-name')).toHaveValue(
+        'Edited Agent'
+      )
+      expect(screen.getByTestId('cloud-project-chat-agent-system-prompt')).toHaveValue(
+        'Updated prompt'
+      )
+      await waitFor(() => expect(screen.getByTestId('cloud-project-chat-agent-save')).toBeEnabled())
+      fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+      await waitFor(() => expect(onSaved).toHaveBeenCalledOnce())
+      expect(list).toHaveBeenCalledWith('cloud-project', {
+        includeArchived: true,
+        forceRefresh: true,
+      })
+      expect(update).toHaveBeenCalledWith(
+        'cloud-project',
+        agent.id,
+        expect.objectContaining({
+          name: 'Edited Agent',
+          systemPrompt: 'Updated prompt',
+          version: 7,
+          capabilityMode: 'manual',
+          additionalSkills: agent.additionalSkills,
+          mcpServers: agent.mcpServers,
+          maxConcurrentExecutions: 4,
+        })
+      )
+      const input = update.mock.calls[0][2]
+      for (const field of [
+        'executionPolicy',
+        'modelPolicy',
+        'model',
+        'modelType',
+        'modelNamespace',
+        'executionEnvironment',
+        'executionMode',
+        'executionDeviceId',
+        'workspacePolicy',
+        'displayName',
+        'namespace',
+        'allowedModels',
+      ]) {
+        expect(input).not.toHaveProperty(field)
+      }
+      expect(host.renderLocalAgentCreator).toBeUndefined()
+    }
+  )
+
   it('creates an Agent from the basic tab using the first cloud model without device discovery', async () => {
     const cloudModel = {
       name: 'cloud-model',
@@ -851,7 +972,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
       } as never
     )
     const onSaved = vi.fn(async () => undefined)
-    render(host.renderLocalAgentEditor!({ resourceId: agent.id, onClose: vi.fn(), onSaved }))
+    render(host.renderProjectAgentEditor!({ resourceId: agent.id, onClose: vi.fn(), onSaved }))
     await waitFor(() =>
       expect(screen.getByTestId('cloud-project-chat-agent-display-name')).toHaveValue(
         agent.displayName
@@ -923,7 +1044,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
       } as never
     )
     render(
-      host.renderLocalAgentEditor!({
+      host.renderProjectAgentEditor!({
         resourceId: agent.id,
         onClose: vi.fn(),
         onSaved: vi.fn(async () => undefined),

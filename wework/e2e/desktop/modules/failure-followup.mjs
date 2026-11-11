@@ -12,10 +12,11 @@ const FOLLOWUP_COMMAND_TIMEOUT_MS = 5_000
 
 // Renderer actions that wait on a condition through waitForDesktopControlElement
 // and therefore time out with the identical renderer message shape. Audited
-// against every waitForDesktopControlElement call site: 'waitFor', the three
-// click/choose variants whose wait predicate the renderer enforces beyond the
-// delivered options (automation.ts spreads them after the command), and
-// 'getValueWhenReady', which waits with exactly the delivered options. The
+// against every waitForDesktopControlElement call site: 'waitFor', the
+// click/choose/select variants whose wait predicate the renderer enforces
+// beyond the delivered options (automation.ts spreads them after the command),
+// and 'getValueWhenReady' / 'getElementMetrics' (the latter only when called
+// with waitForMatch), which wait with exactly the delivered options. The
 // variants' side effects live in the on-match callback, not in the wait
 // predicate, so re-observing them as a plain waitFor with the enforced
 // predicate reproduces the failed condition exactly without replaying the
@@ -28,6 +29,8 @@ const WAIT_LIKE_ACTIONS = new Set([
   'chooseWhenEnabled',
   'setExpanded',
   'getValueWhenReady',
+  'getElementMetrics',
+  'select',
 ])
 // Wait predicates the renderer enforces per action, overriding any delivered
 // option of the same name ({ ...command, enabled: true, … }).
@@ -35,6 +38,7 @@ const ENFORCED_WAIT_PREDICATES = {
   clickWhenEnabled: { enabled: true },
   chooseWhenEnabled: { enabled: true, visible: true },
   setExpanded: { enabled: true },
+  select: { enabled: true },
 }
 
 /**
@@ -126,7 +130,17 @@ function followupOutcome(settledAt, failedAt, condition, snapshot, workbenchDebu
 export function failedWaitCondition(error, commandHistory = []) {
   if (!(error instanceof Error)) return null
   const message = error.message
-  const lastWait = [...commandHistory].reverse().find(entry => WAIT_LIKE_ACTIONS.has(entry?.action))
+  // The failed command, when wait-like, is always the LAST wait-like entry
+  // (the runner awaits commands serially). Select that entry before checking
+  // whether it waits: filtering non-waiting entries out of the lookup itself
+  // would reach past a synchronous getElementMetrics read and attribute its
+  // timeout to an older waiting entry with the same action and selector
+  // (CodeRabbit review). A last entry that does not wait means the failure
+  // was not a wait failure — decline.
+  const lastWaitLike = [...commandHistory]
+    .reverse()
+    .find(entry => WAIT_LIKE_ACTIONS.has(entry?.action))
+  const lastWait = lastWaitLike && entryWaitsOnCondition(lastWaitLike) ? lastWaitLike : null
   if (message.startsWith('Timed out waiting for selector "')) {
     if (lastWait && message.startsWith(`Timed out waiting for selector "${lastWait.selector}"`)) {
       return conditionFromHistory(lastWait)
@@ -141,6 +155,20 @@ export function failedWaitCondition(error, commandHistory = []) {
     return attributable ? conditionFromHistory(lastWait) : null
   }
   return null
+}
+
+// 'getElementMetrics' is dual-mode: it waits only when delivered with
+// waitForMatch (automation.ts), while the synchronous metrics read is the
+// dominant runner usage. A synchronous read that hits the server result
+// timeout is not a wait failure — observing its selector would fabricate a
+// settled or unsettled outcome for a command that never had a wait condition.
+function entryWaitsOnCondition(entry) {
+  if (entry.action !== 'getElementMetrics') return true
+  try {
+    return JSON.parse(entry.value ?? '')?.waitForMatch === true
+  } catch {
+    return false
+  }
 }
 
 function conditionFromHistory(entry) {

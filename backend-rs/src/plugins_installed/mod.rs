@@ -20,6 +20,11 @@ mod catalog_write;
 mod desired_capabilities;
 mod handler;
 mod item;
+mod local_sync;
+
+pub(crate) fn local_sync_enabled() -> bool {
+    local_sync::enabled()
+}
 mod online_route;
 mod plugin_sync_protocol;
 mod record_sync_result;
