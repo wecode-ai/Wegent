@@ -151,7 +151,7 @@ jobs:
         id: runtime
         env:
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -397,8 +397,7 @@ jobs:
       - name: Prepare real mailbox server runtime
         if: contains(matrix.segments, 'stand-in-email')
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends openjdk-21-jre-headless
+          bash .github/scripts/install-e2e-apt-packages.sh openjdk-21-jre-headless
           java -version
           keytool -help >/dev/null
 
@@ -436,14 +435,19 @@ jobs:
       - name: Install the native log-folder opener
         if: contains(matrix.segments, 'native-window-startup')
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends file xdg-utils pcmanfm
+          bash .github/scripts/install-e2e-apt-packages.sh file xdg-utils pcmanfm
           XDG_CONFIG_HOME=/etc/xdg xdg-mime default pcmanfm.desktop inode/directory
           test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default inode/directory)" = pcmanfm.desktop
           test "$(xdg-mime query filetype /tmp)" = inode/directory
 
+      - name: Restore verified Electron installer cache
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        uses: ./.github/actions/prepare-electron-installer-cache
+
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        env:
+          WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: |
           pnpm --dir wework prepare:electron
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
@@ -465,6 +469,7 @@ jobs:
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"
           WEWORK_E2E_PARALLEL_SCOPE: core
+          WEWORK_E2E_RELEASE_ASSET_TOKEN: ${{ contains(matrix.segments, 'harness-app-') && github.token || '' }}
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
@@ -475,8 +480,7 @@ jobs:
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
           if [[ ",$WEWORK_E2E_SEGMENTS," == *",plugin-development,"* ]]; then
-            apt-get update
-            apt-get install -y --no-install-recommends gdb
+            bash .github/scripts/install-e2e-apt-packages.sh gdb
             WEWORK_E2E_EXECUTOR_REAL_BIN=/usr/bin/test \
               WEGENT_APP_IPC_ENDPOINT=diagnostic-fd-check \
               .github/scripts/run-wework-executor-with-gdb.sh \
@@ -947,8 +951,7 @@ jobs:
           source .github/scripts/lib/apt-packages.sh
           mapfile -t missing < <(find_missing_apt_packages gh)
           if ((${#missing[@]} > 0)); then
-            apt-get update
-            apt-get install -y --no-install-recommends "${missing[@]}"
+            bash .github/scripts/install-e2e-apt-packages.sh "${missing[@]}"
           fi
           gh --version
 
@@ -972,6 +975,7 @@ jobs:
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
+          WEWORK_E2E_RELEASE_ASSET_TOKEN: ${{ contains(matrix.segments, 'plugin-legacy-upgrade') && github.token || '' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
           WEWORK_E2E_DWS_FIXTURE_DIR: ${{ github.workspace }}/.ci-artifacts/dws-account-auth
         run: |

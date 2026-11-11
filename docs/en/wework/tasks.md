@@ -46,6 +46,8 @@ Goals may be active, paused, blocked, budget/usage-limited or complete. Exhauste
 5. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
 6. Disable to suspend future scheduling or delete after confirmation. Personal schedules, project-board automation and stand-in calendars are separate flows.
 
+Personal schedules using a cloud model revalidate model access and read the current cloud connection credentials on each trigger, including manual runs. Renewing your login token does not require recreating a schedule; both new tasks and existing-task continuations use current credentials. If login has expired, the model was removed or access was revoked, the run fails. Check your cloud connection and model access before retrying.
+
 ## Write a useful request
 
 Include the goal, scope, constraints, and acceptance criteria. For complex work, ask AI to investigate and propose a plan before editing.
@@ -53,6 +55,8 @@ Include the goal, scope, constraints, and acceptance criteria. For complex work,
 Add files, images, code locations, or an Appshot to the composer when they clarify the task. Type `/` to select an available Skill.
 
 Type `@` in the composer and select a conversation or Issue to insert a reference chip. Click the chip before sending, or focus it and press Enter/Space, to open the referenced conversation in the current task pane, or to open or reuse the matching project-space board with that Issue selected; the draft is preserved. After sending, click the same reference in the user message to make the same jump. If the reference address cannot be resolved, Wework does not navigate. If it resolves but the target was deleted or is inaccessible, Wework opens the corresponding task or board and shows the load error or unavailable state there.
+
+Conversation references retain completed visible assistant replies. A later tool-record update does not make a reply process text solely because of record order; explicit process messages and text still being generated retain their phase-based handling.
 
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 

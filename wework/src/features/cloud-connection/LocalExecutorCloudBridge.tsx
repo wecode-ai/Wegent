@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
+import { configurePluginNativeAuthorization } from '@/features/plugins/pluginNativeAuthorization'
 import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
 import {
   applyLocalExecutorCloudConnection,
@@ -59,6 +60,11 @@ export function LocalExecutorCloudBridge({
     let cancelled = false
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
     let statusTimer: ReturnType<typeof setTimeout> | null = null
+    let applyingConnection = false
+    let retryScheduled = false
+    let needsConnectorResync = false
+    let pluginAuthorizationRefreshAt: number | null = null
+    let refreshingPluginAuthorization = false
     const isCurrentConnectionAttempt = () =>
       !cancelled && connectionGenerationRef.current === generation
 
@@ -74,17 +80,58 @@ export function LocalExecutorCloudBridge({
     const scheduleRetry = () => {
       if (!isCurrentConnectionAttempt() || !connected) return
       if (refreshTimer) clearTimeout(refreshTimer)
-      refreshTimer = setTimeout(() => void applyConnection(), 30_000)
+      retryScheduled = true
+      refreshTimer = setTimeout(() => {
+        retryScheduled = false
+        void applyConnection()
+      }, 30_000)
+    }
+
+    const schedulePluginAuthorization = (
+      auth: Awaited<ReturnType<typeof configurePluginNativeAuthorization>>
+    ) => {
+      if (!isCurrentConnectionAttempt()) return
+      pluginAuthorizationRefreshAt = !auth.ready
+        ? Date.now() + 30_000
+        : auth.expiresIn
+          ? Date.now() + runtimeAuthRefreshDelayMs(auth.expiresIn)
+          : null
+    }
+
+    const refreshPluginAuthorization = async () => {
+      if (!apiBaseUrl || !authToken || refreshingPluginAuthorization) return
+      refreshingPluginAuthorization = true
+      pluginAuthorizationRefreshAt = null
+      try {
+        schedulePluginAuthorization(await configurePluginNativeAuthorization(apiBaseUrl, authToken))
+      } finally {
+        refreshingPluginAuthorization = false
+      }
     }
 
     const refreshConnectionStatus = async () => {
       if (!isCurrentConnectionAttempt() || !connected || !apiBaseUrl) return
-      await refreshLocalExecutorCloudConnectionStatus(apiBaseUrl)
+      const status = await refreshLocalExecutorCloudConnectionStatus(apiBaseUrl)
       if (!isCurrentConnectionAttempt()) return
-      statusTimer = setTimeout(() => void refreshConnectionStatus(), 1_000)
+      if (status?.configured === false && status.explicitly_disconnected !== true) {
+        // A restarted Executor has no in-memory Backend configuration. Socket
+        // disconnections alone remain owned by its existing reconnect loop.
+        needsConnectorResync = true
+        await applyConnection()
+      }
+      // Reuse the existing health tick without reconfiguring the device,
+      // rotating unrelated Runtime tokens, or postponing their renewal.
+      if (pluginAuthorizationRefreshAt !== null && pluginAuthorizationRefreshAt <= Date.now()) {
+        void refreshPluginAuthorization()
+      }
+      if (isCurrentConnectionAttempt()) {
+        statusTimer = setTimeout(() => void refreshConnectionStatus(), 1_000)
+      }
     }
 
     const applyConnection = async () => {
+      if (applyingConnection || retryScheduled) return
+      applyingConnection = true
       try {
         const result = await applyLocalExecutorCloudConnection(
           {
@@ -97,6 +144,7 @@ export function LocalExecutorCloudBridge({
           { isCurrent: isCurrentConnectionAttempt }
         )
         if (!isCurrentConnectionAttempt()) return
+        retryScheduled = false
         if (
           result.connected &&
           typeof result.runtimeAuthTokenExpiresIn === 'number' &&
@@ -104,11 +152,16 @@ export function LocalExecutorCloudBridge({
         ) {
           scheduleRefresh(result.runtimeAuthTokenExpiresIn)
         }
-        if (result.connected && apiBaseUrl) {
-          if (statusTimer) clearTimeout(statusTimer)
-          void refreshConnectionStatus()
-        } else {
+        // Provision in parallel: a slow plugin endpoint cannot delay unrelated
+        // cloud setup. Its lifetime is checked by the existing health tick.
+        if (result.connected && result.pluginAuthorization) {
+          void result.pluginAuthorization.then(schedulePluginAuthorization)
+        }
+        if (!result.connected) {
           setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
+        } else if (needsConnectorResync) {
+          needsConnectorResync = false
+          setConnectorRefreshRevision(revision => revision + 1)
         }
       } catch (error) {
         if (!isCurrentConnectionAttempt()) return
@@ -125,6 +178,8 @@ export function LocalExecutorCloudBridge({
           '[CloudConnection] Failed to disconnect runtime task service from cloud',
           error
         )
+      } finally {
+        applyingConnection = false
       }
     }
 
@@ -132,7 +187,7 @@ export function LocalExecutorCloudBridge({
       apiBaseUrl: apiBaseUrl || '',
       connected: false,
     })
-    void applyConnection()
+    void applyConnection().then(() => refreshConnectionStatus())
     return () => {
       cancelled = true
       connectionGenerationRef.current += 1

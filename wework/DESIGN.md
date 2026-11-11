@@ -972,6 +972,11 @@ the original border and ordinary shadow. Preserve error feedback and other
 focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
 `:where(html:not([data-input-modality='pointer']))` scope at the paint definition.
 
+For native inputs, textareas, and selects, suppress the native `auto` outline
+for pointer focus at base-layer specificity. Making its color transparent alone
+can mask the field's ordinary border. Keep keyboard focus visible and allow
+component-level validation outlines to override the native-outline reset.
+
 - Acknowledge input immediately with pressed, pending, or local state.
 - Keep useful content visible during refresh, reconnect, and long-running work.
 - 设备刷新须分别维护本地结果与云端快照。本地刷新不能清除已加载的云端设备；

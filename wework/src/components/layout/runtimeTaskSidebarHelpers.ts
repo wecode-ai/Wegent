@@ -1,5 +1,8 @@
 import type { RuntimeTaskSummary, RuntimeDeviceWorkspace, RuntimeTaskAddress } from '@/types/api'
-import { isPrimaryStandInConversation } from '@/lib/runtime-task-visibility'
+import {
+  isPrimaryStandInConversation,
+  isStandInMemoryReviewTask,
+} from '@/lib/runtime-task-visibility'
 
 export interface RuntimeSidebarTaskItem {
   workspace: RuntimeDeviceWorkspace
@@ -107,7 +110,7 @@ export function getRuntimeSidebarTaskItems(
   return sortRuntimeTaskItems(
     workspaces.flatMap(workspace =>
       workspace.tasks
-        .filter(task => !isPrimaryStandInConversation(task))
+        .filter(task => !isPrimaryStandInConversation(task) && !isStandInMemoryReviewTask(task))
         .map(task => ({ workspace, task }))
     )
   )

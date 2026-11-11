@@ -31,6 +31,10 @@ pub struct ChatSessionSetup {
     pub assistant_subtask_id: i64,
     /// The assistant subtask's `message_id` (`message_ids.next_message_id + 1`).
     pub assistant_message_id: i64,
+    /// The user subtask's own `message_id` (`message_ids.next_message_id`).
+    /// The `/chat` `chat:send` ACK names this value; deriving it from the
+    /// assistant id would couple two independent rows.
+    pub user_message_id: i64,
     /// The assistant subtask row's `executor_name` / `executor_namespace`
     /// (`TaskRequestBuilder` copies them onto the execution request).
     pub assistant_executor_name: String,
@@ -72,7 +76,11 @@ pub struct SetupChatSessionInput<'a> {
     pub continuation: Option<continuation::Continuation>,
     pub team_id: i64,
     pub bot_ids: &'a [i64],
+    pub create_assistant: bool,
+    pub model_override_type: Option<&'a str>,
+    pub model_options: Option<&'a serde_json::Value>,
     pub input_text: &'a str,
+    pub additional_skills: &'a [serde_json::Value],
     /// The Task CRD template; its `task_id` is replaced with the allocated id.
     pub crd: TaskCrdInput<'a>,
     pub repository: WorkspaceRepository<'a>,
@@ -174,7 +182,10 @@ pub async fn setup_chat_session(
             input.crd.force_override_bot_model,
             input.crd.auto_delete_executor,
         );
-        continuation::mark_pending(&mut task_json, input.crd.updated_at);
+        apply_model_option_labels(&mut task_json, input);
+        if input.create_assistant {
+            continuation::mark_pending(&mut task_json, input.crd.updated_at);
+        }
         let raw_project_id = task_column::<i64>(&row, "project_id").filter(|id| *id > 0);
         let project_id = resumed_project_id(raw_project_id, &task_json);
         let payload = python_json_value(&task_json);
@@ -211,8 +222,27 @@ pub async fn setup_chat_session(
         ..input.crd
     };
     let task_crd = build_task_crd(&crd_input);
-    let task_json = serde_json::to_value(&task_crd).unwrap_or(serde_json::Value::Null);
-    let rename = Some((task_name(task_id), python_json_value(&task_crd)));
+    let mut task_json = serde_json::to_value(&task_crd).unwrap_or(serde_json::Value::Null);
+    let has_model_options = apply_model_option_labels(&mut task_json, input);
+    let payload = if input.additional_skills.is_empty() && !has_model_options {
+        python_json_value(&task_crd)
+    } else {
+        let labels = &mut task_json["metadata"]["labels"];
+        if !input.additional_skills.is_empty() {
+            let names = input
+                .additional_skills
+                .iter()
+                .filter_map(|reference| reference["name"].as_str())
+                .collect::<Vec<_>>();
+            labels["additionalSkills"] =
+                serde_json::Value::String(python_json_value(&serde_json::json!(names)));
+            labels["requestedSkillRefs"] = serde_json::Value::String(python_json_value(
+                &serde_json::json!(input.additional_skills),
+            ));
+        }
+        python_json_value(&task_json)
+    };
+    let rename = Some((task_name(task_id), payload));
 
     append_subtasks(
         store,
@@ -227,6 +257,27 @@ pub async fn setup_chat_session(
         (input.project_id != 0).then_some(input.project_id),
     )
     .await
+}
+
+fn apply_model_option_labels(
+    task_json: &mut serde_json::Value,
+    input: &SetupChatSessionInput<'_>,
+) -> bool {
+    let mut changed = false;
+    if let Some(model_type) = input.model_override_type.filter(|value| !value.is_empty()) {
+        task_json["metadata"]["labels"]["forceOverrideBotModelType"] =
+            serde_json::json!(model_type);
+        changed = true;
+    }
+    if let Some(options) = input
+        .model_options
+        .filter(|value| value.as_object().is_some_and(|map| !map.is_empty()))
+    {
+        task_json["metadata"]["labels"]["modelOptions"] =
+            serde_json::json!(python_json_value(options));
+        changed = true;
+    }
+    changed
 }
 
 /// `max(subtasks.message_id)` then `create_assistant_subtask`'s executor
@@ -270,10 +321,14 @@ async fn append_subtasks(
 
     // `create_assistant_subtask` resolves the executor reference in the same
     // transaction as the insert (qs27/28).
-    let executor = store
-        .resolve_task_executor_on(&mut *transaction, task_id)
-        .await
-        .map_err(internal)?;
+    let executor = if input.create_assistant {
+        store
+            .resolve_task_executor_on(&mut *transaction, task_id)
+            .await
+            .map_err(internal)?
+    } else {
+        Default::default()
+    };
 
     // qs29: `create_new_task`'s `UPDATE tasks SET name, json`, emitted after
     // the executor reads and before the subtask savepoint.
@@ -320,15 +375,17 @@ async fn append_subtasks(
     // `create_assistant_subtask` resolves the executor reference in the same
     // transaction as the insert; `build_execution_request` later reads the
     // assistant subtask's executor fields from the inserted row.
+    let rows = CreateSubtasksRequest {
+        user_subtask,
+        assistant_subtask,
+    };
+    let rows = if input.create_assistant {
+        rows
+    } else {
+        rows.without_assistant()
+    };
     let inserted = store
-        .create_subtasks_with_executor(
-            transaction,
-            &CreateSubtasksRequest {
-                user_subtask,
-                assistant_subtask,
-            },
-            &executor,
-        )
+        .create_subtasks_with_executor(transaction, &rows, &executor)
         .await
         .map_err(internal)?;
 
@@ -340,7 +397,12 @@ async fn append_subtasks(
         workspace_id,
         user_subtask_id: inserted.user_subtask_id,
         assistant_subtask_id: inserted.assistant_subtask_id,
-        assistant_message_id: ids.next_message_id + 1,
+        assistant_message_id: if input.create_assistant {
+            ids.next_message_id + 1
+        } else {
+            0
+        },
+        user_message_id: ids.next_message_id,
         assistant_executor_name: inserted.executor.name,
         assistant_executor_namespace: inserted.executor.namespace,
         assistant_executor_deleted: false,

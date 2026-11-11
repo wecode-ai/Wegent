@@ -40,6 +40,7 @@ from app.services.execution.skill_generation import (
     apply_skill_generation_to_skills,
 )
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.ghost_capabilities import (
     MergedGhostCapabilities,
     load_ghost_chain,
@@ -1392,6 +1393,7 @@ class TaskRequestBuilder:
 
         return model_config
 
+    @execution_resource_scope()
     def _get_secondary_model_config(
         self,
         bot: Kind,
@@ -1582,6 +1584,7 @@ class TaskRequestBuilder:
         shell_info = self._resolve_shell_info(bot, user_id)
         return shell_info["shell_type"]
 
+    @execution_resource_scope()
     def _resolve_shell_info(self, bot: Kind, user_id: int) -> dict:
         """Resolve shell info from bot's shellRef.
 

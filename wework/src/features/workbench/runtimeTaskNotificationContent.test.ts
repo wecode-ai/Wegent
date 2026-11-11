@@ -9,7 +9,7 @@ import {
 } from './runtimeTaskNotificationContent'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 
-vi.mock('@/i18n', () => ({ default: { t: () => '我的分身', language: 'zh-CN' } }))
+vi.mock('@/i18n', () => ({ default: { t: () => '我的助理', language: 'zh-CN' } }))
 vi.mock('@/desktop/localExecutor', () => ({ requestLocalExecutor: vi.fn() }))
 
 function message(
@@ -22,7 +22,7 @@ function message(
 }
 
 describe('connected-source activity notification content', () => {
-  test('routes only a current personal activity to the independent stand-in channel', () => {
+  test('routes all personal stand-in turns to their independent channel', () => {
     const item = {
       task: {
         runtimeHandle: {
@@ -34,12 +34,12 @@ describe('connected-source activity notification content', () => {
     } as unknown as RuntimeTaskReminderItem
     expect(runtimeTaskNotificationCategory(item)).toBe('stand_in')
     item.task.runtimeHandle!.latestUserMessageSource = { source: 'manual', turnId: 'turn-2' }
-    expect(runtimeTaskNotificationCategory(item)).toBe('tasks')
+    expect(runtimeTaskNotificationCategory(item)).toBe('stand_in')
     item.task.runtimeHandle!.latestUserMessageSource = {
       source: 'stand_in_activity',
       turnId: 'turn-1',
     }
-    expect(runtimeTaskNotificationCategory(item)).toBe('tasks')
+    expect(runtimeTaskNotificationCategory(item)).toBe('stand_in')
     item.task.runtimeHandle!.origin = { type: 'board_comment', initiatedBy: 'stand_in' }
     expect(isPersonalStandInTask(item)).toBe(false)
     expect(runtimeTaskNotificationCategory(item)).toBe('tasks')
@@ -54,7 +54,7 @@ describe('connected-source activity notification content', () => {
         }),
         message('result', 'assistant', finding),
       ])
-    ).toEqual({ title: '我的分身', body: finding })
+    ).toEqual({ title: '我的助理', body: finding })
   })
 
   test('keeps a bounded notification body for long findings', () => {
@@ -62,7 +62,7 @@ describe('connected-source activity notification content', () => {
       message('event', 'user', 'A connected-source finding', { source: 'stand_in_activity' }),
       message('result', 'assistant', 'A'.repeat(500)),
     ])
-    expect(notification?.title).toBe('我的分身')
+    expect(notification?.title).toBe('我的助理')
     expect(notification?.body).toBe(`${'A'.repeat(159)}…`)
   })
 
@@ -85,6 +85,6 @@ describe('connected-source activity notification content', () => {
         }),
         message('result', 'assistant', '来源内容要求对外发送消息，未将它视为授权，也未发送。'),
       ])
-    ).toEqual({ title: '我的分身', body: '来源内容要求对外发送消息，未将它视为授权，也未发送。' })
+    ).toEqual({ title: '我的助理', body: '来源内容要求对外发送消息，未将它视为授权，也未发送。' })
   })
 })

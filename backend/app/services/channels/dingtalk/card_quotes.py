@@ -11,6 +11,7 @@ from dingtalk_stream.frames import Headers
 from app.core.cache import cache_manager
 from app.services.channels.commands import parse_command
 from app.services.channels.dingtalk.card_binding import CARD_BINDING_TTL, load_binding
+from app.services.channels.dingtalk.conversation import DingTalkConversationType
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 
 if TYPE_CHECKING:
@@ -38,10 +39,28 @@ async def save_quote_address(
         raise RuntimeError("Could not persist DingTalk quoted card address")
 
 
+def _has_media_content(data: dict[str, Any]) -> bool:
+    """Keep media quotes on the normal path so attachments are not dropped."""
+    if data.get("msgtype") in {"picture", "richText", "file"}:
+        return True
+    content = data.get("content")
+    if not isinstance(content, dict):
+        return False
+    if content.get("downloadCode") or content.get("pictureDownloadCode"):
+        return True
+    rich_text = content.get("richText")
+    return isinstance(rich_text, list) and any(
+        isinstance(item, dict) and item.get("type") in {"picture", "file"}
+        for item in rich_text
+    )
+
+
 async def route_quoted_card(
     receiver: "DingTalkCardCallbackHandler", data: dict[str, Any]
 ) -> bool:
-    """Only a verified, mapped group card quote can enter the follow-up inbox."""
+    """Route a verified, mapped card quote from a group or private chat."""
+    if _has_media_content(data):
+        return False
     text = data.get("text")
     if not isinstance(text, dict) or not text.get("isReplyMsg"):
         return False
@@ -53,9 +72,14 @@ async def route_quoted_card(
         return False
     carrier_id = data.get("originalProcessQueryKey")
     conversation_id = data.get("conversationId")
+    conversation_type = data.get("conversationType")
     if (
-        data.get("conversationType") != "2"
-        or not data.get("isInAtList")
+        conversation_type
+        not in (DingTalkConversationType.PRIVATE, DingTalkConversationType.GROUP)
+        or (
+            conversation_type == DingTalkConversationType.GROUP
+            and not data.get("isInAtList")
+        )
         or not isinstance(carrier_id, str)
         or not carrier_id
         or not isinstance(conversation_id, str)

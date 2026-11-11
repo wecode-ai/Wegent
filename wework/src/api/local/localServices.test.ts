@@ -2134,6 +2134,16 @@ describe('createLocalAppServices', () => {
     })
     expect(getLocalRuntimeSourceIdentity(JSON.parse(JSON.stringify(current)))).toBeUndefined()
 
+    available.mockRejectedValueOnce(new Error('local IPC unavailable'))
+    const [unavailable] = await services.deviceApi.listDevices()
+    expect(unavailable).toMatchObject({
+      device_id: 'current-ipc',
+      runtime_instance_id: null,
+      status: 'offline',
+    })
+    expect(unavailable.local_identity_unresolved).toBeUndefined()
+    expect(getLocalRuntimeSourceIdentity(unavailable)).toBeUndefined()
+
     available.mockResolvedValue({
       running: true,
       ready: true,
@@ -2158,6 +2168,7 @@ describe('createLocalAppServices', () => {
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',
+        local_identity_unresolved: true,
         name: 'Local Executor',
         status: 'offline',
         device_type: 'local',
@@ -2368,6 +2379,8 @@ describe('createLocalAppServices', () => {
         ],
       }),
     })
+    const creation = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(creation.executionRequest).not.toHaveProperty('collaboration_model')
     expect(request).toHaveBeenCalledWith('device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'home_dir',
@@ -4218,7 +4231,7 @@ describe('createLocalAppServices', () => {
     ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
     ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
   ])(
-    'uses the native %s Responses profile with high reasoning',
+    'uses compatible %s Responses tools by default with high reasoning',
     async (modelId, catalogModelId) => {
       saveLocalModelConfig({
         id: modelId,
@@ -4227,7 +4240,6 @@ describe('createLocalAppServices', () => {
         modelId,
         baseUrl: 'https://api.deepseek.com',
         apiFormat: 'openai-responses',
-        toolProfile: 'custom',
         requestPath: '/responses',
         apiKey: 'deepseek-key',
         contextWindow: 1_048_576,
@@ -4257,10 +4269,10 @@ describe('createLocalAppServices', () => {
           base_url: 'https://api.deepseek.com',
           responses_url: 'https://api.deepseek.com/responses',
           upstream_api_format: 'openai-responses',
-          tool_profile: 'custom',
+          tool_profile: 'function',
           codex_catalog_model_id: catalogModelId,
-          native_tool_search: true,
-          native_namespace_tools: true,
+          native_tool_search: false,
+          native_namespace_tools: false,
           model_context_window: 1_048_576,
           reasoning: { effort: 'high' },
         })
@@ -4580,7 +4592,7 @@ describe('createLocalAppServices', () => {
         codex_request_mode: 'passthrough',
         reasoning: { effort: 'high', summary: 'detailed' },
         api_format: 'responses',
-        tool_profile: 'custom',
+        tool_profile: 'function',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',
@@ -4826,7 +4838,7 @@ describe('createLocalAppServices', () => {
         upstream_api_format: 'openai-chat-completions',
         native_tool_search: false,
         native_namespace_tools: false,
-        tool_profile: 'custom',
+        tool_profile: 'function',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',

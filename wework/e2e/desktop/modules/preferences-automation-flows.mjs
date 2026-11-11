@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
 
 import { telemetryEvents } from './response-protocol.mjs'
+import { expireAutomationCredentials } from './automation-stale-credentials.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -452,8 +453,8 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
       modelOptions: {
         collaborationMode: 'default',
         weworkCloudModelNamespace: 'default',
-        weworkCloudModelNativeNamespaceTools: 'true',
-        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'false',
+        weworkCloudModelNativeToolSearch: 'false',
         weworkCloudModelResourceUserId: '0',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
         reasoningEffort: 'medium',
@@ -497,6 +498,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
   const previousScenario = control.scenario
   control.setScenario('automation')
   try {
+    await expireAutomationCredentials(control, storedAutomation.id, DEFAULT_STEP_TIMEOUT_MS)
     await control.command('click', `[data-testid="${automationActions}"]`)
     await control.command('click', '[data-testid="automation-run-now-button"]')
     await control.awaitScenarioRequestCount('automation', 2, WORKBENCH_READY_TIMEOUT_MS)

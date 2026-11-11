@@ -146,6 +146,8 @@ Async business-question replies use the destination task's model configuration a
 
 Answering or cancelling a question in its original task or project view automatically synchronizes and archives it. Handled history retains the source groups. Both handled and dismissed records are stored locally for the current account and survive restarts. Already loaded questions remain available offline and synchronize when the device reconnects. Discovery of questions on a healthy local executor does not depend on its cloud device status.
 
+If a system-notification reply fails while the original question is handled in the task view, **Unsent replies** appears above the left list. Its text and question metadata must be durably saved for this account before the native reply queue releases its copy; failed writes leave the original reply queued. Recovery remains available across restarts and after the latest 100 handled-history entries evict an older question. Select and copy the text to continue in the original conversation; it is never automatically resent and does not reopen the question. Use **Discard this draft** when it is no longer needed. An explicitly accepted answer in the task conversation can also settle a cached native question when task discovery or history reads fail, without granting the cache reply permission. Issue handoff questions remain owned by their authoritative inbox.
+
 A queued Issue answer does not clear the wait. After confirmed acceptance, local history retains settlement identity scoped to the original project, Issue, Runtime and question. This prevents a stale native snapshot from reappearing after a failed read, device-route alias change or offline restart. The record only reconciles the same question: it grants no reply or device access permission and cannot clear another Issue's question.
 
 <a id="project-pending-work"></a>
@@ -174,7 +176,7 @@ Open **titlebar bell → Notification center**, not the obsolete account-area aw
 
 System notification permission also applies. The center differs from **Needs your input**, which retains business questions and their handling state.
 
-**Continue in private chat** in a runtime task's titlebar binds it to an available IM conversation after target review. Successful switch notices show the task title, and subsequent replies follow that binding. Channel preferences and per-task private-chat binding are separate.
+Wegent chat mode remains available. In stand-in mode, connect IM private conversations to a primary stand-in or scenario role under [stand-in details popover → IM channel](./personal-stand-in.md#im-conversations). Task notification subscriptions remain independent; replies quoting a notification in stand-in mode enter the currently connected stand-in.
 
 ## Split tasks by dragging
 
@@ -247,6 +249,10 @@ You can still collapse the left sidebar while the workspace is expanded, leaving
 While a task is running, the conversation shows the tools in use and the current progress. Completed tool calls collapse into summaries that can be expanded to inspect commands or changed files.
 
 After a parent agent starts a subagent, the subagent activity remains anchored at its original invocation position. Later status, progress, and result updates appear at that position even if the parent continues producing other output; the activity does not move to the end of the conversation or render a second time.
+
+If you send another message to the main conversation or start the next turn while a subagent is running, its later output still belongs to the original subagent activity and does not appear as the parent agent's prose. When history loads in pages, child content joins its owning activity after that activity loads.
+
+A subagent with its own thread finishes on its own completion event and can keep streaming after the parent reply ends. Later child output does not restart the completed parent reply; the panel loads its complete history after the child finishes.
 
 Click a subagent activity to view its execution in the right workspace. The panel shows model-provided reasoning summaries, progress messages, tool calls, and results in order. Content updates live while the subagent runs, and saved process content remains available after completion or reloading the task.
 

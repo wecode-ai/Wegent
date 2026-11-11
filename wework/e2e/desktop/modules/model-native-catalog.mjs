@@ -1,5 +1,10 @@
 // Native Codex catalog fixture: canonical messages take precedence over legacy instructions.
 // Keep both forms so the routing matrix exercises the real native metadata contract.
+export const MATRIX_PROVIDER_INSTRUCTIONS =
+  'Provider canonical instructions must be preserved exactly.'
+export const MATRIX_LEGACY_INSTRUCTIONS =
+  'Legacy instructions must not replace the canonical template.'
+
 export function nativeMatrixCatalogModel(id, label) {
   return {
     slug: id,
@@ -14,9 +19,9 @@ export function nativeMatrixCatalogModel(id, label) {
     visibility: 'list',
     supported_in_api: true,
     priority: 0,
-    base_instructions: 'Provider legacy instructions must not replace Wework defaults.',
+    base_instructions: MATRIX_LEGACY_INSTRUCTIONS,
     model_messages: {
-      instructions_template: 'Provider canonical instructions must be replaced by Wework defaults.',
+      instructions_template: MATRIX_PROVIDER_INSTRUCTIONS,
     },
     include_skills_usage_instructions: false,
     supports_reasoning_summaries: true,

@@ -45,7 +45,6 @@ export function PluginManagementPage() {
     archiveChatConversations,
     selectStandaloneDevice,
     openStandaloneWorkspace,
-    getRemoteDeviceStartupCommand,
     refreshDevices,
     createProject,
     createGitWorkspaceProject,
@@ -170,7 +169,6 @@ export function PluginManagementPage() {
           onArchiveChatConversations={archiveChatConversations}
           onOpenStandaloneWorkspace={openStandaloneWorkspace}
           onSelectStandaloneDevice={selectStandaloneDevice}
-          onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
           onRefreshDevices={refreshDevices}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}

@@ -52,16 +52,18 @@ def test_rust_builder_contains_embedded_migration_assets(tmp_path: Path) -> None
     dockerfile = BACKEND_DOCKERFILE.read_text(encoding="utf-8")
     builder = dockerfile.split("FROM rust-builder-deps AS rust-builder\n", 1)[1]
     builder = builder.split("\nFROM ", 1)[0]
-    context_root = tmp_path / "context"
-    image_root = context_root / "backend-rs"
-    image_root.mkdir(parents=True, exist_ok=True)
+    image_root = tmp_path / "app" / "backend-rs"
     for source, destination in re.findall(r"^COPY (\S+) (\S+)$", builder, re.M):
         source_path = REPO_ROOT / source
-        target = context_root / destination.lstrip("/")
-        target.parent.mkdir(parents=True, exist_ok=True)
+        target = (
+            tmp_path / destination.lstrip("/")
+            if destination.startswith("/")
+            else image_root / destination
+        )
         if source_path.is_dir():
             shutil.copytree(source_path, target, dirs_exist_ok=True)
         else:
+            target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source_path, target)
     migration_sources = REPO_ROOT / "backend-rs/src/migrations"
     shutil.copytree(
@@ -76,7 +78,10 @@ def test_rust_builder_contains_embedded_migration_assets(tmp_path: Path) -> None
     )
     includes = [
         (source, asset)
-        for source in migration_sources.rglob("*.rs")
+        for source in [
+            *migration_sources.rglob("*.rs"),
+            REPO_ROOT / "backend-rs/src/responses/create/socket_runtime_model.rs",
+        ]
         for asset in re.findall(
             r'include_str!\(\s*"([^"\n]+)"\s*\)', source.read_text()
         )

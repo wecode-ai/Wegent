@@ -83,7 +83,7 @@ function WorktreeRow({
             <div
               data-testid="worktree-error"
               role="alert"
-              className="mt-1 break-words text-xs text-destructive"
+              className="mt-1 break-words text-xs text-destructive wework:text-red-600"
             >
               {item.lastError}
             </div>
@@ -98,7 +98,7 @@ function WorktreeRow({
             className={
               item.state === 'restorable'
                 ? 'inline-flex h-8 items-center gap-1.5 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-background disabled:opacity-50'
-                : 'inline-flex h-8 items-center gap-1.5 rounded-md bg-destructive/10 px-3 text-sm font-medium text-destructive hover:bg-destructive/15 disabled:opacity-50'
+                : 'inline-flex h-8 items-center gap-1.5 rounded-md bg-destructive/10 px-3 text-sm font-medium text-destructive hover:bg-destructive/15 disabled:opacity-50 wework:bg-red-500/10 wework:text-red-500 wework:hover:bg-red-500/15'
             }
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -441,7 +441,7 @@ export function WorktreesSettingsPage({
       )}
 
       {error && (
-        <div className="mt-5 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="mt-5 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-500">
           {error}
         </div>
       )}
@@ -592,7 +592,7 @@ export function WorktreesSettingsPage({
                   })
                 }}
                 disabled={saving}
-                className="h-10 rounded-xl bg-destructive/15 px-5 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:opacity-50"
+                className="h-10 rounded-xl bg-destructive/15 px-5 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:opacity-50 wework:bg-red-500/15 wework:text-red-500 wework:hover:bg-red-500/20"
               >
                 {t('workbench.worktrees_disable_cleanup')}
               </button>

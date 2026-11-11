@@ -225,7 +225,6 @@ import {
   isDuplicateBrowserPopupRequest,
 } from '@/features/browser-tabs/browserPopupRouting'
 import { TaskForkDialog } from './TaskForkDialog'
-import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import {
   isImplementationPlanConfirmationResponse,
@@ -269,7 +268,6 @@ import {
 } from '@/features/workbench/workspaceLaunchRequest'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
-import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { ConversationHeaderTitle } from './ConversationHeaderTitle'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import {
@@ -2096,7 +2094,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
     }
   }, [currentRuntimeTask?.taskId, paneActive, paneVisible, workbenchVisible])
-  const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const closeRightPanel = () => {
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
@@ -5026,20 +5023,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       </button>
     </Tooltip>
   ) : undefined
-  const canContinueInIm = Boolean(currentRuntimeTask && !issueExecutionReadOnly)
-  const continueInImButton = canContinueInIm ? (
-    <Tooltip label={t('workbench.continue_im_title')} side="bottom" align="end">
-      <button
-        type="button"
-        data-testid="continue-in-im-button"
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={t('workbench.continue_im_title')}
-        onClick={continueInIm.openDialog}
-      >
-        <MessageCircle />
-      </button>
-    </Tooltip>
-  ) : undefined
   const feedbackButton = isDesktop ? (
     <Tooltip
       label={t('workbench.feedback_button')}
@@ -5108,7 +5091,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ) : (
     <>
       {forkTaskButton}
-      {continueInImButton}
+
       {!feedbackInChromeTitlebar && feedbackButton}
       {workspaceToolbarExtensions}
       {mainHeaderProjectAction}
@@ -5125,7 +5108,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ) : (
     <>
       {forkTaskButton}
-      {continueInImButton}
+
       {workspacePanelActions}
     </>
   )
@@ -5224,7 +5207,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ) : (
     <>
       {forkTaskButton}
-      {continueInImButton}
+
       {workspaceToolbarExtensions}
       {mainHeaderProjectAction}
       {mainHeaderEnvironmentAction}
@@ -6227,10 +6210,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             })
           }}
         />
-        <ContinueInImDialog
-          key={continueInIm.dialog.open ? 'continue-im-open' : 'continue-im-closed'}
-          {...continueInIm.dialog}
-        />
         <TaskSupervisorControl
           open={supervisorDialogOpen && !issueExecutionReadOnly}
           supervisor={supervisor}
@@ -6247,11 +6226,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onSet={setTaskSupervisor}
           onClear={clearTaskSupervisor}
           onRunNow={currentRuntimeTask ? runTaskSupervisorNow : undefined}
-        />
-        <TransientNotice
-          message={continueInIm.notice?.message ?? null}
-          tone={continueInIm.notice?.tone}
-          onClear={continueInIm.clearNotice}
         />
         <TransientNotice
           message={additionalHarnessError}

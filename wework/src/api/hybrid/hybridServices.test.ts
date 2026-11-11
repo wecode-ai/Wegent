@@ -104,6 +104,7 @@ const mocks = vi.hoisted(() => {
       viewerUserIds: [0, 7],
     },
     standInApi: {
+      deviceIdentity: vi.fn(),
       binding: vi.fn(),
       lifecycle: vi.fn(),
       taskCommands: { get: vi.fn(), resolve: vi.fn() },
@@ -203,6 +204,7 @@ const mocks = vi.hoisted(() => {
   const cloudServices = {
     issueHumanRequestsApi: { inbox: vi.fn() },
     standInApi: {
+      deviceIdentity: vi.fn(),
       binding: vi.fn(),
       lifecycle: vi.fn(),
       taskCommands: { get: vi.fn(), resolve: vi.fn() },
@@ -533,6 +535,7 @@ describe('stand-in save routing', () => {
       const local = mocks.localServices.standInApi
       const cloud = mocks.cloudServices.standInApi
       for (const api of [local, cloud]) {
+        api.deviceIdentity.mockReset()
         api.projectCoordination.mockClear()
         api.projectProcessing.mockClear()
         api.personalSave.mockClear()
@@ -558,6 +561,11 @@ describe('stand-in save routing', () => {
       await services.standInApi!.personalSave(7, settings, deviceId)
       const selected = deviceId === 'local-device' ? local : cloud
       const other = selected === local ? cloud : local
+      const identity = { deviceId: 'desktop-alias', backendDeviceId: deviceId }
+      selected.deviceIdentity.mockResolvedValue(identity)
+      expect(await services.standInApi!.deviceIdentity(deviceId)).toEqual(identity)
+      expect(selected.deviceIdentity).toHaveBeenCalledExactlyOnceWith(deviceId)
+      expect(other.deviceIdentity).not.toHaveBeenCalled()
       expect(selected.personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, deviceId)
       expect(other.personalSave).not.toHaveBeenCalled()
       await services.standInApi!.binding(deviceId, 'beginStop', 3)

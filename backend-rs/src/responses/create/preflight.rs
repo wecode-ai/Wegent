@@ -55,6 +55,7 @@ pub(super) async fn generation_context<M: brz_mysql::Mysql>(
     task_id: i64,
     user_subtask_id: i64,
     user_id: i64,
+    generation: Option<&Value>,
 ) -> Result<Option<Value>, FastApiError> {
     let current_attachments = contexts::attachments_by_subtask(mysql, user_subtask_id)
         .await
@@ -64,7 +65,7 @@ pub(super) async fn generation_context<M: brz_mysql::Mysql>(
         .await
         .map_err(super::request::dependency)?;
     Ok(skill_generation::enrich_skill_generation_context(
-        None,
+        generation,
         &current_attachments,
         &task_attachments,
         user_subtask_id,

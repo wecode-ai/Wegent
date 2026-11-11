@@ -82,4 +82,35 @@ describe('MCP tool identity in desktop model fixtures', () => {
       )
     ).toEqual({ mode: 'direct', name: directToolName, arguments: { item_id: 'issue-1' } })
   })
+
+  test('uses the converted function name while retaining its requested MCP server', () => {
+    expect(
+      selectMcpToolRequest(
+        {
+          tools: ['wework_control', 'wework_space'].map(server => ({
+            type: 'function',
+            name: `${server}__${name}`,
+          })),
+        },
+        name,
+        { item_id: 'issue-1' },
+        `mcp__wework_space__${name}`
+      )
+    ).toEqual({
+      mode: 'direct',
+      name: `wework_space__${name}`,
+      arguments: { item_id: 'issue-1' },
+    })
+  })
+
+  test('does not substitute a converted namesake from another MCP server', () => {
+    expect(() =>
+      selectMcpToolRequest(
+        { tools: [{ type: 'function', name: `wework_control__${name}` }] },
+        name,
+        {},
+        `mcp__wework_space__${name}`
+      )
+    ).toThrow('Real Codex did not advertise exactly one deferred tool search')
+  })
 })

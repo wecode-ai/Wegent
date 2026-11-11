@@ -1,4 +1,13 @@
 {
+  "workbench": {
+    "git_access_credentials_required": "{{domain}} requires Git credentials on the selected device. Configure the domain under Settings → Integrations → Git accounts, then prepare again.",
+    "git_access_ssh_authentication_failed": "SSH authentication for {{domain}} was rejected. Configure the target device SSH key and retry; cloud Git tokens cannot replace SSH keys.",
+    "git_access_authentication_failed": "Git authentication for {{domain}} was rejected. Check the token under Settings → Integrations → Git accounts or the device SSH key, then retry.",
+    "git_access_repository_inaccessible": "Check the repository URL and account access; this is not necessarily a login problem.",
+    "git_access_network_error": "Check the device network, proxy, TLS certificate and SSH host trust.",
+    "git_access_git_unavailable": "Git cannot start on the selected device. Install or repair Git and retry.",
+    "git_access_invalid_url": "Use a valid repository URL without credentials or query parameters."
+  },
   "extension": {
     "name": "Wegent AI Assistant",
     "description": "A whole dev team of AI agents in your editor."

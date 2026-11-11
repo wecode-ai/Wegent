@@ -82,6 +82,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'dismiss-popout': 'dismissPopoutWindow',
   drag: 'drag',
   'drop-file': 'dropFile',
+  'select-file': 'selectFile',
   'drop-paths': 'dropPaths',
   fill: 'fill',
   'get-attribute': 'getAttribute',
@@ -896,8 +897,9 @@ async function main() {
   }
   const selector = options.selector ?? (SELECTOR_OPTIONAL_COMMANDS.has(command) ? 'body' : null)
   if (!selector) throw new Error('--selector is required')
-  const dropFilePath = command === 'drop-file' ? options.file : undefined
-  if (command === 'drop-file' && !dropFilePath) throw new Error('--file is required')
+  const fileCommand = command === 'drop-file' || command === 'select-file'
+  const dropFilePath = fileCommand ? options.file : undefined
+  if (fileCommand && !dropFilePath) throw new Error('--file is required')
   const dropFileExtension = dropFilePath ? extname(dropFilePath).toLowerCase() : ''
   const dropFileMimeType =
     dropFileExtension === '.png'

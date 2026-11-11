@@ -6,6 +6,9 @@ use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_se
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
+#[path = "tests/im_callback_routing.rs"]
+mod im_callback_routing;
+
 #[path = "superseded_turn_tests.rs"]
 mod superseded_turn_tests;
 
@@ -63,6 +66,9 @@ mod async_question_tests;
 
 #[path = "issue_question_hint_tests.rs"]
 mod issue_question_hint_tests;
+
+#[path = "inventory_read_tests.rs"]
+mod inventory_read_tests;
 
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
@@ -157,6 +163,8 @@ fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
                 "device-1",
                 "/bin/false",
                 event_tx,
+                None,
+                None,
             );
             assert!(handler.startup_recovery_deferred.load(Ordering::Acquire));
 
@@ -3575,6 +3583,8 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
                 "device-1",
                 "/bin/false",
                 event_tx.clone(),
+                None,
+                None,
             );
             handler.store = RuntimeWorkStore::new(root.path().join("fixture-runtime/index.json"));
             handler.worktrees =
@@ -3602,7 +3612,7 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
             );
             link.status = "archived".to_owned();
             handler.upsert_local_task(link.clone());
-            handler.mark_archived_link_deleted(&link);
+            handler.mark_archived_link_deleted(&link).unwrap();
             event_tx
                 .send(json!({"event": "runtime.work.changed", "payload": {"taskId": "unrelated"}}))
                 .unwrap();
@@ -7438,6 +7448,8 @@ fn decision_proxy_handler() -> RuntimeWorkRpcHandler {
         "device-1",
         "/bin/false",
         event_tx,
+        None,
+        None,
     )
 }
 

@@ -25,6 +25,7 @@ import {
   verifyCloudSidebarGitClone,
   verifyGitCloneDeviceRecovery,
 } from './cloud-sidebar-project-flow.mjs'
+import { verifyGitCloneRecovery } from './git-clone-recovery-flow.mjs'
 import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
 import {
   createCloudAttachmentVerification,
@@ -465,9 +466,7 @@ async function waitForGitCloneProject(control, previousProjectMenus, targetPath,
     const projectAdded = snapshot.testIds.some(
       testId => testId.startsWith('project-menu-') && !previousProjectMenus.has(testId)
     )
-    const clonePending = snapshot.testIds.some(testId =>
-      testId.startsWith('git-clone-project-operation-')
-    )
+    const clonePending = snapshot.testIds.includes('remote-project-git-form')
     const targetExists = await access(targetPath)
       .then(() => true)
       .catch(() => false)
@@ -813,6 +812,7 @@ async function verifyCloudCheckpoint({
       restartDesktopApp,
       codexHome
     )
+    await verifyGitCloneRecovery(control, cloudEnvironment, setPhase)
     return
   }
 

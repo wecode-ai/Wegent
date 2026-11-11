@@ -202,6 +202,57 @@ async fn verify(mysql: &MysqlService) {
 
 #[tokio::test]
 #[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn execution_bindings_preserve_database_generated_columns() {
+    with_schema(1, |mysql| async move {
+        mysql.execute(
+            "CREATE TABLE loop_items (
+                id VARCHAR(64) PRIMARY KEY,
+                resource_type VARCHAR(32) NOT NULL,
+                public_id VARCHAR(64) NULL,
+                project_key VARCHAR(64) NULL,
+                storage_prefix VARCHAR(64) NULL,
+                unique_public_id VARCHAR(64) GENERATED ALWAYS AS (NULLIF(public_id,'')) STORED UNIQUE,
+                unique_project_key VARCHAR(64) GENERATED ALWAYS AS (NULLIF(project_key,'')) VIRTUAL UNIQUE,
+                unique_storage_prefix VARCHAR(64) GENERATED ALWAYS AS (NULLIF(storage_prefix,'')) STORED UNIQUE
+            ) ENGINE=InnoDB",
+            (),
+        ).await.unwrap();
+        for values in [
+            json!({"public_id":"binding","project_key":"project","storage_prefix":"prefix"}),
+            json!({}),
+            json!({}),
+        ] {
+            let id = mysql.with_transaction(async |tx| {
+                store::insert(tx, "execution", values.clone()).await
+            }).await.unwrap();
+            let row: brz_mysql::MysqlRow = mysql.fetch_one(
+                "SELECT public_id,unique_public_id,project_key,unique_project_key,storage_prefix,unique_storage_prefix FROM loop_items WHERE id=?",
+                (id,),
+            ).await.unwrap();
+            for (source, generated) in [
+                ("public_id", "unique_public_id"),
+                ("project_key", "unique_project_key"),
+                ("storage_prefix", "unique_storage_prefix"),
+            ] {
+                let expected = values[source].as_str().map(str::to_owned);
+                assert_eq!(row.get::<String>(source).unwrap(), expected);
+                assert_eq!(row.get::<String>(generated).unwrap(), expected);
+            }
+        }
+        mysql.with_transaction(async |tx| {
+            let values = json!({"id":"once","public_id":"once"});
+            store::insert_once(tx, "execution", values.clone()).await?;
+            store::insert_once(tx, "execution", values).await
+        }).await.unwrap();
+        let row: brz_mysql::MysqlRow = mysql.fetch_one(
+            "SELECT COUNT(*) AS count FROM loop_items WHERE unique_public_id='once'", (),
+        ).await.unwrap();
+        assert_eq!(row.get_required::<i64>("count").unwrap(), 1);
+    }).await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
 async fn binding_cas_and_immediate_role_revocation_use_the_project_contract() {
     with_schema(4, |mysql| async move { verify(&mysql).await }).await;
 }
@@ -214,6 +265,117 @@ async fn coordination_dispatch_is_atomic_idempotent_and_version_fenced() {
         super::dispatch::verify_dispatch_transactions(&mysql).await;
     })
     .await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn issue_mention_wakeups_are_atomic_deduplicated_and_recipient_owned() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        let first_recipient = (7, "1001", "issue");
+        let second_recipient = (8, "1002", "other-issue");
+        for (_, project, issue) in [first_recipient, second_recipient] {
+            mysql
+                .execute(
+                    "INSERT INTO loop_items (id,resource_type,cloud_project_id) VALUES (?,'task',?)",
+                    (issue, project),
+                )
+                .await
+                .unwrap();
+        }
+        let first_mentions = tokio::sync::Barrier::new(2);
+        let enqueue = async |(user, project, issue): (i64, &str, &str), comment: &str, first| {
+            mysql
+                .with_transaction(async |tx| {
+                    store::locked(tx, "task", issue)
+                        .await?
+                        .ok_or(brz_mysql::MysqlError::RowNotFound)?;
+                    if first {
+                        first_mentions.wait().await;
+                    }
+                    crate::stand_in_issue_events::enqueue_mention_on(
+                        tx, user, project, issue, comment,
+                    )
+                    .await
+                })
+                .await
+                .unwrap();
+        };
+        // Both first-time recipients start with no inbox in the same index gap.
+        let ((), ()) = tokio::join!(
+            enqueue(first_recipient, "first", true),
+            enqueue(second_recipient, "first", true)
+        );
+        enqueue(first_recipient, "first", false).await;
+        let ((), ()) = tokio::join!(
+            enqueue(first_recipient, "second", false),
+            enqueue(first_recipient, "third", false)
+        );
+        let rollback: brz_mysql::MysqlResult<()> = mysql
+            .with_transaction(async |tx| {
+                crate::stand_in_issue_events::enqueue_mention_on(
+                    tx,
+                    7,
+                    "1001",
+                    "issue",
+                    "rolled-back-comment",
+                )
+                .await?;
+                Err(brz_mysql::MysqlError::RowNotFound)
+            })
+            .await;
+        assert!(rollback.is_err());
+        verify_mention_inbox(&mysql, first_recipient, 3).await;
+        verify_mention_inbox(&mysql, second_recipient, 1).await;
+    })
+    .await;
+}
+
+async fn verify_mention_inbox(
+    mysql: &MysqlService,
+    (user, project, issue): (i64, &str, &str),
+    count: usize,
+) {
+    let inbox = store::get(
+        mysql,
+        "stand_in_issue_inbox",
+        &format!("stand-in-inbox:{user}"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(inbox.next_item_number, count as i64 + 1);
+    let events: Vec<brz_mysql::MysqlRow> = mysql.fetch_all(
+        "SELECT id, CAST(sort_order AS SIGNED) AS sequence, metadata FROM loop_items WHERE resource_type='stand_in_issue_event' AND parent_id=? AND user_id=? ORDER BY sort_order",
+        (inbox.id.as_str(), user),
+    ).await.unwrap();
+    assert_eq!(events.len(), count);
+    for (index, event) in events.iter().enumerate() {
+        assert_eq!(
+            event.get_required::<i64>("sequence").unwrap(),
+            index as i64 + 1
+        );
+        let payload = event.get_required::<Json<Value>>("metadata").unwrap().0;
+        assert_eq!(payload["projectId"], project);
+        assert_eq!(payload["itemId"], issue);
+        assert_ne!(payload["commentId"], "rolled-back-comment");
+        let canonical = json!({"commentId":payload["commentId"],"itemId":payload["itemId"],"projectId":payload["projectId"]});
+        let expected = crate::hex_sha256(
+            format!(
+                "stand-in:{user}:{}",
+                wegent_python_compat::py_json::python_dumps(&canonical)
+            )
+            .as_bytes(),
+        );
+        assert_eq!(event.get_required::<String>("id").unwrap(), expected);
+        if user == 7 && payload["commentId"] == "first" {
+            // hashlib.sha256 of Python json.dumps(payload, sort_keys=True).
+            assert_eq!(
+                expected,
+                "7403d5fe82dab1af8038a7b94f960b5b6d7a04f1d3ac43b1a2a16b9c237799d8"
+            );
+        }
+    }
 }
 
 async fn with_schema<F, Fut>(capacity: u32, verify: F)

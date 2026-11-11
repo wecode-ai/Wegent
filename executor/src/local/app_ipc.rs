@@ -99,6 +99,7 @@ fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
         // Context compaction waits for the Codex app-server to finish the
         // compaction turn, so the request deadline must outlive that budget.
         Some("runtime.tasks.compact") => CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS,
+        Some("executor.plugins.local_sync") => 300,
         _ => APP_IPC_REQUEST_TIMEOUT_SECONDS,
     }
 }
@@ -115,6 +116,7 @@ const APP_IPC_CAPABILITIES: &[&str] = &[
     "executor.harnesses",
     "executor.health",
     "executor.plugins",
+    "plugins.local-sync-v1",
     "executor.plugin_auth",
     "runtime.archives",
     "runtime.automations",
@@ -154,6 +156,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.harnesses.prepare_launch",
     "executor.health",
     "executor.plugins.device_route",
+    "executor.plugins.local_sync",
     "executor.plugins.initialize_bundled_marketplace",
     "executor.plugins.import_package",
     "executor.plugins.import_package.finalize",
@@ -782,6 +785,16 @@ impl AppIpcServer {
             return Ok(Value::String(saved));
         }
 
+        // Native host configuration is intentionally absent from renderer_methods.
+        if method == "executor.plugin_auth.configure" {
+            let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
+                AppIpcError::new(
+                    "plugin_auth_http_unsupported",
+                    "Native plugin authorization is unavailable",
+                )
+            })?;
+            return handler.configure_plugin_auth(params).await;
+        }
         if method == "executor.plugin_auth.migrate" || method == "executor.plugin_auth.run" {
             let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
                 AppIpcError::new(
@@ -794,6 +807,16 @@ impl AppIpcServer {
             } else {
                 handler.migrate_plugin_auth(params).await
             };
+        }
+
+        if method == "executor.plugins.local_sync" {
+            let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
+                AppIpcError::new(
+                    "plugin_local_sync_unsupported",
+                    "Local plugin synchronization is unavailable",
+                )
+            })?;
+            return handler.plugin_local_sync(params).await;
         }
 
         if method == "executor.plugins.device_route" {
@@ -1529,6 +1552,16 @@ impl AppIpcServer {
         .round() as usize;
         let native_args = string_list(params.get("args")).unwrap_or_default();
         let native_result = match command_key {
+            "git_clone" => Some(
+                super::git_access::execute_clone(
+                    &native_args,
+                    native_path.as_deref().map(Path::new),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
             "environment_prepare" => {
                 Some(execute_environment_prepare(&native_args, native_timeout).await)
             }
@@ -2318,9 +2351,10 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;
             let activity_sequence = params.get("activity_sequence").and_then(Value::as_i64);
+            let content_revision = params.get("content_revision").and_then(Value::as_i64);
             serialize_task_value(
                 runtime
-                    .mark_task_read(project_id, task_id, activity_sequence)
+                    .mark_task_read(project_id, task_id, activity_sequence, content_revision)
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -3711,6 +3745,9 @@ fn error_message(request_id: Option<&str>, error: &AppIpcError) -> Value {
     if let Some(delay) = error.retry_after_ms {
         response["error"]["retryAfterMs"] = json!(delay);
     }
+    if let Some(code) = &error.provider_code {
+        response["error"]["providerCode"] = json!(code);
+    }
     if error.code == "runtime_read_busy" {
         response["error"]["retryable"] = json!(true);
     }
@@ -3877,9 +3914,29 @@ mod tests {
 
     use super::{
         app_ipc_request_metadata, app_ipc_request_timeout_seconds, is_bulk_app_ipc_event,
-        local_app_command, AppIpcServer, BlockingSingleFlight, APP_IPC_REQUEST_TIMEOUT_SECONDS,
+        local_app_command, AppIpcServer, BlockingSingleFlight, APP_IPC_RENDERER_METHODS,
+        APP_IPC_REQUEST_TIMEOUT_SECONDS,
     };
     use crate::runtime_work::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
+
+    #[test]
+    fn native_plugin_sessions_are_not_renderer_capabilities() {
+        assert!(!APP_IPC_RENDERER_METHODS.contains(&"executor.plugin_auth.configure"));
+        assert!(!APP_IPC_RENDERER_METHODS.contains(&"executor.plugin_auth.*"));
+        assert!(APP_IPC_RENDERER_METHODS.contains(&"executor.plugin_auth.run"));
+    }
+
+    #[test]
+    fn connection_cli_error_response_preserves_structured_cause_and_read_delay() {
+        let mut error =
+            super::AppIpcError::new("connection_cli_request_unavailable", "Read failed")
+                .with_retry_after_ms(30_000);
+        error.provider_code = Some("request_failed".to_owned());
+        let response = super::error_message(Some("read"), &error);
+        assert_eq!(response["error"]["providerCode"], "request_failed");
+        assert_eq!(response["error"]["retryAfterMs"], 30_000);
+        assert!(response["error"]["retryable"].is_null());
+    }
 
     #[test]
     fn transcript_export_allows_large_snapshot_packaging() {

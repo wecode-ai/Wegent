@@ -73,6 +73,7 @@ REMOTE_READ_ONLY_COMMAND_KEYS = frozenset(
 REMOTE_MUTATING_COMMAND_KEYS = frozenset(
     {
         "mkdir_p",
+        "git_clone",
         "git_checkout",
         "git_checkout_new",
         "git_add_all",
@@ -407,12 +408,12 @@ class LocalDeviceCommandService:
 local_device_command_service = LocalDeviceCommandService()
 
 
-def is_builtin_branch_query(
+def is_builtin_native_git_command(
     command_key: str, configured_commands: Mapping[str, Any]
 ) -> bool:
-    """Identify built-in branch queries while preserving explicit overrides."""
+    """Identify native Git commands while preserving explicit overrides."""
     return (
-        command_key in {"git_branch", "git_branch_list"}
+        command_key in {"git_branch", "git_branch_list", "git_clone"}
         and command_key not in configured_commands
     )
 
@@ -458,7 +459,7 @@ async def execute_configured_device_command(
             f"Device command key '{command_key}' is not configured"
         )
 
-    uses_builtin_branch_query = is_builtin_branch_query(
+    uses_native_git_command = is_builtin_native_git_command(
         command_key, configured_commands
     )
     dispatch_device_id = await _resolve_dispatch_device_id(
@@ -480,7 +481,7 @@ async def execute_configured_device_command(
         "timeout_seconds": timeout_seconds,
         "max_output_bytes": max_output_bytes,
     }
-    if uses_builtin_branch_query or command_key in {
+    if uses_native_git_command or command_key in {
         "environment_prepare",
         "git_apply_patch",
         "workspace_tree",

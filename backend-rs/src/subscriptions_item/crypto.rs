@@ -27,7 +27,7 @@ static TEST_KEY_IV: std::sync::OnceLock<(String, Vec<u8>)> = std::sync::OnceLock
 
 /// `encrypt_sensitive_data` failures.
 #[derive(Debug)]
-pub(crate) enum CryptoError {
+pub enum CryptoError {
     /// `GIT_TOKEN_AES_IV must be configured`.
     MissingIv,
     /// `GIT_TOKEN_AES_IV must be 16 UTF-8 bytes`.
@@ -82,7 +82,7 @@ fn encrypt_with(key: &[u8], iv: &[u8], plain: &str) -> Result<String, CryptoErro
 /// unsupported key length, bad padding, or non-UTF-8 plaintext — logs and
 /// returns the input unchanged, which is the source's backward-compatibility
 /// fallback.
-pub(crate) fn decrypt_sensitive_data(encrypted: &str) -> Result<String, CryptoError> {
+pub fn decrypt_sensitive_data(encrypted: &str) -> Result<String, CryptoError> {
     if encrypted.is_empty() {
         return Ok(String::new());
     }

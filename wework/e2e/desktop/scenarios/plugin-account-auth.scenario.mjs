@@ -18,6 +18,7 @@ import {
   shellCommandPollResponse,
 } from '../modules/shell-command-response.mjs'
 import { managedRoot } from '../modules/managed-plugin-root.mjs'
+import { verifyPluginNativeAuth } from '../modules/plugin-native-auth.mjs'
 import { verifyNativeAccountRuntimeIsolation } from '../modules/native-account-runtime-isolation.mjs'
 import {
   inspectManagedPython,
@@ -97,7 +98,7 @@ export async function createDesktopScenario({
     ? createGithubAuthBoundaries({
         protocol: githubProtocol,
         ghConfigDir,
-        homePath,
+        executorHome,
         resultDir,
         uiTimeoutMs,
         modelResponseTimeoutMs,
@@ -851,6 +852,37 @@ export async function createDesktopScenario({
       assert.ok(check, `Unknown account authentication checkpoint: ${checkpoint}`)
       console.log(`[desktop-e2e-account] start ${checkpoint}`)
       await check()
+      if (checkpoint === 'plugin-account-auth-password') {
+        await verifyPluginNativeAuth({
+          cloud,
+          control,
+          executorHome,
+          homePath,
+          sourceAuth,
+          installedId,
+          signalAutomaticRetry,
+          connectionFor,
+          resultDir,
+          timeoutMs: workbenchReadyTimeoutMs,
+          invokeLocal: async root => {
+            toolResult = null
+            command = `python3 ${quote(join(root, 'scripts/native-cli.py'))} read`
+            businessWorkspace = join(homePath, 'native-plugin-chat')
+            await mkdir(businessWorkspace, { recursive: true })
+            await control.command('click', '[data-testid="new-chat-button"]')
+            await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: prompt })
+            await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+            await waitForValue(
+              () => toolResult,
+              value => typeof value === 'string',
+              modelResponseTimeoutMs,
+              'Local plugin did not execute in conversation'
+            )
+            assert.ok(toolResult.includes('cloud-account-updated'), toolResult)
+            assert.ok(!toolResult.includes(secret), 'Local conversation exposed a credential')
+          },
+        })
+      }
       console.log(`[desktop-e2e-account] end ${checkpoint}`)
       // Return to the visible plugin detail after a long background-only workflow.
       await control.command('waitFor', '[data-testid="plugins-button"]', {

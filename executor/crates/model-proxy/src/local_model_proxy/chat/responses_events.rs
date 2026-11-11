@@ -17,6 +17,12 @@ pub(super) fn restore_responses_tool_item(
     identity: &ToolIdentity,
     arguments: Option<&str>,
 ) {
+    if matches!(identity.kind, ToolKind::Custom | ToolKind::Function) {
+        item["name"] = Value::String(identity.name.clone());
+        if let Some(namespace) = &identity.namespace {
+            item["namespace"] = Value::String(namespace.clone());
+        }
+    }
     match identity.kind {
         ToolKind::Custom => {
             item["type"] = Value::String("custom_tool_call".to_owned());
@@ -57,12 +63,7 @@ pub(super) fn restore_responses_tool_item(
                 object.remove("name");
             }
         }
-        ToolKind::Function => {
-            item["name"] = Value::String(identity.name.clone());
-            if let Some(namespace) = &identity.namespace {
-                item["namespace"] = Value::String(namespace.clone());
-            }
-        }
+        ToolKind::Function => {}
     }
 }
 

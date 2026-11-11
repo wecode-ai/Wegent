@@ -26,6 +26,7 @@ RUN mkdir src \
     && cargo build --release --locked --bin wegent-backend-rs
 
 FROM rust-builder-deps AS rust-builder
+COPY shared/assets/codex-models /app/shared/assets/codex-models
 COPY backend-rs/src ./src
 COPY backend-rs/migrations ./migrations
 COPY shared/data/builtin-connector-apps.json /app/shared/data/builtin-connector-apps.json

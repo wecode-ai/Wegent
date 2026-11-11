@@ -40,6 +40,7 @@ from app.models.user import User
 from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.project_chat import ProjectChatWorkspaceBindingView
 from app.schemas.runtime_work import RuntimeTaskCreateRequest
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.loop_item_executions.notification import notify_execution_lifecycle
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
@@ -1505,6 +1506,7 @@ class LoopItemExecutionService:
         db.refresh(candidate)
         return candidate
 
+    @execution_resource_scope()
     def claim_next_for_device(
         self,
         db: Session,
@@ -3240,17 +3242,17 @@ class LoopItemExecutionService:
         return str(error)
 
     @staticmethod
-    def _lock_terminal_event_execution(
+    def _lock_runtime_event_execution(
         db: Session,
         *,
         execution_id: int,
         event_seq: int | None,
     ) -> LoopItemExecution | None:
-        """Serialize Runtime terminal events with cancellation acknowledgements.
+        """Serialize Runtime observations with lease and cancellation writes.
 
-        Runtime terminal events also update their activity projection. Lock the
-        execution aggregate first so every terminal writer uses the same
-        execution -> activity lock order.
+        Refresh the execution under its lock so an acknowledgement cannot make
+        an observed event fail a stale version check. All activity writers keep
+        the execution -> activity lock order.
         """
 
         execution = (
@@ -3338,14 +3340,14 @@ class LoopItemExecutionService:
             )
             return None
         now = utcnow()
+        row = self._lock_runtime_event_execution(
+            db,
+            execution_id=row.id,
+            event_seq=event_seq,
+        )
+        if row is None:
+            return None
         if terminal is not None:
-            row = self._lock_terminal_event_execution(
-                db,
-                execution_id=row.id,
-                event_seq=event_seq,
-            )
-            if row is None:
-                return None
             self.open_execution_activity(
                 db,
                 execution=row,
@@ -3541,6 +3543,7 @@ class LoopItemExecutionService:
             execution_target_id=None,
         )
 
+    @execution_resource_scope()
     def build_executor_runtime_payload(
         self,
         db: Session,
@@ -4701,7 +4704,7 @@ class LoopItemExecutionService:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.status == STATUS_RUNNING,
-                LoopItemExecution.started_at.isnot(None),
+                ~loop_datetime_is_unset(LoopItemExecution.started_at),
                 LoopItemExecution.started_at < threshold,
             )
             .all()

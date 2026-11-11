@@ -624,17 +624,15 @@ class RealCloudEnvironment {
     assert.equal(typeof enabled, 'boolean')
     assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
     await this.stopBackend()
-    const fromOffset = (await readFile(this.backendLogPath, 'utf8')).length
+    const fromOffset = (await readFile(this.remoteExecutorLogPath, 'utf8')).length
     this.backendEnv = {
       ...this.backendEnv,
       TERMINAL_PROTOCOL_V2_ENABLED: String(enabled),
     }
     await this.launchBackend()
     await waitForLogPattern(
-      this.backendLogPath,
-      new RegExp(
-        `\\[Device WS\\] Device registered: user=\\d+, device=${CLOUD_DEVICE_ID}(?:\\r?\\n|$)`
-      ),
+      this.remoteExecutorLogPath,
+      new RegExp(`local backend registered [^\\r\\n]*device_id=${CLOUD_DEVICE_ID}(?:\\r?\\n|$)`),
       { fromOffset, timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
     )
     await this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath)
@@ -847,6 +845,7 @@ class RealCloudEnvironment {
       'WEGENT_APP_IPC_OWNER_TOKEN',
       'WEGENT_APP_IPC_TOKEN',
       'WEGENT_APP_LIFECYCLE_FD',
+      'WEGENT_RUNTIME_INSTANCE_ID',
     ]) {
       delete environment[key]
     }

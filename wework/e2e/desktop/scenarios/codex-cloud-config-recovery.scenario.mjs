@@ -338,18 +338,21 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
 
       // A second complete desktop restart must reconstruct the final reply and
       // stopped Goal from disk without starting another model continuation.
-      await control.command('waitFor', `[data-testid="runtime-local-task-row-${goalTask}"]`)
-      await control.command('click', `[data-testid="runtime-local-task-row-${goalTask}"]`)
-      await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
-        text: `${goalMarker}_COMPLETE`,
-      })
+      const openGoalConversation = async () => {
+        await control.command('waitFor', `[data-testid="runtime-local-task-row-${goalTask}"]`)
+        await control.command('click', `[data-testid="runtime-local-task-row-${goalTask}"]`)
+        await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
+          text: `${goalMarker}_COMPLETE`,
+        })
+      }
+      await openGoalConversation()
       model.recoverBundle()
       await restartDesktopApp()
       await completed(goalTask, goalMarker, 3)
       assert.equal(goalPlan.count, 3, 'The completed Goal continued after a cold desktop restart')
-      await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
-        text: `${goalMarker}_COMPLETE`,
-      })
+      // Main-window startup restores configured fixed tabs, not the last transient task route.
+      await openGoalConversation()
+      assert.equal(goalPlan.count, 3, 'Reopening the completed Goal started another model turn')
       assert.equal(
         (await rpc('runtime.tasks.goal.get', { address: address(goalTask) })).goal.status,
         'complete'

@@ -6,6 +6,7 @@ import {
   enqueueNotificationReply,
   pendingNotificationReplies,
 } from './notification-replies.js'
+import { registerNotificationReplyE2E } from './notification-reply-e2e.js'
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
@@ -1097,6 +1098,17 @@ export function createElectronCapabilityRouter(
       requiredIntegerParam(params, 'length')
     )
   )
+  router.register('notification.openSettings', async () => {
+    const url =
+      process.platform === 'darwin'
+        ? 'x-apple.systempreferences:com.apple.preference.notifications'
+        : process.platform === 'win32'
+          ? 'ms-settings:notifications'
+          : null
+    if (!url) return { supported: false }
+    await shell.openExternal(url)
+    return { supported: true }
+  })
   router.register('notification.show', params => {
     if (!Notification.isSupported()) {
       throw new HostCapabilityError(
@@ -1128,6 +1140,9 @@ export function createElectronCapabilityRouter(
       desktopServices
     )
   })
+  registerNotificationReplyE2E(router, () =>
+    desktopServices.events.publish('notification-reply', {})
+  )
   router.register('notification.pendingReplies', params =>
     pendingNotificationReplies(stringParam(params, 'accountKey'))
   )

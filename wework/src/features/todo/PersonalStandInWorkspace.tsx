@@ -3,7 +3,12 @@ import type { CollaborationProject } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
+import {
+  getStandInErrorMessage,
+  reportStandInError,
+  requiresStandInUpgrade,
+} from '@/lib/stand-in-error-message'
+import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { createLocalWorkspaceApi } from './localWorkspaceApi'
 import { createWeworkPlatformApi } from './weworkPlatformApi'
@@ -14,10 +19,14 @@ import { LOCAL_USER } from '@/api/local/localSession'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { availableStandInDevices } from './standInDevices'
-import { StandInBindingContext } from './StandInBindingContext'
 import { useStandInInstance } from './useStandInInstance'
 import { StandInMigration } from './StandInMigration'
-import { navigateTo } from '@/lib/navigation'
+import {
+  navigateTo,
+  WORKSPACE_NAVIGATION_EVENT,
+  type WorkspaceNavigationDetail,
+} from '@/lib/navigation'
+import { useStandInRoleDirectory } from './useStandInRoleDirectory'
 
 type PersonalStandInWorkspaceProps = {
   services: WorkbenchServices
@@ -40,6 +49,7 @@ export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
   )
 }
 
+/** Scope binding, project errors and recovery actions to the connected account. */
 function AccountStandInWorkspace({
   services,
   user,
@@ -52,7 +62,19 @@ function AccountStandInWorkspace({
 }: PersonalStandInWorkspaceProps) {
   const { t, i18n } = useTranslation('common')
   const cloud = useContext(CloudConnectionContext)
+  const [reentry, setReentry] = useState(0)
+  const refreshKey = (entryRequestKey ?? 0) + reentry
+  useEffect(() => {
+    if (!active || contentRoute !== '/stand-in') return
+    const onNavigate = (event: Event) => {
+      if ((event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute === contentRoute)
+        setReentry(current => current + 1)
+    }
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+    return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+  }, [active, contentRoute])
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
+  const [initialBindingDevice] = useState(() => query.get('deviceId') ?? undefined)
   const instance = useStandInInstance(
     services,
     Number(user.id),
@@ -60,22 +82,68 @@ function AccountStandInWorkspace({
     !!cloud?.isConnected,
     active,
     cloud?.apiBaseUrl ?? '',
-    query.get('deviceId') ?? undefined
+    initialBindingDevice,
+    refreshKey
   )
   const { binding, localDeviceId, busy } = instance
   const target = binding?.target
   const ownerId = target?.userId ?? Number(user.id)
+  const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
   const deviceId = target?.deviceId
+  const [roleLocation, setRoleLocation] = useState<
+    { deviceId: string; roleId?: string; settings?: boolean } | undefined
+  >(() =>
+    query.get('profileId') && query.get('profileId') !== '@primary' && query.get('deviceId')
+      ? {
+          deviceId: query.get('deviceId')!,
+          roleId: query.get('profileId')!,
+          settings: true,
+        }
+      : undefined
+  )
+  const bindingScope = target
+    ? JSON.stringify([target.userId, target.deviceId, target.backendUrl ?? ''])
+    : undefined
+  const [locationBinding, setLocationBinding] = useState(bindingScope)
+  if (locationBinding !== bindingScope) {
+    setLocationBinding(bindingScope)
+    if (locationBinding && bindingScope) setRoleLocation(undefined)
+  }
+  const selectedDevice =
+    roleLocation?.roleId && roleLocation.roleId !== '@primary' ? roleLocation.deviceId : deviceId
   const ownerAvailable =
-    binding?.status === 'stopped' ||
-    ownerId === LOCAL_USER.id ||
-    (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? ''))
+    notificationOwnerMatches &&
+    (binding?.status === 'stopped' ||
+      ownerId === LOCAL_USER.id ||
+      (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? '')))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
+  const directory = useStandInRoleDirectory(
+    services.standInApi,
+    ownerId,
+    deviceId,
+    active && ownerAvailable && binding?.status === 'active',
+    localDeviceId,
+    refreshKey,
+    cloud?.isConnected ? availableStandInDevices(devices).map(device => device.device_id) : []
+  )
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ message: string; cause?: unknown } | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [projects, setProjects] = useState<CollaborationProject[]>([])
   const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
+  const previousEntry = useRef(JSON.stringify([contentRoute, entryRequestKey]))
+  useEffect(() => {
+    const entry = JSON.stringify([contentRoute, entryRequestKey])
+    if (previousEntry.current === entry || !deviceId) return
+    previousEntry.current = entry
+    const params = new URLSearchParams(contentRoute.split('?')[1] ?? '')
+    const roleId = params.get('profileId') ?? undefined
+    const next = roleId && roleId !== '@primary' ? (params.get('deviceId') ?? deviceId) : deviceId
+    const change = () =>
+      setRoleLocation({ deviceId: next, roleId, settings: !!params.get('settingsRequest') })
+    if (overview.current) overview.current.requestLeave(change)
+    else change()
+  }, [contentRoute, entryRequestKey, deviceId])
   const api = useMemo(
     () =>
       createWeworkPlatformApi(
@@ -110,7 +178,7 @@ function AccountStandInWorkspace({
       cause => {
         if (current) {
           reportStandInError('load_projects', cause)
-          setError(getStandInErrorMessage(cause, 'load_projects_failed'))
+          setError({ message: getStandInErrorMessage(cause, 'load_projects_failed'), cause })
         }
       }
     )
@@ -135,12 +203,29 @@ function AccountStandInWorkspace({
       {t(binding?.status === 'stopping' ? 'standIn.instance.retry_stop' : 'standIn.instance.stop')}
     </button>
   )
-  const failure = instance.error || error
+  const failure = instance.error || error?.message
+  const upgradeRequired = requiresStandInUpgrade(
+    instance.error ? instance.errorCause : error?.cause
+  )
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="personal-stand-in-workspace">
       {failure && (
-        <div role="alert" className="flex items-center gap-2 px-5 py-2 text-sm text-error">
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-error"
+        >
           <span>{failure}</span>
+          {upgradeRequired && (
+            <Button
+              type="button"
+              size="sm"
+              className="min-h-11 md:min-h-8"
+              data-testid="stand-in-view-devices"
+              onClick={() => navigateTo('/cloud-work')}
+            >
+              {t('standIn.view_devices')}
+            </Button>
+          )}
           <button
             type="button"
             data-testid="stand-in-project-catalog-retry"
@@ -234,27 +319,42 @@ function AccountStandInWorkspace({
           {actions}
         </section>
       ) : target && api ? (
-        <StandInBindingContext.Provider value={target}>
-          {!routeMatches && (
-            <p role="alert" className="px-5 py-2 text-sm">
-              {t('standIn.instance.stop_before_rebind')}
+        <>
+          {directory?.error && (
+            <p role="alert" className="px-5 py-2 text-sm text-error">
+              {directory.error}
             </p>
           )}
           <StandInOverviewPage
-            key={`${ownerId}:${deviceId}`}
+            key={`${ownerId}:${selectedDevice}`}
             ref={overview}
             headerActions={actions}
-            initialProfileId={routeMatches ? (query.get('profileId') ?? undefined) : undefined}
-            initialDeviceId={deviceId}
+            initialProfileId={
+              roleLocation?.settings
+                ? roleLocation.roleId
+                : roleLocation
+                  ? undefined
+                  : (query.get('profileId') ?? undefined)
+            }
+            initialSelectedRoleId={roleLocation?.roleId}
+            initialDeviceId={selectedDevice}
+            primaryDeviceId={deviceId}
+            roleLocations={directory?.roles}
             localDeviceId={localDeviceId}
             entryRequestKey={entryRequestKey}
             entryRoute={contentRoute}
             settingsRequestKey={
-              routeMatches ? (query.get('settingsRequest') ?? undefined) : undefined
+              roleLocation?.settings || routeMatches
+                ? (query.get('settingsRequest') ?? undefined)
+                : undefined
             }
             initialWorkView={query.get('view') === 'scheduled' ? 'scheduled' : 'work'}
-            onSelectLocation={next => {
-              if (next !== deviceId) setError(t('standIn.instance.stop_before_rebind'))
+            onSelectLocation={(next, roleId, settings) => {
+              if ((!roleId || roleId === '@primary') && next !== deviceId) {
+                setError({ message: t('standIn.instance.stop_before_rebind') })
+                return
+              }
+              setRoleLocation({ deviceId: next, roleId, settings })
             }}
             api={api}
             projects={projects}
@@ -265,7 +365,7 @@ function AccountStandInWorkspace({
             onCancel={onClose}
             onOpenTask={onOpenTask}
           />
-        </StandInBindingContext.Provider>
+        </>
       ) : (
         <p role="alert" className="p-5 text-sm">
           {t('standIn.errors.backend_connection_unavailable')}

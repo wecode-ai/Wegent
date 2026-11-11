@@ -530,7 +530,6 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
       deviceId: 'device-1',
     }),
     deleteWorktree: vi.fn().mockResolvedValue({ success: true }),
-    bindRuntimeTaskImSessions: vi.fn(),
     getImNotificationSettings: vi.fn().mockResolvedValue({
       global: { enabled: false, sessionKey: null, session: null },
       runtimeTaskSubscriptions: [],
@@ -1420,15 +1419,6 @@ function ProjectSendProbe({
         }
       >
         open project runtime task
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          if (!currentRuntimeTask) return
-          void workbench.bindRuntimeTaskToImSessions(currentRuntimeTask, ['session-a'])
-        }}
-      >
-        bind runtime task to IM
       </button>
       <button
         type="button"
@@ -2914,6 +2904,35 @@ function StartSkillChatProbe() {
 }
 
 describe('WorkbenchProvider runtime tasks', () => {
+  test('coalesces work-change events while a list refresh is pending', async () => {
+    let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
+    const pending = deferred<RuntimeWorkListResponse>()
+    const listRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(createRuntimeWork())
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue(createRuntimeWork())
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+      chatStream: {
+        subscribe: (handlers: ChatStreamHandlers) => {
+          if (handlers.onRuntimeWorkChanged) onChanged = handlers.onRuntimeWorkChanged
+          return vi.fn()
+        },
+      } as WorkbenchServices['chatStream'],
+    })
+    renderWorkbench(<ProjectSendProbe />, services)
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledOnce())
+    act(() => {
+      for (let index = 0; index < 20; index++) {
+        onChanged?.({ taskId: `task-${index}`, deviceId: 'device-1' })
+      }
+    })
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
+    await act(async () => pending.resolve(createRuntimeWork()))
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(3))
+  })
+
   test('publishes background archive cleanup failures outside the settings page', async () => {
     resetArchivedConversationsSettingsStateForTest()
     let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
@@ -6078,109 +6097,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('binds the active runtime model selection with a private IM session', async () => {
-    const bindRuntimeTaskImSessions = vi.fn().mockResolvedValue({
-      address: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-a',
-      },
-      boundSessionKeys: ['session-a'],
-      notifiedCount: 1,
-    })
-    const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(
-        createRuntimeWork({
-          projects: [
-            {
-              project: { id: 7, name: 'Wegent' },
-              deviceWorkspaces: [
-                {
-                  id: 22,
-                  projectId: 7,
-                  deviceId: 'device-1',
-                  deviceName: 'Project Device',
-                  deviceStatus: 'online',
-                  workspacePath: '/workspace/project-alpha',
-                  mapped: true,
-                  available: true,
-                  tasks: [
-                    {
-                      taskId: 'runtime-a',
-                      workspacePath: '/workspace/project-alpha',
-                      title: 'Runtime A',
-                      runtime: 'codex',
-                      modelSelection: {
-                        modelName: 'gpt-5.6-luna',
-                        modelType: 'public',
-                        options: { reasoningEffort: 'low' },
-                      },
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-          totalTasks: 1,
-        })
-      ),
-      getRuntimeTranscript: vi.fn().mockResolvedValue({
-        taskId: 'runtime-a',
-        workspacePath: '/workspace/project-alpha',
-        runtime: 'codex',
-        messages: [],
-      }),
-      bindRuntimeTaskImSessions,
-    })
-    const services = createWorkbenchServices({
-      modelApi: {
-        listModels: vi.fn().mockResolvedValue({
-          data: [
-            {
-              name: 'gpt-5.6-luna',
-              type: 'public',
-              namespace: 'default',
-              resourceUserId: 0,
-              provider: 'cloud',
-            },
-          ],
-        }),
-      },
-      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
-    } as Partial<WorkbenchServices>)
-
-    renderWorkbench(<ProjectSendProbe />, services)
-
-    await userEvent.click(await screen.findByText('open project runtime task'))
-    await waitFor(() =>
-      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-        'device-1:runtime-a'
-      )
-    )
-    await userEvent.click(screen.getByText('bind runtime task to IM'))
-
-    await waitFor(() => expect(bindRuntimeTaskImSessions).toHaveBeenCalledTimes(1))
-    expect(bindRuntimeTaskImSessions).toHaveBeenCalledWith({
-      address: expect.objectContaining({
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-a',
-      }),
-      taskTitle: 'Runtime A',
-      sessionKeys: ['session-a'],
-      modelSelection: {
-        modelName: 'gpt-5.6-luna',
-        modelType: 'public',
-        options: {
-          reasoningEffort: 'low',
-          collaborationMode: 'default',
-          weworkCloudModelNamespace: 'default',
-          weworkCloudModelResourceUserId: '0',
-        },
-      },
-    })
-  })
-
   test('continues a cross-provider model switch in a new referenced conversation', async () => {
     const models: UnifiedModel[] = [
       {
@@ -7402,9 +7318,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await act(async () => initialWork.resolve(createRuntimeWork()))
     await waitFor(() => expect(cloudWork).toHaveBeenCalledOnce())
     act(() => onChanged?.({ taskId: 'runtime-a', deviceId: 'device-1' }))
-    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(3))
+    expect(listRuntimeWork).toHaveBeenCalledTimes(2)
     expect(screen.getByTestId('current-project-name')).not.toHaveTextContent('Wegent')
     await act(async () => latestWork.resolve(createRuntimeWork()))
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(3))
 
     await waitFor(() =>
       expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
@@ -9212,8 +9129,8 @@ describe('WorkbenchProvider runtime tasks', () => {
             weworkCloudModelNamespace: 'default',
             weworkCloudModelResourceUserId: '1',
             weworkCloudModelUpstreamApiFormat: 'openai-responses',
-            weworkCloudModelNativeToolSearch: 'true',
-            weworkCloudModelNativeNamespaceTools: 'true',
+            weworkCloudModelNativeToolSearch: 'false',
+            weworkCloudModelNativeNamespaceTools: 'false',
           },
         },
       })

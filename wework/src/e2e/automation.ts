@@ -9,6 +9,7 @@ import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
+import { selectDesktopControlFile } from './select-file'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { readElementVisibility } from './element-visibility'
@@ -641,7 +642,7 @@ export function seedDesktopE2ELocalModels(
       displayName: 'Desktop E2E DeepSeek Pro Vision Main',
       modelId: 'deepseek-v4-pro',
       apiFormat: 'openai-responses' as const,
-      toolProfile: 'custom' as const,
+      toolProfile: 'function' as const,
       requestPath: '/v1/responses',
       contextWindow: 1_048_576,
       webSearchMode: 'live' as const,
@@ -2952,6 +2953,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return endDesktopControlDrag(command)
     case 'dropFile':
       return dropDesktopControlFile(command)
+    case 'selectFile':
+      return selectDesktopControlFile(findDesktopControlElements(command.selector)[0], command)
     case 'dropPaths':
       return dispatchDesktopControlPaths(command, 'drop')
     case 'pasteFile':

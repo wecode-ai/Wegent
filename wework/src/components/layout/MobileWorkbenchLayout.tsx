@@ -1,5 +1,5 @@
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
-import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
+import { ArrowLeftRight, Bot, Menu } from 'lucide-react'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
@@ -32,8 +32,6 @@ import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
-import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
-import { TransientNotice } from '@/components/common/TransientNotice'
 import {
   isImplementationPlanConfirmationResponse,
   isImplementationPlanRequestUserInput,
@@ -44,7 +42,6 @@ import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPane
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
-import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import {
   pendingRequestUserInputPayload,
   pendingRequestUserInputPayloads,
@@ -140,10 +137,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
-  const [notice, setNotice] = useState<{
-    message: string
-    tone: 'success' | 'error'
-  } | null>(null)
   const currentRuntimeTask = pane.currentRuntimeTask
   const activePaneProject = pane.currentProject
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
@@ -171,7 +164,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     [connectorAuthRecovery, paneSession]
   )
   const retryFailedMessage = paneSession.retryFailedMessage
-  const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const paneMessages = paneSession.messages
   const pendingRequestUserInput = pendingRequestUserInputPayload(
     paneMessages,
@@ -386,15 +378,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       <ArrowLeftRight className="h-5 w-5" />
                     </button>
                   )}
-                  <button
-                    type="button"
-                    data-testid="mobile-continue-in-im-button"
-                    className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
-                    aria-label={t('workbench.continue_im_title')}
-                    onClick={continueInIm.openDialog}
-                  >
-                    <MessageCircle className="h-5 w-5" />
-                  </button>
                 </div>
               ) : (
                 <div className="h-11 min-w-[44px]" />
@@ -727,10 +710,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         onOpenRuntimeTask={onOpenRuntimeTask}
         onRefreshWorkLists={onRefreshWorkLists}
       />
-      <ContinueInImDialog
-        key={continueInIm.dialog.open ? 'continue-im-open' : 'continue-im-closed'}
-        {...continueInIm.dialog}
-      />
       <TaskForkDialog
         key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
         open={forkDialogOpen}
@@ -749,14 +728,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         onCreateDeviceDirectory={onCreateDeviceDirectory}
         onFork={async target => {
           await forkCurrentRuntimeTask(target)
-        }}
-      />
-      <TransientNotice
-        message={notice?.message ?? continueInIm.notice?.message ?? null}
-        tone={notice?.tone ?? continueInIm.notice?.tone}
-        onClear={() => {
-          setNotice(null)
-          continueInIm.clearNotice()
         }}
       />
     </div>

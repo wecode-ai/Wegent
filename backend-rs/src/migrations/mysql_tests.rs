@@ -11,7 +11,7 @@ async fn fresh_schema_and_historical_upgrade_round_trip() -> Result<()> {
     isolated(verify).await
 }
 
-async fn isolated(test: impl AsyncFnOnce(&MysqlService) -> Result<()>) -> Result<()> {
+pub(crate) async fn isolated(test: impl AsyncFnOnce(&MysqlService) -> Result<()>) -> Result<()> {
     // Share the existing service without multiplying simultaneous DDL workloads.
     static DATABASE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
     let _permit = DATABASE.acquire().await?;
@@ -54,6 +54,16 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     check(mysql).await?;
     let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()", ()).await?;
     assert_eq!(tables.len(), 50);
+    assert!(
+        !tables
+            .iter()
+            .any(|table| table.name == "plugin_local_sync_operations")
+    );
+    assert!(
+        !tables
+            .iter()
+            .any(|table| table.name == "plugin_sync_outbox")
+    );
     upgrade(mysql).await?;
     // Exercise JSON/permission, plugin-publication, merge, notification and transcript migrations.
     downgrade(mysql, "d47dd270f4b6").await?;
@@ -61,6 +71,8 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     check(mysql).await?;
     verify_initialization(mysql).await?;
     verify_permission_data(mysql).await?;
+    crate::background_jobs::robot::verify_issue_activity_projection(mysql).await?;
+    crate::socketio::verify_reconnect_projection(mysql).await?;
     Ok(())
 }
 

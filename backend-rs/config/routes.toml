@@ -63,6 +63,9 @@ methods = ["GET"]
 path = "/api/v1/wework-notifications"
 [[routes]]
 methods = ["GET"]
+path = "/api/v1/stand-in-issue-events"
+[[routes]]
+methods = ["GET"]
 path = "/api/v1/wework-notifications/preferences"
 #[[routes]]
 #methods = ["PUT"]
@@ -447,7 +450,7 @@ path = "/api/resource-library/listings"
 methods = ["GET"]
 path = "/api/v1/collaboration-templates"
 [[routes]]
-methods = ["GET"]
+methods = ["GET", "DELETE"]
 path = "/api/v1/collaboration-templates/:template_id"
 [[routes]]
 methods = ["PUT"]
@@ -1074,12 +1077,12 @@ path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py
 #[[routes]]
 #methods = ["POST"]
 #path = "/mcp/subscription/sse" # app/mcp_server/server.py:1032
-#[[routes]]
-#methods = ["GET"]
-#path = "/socket.io/" # app/main.py:984
-#[[routes]]
-#methods = ["POST"]
-#path = "/socket.io/" # app/main.py:984
+[[routes]]
+methods = ["GET"]
+path = "/socket.io/" # app/main.py:984
+[[routes]]
+methods = ["POST"]
+path = "/socket.io/" # app/main.py:984
 
 # New APIs implemented directly in Rust.
 [[routes]]
@@ -1155,3 +1158,16 @@ path = "/api/v1/loop-items/:item_id/human-requests/:request_id"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/wework-human-requests"
+
+[[routes]]
+methods = ["PUT"]
+path = "/api/im/private-sessions/:session_key/stand-in"
+
+# Account HTTP local plugin execution; independent of Device registration.
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/local-sync"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/native-auth/exchange"
