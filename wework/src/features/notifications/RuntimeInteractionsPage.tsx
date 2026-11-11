@@ -221,22 +221,35 @@ export function RuntimeInteractionsPage({
     try {
       for (const entry of entries) {
         if (interactions.busy.has(entry.id)) continue
-        try {
-          const request = pending.find(item => item.id === entry.id)
-          await interactions.dismiss(
-            request ?? {
-              id: entry.dismissalId ?? entry.id,
-              source: entry.source,
-              title: entry.title,
-              question: entry.question,
-              originalUrl: entry.originalUrl,
-              answeredAt: Date.now(),
-            }
-          )
-          setSelected(current => (current === entry.id ? null : current))
-        } catch {
-          setDismissFailed(true)
+        const request = pending.find(item => item.id === entry.id)
+        const projectRow = projectRows.find(item => projectItemId(item) === entry.id)
+        const questions = projectRow
+          ? projectRequests(projectRow).map(item => issueHumanInteraction(item, projectRow.store))
+          : []
+        const targets = request
+          ? [request]
+          : questions.length
+            ? questions
+            : [
+                {
+                  id: entry.dismissalId ?? entry.id,
+                  source: entry.source,
+                  title: entry.title,
+                  question: entry.question,
+                  originalUrl: entry.originalUrl,
+                  answeredAt: Date.now(),
+                },
+              ]
+        let failed = false
+        for (const target of targets) {
+          try {
+            await interactions.dismiss(target)
+          } catch {
+            failed = true
+            setDismissFailed(true)
+          }
         }
+        if (!failed) setSelected(current => (current === entry.id ? null : current))
       }
     } finally {
       dismissingRef.current = false

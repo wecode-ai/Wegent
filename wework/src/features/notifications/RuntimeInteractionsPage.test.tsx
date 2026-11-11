@@ -18,6 +18,60 @@ const projectWork = vi.hoisted(() => ({
   loading: false,
   refresh: vi.fn(),
 }))
+
+function projectQuestionWork(): PendingProjectIssue {
+  return {
+    item: {
+      id: 'ISSUE-1',
+      cloud_project_id: '12',
+      project_name: 'Project',
+      title: 'Two questions',
+      created_by_user_id: 0,
+      status: 'pending',
+      human_requests: ['one', 'two'].map(id => ({
+        id,
+        project_id: '12',
+        issue_id: 'ISSUE-1',
+        root_comment_id: 'root',
+        runtime_device_id: 'device',
+        runtime_task_id: 'task',
+        item_id: id,
+        question: id,
+        status: 'pending',
+        recipient_user_id: 0,
+        created_at: '2026-11-08T00:00:00Z',
+        updated_at: '2026-11-08T00:00:00Z',
+      })),
+    } as PendingProjectIssue['item'],
+    store: 'local',
+    userId: 0,
+  }
+}
+
+it.each([false, true])(
+  'ignores the actual questions represented by a project row (partial failure: %s)',
+  async fail => {
+    projectWork.items = [projectQuestionWork()]
+    const ignored = new Set<string>()
+    const dismiss = vi.fn(async (item: Parameters<RuntimeInteractionsValue['dismiss']>[0]) => {
+      if (!('task' in item)) return
+      if (fail && item.sharedRequest?.id === 'one') throw new Error('Archive unavailable')
+      ignored.add(item.id)
+    })
+    view(undefined, {}, { pending: [], dismiss, isDismissed: id => ignored.has(id) })
+    fireEvent.click(screen.getByTestId(fail ? 'interactions-dismiss-all' : 'interaction-dismiss'))
+    await waitFor(() => expect(dismiss).toHaveBeenCalledTimes(2))
+    expect(
+      dismiss.mock.calls.map(([item]) => ('task' in item ? item.sharedRequest?.id : null))
+    ).toEqual(['one', 'two'])
+    if (fail) {
+      expect(screen.getByRole('alert')).toHaveTextContent('interactions.dismiss_failed')
+      expect(screen.getByTestId('interaction-list-item')).toBeInTheDocument()
+    } else {
+      expect(screen.queryByTestId('interaction-list-item')).not.toBeInTheDocument()
+    }
+  }
+)
 vi.mock('./usePendingProjectIssues', () => ({ usePendingProjectIssues: () => projectWork }))
 
 vi.mock('./schemeEvents', () => ({ openWeworkScheme: vi.fn() }))
@@ -621,34 +675,7 @@ it('keeps the close action available for shared Issue questions', () => {
 })
 
 it('keeps project work visible when another pending question has not been ignored', () => {
-  projectWork.items = [
-    {
-      item: {
-        id: 'ISSUE-1',
-        cloud_project_id: '12',
-        project_name: 'Project',
-        title: 'Two questions',
-        created_by_user_id: 0,
-        status: 'pending',
-        human_requests: ['one', 'two'].map(id => ({
-          id,
-          project_id: '12',
-          issue_id: 'ISSUE-1',
-          root_comment_id: 'root',
-          runtime_device_id: 'device',
-          runtime_task_id: 'task',
-          item_id: id,
-          question: id,
-          status: 'pending',
-          recipient_user_id: 0,
-          created_at: '2026-11-08T00:00:00Z',
-          updated_at: '2026-11-08T00:00:00Z',
-        })),
-      } as PendingProjectIssue['item'],
-      store: 'local',
-      userId: 0,
-    },
-  ]
+  projectWork.items = [projectQuestionWork()]
   view(undefined, {}, { pending: [], isDismissed: id => id.includes('item:one') })
   expect(screen.getByTestId('interaction-list-item')).toHaveTextContent('Two questions')
 })

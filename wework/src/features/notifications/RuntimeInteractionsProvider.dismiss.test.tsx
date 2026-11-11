@@ -4,6 +4,92 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 afterEach(() => vi.restoreAllMocks())
 
+async function issueQuestionTask() {
+  const { interactionTask } = await import('./runtimeInteractions.fixtures')
+  return {
+    ...interactionTask,
+    address: { ...interactionTask.address, deviceId: 'native-device-alias' },
+    task: {
+      ...interactionTask.task,
+      runtimeHandle: {
+        origin: {
+          type: 'board_comment',
+          cloudProjectId: 'project',
+          loopItemId: 'ISSUE-1',
+          rootCommentId: 'root',
+          projectStore: 'backend',
+        },
+      },
+    },
+  }
+}
+
+it('retains shared dismissal when only a differently addressed native copy remains', async () => {
+  const task = await issueQuestionTask()
+  const rendered = view(undefined, task)
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const native = context!.pending[0]
+  const question = {
+    id: 'shared',
+    project_id: 'project',
+    issue_id: 'ISSUE-1',
+    root_comment_id: 'root',
+    runtime_device_id: 'shared-device',
+    runtime_task_id: native.task.address.taskId,
+    item_id: native.payload.itemId!,
+    question: 'Shared decision',
+    recipient_user_id: 7,
+    status: 'pending',
+    version: 1,
+    blocks_progress: true,
+    created_at: new Date(native.createdAt).toISOString(),
+    waiting_since: new Date(Date.now() + 1000).toISOString(),
+  }
+  const inbox = vi.fn().mockResolvedValue({ items: [question] })
+  rendered.rerenderSource({
+    ...rendered.taskSource,
+    userId: 7,
+    services: {
+      ...rendered.taskSource.services!,
+      issueHumanRequestsApi: {
+        inbox,
+        list: vi.fn().mockResolvedValue({ items: [] }),
+        assign: vi.fn(),
+      },
+    },
+  })
+  await act(async () => {
+    await context!.refresh()
+  })
+  await waitFor(() =>
+    expect(context!.pending.some(item => item.sharedRequest?.id === 'shared')).toBe(true)
+  )
+  const shared = context!.pending.find(item => item.sharedRequest?.id === 'shared')!
+  expect(shared.id).not.toBe(native.id)
+  await act(async () => {
+    await context!.dismiss(shared)
+  })
+  inbox.mockResolvedValue({ items: [] })
+  await act(async () => {
+    await context!.refresh()
+  })
+  expect(context!.pending.some(item => item.id === native.id)).toBe(false)
+  await act(async () => {
+    const key = 'wework.interactions:test:1:history'
+    localStorage.setItem(key, '[]')
+    window.dispatchEvent(new StorageEvent('storage', { key, newValue: '[]' }))
+    await context!.refresh()
+  })
+  expect(context!.pending.some(item => item.id === native.id)).toBe(false)
+  inbox.mockResolvedValue({
+    items: [{ ...question, waiting_since: new Date(Date.now() + 2000).toISOString() }],
+  })
+  await act(async () => {
+    await context!.refresh()
+  })
+  expect(context!.pending.some(item => item.sharedRequest?.id === 'shared')).toBe(true)
+})
+
 it('does not persist dismissal before its history lock is acquired', async () => {
   view()
   await waitFor(() => expect(context!.pending).toHaveLength(1))
@@ -244,22 +330,7 @@ it.each([
   'returned-question-behind-clock',
 ])('preserves native dismissal across the shared representation: %s', async scenario => {
   const { interactionQuestion, interactionTask } = await import('./runtimeInteractions.fixtures')
-  const task = {
-    ...interactionTask,
-    address: { ...interactionTask.address, deviceId: 'native-device-alias' },
-    task: {
-      ...interactionTask.task,
-      runtimeHandle: {
-        origin: {
-          type: 'board_comment',
-          cloudProjectId: 'project',
-          loopItemId: 'ISSUE-1',
-          rootCommentId: 'root',
-          projectStore: 'backend',
-        },
-      },
-    },
-  }
+  const task = await issueQuestionTask()
   const rendered = view(interactionQuestion, task)
   await waitFor(() => expect(context!.pending).toHaveLength(1))
   const native = context!.pending[0]
