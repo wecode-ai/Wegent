@@ -760,6 +760,8 @@ export async function installWeworkAutomationBridge(
     return
   }
 
+  // Startup assets can fill the default buffer before a failure snapshot is requested.
+  performance.setResourceTimingBufferSize(10_000)
   if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
     installLocalHarnessDiagnostics()
@@ -3584,7 +3586,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       stopRuntimeStreamDiagnostics()
       return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
-      performance.setResourceTimingBufferSize(10_000)
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
         conversationRendering: await collectConversationRenderingDiagnostics(capability =>
@@ -3659,7 +3660,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ) {
         throw new Error('Plugin image timing diagnostics require an absolute image path')
       }
-      performance.setResourceTimingBufferSize(10_000)
       const completed = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
       return JSON.stringify(
         completed
