@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
 import { ComponentUpdateManager } from './component-update-manager.js'
@@ -21,6 +21,29 @@ export interface ReleasePreparationStage {
   releaseId: string
   version: string
   stage: string
+}
+
+export async function assertReleasePreparationIdentity(
+  release: DesktopRelease,
+  resources: string,
+  version: string,
+  dataSchema: number,
+  readableDataSchemas: number[]
+): Promise<void> {
+  if (
+    version !== release.version ||
+    dataSchema !== release.dataSchema ||
+    JSON.stringify([...readableDataSchemas].sort()) !==
+      JSON.stringify([...release.readableDataSchemas].sort())
+  )
+    throw new Error('Target release identity does not match the selected package')
+  // Module URLs resolve aliases such as macOS /tmp before reaching this CLI.
+  const [delivered, selected] = await Promise.all([
+    realpath(resources),
+    realpath(release.resources),
+  ])
+  if (delivered !== selected)
+    throw new Error('Target release identity does not match the selected package')
 }
 
 export async function preparationStep<T>(
@@ -73,14 +96,13 @@ export async function prepareReleaseEnvironment(
 ): Promise<void> {
   const request = JSON.parse(await readFile(requestFile, 'utf8')) as ReleasePreparationRequest
   const { release } = request
-  if (
-    version !== release.version ||
-    resources !== release.resources ||
-    dataSchema !== release.dataSchema ||
-    JSON.stringify([...readableDataSchemas].sort()) !==
-      JSON.stringify([...release.readableDataSchemas].sort())
+  await assertReleasePreparationIdentity(
+    release,
+    resources,
+    version,
+    dataSchema,
+    readableDataSchemas
   )
-    throw new Error('Target release identity does not match the selected package')
   const store = new ReleaseStore(request.storeRoot)
   const log = new RotatingLog({
     path: join(dirname(request.storeRoot), 'logs', 'release-preparation.log'),
