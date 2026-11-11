@@ -4303,7 +4303,14 @@
     "diagram_render_failed": "图表渲染失败，源码如下",
     "diagram_retry": "重试",
     "plugin_python_temporary": "插件临时使用本机 Python {{version}}，托管环境继续准备。",
-    "runtime_task_load_failed": "无法加载该任务，请刷新后重试。"
+    "runtime_task_load_failed": "无法加载该任务，请刷新后重试。",
+    "plugins_install_authorization_pending": "{{name}} 已安装，可在插件详情中完成授权",
+    "plugins_local_sync_network_error": "暂时无法连接服务，请检查网络后重试；已提交的操作会在恢复后继续。",
+    "plugins_local_sync_apply_error": "本机插件处理未完成，请刷新安装状态后重试。",
+    "plugins_local_sync_unconfirmed": "尚未确认操作提交结果，请先刷新核对安装状态。",
+    "plugins_local_sync_journal_error": "无法读取或保存本机操作记录，请检查磁盘空间和权限后重试。",
+    "plugins_local_sync_superseded": "插件的安装目标已被其他操作改变，请刷新后按最新状态操作。",
+    "plugins_local_sync_disabled": "当前暂不接受新的本机插件操作，请稍后重试。"
   },
   "delivery": {
     "action": "交付",
@@ -5540,7 +5547,7 @@
     "device_label": "设备",
     "local_project": "本地项目",
     "workspace_label": "工作区",
-    "title": "我的分身",
+    "title": "我的助理",
     "close": "关闭",
     "auto": "自动处理",
     "prompt": "你希望分身怎么做？（选填）",
@@ -5556,7 +5563,7 @@
     "reload": "重新加载",
     "view_devices": "查看设备情况",
     "saved": "分身设置已保存",
-    "enabled": "我的分身 · 自动处理已开启",
+    "enabled": "我的助理 · 自动处理已开启",
     "project_enabled": "自动处理已开启",
     "description": "忙碌时，让分身替你接手任务。它会处理新分配给你的任务，完成后由你检查结果。",
     "inherit_environment": "设备默认工作区",
@@ -6118,7 +6125,7 @@
       "repository_help": "选择你有访问权限的仓库。"
     },
     "onboarding": {
-      "title": "开始使用我的分身",
+      "title": "开始使用我的助理",
       "review_add": "添加每周复盘",
       "description": "从一件具体的事开始，逐步把重复工作交给分身。",
       "loading": "正在读取分身功能设置…",

@@ -190,6 +190,7 @@ pub struct LocalBackendRunner<
     runtime_pull_pending: Arc<AtomicBool>,
     /// Latest backend-assigned record route id for this Runtime registration.
     device_route_id: Arc<Mutex<Option<String>>>,
+    external_plugin_auth_broker: bool,
 }
 
 impl<T, R> Drop for LocalBackendRunner<T, R>
@@ -235,15 +236,15 @@ where
         event_hub.ensure_started();
         let device_route_id = Arc::new(Mutex::new(None));
         let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
-            RuntimeWorkRpcHandler::with_event_sender(
+            RuntimeWorkRpcHandler::with_event_sender_and_backend_connection(
                 config.device_id.clone(),
                 resolve_codex_binary(),
                 runtime_event_tx,
-            )
-            .with_backend_device_route(device_route_id.clone())
-            .with_backend_connection(Arc::new(Mutex::new(
-                connection_snapshot_from_config(&config),
-            ))),
+                Some(Arc::new(Mutex::new(connection_snapshot_from_config(
+                    &config,
+                )))),
+                Some(device_route_id.clone()),
+            ),
         );
         Self::new_with_runtime_work_handler(
             config,
@@ -365,7 +366,13 @@ where
             runtime_pull_lock: Arc::new(AsyncMutex::new(())),
             runtime_pull_pending: Arc::new(AtomicBool::new(false)),
             device_route_id: Arc::new(Mutex::new(None)),
+            external_plugin_auth_broker: false,
         }
+    }
+
+    pub(crate) fn with_external_plugin_auth_broker(mut self) -> Self {
+        self.external_plugin_auth_broker = true;
+        self
     }
 
     pub fn with_connection_status(mut self, connection_status: Arc<AtomicBool>) -> Self {
@@ -887,9 +894,9 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
             app_ipc_device_id.clone(),
             resolve_codex_binary(),
             runtime_event_tx.clone(),
-        )
-        .with_backend_device_route(device_route_id.clone())
-        .with_backend_connection(backend_connection_snapshot.clone()),
+            Some(backend_connection_snapshot.clone()),
+            Some(device_route_id.clone()),
+        ),
     );
     let backend_connection = LocalBackendConnectionController::start_with_runtime(
         config,

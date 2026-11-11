@@ -110,6 +110,7 @@ export class ManagedExecutorRuntime {
 }
 
 export function executorRequestTimeoutMs(method: string): number {
+  if (method === 'executor.plugins.local_sync') return 305_000
   const preparesPython =
     method === 'executor.plugin_auth.migrate' ||
     method === 'executor.plugin_auth.run' ||

@@ -153,6 +153,7 @@ import { AppUpdateService } from './host/app-update-service.js'
 import { ReleaseStore } from './runtime/release-store.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
+import { PluginNativeAuthorization } from './host/plugin-native-authorization.js'
 import { cloudFetch } from './host/cloud-http.js'
 import { installE2eDshReleaseRedirect } from './host/e2e-dsh-release-redirect.js'
 import {
@@ -421,6 +422,13 @@ let desktopPreferences: DesktopPreferencesController | null = null
 let performanceRecorder: PerformanceRecorder | null = null
 let rendererStorage: RendererStorageStore | null = null
 let cloudCredentials: CloudCredentialService | null = null
+const pluginNativeAuthorization = new PluginNativeAuthorization(
+  requiredCloudCredentials,
+  (method, params) =>
+    desktopRuntime
+      ? desktopRuntime.requestExecutor(method, params)
+      : Promise.reject(new Error('Desktop runtime is unavailable'))
+)
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
 let startupSplashObserver: ReturnType<typeof observeStartupSplash> | null = null
@@ -2124,7 +2132,24 @@ function installIpc(): void {
       }
     }
   )
-  ipcMain.handle('cloud-credentials:clear', () => requiredCloudCredentials().clear())
+  ipcMain.handle(
+    'plugin-auth:configure',
+    async (_event, apiBaseUrl: unknown, accountToken: unknown) => {
+      try {
+        const value = await pluginNativeAuthorization.configure(
+          requiredText(apiBaseUrl, 'apiBaseUrl'),
+          requiredText(accountToken, 'accountToken')
+        )
+        return { ok: true, value }
+      } catch (error) {
+        return cloudCredentialFailure(error)
+      }
+    }
+  )
+  ipcMain.handle('cloud-credentials:clear', async () => {
+    const clear = requiredCloudCredentials().clear()
+    await Promise.all([clear, pluginNativeAuthorization.clear()])
+  })
   ipcMain.handle('runtime:get-state', () => ({
     ...(desktopRuntime?.state() ?? {
       coreDshUrl: null,

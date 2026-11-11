@@ -21,7 +21,7 @@ function fixture(overrides: Partial<ComponentProps<typeof StandInDetailsPopover>
   const props = {
     anchor,
     userId: 7,
-    name: '我的分身',
+    name: '我的助理',
     enabled: true,
     conversation: address,
     device: {
