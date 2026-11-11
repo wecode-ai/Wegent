@@ -13,8 +13,14 @@ impl LocalTaskStore {
         validate_name(&input.task_id, "task id")?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let container = work_container_from(&transaction, project_id)?
-            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        let (container, local_container_id) = match work_container_from(&transaction, project_id)? {
+            Some(container) => (container, Some(project_id)),
+            None => (
+                external_project_from_catalog(&transaction, project_id)?
+                    .ok_or(TaskRuntimeError::ProjectNotFound)?,
+                None,
+            ),
+        };
         if let Some(item_id) = item_id {
             let item = get_item_from(&transaction, item_id, "task")?
                 .ok_or(TaskRuntimeError::TaskNotFound)?;
@@ -141,7 +147,7 @@ impl LocalTaskStore {
         }
         let id = insert_task_binding(
             &transaction,
-            Some(project_id),
+            local_container_id,
             item_id,
             &input,
             &metadata,

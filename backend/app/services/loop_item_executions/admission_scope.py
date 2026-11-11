@@ -30,5 +30,7 @@ def lock_execution_subject(
     }:
         # Provider-owned Issues have no native Thread row and cannot be rehomed.
         return
+    # Preserve caller writes before refreshing the locked execution subject.
+    db.flush()
     thread = lock_scoped_thread(db, container_id, thread_id)
     require_thread_participation(db, thread, actor_user_id, execute=True)

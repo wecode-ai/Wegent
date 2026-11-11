@@ -70,6 +70,7 @@ def test_publish_loop_item_changed_snapshots_item_before_async_emit(
     monkeypatch: Any,
 ) -> None:
     db = MagicMock()
+    db.get.return_value = None
     db.query.return_value.filter.return_value.all.return_value = []
     item = _Item()
     scheduled: list[Any] = []
@@ -129,6 +130,7 @@ def test_publish_loop_item_changed_explains_skipped_delivery(
 ) -> None:
     caplog.set_level("INFO", logger=loop_item_events.__name__)
     db = MagicMock()
+    db.get.return_value = None
     db.query.return_value.filter.return_value.all.return_value = []
     schedule = MagicMock()
     monkeypatch.setattr(loop_item_events, "get_socketio_loop", lambda: loop)
@@ -156,6 +158,7 @@ def test_publish_loop_item_changed_logs_failed_delivery_without_raising(
 ) -> None:
     caplog.set_level("INFO", logger=loop_item_events.__name__)
     db = MagicMock()
+    db.get.return_value = None
     db.query.return_value.filter.return_value.all.return_value = []
     future: Future[None] = Future()
 
@@ -180,6 +183,7 @@ def test_publish_loop_item_changed_logs_failed_schedule_without_raising(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     db = MagicMock()
+    db.get.return_value = None
     db.query.return_value.filter.return_value.all.return_value = []
 
     def schedule(coroutine: Any, loop: Any) -> None:

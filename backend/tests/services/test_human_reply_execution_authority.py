@@ -169,6 +169,7 @@ async def test_cp15_queued_answer_preserves_original_assigner_and_current_revoca
         queued.runtime_selection["assignment_request"]["continuation"]["execution_id"]
         == s.execution.id
     )
+    s.db.refresh(s.issue)
     assert s.issue.metadata_json["human_requests"][0]["status"] == "answering"
     if revoke:
         s.db.query(ResourceMember).filter_by(

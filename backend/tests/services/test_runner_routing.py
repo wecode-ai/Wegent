@@ -661,6 +661,7 @@ def test_group_automation_keeps_run_identity_and_assignment_snapshot(
         automation_context={"run_id": "automation-run"},
     )
     assert execution.automation_run_id == "automation-run"
+    test_db.refresh(issue)
     assert (
         collaboration_group_snapshot_for_dispatch(item=issue, execution=execution)
         == group
