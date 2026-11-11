@@ -195,11 +195,14 @@ fn bind_personal_device(personal: &mut Value, device: &str) -> bool {
     if device.is_empty() {
         return false;
     }
-    let mut changed = personal["executionDeviceId"] != device;
+    let previous_device = personal["executionDeviceId"].clone();
+    let mut changed = previous_device != device;
     personal["executionDeviceId"] = json!(device);
     for role in personal["roles"].as_array_mut().into_iter().flatten() {
-        changed |= role["executionDeviceId"] != device;
-        role["executionDeviceId"] = json!(device);
+        if role["executionDeviceId"].is_null() || role["executionDeviceId"] == previous_device {
+            changed |= role["executionDeviceId"] != device;
+            role["executionDeviceId"] = json!(device);
+        }
     }
     changed
 }
@@ -248,6 +251,10 @@ pub(super) fn read_personal(
     }
     if !roles.is_empty() {
         personal["executionDeviceId"] = roles[0]["executionDeviceId"].clone();
+        // Project-era device IDs were local aliases, not per-role routing choices.
+        for role in &mut roles {
+            role["executionDeviceId"] = personal["executionDeviceId"].clone();
+        }
         personal["roles"] = json!(roles);
     }
     migrate_personal_settings(&mut personal)?;
@@ -320,7 +327,7 @@ fn validate_projects(value: &Value) -> bool {
 }
 
 /// Validate a normalized independent role and its execution and connection settings.
-pub(super) fn validate_role(role: &Value, device: &str) -> Result<(), TaskRuntimeError> {
+pub(super) fn validate_role(role: &Value) -> Result<(), TaskRuntimeError> {
     let id = role["id"].as_str().unwrap_or_default();
     if id.is_empty()
         || id.len() > 64
@@ -330,7 +337,9 @@ pub(super) fn validate_role(role: &Value, device: &str) -> Result<(), TaskRuntim
         || role["name"].as_str().is_none()
         || role["prompt"].as_str().is_none()
         || role["enabled"].as_bool().is_none()
-        || role["executionDeviceId"] != device
+        || !role["executionDeviceId"]
+            .as_str()
+            .is_some_and(|id| !id.trim().is_empty())
         || !valid_collaboration(&role["collaboration"])
     {
         return Err(TaskRuntimeError::Invalid(
@@ -353,6 +362,32 @@ fn validate_policy(policy: &Value) -> bool {
 #[cfg(test)]
 mod session_policy_tests {
     use super::*;
+
+    #[test]
+    fn role_devices_survive_profile_reads_and_primary_identity_changes() {
+        let mut settings = empty_personal(7, "mac");
+        settings["roles"][0]["executionDeviceId"] = json!("remote");
+        settings["primary"] = implicit_primary();
+        bind_personal_device(&mut settings, "new-mac");
+        assert_eq!(settings["executionDeviceId"], "new-mac");
+        assert_eq!(settings["roles"][0]["executionDeviceId"], "remote");
+        validate_role(&settings["roles"][0]).unwrap();
+        let identities = stand_in_identities(&settings);
+        assert_eq!(identities[0]["executionDeviceId"], "remote");
+        assert_eq!(identities[1]["executionDeviceId"], "new-mac");
+    }
+
+    #[test]
+    fn saved_role_device_is_not_replaced_by_the_profile_device() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"][0]["executionDeviceId"] = json!("remote");
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let restored = store.personal_stand_in(7, "mac").unwrap();
+        assert_eq!(restored["executionDeviceId"], "mac");
+        assert_eq!(restored["roles"][0]["executionDeviceId"], "remote");
+    }
 
     #[test]
     fn validates_session_strategy_independently_of_timing_and_approval() {
@@ -489,7 +524,9 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
     }
     for identity in &mut identities {
         identity["userId"] = settings["userId"].clone();
-        identity["executionDeviceId"] = settings["executionDeviceId"].clone();
+        if identity["executionDeviceId"].is_null() {
+            identity["executionDeviceId"] = settings["executionDeviceId"].clone();
+        }
         identity["sharedPreferences"] = settings["primary"]["preferences"].clone();
     }
     identities
@@ -665,7 +702,7 @@ impl LocalTaskStore {
         }
         let mut ids = HashSet::new();
         for role in roles {
-            validate_role(role, device)?;
+            validate_role(role)?;
             if !ids.insert(role["id"].as_str().unwrap()) {
                 return Err(TaskRuntimeError::Invalid("duplicate personal role".into()));
             }

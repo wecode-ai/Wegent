@@ -104,7 +104,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     },
     async verify(control) {
       const device = await environment.waitForConnectedAppDevice()
-      deviceId = device.app_device_id ?? device.device_id
+      deviceId = device.execution_target_id
+      assert.ok(deviceId, 'The real App must expose its unique Backend execution route')
       const params = { projectId: String(project.id), userId: user.id, projectStore: 'cloud' }
       const initial = await requestExecutor(control, 'runtime.stand_in.get', params, uiTimeoutMs)
       settings = await requestExecutor(

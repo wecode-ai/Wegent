@@ -1,9 +1,69 @@
 //! Recipient-owned durable Issue wakeups are independent of human notifications.
-use brz_mysql::{FromMysqlRow, Json};
+use brz_mysql::{FromMysqlRow, Json, MysqlResult, MysqlTransaction};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{http_compat::FastApiError, state::AppState};
+
+/// Commit a validated mention with its comment, after locking the owning Issue.
+/// The user and inbox locks match Python's Issue -> recipient -> inbox order.
+pub(crate) async fn enqueue_mention_on(
+    tx: &mut impl MysqlTransaction,
+    user: i64,
+    project: &str,
+    issue: &str,
+    comment: &str,
+) -> MysqlResult<()> {
+    use crate::background_jobs::project::store;
+
+    // Keep sorted keys and Python's default JSON spacing for cross-writer dedupe.
+    let payload = json!({"commentId":comment,"itemId":issue,"projectId":project});
+    let id = crate::hex_sha256(
+        format!(
+            "stand-in:{user}:{}",
+            wegent_python_compat::py_json::python_dumps(&payload)
+        )
+        .as_bytes(),
+    );
+    let _: (i64,) = tx
+        .fetch_optional("SELECT id FROM users WHERE id=? FOR UPDATE", (user,))
+        .await?
+        .ok_or(brz_mysql::MysqlError::RowNotFound)?;
+    let inbox_id = format!("stand-in-inbox:{user}");
+    let sequence = match store::locked(tx, "stand_in_issue_inbox", &inbox_id).await? {
+        Some(inbox) => inbox.next_item_number,
+        None => {
+            store::insert(
+                tx,
+                "stand_in_issue_inbox",
+                json!({
+                    "id":inbox_id,"user_id":user,"next_item_number":1
+                }),
+            )
+            .await?;
+            1
+        }
+    };
+    if store::locked(tx, "stand_in_issue_event", &id)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+    store::insert(
+        tx,
+        "stand_in_issue_event",
+        json!({
+            "id":id,"parent_id":inbox_id,"user_id":user,"sort_order":sequence,"metadata":payload
+        }),
+    )
+    .await?;
+    tx.execute(
+        "UPDATE loop_items SET next_item_number=? WHERE id=? AND resource_type='stand_in_issue_inbox' AND user_id=?",
+        (sequence + 1, inbox_id.as_str(), user),
+    ).await?;
+    Ok(())
+}
 
 #[derive(Default, Deserialize)]
 struct EventQuery {

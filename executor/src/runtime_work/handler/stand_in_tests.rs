@@ -204,6 +204,55 @@ async fn manual_issue_work_needs_no_assignment_or_intake_subscription() {
 }
 
 #[tokio::test]
+async fn redirected_role_polls_only_existing_local_issue_work() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"][0]["enabled"] = json!(true);
+    settings["roles"][0]["executionDeviceId"] = json!("remote");
+    settings["roles"][0]["collaboration"]["enabled"] = json!(true);
+    settings["roles"][0]["collaboration"]["policy"]["immediate"] = json!(false);
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Redirected local work"})).unwrap())
+        .unwrap();
+    let mut issues = Vec::new();
+    for title in ["Existing work", "New work"] {
+        issues.push(
+            store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value(json!({"title":title,"assignee_user_id":7})).unwrap(),
+                )
+                .unwrap(),
+        );
+    }
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "existing-task".into(),
+        status: "done".into(),
+        runtime_handle: json!({"standInIssueWakeups":[],"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"default","userId":7,"projectStore":"local","cloudProjectId":project.id,"loopItemId":issues[0].id}}),
+        ..Default::default()
+    });
+    handler.poll_local_stand_ins().await.unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["issueId"], issues[0].id);
+    assert!(store.list_task_bindings(&issues[1].id).unwrap().is_empty());
+    assert_eq!(handler.local_task_links(false).len(), 1);
+    assert_eq!(
+        handler
+            .run_stand_in(json!({"projectId":project.id,"issueId":issues[1].id,"userId":7,"standInId":"default","projectStore":"local"}))
+            .await
+            .unwrap_err()
+            .code,
+        "wrong_device"
+    );
+}
+
+#[tokio::test]
 async fn prior_assignment_binding_blocks_new_local_role_executions() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");

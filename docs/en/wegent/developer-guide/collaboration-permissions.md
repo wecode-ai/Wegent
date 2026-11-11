@@ -285,6 +285,10 @@ Development startup now aborts on migration failure instead of serving an incomp
 
 ## Implementation and regression protection
 
+Socket.IO replies recover stand-in identity only from a persisted agent message in the same project and Issue. When the caller supplies no explicit mentions, the original stand-in user and role become the continuation target. Implicit recipients pass the same membership and Issue-read checks as explicit mentions, and wakeups commit with the comment. Caller metadata cannot supply identity, and explicit recipients retain precedence. Focused `socketio::project_chat_events::reply` tests cover identity provenance and explicit-mention precedence; the existing `stand-in-assignment-notifications` E2E verifies queued supplements during child execution and continuation without another mention. CP01–CP20 remain unchanged.
+
+Rust Socket.IO Issue comments persist the comment, notifications and stand-in wakeups in one transaction. Recipients still require effective project membership and Issue read access. Self mentions suppress human notifications while retaining durable wakeups for the actor's stand-in. Writers lock the Issue, recipients and inboxes in that order, reuse Python-compatible recipient/payload deduplication keys, and roll back together on failure. CP01–CP20 remain unchanged. The CI-registered `project_coordination::mysql_tests::issue_mention_wakeups_are_atomic_deduplicated_and_recipient_owned` covers recipient isolation, concurrent sequence allocation, deduplication and rollback on real MySQL; the `stand-in-assignment-notifications` desktop E2E covers actual comment wakeups and public acknowledgments.
+
 `collaboration_permissions.py` supplies roles, sources and denial reasons. `cloud_project_visibility.py` implements equivalent list queries. `collaboration_revocation.py` revalidates current Issue, Agent, group, Runtime profile and device authority for durable work.
 
 Regression entry points:
@@ -301,6 +305,48 @@ Regression entry points:
 - Shared UI: inherited sources, guests, membership mode, ownership transfer, absent old-backend capabilities, binding reactivation and chat recovery.
 
 Permission changes must update the corresponding rule, local architecture record and tests. Semantic changes require user authorization. Never weaken assertions, skip cases or add administrator exceptions to conceal a violation. Tests use isolated databases, deterministic encryption and mocked external services; passing them does not claim deployment or live Runtime execution.
+
+Stand-in roles and conversation identity do not require a cloud Executor. Cloud
+Issue reservations, assignment receipts and public replies use the owning Runtime's
+backend-assigned registration route; the desktop `electron-…` identity routes local
+IPC. Multiple Runtime registrations may share a desktop alias, so it cannot prove
+device ownership. A missing registration route waits for registration without
+bypassing device, project, Issue or active-assignment checks. Receipt outbox entries
+retain their accepted binding's device. Route changes do not recreate the role or
+conversation identity. `test_stand_in_issue_replies.py` and Executor
+`runtime_owner_tests` cover ambiguity denial, exact routes and receipt identity;
+CI's stand-in Issue-conversation scenario covers real execution with duplicate
+desktop aliases.
+
+A role's execution device selects where new work is received; it grants no resource
+authority. A device change stages a paused role on the target, redirects source
+intake, and then activates the target. The target retains identity, resource and
+source authorization checks; credentials are not copied. Source tasks, sessions
+and role configuration remain on their original device, and existing Issues retain
+their conversation binding. Recovery uses version checks and never restores a
+second receiver when target activation is uncertain. CP rules remain unchanged.
+`saveStandInRoleDevice.test.ts`, Executor role-device tests and the existing CI
+stand-in conversation scenario cover success, denial, lost responses and routing
+new work separately from existing tasks.
+
+The Rust comment entry preserves existing authority checks: project and Issue
+visibility are checked for the comment and mentioned recipients, and the comment
+and stand-in wakeups commit in one transaction. Lock order is Issue, recipient,
+then recipient inbox; sequence and event identity retain the Python contract.
+Disabling human reminders or mentioning oneself does not suppress wakeups. Replies
+to a validated public stand-in message retain its role identity and recheck recipient
+visibility; ordinary user messages cannot forge a stand-in recipient. Events only
+prompt Runtime permission revalidation and grant no execution or resource authority.
+The CI stand-in conversation scenario covers self-mentions, durable events and
+direct replies; focused Rust tests cover reply identity and cross-implementation
+event deduplication.
+
+A manual request rejected for the wrong device must never recover as accepted
+work. Repeating that request must also preserve work accepted durably before a
+role move. Project-addressed role saves preserve the primary device. Only imports
+from the old project format normalize stale device aliases; saved independent
+role choices remain intact. Executor regressions cover these persistence and
+recovery boundaries.
 
 ## Verification record
 

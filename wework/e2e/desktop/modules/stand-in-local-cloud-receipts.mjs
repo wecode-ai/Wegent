@@ -15,6 +15,8 @@ export async function verifyLocalCloudStandInReceipt(
     value: JSON.stringify({ projectKey, name: projectKey, path: workspacePath }),
   })
   const previous = await rpc('runtime.stand_in.get', settingsParams())
+  const identity = await rpc('runtime.stand_in.device_identity', {})
+  assert.ok(identity.backendDeviceId, 'The local App must expose its unique Backend route')
   await rpc('runtime.stand_in.save', {
     ...settingsParams(),
     settings: {
@@ -33,7 +35,7 @@ export async function verifyLocalCloudStandInReceipt(
     })
     const binding = await until(
       () => request(`/v1/loop-items/${issue.id}/tasks`),
-      rows => rows.find(row => row.device_id === previous.executionDeviceId),
+      rows => rows.find(row => row.device_id === identity.backendDeviceId),
       modelResponseTimeoutMs,
       'The local App did not bind its cloud assignment'
     )
