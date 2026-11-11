@@ -204,3 +204,28 @@ it('retains an unsaved local draft after its write fails', async () => {
   })
   stop()
 })
+
+it('keeps a failed clear hidden when settlement has no new native text', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  const store = createInteractionDraftStore('test:1')
+  const stop = store.activate()
+  store.setDraft(interaction.id, 'Old draft')
+  await store.flush()
+  const original = Storage.prototype.setItem
+  const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    if (key === draftsKey) throw new Error('Quota exceeded')
+    return original.call(this, key, value)
+  })
+  store.setDraft(interaction.id, '')
+  await store.flush()
+  write.mockRestore()
+
+  await store.retainDraft(interaction)
+
+  expect(store.getSnapshot()).toEqual({})
+  window.dispatchEvent(
+    new StorageEvent('storage', { key: draftsKey, newValue: localStorage.getItem(draftsKey) })
+  )
+  expect(store.getSnapshot()).toEqual({})
+  stop()
+})

@@ -133,13 +133,14 @@ export function createInteractionDraftStore(accountKey: string) {
         // An acknowledgement retry must not replace newer edits.
         const alreadyRetained = nativeReply && retained?.nativeReplyIds.includes(nativeReply.id)
         const unsaved = pendingText.get(interaction.id)
-        const text = unsaved
-          ? unsaved
-          : nativeReply
-            ? nativeReply.text
-            : alreadyRetained && retained
-              ? retained.text
-              : draftText(previous)
+        const text =
+          unsaved !== undefined
+            ? unsaved || nativeReply?.text || ''
+            : nativeReply
+              ? nativeReply.text
+              : alreadyRetained && retained
+                ? retained.text
+                : draftText(previous)
         if (!text) {
           // A native reply must never be acknowledged without a recoverable copy.
           if (nativeReply) throw new Error('Native interaction reply has no recoverable text')
