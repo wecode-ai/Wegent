@@ -2,49 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::symlink;
 
 struct Fixture {
     binary: String,
     directory: tempfile::TempDir,
+    _catalog_environment: EnvRestore,
     _environment: LaunchEnvironment,
 }
 
 impl Fixture {
     fn new() -> Self {
         let environment = LaunchEnvironment::new();
+        let catalog_environment = EnvRestore::capture("WEGENT_TEST_CODEX_BUNDLED_CATALOG");
+        env::set_var(
+            "WEGENT_TEST_CODEX_BUNDLED_CATALOG",
+            crate::test_env::CODEX_BUNDLED_CATALOG,
+        );
         let directory = tempfile::tempdir().unwrap();
         let binary = directory.path().join("codex");
-        fs::write(
-            &binary,
-            crate::test_env::with_codex_bundled_catalog(r#"#!/bin/sh
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$CODEX_HOME/requests.jsonl"
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
-    *'"method":"skills/config/write"'*)
-      printf '%s\n' written > "$CODEX_HOME/skill-written"
-      printf '{"id":%s,"result":{"effectiveEnabled":false}}\n' "$id" ;;
-    *'"method":"config/batchWrite"'*)
-      mode=success
-      if [ -f "$CODEX_HOME/reload-mode" ]; then
-        IFS= read -r mode < "$CODEX_HOME/reload-mode"
-      fi
-      case "$mode" in
-        failure) printf '{"id":%s,"error":{"code":-32603,"message":"skill reload rejected"}}\n' "$id" ;;
-        blocked) ;;
-        *) printf '{"id":%s,"result":{"status":"ok"}}\n' "$id" ;;
-      esac ;;
-  esac
-done
-"#),
-        )
-        .unwrap();
-        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        // A parallel fork can retain a freshly written script's writer and cause ETXTBSY.
+        let script =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex-skill-config.sh");
+        symlink(script, &binary).unwrap();
         Self {
             binary: resolve_codex_binary(&binary.to_string_lossy()),
             directory,
+            _catalog_environment: catalog_environment,
             _environment: environment,
         }
     }
