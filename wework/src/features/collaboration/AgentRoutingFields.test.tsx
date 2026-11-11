@@ -46,6 +46,20 @@ function catalog(environments = [environment('1', [model])]) {
 }
 
 describe('agent routing editor', () => {
+  test('opening legacy routing preserves it until the user changes a routing field', async () => {
+    const api = catalog([])
+    const { result } = renderHook(() => useAgentRouting(api, 'codex', 'project', { defer: true }))
+    act(() => result.current.load(undefined, undefined))
+    expect(result.current.changed).toBe(false)
+    expect(result.current.valid).toBe(false)
+    act(() => result.current.activate())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.changed).toBe(false)
+    act(() => result.current.setExecutionPolicy({ mode: 'fixed', environment_id: 'unavailable' }))
+    expect(result.current.changed).toBe(true)
+    expect(result.current.valid).toBe(false)
+  })
+
   test('defaults new agents to automatic allocation without binding even the only native device', async () => {
     const api = { ...catalog(), listModels: vi.fn(async () => [cloudModel]) }
     const { result } = renderHook(() =>

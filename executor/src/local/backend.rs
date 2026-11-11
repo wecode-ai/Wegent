@@ -190,6 +190,7 @@ pub struct LocalBackendRunner<
     runtime_pull_pending: Arc<AtomicBool>,
     /// Latest backend-assigned record route id for this Runtime registration.
     device_route_id: Arc<Mutex<Option<String>>>,
+    external_plugin_auth_broker: bool,
 }
 
 impl<T, R> Drop for LocalBackendRunner<T, R>
@@ -365,7 +366,13 @@ where
             runtime_pull_lock: Arc::new(AsyncMutex::new(())),
             runtime_pull_pending: Arc::new(AtomicBool::new(false)),
             device_route_id: Arc::new(Mutex::new(None)),
+            external_plugin_auth_broker: false,
         }
+    }
+
+    pub(crate) fn with_external_plugin_auth_broker(mut self) -> Self {
+        self.external_plugin_auth_broker = true;
+        self
     }
 
     pub fn with_connection_status(mut self, connection_status: Arc<AtomicBool>) -> Self {

@@ -11,7 +11,7 @@ mod data_changes;
 pub mod graph;
 mod legacy;
 #[cfg(test)]
-mod mysql_tests;
+pub(crate) mod mysql_tests;
 mod plugin_publication;
 mod rows;
 mod runtime_profiles;

@@ -26,6 +26,8 @@
 - [外部知识库 MCP](./external-knowledge-mcp.md) - 受信任外部系统的知识库 MCP 集成
 - [外部 OAuth 2.0 接入](./external-oauth-integration.md) - Authorization Code、PKCE、userinfo、刷新与撤销
 
+- [插件本机执行与云端同步](./plugin-local-sync.md)
+
 ### 💬 Chat Shell
 
 - [Chat Shell 上下文治理](./chat-shell-context-governance.md) - Chat Shell 三阶段上下文治理总览
