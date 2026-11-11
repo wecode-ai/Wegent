@@ -10,6 +10,7 @@ import {
   verifySmartAppArchiveRegression,
 } from '../e2e/desktop/modules/smart-app-archive-regression.mjs'
 import { verifySmartAppMarketplaceIdentity } from '../e2e/desktop/modules/smart-app-marketplace-identity.mjs'
+import { verifyWorkbenchEntriesWithoutExperimentalFeatures } from '../e2e/desktop/modules/harness-app-fixture.mjs'
 
 // Protocol coverage only; harness-app-lifecycle retains real Electron, storage, and DSH in CI.
 async function archiveFixture({ rejectConfirmation = false, corruptVersion = null } = {}) {
@@ -463,3 +464,150 @@ test.each([
   )
   assert.equal(app.events.includes('screenshot:harness-apps-15d-deep-link-retry.png'), false)
 })
+
+function experimentalEntriesFixture({
+  applicationsVisible = 1,
+  applicationsHidden = 3,
+  menuVisible = 1,
+  menuHidden = 3,
+  blockedReadiness = null,
+} = {}) {
+  const active = '[data-workspace-tab-content][aria-hidden="false"]'
+  const events = []
+  let route = '/'
+  let experimental = true
+  let applicationsReady = false
+  let menuRequested = false
+  let menuReady = false
+  const entryNodes = (testId, count, owner, visible) =>
+    Array.from({ length: count }, () => ({ testId, owner, visible }))
+  const nodes = () => [
+    ...entryNodes('sites-workspace', applicationsHidden, { active: false }, false),
+    ...entryNodes('applications-tab-smart-app', applicationsHidden, { active: false }, false),
+    ...entryNodes('sites-workspace', Number(applicationsReady), { active: true }, route === '/sites'),
+    ...entryNodes(
+      'applications-tab-smart-app',
+      applicationsReady ? applicationsVisible : 0,
+      { active: true },
+      route === '/sites'
+    ),
+    ...entryNodes('workspace-tab-add', 1, null, route === '/'),
+    ...entryNodes('workspace-tab-add-menu', menuHidden, null, false),
+    ...entryNodes('workspace-tab-add-smart-app', menuHidden, null, false),
+    ...entryNodes('workspace-tab-add-menu', Number(menuReady), null, route === '/'),
+    ...entryNodes('workspace-tab-add-smart-app', menuReady ? menuVisible : 0, null, route === '/'),
+  ]
+  const query = (selector, visible) => {
+    const testId = selector.match(/\[data-testid="([^"]+)"\]/)?.[1]
+    assert.ok(testId, `Unsupported protocol fixture selector: ${selector}`)
+    return nodes().filter(
+      node =>
+        node.testId === testId &&
+        (!selector.includes('[data-workspace-tab-content]') || node.owner?.active) &&
+        (!visible || node.visible)
+    )
+  }
+  const phaseFor = selector => {
+    if (selector.includes('sites-workspace') || selector.includes('applications-tab-smart-app'))
+      return 'applications'
+    if (selector.includes('workspace-tab-add-menu') || selector.includes('workspace-tab-add-smart-app'))
+      return 'menu'
+    return null
+  }
+  const control = {
+    async command(action, selector, options = {}) {
+      if (action === 'navigate') {
+        route = options.value
+        assert.ok(['/settings/general', '/sites', '/'].includes(route))
+        if (route === '/sites') applicationsReady = false
+      } else if (selector.includes('general-experimental-features-toggle')) {
+        assert.equal(route, '/settings/general')
+        if (action === 'getAttribute') return String(experimental)
+        if (action === 'click') experimental = !experimental
+        else {
+          assert.equal(action, 'waitFor')
+          assert.equal(options.timeoutMs, 10_000)
+          if (selector.includes('aria-checked')) assert.equal(experimental, false)
+        }
+      } else if (action === 'click') {
+        assert.equal(selector, '[data-testid="workspace-tab-add"]')
+        assert.equal(query(selector, true).length, 1)
+        menuRequested = true
+        events.push('menu:requested')
+      } else if (action === 'waitFor') {
+        assert.equal(options.timeoutMs, 10_000)
+        const phase = phaseFor(selector)
+        if (!query(selector, options.visible).length && phase) {
+          assert.notEqual(blockedReadiness, phase, `${phase} readiness failed`)
+          assert.equal(experimental, false)
+          if (phase === 'applications') {
+            assert.equal(route, '/sites')
+            applicationsReady = true
+          } else {
+            assert.equal(menuRequested, true)
+            menuReady = true
+          }
+          events.push(`ready:${phase}`)
+        }
+        if (!query(selector, options.visible).length) {
+          events.push(`missing:${phase}`)
+          assert.fail(`${phase} has no matching visible entry`)
+        }
+      } else {
+        assert.equal(action, 'getElementCount')
+        const count = query(selector, options.visible).length
+        events.push(`count:${phaseFor(selector)}:${count}`)
+        return String(count)
+      }
+      return ''
+    },
+  }
+  return {
+    events,
+    run: () =>
+      verifyWorkbenchEntriesWithoutExperimentalFeatures(control, {
+        activeWorkspaceContentSelector: active,
+        uiTimeoutMs: 10_000,
+        captureScreenshot: async () => events.push('screenshot'),
+      }),
+  }
+}
+
+test('experimental-disabled entry checks wait for the current page and portal menu while excluding retained hidden entries', async () => {
+  const app = experimentalEntriesFixture()
+  await app.run()
+  assert.deepEqual(app.events, [
+    'ready:applications',
+    'count:applications:1',
+    'menu:requested',
+    'ready:menu',
+    'count:menu:1',
+    'screenshot',
+  ])
+})
+
+test.each([
+  { phase: 'applications', visible: 0, options: { applicationsVisible: 0, applicationsHidden: 1 } },
+  { phase: 'applications', visible: 2, options: { applicationsVisible: 2 } },
+  { phase: 'menu', visible: 0, options: { menuVisible: 0, menuHidden: 1 } },
+  { phase: 'menu', visible: 2, options: { menuVisible: 2 } },
+])('experimental-disabled checks reject $visible visible $phase entries', async entry => {
+  const app = experimentalEntriesFixture(entry.options)
+  await assert.rejects(app.run(), { code: 'ERR_ASSERTION' })
+  assert.ok(
+    app.events.includes(
+      entry.visible ? `count:${entry.phase}:${entry.visible}` : `missing:${entry.phase}`
+    )
+  )
+  assert.equal(app.events.includes('screenshot'), false)
+})
+
+test.each(['applications', 'menu'])(
+  'experimental-disabled checks propagate %s readiness failures before counting entries',
+  async phase => {
+    const app = experimentalEntriesFixture({ blockedReadiness: phase })
+    await assert.rejects(app.run(), new RegExp(`${phase} readiness failed`))
+    assert.equal(app.events.some(event => event.startsWith(`count:${phase}:`)), false)
+    assert.equal(app.events.includes('screenshot'), false)
+  }
+)

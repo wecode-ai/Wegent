@@ -130,6 +130,50 @@ export async function setExperimentalFeatures(control, enabled, uiTimeoutMs) {
   )
 }
 
+export async function verifyWorkbenchEntriesWithoutExperimentalFeatures(
+  control,
+  { uiTimeoutMs, captureScreenshot, activeWorkspaceContentSelector }
+) {
+  const applicationsPage = `${activeWorkspaceContentSelector} [data-testid="sites-workspace"]`
+  const applicationsEntry = `${activeWorkspaceContentSelector} [data-testid="applications-tab-smart-app"]`
+  const menuEntry = '[data-testid="workspace-tab-add-smart-app"]'
+  await setExperimentalFeatures(control, false, uiTimeoutMs)
+  await control.command('navigate', 'body', { value: '/sites' })
+  await control.command('waitFor', applicationsPage, {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', applicationsEntry, {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', applicationsEntry, { visible: true })),
+    1,
+    'Workbenches disappeared from Applications after experimental features were disabled'
+  )
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', '[data-testid="workspace-tab-add"]', { visible: true })
+  await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', menuEntry, {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', menuEntry, { visible: true })),
+    1,
+    'Workbenches disappeared after experimental features were disabled'
+  )
+  await captureScreenshot(control, 'harness-apps-16-experimental-disabled.png', 'body')
+}
+
 export async function waitForElementCount(control, selector, expected, timeoutMs, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
