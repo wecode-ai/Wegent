@@ -30,4 +30,6 @@ runs:
 
     - name: Prime the official Electron installer cache
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: node .github/scripts/prime-ci-electron-installer-cache.mjs

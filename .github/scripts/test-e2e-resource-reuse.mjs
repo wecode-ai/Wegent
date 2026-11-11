@@ -634,6 +634,12 @@ test("Linux native probes restore verified Electron downloads before the officia
     step.run?.includes("pnpm --dir wework/electron install --frozen-lockfile"),
   );
   assert.equal(moduleInstall.env.ELECTRON_SKIP_BINARY_DOWNLOAD, "1");
+  const installerPrime = action.find((step) =>
+    step.run?.includes(
+      "node .github/scripts/prime-ci-electron-installer-cache.mjs",
+    ),
+  );
+  assert.equal(installerPrime.env.GH_TOKEN, "${{ github.token }}");
   assert.equal(
     steps[installIndex].env.WEWORK_ELECTRON_DEPENDENCIES_READY,
     "true",
