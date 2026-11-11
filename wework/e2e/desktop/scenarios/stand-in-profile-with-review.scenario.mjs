@@ -399,6 +399,18 @@ export function createDesktopScenario(options) {
       assert.equal(review.enabled, true)
       assert.equal(review.timezone, 'Asia/Shanghai')
       assert.equal(review.schedule.expression, '30 10 * * 1')
+      assert.ok(review.nextRunAt, 'The scheduler must compute the next run for the edited timezone')
+      const savedNext = new Intl.DateTimeFormat('en-US', {
+        timeZone: review.timezone,
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(new Date(review.nextRunAt))
+      const savedNextPart = type => savedNext.find(part => part.type === type)?.value
+      assert.equal(savedNextPart('weekday'), 'Mon')
+      assert.equal(savedNextPart('hour'), '10')
+      assert.equal(savedNextPart('minute'), '30')
       await control.command('click', '[data-testid="stand-in-primary-profile-close"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
         visible: false,
