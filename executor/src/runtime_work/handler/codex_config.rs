@@ -88,6 +88,16 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn list_codex_models(&self, payload: Value) -> Result<Value, AppIpcError> {
         let _restart_guard = codex_app_server_restart_gate().lock().await;
+        self.read_codex_models(payload, None)
+            .await
+            .map(|(catalog, _)| catalog)
+    }
+
+    async fn read_codex_models(
+        &self,
+        payload: Value,
+        account_type: Option<&str>,
+    ) -> Result<(Value, bool), AppIpcError> {
         let query_id = uuid::Uuid::new_v4().to_string();
         let include_hidden = bool_field(&payload, "includeHidden")
             .or_else(|| bool_field(&payload, "include_hidden"));
@@ -136,13 +146,20 @@ impl RuntimeWorkRpcHandler {
                 .and_then(Value::as_str)
                 .map(str::trim)
                 == Some(RETIRED_CHATGPT_MODEL_ID);
+        let mut retired_default_replaced =
+            configured_default_is_retired && account_type == Some("chatgpt");
         if available
             && (configured_default_is_retired || models.iter().any(is_retired_chatgpt_model))
         {
             // The shared app-server uses Wework's router provider, where account/read
             // can return null even while the user's subscription auth is configured.
-            let account_type = super::codex_accounts::current_codex_account_type()
-                .map_err(|error| AppIpcError::new("codex_models_unavailable", error))?;
+            let account_type = match account_type {
+                Some(account_type) => Some(account_type.to_owned()),
+                None => super::codex_accounts::current_codex_account_type()
+                    .map_err(|error| AppIpcError::new("codex_models_unavailable", error))?,
+            };
+            retired_default_replaced =
+                configured_default_is_retired && account_type.as_deref() == Some("chatgpt");
             let before = models.len();
             remove_retired_chatgpt_models(
                 &mut models,
@@ -196,10 +213,79 @@ impl RuntimeWorkRpcHandler {
                 ),
             ],
         );
-        Ok(json!({
-            "data": models,
-            "providers": provider_results,
-        }))
+        Ok((
+            json!({
+                "data": models,
+                "providers": provider_results,
+            }),
+            retired_default_replaced,
+        ))
+    }
+
+    pub(super) async fn resolve_retired_codex_default(
+        &self,
+        request: &mut ExecutionRequest,
+    ) -> Result<bool, AppIpcError> {
+        if !crate::agents::codex_request_inherits_wework_default(request) {
+            return Ok(false);
+        }
+        // Ordinary defaults retain native resolution without a model discovery request.
+        // A failed probe also leaves the native config error on its original path.
+        let retired_default =
+            fs::read_to_string(crate::agents::wework_codex_home().join("config.toml"))
+                .ok()
+                .and_then(|content| content.parse::<toml_edit::DocumentMut>().ok())
+                .is_some_and(|config| {
+                    config
+                        .get("model")
+                        .and_then(|model| model.as_str())
+                        .map(str::trim)
+                        == Some(RETIRED_CHATGPT_MODEL_ID)
+                });
+        if !retired_default || crate::agents::configured_inference_model_provider() != "openai" {
+            return Ok(false);
+        }
+        let _restart_guard = codex_app_server_restart_gate().lock().await;
+        let account_type = super::codex_accounts::current_codex_account_type()
+            .map_err(|error| AppIpcError::new("codex_models_unavailable", error))?;
+        if account_type.as_deref() != Some("chatgpt") {
+            return Ok(false);
+        }
+        let (catalog, replaced) = self
+            .read_codex_models(json!({"includeHidden": false}), Some("chatgpt"))
+            .await?;
+        if !replaced {
+            return Ok(false);
+        }
+        let defaults: Vec<_> = catalog["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|model| {
+                model["isDefault"] == true
+                    && model["hidden"] != true
+                    && model["providerType"] == "official"
+            })
+            .collect();
+        let model = match defaults.as_slice() {
+            [model] => codex_model_id(model),
+            _ => None,
+        }
+        .filter(|model| model.trim() != RETIRED_CHATGPT_MODEL_ID)
+        .ok_or_else(|| {
+            AppIpcError::new(
+                "model_unavailable",
+                "The retired ChatGPT default has no available replacement; select a model",
+            )
+        })?;
+        let mut config = super::creation::codex_runtime_model_config(
+            model,
+            &json!("openai"),
+            &request.model_config,
+        );
+        config["wework_model_kind"] = json!("codex-official");
+        request.model_config = config;
+        Ok(true)
     }
 
     async fn request_model_discovery(
@@ -541,6 +627,109 @@ pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppI
 #[cfg(test)]
 mod configured_default_tests {
     use super::*;
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Isolate process-wide Codex configuration paths.
+    async fn retired_default_recovery_fails_when_the_native_catalog_is_empty_or_unavailable() {
+        use super::super::tests::{
+            install_native_history, isolated_runtime_work_handler, ScalarEnv,
+        };
+        let _lock = crate::test_env::lock();
+        let home = tempfile::tempdir().unwrap();
+        let _home = ScalarEnv::set("WEGENT_CODEX_HOME", home.path().to_str().unwrap());
+        fs::write(home.path().join("config.toml"), "model = \"gpt-5.5\"\n").unwrap();
+        fs::write(home.path().join("auth.json"), r#"{"auth_mode":"chatgpt"}"#).unwrap();
+        let (mut handler, root) = isolated_runtime_work_handler("retired-default-catalog-failure");
+        install_native_history(&mut handler, &root, vec![], None);
+        fs::write(
+            root.join("config_read.json"),
+            json!({"config":{"model":"gpt-5.5"}}).to_string(),
+        )
+        .unwrap();
+        fs::write(root.join("model_list.json"), json!({"data":[]}).to_string()).unwrap();
+        for unavailable in [false, true] {
+            if unavailable {
+                fs::write(
+                    root.join("model_list.error-once.json"),
+                    json!({"code":-32000,"message":"catalog unavailable"}).to_string(),
+                )
+                .unwrap();
+            }
+            let mut request = ExecutionRequest::default();
+            let original = request.model_config.clone();
+            let error = handler
+                .resolve_retired_codex_default(&mut request)
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "model_unavailable");
+            assert_eq!(request.model_config, original);
+        }
+        handler.codex_app_server.restart().await;
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn retired_default_recovery_preserves_explicit_model_sources_and_routes() {
+        for config in [
+            json!({"model_id":"selected"}),
+            json!({"env":{"model_id":"selected"}}),
+            json!({"codex_responses_compat_proxy":true,"codex_catalog_model_id":"selected"}),
+            json!({"model_provider":"custom"}),
+            json!({"api_key":"synthetic-api-key"}),
+            json!({"base_url":"https://model.invalid"}),
+        ] {
+            let request = ExecutionRequest {
+                model_config: config,
+                ..Default::default()
+            };
+            assert!(!crate::agents::codex_request_inherits_wework_default(
+                &request
+            ));
+        }
+        let request = ExecutionRequest {
+            bot: json!([{"agent_config":{"env":{"model_id":"selected"}}}]),
+            ..Default::default()
+        };
+        assert!(!crate::agents::codex_request_inherits_wework_default(
+            &request
+        ));
+        assert!(crate::agents::codex_request_inherits_wework_default(
+            &ExecutionRequest::default()
+        ));
+        let request = ExecutionRequest {
+            model_config: json!({"base_url":"https://ignored.invalid","api_key":"ignored",
+                "runtime_config":{"codex":{"use_user_config":true,"configured":true}}}),
+            ..Default::default()
+        };
+        assert!(crate::agents::codex_request_inherits_wework_default(
+            &request
+        ));
+    }
+
+    #[test]
+    fn native_default_recovery_keeps_per_request_options_and_runtime_proxy() {
+        let inherited = json!({"reasoning":{"effort":"high"},"service_tier":"priority",
+            "model_context_window":123456,"max_output_tokens":4096,"web_search":"disabled",
+            "runtime_config":{"codex":{"proxy_url":"http://proxy.invalid","use_user_config":false}}});
+        let config = super::super::creation::codex_runtime_model_config(
+            "recommended",
+            &json!("openai"),
+            &inherited,
+        );
+        assert_eq!(config["model_id"], "recommended");
+        assert_eq!(config["model_provider"], "openai");
+        assert_eq!(config["reasoning"], inherited["reasoning"]);
+        assert_eq!(config["service_tier"], inherited["service_tier"]);
+        for key in ["model_context_window", "max_output_tokens", "web_search"] {
+            assert_eq!(config[key], inherited[key]);
+        }
+        assert_eq!(
+            config["runtime_config"]["codex"]["proxy_url"],
+            "http://proxy.invalid"
+        );
+        assert_eq!(config["runtime_config"]["codex"]["use_user_config"], true);
+        assert_eq!(config["runtime_config"]["codex"]["configured"], true);
+    }
 
     #[test]
     fn retired_configured_default_uses_the_surviving_native_recommendation() {

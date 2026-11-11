@@ -3,6 +3,7 @@ use super::*;
 
 mod cloud_options;
 mod models;
+pub(super) use models::codex_runtime_model_config;
 #[cfg(test)]
 mod tests;
 

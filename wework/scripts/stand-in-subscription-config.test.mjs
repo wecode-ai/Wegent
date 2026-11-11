@@ -4,7 +4,50 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { PassThrough } from 'node:stream'
 import { test } from 'vitest'
-import { createSubscriptionConfigRegression } from '../e2e/desktop/modules/stand-in-subscription-config.mjs'
+import {
+  assertSubscriptionModelRequest,
+  createSubscriptionConfigRegression,
+  implicitSubscriptionTask,
+} from '../e2e/desktop/modules/stand-in-subscription-config.mjs'
+
+test('the implicit subscription regression submits no explicit fallback model', () => {
+  const task = implicitSubscriptionTask(41, '/fixture/workspace')
+  for (const key of ['modelSelection', 'modelId', 'modelOptions', 'modelConfig']) {
+    assert.equal(Object.hasOwn(task, key), false)
+  }
+  assert.deepEqual(task.executionRequest.model_config, {})
+  assert.equal(task.executionRequest.user_id, 41)
+  assert.equal(task.workspacePath, '/fixture/workspace')
+  assert.equal(task.executionRequest.new_session, true)
+  assert.equal(task.executionRequest.prompt, task.message)
+})
+
+test('the model service requires the measured default and exact subscription identity', () => {
+  const request = {
+    headers: {
+      authorization: 'Bearer synthetic-subscription-access',
+      'chatgpt-account-id': 'stand-in-config-e2e',
+    },
+  }
+  assert.doesNotThrow(() =>
+    assertSubscriptionModelRequest(request, { model: 'catalog-default' }, 'catalog-default')
+  )
+  assert.throws(() =>
+    assertSubscriptionModelRequest(request, { model: 'gpt-5.5' }, 'catalog-default')
+  )
+  assert.throws(() =>
+    assertSubscriptionModelRequest(request, { model: 'gpt-6.1-sol' }, 'catalog-default')
+  )
+  assert.doesNotThrow(() => assertSubscriptionModelRequest(request, { model: 'gpt-6.1-sol' }))
+  for (const headers of [
+    { ...request.headers, authorization: 'Bearer unrelated-api-key' },
+    { ...request.headers, 'chatgpt-account-id': 'unrelated-account' },
+  ]) {
+    assert.throws(() =>
+      assertSubscriptionModelRequest({ headers }, { model: 'catalog-default' }, 'catalog-default')
+    )
+  }
+})
 
 function refusedUpgrade(url = '/backend-api/codex/responses') {
   const server = createServer()

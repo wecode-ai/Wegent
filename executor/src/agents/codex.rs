@@ -5013,6 +5013,19 @@ fn project_plugin_config_overrides(request: &ExecutionRequest) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn codex_request_inherits_wework_default(request: &ExecutionRequest) -> bool {
+    codex_request_model(request).is_none()
+        && super::instance_home::request_home(request).is_none()
+        && explicit_model_provider(&request.model_config)
+            .map_or(true, |provider| provider == "openai")
+        && (use_user_runtime_config(&request.model_config)
+            || (api_key(&request.model_config).is_none()
+                && matches!(
+                    local_model_proxy::upstream_from_model_config(&request.model_config),
+                    Ok(None)
+                )))
+}
+
 fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
     let compat_proxy = bool_value(
         request
@@ -5679,7 +5692,7 @@ fn normalize_reasoning_effort(value: Option<&str>) -> String {
     let aliased = normalize_reasoning_effort_alias(value.unwrap_or_default());
     if matches!(
         aliased.as_str(),
-        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+        "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
     ) {
         aliased
     } else {

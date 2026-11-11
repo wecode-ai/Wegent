@@ -7,15 +7,44 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { rejectModelWebSocketUpgrade } from './reject-model-upgrade.mjs'
 import { MODEL_PROVIDER_ID } from './shared.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
+import { until } from './plugin-regression-fixture.mjs'
 
 const MODEL = 'gpt-6.1-sol'
 const ACCOUNT = 'stand-in-config-e2e'
 const MARKER = 'SUBSCRIPTION_CONFIG_RELOAD'
+const IMPLICIT_TASK = `${MARKER}-model-less`
+
+export function implicitSubscriptionTask(userId, workspacePath) {
+  return {
+    taskId: IMPLICIT_TASK,
+    title: IMPLICIT_TASK,
+    runtime: 'codex',
+    workspacePath,
+    message: IMPLICIT_TASK,
+    clientUserMessageId: `${IMPLICIT_TASK}-initial`,
+    executionRequest: {
+      task_id: IMPLICIT_TASK,
+      subtask_id: `${IMPLICIT_TASK}-initial`,
+      user_id: userId,
+      prompt: IMPLICIT_TASK,
+      new_session: true,
+      bot: [{ shell_type: 'Codex', name: 'Implicit subscription default regression' }],
+      model_config: {},
+    },
+  }
+}
+
+export function assertSubscriptionModelRequest(request, body, expectedModel = MODEL) {
+  assert.equal(body.model, expectedModel)
+  assert.equal(request.headers.authorization, 'Bearer synthetic-subscription-access')
+  assert.equal(request.headers['chatgpt-account-id'], ACCOUNT)
+}
 
 export function createSubscriptionConfigRegression() {
   let server
   let accountChecks = 0
   let modelRequests = 0
+  let implicitRequest
   return {
     async prepareApp({ appEnvironment, codexHome, control }) {
       delete appEnvironment.OPENAI_API_KEY
@@ -83,9 +112,12 @@ export function createSubscriptionConfigRegression() {
     },
     acceptsModelRequest(request, url, body) {
       if (url.pathname !== '/backend-api/codex/responses') return false
-      assert.equal(body.model, MODEL)
-      assert.equal(request.headers.authorization, 'Bearer synthetic-subscription-access')
-      assert.equal(request.headers['chatgpt-account-id'], ACCOUNT)
+      const latestUser = (body.input ?? []).filter(item => item.role === 'user').at(-1)
+      const implicit = JSON.stringify(latestUser?.content ?? '').includes(IMPLICIT_TASK)
+      if (implicit)
+        assert.ok(implicitRequest, 'An implicit task must have a measured native default')
+      assertSubscriptionModelRequest(request, body, implicit ? implicitRequest.model : MODEL)
+      if (implicit) implicitRequest.calls += 1
       modelRequests += 1
       return true
     },
@@ -218,6 +250,56 @@ export function createSubscriptionConfigRegression() {
           [expectedDefault.model ?? expectedDefault.id],
           'Background work and the picker must receive the same effective default'
         )
+        const defaultModel = expectedDefault.model ?? expectedDefault.id
+        assert.notEqual(defaultModel, 'gpt-5.5', 'The implicit native default must be available')
+        const savedConfig = await native('config/read', { includeLayers: false, cwd: null })
+        assert.equal(savedConfig.config.model, 'gpt-5.5')
+        assert.equal(savedConfig.config.model_provider, 'openai')
+        implicitRequest = { model: defaultModel, calls: 0 }
+        const intent = implicitSubscriptionTask(userId, workspacePath)
+        for (const key of ['modelSelection', 'modelId', 'modelOptions']) {
+          assert.equal(
+            Object.hasOwn(intent, key),
+            false,
+            'The task must use implicit model selection'
+          )
+        }
+        assert.deepEqual(intent.executionRequest.model_config, {})
+        await rpc('runtime.tasks.create', intent)
+        await until(
+          () => rpc('runtime.tasks.get', { taskId: IMPLICIT_TASK }),
+          result => {
+            assert.notEqual(result.task?.status, 'failed', JSON.stringify(result))
+            return result.task?.status === 'done' && result.task.running !== true
+          },
+          'The implicit task did not finish through the corrected native default',
+          modelResponseTimeoutMs
+        )
+        assert.ok(
+          implicitRequest.calls > 0,
+          'The model-less task must reach the subscription service'
+        )
+        await until(
+          () => rpc('runtime.tasks.transcript', { taskId: IMPLICIT_TASK, limit: 50 }),
+          transcript =>
+            transcript.messages.some(
+              message =>
+                message.role === 'user' && JSON.stringify(message.content).includes(IMPLICIT_TASK)
+            ) &&
+            transcript.messages.some(
+              message =>
+                message.role === 'assistant' &&
+                JSON.stringify(message.content).includes('已完成任务，等待检查。')
+            ),
+          'The real implicit task transcript must contain its request and the model service answer'
+        )
+        const unchanged = await native('config/read', { includeLayers: false, cwd: null })
+        assert.equal(
+          unchanged.config.model,
+          'gpt-5.5',
+          'Execution must not rewrite the saved default'
+        )
+        assert.equal(unchanged.config.model_provider, 'openai')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
         await openStandInSettings(control)
@@ -239,7 +321,27 @@ export function createSubscriptionConfigRegression() {
           visible: false,
         })
       } finally {
-        await setCatalogConfig(MODEL_PROVIDER_ID, previousModel)
+        try {
+          if (implicitRequest) {
+            const result = await rpc('runtime.tasks.get', { taskId: IMPLICIT_TASK })
+            if (result.task) {
+              assert.equal(
+                (await rpc('runtime.tasks.archive', { taskId: IMPLICIT_TASK })).accepted,
+                true
+              )
+              const deleted = await rpc('runtime.archived_conversations.delete', {
+                taskId: IMPLICIT_TASK,
+              })
+              assert.equal(deleted.accepted, true)
+              assert.equal(deleted.deleted, true)
+            } else {
+              assert.equal(result.code, 'task_not_found')
+            }
+          }
+        } finally {
+          implicitRequest = undefined
+          await setCatalogConfig(MODEL_PROVIDER_ID, previousModel)
+        }
       }
       assert.ok(accountChecks > 0, 'The real Codex subscription routing resolver must run')
     },
