@@ -26,6 +26,8 @@ export function showStartupRecovery(error: unknown): Promise<BrowserWindow> {
 }
 
 async function openRecoveryWindow(): Promise<BrowserWindow> {
+  // A failed release handoff may have prohibited the bridge from showing UI.
+  if (process.platform === 'darwin') app.setActivationPolicy('regular')
   const dist = resolve(dirname(fileURLToPath(import.meta.url)), '..')
   const window = new BrowserWindow({
     title: 'Wework',

@@ -13,6 +13,7 @@ const fixture = vi.hoisted(() => ({
     once: vi.fn(),
   },
   create: vi.fn(),
+  activationPolicy: vi.fn(),
   quit: vi.fn(),
   relaunch: vi.fn(),
   copy: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('electron', () => ({
     quit: fixture.quit,
     relaunch: fixture.relaunch,
     getPath: () => '/logs',
+    setActivationPolicy: fixture.activationPolicy,
   },
   BrowserWindow: class {
     constructor(options: unknown) {
@@ -70,6 +72,8 @@ test('opens a recovery window without using persistent profile storage or exitin
     })
   )
   expect(fixture.window.show).toHaveBeenCalledOnce()
+  if (process.platform === 'darwin')
+    expect(fixture.activationPolicy).toHaveBeenCalledWith('regular')
   expect(fixture.quit).not.toHaveBeenCalled()
   expect(fixture.relaunch).not.toHaveBeenCalled()
   const invoke = fixture.handlers.get('startup-recovery-window')!
