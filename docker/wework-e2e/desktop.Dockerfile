@@ -12,8 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
+    file \
     fontconfig \
     fonts-noto-cjk \
+    gdb \
     gnupg \
     gh \
     git \
@@ -34,6 +36,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxss1 \
     mysql-server \
     openbox \
+    openjdk-21-jre-headless \
+    pcmanfm \
     python3 \
     python3-venv \
     redis-server \
@@ -41,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     umoci \
     x11-utils \
+    xdg-utils \
     xvfb \
     zstd \
   && curl --proto '=https' --tlsv1.2 -fsSL \
@@ -60,6 +65,10 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 ENV IS_SANDBOX=1
 
 RUN node --version \
+  && java -version \
+  && keytool -help >/dev/null \
+  && gdb --version \
+  && command -v file xdg-mime pcmanfm \
   && fc-match --format '%{family}\n' ':lang=zh-cn' | grep -F 'Noto Sans CJK' \
   && pnpm --version \
   && gh --version \
