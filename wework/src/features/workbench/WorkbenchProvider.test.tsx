@@ -3514,7 +3514,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.status') return { apps: [] }
+        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -4444,15 +4444,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('runtime-record-70')
     await waitFor(() =>
       expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
-        'runtime.connectors.status'
+        'runtime.connectors.apps.sync',
+        { apps: [] }
       )
     )
     expect(listWegentInstalledConnectorApps).toHaveBeenCalled()
-    expect(
-      localExecutorMocks.requestLocalExecutor.mock.calls.some(
-        ([method]) => method === 'runtime.connectors.apps.sync'
-      )
-    ).toBe(false)
 
     act(() => {
       window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
