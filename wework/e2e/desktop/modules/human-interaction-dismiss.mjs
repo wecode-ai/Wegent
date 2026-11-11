@@ -63,7 +63,13 @@ export async function verifyInteractionArchiving(control, timeoutMs, taskId) {
     const waitForHistoryItem = async () => {
       const attemptTimeoutMs = Math.min(timeoutMs, 20_000)
       await control.command('click', `${PAGE} [data-testid="interactions-history"]`)
+      const revision = Number(
+        await control.command('getAttribute', PAGE, { value: 'data-refresh-revision' })
+      )
       await control.command('clickWhenEnabled', `${PAGE} [data-testid="interactions-refresh"]`, {
+        timeoutMs: attemptTimeoutMs,
+      })
+      await control.command('waitFor', `${PAGE}[data-refresh-revision="${revision + 1}"]`, {
         timeoutMs: attemptTimeoutMs,
       })
       await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
@@ -79,12 +85,7 @@ export async function verifyInteractionArchiving(control, timeoutMs, taskId) {
         timeoutMs: attemptTimeoutMs,
       })
     }
-    try {
-      await waitForHistoryItem()
-    } catch {
-      // The inbox can keep serving the previous poll until the refresh lands.
-      await waitForHistoryItem()
-    }
+    await waitForHistoryItem()
     await control.command('click', `${PAGE} [data-testid="interaction-list-item"]`)
     if (item.mode === 'external') {
       await control.command('click', `${PAGE} [data-testid="interaction-open-original"]`)
