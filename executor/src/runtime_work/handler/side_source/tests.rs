@@ -1,6 +1,18 @@
 use super::*;
 use crate::runtime_work::handler::tests::{install_native_history, ScalarEnv};
 
+async fn initialized_native_history(root: &Path) -> RuntimeWorkRpcHandler {
+    let mut handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
+    install_native_history(&mut handler, root, vec![], None);
+    // Process initialization is a fixture prerequisite, not side-source readiness.
+    handler
+        .codex_app_server
+        .ensure_started()
+        .await
+        .expect("native history fixture must initialize before testing side-source metadata");
+    handler
+}
+
 #[test]
 fn persisted_side_source_is_resolved_by_id_outside_the_default_provider_catalog() {
     let _lock = crate::test_env::lock();
@@ -14,8 +26,7 @@ fn persisted_side_source_is_resolved_by_id_outside_the_default_provider_catalog(
                 .into_iter()
                 .map(|key| ScalarEnv::set(key, root.path().to_str().unwrap()))
                 .collect();
-            let mut handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
-            install_native_history(&mut handler, root.path(), vec![], None);
+            let handler = initialized_native_history(root.path()).await;
             let path = root.path().join("source.jsonl");
             fs::write(&path, metadata("source")).unwrap();
             fs::write(
@@ -70,8 +81,7 @@ fn side_source_rejects_missing_or_mismatched_native_metadata() {
                 .into_iter()
                 .map(|key| ScalarEnv::set(key, root.path().to_str().unwrap()))
                 .collect();
-            let mut handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
-            install_native_history(&mut handler, root.path(), vec![], None);
+            let handler = initialized_native_history(root.path()).await;
             for response in [json!({}), json!({"thread":{"id":"another-source"}})] {
                 fs::write(root.path().join("thread_read.json"), response.to_string()).unwrap();
                 let mut source = SideSourceThread {
