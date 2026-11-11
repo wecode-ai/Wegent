@@ -6,7 +6,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -155,9 +155,12 @@ impl LocalTaskStore {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self, TaskRuntimeError> {
+        let started = Instant::now();
         let _initialization = LOCAL_TASK_STORE_INITIALIZATION
             .lock()
             .map_err(|_| TaskRuntimeError::LockPoisoned)?;
+        let lock_wait_ms = started.elapsed().as_millis();
+        let open_started = Instant::now();
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -167,7 +170,18 @@ impl LocalTaskStore {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
+        let open_ms = open_started.elapsed().as_millis();
+        let migration_started = Instant::now();
         migrate(&connection)?;
+        crate::logging::log_executor_event(
+            "task store initialization finished",
+            &[
+                ("lock_wait_ms", lock_wait_ms.to_string()),
+                ("open_ms", open_ms.to_string()),
+                ("migration_ms", migration_started.elapsed().as_millis().to_string()),
+                ("total_ms", started.elapsed().as_millis().to_string()),
+            ],
+        );
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             path,

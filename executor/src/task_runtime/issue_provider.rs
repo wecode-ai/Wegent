@@ -5,6 +5,7 @@
 use std::{
     fs,
     path::{Component, Path, PathBuf},
+    time::Instant,
 };
 
 use base64::{
@@ -21,7 +22,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use url::{form_urlencoded::byte_serialize, Url};
 
-use crate::logging::{format_executor_log, write_executor_log_line};
+use crate::logging::{format_executor_log, log_executor_event, write_executor_log_line};
 
 use super::{
     credentials::decrypt_provider_credential, BinaryInput, IssueComment, LoopItem, TaskAttachment,
@@ -46,10 +47,15 @@ pub(crate) struct IssueProvider {
 
 impl IssueProvider {
     pub(crate) fn new(database_path: PathBuf) -> Result<Self, TaskRuntimeError> {
+        let started = Instant::now();
         let client = Client::builder()
             .user_agent(concat!("wegent-executor/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(provider_error)?;
+        log_executor_event(
+            "issue provider HTTP client initialized",
+            &[("elapsed_ms", started.elapsed().as_millis().to_string())],
+        );
         Ok(Self {
             client,
             database_path,
