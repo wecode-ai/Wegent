@@ -44,3 +44,22 @@ async fn empty_subtask_ids_do_not_issue_a_statement() {
     );
     assert!(mysql.queries().is_empty());
 }
+
+/// Read the full result without asking MySQL to sort the JSON payload.
+#[tokio::test]
+async fn the_full_subtask_listing_avoids_filesort() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let listing = ordered_subtasks_by_task(&mysql, "subtasks_0057", 7_834_020_499_795)
+        .await
+        .unwrap();
+    assert!(listing.rows.is_empty());
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    assert!(!queries[0].sql.contains("ORDER BY"), "{}", queries[0].sql);
+    assert!(
+        !queries[0].sql.contains("status != 'DELETE'"),
+        "{}",
+        queries[0].sql
+    );
+    assert_eq!(queries[0].first_integer, Some(7_834_020_499_795));
+}

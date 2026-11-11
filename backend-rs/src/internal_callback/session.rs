@@ -45,6 +45,14 @@ fn set_ex_options() -> SetOptions {
     SetOptions::default().with_expiration(SetExpiration::Seconds(STREAMING_TTL))
 }
 
+/// `settings.STREAMING_REDIS_TTL` (300 seconds): the context-metrics snapshot
+/// uses the shorter cache TTL, unlike the one-hour streaming state.
+pub(crate) const CONTEXT_METRICS_TTL: u64 = 300;
+
+fn context_metrics_options() -> SetOptions {
+    SetOptions::default().with_expiration(SetExpiration::Seconds(CONTEXT_METRICS_TTL))
+}
+
 pub(crate) fn streaming_key(subtask_id: i64) -> String {
     format!("{STREAMING_KEY_PREFIX}{subtask_id}")
 }
@@ -148,6 +156,9 @@ pub(crate) async fn touch_task_streaming_activity<R: Redis>(
 }
 
 /// `save_context_metrics`: cache the latest context-metrics snapshot.
+///
+/// The source passes `settings.STREAMING_REDIS_TTL` (300 seconds), so this key
+/// expires earlier than the one-hour streaming state.
 pub(crate) async fn save_context_metrics<R: Redis>(
     redis: &R,
     subtask_id: i64,
@@ -155,9 +166,13 @@ pub(crate) async fn save_context_metrics<R: Redis>(
 ) -> RedisResult<()> {
     let payload = orjson_dumps(context_metrics);
     redis
-        .set_with(context_metrics_key(subtask_id), payload, set_ex_options())
-        .await?;
-    Ok(())
+        .set_with(
+            context_metrics_key(subtask_id),
+            payload,
+            context_metrics_options(),
+        )
+        .await
+        .map(|_| ())
 }
 
 /// `publish_callback_event`: publish the serialized event to the subtask's

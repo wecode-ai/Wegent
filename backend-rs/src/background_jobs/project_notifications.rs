@@ -14,7 +14,10 @@ use serde_json::{Value, json};
 
 #[path = "project_notifications_im.rs"]
 mod im;
-pub(crate) use im::send_im;
+pub(crate) use im::{
+    DingTalkAccessToken, active_dingtalk_channel_config, dingtalk_access_token,
+    dingtalk_credentials, send_im, send_text, telegram_message,
+};
 
 pub(crate) struct Pending {
     notification: Value,
@@ -97,7 +100,7 @@ pub(crate) async fn create_on(
     let project = payload["projectId"].as_str().unwrap_or("");
     let issue = payload["itemId"].as_str().unwrap_or("");
     let encode = crate::board_snapshot::external_provider::url_encode_path;
-    let url = if project.is_empty() {
+    let mut url = if project.is_empty() {
         String::new()
     } else if issue.is_empty() {
         format!("wework://boards/{}", encode(project))
@@ -108,6 +111,13 @@ pub(crate) async fn create_on(
             encode(issue)
         )
     };
+    if !issue.is_empty()
+        && !url.is_empty()
+        && let Some(comment) = payload["commentId"].as_str().filter(|id| !id.is_empty())
+    {
+        url.push_str("/comments/");
+        url.push_str(&encode(comment));
+    }
     if channels.in_app {
         tx.execute("INSERT INTO wework_notifications (id,user_id,actor_user_id,kind,title,body,url,payload,created_at,is_read,read_status_changed_at) VALUES (?,?,?,?,?,?,?,?,?,false,?)",(id.as_str(),user,actor,kind,title,body,url.as_str(),Json(payload.clone()),now,now)).await?;
     }
@@ -349,12 +359,21 @@ pub(crate) async fn deliver(state: &AppState, pending: Pending) {
         if pending.channels.system && notification["kind"] == "assignment" {
             frames.push(json!({"event":"project.task.assigned","payload":notification["payload"]}));
         }
+        let room = format!("wework-runtime:user:{user}");
         for frame in frames {
+            crate::socketio::runtime::deliver_local_emit(
+                "/wework-runtime",
+                "runtime:event",
+                &room,
+                None,
+                &frame,
+            )
+            .await;
             let message = crate::socketio_emit::emit_message(
                 "runtime:event",
                 &serde_json::to_string(&json!([frame])).expect("JSON value"),
                 "/wework-runtime",
-                &format!("wework-runtime:user:{user}"),
+                &room,
             );
             if let Err(error) = redis
                 .publish(crate::socketio_emit::SOCKETIO_CHANNEL, message)

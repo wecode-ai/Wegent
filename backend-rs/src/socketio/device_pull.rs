@@ -12,7 +12,7 @@
 //! 1. an optional `runner_catalog` capability report is validated and stored
 //!    under the device's `spec.runnerCatalog`;
 //! 2. the per-runtime Redis lock `wegent:lock:robot_exec:{owner}:runtime:{id}`
-//!    serializes claims (`SET … EX 30 NX`, released with `DEL`);
+//!    serializes claims with a token-owned Redis lease;
 //! 3. `runtime.tasks.pull` claims one queued execution for the session's
 //!    execution target (unconfirmed redelivery first, then the priority/FIFO
 //!    queue);
@@ -20,10 +20,11 @@
 //!
 //! Claim delivery and the persisted Runtime request compilation are not ported
 //! yet (their Runtime payload builder and issue TaskBinding are separate source
-//! modules). If this request would claim work, the handler fails explicitly
-//! with `NOT_IMPLEMENTED` before mutating any row rather than reporting a
-//! fabricated empty result. The recorded `/socket.io/` case exercises only the
-//! no-work branch, which is reproduced here through the real queries and lock.
+//! modules). The queue read is followed by the source's claimability and
+//! occupancy filters, so a pull that admits no eligible row acknowledges
+//! `task: null`; only a row that survives those filters reaches the unported
+//! delivery branch, which fails explicitly with `NOT_IMPLEMENTED` before
+//! reserving the selected execution.
 
 use std::sync::Arc;
 
@@ -38,32 +39,23 @@ use crate::device_identity::{
     resolve_runtime_route_identity,
 };
 use crate::json_compat::python_str;
-use crate::loop_tasks::loop_repository::EXECUTION_COLUMNS;
 use crate::socketio::device::DeviceType;
+use crate::socketio::device_pull_claim as claim;
 use crate::socketio::runner_catalog;
 use crate::socketio::session::SessionSnapshot;
-use crate::sql_support::StatementArg;
 use crate::state::AppState;
 
 /// `DEVICE_PULL_LOCK_SECONDS`.
 const DEVICE_PULL_LOCK_SECONDS: u64 = 30;
 
-/// `assignment_pending` compiled by the source's hybrid property. The trailing
-/// comparison is supplied by the caller (`= 1` in the preparation scan, `= 0`
-/// in the claim queue, where `~assignment_pending` applies).
-const ASSIGNMENT_REQUEST_OBJECT_EXPR: &str = "coalesce(lower(json_type(JSON_EXTRACT(JSON_EXTRACT(CASE WHEN (json_valid(loop_item_executions.execution_payload) = 1) THEN loop_item_executions.execution_payload ELSE '{}' END, '$.\"runtime_selection\"'), '$.\"assignment_request\"'))) = 'object', 0)";
-
-/// `uses_runner_routing` compiled by the source's hybrid property.
-const USES_RUNNER_ROUTING_EXPR: &str = "coalesce(lower(json_type(CASE WHEN (lower(json_type(JSON_EXTRACT(CASE WHEN (json_valid(loop_item_executions.execution_payload) = 1) THEN loop_item_executions.execution_payload ELSE '{}' END, '$.\"runtime_selection\"'))) = 'object') THEN JSON_EXTRACT(JSON_EXTRACT(CASE WHEN (json_valid(loop_item_executions.execution_payload) = 1) THEN loop_item_executions.execution_payload ELSE '{}' END, '$.\"runtime_selection\"'), '$.\"runner_routing\"') ELSE JSON_EXTRACT(CASE WHEN (json_valid(loop_item_executions.execution_payload) = 1) THEN loop_item_executions.execution_payload ELSE '{}' END, '$.\"runner_routing\"') END)) = 'object', 0) = 1";
-
 /// One pull request's session-derived arguments.
 #[derive(Debug)]
-struct PullCommand<'a> {
-    owner_user_id: i64,
-    runtime_device_id: &'a str,
-    execution_target_id: &'a str,
-    runtime_instance_id: &'a str,
-    environment: &'static str,
+pub(super) struct PullCommand<'a> {
+    pub(super) owner_user_id: i64,
+    pub(super) runtime_device_id: &'a str,
+    pub(super) execution_target_id: &'a str,
+    pub(super) runtime_instance_id: &'a str,
+    pub(super) environment: &'static str,
     runner_catalog: Option<&'a Value>,
 }
 
@@ -78,18 +70,9 @@ pub(crate) async fn pull(
         Ok(command) => command,
         Err(ack) => return Ok(ack),
     };
-    let outcome = pull_execution(app, &command).await.map_err(|error| {
+    pull_execution(app, &command).await.map_err(|error| {
         tracing::error!(%error, "runtime.tasks.pull failed");
         ClientError::new("INTERNAL_ERROR", "Runtime task pull failed")
-    })?;
-    Ok(match outcome {
-        PullOutcome::Ack(ack) => ack,
-        PullOutcome::Uncollected => {
-            return Err(ClientError::new(
-                "NOT_IMPLEMENTED",
-                "runtime.tasks.pull execution delivery is not implemented",
-            ));
-        }
     })
 }
 
@@ -127,19 +110,10 @@ fn pull_command<'a>(
     })
 }
 
-/// One `pull_execution` result: a business ACK, or the source's unported
-/// claim-delivery branch.
-enum PullOutcome {
-    Ack(Value),
-    Uncollected,
-}
-
-async fn pull_execution(app: &AppState, command: &PullCommand<'_>) -> MysqlResult<PullOutcome> {
+async fn pull_execution(app: &AppState, command: &PullCommand<'_>) -> anyhow::Result<Value> {
     if let Some(catalog) = command.runner_catalog {
         let Some(normalized) = runner_catalog::normalize(catalog) else {
-            return Ok(PullOutcome::Ack(
-                json!({"success": false, "error": "Invalid runner capability report"}),
-            ));
+            return Ok(json!({"success": false, "error": "Invalid runner capability report"}));
         };
         match save_catalog(
             app,
@@ -151,108 +125,127 @@ async fn pull_execution(app: &AppState, command: &PullCommand<'_>) -> MysqlResul
         {
             CatalogOutcome::Saved => {}
             CatalogOutcome::NotAuthorized => {
-                return Ok(PullOutcome::Ack(
-                    json!({"success": false, "error": "Runner is no longer authorized"}),
-                ));
+                return Ok(json!({"success": false, "error": "Runner is no longer authorized"}));
             }
         }
     }
 
-    let acquired = acquire_lock(app, command.owner_user_id, command.runtime_instance_id).await;
-    let claimed = if acquired {
-        claim_execution(app, command).await
-    } else {
-        // The lock holder is already claiming; the source still reports an
-        // empty pull.
-        Ok(PullOutcome::Ack(json!({"success": true, "task": null})))
-    };
-    // `acquire_context` releases the lock in a `finally`, including when the
-    // guarded body raises.
-    if acquired {
-        release_lock(app, command.owner_user_id, command.runtime_instance_id).await;
-    }
-    let claimed = claimed?;
-
-    let mut ack = match claimed {
-        PullOutcome::Ack(ack) => ack,
-        PullOutcome::Uncollected => return Ok(PullOutcome::Uncollected),
-    };
+    let key = lock_key(command.owner_user_id, command.runtime_instance_id);
+    let mut ack = match acquire_lock(app, &key).await {
+        PullLock::Busy => Ok(json!({"success": true, "task": null})),
+        PullLock::Unavailable => claim_execution(app, command).await,
+        PullLock::Owned(token) => {
+            let result = claim_execution(app, command).await;
+            release_lock(app, &key, &token).await;
+            result
+        }
+    }?;
     ack["workspace_cleanup_intents"] =
         Value::Array(pull_due(app, command.owner_user_id, command.runtime_device_id).await?);
-    Ok(PullOutcome::Ack(ack))
+    Ok(ack)
 }
 
 /// `_claim_execution`: redeliver an unconfirmed claim, otherwise claim the
 /// next eligible queued run.
-async fn claim_execution(app: &AppState, command: &PullCommand<'_>) -> MysqlResult<PullOutcome> {
+async fn claim_execution(app: &AppState, command: &PullCommand<'_>) -> anyhow::Result<Value> {
     if let Some(reserved) = unconfirmed_claim(app, command).await? {
-        // Delivering the redelivered payload needs the Runtime request
-        // builder, which is not ported yet.
-        tracing::info!(
-            execution_id = reserved.id,
-            "runtime.tasks.pull would redeliver an unconfirmed execution"
-        );
-        return Ok(PullOutcome::Uncollected);
+        let Some(mut prepared) = claim::redelivery_preparation(&reserved) else {
+            return Ok(json!({
+                "success": false, "task": null, "error": "Claimed execution has no Runtime task identity"
+            }));
+        };
+        let payload =
+            super::device_pull_payload::compile_request(app, command, &reserved, &mut prepared)
+                .await?;
+        if claim::renew_redelivery(app, command, &reserved).await? {
+            return Ok(delivery(reserved.id, &prepared.runtime_task_id, payload));
+        }
+        return Ok(json!({"success": true, "task": null}));
     }
-    let pending = prepare_candidates(app).await?;
-    if let Some(candidate) = pending.first() {
-        // `prepare_queued_assignments` mutates queued rows in this session
-        // before the claim scan; that assignment preparation is not ported
-        // into the pull path yet.
-        tracing::info!(
-            execution_id = candidate.id,
-            loop_item_id = %candidate.loop_item_id,
-            candidates = pending.len(),
-            "runtime.tasks.pull would prepare queued assignments"
-        );
-        return Ok(PullOutcome::Uncollected);
-    }
+    crate::background_jobs::robot::prepare_queued_assignments(app).await?;
     let identities =
         owned_execution_device_ids(app, command.owner_user_id, command.execution_target_id).await?;
-    let _canonical =
+    let canonical =
         canonical_execution_device(app, command.owner_user_id, command.execution_target_id).await?;
-    let queued = queue_rows(app, command.owner_user_id, &identities, command.environment).await?;
-    if let Some(candidate) = queued.first() {
-        // Claiming and materializing the Executor payload is a separate
-        // migration unit (`_claim_execution` -> `build_executor_runtime_payload`).
-        tracing::info!(
-            execution_id = candidate.id,
-            queued = queued.len(),
-            "runtime.tasks.pull would claim a queued execution"
-        );
-        return Ok(PullOutcome::Uncollected);
+    let queued =
+        claim::queue_rows(app, command.owner_user_id, &identities, command.environment).await?;
+    // `claim_next_for_device`'s post-queue filters: only a row whose current
+    // authority, device set, route/affinity and execution scope allow it may
+    // be claimed.
+    let candidate = claim::select_claimable(
+        app,
+        command.owner_user_id,
+        command.execution_target_id,
+        queued,
+    )
+    .await?;
+    if let Some(candidate) = candidate
+        && let Some(mut prepared) = claim::prepare_candidate(
+            app,
+            &candidate,
+            command.owner_user_id,
+            command.execution_target_id,
+            command.runtime_device_id,
+        )
+        .await?
+    {
+        let payload = match super::device_pull_payload::compile_request(
+            app,
+            command,
+            &candidate,
+            &mut prepared,
+        )
+        .await
+        {
+            Ok(payload) => payload,
+            Err(error) if crate::background_jobs::robot::authority::infrastructure(&error) => {
+                return Err(error);
+            }
+            Err(error) => {
+                tracing::warn!(execution_id = candidate.id, %error, "queued Runtime preflight failed");
+                let detail = error
+                    .downcast_ref::<crate::background_jobs::project::runtime_rpc::IncompleteCloudModelIdentity>()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "Execution configuration is unavailable".to_owned());
+                crate::background_jobs::robot::fail_preparation(
+                    app,
+                    &candidate.execution(),
+                    &detail,
+                )
+                .await?;
+                return Ok(json!({"success": false, "error": detail, "task": null}));
+            }
+        };
+        if claim::reserve(app, command, &candidate, &prepared, &canonical).await? {
+            tracing::info!(
+                execution_id = candidate.id,
+                device = command.runtime_device_id,
+                runtime_task_id = prepared.runtime_task_id,
+                "Queued Runtime execution claimed"
+            );
+            return Ok(delivery(candidate.id, &prepared.runtime_task_id, payload));
+        }
     }
-    Ok(PullOutcome::Ack(json!({"success": true, "task": null})))
+    Ok(json!({"success": true, "task": null}))
 }
 
-#[derive(FromMysqlRow)]
-struct ExecutionIdRow {
-    #[mysql(rename = "loop_item_executions_id")]
-    id: i64,
-}
-
-#[derive(FromMysqlRow)]
-struct CandidateRow {
-    #[mysql(rename = "loop_item_executions_id")]
-    id: i64,
-    #[mysql(rename = "loop_item_executions_loop_item_id")]
-    loop_item_id: String,
-}
-
-#[derive(FromMysqlRow)]
-struct QueueExecutionRow {
-    #[mysql(rename = "loop_item_executions_id")]
-    id: i64,
+fn delivery(execution_id: i64, runtime_task_id: &str, payload: Value) -> Value {
+    let prompt = payload["executionRequest"]["prompt"].as_str();
+    json!({"success": true, "task": {
+        "execution_id": execution_id, "runtime_task_id": runtime_task_id,
+        "payload": payload, "prompt": prompt
+    }})
 }
 
 /// `_unconfirmed_claim`: work reserved by this Runtime but not acknowledged.
 async fn unconfirmed_claim(
     app: &AppState,
     command: &PullCommand<'_>,
-) -> MysqlResult<Option<ExecutionIdRow>> {
+) -> MysqlResult<Option<claim::QueueExecutionRow>> {
     app.mysql
         .fetch_optional(
-            "SELECT loop_item_executions.id AS loop_item_executions_id \
+            format!(
+                "SELECT {} \
              FROM loop_item_executions \
              WHERE loop_item_executions.executor_owner_user_id = ? \
              AND loop_item_executions.runtime_device_id = ? \
@@ -264,6 +257,8 @@ async fn unconfirmed_claim(
                      ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
              ORDER BY loop_item_executions.claimed_at ASC, loop_item_executions.id ASC \
              LIMIT 1",
+                crate::loop_tasks::loop_repository::EXECUTION_COLUMNS
+            ),
             (
                 command.owner_user_id,
                 command.runtime_device_id,
@@ -272,23 +267,6 @@ async fn unconfirmed_claim(
             ),
         )
         .await
-}
-
-/// `prepare_queued_assignments`: committed assignment intents awaiting
-/// configuration.
-async fn prepare_candidates(app: &AppState) -> MysqlResult<Vec<CandidateRow>> {
-    app.mysql.fetch_all(prepare_candidates_sql(), ()).await
-}
-
-fn prepare_candidates_sql() -> String {
-    format!(
-        "SELECT loop_item_executions.id AS loop_item_executions_id, \
-         loop_item_executions.loop_item_id AS loop_item_executions_loop_item_id \
-         FROM loop_item_executions \
-         WHERE loop_item_executions.status = 'queued' \
-         AND {ASSIGNMENT_REQUEST_OBJECT_EXPR} = 1 \
-         ORDER BY loop_item_executions.id"
-    )
 }
 
 /// `_owned_execution_device_ids`: every queue identity for one owned device.
@@ -316,45 +294,6 @@ async fn canonical_execution_device(
             Some(identity) => identity.runtime_device_id,
             None => submitted_device_id.to_owned(),
         },
-    )
-}
-
-/// `claim_next_for_device`'s queue read (`prepare_queued_assignments` runs
-/// first, then this source filter).
-async fn queue_rows(
-    app: &AppState,
-    owner_user_id: i64,
-    execution_device_ids: &[String],
-    environment: &str,
-) -> MysqlResult<Vec<QueueExecutionRow>> {
-    let placeholders = std::iter::repeat_n("?", execution_device_ids.len())
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = queue_sql(&placeholders);
-    let mut args = Vec::with_capacity(execution_device_ids.len() + 2);
-    args.push(StatementArg::Int(owner_user_id));
-    args.extend(
-        execution_device_ids
-            .iter()
-            .map(|device_id| StatementArg::Str(device_id.clone())),
-    );
-    args.push(StatementArg::Str(environment.to_owned()));
-    app.mysql.fetch_all(sql, args).await
-}
-
-fn queue_sql(placeholders: &str) -> String {
-    format!(
-        "SELECT {EXECUTION_COLUMNS} \
-         FROM loop_item_executions \
-         WHERE (loop_item_executions.executor_owner_user_id = ? \
-                OR {USES_RUNNER_ROUTING_EXPR}) \
-         AND (loop_item_executions.execution_device_id IN ({placeholders}) \
-              AND loop_item_executions.execution_environment = ? \
-              OR loop_item_executions.execution_device_id = '') \
-         AND loop_item_executions.status = 'queued' \
-         AND {ASSIGNMENT_REQUEST_OBJECT_EXPR} = 0 \
-         ORDER BY loop_item_executions.priority_weight DESC, \
-                  loop_item_executions.queued_at ASC, loop_item_executions.id ASC"
     )
 }
 
@@ -502,32 +441,41 @@ fn lock_key(owner_user_id: i64, runtime_instance_id: &str) -> String {
     format!("wegent:lock:robot_exec:{owner_user_id}:runtime:{runtime_instance_id}")
 }
 
-/// `DistributedLock.acquire`: `SET key 1 EX 30 NX`, fail-open when Redis is
-/// unavailable or errors, exactly like the source.
-async fn acquire_lock(app: &AppState, owner_user_id: i64, runtime_instance_id: &str) -> bool {
+enum PullLock {
+    Busy,
+    Unavailable,
+    Owned(String),
+}
+
+/// Redis is advisory. The database still arbitrates ownership when it is unavailable.
+async fn acquire_lock(app: &AppState, key: &str) -> PullLock {
     let Some(redis) = app.redis.as_ref() else {
-        return true;
+        return PullLock::Unavailable;
     };
-    let key = lock_key(owner_user_id, runtime_instance_id);
+    let token = crate::device_identity_lock::lock_token();
     let options = SetOptions::default()
         .with_expiration(SetExpiration::Seconds(DEVICE_PULL_LOCK_SECONDS))
         .if_absent();
-    match redis.set_with(key.as_str(), "1", options).await {
-        Ok(acquired) => acquired,
+    match redis.set_with(key, token.as_str(), options).await {
+        Ok(true) => PullLock::Owned(token),
+        Ok(false) => PullLock::Busy,
         Err(error) => {
             tracing::warn!(%error, "robot execution lock acquisition failed; proceeding");
-            true
+            PullLock::Unavailable
         }
     }
 }
 
-/// `DistributedLock.release`: `DEL key`; failures are logged, not propagated.
-async fn release_lock(app: &AppState, owner_user_id: i64, runtime_instance_id: &str) {
+async fn release_lock(app: &AppState, key: &str, token: &str) {
     let Some(redis) = app.redis.as_ref() else {
         return;
     };
-    let key = lock_key(owner_user_id, runtime_instance_id);
-    if let Err(error) = redis.del(key.as_str()).await {
+    // A long preflight may outlive the TTL. Release only our own lease.
+    let released: Result<i64, _> = redis.eval(
+        "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0",
+        [key], [token],
+    ).await;
+    if let Err(error) = released {
         tracing::warn!(%error, "robot execution lock release failed");
     }
 }
@@ -691,20 +639,5 @@ mod tests {
             ack,
             json!({"success": true, "task": null, "workspace_cleanup_intents": []})
         );
-    }
-
-    #[test]
-    fn the_queue_filter_uses_the_source_properties() {
-        assert!(ASSIGNMENT_REQUEST_OBJECT_EXPR.contains("'$.\"assignment_request\"'"));
-        assert!(ASSIGNMENT_REQUEST_OBJECT_EXPR.ends_with("= 'object', 0)"));
-        assert!(USES_RUNNER_ROUTING_EXPR.contains("'$.\"runner_routing\"'"));
-        assert!(USES_RUNNER_ROUTING_EXPR.ends_with("= 1"));
-
-        let prepare = prepare_candidates_sql();
-        assert!(prepare.contains("= 'object', 0) = 1"));
-        let queue = queue_sql("?,?,?");
-        assert!(queue.contains("execution_device_id IN (?,?,?)"));
-        assert!(queue.contains("= 'object', 0) = 0"));
-        assert!(!queue.contains("= 1 = 0"));
     }
 }

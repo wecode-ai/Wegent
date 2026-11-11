@@ -26,6 +26,7 @@ pub use crate::task_store_personal::{
     PERSONAL_TASK_HISTORY_LIMIT, PersonalTaskIndexes, personal_task_candidates,
     personal_task_candidates_statement,
 };
+pub use crate::task_store_pipeline::handoff_message;
 pub use crate::task_store_pipeline::{PipelineStageAdvance, advance_pipeline_stage};
 pub use crate::task_store_project::{
     active_project_task_statement, fetch_active_project_task, task_by_id_refresh_statement,
@@ -312,7 +313,7 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     ) -> MysqlResult<Option<MysqlRow>> {
         sql.fetch_optional_row(
             crate::request_sql::RouteKey::Task(task_id as u64),
-            &active_task_owned_statement(TASKS_TABLE),
+            &crate::task_store_statements::active_task_owned_labeled_statement(TASKS_TABLE),
             vec![
                 StatementArg::Int(task_id),
                 StatementArg::Int(i64::from(owner_user_id)),
@@ -608,7 +609,7 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     ) -> MysqlResult<Option<MysqlRow>> {
         sql.fetch_optional_row(
             crate::request_sql::RouteKey::Task(task_id as u64),
-            &owner_matches_task_id_statement(TASKS_TABLE),
+            &crate::task_store_statements::owner_matches_task_id_labeled_statement(TASKS_TABLE),
             vec![StatementArg::Int(task_id), StatementArg::Int(owner_user_id)],
         )
         .await

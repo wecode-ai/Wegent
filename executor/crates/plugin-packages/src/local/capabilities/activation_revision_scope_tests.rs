@@ -54,6 +54,10 @@ async fn detection_skips_unrelated_runtime_and_reuses_unchanged_payload_hashes()
     let untouched = Path::new(&unrelated).join("large-unrelated.bin");
     fs::write(&untouched, vec![0; 2 * 1024 * 1024]).unwrap();
     let spec = PluginSyncSpec::from_value(&payload["plugins"][0]).unwrap();
+    // Let freshly installed files leave the filesystem timestamp window
+    // before checking that unchanged payload digests are reused.
+    #[cfg(unix)]
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     let _activation = crate::services::capability_activation::activate().await;
     let _publication = store.lock_shared_manifest().unwrap();
     let mut activation = ActivationRevision::begin(&store, &[spec], &[]).unwrap();

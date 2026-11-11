@@ -25,6 +25,9 @@ pub struct BotConfigInput<'a> {
     pub plugins: Vec<Value>,
     pub skills: Vec<Value>,
     pub skill_refs: Value,
+    /// `list(merged.preload_skills) if ghost_skills else []`: the merged
+    /// Ghost chain's preload skills, empty when the chain declares none.
+    pub preload_skills: Vec<String>,
     pub capability_mode: &'a str,
     pub role: &'a str,
     pub base_image: Option<&'a str>,
@@ -48,6 +51,16 @@ pub fn build_bot_config(input: &BotConfigInput<'_>) -> Value {
     bot.insert("plugins".into(), Value::Array(input.plugins.clone()));
     bot.insert("skills".into(), Value::Array(input.skills.clone()));
     bot.insert("skill_refs".into(), input.skill_refs.clone());
+    bot.insert(
+        "preload_skills".into(),
+        Value::Array(
+            input
+                .preload_skills
+                .iter()
+                .map(|skill| Value::String(skill.clone()))
+                .collect(),
+        ),
+    );
     bot.insert(
         "capability_mode".into(),
         serde_json::json!(input.capability_mode),
@@ -255,6 +268,7 @@ mod tests {
             plugins: Vec::new(),
             skills: vec![json!("wegent-knowledge")],
             skill_refs: json!({"wegent-knowledge": {"skill_id": 128913}}),
+            preload_skills: vec!["sandbox".into()],
             capability_mode: "manual",
             role: "leader",
             base_image: None,
@@ -278,6 +292,7 @@ mod tests {
                 "plugins",
                 "skills",
                 "skill_refs",
+                "preload_skills",
                 "capability_mode",
                 "role",
                 "base_image",

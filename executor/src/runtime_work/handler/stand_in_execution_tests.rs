@@ -3,6 +3,31 @@ use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
+async fn moved_roles_leave_existing_issue_work_on_its_original_device() {
+    let root = tempfile::tempdir().unwrap();
+    let handler = RuntimeWorkRpcHandler {
+        store: RuntimeWorkStore::new(root.path().join("runtime-index.json")),
+        ..RuntimeWorkRpcHandler::new("mac", "unused")
+    };
+    let config = json!({"id":"review","userId":7,"projectId":"project","projectStore":"cloud","executionDeviceId":"remote"});
+    let old_issue = json!({"id":"existing-issue"});
+    let new_issue = json!({"id":"new-issue"});
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "existing-task".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","userId":7,"standInId":"review","projectStore":"cloud","cloudProjectId":"project","loopItemId":"existing-issue"}}),
+        ..Default::default()
+    });
+    assert!(handler.stand_in_issue_runs_here(&config, &old_issue));
+    assert!(!handler.stand_in_issue_runs_here(&config, &new_issue));
+    handler
+        .execute_stand_in_task(&config, &new_issue, &json!({}))
+        .await
+        .unwrap();
+    assert_eq!(handler.local_task_links(false).len(), 1);
+    assert!(handler.local_task_link("existing-task").is_some());
+}
+
+#[tokio::test]
 async fn rejected_local_creation_preserves_the_issue_reservation() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
@@ -173,6 +198,10 @@ async fn manual_delegation_does_not_report_a_deleted_task_as_running() {
         .unwrap();
     let error = handler.run_stand_in(json!({"projectId":project.id,"issueId":issue.id,"userId":7,"projectStore":"local","standInId":"review"})).await.unwrap_err();
     assert_eq!(error.code, "assignment_already_handled");
+    assert_eq!(
+        error.message,
+        "This assignment has already been handled or is no longer active"
+    );
 }
 
 #[tokio::test]

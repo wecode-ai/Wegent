@@ -50,6 +50,7 @@ pub struct DeviceSessionState {
     pub device_type: Option<DeviceType>,
     pub execution_target_id: Option<String>,
     pub registered: bool,
+    pub(super) last_presence_attempt: Option<std::time::Instant>,
 }
 
 /// One namespace connection's business session.
@@ -114,6 +115,7 @@ impl DeviceSession {
         state.device_type = Some(registration.device_type);
         state.execution_target_id = Some(execution_target_id.clone());
         state.registered = true;
+        state.last_presence_attempt = Some(std::time::Instant::now());
         (route_id, execution_target_id)
     }
 
@@ -126,6 +128,19 @@ impl DeviceSession {
         let mut state = self.state.lock().expect("device session lock");
         state.runtime_transfer_host = runtime_transfer_host;
         state.runtime_transfer_port = runtime_transfer_port;
+    }
+
+    pub(super) fn reserve_presence_update(&self) -> bool {
+        let mut state = self.state.lock().expect("device session lock");
+        let now = std::time::Instant::now();
+        if state
+            .last_presence_attempt
+            .is_some_and(|last| now.duration_since(last) < super::device_upsert::PERSIST_INTERVAL)
+        {
+            return false;
+        }
+        state.last_presence_attempt = Some(now);
+        true
     }
 }
 

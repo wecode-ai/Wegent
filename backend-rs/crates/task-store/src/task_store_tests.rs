@@ -443,7 +443,10 @@ async fn active_task_owned_on_uses_the_request_handle_and_the_owner_guard() {
         calls[0].0,
         crate::request_sql::RouteKey::Task(893_078_319_907_087)
     );
-    assert_eq!(calls[0].1, active_task_owned_statement(TASKS_TABLE));
+    assert_eq!(
+        calls[0].1,
+        crate::task_store_statements::active_task_owned_labeled_statement(TASKS_TABLE)
+    );
     assert_eq!(calls[0].2, 2, "binds (task_id, owner_user_id)");
 }
 
@@ -493,7 +496,7 @@ async fn lineage_task_read_uses_the_request_handle_and_the_owner_guard() {
     );
     assert_eq!(
         calls[0].1,
-        crate::task_store_statements::owner_matches_task_id_statement(TASKS_TABLE)
+        crate::task_store_statements::owner_matches_task_id_labeled_statement(TASKS_TABLE)
     );
     assert_eq!(calls[0].2, 2, "binds (task_id, owner_user_id)");
 }
@@ -519,7 +522,7 @@ async fn refresh_task_on_is_a_plain_primary_key_read() {
     assert!(
         !calls
             .iter()
-            .any(|(_, sql, _)| sql == &owner_matches_task_id_statement(TASKS_TABLE)),
+            .any(|(_, sql, _)| sql == &owner_matches_task_id_labeled_statement(TASKS_TABLE)),
         "no owner probe may accompany the refresh: {calls:?}"
     );
 }

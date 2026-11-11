@@ -18,7 +18,9 @@
 use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
-use crate::json_compat::{python_json_compact, python_json_value, python_str, python_truthy};
+use crate::json_compat::{
+    python_json_compact, python_json_value, python_str, python_strip, python_truthy,
+};
 use crate::socketio::device_lifecycle::publish_room_event;
 use crate::socketio::runtime::SocketRuntime;
 use crate::socketio::runtime_projection::{self, Projected, RuntimeIdentity};
@@ -30,6 +32,8 @@ pub const RUNTIME_NAMESPACE: &str = "/wework-runtime";
 pub const RUNTIME_EVENT: &str = "runtime:event";
 /// `PROJECT_CHAT_CREATED_EVENT`.
 pub const PROJECT_CHAT_CREATED_EVENT: &str = "wework:project_chat:message:created";
+/// `wework:loop_item:changed` (`loop_item_events.LOOP_ITEM_CHANGED_EVENT`).
+pub const LOOP_ITEM_CHANGED_EVENT: &str = "wework:loop_item:changed";
 /// `PROJECT_CHAT_AGENT_CHUNK_EVENT`.
 pub const PROJECT_CHAT_AGENT_CHUNK_EVENT: &str = "wework:project_chat:agent:chunk";
 /// `WEWORK_RUNTIME_USER_ROOM_PREFIX`.
@@ -125,8 +129,33 @@ pub async fn forward(
     let envelope = working_envelope(data, logical_device_id);
     if let Some(identity) = RuntimeIdentity::parse(&envelope)
         && let Some(projected) =
-            runtime_projection::project(state, user_id, device_id, &identity).await?
+            runtime_projection::project(state, runtime, user_id, device_id, &identity).await?
     {
+        if let Some((activity, allow_review)) = &projected.terminal_activity {
+            match crate::background_jobs::robot::project_runtime_completion(
+                &state.mysql,
+                activity,
+                *allow_review,
+            )
+            .await
+            {
+                Ok(true) => {
+                    super::project_chat_snapshot::publish_item_change(
+                        state,
+                        runtime,
+                        &activity.task_id,
+                        0,
+                    )
+                    .await;
+                }
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    %error,
+                    item_id = activity.task_id,
+                    "Runtime activity completion projection failed"
+                ),
+            }
+        }
         emit_project_chat(state, runtime, &projected).await;
     }
     // `sio.emit` delivers to local sockets first (`_handle_emit`) and then
@@ -143,15 +172,15 @@ pub async fn forward(
     )
     .await;
     publish_live(state, user_id, device_id, &envelope).await;
-    forward_channel_event(&envelope);
-    notify_runtime_event(&envelope);
+    forward_channel_event(state, logical_device_id, &envelope).await;
+    notify_runtime_event(state, user_id, logical_device_id, &envelope).await;
     Ok(accepted())
 }
 
 /// `sio.emit(PROJECT_CHAT_* , message, room=project_chat_room(...))`.
-async fn emit_project_chat(
+pub(super) async fn emit_project_chat(
     state: &AppState,
-    runtime: &std::sync::Arc<SocketRuntime>,
+    runtime: &SocketRuntime,
     projected: &Projected,
 ) {
     let message = &projected.message;
@@ -209,44 +238,328 @@ fn truthy_task_id(value: Option<&Value>) -> Option<String> {
 
 /// `LocalTaskResponsesHandler.forward_runtime_event_to_channels`: IM channel
 /// callbacks only, and only for an `im` source envelope.
-fn forward_channel_event(envelope: &Value) {
-    let Some(payload) = envelope.get("payload") else {
+async fn forward_channel_event(state: &AppState, device_id: &str, envelope: &Value) {
+    use super::device_responses::{
+        forward_local_task_callbacks, local_execution_event, runtime_subtask_id,
+    };
+    use crate::internal_callback::event::{EventType, ExecutionEvent};
+
+    let Some(payload) = envelope.get("payload").and_then(Value::as_object) else {
         return;
     };
     let source = payload.get("source");
     if source.is_none_or(|source| source.get("source").and_then(Value::as_str) != Some("im")) {
         return;
     }
-    let task_id = payload.get("taskId").and_then(Value::as_str);
-    tracing::warn!(task_id, "IM runtime event forwarding is not ported");
+    let task_id = stripped_field(payload, "taskId");
+    let event_type = stripped_field(payload, "event_type");
+    if task_id.is_empty() || event_type.is_empty() {
+        return;
+    }
+    let subtask_id = runtime_subtask_id(payload, device_id, &task_id);
+    let event_data = payload
+        .get("data")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let event = if let Some(terminal) = terminal_event(&event_type, &event_data) {
+        let kind = match terminal.status {
+            "COMPLETED" => EventType::Done,
+            "CANCELLED" => EventType::Cancelled,
+            _ => EventType::Error,
+        };
+        let mut event = ExecutionEvent::new(kind, 0, subtask_id);
+        if terminal.status == "COMPLETED" {
+            event.result = Some(terminal.result);
+        } else {
+            event.error = Some(terminal.content);
+        }
+        event
+    } else {
+        match local_execution_event(&event_type, &Value::Object(event_data), subtask_id, None) {
+            Ok(Some(event)) => event,
+            Ok(None) => return,
+            Err(_) => {
+                tracing::warn!(event_type, "Invalid IM Runtime execution event");
+                return;
+            }
+        }
+    };
+    forward_local_task_callbacks(state, device_id, &task_id, source, &event).await;
 }
 
-/// `_notify_runtime_event`: best-effort IM delivery for terminal events.
-fn notify_runtime_event(envelope: &Value) {
-    let Some(payload) = envelope.get("payload") else {
+/// Best-effort notification for terminal events from non-IM Runtime turns.
+async fn notify_runtime_event(state: &AppState, user_id: i64, device_id: &str, envelope: &Value) {
+    let Some(payload) = envelope.get("payload").and_then(Value::as_object) else {
         return;
     };
-    let source = payload.get("source");
-    if source.is_some_and(|source| source.get("source").and_then(Value::as_str) == Some("im")) {
+    let Some(plan) = notification_plan(user_id, device_id, payload) else {
         return;
+    };
+    if let Err(error) =
+        runtime_im_notification::deliver(state, user_id, device_id, payload, &plan).await
+    {
+        tracing::warn!(%error, user_id, device_id, local_task_id = plan.local_task_id,
+            event_type = plan.event_type, "Runtime event IM delivery failed");
     }
-    let has_task = payload
-        .get("taskId")
+}
+
+#[path = "device_runtime_im_notification.rs"]
+mod runtime_im_notification;
+
+/// `RUNTIME_VALUE_ORIGINS`: the `valueOrigin` values the runtime terminal event
+/// keeps.
+const RUNTIME_VALUE_ORIGINS: [&str; 3] = ["final", "process_fallback", "empty"];
+
+/// The terminal event `_notify_runtime_event` is about to notify for.
+#[derive(Debug, PartialEq, Eq)]
+struct NotificationPlan {
+    local_task_id: String,
+    event_type: String,
+    status: &'static str,
+    content: String,
+    waiting_for_user_input: bool,
+}
+
+/// `_notify_runtime_event`'s guards, in source order: a non-`im` source, a
+/// non-empty `taskId`, a terminal `event_type`, a terminal event, and a reply
+/// that is neither empty nor merely waiting for user input. Anything else
+/// issues no IM notification — and therefore no settings read.
+fn notification_plan(
+    user_id: i64,
+    device_id: &str,
+    payload: &Map<String, Value>,
+) -> Option<NotificationPlan> {
+    if payload
+        .get("source")
+        .and_then(Value::as_object)
+        .and_then(|source| source.get("source"))
         .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty());
-    let event_type = payload.get("event_type").and_then(Value::as_str);
-    let Some(event_type) = event_type.filter(|value| !value.trim().is_empty()) else {
-        return;
-    };
-    if !has_task || !TERMINAL_EVENT_TYPES.contains(&event_type) {
-        return;
+        == Some("im")
+    {
+        return None;
     }
-    let task_id = payload.get("taskId").and_then(Value::as_str);
-    tracing::warn!(
-        task_id,
+
+    let local_task_id = stripped_field(payload, "taskId");
+    let event_type = stripped_field(payload, "event_type");
+    if local_task_id.is_empty()
+        || event_type.is_empty()
+        || !TERMINAL_EVENT_TYPES.contains(&event_type.as_str())
+    {
+        return None;
+    }
+
+    let event_data = payload
+        .get("data")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let event = terminal_event(&event_type, &event_data)?;
+    let waiting_for_user_input = waits_for_user_input(&event_data, payload, &event.result);
+    if event.status == "COMPLETED"
+        && python_strip(&event.content).is_empty()
+        && !waiting_for_user_input
+    {
+        tracing::info!(
+            user_id,
+            device_id,
+            local_task_id,
+            event_type,
+            "Skipped empty Runtime reply"
+        );
+        return None;
+    }
+
+    Some(NotificationPlan {
+        local_task_id,
         event_type,
-        "Terminal Runtime event IM notification is not ported"
-    );
+        status: event.status,
+        content: event.content,
+        waiting_for_user_input,
+    })
+}
+
+/// `str(payload.get(key) or "").strip()`.
+fn stripped_field(payload: &Map<String, Value>, key: &str) -> String {
+    payload
+        .get(key)
+        .filter(|value| python_truthy(value))
+        .map(python_str)
+        .map(|value| python_strip(&value))
+        .unwrap_or_default()
+}
+
+/// The subset of `ExecutionEvent` `_notify_runtime_event` reads: the terminal
+/// status, the reply text, and the result mapping `_waits_for_user_input`
+/// scans.
+#[derive(Debug)]
+struct TerminalEvent {
+    status: &'static str,
+    content: String,
+    result: Value,
+}
+
+/// `runtime_terminal_event(...) or self.execution_event(...)`.
+fn terminal_event(event_type: &str, event_data: &Map<String, Value>) -> Option<TerminalEvent> {
+    match event_type {
+        "response.completed" => Some(completed_event(event_data)),
+        "response.failed" => Some(error_event(event_data, "FAILED")),
+        "response.incomplete" => Some(error_event(event_data, "CANCELLED")),
+        // `runtime_terminal_event` declines a bare `error`; the shared parser
+        // then builds an ERROR event from `data.message`.
+        "error" => Some(TerminalEvent {
+            status: "FAILED",
+            content: match event_data.get("message") {
+                Some(value) if python_truthy(value) => python_str(value),
+                Some(_) => String::new(),
+                None => "Unknown error".to_owned(),
+            },
+            result: Value::Object(Map::new()),
+        }),
+        _ => None,
+    }
+}
+
+/// `runtime_terminal_event` for `response.completed`, falling back to the
+/// shared parser's `response.completed` branch when `data.value` is absent.
+fn completed_event(event_data: &Map<String, Value>) -> TerminalEvent {
+    if event_data.contains_key("value") {
+        let value = event_data
+            .get("value")
+            .filter(|value| python_truthy(value))
+            .map(python_str)
+            .unwrap_or_default();
+        let mut result = Map::new();
+        result.insert("value".into(), Value::String(value.clone()));
+        if let Some(origin) = event_data.get("valueOrigin").and_then(Value::as_str)
+            && RUNTIME_VALUE_ORIGINS.contains(&origin)
+        {
+            result.insert("value_origin".into(), Value::String(origin.to_owned()));
+        }
+        for field in ["stop_reason", "silent_exit", "silent_exit_reason"] {
+            if let Some(field_value) = event_data.get(field) {
+                result.insert(field.to_owned(), field_value.clone());
+            }
+        }
+        return TerminalEvent {
+            status: "COMPLETED",
+            content: value,
+            result: Value::Object(result),
+        };
+    }
+
+    // `execution_event` -> `ResponsesAPIEventParser.parse`:
+    // `extract_completed_result(data.get("response", {}))`.
+    let result = completed_response_result(event_data.get("response").and_then(Value::as_object));
+    let content = result
+        .get("value")
+        .filter(|value| python_truthy(value))
+        .map(python_str)
+        .unwrap_or_default();
+    TerminalEvent {
+        status: "COMPLETED",
+        content,
+        result: Value::Object(result),
+    }
+}
+
+/// The `extract_completed_result` fields this path reads: the concatenated
+/// output text and the waiting marker.
+fn completed_response_result(response: Option<&Map<String, Value>>) -> Map<String, Value> {
+    let mut value = String::new();
+    if let Some(output) = response
+        .and_then(|response| response.get("output"))
+        .and_then(Value::as_array)
+    {
+        for item in output {
+            let Some(content) = item
+                .as_object()
+                .and_then(|item| item.get("content"))
+                .and_then(Value::as_array)
+            else {
+                continue;
+            };
+            for block in content {
+                let Some(block) = block.as_object() else {
+                    continue;
+                };
+                let Some(text) = block.get("text").and_then(Value::as_str) else {
+                    continue;
+                };
+                if text.is_empty() {
+                    continue;
+                }
+                let included = match block.get("type") {
+                    None | Some(Value::Null) => true,
+                    Some(Value::String(kind)) => kind == "output_text" || kind == "text",
+                    Some(_) => false,
+                };
+                if included {
+                    value.push_str(text);
+                }
+            }
+        }
+    }
+
+    let mut result = Map::new();
+    result.insert("value".into(), Value::String(value));
+    if let Some(reason) = response.and_then(|response| response.get("silent_exit_reason")) {
+        result.insert("silent_exit_reason".into(), reason.clone());
+    }
+    result
+}
+
+/// `runtime_terminal_event` for `response.failed` / `response.incomplete`:
+/// `event.error` is the nested error message, or the Responses API response's
+/// error message.
+fn error_event(event_data: &Map<String, Value>, status: &'static str) -> TerminalEvent {
+    let error = match event_data.get("error") {
+        Some(error) if error.is_object() => Some(error),
+        _ => event_data
+            .get("response")
+            .and_then(Value::as_object)
+            .and_then(|response| response.get("error")),
+    };
+    let content = error
+        .and_then(Value::as_object)
+        .and_then(|error| error.get("message"))
+        .filter(|message| python_truthy(message))
+        .map(python_str)
+        .unwrap_or_default();
+    TerminalEvent {
+        status,
+        content,
+        result: Value::Object(Map::new()),
+    }
+}
+
+/// `_waits_for_user_input(*payloads)`: any mapping — the event data, the
+/// envelope payload, or the parsed result — carrying the marker directly or
+/// under its nested `response`.
+fn waits_for_user_input(
+    event_data: &Map<String, Value>,
+    payload: &Map<String, Value>,
+    result: &Value,
+) -> bool {
+    let marker = Some("waiting_for_user_input");
+    for candidate in [Some(event_data), Some(payload), result.as_object()] {
+        let Some(candidate) = candidate else {
+            continue;
+        };
+        if candidate.get("silent_exit_reason").and_then(Value::as_str) == marker {
+            return true;
+        }
+        if candidate
+            .get("response")
+            .and_then(Value::as_object)
+            .and_then(|response| response.get("silent_exit_reason"))
+            .and_then(Value::as_str)
+            == marker
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -350,5 +663,170 @@ mod tests {
         assert!(TERMINAL_EVENT_TYPES.contains(&"response.completed"));
         assert!(!TERMINAL_EVENT_TYPES.contains(&"response.block.created"));
         assert!(!TERMINAL_EVENT_TYPES.contains(&"thread/tokenUsage/updated"));
+    }
+
+    fn plan(value: Value) -> Option<NotificationPlan> {
+        notification_plan(273, "device-a", value.as_object().expect("payload object"))
+    }
+
+    #[test]
+    fn an_im_sourced_event_is_never_notified() {
+        let outcome = plan(json!({
+            "taskId": "runtime-1",
+            "event_type": "response.completed",
+            "source": {"source": "im"},
+            "data": {"value": "done"},
+        }));
+        assert!(outcome.is_none());
+    }
+
+    #[test]
+    fn a_notification_requires_a_task_and_a_terminal_type() {
+        assert!(
+            plan(json!({
+                "event_type": "response.completed",
+                "data": {"value": "done"},
+            }))
+            .is_none()
+        );
+        assert!(
+            plan(json!({
+                "taskId": "   ",
+                "event_type": "response.completed",
+                "data": {"value": "done"},
+            }))
+            .is_none()
+        );
+        assert!(
+            plan(json!({
+                "taskId": "runtime-1",
+                "event_type": "response.block.created",
+                "data": {"value": "done"},
+            }))
+            .is_none()
+        );
+        assert!(
+            plan(json!({
+                "taskId": "runtime-1",
+                "event_type": "",
+                "data": {"value": "done"},
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_completed_reply_becomes_a_notification_plan() {
+        let outcome = plan(json!({
+            "taskId": "  runtime-1  ",
+            "event_type": "response.completed",
+            "data": {"value": "done", "valueOrigin": "final"},
+        }))
+        .expect("plan");
+        assert_eq!(outcome.local_task_id, "runtime-1");
+        assert_eq!(outcome.event_type, "response.completed");
+        assert_eq!(outcome.status, "COMPLETED");
+        assert_eq!(outcome.content, "done");
+    }
+
+    #[test]
+    fn an_empty_completed_reply_is_skipped() {
+        // `data.value` present but empty: the source's `COMPLETED` reply with
+        // no content and no waiting marker returns before any IM settings read.
+        assert!(
+            plan(json!({
+                "taskId": "runtime-1",
+                "event_type": "response.completed",
+                "data": {"value": ""},
+            }))
+            .is_none()
+        );
+        // No `data.value` and no parsable response object.
+        assert!(
+            plan(json!({
+                "taskId": "runtime-1",
+                "event_type": "response.completed",
+                "data": {},
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_completed_reply_without_value_reads_the_response_output() {
+        let outcome = plan(json!({
+            "taskId": "runtime-1",
+            "event_type": "response.completed",
+            "data": {"response": {"output": [{"content": [
+                {"type": "output_text", "text": "hel"},
+                {"type": "reasoning", "text": "ignored"},
+                {"text": "lo"},
+            ]}]}},
+        }))
+        .expect("plan");
+        assert_eq!(outcome.status, "COMPLETED");
+        assert_eq!(outcome.content, "hello");
+    }
+
+    #[test]
+    fn an_empty_reply_waiting_for_user_input_is_notified() {
+        let direct = plan(json!({
+            "taskId": "runtime-1",
+            "event_type": "response.completed",
+            "data": {"value": "", "silent_exit_reason": "waiting_for_user_input"},
+        }))
+        .expect("plan");
+        assert_eq!(direct.status, "COMPLETED");
+        assert_eq!(direct.content, "");
+
+        let nested = plan(json!({
+            "taskId": "runtime-1",
+            "event_type": "response.completed",
+            "data": {"response": {"silent_exit_reason": "waiting_for_user_input"}},
+        }))
+        .expect("plan");
+        assert_eq!(nested.status, "COMPLETED");
+        assert_eq!(nested.content, "");
+    }
+
+    #[test]
+    fn an_error_event_uses_the_message_as_content() {
+        let outcome = plan(json!({
+            "taskId": "runtime-1",
+            "event_type": "error",
+            "data": {"message": "boom"},
+        }))
+        .expect("plan");
+        assert_eq!(outcome.status, "FAILED");
+        assert_eq!(outcome.content, "boom");
+
+        let defaulted = plan(json!({
+            "taskId": "runtime-1",
+            "event_type": "error",
+            "data": {},
+        }))
+        .expect("plan");
+        assert_eq!(defaulted.content, "Unknown error");
+    }
+
+    #[test]
+    fn failed_and_incomplete_events_use_the_error_message() {
+        let failed = plan(json!({
+            "taskId": "runtime-1",
+            "event_type": "response.failed",
+            "data": {"error": {"message": "bad"}},
+        }))
+        .expect("plan");
+        assert_eq!(failed.status, "FAILED");
+        assert_eq!(failed.content, "bad");
+
+        let incomplete = plan(json!({
+            "taskId": "runtime-1",
+            "event_type": "response.incomplete",
+            "data": {"response": {"error": {"message": "cut"}}},
+        }))
+        .expect("plan");
+        assert_eq!(incomplete.status, "CANCELLED");
+        assert_eq!(incomplete.content, "cut");
     }
 }

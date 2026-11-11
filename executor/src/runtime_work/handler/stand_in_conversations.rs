@@ -222,6 +222,12 @@ impl RuntimeWorkRpcHandler {
         config = self.conversation_model(config, &payload["options"]).await?;
         let client_user_message_id = conversation_client_message_id(&payload);
         let mut prepared=self.prepare_stand_in_execution(json!({"taskId":task_id,"title":title,"message":message,"origin":origin,"attachments":payload["options"]["attachments"],"clientUserMessageId":client_user_message_id}),&config).await?;
+        if let Some(source) = payload["options"].get("source") {
+            prepared["source"] = source.clone();
+        }
+        if let Some(context) = payload["options"].get("additionalContext") {
+            prepared["additionalContext"] = context.clone();
+        }
         for field in ["commandId", "userMessagePresentation"] {
             if let Some(value) = payload.get(field) {
                 prepared[field] = value.clone();

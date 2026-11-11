@@ -11,6 +11,7 @@ import {
   cacheRuntimeConversationQueuedMessages,
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationQueuedMessages,
+  getRuntimeConversationMessages,
 } from '../runtimeConversationCache'
 import { synchronizeRuntimeConversation } from '../runtimeConversationSynchronization'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
@@ -131,6 +132,47 @@ test('a complete live turn and authoritative terminal task do not read history a
   })
   expect(getRuntimeTranscript).not.toHaveBeenCalled()
   expect(store.getTask(address('fast'))?.execution.phase).toBe('idle')
+  expect(store.getTask(address('fast'))?.turn.outcome).toBe('succeeded')
+})
+
+test('repairs a cancelled history snapshot when the native turn subsequently succeeds', async () => {
+  const store = new RuntimeTaskLifecycleStore('conflicting-terminal-history')
+  store.syncRuntimeWork(work(true))
+  store.turnStarted(address('fast'), 'fast-turn')
+  await synchronizeRuntimeConversation(
+    async () => ({
+      ...transcript('fast'),
+      running: true,
+      turns: [{ id: 'fast-turn', status: 'cancelled', items: [] }],
+    }),
+    address('fast')
+  )
+  let handlers: ChatStreamHandlers = {}
+  const getRuntimeTranscript = vi.fn().mockResolvedValue(transcript('fast'))
+  const services = {
+    chatStream: {
+      subscribe: (next: ChatStreamHandlers) => {
+        handlers = next
+        return () => {}
+      },
+    },
+    executorClient: { runtime: { getRuntimeTranscript } },
+  } as unknown as WorkbenchServices
+  render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+  await act(async () => {
+    handlers.onChatDone?.({
+      taskId: 'fast',
+      deviceId: 'responsive-device',
+      subtaskId: 'fast-turn',
+      task: task('fast', false),
+      result: {},
+    })
+  })
+  expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+  expect(getRuntimeConversationMessages(address('fast')).at(-1)).toMatchObject({
+    content: 'Complete answer',
+    status: 'done',
+  })
   expect(store.getTask(address('fast'))?.turn.outcome).toBe('succeeded')
 })
 

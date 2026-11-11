@@ -33,7 +33,8 @@ use serde_json::{Map, Value, json};
 use crate::device_identity::{DeviceType, resolve_runtime_route_identity};
 use crate::device_online_state::read_online_state;
 use crate::runtime_work::{
-    RuntimeCallError, call_runtime_method, remote_control_is_enabled, runtime_instance_matches,
+    RuntimeCallError, call_runtime_method_envelope, remote_control_is_enabled,
+    runtime_instance_matches,
 };
 use crate::state::AppState;
 
@@ -272,12 +273,13 @@ pub(crate) async fn call(
             })
         })?;
 
-    let ack = call_runtime_method(
+    let request = runtime_request_envelope(method, payload, user_id, &route.runtime_device_id)
+        .map_err(|message| CallFailure::Rpc(rpc_error("bad_request", message)))?;
+    let ack = call_runtime_method_envelope(
         app,
         user_id,
         &route.socket_id,
-        method,
-        payload,
+        request,
         normalized_timeout as u64,
     )
     .await
@@ -305,6 +307,68 @@ pub(crate) async fn call(
         &route.runtime_device_id,
         &route.logical_device_id,
     )))
+}
+
+fn runtime_request_envelope(
+    method: &str,
+    mut payload: Value,
+    user_id: i64,
+    runtime_device_id: &str,
+) -> Result<Value, &'static str> {
+    if !matches!(
+        method,
+        "runtime.tasks.create"
+            | "runtime.tasks.send"
+            | "runtime.tasks.rollback"
+            | "runtime.tasks.interrupt_and_send"
+    ) {
+        return Ok(json!({"method":method,"payload":payload}));
+    }
+    let execution = payload.get("executionRequest");
+    if execution.is_some_and(|value| !value.is_object()) {
+        return Err("executionRequest must be an object");
+    }
+    let config = execution.and_then(|value| value.get("model_config"));
+    if config.is_some_and(|value| !value.is_object()) {
+        return Err("model_config must be an object");
+    }
+    let Some(config) = config
+        .filter(|value| value["wework_model_kind"] == "model-interface")
+        .cloned()
+    else {
+        return Ok(json!({"method":method,"payload":payload}));
+    };
+    let identifier = |object: &Value, key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let mut task_id = identifier(&payload, "taskId").or_else(|| identifier(&payload, "task_id"));
+    if task_id.is_none() {
+        if let Some(address) = payload.get("address") {
+            if !address.is_object() {
+                return Err("address must be an object");
+            }
+            task_id = identifier(address, "taskId").or_else(|| identifier(address, "task_id"));
+        }
+        if task_id.is_none() && method == "runtime.tasks.create" {
+            let id = format!("remote-task-{}", super::project_chat_messages::uuid4());
+            payload["taskId"] = json!(id);
+            task_id = Some(id);
+        }
+    }
+    let command_id = identifier(&payload, "commandId")
+        .unwrap_or_else(|| format!("remote-command-{}", super::project_chat_messages::uuid4()));
+    payload["commandId"] = json!(command_id);
+    Ok(json!({
+        "method":method, "payload":payload,
+        "modelBinding":{
+            "kind":"submitted_interface", "actorUserId":user_id, "deviceId":runtime_device_id,
+            "taskId":task_id, "commandId":command_id, "modelConfig":config,
+        },
+    }))
 }
 
 /// `_classify_rpc_error`: the acknowledgement failure categories the transport
@@ -798,6 +862,45 @@ fn url_path(base_url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn submitted_interface_is_bound_to_the_authenticated_runtime_command() {
+        let config = json!({"wework_model_kind":"model-interface","model_id":"local-model:test","model_provider":"test"});
+        let payload = json!({"executionRequest":{"user_id":23,"model_config":config},
+            "address":{"taskId":"existing-task"},"commandId":"existing-command"});
+        let envelope =
+            runtime_request_envelope("runtime.tasks.send", payload.clone(), 23, "runner")
+                .expect("a valid task command");
+        assert_eq!(envelope["payload"], payload);
+        assert_eq!(
+            envelope["modelBinding"],
+            json!({
+                "kind":"submitted_interface", "actorUserId":23, "deviceId":"runner",
+                "taskId":"existing-task", "commandId":"existing-command", "modelConfig":config,
+            })
+        );
+        let create = runtime_request_envelope(
+            "runtime.tasks.create",
+            json!({"executionRequest":{"user_id":23,"model_config":config}}),
+            23,
+            "runner",
+        )
+        .expect("task and command IDs are generated for creation");
+        assert!(
+            create["payload"]["taskId"]
+                .as_str()
+                .unwrap()
+                .starts_with("remote-task-")
+        );
+        assert_eq!(
+            create["modelBinding"]["taskId"],
+            create["payload"]["taskId"]
+        );
+        assert_eq!(
+            create["modelBinding"]["commandId"],
+            create["payload"]["commandId"]
+        );
+    }
     use serde_json::json;
 
     #[test]

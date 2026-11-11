@@ -10,6 +10,50 @@ import {
 } from './runtimeTaskSidebarHelpers'
 
 describe('runtimeTaskSidebarHelpers', () => {
+  test.each(['running', 'done', 'failed', 'waiting_input'])(
+    'hides %s memory maintenance from shared task lists while retaining stored history',
+    status => {
+      const workspace: RuntimeDeviceWorkspace = {
+        deviceId: 'device-1',
+        workspacePath: '/chats',
+        workspaceKind: 'chat',
+        available: true,
+        tasks: [
+          {
+            taskId: 'memory-run',
+            workspacePath: '/chats',
+            title: 'Renamed maintenance',
+            runtime: 'codex',
+            pinned: true,
+            status,
+            runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
+          },
+          {
+            taskId: 'weekly-review',
+            workspacePath: '/chats',
+            title: 'Weekly review',
+            runtime: 'codex',
+            runtimeHandle: { origin: { type: 'stand_in_schedule', weeklyReview: true } },
+          },
+          {
+            taskId: 'ordinary',
+            workspacePath: '/chats',
+            title: '分身记忆整理',
+            runtime: 'codex',
+          },
+        ],
+      }
+      const storedTasks = [...workspace.tasks]
+      for (const list of [getRuntimeSidebarTaskItems, getRuntimeChatSidebarTaskItems]) {
+        expect(list([workspace]).map(item => item.task.taskId)).toEqual([
+          'weekly-review',
+          'ordinary',
+        ])
+      }
+      expect(workspace.tasks).toEqual(storedTasks)
+    }
+  )
+
   test('omits the primary identity without changing stored work or hiding delegated tasks', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
