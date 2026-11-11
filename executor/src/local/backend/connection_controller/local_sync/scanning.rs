@@ -15,7 +15,7 @@ fn execution_stamp(journal: &Value) -> Value {
     }
     json!({
         "version":journal["version"],"nextIntentOrder":journal["nextIntentOrder"],
-        "pending":pending,"snapshot":journal["snapshot"],"revision":journal["revision"],
+        "pending":pending,"revision":journal["revision"],
         "verifiedDigest":journal["verifiedDigest"],"lastResult":journal["lastResult"]
     })
 }

@@ -39,7 +39,7 @@ async fn single_plugin_operations_never_scan_global_content_and_invalidate_full_
         assert_eq!(journal["pending"], json!([original]), "{params}");
         assert!(journal["revision"].is_null());
         assert!(journal["verifiedDigest"].is_null());
-        assert!(journal["snapshot"].is_null());
+        assert!(journal.get("snapshot").is_none());
         assert_eq!(journal["reconcilePending"], true);
         let plans = fixture.plans.lock().unwrap();
         assert_eq!(plans.len(), 1);
@@ -91,7 +91,8 @@ async fn failed_delta_keeps_accepted_intent_until_full_reconciliation_without_lo
     let accepted = journal["pending"][1].clone();
     assert_eq!(accepted["accepted"], true);
     assert_eq!(accepted["payload"], json!({"releaseId":3}));
-    assert!(journal["snapshot"].is_object());
+    assert_eq!(journal["reconcilePending"], true);
+    assert!(journal.get("snapshot").is_none());
 
     fixture.installer.plan = Plan::Valid;
     fixture.sync(json!({"full":true})).await.unwrap();
@@ -117,5 +118,5 @@ async fn failed_delta_keeps_accepted_intent_until_full_reconciliation_without_lo
         "plugin_local_acceptance_unconfirmed"
     );
     assert_eq!(journal["reconcilePending"], true);
-    assert!(journal["snapshot"].is_null());
+    assert!(journal.get("snapshot").is_none());
 }

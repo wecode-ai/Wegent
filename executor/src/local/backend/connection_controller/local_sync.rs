@@ -42,10 +42,18 @@ fn load(path: &Path) -> Result<Value, AppIpcError> {
 }
 fn load_journal(path: &Path) -> Result<Value, AppIpcError> {
     let mut journal = load(path)?;
-    journal
+    let document = journal
         .as_object_mut()
-        .ok_or_else(|| error("plugin_local_journal_invalid"))?
-        .remove("receipts");
+        .ok_or_else(|| error("plugin_local_journal_invalid"))?;
+    document.remove("receipts");
+    // Older journals stored the plan only to mark unfinished application.
+    // Keep that recovery intent without retaining an unused payload copy.
+    if document
+        .remove("snapshot")
+        .is_some_and(|plan| plan.is_object())
+    {
+        document.insert("reconcilePending".into(), json!(true));
+    }
     let valid = journal["version"] == 1
         && journal["pending"].as_array().is_some_and(|items| {
             items.iter().all(|item| {
@@ -150,7 +158,6 @@ fn retire_superseded(journal: &mut Value, operation: &str) {
         .as_array_mut()
         .unwrap()
         .retain(|entry| entry["operationId"].as_str() != Some(operation));
-    journal["snapshot"] = Value::Null;
     journal["revision"] = Value::Null;
     journal["reconcilePending"] = json!(true);
 }
@@ -386,7 +393,6 @@ impl LocalBackendConnectionController {
             let recovery = journal["pending"]
                 .as_array()
                 .is_some_and(|items| !items.is_empty())
-                || journal["snapshot"].is_object()
                 || journal["reconcilePending"] == true;
             let mut capabilities = capabilities;
             capabilities["recoveryPending"] = json!(recovery);
@@ -450,49 +456,34 @@ impl LocalBackendConnectionController {
                 .push(request);
             persist(path, &journal)?;
         }
-        let pending = journal["pending"]
-            .as_array()
-            .cloned()
-            .ok_or_else(|| error("plugin_local_journal_invalid"))?;
-        let selected = select_pending(&pending, &params);
+        let selected = select_pending(
+            journal["pending"]
+                .as_array()
+                .ok_or_else(|| error("plugin_local_journal_invalid"))?,
+            &params,
+        );
         let operation = selected
             .as_ref()
             .and_then(|request| request["operationId"].as_str());
         if let Some(request) = &selected {
-            if let Some(entry) = journal["pending"]
-                .as_array_mut()
-                .unwrap()
-                .iter_mut()
-                .find(|entry| entry["operationId"] == request["operationId"])
-            {
-                entry["lastAttemptAt"] = json!(chrono::Utc::now().timestamp_millis());
-            }
+            recovery::record_submission_attempt(&mut journal, operation.unwrap());
             persist(path, &journal)?;
             let outcome = submit(connection, instance, request, &self.base_config.device_id).await;
+            recovery::record_submission_result(&mut journal, operation.unwrap(), &outcome);
+            persist(path, &journal)?;
             if !matches!(outcome, Ok(SubmitOutcome::Accepted)) {
-                recovery::record_submission_result(&mut journal, operation.unwrap(), &outcome);
-                persist(path, &journal)?;
                 return Err(match outcome {
                     Err(failure) | Ok(SubmitOutcome::Rejected { failure, .. }) => failure,
                     Ok(SubmitOutcome::Superseded) => error("INTENT_SUPERSEDED"),
                     Ok(SubmitOutcome::Accepted) => unreachable!(),
                 });
             }
-            if let Some(entry) = journal["pending"]
-                .as_array_mut()
-                .unwrap()
-                .iter_mut()
-                .find(|entry| entry["operationId"] == request["operationId"])
-            {
-                entry["accepted"] = json!(true);
-            }
-            persist(path, &journal)?;
         }
         let installed_plugin_id = params["installedPluginId"]
             .as_u64()
             .filter(|_| selected.is_none() && params["full"] != true);
         let targeted = selected.is_some() || installed_plugin_id.is_some();
-        if !targeted && !pending.is_empty() {
+        if !targeted && !journal["pending"].as_array().unwrap().is_empty() {
             if let Err(failure) =
                 self.schedule_local_recovery(connection, instance, path, &mut journal)
             {
@@ -531,7 +522,7 @@ impl LocalBackendConnectionController {
         } else {
             Vec::new()
         };
-        let snapshot=post(connection,"/api/plugins/local-sync",&json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["snapshot"].is_object() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id})).await?;
+        let snapshot=post(connection,"/api/plugins/local-sync",&json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id})).await?;
         // Profile replacement fences the shared installer as well as this HTTP scope.
         {
             let state = self.state.lock().await;
@@ -546,7 +537,7 @@ impl LocalBackendConnectionController {
         if snapshot["unchanged"] == true {
             if !verified
                 || !pending.is_empty()
-                || journal["snapshot"].is_object()
+                || journal["reconcilePending"] == true
                 || snapshot["revision"] != journal["revision"]
             {
                 return Err(error("plugin_local_invalid_response"));
@@ -574,7 +565,7 @@ impl LocalBackendConnectionController {
             persist(path, &journal)?;
             return Err(error("INTENT_SUPERSEDED"));
         }
-        journal["snapshot"] = snapshot.clone();
+        journal["reconcilePending"] = json!(true);
         persist(path, &journal)?;
         let result = local_result(
             &snapshot["payload"],
@@ -609,7 +600,6 @@ impl LocalBackendConnectionController {
                 });
             }
             journal["reconcilePending"] = json!(targeted);
-            journal["snapshot"] = Value::Null;
         }
         persist(path, &journal)?;
         if !completed {

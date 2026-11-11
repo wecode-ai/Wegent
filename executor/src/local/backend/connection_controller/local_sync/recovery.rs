@@ -24,6 +24,18 @@ pub(super) fn select_pending(pending: &[Value]) -> Option<Value> {
         .cloned()
 }
 
+pub(super) fn record_submission_attempt(journal: &mut Value, operation: &str) {
+    if let Some(entry) = journal["pending"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| entry["operationId"].as_str() == Some(operation))
+    {
+        entry["lastAttemptAt"] = json!(chrono::Utc::now().timestamp_millis());
+        entry["lastErrorCode"] = Value::Null;
+    }
+}
+
 pub(super) fn record_submission_result(
     journal: &mut Value,
     operation: &str,
@@ -89,12 +101,7 @@ impl LocalBackendConnectionController {
         let Some(request) = select_pending(journal["pending"].as_array().unwrap()) else {
             return Ok(None);
         };
-        for entry in journal["pending"].as_array_mut().unwrap() {
-            if entry["operationId"] == request["operationId"] {
-                entry["lastAttemptAt"] = json!(chrono::Utc::now().timestamp_millis());
-                entry["lastErrorCode"] = Value::Null;
-            }
-        }
+        record_submission_attempt(journal, request["operationId"].as_str().unwrap());
         persist(path, journal)?;
         let controller = self.clone();
         let connection = connection.clone();

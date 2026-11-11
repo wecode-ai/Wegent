@@ -19,6 +19,7 @@ use std::{
 use tokio::sync::Notify;
 
 mod digest_tests;
+mod journal_tests;
 mod scanning_tests;
 
 #[derive(Default)]
@@ -43,6 +44,7 @@ enum Plan {
     Valid,
     HttpFailure,
     InvalidSnapshot,
+    UnexpectedUnchanged,
     FailedApplication,
     HeldHttp,
     HeldApplication,
@@ -186,6 +188,9 @@ impl Fixture {
                         }
                         if matches!(plan, Plan::InvalidSnapshot) {
                             return Json(json!({"protocolVersion":1,"generation":0})).into_response();
+                        }
+                        if matches!(plan, Plan::UnexpectedUnchanged) {
+                            return Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"unchanged":true})).into_response();
                         }
                         let targeted = body["targeted"] == true;
                         if !targeted && body["knownRevision"] == "a".repeat(64) && body["actualRevision"] == body["knownRevision"] && body["recoveryPending"] != true {
