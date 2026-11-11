@@ -1,4 +1,5 @@
 import { ApiError } from '@/api/http'
+import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
 import {
   HARNESS_APP_INSTALLATIONS_CHANGED_EVENT,
@@ -1275,6 +1276,110 @@ describe('SmartAppsMarketplacePage', () => {
     expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
     expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2)
   })
+
+  test.each([
+    { state: 'installed' as const, dismissed: false },
+    { state: 'running' as const, dismissed: false },
+    { state: 'installed' as const, dismissed: true },
+    { state: 'running' as const, dismissed: true },
+  ])(
+    're-resolves the same target after removing a $state installation (details dismissed: $dismissed)',
+    async ({ state, dismissed }) => {
+      const smartAppsApi = api([])
+      const lookup = deferred<SmartAppMarketplaceItem>()
+      const pendingOpen = deferred<HarnessAppInstallation>()
+      const installation: HarnessAppInstallation = {
+        ...importedInstallation,
+        id: `same-target-${state}-${dismissed}`,
+        smartAppId: 7,
+        state,
+      }
+      openInstalled.mockReturnValue(pendingOpen.promise)
+      vi.mocked(smartAppsApi.getItem)
+        .mockResolvedValueOnce(item())
+        .mockReturnValueOnce(lookup.promise)
+      render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" targetSmartAppId={7} />)
+      await screen.findByText('还没有符合条件的工作台')
+      expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+        '研究工作台'
+      )
+      await screen.findByTestId('smart-app-details')
+      if (dismissed) fireEvent.click(screen.getByTestId('smart-app-details-close'))
+
+      listInstalled.mockResolvedValue([installation])
+      await act(async () => {
+        notifyHarnessAppInstallationsChanged({
+          type: 'updated',
+          installationId: installation.id,
+          installation,
+        })
+      })
+      expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+      expect(smartAppsApi.getItem).toHaveBeenCalledExactlyOnceWith(7)
+
+      listInstalled.mockResolvedValue([])
+      await act(async () => {
+        notifyHarnessAppInstallationsChanged({ type: 'removed', installationId: installation.id })
+      })
+      await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2))
+      expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+      await act(async () => lookup.resolve(item({ displayName: '更新后的工作台' })))
+
+      expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+        '更新后的工作台'
+      )
+      if (dismissed) {
+        expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+      } else {
+        expect(screen.getByTestId('smart-app-details')).toHaveTextContent('更新后的工作台')
+      }
+      await act(async () => pendingOpen.resolve(installation))
+    }
+  )
+
+  test.each(['installed', 'running'] as const)(
+    'starts a fresh target lookup after removing a %s installation that superseded a lookup failure',
+    async state => {
+      const smartAppsApi = api([])
+      const pendingOpen = deferred<HarnessAppInstallation>()
+      const installation: HarnessAppInstallation = {
+        ...importedInstallation,
+        id: `failed-target-${state}`,
+        smartAppId: 7,
+        state,
+      }
+      openInstalled.mockReturnValue(pendingOpen.promise)
+      vi.mocked(smartAppsApi.getItem)
+        .mockRejectedValueOnce(new ApiError('temporary failure', 503, 'unavailable'))
+        .mockResolvedValueOnce(item({ displayName: '恢复后的工作台' }))
+      render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" targetSmartAppId={7} />)
+      await screen.findByText('还没有符合条件的工作台')
+      await screen.findByTestId('smart-app-deep-link-retry')
+
+      listInstalled.mockResolvedValue([installation])
+      await act(async () => {
+        notifyHarnessAppInstallationsChanged({
+          type: 'updated',
+          installationId: installation.id,
+          installation,
+        })
+      })
+      expect(screen.queryByTestId('smart-app-deep-link-retry')).not.toBeInTheDocument()
+      expect(smartAppsApi.getItem).toHaveBeenCalledExactlyOnceWith(7)
+
+      listInstalled.mockResolvedValue([])
+      await act(async () => {
+        notifyHarnessAppInstallationsChanged({ type: 'removed', installationId: installation.id })
+      })
+
+      expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+        '恢复后的工作台'
+      )
+      expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2)
+      expect(screen.queryByTestId('smart-app-deep-link-retry')).not.toBeInTheDocument()
+      await act(async () => pendingOpen.resolve(installation))
+    }
+  )
 
   test('ignores a pending download after the deep-link target changes', async () => {
     const smartAppsApi = api([item()])

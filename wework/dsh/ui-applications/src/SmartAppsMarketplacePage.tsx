@@ -432,6 +432,11 @@ export function SmartAppsMarketplacePage({
     const installation = activeInstallations.find(
       candidate => candidate.smartAppId === targetSmartAppId
     )
+    if (installation) {
+      catalogTargetSmartAppIdRef.current = null
+      targetItemsSnapshotRef.current = null
+      targetLookupFailedRef.current = null
+    }
     if (installation && (installation.state !== 'running' || installation.webUrl)) {
       const shouldOpen = handledTargetSmartAppIdRef.current !== targetSmartAppId
       if (shouldOpen) {
