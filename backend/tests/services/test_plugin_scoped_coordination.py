@@ -43,7 +43,7 @@ def installation(db: Session, name: str) -> int:
 
 
 @pytest.mark.parametrize("single_device", [True, False])
-def test_ack_retries_metadata_conflict_without_losing_another_device(
+def test_ack_merges_metadata_without_retry_or_losing_another_device(
     scoped_db, plugin_write_backend, monkeypatch, single_device
 ):
     bind = scoped_db.get_bind()
@@ -103,7 +103,7 @@ def test_ack_retries_metadata_conflict_without_losing_another_device(
             response=DeviceCapabilitySyncResponse(results=[result]),
         )
 
-    assert attempts == ["device", "device"]
+    assert attempts == ["device"]
     assert scoped_db.query(PluginDeviceInstallation).count() == 0
     parent = scoped_db.get(Kind, installed_id)
     assert parent.is_active is False

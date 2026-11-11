@@ -23,13 +23,11 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
             Targets(Vec<u64>),
             Retry,
         }
-        let retry = [
+        let retry = retry_deadline(
             cycle_retry,
             reconciler.next_retry().map(tokio::time::Instant::from_std),
-        ]
-        .into_iter()
-        .flatten()
-        .min();
+            transport.available(connected.load(Ordering::Acquire)),
+        );
         let trigger = tokio::select! {
             _ = cancel.changed() => break,
             _ = tokio::time::sleep_until(audit) => Trigger::Audit,
@@ -58,7 +56,11 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
             continue;
         }
         let retry_all = cycle_retry.is_some_and(|due| due <= tokio::time::Instant::now());
-        cycle_retry = None;
+        let full_cycle =
+            matches!(trigger, Trigger::Audit) || matches!(trigger, Trigger::Retry) && retry_all;
+        if full_cycle {
+            cycle_retry = None;
+        }
         let result = tokio::select! {
             _ = cancel.changed() => break,
             result = async {
@@ -75,17 +77,17 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
             } => result,
         };
         match result {
-            Ok(()) => failures = 0,
+            Ok(()) if full_cycle => failures = 0,
+            Ok(()) => {}
             Err(_) => {
                 failures = failures.saturating_add(1);
-                cycle_retry = Some(
-                    tokio::time::Instant::now()
-                        + Duration::from_secs(match failures {
-                            1 => 30,
-                            2 => 60,
-                            _ => 300,
-                        }),
-                );
+                let due = tokio::time::Instant::now()
+                    + Duration::from_secs(match failures {
+                        1 => 30,
+                        2 => 60,
+                        _ => 300,
+                    });
+                cycle_retry = Some(cycle_retry.map_or(due, |previous| previous.min(due)));
             }
         }
         if let Some(path) = super::super::e2e_reconcile_marker() {
@@ -100,6 +102,17 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
     }
 }
 
+fn retry_deadline(
+    cycle: Option<tokio::time::Instant>,
+    target: Option<tokio::time::Instant>,
+    available: bool,
+) -> Option<tokio::time::Instant> {
+    [cycle, target.filter(|_| available)]
+        .into_iter()
+        .flatten()
+        .min()
+}
+
 pub(super) fn audit_interval(seed: u8) -> Duration {
     let audit = default_audit_interval(seed);
     super::super::e2e_duration("WEWORK_E2E_PLUGIN_ACCOUNT_RECONCILE_INTERVAL_MS", audit)
@@ -112,6 +125,19 @@ fn default_audit_interval(seed: u8) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn offline_transport_ignores_expired_target_deadlines() {
+        let past = tokio::time::Instant::now();
+        tokio::time::advance(Duration::from_secs(31)).await;
+        let backoff = tokio::time::Instant::now() + Duration::from_secs(30);
+        assert_eq!(
+            retry_deadline(Some(backoff), Some(past), false),
+            Some(backoff)
+        );
+        assert_eq!(retry_deadline(None, Some(past), false), None);
+        assert_eq!(retry_deadline(Some(backoff), Some(past), true), Some(past));
+    }
 
     #[test]
     fn audit_cadence_is_five_minutes_with_bounded_jitter() {

@@ -83,3 +83,68 @@ async fn lifecycle_and_inventory_events_run_before_the_long_audit() {
     cancel.send_replace(true);
     task.await.unwrap();
 }
+
+#[derive(Clone)]
+struct FailedDiscovery {
+    calls: tokio::sync::mpsc::UnboundedSender<Value>,
+    first: Arc<AtomicBool>,
+}
+
+impl super::super::super::PluginAuthTransport for FailedDiscovery {
+    fn exchange<'a>(&'a self, _: &'a str, payload: Value, _: Duration) -> Reply<'a, Value> {
+        self.calls.send(payload).unwrap();
+        let fail = self.first.swap(false, Ordering::SeqCst);
+        Box::pin(async move {
+            if fail {
+                Err("discovery unavailable".into())
+            } else {
+                Ok(json!({"success":true,"packages":[]}))
+            }
+        })
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn successful_partial_events_preserve_a_failed_full_cycle_retry() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir(home.path().join("capabilities")).unwrap();
+    std::fs::write(
+        home.path().join("capabilities/manifest-v2.json"),
+        json!({"plugins":{
+            "a":{"installed_plugin_id":42,"managed":true,"enabled":true},
+            "b":{"installed_plugin_id":43,"managed":true,"enabled":true}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let (cancel, cancelled) = watch::channel(false);
+    let (events, requested) = tokio::sync::mpsc::channel(16);
+    let task = tokio::spawn(run(
+        FailedDiscovery {
+            calls,
+            first: Arc::new(AtomicBool::new(true)),
+        },
+        home.path().to_owned(),
+        Arc::new(AtomicBool::new(true)),
+        cancelled,
+        requested,
+        Duration::from_secs(3600),
+    ));
+    assert_eq!(
+        next(&mut received).await["installed_plugin_ids"],
+        json!([42, 43])
+    );
+    events.send(43).await.unwrap();
+    assert_eq!(
+        next(&mut received).await["installed_plugin_ids"],
+        json!([43])
+    );
+    tokio::time::advance(Duration::from_secs(31)).await;
+    assert_eq!(
+        next(&mut received).await["installed_plugin_ids"],
+        json!([42, 43])
+    );
+    cancel.send_replace(true);
+    task.await.unwrap();
+}

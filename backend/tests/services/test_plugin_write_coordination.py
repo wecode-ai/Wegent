@@ -339,3 +339,27 @@ def test_expired_operation_deadline_rejects_commit(test_db, plugin_write_backend
     assert caught.value.code == "plugin_write_lease_lost"
     test_db.rollback()
     assert not plugin_write_backend.values
+
+
+def test_batch_rejects_an_installation_renamed_during_acquisition(
+    test_db, test_user, plugin_write_backend, monkeypatch
+):
+    from app.services import plugin_write_identity
+
+    row = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="batch-parent",
+        json={"spec": {}},
+        is_active=True,
+    )
+    test_db.add(row)
+    test_db.commit()
+    lookup = Mock(side_effect=["batch-parent", "renamed-parent"])
+    monkeypatch.setattr(plugin_write_identity, "installed_write_name", lookup)
+    with pytest.raises(coordination.PluginWriteError) as caught:
+        coordination.acquire_plugin_write_locks(test_db, [(test_user.id, row.id)])
+    assert caught.value.code == "plugin_write_conflict"
+    assert lookup.call_count == 2
+    assert not plugin_write_backend.values

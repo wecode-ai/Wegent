@@ -180,3 +180,25 @@ async def test_installed_state_without_target_release_still_syncs(
         ].actual_release_id
         == 0
     )
+
+
+def test_alias_repair_reloads_rows_deleted_while_waiting_for_the_lease(
+    test_db, test_user, alias_install, monkeypatch
+):
+    from app.services import plugin_device_identity as module
+
+    installed, _ = alias_install
+    acquire = module.acquire_plugin_write_locks
+    user_id = test_user.id
+
+    def remove_alias(db, targets):
+        acquire(db, targets)
+        db.query(PluginDeviceInstallation).filter_by(
+            user_id=user_id, device_id="runtime-device"
+        ).delete(synchronize_session=False)
+        db.expire_all()
+
+    monkeypatch.setattr(module, "acquire_plugin_write_locks", remove_alias)
+    reconcile_plugin_device_rows(test_db, user_id, installed_ids=[installed.id])
+    test_db.commit()
+    assert test_db.query(PluginDeviceInstallation).one().device_id == "runtime-device"

@@ -12,6 +12,9 @@ use brz_redis::{
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+#[path = "write_coordination_policy_tests.rs"]
+mod policy_tests;
+
 #[test]
 fn coordination_failures_keep_the_service_unavailable_response_contract() {
     for code in [

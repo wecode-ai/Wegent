@@ -155,22 +155,32 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
     /// later reads reject duplicates instead of choosing an arbitrary parent.
     pub async fn ensure_policy<M: Mysql>(&self, mysql: &M) -> MysqlResult<()> {
         let bootstrap = if self.name != "@account-policy" {
-            let ready = mysql
-                .with_transaction(async |tx| {
+            let ready = tokio::time::timeout_at(
+                self.deadline,
+                mysql.with_transaction(async |tx| {
                     Ok(load_policy(tx, self.user_id)
                         .await?
                         .is_some_and(|row| row.is_active == Some(true)))
-                })
-                .await?;
+                }),
+            )
+            .await
+            .map_err(|_| coordination_error("plugin_write_busy"))??;
             if ready {
                 return self.verify_owned().await;
             }
-            Some(Self::acquire(Some(self.redis), self.user_id).await?)
+            Some(
+                tokio::time::timeout_at(
+                    self.deadline,
+                    Self::acquire(Some(self.redis), self.user_id),
+                )
+                .await
+                .map_err(|_| coordination_error("plugin_write_busy"))??,
+            )
         } else {
             None
         };
         let deadline = (Instant::now() + ACQUIRE_WAIT).min(self.deadline);
-        let result = tokio::time::timeout_at(deadline, async {
+        let Ok(result) = tokio::time::timeout_at(deadline, async {
             self.verify_owned().await?;
             if let Some(lease) = &bootstrap {
                 lease.verify_owned().await?;
@@ -183,7 +193,11 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                 .await
         })
         .await
-        .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")));
+        else {
+            // COMMIT may still complete after cancellation. Keep bootstrap fencing
+            // until expiry instead of admitting another first-policy creator.
+            return Err(coordination_error("plugin_write_busy"));
+        };
         if matches!(&result, Ok(_) | Err(MysqlError::InvalidQuery { .. }))
             && let Some(lease) = bootstrap
         {

@@ -2,11 +2,32 @@
 
 from datetime import datetime, timedelta
 
+import pytest
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.models.kind import Kind
 from scripts.compact_plugin_auth_migrations import compact_batch, obsolete_query
 
 
 def add_row(db, user, offset, *, active=False, expires=1, **overrides):
+    parent = (
+        db.query(Kind)
+        .filter_by(
+            user_id=user.id, kind="InstalledPlugin", namespace="default", name="mail"
+        )
+        .first()
+    )
+    if parent is None:
+        parent = Kind(
+            user_id=user.id,
+            kind="InstalledPlugin",
+            namespace="default",
+            name="mail",
+            json={"spec": {}},
+            is_active=True,
+        )
+        db.add(parent)
+        db.flush()
     row = Kind(
         user_id=user.id,
         kind="ConnectorMigration",
@@ -21,6 +42,7 @@ def add_row(db, user, offset, *, active=False, expires=1, **overrides):
                 "connector_slug": "mail",
                 "device_id": "local",
                 "expires_at": expires,
+                "installed_plugin_id": parent.id,
             }
         },
     )
@@ -131,3 +153,22 @@ def test_compaction_rechecks_a_reused_slot_after_acquiring_its_plugin_lease(
 
     assert compact_batch(test_db, test_user.id, 100) == 0
     assert test_db.get(Kind, old.id).is_active is True
+
+
+@pytest.mark.parametrize("parent", [None, [], {}, 999999, True, 1.0, "1"])
+def test_unresolved_history_is_preserved_without_blocking_resolvable_rows(
+    test_db, test_user, parent
+):
+    unresolved = add_row(test_db, test_user, 1)
+    unresolved.json = {
+        "spec": {**unresolved.json["spec"], "installed_plugin_id": parent}
+    }
+    # Python considers True and 1.0 equal to 1; persist the malformed JSON type.
+    flag_modified(unresolved, "json")
+    resolved = add_row(test_db, test_user, 2)
+    add_row(test_db, test_user, 3)
+    test_db.flush()
+    resolved_id, unresolved_id = resolved.id, unresolved.id
+    assert compact_batch(test_db, test_user.id, 1) == 1
+    assert test_db.query(Kind).filter_by(id=resolved_id).count() == 0
+    assert test_db.query(Kind).filter_by(id=unresolved_id).count() == 1

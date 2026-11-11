@@ -504,6 +504,11 @@ impl LocalBackendConnectionController {
             .as_u64()
             .filter(|_| selected.is_none() && params["full"] != true);
         let targeted = selected.is_some() || installed_plugin_id.is_some();
+        if installed_plugin_id.is_some() {
+            // Target-only refreshes also fence older full plans after cancellation.
+            next_intent_order(&mut journal)?;
+            persist(path, &journal)?;
+        }
         if !targeted && !journal["pending"].as_array().unwrap().is_empty() {
             if let Err(failure) =
                 self.schedule_local_recovery(connection, instance, path, &mut journal)
@@ -620,7 +625,8 @@ impl LocalBackendConnectionController {
                     .all(|item| matches!(item["status"].as_str(), Some("synced" | "removed")))
             });
         if completed {
-            let intervening = journal["nextIntentOrder"] != plan_order;
+            let intervening = journal["nextIntentOrder"] != plan_order
+                || !targeted && self.has_foreground_plugin_operation(path);
             journal["revision"] = if targeted || intervening {
                 Value::Null
             } else {
@@ -665,7 +671,10 @@ impl LocalBackendConnectionController {
             }
             return Err(error("plugin_local_apply_failed"));
         }
-        if !targeted && journal["nextIntentOrder"] == plan_order {
+        if !targeted
+            && journal["nextIntentOrder"] == plan_order
+            && !self.has_foreground_plugin_operation(path)
+        {
             let digest = self
                 .scan_local_plugin_content(&session, &mut journal, lease)
                 .await?;

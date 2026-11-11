@@ -177,7 +177,6 @@ class PluginDeviceInstallationService:
                 db,
                 user_id=user_id,
                 response=response,
-                installed_ids=[installed_kind_id],
             )
             return
         acquire_plugin_write_lock(db, user_id, installed_id=installed_kind_id)
@@ -225,7 +224,7 @@ class PluginDeviceInstallationService:
                     item.desired_plugin_snapshot is not None
                     for item in response.results
                 ):
-                    lock_plugin_sync_state(db, user_id)
+                    lock_plugin_sync_state(db, user_id, merge=True)
                 scopes = self._response_scopes(db, user_id, response, installed_ids)
                 acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
                 reconcile_plugin_device_rows(db, user_id, installed_ids=scopes)
@@ -343,6 +342,8 @@ class PluginDeviceInstallationService:
         reconcile_plugin_device_rows(db, user_id, installed_ids=scopes)
         acknowledged_ids: list[int] = []
         for installed in self._desired_installs(db, user_id):
+            if installed.id not in scopes:
+                continue
             report = reports_by_id.get(installed.id)
             if report is None:
                 continue
@@ -375,7 +376,7 @@ class PluginDeviceInstallationService:
                 None,
             )
         if reconcile and result.desired_plugin_snapshot is not None:
-            lock_plugin_sync_state(db, user_id)
+            lock_plugin_sync_state(db, user_id, merge=True)
         if reconcile:
             acquire_plugin_write_locks(db, ((user_id, item) for item in installed_ids))
             reconcile_plugin_device_rows(db, user_id, installed_ids=installed_ids)
@@ -577,6 +578,8 @@ class PluginDeviceInstallationService:
         Creates missing rows and retries failed updates until their per-release
         circuit breaker opens. Manual retries reset that breaker.
         """
+        scopes = [item.id for item in self._desired_installs(db, user_id)]
+        acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
         reconcile_plugin_device_rows(db, user_id)
         normalized_device_id = plugin_device_id(db, user_id, device_id)
         if not normalized_device_id:
@@ -584,6 +587,8 @@ class PluginDeviceInstallationService:
             return 0
         changed = 0
         for installed in self._desired_installs(db, user_id):
+            if installed.id not in scopes:
+                continue
             changed += self._ensure_desired_install_pending(
                 db,
                 user_id=user_id,

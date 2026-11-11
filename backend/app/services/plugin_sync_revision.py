@@ -10,7 +10,7 @@ import logging
 from copy import deepcopy
 
 from redis.exceptions import RedisError
-from sqlalchemy import func, select
+from sqlalchemy import BigInteger, cast, func, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
@@ -29,10 +29,15 @@ def remember_sync_revision(db: Session, row: Kind, *, merge: bool = False) -> No
     revision = row.json.get("spec", {}).get("revision", 0)
     if type(revision) is not int or not 0 <= revision < 2**63 - 1:
         raise PluginWriteError("plugin_write_conflict")
-    db.info.setdefault(_EXPECTED, {}).setdefault(row.id, revision)
-    db.info.setdefault(_DOCUMENTS, {}).setdefault(row.id, deepcopy(row.json))
+    expected = db.info.setdefault(_EXPECTED, {})
+    documents = db.info.setdefault(_DOCUMENTS, {})
     if merge:
+        expected[row.id] = revision
+        documents[row.id] = deepcopy(row.json)
         db.info.setdefault(_MERGE, set()).add(row.id)
+    else:
+        expected.setdefault(row.id, revision)
+        documents.setdefault(row.id, deepcopy(row.json))
 
 
 def _merge_patch(before: dict, after: dict) -> dict:
@@ -79,13 +84,20 @@ def flush_sync_revision(db: Session, row: Kind) -> None:
 def _flush_merge(db: Session, row: Kind) -> None:
     """Merge independent intent paths without retrying other plugins' writes."""
     original = db.info[_DOCUMENTS][row.id]
-    patch = json.dumps(_merge_patch(original, row.json), separators=(",", ":"))
+    changes = _merge_patch(original, row.json)
+    watermarks = _pop_watermarks(changes)
+    patch = json.dumps(changes, separators=(",", ":"))
     merge = (
         func.json_merge_patch
         if db.get_bind().dialect.name == "mysql"
         else func.json_patch
     )
     revision = func.coalesce(Kind.json["spec"]["revision"].as_integer(), 0)
+    maximum = func.greatest if db.get_bind().dialect.name == "mysql" else func.max
+    assignments = ["$.spec.revision", revision + 1]
+    for path, value in watermarks.items():
+        current = func.coalesce(cast(func.json_extract(Kind.json, path), BigInteger), 0)
+        assignments.extend((path, maximum(current, value)))
     identity = (
         Kind.id == row.id,
         Kind.user_id == row.user_id,
@@ -98,11 +110,7 @@ def _flush_merge(db: Session, row: Kind) -> None:
         db.query(Kind)
         .filter(*identity)
         .update(
-            {
-                Kind.json: func.json_set(
-                    merge(Kind.json, patch), "$.spec.revision", revision + 1
-                )
-            },
+            {Kind.json: func.json_set(merge(Kind.json, patch), *assignments)},
             synchronize_session=False,
         )
     )
@@ -112,6 +120,29 @@ def _flush_merge(db: Session, row: Kind) -> None:
     db.info[_EXPECTED][row.id] = document["spec"]["revision"]
     db.info[_DOCUMENTS][row.id] = deepcopy(document)
     set_committed_value(row, "json", document)
+
+
+def _pop_watermarks(changes: dict) -> dict[str, int]:
+    """Merge protocol counters against the current row, never a stale document."""
+    counters: dict[str, int] = {}
+
+    def take(document: dict, key: str, path: str) -> None:
+        if key not in document:
+            return
+        value = document.pop(key)
+        if type(value) is not int or value < 0:
+            raise PluginWriteError("plugin_write_conflict")
+        counters[path] = value
+
+    spec = changes.get("spec", {})
+    take(spec, "generation", "$.spec.generation")
+    for device_id, device in spec.get("devices", {}).items():
+        path = f"$.spec.devices.{json.dumps(device_id)}"
+        take(device, "complete_generation", f"{path}.complete_generation")
+        plugins = device.get("plugins", {})
+        for installed_id in list(plugins):
+            take(plugins, installed_id, f"{path}.plugins.{json.dumps(installed_id)}")
+    return counters
 
 
 def clear_sync_revisions(db: Session) -> None:

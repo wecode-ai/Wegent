@@ -66,7 +66,7 @@ def record_versioned_result(
     payload = result.desired_plugin_snapshot or {}
     metadata = payload["plugin_sync"]
     generation = metadata["generation"]
-    sync_state = lock_plugin_sync_state(db, user_id)
+    sync_state = lock_plugin_sync_state(db, user_id, merge=True)
     expected = {
         item["installed_plugin_id"]: item for item in payload.get("plugins") or []
     }

@@ -168,12 +168,11 @@ def acquire_plugin_write_locks(
     from app.services.plugin_write_identity import installed_write_name
 
     configure_plugin_session(db)
-    targets = sorted(
-        {
-            (user_id, installed_write_name(db, user_id, installed_id))
-            for user_id, installed_id in installations
-        }
-    )
+    requested = {
+        (user_id, installed_id): installed_write_name(db, user_id, installed_id)
+        for user_id, installed_id in installations
+    }
+    targets = sorted({(user_id, name) for (user_id, _), name in requested.items()})
     if not targets:
         return
     deadline = time.monotonic() + WAIT_SECONDS
@@ -198,6 +197,11 @@ def acquire_plugin_write_locks(
             raise PluginWriteError("plugin_write_busy")
         for lease in db.info.get(_LEASES, {}).values():
             lease.check()
+        for (user_id, installed_id), name in requested.items():
+            if installed_write_name(
+                db, user_id, installed_id
+            ) != name or installed_id not in db.info.get(_REVISIONS, {}):
+                raise PluginWriteError("plugin_write_conflict")
     except Exception:
         # Policy reads can reactivate rows. Roll back before releasing any lease.
         db.rollback()

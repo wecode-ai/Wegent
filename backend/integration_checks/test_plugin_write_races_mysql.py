@@ -631,3 +631,116 @@ def test_stale_automation_cannot_insert_an_intent_after_logout_commits(
             installed_ids=[context.plugin_id],
         ) == {"migrations": []}
     assert not client.exists(lock_key(context))
+
+
+def test_stale_ack_merge_preserves_newer_dispatch_counters_on_real_mysql(context):
+    from app.services.device.plugin_sync_protocol import (
+        advance_plugin_snapshot_watermark,
+        lock_plugin_sync_state,
+        plugin_snapshot_watermark,
+        register_plugin_snapshot_intent,
+    )
+
+    with context.sessions() as db:
+        lock_plugin_sync_state(db, context.user_id)
+        db.commit()
+    with context.sessions() as acknowledgement:
+        state = lock_plugin_sync_state(acknowledgement, context.user_id, merge=True)
+        advance_plugin_snapshot_watermark(
+            state,
+            "device.with.dot",
+            generation=2,
+            complete=True,
+            installed_plugin_ids=[context.plugin_id],
+        )
+        register_plugin_snapshot_intent(
+            context.sessions,
+            user_id=context.user_id,
+            device_id="device.with.dot",
+            payload={
+                "plugins": [{"installed_plugin_id": context.plugin_id}],
+                "plugin_sync": {"generation": 9, "complete": True},
+            },
+        )
+        acknowledgement.commit()
+    with context.sessions() as db:
+        state = lock_plugin_sync_state(db, context.user_id)
+        assert state.json["spec"]["generation"] == 9
+        assert (
+            plugin_snapshot_watermark(state, "device.with.dot", context.plugin_id) == 9
+        )
+
+
+def test_parallel_ack_metadata_commits_need_no_global_revision_retry(context):
+    from app.services.device.plugin_sync_protocol import (
+        advance_plugin_snapshot_watermark,
+        lock_plugin_sync_state,
+    )
+
+    with context.sessions() as db:
+        lock_plugin_sync_state(db, context.user_id)
+        db.commit()
+    read = threading.Barrier(4)
+
+    def acknowledge(index):
+        with context.sessions() as db:
+            state = lock_plugin_sync_state(db, context.user_id, merge=True)
+            advance_plugin_snapshot_watermark(
+                state,
+                f"peer-{index}",
+                generation=index + 1,
+                complete=False,
+                installed_plugin_ids=[context.plugin_id],
+            )
+            read.wait(timeout=10)
+            db.commit()
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        pending = [pool.submit(acknowledge, index) for index in range(4)]
+        for future in pending:
+            future.result(timeout=15)
+    with context.sessions() as db:
+        state = lock_plugin_sync_state(db, context.user_id)
+        assert state.json["spec"]["generation"] == 4
+        for index in range(4):
+            assert (
+                state.json["spec"]["devices"][f"peer-{index}"]["plugins"][
+                    str(context.plugin_id)
+                ]
+                == index + 1
+            )
+
+
+def test_compactor_skips_unresolved_parents_before_its_mysql_batch_limit(context):
+    from scripts.compact_plugin_auth_migrations import compact_batch
+
+    with context.sessions() as db:
+        rows = []
+        for parent in ([], context.plugin_id, context.plugin_id):
+            row = Kind(
+                user_id=context.user_id,
+                kind="ConnectorMigration",
+                namespace="plugin-auth",
+                name=uuid.uuid4().hex,
+                is_active=False,
+                json={
+                    "spec": {
+                        "automatic": True,
+                        "source_identity": "compactor-fixture",
+                        "connector_slug": "test",
+                        "device_id": context.device_id,
+                        "expires_at": 1,
+                        "installed_plugin_id": parent,
+                    }
+                },
+            )
+            db.add(row)
+            rows.append(row)
+        db.commit()
+        ids = [row.id for row in rows]
+        assert compact_batch(db, context.user_id, 1) == 1
+        db.commit()
+        assert set(id for id, in db.query(Kind.id).filter(Kind.id.in_(ids))) == {
+            ids[0],
+            ids[2],
+        }

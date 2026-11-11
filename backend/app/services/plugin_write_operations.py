@@ -35,7 +35,10 @@ def run_plugin_transaction(
 ) -> T:
     """Retry bounded optimistic conflicts after a complete transaction rollback."""
     deadline = time.monotonic() + 20
+    last_conflict = None
     for attempt in range(attempts):
+        if last_conflict is not None and time.monotonic() >= deadline:
+            raise last_conflict
         with session_factory() as db:
             configure_plugin_session(db)
             try:
@@ -49,5 +52,6 @@ def run_plugin_transaction(
                     and error.code == "plugin_write_conflict"
                 ):
                     raise
+                last_conflict = error
         time.sleep(min(0.01 * (attempt + 1), max(0, deadline - time.monotonic())))
     raise AssertionError("Plugin transaction retry exhausted without a result")

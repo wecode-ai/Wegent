@@ -175,3 +175,30 @@ async def test_operation_failure_rolls_back_before_session_close(monkeypatch):
 
     assert caught.value is failure
     assert events == ["open", "configure", "mutate", "rollback", "close"]
+
+
+def test_backoff_cannot_start_a_new_transaction_after_the_shared_deadline(monkeypatch):
+    from unittest.mock import Mock
+
+    clock = [0.0]
+    opened = []
+    conflict = PluginWriteError("plugin_write_conflict")
+
+    @contextmanager
+    def session():
+        opened.append(True)
+        yield Mock()
+
+    def fail(_db):
+        clock[0] = 19.999
+        raise conflict
+
+    monkeypatch.setattr(operations, "configure_plugin_session", Mock())
+    monkeypatch.setattr(operations.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        operations.time, "sleep", lambda _delay: clock.__setitem__(0, 20.001)
+    )
+    with pytest.raises(PluginWriteError) as caught:
+        operations.run_plugin_transaction(fail, session)
+    assert caught.value is conflict
+    assert len(opened) == 1

@@ -131,7 +131,15 @@ def reconcile_plugin_device_rows(
             PluginDeviceInstallation.installed_kind_id.in_(installed_ids)
         )
     rows = query.all()
-    acquire_plugin_write_locks(db, ((user_id, row.installed_kind_id) for row in rows))
+    scopes = sorted({row.installed_kind_id for row in rows})
+    acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
+    # Flush owned pending work before replacing clean identities with live rows.
+    db.flush()
+    rows = (
+        query.filter(PluginDeviceInstallation.installed_kind_id.in_(scopes))
+        .populate_existing()
+        .all()
+    )
     selected = coalesce_plugin_device_rows(db, rows)
     retained_ids = {row.id for row in selected.values()}
     for row in rows:

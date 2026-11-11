@@ -47,7 +47,7 @@ def reconciliation(monkeypatch):
     monkeypatch.setattr(module, "get_db_session", session)
     record = Mock()
     monkeypatch.setattr(
-        module.plugin_device_installation_service, "record_device_sync_result", record
+        module.plugin_device_installation_service, "_record_device_sync_result", record
     )
     dispatch = AsyncMock(
         return_value=DeviceCapabilitySyncResult(
@@ -213,6 +213,12 @@ async def test_reconciliation_waits_leave_loop_responsive_and_sessions_in_worker
             self.touch()
             self.closed = True
 
+        def commit(self):
+            self.touch()
+
+        def rollback(self):
+            self.touch()
+
     @contextmanager
     def session():
         db = TrackedSession()
@@ -234,7 +240,7 @@ async def test_reconciliation_waits_leave_loop_responsive_and_sessions_in_worker
         operation(db, "initial_snapshot" if snapshots == 1 else "latest_snapshot")
         return {"scope": "plugins", "mode": "merge", "plugins": []}
 
-    def record(db, **kwargs):
+    def record(db, *_args, **kwargs):
         operation(db, "record")
 
     async def dispatch(**kwargs):
@@ -245,6 +251,9 @@ async def test_reconciliation_waits_leave_loop_responsive_and_sessions_in_worker
 
     monkeypatch.setattr(module, "get_db_session", session)
     monkeypatch.setattr(module, "configure_plugin_session", lambda db: db.touch())
+    monkeypatch.setattr(
+        plugin_write_operations, "configure_plugin_session", lambda db: db.touch()
+    )
     monkeypatch.setattr(
         module.plugin_marketplace_service,
         "reconcile_stale_installed_catalog_refs",
@@ -267,7 +276,7 @@ async def test_reconciliation_waits_leave_loop_responsive_and_sessions_in_worker
         module.device_capability_sync_service, "sync_device_payload", dispatch
     )
     monkeypatch.setattr(
-        module.plugin_device_installation_service, "record_device_sync_result", record
+        module.plugin_device_installation_service, "_record_device_sync_result", record
     )
 
     task = asyncio.create_task(module.reconcile_device_plugins(7, "device"))
@@ -461,7 +470,7 @@ async def test_final_snapshot_and_ack_share_one_owned_lease_until_commit(
     observed = []
     original_build = module.device_capability_sync_service.build_desired_plugins
     original_record = (
-        module.plugin_device_installation_service.record_device_sync_result
+        module.plugin_device_installation_service._record_device_sync_result
     )
 
     def observe_lease(operation, db):
@@ -485,16 +494,16 @@ async def test_final_snapshot_and_ack_share_one_owned_lease_until_commit(
         )
         return original_build(db, **kwargs)
 
-    def record(db, **kwargs):
+    def record(db, user_id, result, **kwargs):
         observe_lease("record", db)
-        original_record(db, **kwargs)
-        assert user_id not in db.info.get("plugin_write_leases", {})
+        original_record(db, user_id, result, **kwargs)
+        assert any(owner == user_id for owner, _ in db.info["plugin_write_leases"])
 
     monkeypatch.setattr(
         module.device_capability_sync_service, "build_desired_plugins", build
     )
     monkeypatch.setattr(
-        module.plugin_device_installation_service, "record_device_sync_result", record
+        module.plugin_device_installation_service, "_record_device_sync_result", record
     )
     result = await asyncio.to_thread(
         module.record_reconciliation_result,
@@ -520,3 +529,42 @@ async def test_final_snapshot_and_ack_share_one_owned_lease_until_commit(
     assert snapshot_lease is record_lease is commit_lease
     assert snapshot_thread == record_thread == commit_thread != threading.get_ident()
     assert not snapshot_lease.lock.owned()
+
+
+def test_reconciliation_revalidates_the_snapshot_after_an_ack_write_conflict(
+    installed_reconciliation, monkeypatch
+):
+    user_id, installed_id, _, sessions = installed_reconciliation
+    payload = module.desired_plugins(user_id, "desktop")
+    opened = []
+
+    @contextmanager
+    def session():
+        if opened:
+            with sessions() as writer:
+                uninstall_account_plugin(
+                    db=writer, user_id=user_id, installed_id=installed_id
+                )
+        opened.append(True)
+        with sessions() as db:
+            yield db
+
+    record = Mock(side_effect=PluginWriteError("plugin_write_conflict"))
+    monkeypatch.setattr(module, "get_db_session", session)
+    monkeypatch.setattr(
+        module.plugin_device_installation_service, "_record_device_sync_result", record
+    )
+    latest = module.record_reconciliation_result(
+        user_id,
+        "desktop",
+        payload,
+        DeviceCapabilitySyncResult(
+            device_id="desktop",
+            success=True,
+            plugins=[{"id": installed_id, "status": "synced"}],
+        ),
+    )
+    assert latest is not None
+    assert latest["plugins"] == []
+    assert len(opened) == 2
+    record.assert_called_once()

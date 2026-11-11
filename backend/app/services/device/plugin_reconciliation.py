@@ -4,6 +4,8 @@ import asyncio
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
@@ -12,6 +14,7 @@ from app.services.device.capability_sync_service import device_capability_sync_s
 from app.services.device.plugin_change_sync import dispatch_snapshot
 from app.services.device.plugin_sync_protocol import load_versioned_plugin_payload
 from app.services.plugin_device_installation_service import (
+    _is_mysql_deadlock,
     plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
@@ -19,6 +22,8 @@ from app.services.plugin_write_coordination import (
     acquire_plugin_write_locks,
     configure_plugin_session,
 )
+from app.services.plugin_write_errors import PluginWriteError
+from app.services.plugin_write_operations import run_plugin_transaction
 from shared.telemetry.decorators import trace_async
 
 
@@ -45,7 +50,8 @@ def record_reconciliation_result(
     result: DeviceCapabilitySyncResult,
 ) -> dict[str, Any] | None:
     """Validate and persist the acknowledged snapshot under one write lease."""
-    with get_db_session() as db:
+
+    def record(db: Session) -> dict[str, Any] | None:
         configure_plugin_session(db)
         scopes = plugin_device_installation_service._response_scopes(
             db,
@@ -63,10 +69,18 @@ def record_reconciliation_result(
             item.status == "superseded" for item in result.plugins
         ):
             return latest
-        plugin_device_installation_service.record_device_sync_result(
-            db, user_id=user_id, result=result
-        )
-    return None
+        try:
+            plugin_device_installation_service._record_device_sync_result(
+                db, user_id, result, installed_ids=scopes
+            )
+            db.commit()
+        except OperationalError as error:
+            if _is_mysql_deadlock(error):
+                raise PluginWriteError("plugin_write_conflict") from error
+            raise
+        return None
+
+    return run_plugin_transaction(record, get_db_session, attempts=3)
 
 
 def plugin_snapshot(payload: dict[str, Any]) -> list[dict[str, Any]]:
