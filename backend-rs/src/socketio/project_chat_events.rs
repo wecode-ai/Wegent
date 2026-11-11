@@ -395,7 +395,8 @@ async fn send_message(
         crate::transaction_outcome::run_mysql_with_deadlock_retry(&state.mysql, async |tx| {
             let item = match request.task_id.as_deref() {
                 Some(item) => {
-                    crate::background_jobs::project::store::locked(tx, "task", item).await?
+                    crate::background_jobs::project::store::locked_existing(tx, "task", item)
+                        .await?
                 }
                 None => None,
             };
