@@ -29,7 +29,9 @@ Timeouts, missing/mismatched acceptance headers, 5xx, authentication failures an
 
 A compacted request cannot override later intent: persistent watermarks fence late arrivals. Only a matching explicit `409 INTENT_SUPERSEDED` with `X-Plugin-Operation-State: superseded` archives the original request as superseded. Installation revision changes from legacy APIs, another instance or automatic updates also fence accepted replays. Ordinary acknowledged business rejections retire only unaccepted requests. Absence of a compacted marker is not proof of nonacceptance: rejection acknowledgement also requires an order newer than the retained instance watermarks.
 
-Pending recovery runs independently from full snapshot HTTP/application and merges its result into the freshly loaded journal. Automatic update and reconciliation scheduling remain independent; real file publication remains serialized. Profile changes fence queued requests and publication.
+Pending recovery runs independently from full snapshot HTTP/application and merges its result into the freshly loaded journal. Automatic update and reconciliation scheduling remain independent; real file publication remains serialized.
+
+Queued foreground operations and scan publication validate the Backend, account token and installer Socket. Pending account HTTP recovery validates only the Backend and account token. Runtime-token renewal alone does not interrupt this work. Account or Backend replacement still rejects old-profile requests, and Socket replacement still fences publication through the captured installer.
 
 Before application, persist only the existing `reconcilePending` marker, never a copy of the execution plan. Recovery fetches the account's current plan. Reading an older journal converts its `snapshot` object into this marker and removes the copy while preserving original pending requests and ordering. Foreground submission and background recovery share attempt, acceptance and rejection handling.
 
@@ -39,7 +41,7 @@ Scans use the existing monotonic intent order to identify new foreground request
 
 Deploy all Backend, gateway and Runtime replicas before enabling `PLUGIN_LOCAL_SYNC_ENABLED` (default false). Legacy requests without the mode preserve their original behavior. Contract 3 does not mix with contract 2 from earlier PR revisions. Disabling new acceptance retains replay and reconciliation for existing instances. Old local pending requests are preserved; obsolete receipt entries are no longer sent.
 
-Focused tests cover no-device lifecycle, bounded acceptance slots, request hashing, rollback, compacted and legacy-write supersession, isolation and independent recovery. Existing CI invokes real HTTP/MySQL/Redis coverage and the desktop `plugin-write-coordination` checkpoint. Actual release-package compatibility for 1.0.0, 1.1.0 and 1.1.1 remains unverified.
+Focused tests cover no-device lifecycle, bounded acceptance slots, request hashing, rollback, compacted and legacy-write supersession, isolation, independent recovery, and Runtime-token renewal during queued operations, both scan phases and pending recovery. Independent connection-field changes verify the account, Backend and Socket validation boundaries. Existing CI invokes real HTTP/MySQL/Redis coverage and the desktop `plugin-write-coordination` checkpoint. Actual release-package compatibility for 1.0.0, 1.1.0 and 1.1.1 remains unverified.
 
 ## Managed account commands in local conversations
 

@@ -29,7 +29,9 @@ sidebar_position: 59
 
 最新受理槽位被后续操作覆盖后，旧请求仍受持久化顺序水位约束。Backend 明确返回匹配 ID/顺序的 `409 INTENT_SUPERSEDED` 和 `X-Plugin-Operation-State: superseded` 时，Native 才将原请求转存 superseded 终态。已受理请求之后被旧接口、其他实例或自动更新改变安装 revision，也不能再次执行旧动作。普通业务拒绝只有在取得写锁、没有匹配受理标记且请求顺序高于已有实例水位时才返回 `rejected`；标记已压缩不能被当成从未受理的证明；已知受理请求不会因普通拒绝被清理。
 
-完整对账独立恢复原 pending；恢复 HTTP 不持有前台执行锁或 journal 文件锁。结果写回时重读并合并 journal。快照 HTTP、合同或安装失败不取消恢复，恢复失败不阻止对账。自动更新与完整对账独立合并触发；实际包发布仍串行。账号切换阻止旧配置的排队请求和文件发布。
+完整对账独立恢复原 pending；恢复 HTTP 不持有前台执行锁或 journal 文件锁。结果写回时重读并合并 journal。快照 HTTP、合同或安装失败不取消恢复，恢复失败不阻止对账。自动更新与完整对账独立合并触发；实际包发布仍串行。
+
+排队的前台操作及扫描写回核验 Backend、账号 token 和安装器 Socket；pending 的账号 HTTP 恢复只核验 Backend 和账号 token。仅 Runtime token 续期不会中断这些工作。账号或 Backend 切换仍拒绝旧配置的请求，Socket 变化仍阻止旧安装器发布。
 
 执行前仅持久化已有 `reconcilePending` 标记，不保存执行计划副本。中断后重新获取当前账号计划；读取旧 journal 时将原 `snapshot` 对象转为待对账标记并移除副本，原 pending 请求及顺序保持不变。前台提交与后台恢复复用同一套尝试、受理和拒绝结果处理。
 
@@ -43,7 +45,7 @@ pending 恢复先于完整内容扫描启动。全量指纹在阻塞线程执行
 
 关闭受理开关时保留当前 HTTP/IPC 恢复能力；已受理标记可重放，已有实例可继续对账，未知新操作不能受理。本机旧 journal 的 pending 原样保留，已删除协议的回执不再补报。
 
-聚焦回归覆盖无 Device 安装/更新/卸载、最新标记容量、重复请求、摘要冲突、原子回滚、旧接口变更后迟到重试、标记压缩后防乱序、账号/实例隔离、恢复与对账互不阻塞。真实 HTTP/MySQL/Redis 测试及桌面 `plugin-write-coordination` checkpoint 接入现有 CI；本地执行情况以 PR 记录为准。尚无 1.0.0、1.1.0、1.1.1 实际发行制品的完整兼容验证。
+聚焦回归覆盖无 Device 安装/更新/卸载、最新标记容量、重复请求、摘要冲突、原子回滚、旧接口变更后迟到重试、标记压缩后防乱序、账号/实例隔离、恢复与对账互不阻塞，以及 Runtime token 续期期间的排队操作、两阶段扫描和 pending 恢复。连接字段独立变化的反例验证账号、Backend 和 Socket 校验边界。真实 HTTP/MySQL/Redis 测试及桌面 `plugin-write-coordination` checkpoint 接入现有 CI；本地执行情况以 PR 记录为准。尚无 1.0.0、1.1.0、1.1.1 实际发行制品的完整兼容验证。
 
 ## 本机对话中的托管账号调用
 
