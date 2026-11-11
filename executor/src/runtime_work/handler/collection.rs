@@ -14,7 +14,10 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<RuntimeTaskLink, AppIpcError> {
         let local_task_id = runtime_task_id(payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
-        if let Some(link) = self.local_task_link(&local_task_id) {
+        if let Some(link) = self
+            .local_task_link(&local_task_id)
+            .or_else(|| self.local_task_by_thread_id(&local_task_id))
+        {
             if (link.status == "archived") == archived {
                 log_runtime_archive_link(
                     "runtime task payload matched local link",
@@ -234,16 +237,23 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn task_send_gate(&self, local_task_id: &str) -> Arc<AsyncMutex<()>> {
+        // Callers may address a task by its local task ID or provider thread ID.
+        // Both aliases must share one gate so send and history edits serialize.
+        let canonical_task_id = self
+            .local_task_link(local_task_id)
+            .or_else(|| self.local_task_by_thread_id(local_task_id))
+            .map(|link| link.local_task_id)
+            .unwrap_or_else(|| local_task_id.to_owned());
         let mut gates = self
             .task_send_gates
             .lock()
             .expect("task send gate map lock should not be poisoned");
         gates.retain(|_, gate| gate.strong_count() > 0);
-        if let Some(gate) = gates.get(local_task_id).and_then(Weak::upgrade) {
+        if let Some(gate) = gates.get(&canonical_task_id).and_then(Weak::upgrade) {
             return gate;
         }
         let gate = Arc::new(AsyncMutex::new(()));
-        gates.insert(local_task_id.to_owned(), Arc::downgrade(&gate));
+        gates.insert(canonical_task_id, Arc::downgrade(&gate));
         gate
     }
 

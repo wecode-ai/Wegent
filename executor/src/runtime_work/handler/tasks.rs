@@ -1586,6 +1586,8 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn rollback_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&requested_task_id);
+        let _guard = gate.lock().await;
         let existing_link = self.task_link_from_payload(&payload, false).await?;
         let local_task_id = existing_link.local_task_id.clone();
         if self.is_busy_local_task(&existing_link.local_task_id) {

@@ -200,6 +200,38 @@ fn seed_runtime_task(
     .unwrap();
 }
 
+struct TestHoldFile {
+    path: PathBuf,
+}
+
+impl TestHoldFile {
+    fn create(path: PathBuf) -> Self {
+        fs::write(&path, "").unwrap();
+        Self { path }
+    }
+
+    fn release(self) {
+        fs::remove_file(&self.path).unwrap();
+    }
+}
+
+impl Drop for TestHoldFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn turn_start_input_text(call: &Value) -> String {
+    call["params"]["input"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["type"] == "text")
+        .filter_map(|item| item["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[tokio::test]
 async fn runtime_task_forwards_all_local_project_roots_to_codex() {
     let _lock = env_lock().await;
@@ -4942,6 +4974,274 @@ async fn runtime_tasks_rollback_uses_the_task_agent_home() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_rollback_serializes_with_concurrent_send() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-edit-send-race-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-edit-send-race-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_persisted_runtime_task(&executor_home, "local-edit-race", "thread-1");
+    let log_path = temp_path("runtime-edit-send-race-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    fs::write(format!("{}.paginated-thread", log_path.display()), "").unwrap();
+    let hold_revert =
+        TestHoldFile::create(PathBuf::from(format!("{}.hold-revert", log_path.display())));
+    let hold_turn =
+        TestHoldFile::create(PathBuf::from(format!("{}.hold-turn", log_path.display())));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let rollback_handler = handler.clone();
+    let rollback = tokio::spawn(async move {
+        rollback_handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.rollback",
+                "payload": {
+                    "address": {
+                        "deviceId": "device-1",
+                        "workspacePath": "/tmp/project",
+                        "taskId": "thread-1",
+                        "runtimeHandle": {"threadId": "thread-1"}
+                    },
+                    "message": "edited prompt",
+                    "messageId": "user-last",
+                    "retrySourceTurnId": "turn-1",
+                    "executionRequest": codex_execution_request(
+                        "edited prompt",
+                        "/tmp/project",
+                        "gpt-4.1"
+                    )
+                }
+            }))
+            .await
+    });
+    wait_for_method_count(&log_path, "thread/revert", 1).await;
+
+    let send_handler = handler.clone();
+    let send = tokio::spawn(async move {
+        send_handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.send",
+                "payload": {
+                    "workspacePath": "/tmp/project",
+                    "taskId": "local-edit-race",
+                    "message": "follow up after edit",
+                    "queueIfBusy": true,
+                    "executionRequest": codex_execution_request(
+                        "follow up after edit",
+                        "/tmp/project",
+                        "gpt-4.1"
+                    )
+                }
+            }))
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/revert")
+            .count(),
+        1,
+        "a concurrent send must not start another history edit"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "turn/start")
+            .count(),
+        0,
+        "a concurrent send must wait for the edit to admit its replacement turn"
+    );
+    assert!(
+        !send.is_finished(),
+        "the concurrent send should still be blocked by the shared task gate"
+    );
+
+    hold_revert.release();
+    let rollback_response = tokio::time::timeout(std::time::Duration::from_secs(10), rollback)
+        .await
+        .expect("rollback should finish after the held revert is released")
+        .expect("rollback task should not panic")
+        .expect("rollback should be accepted");
+    assert_eq!(rollback_response["accepted"], true);
+    let send_response = tokio::time::timeout(std::time::Duration::from_secs(10), send)
+        .await
+        .expect("queued send should finish after the edit admits its turn")
+        .expect("send task should not panic")
+        .expect("queued send should return a response");
+    assert_eq!(send_response["accepted"], true);
+    assert_eq!(
+        send_response["status"], "queued",
+        "the follow-up must queue behind the replacement turn"
+    );
+
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+    let calls = read_json_lines(&log_path);
+    let first_turn_start = calls
+        .iter()
+        .find(|call| call["method"] == "turn/start")
+        .expect("the edit should start its replacement turn");
+    assert!(
+        turn_start_input_text(first_turn_start).contains("edited prompt"),
+        "the first turn must preserve the edited prompt"
+    );
+
+    hold_turn.release();
+    wait_for_method_count(&log_path, "turn/start", 2).await;
+    let calls = read_json_lines(&log_path);
+    let turn_starts = calls
+        .iter()
+        .filter(|call| call["method"] == "turn/start")
+        .collect::<Vec<_>>();
+    assert_eq!(turn_starts.len(), 2);
+    assert!(
+        turn_start_input_text(turn_starts[1]).contains("follow up after edit"),
+        "the queued follow-up must start after the edited turn"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/revert")
+            .count(),
+        1,
+        "the follow-up must not trigger another history revert"
+    );
+}
+
+#[tokio::test]
+async fn runtime_tasks_rollback_serializes_concurrent_edits() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-edit-edit-race-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-edit-edit-race-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_persisted_runtime_task(&executor_home, "local-edit-race", "thread-1");
+    let log_path = temp_path("runtime-edit-edit-race-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    fs::write(format!("{}.paginated-thread", log_path.display()), "").unwrap();
+    let hold_revert =
+        TestHoldFile::create(PathBuf::from(format!("{}.hold-revert", log_path.display())));
+    let hold_turn =
+        TestHoldFile::create(PathBuf::from(format!("{}.hold-turn", log_path.display())));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let first_handler = handler.clone();
+    let first = tokio::spawn(async move {
+        first_handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.rollback",
+                "payload": {
+                    "address": {
+                        "deviceId": "device-1",
+                        "workspacePath": "/tmp/project",
+                        "taskId": "local-edit-race",
+                        "runtimeHandle": {"threadId": "thread-1"}
+                    },
+                    "message": "first edit wins",
+                    "messageId": "user-last",
+                    "retrySourceTurnId": "turn-1",
+                    "executionRequest": codex_execution_request(
+                        "first edit wins",
+                        "/tmp/project",
+                        "gpt-4.1"
+                    )
+                }
+            }))
+            .await
+    });
+    wait_for_method_count(&log_path, "thread/revert", 1).await;
+
+    let second_handler = handler.clone();
+    let second = tokio::spawn(async move {
+        second_handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.rollback",
+                "payload": {
+                    "address": {
+                        "deviceId": "device-1",
+                        "workspacePath": "/tmp/project",
+                        "taskId": "thread-1",
+                        "runtimeHandle": {"threadId": "thread-1"}
+                    },
+                    "message": "second edit must not interleave",
+                    "messageId": "user-last",
+                    "retrySourceTurnId": "turn-1",
+                    "executionRequest": codex_execution_request(
+                        "second edit must not interleave",
+                        "/tmp/project",
+                        "gpt-4.1"
+                    )
+                }
+            }))
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/revert")
+            .count(),
+        1,
+        "concurrent edits must not revert the same history twice"
+    );
+    assert!(
+        !second.is_finished(),
+        "the second edit should wait for the first edit's turn admission"
+    );
+
+    hold_revert.release();
+    let first_response = tokio::time::timeout(std::time::Duration::from_secs(10), first)
+        .await
+        .expect("first edit should finish after the held revert is released")
+        .expect("first edit task should not panic")
+        .expect("first edit should be accepted");
+    assert_eq!(first_response["accepted"], true);
+    let second_response = tokio::time::timeout(std::time::Duration::from_secs(10), second)
+        .await
+        .expect("second edit should return while the replacement turn is active")
+        .expect("second edit task should not panic")
+        .expect("second edit should return a contract response");
+    assert_eq!(second_response["accepted"], false);
+    assert_eq!(second_response["code"], "bad_request");
+    wait_until_task_running(&handler, "local-edit-race").await;
+
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+    let calls = read_json_lines(&log_path);
+    let turn_starts = calls
+        .iter()
+        .filter(|call| call["method"] == "turn/start")
+        .collect::<Vec<_>>();
+    assert_eq!(turn_starts.len(), 1);
+    assert!(
+        turn_start_input_text(turn_starts[0]).contains("first edit wins"),
+        "the winning edit must remain the admitted prompt"
+    );
+    assert!(
+        !turn_start_input_text(turn_starts[0]).contains("second edit must not interleave"),
+        "the blocked edit must not replace the admitted prompt"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/revert")
+            .count(),
+        1,
+        "the blocked edit must not revert history"
+    );
+    hold_turn.release();
+}
+
+#[tokio::test]
 async fn runtime_tasks_rollback_does_not_send_after_a_failed_revert() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -5107,6 +5407,9 @@ while IFS= read -r line; do
         printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32603,"message":"thread/revert used the wrong Codex home"}}}}'
         continue
       fi
+      while [ -f "$LOG_PATH.hold-revert" ]; do
+        sleep 0.05
+      done
       if [ "$thread_loaded" -eq 0 ]; then
         printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32603,"message":"thread not loaded: thread-1"}}}}'
         continue
@@ -5137,6 +5440,15 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"'"$active_thread_id"'","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"'"$active_thread_id"'","turnId":"'"$turn_id"'","itemId":"'"$final_id"'","delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"'"$active_thread_id"'","turnId":"'"$turn_id"'","item":{{"id":"'"$final_id"'","type":"agentMessage","text":"done","phase":"finalAnswer"}}}}}}'
+      if [ -f "$LOG_PATH.hold-turn" ]; then
+        (
+          while [ -f "$LOG_PATH.hold-turn" ]; do
+            sleep 0.05
+          done
+          printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"'"$active_thread_id"'","turn":{{"id":"'"$turn_id"'","status":"completed"}}}}}}'
+        ) &
+        continue
+      fi
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"'"$active_thread_id"'","turn":{{"id":"'"$turn_id"'","status":"completed"}}}}}}'
       ;;
   esac
@@ -6258,7 +6570,7 @@ async fn wait_for_thread_mapping(
 }
 
 async fn wait_for_method_count(log_path: &Path, method: &str, expected: usize) {
-    for _ in 0..200 {
+    for _ in 0..500 {
         let calls = read_json_lines(log_path);
         let count = calls.iter().filter(|call| call["method"] == method).count();
         if count >= expected {
