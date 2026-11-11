@@ -434,7 +434,9 @@ jobs:
       - name: Configure the native log-folder opener
         if: contains(matrix.segments, 'native-window-startup')
         run: |
-          command -v file xdg-mime pcmanfm
+          command -v file
+          command -v xdg-mime
+          command -v pcmanfm
           XDG_CONFIG_HOME=/etc/xdg xdg-mime default pcmanfm.desktop inode/directory
           test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default inode/directory)" = pcmanfm.desktop
           test "$(xdg-mime query filetype /tmp)" = inode/directory

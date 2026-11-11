@@ -6,10 +6,14 @@ import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { NotificationEntitySurface } from './NotificationEntitySurface'
 import { openWeworkScheme } from './schemeEvents'
 import { weworkIssueScheme, weworkTaskScheme } from './scheme'
-import { issueWaitingSince } from '@wegent/collaboration'
+import { issueWaitingSince, issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
 import { IssueWaitingTime } from './IssueWaitingTime'
 import { usePendingProjectIssues } from './usePendingProjectIssues'
-import { issueHumanInteraction, issueQuestionIdentity } from './issueHumanInteractions'
+import {
+  issueHumanInteraction,
+  issueQuestionIdentity,
+  issueQuestionHandoffAt,
+} from './issueHumanInteractions'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   INTERACTION_SOURCES,
@@ -124,26 +128,42 @@ export function RuntimeInteractionsPage({
   }
   const projectItemId = ({ item, store }: (typeof projectIssues.items)[number]) =>
     `project-issue:${store}:${item.cloud_project_id}:${item.id}`
-  const projectDismissalId = (row: (typeof projectIssues.items)[number]) =>
-    `${projectItemId(row)}:${issueWaitingSince(row.item, row.userId) ?? 'untracked'}`
-  const projectRows = projectIssues.items.filter(
-    row =>
-      !interactions?.isDismissed?.(projectDismissalId(row)) &&
-      !row.item.human_requests?.some(request => {
-        if (request.status !== 'pending' && request.status !== 'answering') return false
-        const interaction = issueHumanInteraction(request, row.store)
-        return (
-          interactions?.isDismissed?.(interaction.id, issueQuestionIdentity(interaction)) ||
-          interactions?.history.some(accepted => accepted.id === interaction.id)
+  const projectRequests = (row: (typeof projectIssues.items)[number]) =>
+    pendingIssueHumanRequests(row.item).filter(request =>
+      issueNeedsUser({ ...row.item, human_requests: [request] }, row.userId)
+    )
+  const projectDismissalId = (row: (typeof projectIssues.items)[number]) => {
+    const requests = projectRequests(row)
+    const scope = requests.length
+      ? ':' +
+        JSON.stringify(
+          requests.map(request => [request.id, request.waiting_since ?? request.created_at]).sort()
         )
-      }) &&
-      !interactions?.pending.some(
-        request =>
-          request.project?.store === row.store &&
-          String(request.project.projectId) === String(row.item.cloud_project_id) &&
-          request.project.issueId === row.item.id
-      )
-  )
+      : ''
+    return `${projectItemId(row)}:${issueWaitingSince(row.item, row.userId) ?? 'untracked'}${scope}`
+  }
+  const projectRows = projectIssues.items.filter(row => {
+    if (interactions?.isDismissed?.(projectDismissalId(row))) return false
+    const requests = projectRequests(row)
+    if (
+      requests.length > 0 &&
+      requests.every(request => {
+        const interaction = issueHumanInteraction(request, row.store)
+        return interactions?.isDismissed?.(
+          interaction.id,
+          issueQuestionIdentity(interaction),
+          issueQuestionHandoffAt(interaction)
+        )
+      })
+    )
+      return false
+    return !interactions?.pending.some(
+      request =>
+        request.project?.store === row.store &&
+        String(request.project.projectId) === String(row.item.cloud_project_id) &&
+        request.project.issueId === row.item.id
+    )
+  })
   const reportProjectPendingCount = interactions?.reportProjectPendingCount
   const projectCountKnown =
     active && !projectIssues.loading && !Object.values(projectIssues.errors).some(Boolean)

@@ -22,6 +22,19 @@ export function issueQuestionIdentity(item: RuntimeInteraction): string | null {
   ])
 }
 
+/** Only an actual reassignment starts a new dismissal scope for the same question. */
+export function issueQuestionHandoffAt(item: RuntimeInteraction): number | undefined {
+  const request = item.sharedRequest
+  if (!request) return undefined
+  const waitingAt = Date.parse(request.waiting_since ?? '')
+  if (waitingAt > Date.parse(request.created_at)) return waitingAt
+  const assignment = request.events?.findLast(
+    event => event.type === 'assigned' && event.from_user_id !== event.to_user_id
+  )
+  const assignedAt = Date.parse(assignment?.at ?? '')
+  return Number.isFinite(assignedAt) ? assignedAt : undefined
+}
+
 /** Only server-validated resolved questions supersede a retained native snapshot. */
 export function isResolvedIssueQuestion(
   native: RuntimeInteraction,

@@ -59,11 +59,13 @@ it('archives project work without inventing a runtime task and retains it after 
   await act(async () => {
     await context!.dismiss(entry)
   })
-  expect(context!.history).toContainEqual({ ...entry, dismissed: true })
+  expect(context!.history).toContainEqual({ ...entry, dismissed: true, dismissedAt: Date.now() })
   expect(context!.isDismissed?.(entry.id)).toBe(true)
   rendered.unmount()
   view()
-  await waitFor(() => expect(context!.history).toContainEqual({ ...entry, dismissed: true }))
+  await waitFor(() =>
+    expect(context!.history).toContainEqual({ ...entry, dismissed: true, dismissedAt: Date.now() })
+  )
   expect(context!.isDismissed?.(entry.id)).toBe(true)
   expect(harness.send).not.toHaveBeenCalled()
 })
@@ -228,53 +230,88 @@ it('keeps unarchived work readable when dismissal-marker storage cannot be read'
   expect(context!.isDismissed?.('project-issue:local:12:ISSUE-2:untracked')).toBe(false)
 })
 
-it.each(['same-question', 'later-question', 'another-issue'])(
-  'preserves native dismissal across the shared representation: %s',
-  async scenario => {
-    const { interactionQuestion, interactionTask } = await import('./runtimeInteractions.fixtures')
-    const task = {
-      ...interactionTask,
-      address: { ...interactionTask.address, deviceId: 'native-device-alias' },
-      task: {
-        ...interactionTask.task,
-        runtimeHandle: {
-          origin: {
-            type: 'board_comment',
-            cloudProjectId: 'project',
-            loopItemId: 'ISSUE-1',
-            rootCommentId: 'root',
-            projectStore: 'backend',
-          },
+it.each([
+  'same-question',
+  'same-question-updated',
+  'later-question',
+  'another-issue',
+  'returned-question',
+])('preserves native dismissal across the shared representation: %s', async scenario => {
+  const { interactionQuestion, interactionTask } = await import('./runtimeInteractions.fixtures')
+  const task = {
+    ...interactionTask,
+    address: { ...interactionTask.address, deviceId: 'native-device-alias' },
+    task: {
+      ...interactionTask.task,
+      runtimeHandle: {
+        origin: {
+          type: 'board_comment',
+          cloudProjectId: 'project',
+          loopItemId: 'ISSUE-1',
+          rootCommentId: 'root',
+          projectStore: 'backend',
         },
       },
-    }
-    const rendered = view(interactionQuestion, task)
-    await waitFor(() => expect(context!.pending).toHaveLength(1))
-    const native = context!.pending[0]
-    await act(async () => {
-      await context!.dismiss(native)
-    })
-    const question = {
-      id: 'shared-after-discovery',
-      project_id: 'project',
-      issue_id: scenario === 'another-issue' ? 'ISSUE-2' : 'ISSUE-1',
-      root_comment_id: 'root',
-      runtime_device_id: interactionTask.address.deviceId,
-      runtime_task_id: native.task.address.taskId,
-      item_id: scenario === 'later-question' ? 'later-question' : native.payload.itemId!,
-      question: 'Shared question',
-      recipient_user_id: 7,
-      status: 'pending',
-      version: 1,
-      blocks_progress: true,
-      created_at: new Date(native.createdAt).toISOString(),
-    }
-    const inbox = vi.fn().mockResolvedValue({ items: [question] })
-    rendered.rerenderSource({
-      ...rendered.taskSource,
+    },
+  }
+  const rendered = view(interactionQuestion, task)
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const native = context!.pending[0]
+  await act(async () => {
+    await context!.dismiss(native)
+  })
+  const question = {
+    id: 'shared-after-discovery',
+    project_id: 'project',
+    issue_id: scenario === 'another-issue' ? 'ISSUE-2' : 'ISSUE-1',
+    root_comment_id: 'root',
+    runtime_device_id: interactionTask.address.deviceId,
+    runtime_task_id: native.task.address.taskId,
+    item_id: scenario === 'later-question' ? 'later-question' : native.payload.itemId!,
+    question: 'Shared question',
+    recipient_user_id: 7,
+    status: 'pending',
+    version: 1,
+    blocks_progress: true,
+    created_at: new Date(native.createdAt).toISOString(),
+    updated_at: new Date(
+      scenario === 'same-question-updated'
+        ? context!.history[0].answeredAt + 1000
+        : native.createdAt
+    ).toISOString(),
+    ...(scenario === 'returned-question'
+      ? { waiting_since: new Date(context!.history[0].answeredAt + 1000).toISOString() }
+      : {}),
+  }
+  const inbox = vi.fn().mockResolvedValue({ items: [question] })
+  rendered.rerenderSource({
+    ...rendered.taskSource,
+    userId: 7,
+    services: {
+      ...rendered.taskSource.services!,
+      issueHumanRequestsApi: {
+        inbox,
+        list: vi.fn().mockResolvedValue({ items: [] }),
+        assign: vi.fn(),
+      },
+    },
+  })
+  await act(async () => {
+    await context!.refresh()
+  })
+  await waitFor(() => expect(inbox).toHaveBeenCalled())
+  expect(context!.pending.some(item => item.sharedRequest?.id === question.id)).toBe(
+    !scenario.startsWith('same-question')
+  )
+  if (scenario.startsWith('same-question') || scenario === 'returned-question') {
+    rendered.unmount()
+    localStorage.setItem('wework.interactions:test:1:history', '[]')
+    const restarted = view(interactionQuestion, task)
+    restarted.rerenderSource({
+      ...restarted.taskSource,
       userId: 7,
       services: {
-        ...rendered.taskSource.services!,
+        ...restarted.taskSource.services!,
         issueHumanRequestsApi: {
           inbox,
           list: vi.fn().mockResolvedValue({ items: [] }),
@@ -285,30 +322,8 @@ it.each(['same-question', 'later-question', 'another-issue'])(
     await act(async () => {
       await context!.refresh()
     })
-    await waitFor(() => expect(inbox).toHaveBeenCalled())
     expect(context!.pending.some(item => item.sharedRequest?.id === question.id)).toBe(
-      scenario !== 'same-question'
+      scenario === 'returned-question'
     )
-    if (scenario === 'same-question') {
-      rendered.unmount()
-      localStorage.setItem('wework.interactions:test:1:history', '[]')
-      const restarted = view(interactionQuestion, task)
-      restarted.rerenderSource({
-        ...restarted.taskSource,
-        userId: 7,
-        services: {
-          ...restarted.taskSource.services!,
-          issueHumanRequestsApi: {
-            inbox,
-            list: vi.fn().mockResolvedValue({ items: [] }),
-            assign: vi.fn(),
-          },
-        },
-      })
-      await act(async () => {
-        await context!.refresh()
-      })
-      expect(context!.pending.some(item => item.sharedRequest?.id === question.id)).toBe(false)
-    }
   }
-)
+})

@@ -18,8 +18,11 @@ function read(key: string): unknown {
   }
 }
 
-export function readInteractionDismissal(key: string): boolean {
-  return read(key) === 'dismissed'
+export function readInteractionDismissal(key: string, handoffAt?: number): boolean {
+  const value = read(key)
+  if (record(value) && typeof value.dismissedAt === 'number' && Number.isFinite(value.dismissedAt))
+    return value.dismissedAt >= (handoffAt ?? 0)
+  return handoffAt === undefined && value === 'dismissed'
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -182,6 +185,10 @@ function interactionHistoryRows(value: unknown): InteractionHistory[] {
         record(row) &&
         typeof row.id === 'string' &&
         (row.dismissed === undefined || row.dismissed === true) &&
+        (row.dismissedAt === undefined ||
+          (row.dismissed === true &&
+            typeof row.dismissedAt === 'number' &&
+            Number.isFinite(row.dismissedAt))) &&
         (row.dismissedQuestionIdentity === undefined ||
           (row.dismissed === true && validIssueQuestionIdentity(row.dismissedQuestionIdentity))) &&
         (row.resolvedIssueQuestion === undefined ||
@@ -261,6 +268,8 @@ export function archiveInteraction(
   if (previous) {
     if (
       (!entry.dismissed || previous.dismissed) &&
+      (entry.dismissedAt === undefined ||
+        (previous.dismissedAt ?? previous.answeredAt) >= entry.dismissedAt) &&
       (!entry.dismissedQuestionIdentity ||
         previous.dismissedQuestionIdentity === entry.dismissedQuestionIdentity) &&
       (!entry.resolvedIssueQuestion ||
@@ -273,6 +282,7 @@ export function archiveInteraction(
         ? {
             ...row,
             ...(entry.dismissed ? { dismissed: true as const } : {}),
+            ...(entry.dismissedAt !== undefined ? { dismissedAt: entry.dismissedAt } : {}),
             ...(entry.dismissedQuestionIdentity
               ? { dismissedQuestionIdentity: entry.dismissedQuestionIdentity }
               : {}),

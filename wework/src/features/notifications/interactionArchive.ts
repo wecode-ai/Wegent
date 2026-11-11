@@ -3,6 +3,7 @@ import {
   readCommittedLocalStorageValue,
 } from '@/desktop/localStoragePersistence'
 import type { InteractionHistory } from './RuntimeInteractionsContext'
+import { createRequestId } from '@/lib/request-id'
 import { archiveInteraction, parseInteractionHistory } from './interactionStorage'
 import {
   interactionSource,
@@ -33,7 +34,15 @@ export async function persistInteractionArchive(
   onCommitted: (history: InteractionHistory[]) => void
 ): Promise<void> {
   await navigator.locks.request(key, async () => {
-    const current = parseInteractionHistory(await readCommittedLocalStorageValue(key))
+    const raw = await readCommittedLocalStorageValue(key)
+    let current: InteractionHistory[]
+    try {
+      current = parseInteractionHistory(raw)
+    } catch (error) {
+      if (!(error instanceof SyntaxError) || raw === null) throw error
+      await commitLocalStorageValue(`${key}:recovery:${createRequestId('history')}`, raw)
+      current = []
+    }
     const next = archiveInteraction(current, entry)
     if (next !== current) await commitLocalStorageValue(key, JSON.stringify(next))
     onCommitted(next)

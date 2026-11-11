@@ -28,6 +28,32 @@ afterEach(() => {
   Reflect.deleteProperty(navigator, 'locks')
 })
 
+it.each([false, true])(
+  'preserves malformed history before recovery (backup failure: %s)',
+  async fail => {
+    const durable: Record<string, string> = { history: '{broken' }
+    host.request.mockImplementation(async (method: string, params) => {
+      if (method === 'rendererStorage.initialize') return { ...durable }
+      if (fail) throw new Error('Backup unavailable')
+      Object.assign(durable, params.changes)
+    })
+    const published = vi.fn()
+    const result = persistInteractionArchive('history', entry('recovered'), published)
+    if (fail) {
+      await expect(result).rejects.toThrow('Backup unavailable')
+      expect(durable.history).toBe('{broken')
+      expect(published).not.toHaveBeenCalled()
+    } else {
+      await result
+      expect(
+        Object.entries(durable).filter(([key]) => key.startsWith('history:recovery:'))
+      ).toEqual([[expect.any(String), '{broken']])
+      expect(JSON.parse(durable.history)).toEqual([entry('recovered')])
+      expect(published).toHaveBeenCalledWith([entry('recovered')])
+    }
+  }
+)
+
 it('does not publish a rejected archive or overwrite another window on recovery', async () => {
   const durable: Record<string, string> = {}
   let fail = true

@@ -74,7 +74,9 @@ RUN node --version \
   && java -version \
   && keytool -help >/dev/null \
   && gdb --version \
-  && command -v file xdg-mime pcmanfm \
+  && command -v file \
+  && command -v xdg-mime \
+  && command -v pcmanfm \
   && fc-match --format '%{family}\n' ':lang=zh-cn' | grep -F 'Noto Sans CJK' \
   && pnpm --version \
   && gh --version \

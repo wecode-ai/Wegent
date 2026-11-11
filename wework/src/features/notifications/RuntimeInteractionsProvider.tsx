@@ -20,6 +20,7 @@ import { useIssueHumanInteractions } from './useIssueHumanInteractions'
 import {
   isResolvedIssueQuestion,
   issueQuestionIdentity,
+  issueQuestionHandoffAt,
   matchesIssueResolution,
 } from './issueHumanInteractions'
 import { createIssueQuestionEnricher } from './enrichIssueQuestions'
@@ -510,16 +511,18 @@ function RuntimeInteractionsState({
   }, [refresh, signature, source?.services?.runtimeWorkApi])
 
   const isDismissed = useCallback(
-    (id: string, questionIdentity?: string | null) =>
+    (id: string, questionIdentity?: string | null, handoffAt?: number) =>
       history.some(
         entry =>
           entry.dismissed &&
+          (entry.dismissedAt ?? entry.answeredAt) >= (handoffAt ?? 0) &&
           (questionIdentity
             ? entry.dismissedQuestionIdentity === questionIdentity
             : entry.id === id)
       ) ||
       readInteractionDismissal(
-        acceptancePrefix + (questionIdentity ? `issue:${questionIdentity}` : id)
+        acceptancePrefix + (questionIdentity ? `issue:${questionIdentity}` : id),
+        handoffAt
       ),
     [history, acceptancePrefix]
   )
@@ -566,7 +569,9 @@ function RuntimeInteractionsState({
       ...runtime.filter(
         item => !shared.has(item.id) && !sharedQuestions.has(issueQuestionIdentity(item))
       ),
-      ...sharedItems.filter(item => !isDismissed(item.id, issueQuestionIdentity(item))),
+      ...sharedItems.filter(
+        item => !isDismissed(item.id, issueQuestionIdentity(item), issueQuestionHandoffAt(item))
+      ),
     ].sort((a, b) => b.createdAt - a.createdAt)
   }, [
     acceptancePrefix,
@@ -627,13 +632,16 @@ function RuntimeInteractionsState({
             {
               ...('task' in item ? interactionHistoryEntry(item, handledAt) : item),
               dismissed: true,
+              dismissedAt: handledAt,
               ...(questionIdentity ? { dismissedQuestionIdentity: questionIdentity } : {}),
             },
             handledAt
           )
           saveInteractionState(acceptancePrefix + item.id, 'dismissed')
           if (questionIdentity)
-            saveInteractionState(acceptancePrefix + `issue:${questionIdentity}`, 'dismissed')
+            saveInteractionState(acceptancePrefix + `issue:${questionIdentity}`, {
+              dismissedAt: handledAt,
+            })
           if (!mounted.current) return
           markHandled(item.id)
           clearReplyDraft(item.id)

@@ -12,6 +12,7 @@ export interface InteractionHistory {
   sourceMessageIds?: string[]
   answeredAt: number
   dismissed?: true
+  dismissedAt?: number
   dismissedQuestionIdentity?: string
   resolvedIssueQuestion?: ValidatedIssueResolution
 }
@@ -35,7 +36,7 @@ export interface RuntimeInteractionsValue {
     options?: { clientMessageId?: string; send?: () => Promise<boolean> }
   ) => Promise<boolean>
   dismiss: (item: RuntimeInteraction | InteractionHistory) => Promise<void>
-  isDismissed?: (id: string, questionIdentity?: string | null) => boolean
+  isDismissed?: (id: string, questionIdentity?: string | null, handoffAt?: number) => boolean
   refresh: () => Promise<void>
   open: (id?: string) => void
   notice: RuntimeInteraction | null
