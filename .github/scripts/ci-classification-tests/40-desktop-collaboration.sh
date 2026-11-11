@@ -81,7 +81,6 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}'
 for personal_board_path in \
   "wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs" \
-  "wework/e2e/desktop/modules/collaboration-board-personal-view.mjs" \
   "wework/e2e/desktop/modules/collaboration-board-field-drag.mjs" \
   "wework/e2e/desktop/modules/collaboration-board-preferences.mjs" \
   "wework/e2e/desktop/modules/collaboration-board-tag-drag.mjs" \
@@ -89,6 +88,14 @@ for personal_board_path in \
   assert_desktop_case "Personal Issue board regression selects its checkpoint: $personal_board_path" \
     "$personal_board_expected" "$personal_board_path"
 done
+
+assert_desktop_case "Shared personal board navigation selects both existing consumers" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"group-thread-cloud"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/collaboration-board-personal-view.mjs"
 
 assert_desktop_case "Lane sorting scenario is invoked by its core CI shard" \
   'wework_desktop_e2e=true

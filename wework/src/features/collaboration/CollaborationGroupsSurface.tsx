@@ -27,7 +27,6 @@ import type { DeviceCommandApi } from '@/api/environment'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { CollaborationViewSwitcher } from './CollaborationViewSwitcher'
-import { reportCollaborationNavigation } from './collaborationNavigationDiagnostics'
 import { createGroupWorkspaceApi, groupBoardContext } from './groupWorkspaceApi'
 import { GroupConversation } from './GroupConversation'
 import { CreateGroupOrThread, GroupSettings } from './GroupManagementDialogs'
@@ -98,9 +97,7 @@ export function CollaborationGroupsSurface({
     else action()
   }, [])
   const requestNavigate = (nextSearch: string, relatedThreadId?: string) => {
-    reportCollaborationNavigation('leave-requested', nextSearch)
     requestLeave(() => {
-      reportCollaborationNavigation('leave-accepted', nextSearch)
       if (relatedThreadId) onNavigate(nextSearch, relatedThreadId)
       else onNavigate(nextSearch)
     })

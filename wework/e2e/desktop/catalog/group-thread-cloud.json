@@ -17,6 +17,9 @@
     "wework/e2e/desktop/modules/real-object-storage.mjs",
     "wework/e2e/desktop/modules/group-thread-manual-execution.mjs",
     "wework/e2e/desktop/modules/group-thread-board-privacy.mjs",
+    "wework/e2e/desktop/modules/collaboration-board-personal-view.mjs",
+    "wework/e2e/desktop/modules/group-thread-file-download.mjs",
+    "wework/electron/src/host/e2e-browser-downloads.ts",
     "wework/src/features/collaboration/*"
   ]
 }

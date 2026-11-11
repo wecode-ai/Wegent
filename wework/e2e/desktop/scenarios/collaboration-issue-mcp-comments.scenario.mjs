@@ -4,6 +4,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { captureVerificationScreenshot, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { createPersonalIssueAccessRegression } from '../modules/personal-issue-access.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const REPORT = 'PR review regression: this report must be visible in the Issue activity.'
@@ -164,6 +165,18 @@ export async function createDesktopScenario({
       await assertMentionNotification(written)
 
       await control.command('waitFor', reportSelector, { text: REPORT, visible: true })
+      await control.command('scrollIntoView', reportSelector)
+      await waitForValue(
+        async () => JSON.parse(await control.command('getElementMetrics', reportSelector)),
+        boxes =>
+          boxes.length === 1 &&
+          boxes[0].height > 0 &&
+          boxes[0].hitTestVisible === true &&
+          boxes[0].visibleIntersection?.height >= boxes[0].height - 1 &&
+          boxes[0].visibleIntersection?.width >= boxes[0].width - 1,
+        'The persisted MCP report must be fully readable in its screenshot',
+        uiTimeoutMs
+      )
       await captureVerificationScreenshot(control, 'mcp-report-persisted-after-reload.png')
 
       // The native Executor uses this REST write path for the same MCP tool.

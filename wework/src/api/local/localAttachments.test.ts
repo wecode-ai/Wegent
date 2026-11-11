@@ -17,6 +17,53 @@ describe('local attachment API', () => {
 
   afterEach(() => {
     delete window.weworkElectronFiles
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  test('bounds staging diagnostics and excludes file names, paths and contents', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const diagnostics = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    desktopMocks.invoke.mockImplementation((capability: string, params) => {
+      if (capability === 'attachment.begin')
+        return Promise.resolve({ uploadId: 'private-id', chunkSize: 2 })
+      if (capability === 'attachment.append')
+        return Promise.resolve(params.offset + atob(params.chunkBase64).length)
+      return Promise.resolve('/private/path/file.txt')
+    })
+    const file = new File(['private-content'], 'private-name.txt')
+
+    await createLocalAttachmentApi().uploadAttachment(file)
+
+    const entries = diagnostics.mock.calls.map(([message]) =>
+      JSON.parse(String(message).replace('[Wework] Electron host diagnostic ', ''))
+    )
+    expect(entries.length).toBeGreaterThan(0)
+    expect(entries.length).toBeLessThanOrEqual(4)
+    expect(entries.at(-1)).toMatchObject({ offset: file.size, totalBytes: file.size })
+    for (const entry of entries) {
+      expect(Object.keys(entry).sort()).toEqual(
+        [
+          'capability',
+          'chunks',
+          'elapsedMs',
+          'encodeMs',
+          'invokeMs',
+          'offset',
+          'phase',
+          'progressMs',
+          'readMs',
+          'totalBytes',
+        ].sort()
+      )
+      expect(entry).toMatchObject({ capability: 'attachment.staging', phase: 'progress' })
+      for (const field of ['readMs', 'encodeMs', 'invokeMs', 'progressMs', 'elapsedMs']) {
+        expect(Number.isFinite(entry[field])).toBe(true)
+        expect(entry[field]).toBeGreaterThanOrEqual(0)
+      }
+    }
+    expect(JSON.stringify(entries)).not.toContain('private-')
+    expect(JSON.stringify(entries)).not.toContain('/private/')
   })
 
   test('references an Electron-selected Windows file without creating a draft copy', async () => {

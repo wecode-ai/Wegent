@@ -15,6 +15,7 @@
     "executor/crates/task-store/src/task_runtime/store/chat_groups.rs",
     "executor/crates/task-store/src/task_runtime/store/thread_project_links.rs",
     "executor/crates/task-store/src/task_runtime/store/thread_migration.rs",
-    "wework/e2e/desktop/modules/group-thread-board-return.mjs"
+    "wework/e2e/desktop/modules/group-thread-board-return.mjs",
+    "wework/e2e/desktop/modules/group-thread-first-use.mjs"
   ]
 }

@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { holdDatabaseLock } from '../modules/database-lock.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { repoDir, runChecked } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { verifyGroupFileDownload } from '../modules/group-thread-file-download.mjs'
 import {
   GROUP_MANUAL_MARKER,
   GROUP_MANUAL_RESULT,
@@ -31,6 +32,8 @@ export async function createDesktopScenario({
   modelResponseTimeoutMs,
 }) {
   const storage = await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
+  const downloadsPath = join(resultDir, 'downloads')
+  await mkdir(downloadsPath, { recursive: true })
   let cloud
   let member
   let memberToken
@@ -627,6 +630,7 @@ export async function createDesktopScenario({
       await storage.stop()
     },
     requiresRemoteExecutor: false,
+    appEnvironment: { WEWORK_E2E_DOWNLOADS_DIR: downloadsPath },
     setCloudEnvironment(environment) {
       cloud = environment
     },
@@ -841,6 +845,17 @@ export async function createDesktopScenario({
         assert.equal(response.status, 200)
         assert.equal(await response.text(), content)
       }
+      await verifyGroupFileDownload({
+        control,
+        directory: downloadsPath,
+        resultDir,
+        fileId: firstFile.id,
+        groupId,
+        threadId,
+        content: 'first group content',
+        timeoutMs: uiTimeoutMs,
+        capture,
+      })
       const delivery = await request(`/api/v1/loop-items/${threadId}/deliveries`, {
         method: 'POST',
         body: { title: '共享交付', markdown: '群成员可读的交付内容' },

@@ -196,6 +196,21 @@ describe('Thread settings domain boundaries', () => {
     expect(await screen.findByTestId('thread-settings-milestone-option-milestone')).toBeVisible()
   })
 
+  it('shows the chosen milestone and the cleared value in the closed picker', async () => {
+    setup({ linked: true })
+    const picker = await screen.findByTestId('thread-settings-milestone')
+    await waitFor(() => expect(picker).toBeEnabled())
+    expect(picker).toHaveTextContent('未设置')
+    fireEvent.click(picker)
+    fireEvent.click(await screen.findByTestId('thread-settings-milestone-option-milestone'))
+    await waitFor(() => expect(picker).toBeEnabled())
+    expect(picker).toHaveTextContent('Release')
+    fireEvent.click(picker)
+    fireEvent.click(await screen.findByTestId('thread-settings-milestone-option-empty'))
+    await waitFor(() => expect(picker).toBeEnabled())
+    expect(picker).toHaveTextContent('未设置')
+  })
+
   it('prevents removing a restricted project link without source project authority', async () => {
     const { setProjectLink } = setup({ restricted: true })
     const select = await screen.findByTestId('thread-project-select')

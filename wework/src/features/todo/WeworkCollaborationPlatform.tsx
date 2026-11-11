@@ -1,5 +1,4 @@
 import { prepareIssueRuntimeArchive } from './prepareIssueRuntimeArchive'
-import { reportCollaborationNavigation } from '@/features/collaboration/collaborationNavigationDiagnostics'
 import {
   GroupThreadPersonalTaskController,
   GroupThreadSurface,
@@ -993,9 +992,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   const navigationOwner = useRef({ scope: draftAccountScope, mounted: false })
   useLayoutEffect(() => {
     navigationOwner.current = { scope: draftAccountScope, mounted: true }
-    reportCollaborationNavigation('scope-ready', '', { mounted: true })
     return () => {
-      reportCollaborationNavigation('scope-released', '', { mounted: false })
       navigationOwner.current.mounted = false
     }
   }, [draftAccountScope])
@@ -1011,9 +1008,6 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     new URLSearchParams(search).get('collaborationView') ??
     (props.activeProjectRef ? 'projects' : retainedView)
   if (retainedView !== view) setRetainedView(view)
-  useEffect(() => {
-    reportCollaborationNavigation('view-rendered', search, { renderedView: view })
-  }, [search, view])
   const [connectOpen, setConnectOpen] = useState(false)
   const savedGroupSearch = useRef('?collaborationView=groups')
   const savedProjectSearch = useRef(
@@ -1035,14 +1029,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   }, [props.workspaceTabId])
   const publishSearch = useCallback(
     (nextSearch: string, replace = false) => {
-      const allowed = canNavigate()
-      reportCollaborationNavigation('publish-requested', nextSearch, {
-        allowed,
-        mounted: navigationOwner.current.mounted,
-        boundTab: Boolean(props.workspaceTabId),
-        ownedTab: Boolean(ownedTab),
-      })
-      if (!allowed) return
+      if (!canNavigate()) return
       if (props.workspaceTabId) {
         if (ownedTab && workspaceTabs)
           workspaceTabs.updateTab(props.workspaceTabId, { contentRoute: `/todo${nextSearch}` })
@@ -1056,12 +1043,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   )
   const onNavigate = useCallback(
     (nextSearch: string, relatedThreadId?: string) => {
-      const allowed = canNavigate()
-      reportCollaborationNavigation('navigation-requested', nextSearch, {
-        allowed,
-        mounted: navigationOwner.current.mounted,
-      })
-      if (!allowed) return
+      if (!canNavigate()) return
       if (view === 'groups') savedGroupSearch.current = search
       else savedProjectSearch.current = search
       const next = new URLSearchParams(nextSearch)

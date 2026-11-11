@@ -1,9 +1,10 @@
 import { GroupThreadContextPanel } from '@/features/collaboration/GroupThreadContextPanel'
 import { mergeIssueReadConfirmation } from '@wegent/collaboration'
 import { ArrowUpRight } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { projectStoreLocation, type ProjectSpaceApi } from './projectSpaceSelection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -46,8 +47,19 @@ export interface WorkItemContextPanelProps {
 }
 
 export function WorkItemContextPanel(props: WorkItemContextPanelProps) {
-  if (props.item.group_id) return <GroupThreadContextPanel {...props} />
-  return <ProjectWorkItemContextPanel {...props} />
+  const connection = useContext(CloudConnectionContext)
+  const identity = JSON.stringify([
+    connection?.apiBaseUrl ?? '',
+    props.currentUserId,
+    props.project.project_store,
+    props.project.id,
+    props.item.group_id,
+    props.item.id,
+    props.currentTask?.deviceId,
+    props.currentTask?.taskId,
+  ])
+  if (props.item.group_id) return <GroupThreadContextPanel key={identity} {...props} />
+  return <ProjectWorkItemContextPanel key={`${identity}:${props.item.version}`} {...props} />
 }
 
 function ProjectWorkItemContextPanel({

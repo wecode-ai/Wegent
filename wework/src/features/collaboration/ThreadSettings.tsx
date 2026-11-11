@@ -470,6 +470,11 @@ export function ThreadSettings({
                   className={field}
                   disabled={!editable || saving || Boolean(milestoneFailure)}
                   value={actualMilestone}
+                  triggerContent={
+                    actualMilestone
+                      ? milestones.find(milestone => milestone.id === actualMilestone)?.title
+                      : translate('todo.not_set')
+                  }
                   searchPlaceholder={translate('todo.search_milestone')}
                   emptyLabel={translate('todo.no_matching_milestone')}
                   options={[

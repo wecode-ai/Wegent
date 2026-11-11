@@ -6097,7 +6097,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 boundCloudItem &&
                 boundProjectSpaceApi ? (
                   <WorkItemContextPanel
-                    key={`${boundCloudProject.id}:${boundCloudItem.id}:${boundCloudItem.version}:${currentProjectSpaceRuntimeTask.deviceId}:${currentProjectSpaceRuntimeTask.taskId}`}
                     api={boundProjectSpaceApi}
                     services={services}
                     project={boundCloudProject}

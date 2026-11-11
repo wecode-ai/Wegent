@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import {
+  enterProjectCollaborationView,
   expandCollaborationWorkspace,
   reloadMainWindow,
   selectCollaborationProjectView,
@@ -9,6 +10,7 @@ import {
 export async function openProjectBoard(control, scoped, project) {
   await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
   await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+  await enterProjectCollaborationView(control, scoped('').trim())
   await expandCollaborationWorkspace(
     control,
     scoped(`[data-testid="collaboration-workspace-toggle-${project.workspace_id}"]`)

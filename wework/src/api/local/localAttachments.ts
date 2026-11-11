@@ -48,18 +48,56 @@ async function saveElectronAttachment(
     Number.isSafeInteger(started.chunkSize) && started.chunkSize > 0
       ? Math.min(started.chunkSize, FALLBACK_ATTACHMENT_CHUNK_BYTES)
       : FALLBACK_ATTACHMENT_CHUNK_BYTES
+  const trace = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
+  const startedAt = performance.now()
+  // Read time includes async scheduling; progress measures only its synchronous callback.
+  const timing = { readMs: 0, encodeMs: 0, invokeMs: 0, progressMs: 0 }
+  let reportedQuarter = 0
+  let chunks = 0
   let offset = 0
   try {
     while (offset < file.size) {
+      const readStartedAt = performance.now()
       const chunk = new Uint8Array(
         await file.slice(offset, Math.min(file.size, offset + chunkSize)).arrayBuffer()
       )
+      const readFinishedAt = performance.now()
+      const encoded = bytesToBase64(chunk)
+      const encodeFinishedAt = performance.now()
       offset = await invokeDesktopHost<number>('attachment.append', {
         uploadId: started.uploadId,
         offset,
-        chunkBase64: bytesToBase64(chunk),
+        chunkBase64: encoded,
       })
+      const invokeFinishedAt = performance.now()
       onProgress?.(Math.round((offset / file.size) * 100))
+      const progressFinishedAt = performance.now()
+      timing.readMs += readFinishedAt - readStartedAt
+      timing.encodeMs += encodeFinishedAt - readFinishedAt
+      timing.invokeMs += invokeFinishedAt - encodeFinishedAt
+      timing.progressMs += progressFinishedAt - invokeFinishedAt
+      chunks += 1
+      const quarter = Math.floor((offset / file.size) * 4)
+      if (trace && quarter > reportedQuarter) {
+        reportedQuarter = quarter
+        console.debug(
+          '[Wework] Electron host diagnostic ' +
+            JSON.stringify({
+              capability: 'attachment.staging',
+              phase: 'progress',
+              elapsedMs: Math.round(progressFinishedAt - startedAt),
+              offset,
+              totalBytes: file.size,
+              chunks,
+              ...Object.fromEntries(
+                Object.entries(timing).map(([name, milliseconds]) => [
+                  name,
+                  Math.round(milliseconds),
+                ])
+              ),
+            })
+        )
+      }
     }
     return await invokeDesktopHost<string>('attachment.finish', {
       uploadId: started.uploadId,

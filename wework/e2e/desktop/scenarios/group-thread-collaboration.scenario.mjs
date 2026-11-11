@@ -6,6 +6,7 @@ import { selectCollaborationProjectView } from '../modules/collaboration-project
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { createBoardReturnVerification } from '../modules/group-thread-board-return.mjs'
+import { verifyStandaloneGroupFormCancellation } from '../modules/group-thread-first-use.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import { ensureTaskRowVisible } from '../modules/memory-tool-flows.mjs'
 import { readFile } from 'node:fs/promises'
@@ -312,6 +313,7 @@ export function createDesktopScenario({
       await wait(control, 'group-empty-create')
       await capture(control, 'group-thread-first-use.png')
       await click(control, 'group-create-open')
+      await verifyStandaloneGroupFormCancellation(control, CONTENT, uiTimeoutMs)
       await control.command('fill', '[data-testid="create-group-name"]', { value: GROUP_NAME })
       await control.command('select', '[data-testid="create-group-store"]', { value: 'local' })
       await captureScreenshot(control, 'group-thread-group-create-form.png', 'body')
