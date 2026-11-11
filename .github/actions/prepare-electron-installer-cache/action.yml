@@ -10,11 +10,11 @@ runs:
         mapfile -t missing < <(find_missing_apt_packages skopeo umoci)
         if ((${#missing[@]})); then
           if ((EUID == 0)); then
-            apt-get update
-            apt-get install -y --no-install-recommends "${missing[@]}"
+            run_apt_with_diagnostics apt-get update
+            run_apt_with_diagnostics apt-get install -y --no-install-recommends "${missing[@]}"
           else
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends "${missing[@]}"
+            run_apt_with_diagnostics sudo apt-get update
+            run_apt_with_diagnostics sudo apt-get install -y --no-install-recommends "${missing[@]}"
           fi
         fi
 
