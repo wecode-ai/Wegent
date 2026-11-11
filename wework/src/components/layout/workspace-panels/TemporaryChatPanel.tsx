@@ -405,6 +405,10 @@ export function TemporaryChatPanel({
   const [turns, setTurns] = useState<RuntimeConversationTurn[]>(() =>
     initialAddress ? getRuntimeConversationTurns(initialAddress) : []
   )
+  const presentation = useMemo(
+    () => (hideProcessing ? conversationOutcomePresentation(messages, turns) : { messages, turns }),
+    [hideProcessing, messages, turns]
+  )
   const draftScopeKey = `pane:${instanceId}`
   const [initialDraftScope] = useState(draftScopeKey)
   const [inputState, setInputState] = useState(() => ({
@@ -1158,7 +1162,7 @@ export function TemporaryChatPanel({
         const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
         await retryRuntimeConversation({
           messageId: message.id,
-          messages,
+          messages: presentation.messages,
           request: { address, ...selectedModelFields, ...runtimeContext, ...sessionStartFields },
           labels: {
             continue: t('workbench.retry_continue_message'),
@@ -1201,7 +1205,7 @@ export function TemporaryChatPanel({
     },
     [
       address,
-      messages,
+      presentation.messages,
       runtimeContext,
       selectedModelFields,
       sendRuntimePaneMessage,
@@ -1309,10 +1313,6 @@ export function TemporaryChatPanel({
     historyError,
     loadMoreHistory,
   ])
-  const presentation = useMemo(
-    () => (hideProcessing ? conversationOutcomePresentation(messages, turns) : { messages, turns }),
-    [hideProcessing, messages, turns]
-  )
   const pendingRequest =
     focusedRequest === undefined
       ? pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)

@@ -935,7 +935,13 @@ async function verifyCloudModelRecovery({
     // Select the loaded model explicitly before its same-identity metadata changes.
     await openExplicitModelMenu(control, trigger)
     await control.command('clickWhenEnabled', selector(`model-option-${modelName}`))
-    await control.command('press', 'body', { key: 'Escape' })
+    await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
+      text: '下一条消息将在这里开启新会话',
+    })
+    await control.command('clickWhenEnabled', '[data-testid="model-switch-warning-confirm-button"]')
+    await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
+      visible: false,
+    })
     await waitForDeliveredCloudCatalog(control, catalogProxy)
     const updatedLabel = `${model.json.metadata.displayName} · updated limits`
     const updated = withModelLimits(model.json, UPDATED_LIMITS)

@@ -28,6 +28,7 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
+import { projectRuntimeConversationTurns } from '@wegent/chat-core/runtime-conversation-turns'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
 import type { ConversationModelControls } from './conversationModelControls'
 import * as runtimeModelSelection from '@/features/workbench/runtimeModelSelection'
@@ -91,14 +92,8 @@ const mocks = vi.hoisted(() => ({
   revertTurnFileChanges: vi.fn(),
   cancelRuntimePaneTask: vi.fn(async () => true),
   syncTranscript: vi.fn(),
-  conversationMessages: [] as Array<{
-    id: string
-    role: 'assistant' | 'user'
-    content: string
-    status: 'done' | 'failed'
-    createdAt: string
-    blocks?: WorkbenchMessage['blocks']
-  }>,
+  conversationMessages: [] as WorkbenchMessage[],
+  conversationTurns: [] as RuntimeConversationTurn[],
   lifecycleSnapshot: null as {
     task?: { threadId?: string; modelSelection?: ModelSelectionConfig }
     unread?: boolean
@@ -217,15 +212,19 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
           </span>
         ))
       )}
-      {onRetryFailedMessage && messages[0] ? (
-        <button
-          type="button"
-          data-testid="mock-retry"
-          onClick={() => onRetryFailedMessage(messages[0])}
-        >
-          重试
-        </button>
-      ) : null}
+      {onRetryFailedMessage &&
+        messages
+          .filter(message => message.role === 'assistant' && message.status === 'failed')
+          .map(message => (
+            <button
+              key={message.id}
+              type="button"
+              data-testid="mock-retry"
+              onClick={() => onRetryFailedMessage(message)}
+            >
+              重试
+            </button>
+          ))}
       {onSwitchModelForFailedMessage && messages[0] ? (
         <button
           type="button"
@@ -539,7 +538,7 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   beginRuntimeConversationHydration: vi.fn(),
   completeRuntimeConversationHydration: () => mocks.conversationMessages,
   getRuntimeConversationMessages: () => mocks.conversationMessages,
-  getRuntimeConversationTurns: () => [],
+  getRuntimeConversationTurns: () => mocks.conversationTurns,
   removeRuntimeConversationTurn: () => [],
   subscribeRuntimeConversation: () => () => undefined,
   updateRuntimeConversationBlocks: () => mocks.conversationMessages,
@@ -695,6 +694,7 @@ describe('TemporaryChatPanel', () => {
     mocks.cancelRuntimePaneTask.mockReset()
     mocks.cancelRuntimePaneTask.mockResolvedValue(true)
     mocks.conversationMessages = []
+    mocks.conversationTurns = []
     mocks.lifecycleSnapshot = null
     mocks.activeModelSelection = null
     mocks.isBootstrapping = false
@@ -1103,6 +1103,14 @@ describe('TemporaryChatPanel', () => {
     { existing: true, target: 'cloud', role: 'primary', oldModelRemoved: true },
     { existing: true, target: 'cloud', role: 'primary', localCatalogFailed: true },
     { existing: true, target: 'cloud', role: 'primary', legacyProvider: true, retry: true },
+    {
+      existing: true,
+      target: 'cloud',
+      role: 'primary',
+      legacyProvider: true,
+      retry: true,
+      hideProcessing: true,
+    },
     { existing: true, target: 'official', role: 'primary', providerFailure: true },
     { existing: true, target: 'official', role: 'primary', providerPending: true },
     { existing: true, target: 'cloud', role: 'primary', revertBeforeSend: true },
@@ -1114,7 +1122,7 @@ describe('TemporaryChatPanel', () => {
       changeTargetRoundtrip: true,
     },
   ])(
-    'sends the $role chat with a temporary $target model across providers (existing=$existing, removed=$oldModelRemoved, catalogFailed=$localCatalogFailed)',
+    'sends the $role chat with a temporary $target model across providers (existing=$existing, removed=$oldModelRemoved, catalogFailed=$localCatalogFailed, outcome=$hideProcessing)',
     async ({
       existing,
       target,
@@ -1125,6 +1133,7 @@ describe('TemporaryChatPanel', () => {
       localCatalogFailed = false,
       legacyProvider = false,
       retry = false,
+      hideProcessing = false,
       providerFailure = false,
       providerPending = false,
       revertBeforeSend = false,
@@ -1266,7 +1275,25 @@ describe('TemporaryChatPanel', () => {
             })
         )
       }
-      if (retry)
+      if (retry && hideProcessing) {
+        mocks.conversationTurns = [
+          {
+            id: 'failed-turn',
+            status: 'failed',
+            error: 'Provider failed',
+            items: [
+              { id: 'ack', type: 'assistant_text', content: 'Received', createdAt: '' },
+              {
+                id: 'progress',
+                type: 'assistant_text',
+                content: 'Completed progress',
+                createdAt: '',
+              },
+            ],
+          },
+        ]
+        mocks.conversationMessages = projectRuntimeConversationTurns(mocks.conversationTurns)
+      } else if (retry)
         mocks.conversationMessages = [
           {
             id: 'failed-turn',
@@ -1290,6 +1317,7 @@ describe('TemporaryChatPanel', () => {
           <I18nextProvider i18n={i18n}>
             <TemporaryChatPanel
               nativeConversation
+              hideProcessing={hideProcessing}
               currentProject={null}
               source={null}
               instanceId={`switch-${role}-${existing}`}
