@@ -5,7 +5,10 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   FRESH_CHAT_PROMPT,
   assert,
+  join,
+  resultDir,
   selectE2EModel,
+  writeFile,
 } from './shared.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForElementCount } from './harness-app-fixture.mjs'
@@ -76,6 +79,23 @@ export async function verifyConversationDiagrams(control, composerSelector, rest
       source,
       'Returning to the graph must reuse the compiled artifact'
     )
+  } catch (error) {
+    // Capture the failing transcript before restoring the previous task below.
+    const diagnostics = await Promise.allSettled([
+      control.command('getWorkbenchDebugSnapshot', 'body'),
+      control.command('getConversationDiagnosticsSnapshot', 'body'),
+      control.command('getElementMetrics', scroller),
+      control.command(
+        'getElementMetrics',
+        `${selector('message-assistant')} [data-markdown-window-chunk]`
+      ),
+      control.command('getElementMetrics', preview),
+    ])
+    await writeFile(
+      join(resultDir, 'conversation-diagram-failure.json'),
+      JSON.stringify({ error: String(error), diagnostics }, null, 2)
+    ).catch(captureError => console.error('Cannot save diagram failure diagnostics', captureError))
+    throw error
   } finally {
     if (
       Number(
