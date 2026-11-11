@@ -92,11 +92,13 @@ To delete an imported personal template, open **Collaboration → Templates → 
 | Save/export group configuration   | Use save/export template in team details; inspect content and sensitive information before sharing                                                                              |
 | Sync/publish                      | Sync pending local content; publishing requires reviewing its confirmation before submitting. Save, sync and publish differ; unavailability does not mean content became public |
 
-## New Issue content and assignee
+<a id="new-issue-content-and-assignee"></a>
 
-Open **Collaboration → New Issue**, choose the project first and enter content. Type **@** to select an available member, agent or team; explicitly assign with the assignee control below. A manually chosen assignee takes precedence over mentions: mentioning multiple people does not assign them all.
+## Create a Thread and choose an assignee
 
-Type **#** and select a matching Issue from this project. After switching projects, recheck/reselect references rather than retaining invalid old-project links. This creates an Issue, not a runtime task, so do not assume task plan-mode/plugin/Skill-slash controls are available. Review project, assignee and references before submitting, then continue in details.
+See [Groups and Threads](#group-thread-controls) for creation paths, group selection, and optional project association. Each Thread belongs to a group; creating or linking a project is optional. Starting from a project board still requires explicitly choosing or creating the owning group.
+
+Member candidates come from the owning group. Linking a project does not add its members to the group or make them assignable. Choose an eligible group member in the full creation form or Thread settings when assigning responsibility; an **@** mention in chat neither assigns the Thread nor joins the mentioned person. GitHub, GitLab, and table sources retain their own creation forms; [Groups and Threads](#group-thread-controls) also describes their entry points and conversion conditions.
 
 ## Manage milestones
 

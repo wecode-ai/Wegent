@@ -5,6 +5,12 @@ use serde_json::{Value, json};
 
 use crate::{http_compat::FastApiError, state::AppState};
 
+#[cfg(test)]
+#[path = "stand_in_issue_events_mention_tests.rs"]
+mod mention_tests;
+#[cfg(test)]
+pub(crate) use mention_tests::verify as verify_mentions;
+
 /// Commit a validated mention with its comment, after locking the owning Issue.
 /// The user and inbox locks match Python's Issue -> recipient -> inbox order.
 pub(crate) async fn enqueue_mention_on(

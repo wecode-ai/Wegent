@@ -1723,6 +1723,59 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.codex.models.list', { includeHidden: true })
   })
 
+  test.each(['loaded', 'idle'])(
+    'reconciles a deferred catalog immediately when the runtime becomes %s',
+    async recovery => {
+      const catalogEntry = createDefaultLocalModelCatalogEntry({
+        id: 'busy-pending-model',
+        displayName: 'Busy pending model',
+        toolProfile: 'native',
+      })
+      saveLocalModelConfig({
+        id: 'busy-pending-model',
+        displayName: 'Busy pending model',
+        modelId: 'busy-pending-model',
+        baseUrl: 'http://localhost:11434/v1',
+        catalogEntry,
+        codexCatalogModelId: String(catalogEntry.slug),
+        catalogReady: false,
+      })
+      let recovered = false
+      const request = vi.fn().mockImplementation(async (method: string) => {
+        if (method === 'runtime.codex.app_server.restart') {
+          return { restarted: recovered && recovery === 'idle', activeTaskCount: 1 }
+        }
+        if (method === 'runtime.codex.models.list') {
+          return { data: recovered ? [{ id: catalogEntry.slug }] : [] }
+        }
+        return {}
+      })
+      const services = createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({
+          running: true,
+          ready: true,
+          deviceId: 'local-device',
+          runtimeInstanceId: 'runtime-1',
+        }),
+        request,
+        subscribe: vi.fn(),
+      })
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(1000)
+      try {
+        await services.deviceApi.listDevices()
+        expect(findLocalModelConfigByModelName(String(catalogEntry.slug))?.catalogReady).toBe(false)
+        recovered = true
+        await services.deviceApi.listDevices()
+        expect(findLocalModelConfigByModelName(String(catalogEntry.slug))?.catalogReady).toBe(true)
+        expect(
+          request.mock.calls.filter(([method]) => method === 'runtime.codex.app_server.restart')
+        ).toHaveLength(2)
+      } finally {
+        clock.mockRestore()
+      }
+    }
+  )
+
   test('retries an idle catalog restart after startup requests drain', async () => {
     const catalogEntry = createDefaultLocalModelCatalogEntry({
       id: 'startup-pending-model',

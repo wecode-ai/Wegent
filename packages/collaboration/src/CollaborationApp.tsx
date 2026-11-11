@@ -22,14 +22,7 @@ import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
 import { saveProjectBoardViews } from "./project-board/saveProjectBoardViews";
 import type { BoardIssueCreateDefaults } from "./project-board/projectBoardViews";
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
-import {
-  Activity,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   collaborationMessages,
@@ -638,7 +631,7 @@ export function CollaborationApp({
   return (
     <>
       {loadingView}
-      <Activity mode={loading ? "hidden" : "visible"}>
+      <div style={{ display: loading ? "none" : "contents" }}>
         <RuntimeConfigurationProvider
           api={api}
           project={project}
@@ -1559,7 +1552,7 @@ export function CollaborationApp({
             </section>
           </BrowserTaskDrafts>
         </RuntimeConfigurationProvider>
-      </Activity>
+      </div>
     </>
   );
 }

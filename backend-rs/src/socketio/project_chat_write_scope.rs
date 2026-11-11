@@ -13,8 +13,15 @@ pub(super) async fn lock(
     let Some(task_id) = task_id.filter(|id| !id.is_empty()) else {
         return Ok(Ok(None));
     };
-    let item: Option<Node> = tx
+    // Provider-owned records have no local row; never range-lock an absent key.
+    let present: Option<(String,)> = tx
         .fetch_optional(
+            "SELECT id FROM loop_items WHERE id=? AND resource_type='task'",
+            (task_id,),
+        )
+        .await?;
+    let item: Option<Node> = if present.is_some() {
+        tx.fetch_optional(
             format!(
                 "SELECT {} FROM loop_items WHERE id=? AND resource_type='task' AND {} FOR UPDATE",
                 store::COLUMNS,
@@ -22,7 +29,10 @@ pub(super) async fn lock(
             ),
             (task_id,),
         )
-        .await?;
+        .await?
+    } else {
+        None
+    };
     if let Some(item) = item {
         if item.cloud_project_id == project_id {
             return Ok(Ok(Some(item)));
