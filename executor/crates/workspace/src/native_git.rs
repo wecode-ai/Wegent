@@ -97,12 +97,14 @@ pub async fn run_git_capture(
         message: error.to_string(),
         timed_out: false,
     })?;
-    let output = time::timeout(timeout, child.wait_with_output())
-        .await
-        .map_err(|_| GitRunError {
-            message: format!("Git command timed out after {}s", timeout.as_secs()),
-            timed_out: true,
-        })?;
+    let pid = child.id();
+    log_git_directory_use("native git directory acquired", cwd, pid);
+    let output = time::timeout(timeout, child.wait_with_output()).await;
+    log_git_directory_use("native git directory wait finished", cwd, pid);
+    let output = output.map_err(|_| GitRunError {
+        message: format!("Git command timed out after {}s", timeout.as_secs()),
+        timed_out: true,
+    })?;
     let output = output.map_err(|error| GitRunError {
         message: error.to_string(),
         timed_out: false,
@@ -116,6 +118,25 @@ pub async fn run_git_capture(
         success,
         truncated,
     })
+}
+
+fn log_git_directory_use(event: &str, cwd: Option<&Path>, pid: Option<u32>) {
+    // Windows keeps a process's working directory open until the child exits.
+    // Record ownership without exposing command arguments or environment values.
+    if !cfg!(windows) {
+        return;
+    }
+    crate::logging::log_executor_event(
+        event,
+        &[
+            (
+                "cwd",
+                cwd.map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+            ),
+            ("pid", pid.map(|pid| pid.to_string()).unwrap_or_default()),
+        ],
+    );
 }
 
 /// Run `git` directly with bounded stdin input.
