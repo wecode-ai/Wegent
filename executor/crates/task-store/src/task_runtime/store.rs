@@ -178,7 +178,10 @@ impl LocalTaskStore {
             &[
                 ("lock_wait_ms", lock_wait_ms.to_string()),
                 ("open_ms", open_ms.to_string()),
-                ("migration_ms", migration_started.elapsed().as_millis().to_string()),
+                (
+                    "migration_ms",
+                    migration_started.elapsed().as_millis().to_string(),
+                ),
                 ("total_ms", started.elapsed().as_millis().to_string()),
             ],
         );
