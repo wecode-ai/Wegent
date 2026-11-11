@@ -30,13 +30,13 @@ const resolution = {
   nativeInteractionId: JSON.stringify(['device', 'review', 'item:question']),
 }
 
-it('updates the durable dismissal time when the same question is ignored after a new handoff', () => {
-  const first = { ...entry(1), dismissed: true as const, dismissedAt: 1 }
+it('updates the durable dismissal scope when the same question is ignored after a new handoff', () => {
+  const first = { ...entry(1), dismissed: true as const, dismissedHandoff: 'first' }
   const second = { ...entry(2), dismissed: true as const }
-  const repeated = { ...first, dismissedAt: 3 }
+  const repeated = { ...first, dismissedHandoff: 'second' }
   const history = archiveInteraction([second, first], repeated)
   expect(history).toEqual([second, repeated])
-  expect(archiveInteraction(history, first)).toBe(history)
+  expect(archiveInteraction(history, repeated)).toBe(history)
 })
 
 it('persists only complete internally consistent canonical resolution identities', () => {

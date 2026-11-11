@@ -12,7 +12,7 @@ import { usePendingProjectIssues } from './usePendingProjectIssues'
 import {
   issueHumanInteraction,
   issueQuestionIdentity,
-  issueQuestionHandoffAt,
+  issueQuestionHandoff,
 } from './issueHumanInteractions'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
@@ -152,7 +152,7 @@ export function RuntimeInteractionsPage({
         return interactions?.isDismissed?.(
           interaction.id,
           issueQuestionIdentity(interaction),
-          issueQuestionHandoffAt(interaction)
+          issueQuestionHandoff(interaction)
         )
       })
     )

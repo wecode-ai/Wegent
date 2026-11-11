@@ -59,64 +59,69 @@ it('archives project work without inventing a runtime task and retains it after 
   await act(async () => {
     await context!.dismiss(entry)
   })
-  expect(context!.history).toContainEqual({ ...entry, dismissed: true, dismissedAt: Date.now() })
+  expect(context!.history).toContainEqual({ ...entry, dismissed: true })
   expect(context!.isDismissed?.(entry.id)).toBe(true)
   rendered.unmount()
   view()
-  await waitFor(() =>
-    expect(context!.history).toContainEqual({ ...entry, dismissed: true, dismissedAt: Date.now() })
-  )
+  await waitFor(() => expect(context!.history).toContainEqual({ ...entry, dismissed: true }))
   expect(context!.isDismissed?.(entry.id)).toBe(true)
   expect(harness.send).not.toHaveBeenCalled()
 })
 
-it('locally dismisses a shared question without answering or assigning its Issue', async () => {
-  const rendered = view()
-  await waitFor(() => expect(context!.pending).toHaveLength(1))
-  const native = context!.pending[0]
-  const question = {
-    id: 'shared',
-    project_id: 'project',
-    issue_id: 'ISSUE-1',
-    root_comment_id: 'root',
-    runtime_device_id: native.task.address.deviceId,
-    runtime_task_id: native.task.address.taskId,
-    item_id: 'question',
-    question: 'Shared decision',
-    recipient_user_id: 7,
-    responsible_user_id: 7,
-    status: 'pending',
-    version: 1,
-    blocks_progress: true,
-    created_at: new Date(native.createdAt).toISOString(),
+it.each([false, true])(
+  'locally dismisses a shared question without answering or assigning its Issue (server clock ahead: %s)',
+  async clockAhead => {
+    const rendered = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const native = context!.pending[0]
+    const question = {
+      id: 'shared',
+      project_id: 'project',
+      issue_id: 'ISSUE-1',
+      root_comment_id: 'root',
+      runtime_device_id: native.task.address.deviceId,
+      runtime_task_id: native.task.address.taskId,
+      item_id: 'question',
+      question: 'Shared decision',
+      recipient_user_id: 7,
+      responsible_user_id: 7,
+      status: 'pending',
+      version: 1,
+      blocks_progress: true,
+      created_at: new Date(native.createdAt).toISOString(),
+      ...(clockAhead ? { waiting_since: new Date(Date.now() + 60_000).toISOString() } : {}),
+    }
+    const inbox = vi.fn().mockResolvedValue({ items: [question] })
+    const list = vi.fn().mockResolvedValue({ items: [question] })
+    const assign = vi.fn()
+    rendered.rerenderSource({
+      ...rendered.taskSource,
+      userId: 7,
+      services: {
+        ...rendered.taskSource.services!,
+        issueHumanRequestsApi: { inbox, list, assign },
+      },
+    })
+    await act(async () => {
+      await context!.refresh()
+    })
+    await waitFor(() =>
+      expect(context!.pending.some(item => item.sharedRequest?.id === 'shared')).toBe(true)
+    )
+    const shared = context!.pending.find(item => item.sharedRequest?.id === 'shared')!
+    await act(async () => {
+      await context!.dismiss(shared)
+    })
+    expect(context!.pending.some(item => item.id === shared.id)).toBe(false)
+    await act(async () => {
+      await context!.refresh()
+    })
+    expect(context!.pending.some(item => item.id === shared.id)).toBe(false)
+    expect(context!.history).toContainEqual(expect.objectContaining({ id: shared.id }))
+    expect(assign).not.toHaveBeenCalled()
+    expect(harness.send).not.toHaveBeenCalled()
   }
-  const inbox = vi.fn().mockResolvedValue({ items: [question] })
-  const list = vi.fn().mockResolvedValue({ items: [question] })
-  const assign = vi.fn()
-  rendered.rerenderSource({
-    ...rendered.taskSource,
-    userId: 7,
-    services: { ...rendered.taskSource.services!, issueHumanRequestsApi: { inbox, list, assign } },
-  })
-  await act(async () => {
-    await context!.refresh()
-  })
-  await waitFor(() =>
-    expect(context!.pending.some(item => item.sharedRequest?.id === 'shared')).toBe(true)
-  )
-  const shared = context!.pending.find(item => item.sharedRequest?.id === 'shared')!
-  await act(async () => {
-    await context!.dismiss(shared)
-  })
-  expect(context!.pending.some(item => item.id === shared.id)).toBe(false)
-  await act(async () => {
-    await context!.refresh()
-  })
-  expect(context!.pending.some(item => item.id === shared.id)).toBe(false)
-  expect(context!.history).toContainEqual(expect.objectContaining({ id: shared.id }))
-  expect(assign).not.toHaveBeenCalled()
-  expect(harness.send).not.toHaveBeenCalled()
-})
+)
 
 it('keeps dismissal pending when durable storage fails and allows recovery', async () => {
   view()
@@ -236,6 +241,7 @@ it.each([
   'later-question',
   'another-issue',
   'returned-question',
+  'returned-question-behind-clock',
 ])('preserves native dismissal across the shared representation: %s', async scenario => {
   const { interactionQuestion, interactionTask } = await import('./runtimeInteractions.fixtures')
   const task = {
@@ -279,8 +285,14 @@ it.each([
         ? context!.history[0].answeredAt + 1000
         : native.createdAt
     ).toISOString(),
-    ...(scenario === 'returned-question'
-      ? { waiting_since: new Date(context!.history[0].answeredAt + 1000).toISOString() }
+    ...(scenario.startsWith('returned-question')
+      ? {
+          waiting_since: new Date(
+            scenario === 'returned-question'
+              ? context!.history[0].answeredAt + 1000
+              : native.createdAt + 1000
+          ).toISOString(),
+        }
       : {}),
   }
   const inbox = vi.fn().mockResolvedValue({ items: [question] })
@@ -303,7 +315,7 @@ it.each([
   expect(context!.pending.some(item => item.sharedRequest?.id === question.id)).toBe(
     !scenario.startsWith('same-question')
   )
-  if (scenario.startsWith('same-question') || scenario === 'returned-question') {
+  if (scenario.startsWith('same-question') || scenario.startsWith('returned-question')) {
     rendered.unmount()
     localStorage.setItem('wework.interactions:test:1:history', '[]')
     const restarted = view(interactionQuestion, task)
@@ -323,7 +335,7 @@ it.each([
       await context!.refresh()
     })
     expect(context!.pending.some(item => item.sharedRequest?.id === question.id)).toBe(
-      scenario === 'returned-question'
+      scenario.startsWith('returned-question')
     )
   }
 })
