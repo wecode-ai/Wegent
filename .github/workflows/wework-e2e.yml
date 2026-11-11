@@ -923,6 +923,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Set up pnpm for Windows installer verification
+        if: always() && matrix.id == 'core-10' && needs.changes.outputs.windows_installer_e2e == 'true'
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
       - name: Install Windows installer packaging dependencies
         # Packaging and the real alternate-drive installation run beside the
         # other core shards instead of delaying every shard from the build job.
