@@ -9,8 +9,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from app.models.subtask import SubtaskStatus
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.services.channels.callback import ChannelType
 from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.channels.handler import MessageContext
@@ -19,6 +22,7 @@ from app.services.execution.emitters import (
     CompositeResultEmitter,
     WebSocketResultEmitter,
 )
+from app.stores.tasks import subtask_store, task_store
 
 EXPECTED_IM_SOURCE = {
     "source": "im",
@@ -529,6 +533,115 @@ class TestTelegramChannelHandler:
         assert websocket_emitter.subtask_id == creation_result.assistant_subtask.id
         assert websocket_emitter.user_id == user.id
         _assert_message_source(create_task_mock)
+
+    @pytest.mark.asyncio
+    async def test_registration_failure_persists_detached_task_and_subtask(
+        self, handler, test_user
+    ):
+        from app.services.channels import handler as handler_module
+
+        engine = create_engine("sqlite://")
+        for model in (TaskResource, Subtask):
+            model.__table__.create(engine)
+        factory = sessionmaker(engine, expire_on_commit=False)
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="registration-failure",
+            namespace="default",
+            json={"status": {"status": "PENDING"}},
+        )
+        with factory() as db:
+            db.add(task)
+            db.flush()
+            assistant = Subtask(
+                user_id=test_user.id,
+                task_id=task.id,
+                team_id=1,
+                title="assistant",
+                bot_ids=[],
+                role=SubtaskRole.ASSISTANT,
+                status=SubtaskStatus.PENDING,
+                progress=0,
+            )
+            db.add(assistant)
+            db.commit()
+            task_id = task.id
+            assistant_id = assistant.id
+        creation = SimpleNamespace(
+            task=task,
+            user_subtask=SimpleNamespace(id=301),
+            assistant_subtask=assistant,
+        )
+
+        with (
+            patch.object(
+                handler,
+                "_get_user_model_override",
+                new=AsyncMock(return_value=(None, None)),
+            ),
+            patch.object(
+                handler,
+                "_get_conversation_task_id",
+                new=AsyncMock(return_value=(None, False)),
+            ),
+            patch.object(
+                handler,
+                "_set_conversation_task_id",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                handler,
+                "_get_selected_or_default_team",
+                new=AsyncMock(return_value=SimpleNamespace(id=100)),
+            ),
+            patch.object(
+                handler,
+                "_apply_team_model_restriction",
+                new=MagicMock(return_value=(None, None)),
+            ),
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                handler,
+                "_register_streaming_emitter",
+                new=AsyncMock(side_effect=RuntimeError("cache down")),
+            ),
+            patch.object(
+                handler,
+                "_broadcast_user_message_to_web",
+                new=AsyncMock(),
+            ),
+            patch.object(handler, "send_text_reply", new=AsyncMock()),
+            patch(
+                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                new=AsyncMock(return_value=creation),
+            ),
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(),
+            ) as trigger,
+            patch.object(handler_module, "SessionLocal", factory),
+        ):
+            with factory() as db:
+                db.expunge_all()
+                result = await handler._create_and_process_chat(
+                    test_user, _message_context()
+                )
+
+        assert result is None
+        with factory() as db:
+            persisted_task = task_store.get_by_id(db, task_id=task_id)
+            persisted_subtask = subtask_store.get_basic_by_id(
+                db, subtask_id=assistant_id
+            )
+        assert persisted_task.json["status"]["status"] == "FAILED"
+        assert persisted_subtask.status == SubtaskStatus.FAILED
+        trigger.assert_not_awaited()
+        engine.dispose()
 
     @pytest.mark.asyncio
     async def test_create_and_process_chat_ignores_agent_restricted_model(

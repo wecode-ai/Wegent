@@ -2965,32 +2965,37 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             response_emitter = SyncResponseEmitter()
 
         try:
-            # Register before dispatch so callback events can update this card.
-            await self._register_streaming_emitter(
-                task_id=task_id,
-                streaming_emitter=streaming_emitter,
-                message_context=message_context,
-            )
+            try:
+                # Register before dispatch so callbacks can update this card.
+                await self._register_streaming_emitter(
+                    task_id=task_id,
+                    streaming_emitter=streaming_emitter,
+                    message_context=message_context,
+                )
+            except Exception as exc:
+                self._mark_task_registration_failed(
+                    task=trigger_data["task"],
+                    assistant_subtask=trigger_data["assistant_subtask"],
+                    error_message=str(exc),
+                )
+                raise
         except Exception as exc:
             self.logger.exception(
                 "[%sHandler] Could not register task callback: task_id=%s",
                 self._channel_type.value,
                 task_id,
             )
-            self._mark_private_im_task_response_failed(
-                db,
-                task=trigger_data["task"],
-                assistant_subtask=trigger_data["assistant_subtask"],
-                error_message=str(exc),
-            )
             error = f"任务回调注册失败：{exc}"
-            await self.send_text_reply(message_context, error)
+            delivered = False
             if streaming_emitter and hasattr(streaming_emitter, "emit_error"):
                 await streaming_emitter.emit_error(
                     task_id=task_id,
                     subtask_id=trigger_data["assistant_subtask"].id,
                     error=error,
                 )
+                delivered = True
+            if not delivered:
+                await self.send_text_reply(message_context, error)
             return None
 
         # Notify user if auto-starting new conversation due to timeout
@@ -3065,6 +3070,34 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"[{self._channel_type.value}Handler] Response timeout for task {task_id}"
             )
             return "Response timeout, please try again later"
+
+    def _mark_task_registration_failed(
+        self,
+        *,
+        task: Any,
+        assistant_subtask: Any,
+        error_message: str,
+    ) -> None:
+        """Reload detached records before persisting a registration failure."""
+
+        from app.stores.tasks import subtask_store
+
+        with SessionLocal() as db:
+            persisted_task = task_store.get_by_id(db, task_id=task.id)
+            persisted_subtask = subtask_store.get_basic_by_id(
+                db, subtask_id=assistant_subtask.id
+            )
+            if persisted_task is None or persisted_subtask is None:
+                raise LookupError(
+                    f"Cannot find task {task.id} or assistant subtask "
+                    f"{assistant_subtask.id} after callback registration failure"
+                )
+            self._mark_private_im_task_response_failed(
+                db,
+                task=persisted_task,
+                assistant_subtask=persisted_subtask,
+                error_message=error_message,
+            )
 
     def _build_chat_payload(
         self,

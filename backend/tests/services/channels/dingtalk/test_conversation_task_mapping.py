@@ -171,13 +171,22 @@ async def test_mirror_failure_does_not_block_dispatch_or_restore_stale_task(
         _mapping_key("conv-private", 9), 42, expire=CHANNEL_CONV_TASK_TTL
     )
     disabled_key = cache.set.await_args_list[-1].args[0]
-    assert disabled_key.startswith("channel:conv_task:no_restore:dingtalk:")
-    cache.get.side_effect = [None, True]
+    assert disabled_key == ("channel:conv_task:no_restore:dingtalk:conv-private:9")
+    stored = {call.args[0]: call.args[1] for call in cache.set.await_args_list}
+    cache.get.side_effect = lambda key: stored.get(key)
+    session_service.get_chat_task.return_value = 7
 
+    # The current turn's primary mapping always wins over the safety marker.
     task_id, auto_new_conversation = await handler._get_conversation_task_id(
         "conv-private", 9
     )
+    assert (task_id, auto_new_conversation) == (42, False)
 
+    # Once it expires, a possibly stale mirror must not resurrect the old task.
+    stored.pop(_mapping_key("conv-private", 9))
+    task_id, auto_new_conversation = await handler._get_conversation_task_id(
+        "conv-private", 9
+    )
     assert (task_id, auto_new_conversation) == (None, False)
     session_service.get_chat_task.assert_not_awaited()
 
@@ -195,7 +204,15 @@ async def test_reset_mirror_failure_does_not_block_new_conversation(
     await handler._delete_conversation_task_id("conv-private", 9)
 
     cache.delete.assert_awaited_once_with(_mapping_key("conv-private", 9))
-    cache.set.assert_awaited_once()
+    disabled_key = cache.set.await_args.args[0]
+    assert disabled_key == ("channel:conv_task:no_restore:dingtalk:conv-private:9")
+    stored = {cache.set.await_args.args[0]: cache.set.await_args.args[1]}
+    cache.get.side_effect = lambda key: stored.get(key)
+    session_service.get_chat_task.return_value = 7
+
+    task_id, _ = await handler._get_conversation_task_id("conv-private", 9)
+    assert task_id is None
+    session_service.get_chat_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio

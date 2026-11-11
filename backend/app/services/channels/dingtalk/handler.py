@@ -451,9 +451,8 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
                 persist_without_emitter=persist_without_emitter,
             )
         except Exception:
-            # The quote address is written before the callback entry, so a card
-            # that fails registration stays quotable unless the address is
-            # dropped here. The plain-text error alone cannot retire it.
+            # Runtime continuations own their round-scoped error delivery. For
+            # ordinary tasks the caller persists the failure and reports once.
             if bound and card_instance_id:
                 try:
                     await delete_binding(self._channel_id, card_instance_id)
@@ -462,18 +461,17 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
                         "[DingTalkHandler] Failed to drop unusable card binding: %s",
                         card_instance_id,
                     )
-            try:
-                await self._fail_unstarted_card_streaming_emitter(
-                    task_id=task_id,
+            if isinstance(task_id, str):
+                await self._fail_private_im_runtime_continuation(
+                    callback_key=task_id,
                     streaming_emitter=streaming_emitter,
                     message_context=message_context,
+                    error=(
+                        "聊天卡片创建失败，任务可能仍在运行，" "请稍后在 Wework 查看。"
+                    ),
                 )
-            except Exception:
-                self.logger.exception(
-                    "[DingTalkHandler] Failed to close card after registration "
-                    "error: %s",
-                    card_instance_id,
-                )
+            else:
+                await streaming_emitter.close()
             raise
 
     async def _fail_unstarted_card_streaming_emitter(
