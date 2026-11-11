@@ -41,6 +41,7 @@ export function createWorkbenchControlCollaboration({ uiTimeoutMs, findValue }) 
   const spawned = new Set()
   const children = new Set()
   const completed = new Set()
+  const statusCalls = {}
   const reply = (response, events) => {
     const id = `native-collaboration-${++sequence}`
     response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -73,13 +74,12 @@ export function createWorkbenchControlCollaboration({ uiTimeoutMs, findValue }) 
     const inventory = toolOutputText(body, callId)
     if (!inventory && !inventories[phase]) {
       const code = `text(ALL_TOOLS.filter(t => t.name.startsWith('collaboration__')).map(t => t.name.slice('collaboration__'.length)).sort())`
-      return selectedToolCall(callId, selectProgrammaticExec(body, code))
+      return selectedToolCall(callId, { codeMode: selectProgrammaticExec(body, code) })
     }
     if (inventory) inventories[phase] = JSON.parse(inventory)
     assert.deepEqual(inventories[phase], phase === 'disabled' ? [] : TOOLS)
     const childResult = `${MARKER}_CHILD_${phase}_DONE`
-    if (phase === 'disabled' || JSON.stringify(body.input).includes(childResult)) {
-      if (phase !== 'disabled') assert.ok(children.has(phase), 'A real child must finish first')
+    if (phase === 'disabled') {
       completed.add(phase)
       return [assistantMessage(`${MARKER}_${phase}_DONE`)]
     }
@@ -93,9 +93,27 @@ export function createWorkbenchControlCollaboration({ uiTimeoutMs, findValue }) 
         })
       )
     }
+    const status = statusCalls[phase] && toolOutputText(body, statusCalls[phase])
+    if (status) {
+      const child = JSON.parse(status).agents.find(
+        agent => agent.agent_name === `/root/control_resume_${phase}`
+      )
+      if (child?.agent_status && Object.hasOwn(child.agent_status, 'completed')) {
+        assert.ok(children.has(phase), 'A real child must finish first')
+        assert.equal(child.agent_status.completed?.trim(), childResult)
+        completed.add(phase)
+        return [assistantMessage(`${MARKER}_${phase}_DONE`)]
+      }
+      delete statusCalls[phase]
+      return selectedToolCall(
+        `native-collaboration-wait-${sequence}`,
+        selectTool(body, 'wait_agent', { timeout_ms: 10000 })
+      )
+    }
+    statusCalls[phase] = `native-collaboration-status-${sequence}`
     return selectedToolCall(
-      `native-collaboration-wait-${sequence}`,
-      selectTool(body, 'wait_agent', { timeout_ms: 10000 })
+      statusCalls[phase],
+      selectTool(body, 'list_agents', { path_prefix: `/root/control_resume_${phase}` })
     )
   }
   return {
