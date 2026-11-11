@@ -144,7 +144,9 @@ async function createShareScopeFixture(
     })
     expect([200, 201], JSON.stringify(reporterMember.data)).toContain(reporterMember.status)
 
-    const groupTeam = await createGroupTeam(adminApi, prefix, groupName, 'group')
+    // The admin owns this private leader Bot while the Team itself is a group
+    // resource, keeping the regression on the Team-context authorization path.
+    const groupTeam = await createGroupTeam(adminApi, prefix, 'default', 'group')
     createdBotIds.push(groupTeam.botId)
     createdTeamIds.push({
       id: groupTeam.teamId,
