@@ -146,6 +146,24 @@ pub(crate) async fn insert(
     kind: &str,
     values: Value,
 ) -> MysqlResult<String> {
+    insert_with_conflict_clause(tx, kind, values, "").await
+}
+
+pub(crate) async fn insert_once(
+    tx: &mut impl MysqlTransaction,
+    kind: &str,
+    values: Value,
+) -> MysqlResult<()> {
+    insert_with_conflict_clause(tx, kind, values, " ON DUPLICATE KEY UPDATE id=id").await?;
+    Ok(())
+}
+
+async fn insert_with_conflict_clause(
+    tx: &mut impl MysqlTransaction,
+    kind: &str,
+    values: Value,
+    conflict_clause: &str,
+) -> MysqlResult<String> {
     let columns: Vec<Column> = tx.fetch_all(
         "SELECT CAST(COLUMN_NAME AS CHAR) AS column_name, CAST(IS_NULLABLE AS CHAR) AS is_nullable, CAST(DATA_TYPE AS CHAR) AS data_type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='loop_items' ORDER BY ORDINAL_POSITION", ()
     ).await?;
@@ -196,7 +214,7 @@ pub(crate) async fn insert(
     let placeholders = vec!["?"; columns.len()].join(",");
     tx.execute(
         format!(
-            "INSERT INTO loop_items ({}) VALUES ({placeholders})",
+            "INSERT INTO loop_items ({}) VALUES ({placeholders}){conflict_clause}",
             names.join(",")
         ),
         args,
