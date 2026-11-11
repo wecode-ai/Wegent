@@ -559,6 +559,7 @@ async function runRecoveryAction(action, ...args) {
 
 setLocalizedActionCopy()
 renderLocalizedStaticCopy()
+brandAnimation.refresh()
 disablePluginButton.addEventListener('click', () => {
   if (failedPluginName) void runRecoveryAction('disablePlugin', failedPluginName)
 })

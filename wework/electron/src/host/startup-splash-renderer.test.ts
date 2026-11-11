@@ -72,6 +72,7 @@ async function createRendererFixture(
     setPaused: vi.fn(),
     complete: vi.fn(async () => undefined),
     destroy: vi.fn(),
+    refresh: vi.fn(),
   }
   const createStartupBrandAnimation = vi.fn(() => brandAnimation)
   const listeners = new Map<string, (event: unknown) => void>()
@@ -369,6 +370,7 @@ describe('startup splash renderer', () => {
         [element('#startup-timeout'), element('#startup-timeout-actions')],
       ]
     )
+    expect(brandAnimation.refresh).toHaveBeenCalledOnce()
     expect(element('documentElement').dataset.animationReady).toBeUndefined()
     expect(frames.size).toBe(1)
     await step(0)
@@ -687,7 +689,11 @@ describe('startup splash renderer', () => {
       performance: { now: () => 0 },
       requestAnimationFrame: vi.fn(),
       window: {
-        createStartupBrandAnimation: vi.fn(() => ({ setPaused: vi.fn(), destroy: vi.fn() })),
+        createStartupBrandAnimation: vi.fn(() => ({
+          setPaused: vi.fn(),
+          destroy: vi.fn(),
+          refresh: vi.fn(),
+        })),
         location: { search: '' },
         addEventListener: (event: string, listener: () => void) => {
           windowListeners.set(event, listener)
@@ -762,7 +768,11 @@ describe('startup splash renderer', () => {
         performance: { now: () => 0 },
         requestAnimationFrame: vi.fn(),
         window: {
-          createStartupBrandAnimation: vi.fn(() => ({ setPaused: vi.fn(), destroy: vi.fn() })),
+          createStartupBrandAnimation: vi.fn(() => ({
+            setPaused: vi.fn(),
+            destroy: vi.fn(),
+            refresh: vi.fn(),
+          })),
           location: { search },
           addEventListener: vi.fn(),
           matchMedia: () => ({ matches: true }),
@@ -881,7 +891,11 @@ describe('startup splash renderer', () => {
       performance: { now: () => 0 },
       requestAnimationFrame: vi.fn(),
       window: {
-        createStartupBrandAnimation: vi.fn(() => ({ setPaused: vi.fn(), destroy: vi.fn() })),
+        createStartupBrandAnimation: vi.fn(() => ({
+          setPaused: vi.fn(),
+          destroy: vi.fn(),
+          refresh: vi.fn(),
+        })),
         location: { search: '' },
         addEventListener: vi.fn(),
         matchMedia: () => ({ matches: true }),

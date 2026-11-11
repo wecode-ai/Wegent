@@ -608,7 +608,7 @@
     window.addEventListener('pagehide', destroy)
     resize()
     syncPlayback()
-    return { setPaused, complete, destroy }
+    return { setPaused, complete, destroy, refresh: resize }
   }
 
   window.createStartupBrandAnimation = createStartupBrandAnimation

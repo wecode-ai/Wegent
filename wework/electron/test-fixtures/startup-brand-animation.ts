@@ -7,6 +7,7 @@ interface BrandAnimation {
   setPaused: (paused: boolean) => void
   complete: (durationMs?: number) => Promise<void>
   destroy: () => void
+  refresh: () => void
 }
 
 class FakePath2D {
