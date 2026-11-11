@@ -198,7 +198,8 @@ run_wework_full_renderer_tests() {
     echo "   Renderer shard concurrency: $shard_concurrency"
     for ((shard = 1; shard <= shard_count; shard++)); do
         shard_logs+=("$TEMP_DIR/wework_test_shard_${shard}.log")
-        pnpm --filter wework exec vitest run --dir src --pool=threads \
+        # Keep excludes relative to the package root, including nested src/e2e tests.
+        pnpm --filter wework exec vitest run src --pool=threads \
             --maxWorkers "$test_workers" \
             --testTimeout "$test_timeout_ms" \
             --reporter=default \
