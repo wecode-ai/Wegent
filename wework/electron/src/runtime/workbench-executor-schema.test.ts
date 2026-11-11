@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import {
   EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
+  ExecutorCompatibilityGate,
   assertExecutorWorkbenchCompatibility,
   assertWorkbenchSchema,
 } from './workbench-executor-schema.js'
@@ -44,6 +45,7 @@ const compatible = {
   protocol_version: 1,
   workbench_layout_versions: [1],
   capability_manifest_versions: [2],
+  workbench_lock_resources: 32,
 }
 const directories: string[] = []
 afterEach(async () => {
@@ -59,6 +61,9 @@ test.each([
   { ...compatible, workbench_layout_versions: [2] },
   { ...compatible, capability_manifest_versions: [1] },
   { ...compatible, capability_manifest_versions: ['2'] },
+  { ...compatible, workbench_lock_resources: undefined },
+  { ...compatible, workbench_lock_resources: 10 },
+  { ...compatible, workbench_lock_resources: '32' },
 ])('rejects missing or incompatible schema %j', schema => {
   expect(() => assertWorkbenchSchema(schema)).toThrow()
 })
@@ -72,6 +77,41 @@ test('allows explicitly supported layout and manifest versions', () => {
 
 test('allows time for first-run macOS executable validation', () => {
   expect(EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS).toBeGreaterThan(5_000)
+})
+
+test('reuses a successful compatibility check for the selected executable', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'workbench schema gate '))
+  directories.push(directory)
+  const binary = join(directory, 'executor')
+  await writeFile(binary, 'first')
+  const verify = vi.fn(async () => undefined)
+  const gate = new ExecutorCompatibilityGate(verify)
+  const environment = { WEWORK_EXECUTOR_PATH: binary }
+
+  await Promise.all([gate.assert(environment), gate.assert(environment)])
+  await gate.assert(environment)
+  expect(verify).toHaveBeenCalledOnce()
+
+  await writeFile(binary, 'replacement')
+  await gate.assert(environment)
+  expect(verify).toHaveBeenCalledTimes(2)
+})
+
+test('retries a failed compatibility check', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'workbench schema retry '))
+  directories.push(directory)
+  const binary = join(directory, 'executor')
+  await writeFile(binary, 'fixture')
+  const verify = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error('temporary probe failure'))
+    .mockResolvedValueOnce(undefined)
+  const gate = new ExecutorCompatibilityGate(verify)
+  const environment = { WEWORK_EXECUTOR_PATH: binary }
+
+  await expect(gate.assert(environment)).rejects.toThrow('temporary probe failure')
+  await expect(gate.assert(environment)).resolves.toBeUndefined()
+  expect(verify).toHaveBeenCalledTimes(2)
 })
 
 test('missing executors and arbitrary wrapper arguments cannot authorize migration', async () => {
