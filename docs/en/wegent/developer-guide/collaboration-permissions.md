@@ -133,7 +133,7 @@ GitHub/GitLab personal and repository sources use a stricter native boundary: lo
 
 Issue creation and automation event dispatch neither scan nor prepare the global execution queue. After dispatch commits, they read only the executions associated with those runs and asynchronously notify their target Executors, using the actual owner's device address for shared runners. Notifications carry no work or execution authority; consumers and independent maintenance jobs retain queue preparation and claiming.
 
-Execution resource resolution exposes a separate extension scope. Distributions may exclude directory-derived grants from execution in their own entity adapters while ordinary discovery retains the original resolvers. Public defaults preserve every registered resolver's existing policy. Request-local group caches isolate execution and discovery; extensions must retain project, Issue, resource-binding, whitelist, and revocation checks.
+Execution and discovery use separate resource resolution scopes. Resolvers can declare whether they participate in execution checks, preserving existing behavior by default. Request-local group caches isolate the scopes so discovery results do not become execution authority. Extensions retain project, Issue, resource-binding, whitelist, and revocation checks.
 
 Sharing delegates use, not source editing. Project administrators manage bindings and allowed project configuration; resource editors manage the original definition. Actor, definition owner, device owner and Runtime identity remain separate. Model and connector credentials retain their original access rules. Project session reads authorize one bound Issue session, never the owner's entire device catalog.
 

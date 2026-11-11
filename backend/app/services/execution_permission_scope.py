@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Expose execution resource scopes to distribution-owned entity adapters."""
+"""Scope resource resolution separately for execution and discovery."""
 
 from contextlib import contextmanager
 from contextvars import ContextVar

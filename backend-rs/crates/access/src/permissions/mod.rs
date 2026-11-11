@@ -30,8 +30,7 @@ pub enum ResolutionPurpose {
 
 #[async_trait]
 pub trait EntityResolver<R: Redis>: Send + Sync {
-    /// External directories may remain available for sharing while execution
-    /// requires grants that can be checked without that directory.
+    /// Whether this resolver participates in execution resource resolution.
     fn allows_execution(&self) -> bool {
         true
     }
@@ -100,8 +99,7 @@ impl<R: Redis> Clone for EntityResolvers<R> {
 }
 
 impl<R: Redis> EntityResolvers<R> {
-    /// Keep the configured provider unless its adapter explicitly excludes
-    /// directory-derived grants from execution.
+    /// Select a provider according to the registered execution resource policy.
     pub fn execution_directory<'a>(
         &self,
         provider: &'a dyn wegent_directory::erp_provider::ErpProvider<R>,
