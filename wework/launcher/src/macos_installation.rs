@@ -1,6 +1,6 @@
 //! Materialize the selected signed host at its original macOS application URL.
 use std::{
-    ffi::{c_char, c_void, CString, OsString},
+    ffi::{c_char, c_int, c_uint, c_ulong, c_void, CString, OsString},
     fs, io,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
@@ -32,20 +32,30 @@ unsafe extern "C" {
         buffer: *mut u8,
         size: isize,
     ) -> bool;
-    fn CFURLCopyResourcePropertyForKey(
-        url: *const c_void,
-        key: *const c_void,
-        value: *mut *const c_void,
-        error: *mut *const c_void,
-    ) -> bool;
-    static kCFURLVolumeIsReadOnlyKey: *const c_void;
-    fn CFGetTypeID(value: *const c_void) -> usize;
-    fn CFBooleanGetTypeID() -> usize;
-    fn CFBooleanGetValue(value: *const c_void) -> bool;
     fn CFRelease(value: *const c_void);
 }
 
+// Darwin sys/statvfs.h uses unsigned int for both block and inode counts.
+#[repr(C)]
+struct VolumeStats {
+    f_bsize: c_ulong,
+    f_frsize: c_ulong,
+    f_blocks: c_uint,
+    f_bfree: c_uint,
+    f_bavail: c_uint,
+    f_files: c_uint,
+    f_ffree: c_uint,
+    f_favail: c_uint,
+    f_fsid: c_ulong,
+    f_flag: c_ulong,
+    f_namemax: c_ulong,
+}
+
+const _: () = assert!(std::mem::size_of::<VolumeStats>() == 64);
+const _: () = assert!(std::mem::offset_of!(VolumeStats, f_flag) == 48);
+
 unsafe extern "C" {
+    fn statvfs(path: *const c_char, stats: *mut VolumeStats) -> c_int;
     fn renamex_np(from: *const c_char, to: *const c_char, flags: u32) -> i32;
 }
 
@@ -86,11 +96,6 @@ pub fn applications(identifier: OsString) -> io::Result<()> {
 }
 
 fn application_path(url: *const c_void) -> io::Result<Option<String>> {
-    // An installer image is not an installation destination. External writable
-    // volumes remain valid; their location under /Volumes is not a rejection reason.
-    if read_only_volume(url)? {
-        return Ok(None);
-    }
     let mut buffer = [0u8; 4096];
     if !unsafe {
         CFURLGetFileSystemRepresentation(url, true, buffer.as_mut_ptr(), buffer.len() as isize)
@@ -108,28 +113,22 @@ fn application_path(url: *const c_void) -> io::Result<Option<String>> {
     if path.contains(['\r', '\n']) {
         return Err(invalid("Application path contains a newline"));
     }
+    // Check the actual mount, including sealed APFS system volumes. Writable
+    // external volumes remain valid regardless of their location under /Volumes.
+    if read_only_volume(path)? {
+        return Ok(None);
+    }
     Ok(Some(path.to_owned()))
 }
 
-fn read_only_volume(url: *const c_void) -> io::Result<bool> {
-    let mut value = std::ptr::null();
-    let mut error = std::ptr::null();
-    let success = unsafe {
-        CFURLCopyResourcePropertyForKey(url, kCFURLVolumeIsReadOnlyKey, &mut value, &mut error)
-    };
-    if !error.is_null() {
-        unsafe { CFRelease(error) };
+fn read_only_volume(path: &str) -> io::Result<bool> {
+    let path = CString::new(path).map_err(|_| invalid("Invalid application path"))?;
+    let mut stats = std::mem::MaybeUninit::<VolumeStats>::uninit();
+    if unsafe { statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
     }
-    if value.is_null() {
-        return Err(invalid("The application volume cannot be identified"));
-    }
-    let result = if success && unsafe { CFGetTypeID(value) == CFBooleanGetTypeID() } {
-        Ok(unsafe { CFBooleanGetValue(value) })
-    } else {
-        Err(invalid("The application volume cannot be identified"))
-    };
-    unsafe { CFRelease(value) };
-    result
+    // ST_RDONLY is defined as 1 by Darwin's sys/statvfs.h.
+    Ok(unsafe { stats.assume_init() }.f_flag & 1 != 0)
 }
 
 fn application(executable: &Path) -> io::Result<PathBuf> {
@@ -290,152 +289,6 @@ mod tests {
         ) -> *const c_void;
     }
 
-    struct MountedImage {
-        root: PathBuf,
-        mount: PathBuf,
-        mounted: bool,
-    }
-
-    impl MountedImage {
-        fn new() -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "wework-volume-test-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            let application = root.join("source/Installed.app/Contents");
-            fs::create_dir_all(&application).unwrap();
-            fs::write(application.join("Info.plist"), "volume detection fixture").unwrap();
-            let mount = root.join("mounted");
-            fs::create_dir_all(&mount).unwrap();
-            assert!(Command::new("/usr/bin/hdiutil")
-                .args(["create", "-quiet", "-format", "UDRW", "-fs", "HFS+"])
-                .arg("-srcfolder")
-                .arg(root.join("source"))
-                .arg(root.join("installer.dmg"))
-                .status()
-                .unwrap()
-                .success());
-            Self {
-                root,
-                mount,
-                mounted: false,
-            }
-        }
-
-        fn attach(&mut self, read_only: bool) {
-            eprintln!(
-                "Fixture attach: mount={:?}, read_only={read_only}",
-                self.mount
-            );
-            assert!(Command::new("/usr/bin/hdiutil")
-                .args(["attach", "-quiet", "-nobrowse"])
-                .arg(if read_only { "-readonly" } else { "-readwrite" })
-                .arg("-mountpoint")
-                .arg(&self.mount)
-                .arg(self.root.join("installer.dmg"))
-                .status()
-                .unwrap()
-                .success());
-            self.mounted = true;
-        }
-
-        fn detach(&mut self) {
-            let detached = Command::new("/usr/bin/hdiutil")
-                .args(["detach", "-verbose", "-debug"])
-                .arg(&self.mount)
-                .output()
-                .unwrap();
-            if !detached.status.success() {
-                let holders = Command::new("/usr/sbin/lsof")
-                    .arg("+D")
-                    .arg(&self.mount)
-                    .output();
-                eprintln!("Fixture mount holders: {holders:?}");
-                let volume = Command::new("/usr/sbin/diskutil")
-                    .arg("info")
-                    .arg(&self.mount)
-                    .output();
-                eprintln!("Fixture volume state: {volume:?}");
-                report_image_device(&self.root, &detached.stderr);
-            }
-            assert!(
-                detached.status.success(),
-                "Fixture detach failed at {:?} ({}): stdout={}, stderr={}",
-                self.mount,
-                detached.status,
-                String::from_utf8_lossy(&detached.stdout),
-                String::from_utf8_lossy(&detached.stderr)
-            );
-            self.mounted = false;
-        }
-    }
-
-    fn report_image_device(root: &Path, stderr: &[u8]) {
-        let image_info = Command::new("/usr/bin/hdiutil").arg("info").output();
-        if let Ok(info) = image_info {
-            for image in String::from_utf8_lossy(&info.stdout)
-                .split("================================================")
-            {
-                if image.contains(&root.to_string_lossy().to_string()) {
-                    eprintln!("Fixture attached image: {image}");
-                }
-            }
-        }
-        let stderr = String::from_utf8_lossy(stderr);
-        let Some(device) = stderr
-            .lines()
-            .find_map(|line| line.strip_prefix("unmount_and_eject(")?.strip_suffix(')'))
-        else {
-            return;
-        };
-        let Some(number) = device.strip_prefix("disk") else {
-            return;
-        };
-        let number: String = number.chars().take_while(char::is_ascii_digit).collect();
-        if number.is_empty() {
-            return;
-        }
-        let disk = format!("disk{number}");
-        let holders = Command::new("/usr/bin/sudo")
-            .args(["-n", "/usr/sbin/lsof", "-nP"])
-            .arg(format!("/dev/{disk}"))
-            .arg(format!("/dev/r{disk}"))
-            .output();
-        eprintln!("Fixture device holders: {holders:?}");
-        let predicate = format!(
-            "(process == 'diskarbitrationd' OR process == 'diskimages-helper') AND eventMessage CONTAINS '{disk}'"
-        );
-        let events = Command::new("/usr/bin/sudo")
-            .args([
-                "-n",
-                "/usr/bin/log",
-                "show",
-                "--last",
-                "2m",
-                "--style",
-                "compact",
-                "--info",
-                "--debug",
-                "--predicate",
-            ])
-            .arg(predicate)
-            .output();
-        eprintln!("Fixture device arbitration: {events:?}");
-    }
-
-    impl Drop for MountedImage {
-        fn drop(&mut self) {
-            if self.mounted {
-                let _ = Command::new("/usr/bin/hdiutil")
-                    .args(["detach", "-quiet"])
-                    .arg(&self.mount)
-                    .status();
-            }
-            let _ = fs::remove_dir_all(&self.root);
-        }
-    }
-
     fn candidate(path: &Path) -> io::Result<Option<String>> {
         let bytes = path.as_os_str().as_bytes();
         let url = unsafe {
@@ -453,24 +306,19 @@ mod tests {
     }
 
     #[test]
-    fn installer_volumes_are_excluded_but_writable_volumes_remain_candidates() {
-        let mut image = MountedImage::new();
-        let installed = image.root.join("source/Installed.app");
+    fn read_only_volumes_are_excluded_but_writable_volumes_remain_candidates() {
+        // Use real OS volumes: the sealed system application is read-only and
+        // the signed fixture lives on the writable data volume. Disk-image
+        // creation and device ejection are unrelated to this lookup contract.
+        let system_application = Path::new("/System/Library/CoreServices/Finder.app");
+        assert!(system_application.is_dir());
+        assert_eq!(candidate(system_application).unwrap(), None);
+        let f = fixture();
         assert_eq!(
-            candidate(&installed).unwrap(),
-            Some(installed.to_string_lossy().into_owned())
+            candidate(&f.installed).unwrap(),
+            Some(f.installed.to_string_lossy().into_owned())
         );
-        image.attach(true);
-        let mounted = image.mount.join("Installed.app");
-        assert!(mounted.is_dir());
-        assert_eq!(candidate(&mounted).unwrap(), None);
-        image.detach();
-        image.attach(false);
-        assert_eq!(
-            candidate(&mounted).unwrap(),
-            Some(mounted.to_string_lossy().into_owned())
-        );
-        image.detach();
+        assert!(candidate(&f.root.join("Missing.app")).is_err());
     }
 
     struct Fixture {
