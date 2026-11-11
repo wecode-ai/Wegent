@@ -51,7 +51,10 @@ describe('TelemetryBridge', () => {
     mocks.setTelemetryEnabled.mockClear()
     mocks.track.mockClear()
     mocks.updateAppPreferences.mockReset()
-    mocks.updateAppPreferences.mockResolvedValue(undefined)
+    mocks.updateAppPreferences.mockImplementation(async patch => {
+      Object.assign(mocks.preferences.preferences, patch)
+      return mocks.preferences.preferences
+    })
     mocks.preferences.loaded = true
     mocks.preferences.preferences.telemetryConsentAsked = true
     mocks.preferences.preferences.telemetryEnabled = true
@@ -124,8 +127,8 @@ describe('TelemetryBridge', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
     )
-    expect(mocks.setTelemetryEnabled).toHaveBeenCalledWith(false)
-    expect(mocks.installTelemetry).not.toHaveBeenCalledWith(true)
+    expect(mocks.setTelemetryEnabled).not.toHaveBeenCalled()
+    expect(mocks.installTelemetry).not.toHaveBeenCalled()
   })
 
   it('does not block the workbench while consent persistence never settles', async () => {
@@ -136,8 +139,34 @@ describe('TelemetryBridge', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
     )
-    expect(mocks.installTelemetry).toHaveBeenCalledWith(false)
-    expect(mocks.installTelemetry).not.toHaveBeenCalledWith(true)
+    expect(mocks.installTelemetry).not.toHaveBeenCalled()
+    expect(mocks.setTelemetryEnabled).not.toHaveBeenCalled()
+  })
+
+  it('initializes directly with saved consent after the first opt-in finishes', async () => {
+    mocks.preferences.preferences.telemetryConsentAsked = false
+    mocks.preferences.preferences.telemetryEnabled = false
+    let finishSave: (() => void) | undefined
+    mocks.updateAppPreferences.mockImplementationOnce(
+      patch =>
+        new Promise(resolve => {
+          finishSave = () => {
+            Object.assign(mocks.preferences.preferences, patch)
+            resolve(mocks.preferences.preferences)
+          }
+        })
+    )
+    render(<TelemetryBridge />)
+    fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
+    expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
+    expect(mocks.installTelemetry).not.toHaveBeenCalled()
+    expect(mocks.setTelemetryEnabled).not.toHaveBeenCalled()
+
+    await act(async () => finishSave?.())
+
+    await waitFor(() => expect(mocks.installTelemetry).toHaveBeenCalledExactlyOnceWith(true))
+    expect(mocks.setTelemetryEnabled).not.toHaveBeenCalledWith(false)
+    expect(mocks.track).toHaveBeenCalledExactlyOnceWith('app_started', { surface: 'main' })
   })
 
   it('honors a refusal from another window after a local opt-in succeeds', async () => {

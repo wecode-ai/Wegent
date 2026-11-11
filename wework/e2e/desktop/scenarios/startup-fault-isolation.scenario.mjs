@@ -79,6 +79,7 @@ export async function createDesktopScenario({
   let environment
   let replacement
   let appPid
+  let restartDesktopApp
   const preferences = join(electronUserDataDirectory, 'app-preferences.json')
   const preferencesBackup = `${preferences}.startup-original`
   const metadata = JSON.parse(
@@ -86,6 +87,9 @@ export async function createDesktopScenario({
   )
   return {
     appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
+    setRestartDesktopApp(restart) {
+      restartDesktopApp = restart
+    },
     appProcessStarted(child) {
       appPid = child.pid
     },
@@ -160,13 +164,14 @@ export async function createDesktopScenario({
         version: metadata.version,
       })
       const durableState = join(electronUserDataDirectory, 'renderer-local-storage.json')
-      const original = await readFile(durableState)
+      let original
       const damaged = '{damaged-durable-state'
       try {
-        await writeFile(durableState, damaged)
-        const before = control.readyCount
-        await control.command('reloadApp', 'body')
-        await control.awaitReadyAfter(before, workbenchReadyTimeoutMs)
+        // Inject damage only after all host writers stop, as for a damaged file on launch.
+        await restartDesktopApp(async () => {
+          original = await readFile(durableState)
+          await writeFile(durableState, damaged)
+        })
         await control.command('waitFor', '[data-testid="app-shell"]', {
           timeoutMs: workbenchReadyTimeoutMs,
         })
@@ -180,7 +185,9 @@ export async function createDesktopScenario({
           JSON.stringify({ workbenchAvailable: true, originalDataPreserved: true })
         )
       } finally {
-        await writeFile(durableState, original)
+        if (original) {
+          await restartDesktopApp(() => writeFile(durableState, original))
+        }
       }
       assert.ok(Number.isInteger(appPid) && appPid > 0)
       await verifyInitialStorageWriteFailure({

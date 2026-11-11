@@ -23,7 +23,9 @@ export function TelemetryBridge() {
   const startedRef = useRef(false)
   const sessionConsent = useSessionTelemetryConsent()
   const sessionAsked = useSessionTelemetryConsentAsked()
-  const consentAsked = sessionAsked || appPreferences?.preferences.telemetryConsentAsked
+  // Dismiss the prompt immediately, but initialize collection only from saved consent.
+  const savedConsentAsked = appPreferences?.preferences.telemetryConsentAsked === true
+  const consentAsked = sessionAsked || savedConsentAsked
   // A session opt-in must not override a refusal saved by another window.
   const telemetryEnabled =
     sessionConsent !== false &&
@@ -38,17 +40,23 @@ export function TelemetryBridge() {
     if (!appPreferences?.loaded || initializedRef.current) {
       return
     }
-    if (officialRelease && !consentAsked) return
+    if (officialRelease && !savedConsentAsked) return
     initializedRef.current = true
     void installTelemetry(effectiveTelemetryEnabled).then(() => {
       if (!effectiveTelemetryEnabled || !isTelemetryEnabled() || startedRef.current) return
       startedRef.current = true
       track('app_started', { surface })
     })
-  }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled, officialRelease, surface])
+  }, [
+    appPreferences?.loaded,
+    savedConsentAsked,
+    effectiveTelemetryEnabled,
+    officialRelease,
+    surface,
+  ])
 
   useEffect(() => {
-    if (!appPreferences?.loaded || (officialRelease && !consentAsked)) {
+    if (!appPreferences?.loaded || (officialRelease && !savedConsentAsked)) {
       return
     }
     void setTelemetryEnabled(effectiveTelemetryEnabled).then(() => {
@@ -58,7 +66,13 @@ export function TelemetryBridge() {
       startedRef.current = true
       track('app_started', { surface })
     })
-  }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled, officialRelease, surface])
+  }, [
+    appPreferences?.loaded,
+    savedConsentAsked,
+    effectiveTelemetryEnabled,
+    officialRelease,
+    surface,
+  ])
 
   useEffect(() => {
     if (
