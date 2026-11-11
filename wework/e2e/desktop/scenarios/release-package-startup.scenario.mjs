@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { packagedComponentRoots } from '../modules/packaged-component-resources.mjs'
+import { INSTALLED_PREPARATION_ARGUMENT } from '../../../electron/src/runtime/installed-preparation-contract.mjs'
 
 const PROFILE_NAME = 'wework-core'
 const NATIVE_PROVIDER = '@wework-e2e/native-dsh-provider'
 const NATIVE_CONSUMER = '@wework-e2e/native-dsh-consumer'
+const INSTALL_PREPARATION_TIMEOUT_MS = 600_000
 
 async function writePlugin(profileRoot, name, manifest, files) {
   const pluginRoot = join(profileRoot, 'node_modules', name)
@@ -323,7 +325,6 @@ export async function createDesktopScenario({
       `${JSON.stringify(hostUpdateCompression, null, 2)}\n`
     )
   }
-  await seedNativeDshProfile(electronUserDataDirectory)
   const profileManifest = join(
     electronUserDataDirectory,
     'dsh-core',
@@ -334,6 +335,34 @@ export async function createDesktopScenario({
 
   return {
     usesReleasePackageRuntimeAssets: true,
+
+    async prepareApp({ appBinary, appEnvironment }) {
+      const preparation = spawnSync(appBinary, [INSTALLED_PREPARATION_ARGUMENT], {
+        env: appEnvironment,
+        encoding: 'utf8',
+        timeout: INSTALL_PREPARATION_TIMEOUT_MS,
+        windowsHide: true,
+      })
+      await writeFile(
+        join(resultDir, 'install-preparation.log'),
+        `${preparation.stdout}${preparation.stderr}`
+      )
+      assert.equal(
+        preparation.status,
+        0,
+        `Installed package preparation failed:\n${preparation.stderr}`
+      )
+      const status = JSON.parse(
+        await readFile(join(electronUserDataDirectory, 'logs', 'install-preparation.json'), 'utf8')
+      )
+      assert.equal(status.version, packagedComponents.appVersion)
+      assert.equal(status.runtimeRoot, join(electronUserDataDirectory, 'managed-runtimes', 'dsh'))
+      assert.ok(status.durationMs >= 0)
+    },
+
+    async prepareUserDataLaunch() {
+      await seedNativeDshProfile(electronUserDataDirectory)
+    },
 
     async verify(control) {
       await control.command('waitFor', '[data-testid="app-shell"]', {
@@ -402,6 +431,11 @@ export async function createDesktopScenario({
       )
 
       const appLog = await readFile(join(resultDir, 'app.log'), 'utf8')
+      assert.doesNotMatch(
+        appLog,
+        /step: 'core-runtime-archive-extract'/,
+        'Release startup extracted a Core runtime that installation preparation should have materialized'
+      )
       assert.doesNotMatch(appLog, /pending \(waiting for service: nativeExtensionHost\)/)
       assert.doesNotMatch(appLog, /Failed to load plugins/)
     },
