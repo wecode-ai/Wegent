@@ -32,7 +32,7 @@ impl ProcessTreeGuard {
         }
     }
 
-    /// Assign a new background child before it can create descendants.
+    /// Prepare Windows containment before a background child is spawned.
     pub fn prepare_child(command: &mut Command) -> std::io::Result<Self> {
         #[cfg(windows)]
         {
@@ -68,19 +68,23 @@ impl ProcessTreeGuard {
         Ok(())
     }
 
-    pub fn disarm(&mut self) {
+    pub fn disarm(&mut self) -> std::io::Result<()> {
         #[cfg(windows)]
         {
+            if let Some(job) = &self.job {
+                job.preserve_descendants()?;
+            }
             self.pid = None;
             // Successful commands may intentionally leave detached hooks running.
-            // Closing this job handle preserves them; cancellation terminates explicitly.
+            // Disable owner-exit cleanup only after success before closing the handle.
             self.job = None;
         }
+        Ok(())
     }
 
     pub fn terminate(&mut self) {
         #[cfg(windows)]
-        if let Some(job) = &self.job {
+        if let Some(job) = self.job.take() {
             if let Err(error) = job.terminate() {
                 log_executor_event(
                     "windows process job termination failed",

@@ -288,7 +288,12 @@ async fn supervise_git(
             }
         }
     }
-    tree.disarm();
+    tree.disarm().map_err(|error| {
+        git_error(
+            format!("Cannot release Git process ownership: {error}"),
+            false,
+        )
+    })?;
     let event = match &result {
         Err(error) if error.timed_out => "native git directory wait timed out",
         Err(_) => "native git directory wait failed",
@@ -483,7 +488,7 @@ mod pipe_lifetime_tests {
             .unwrap()
             .unwrap()
             .success());
-        tree.disarm();
+        tree.disarm().unwrap();
         drop(stdout);
         drop(stderr);
         drop(access);
