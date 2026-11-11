@@ -6272,6 +6272,8 @@
     "reply": "回复",
     "reply_placeholder": "补充你的判断…",
     "send": "发送",
+    "dismiss_all": "全部忽略",
+    "dismiss_failed": "部分事项忽略失败，请重试。",
     "skip": "暂不处理",
     "dismiss": "关闭提醒",
     "add_detail": "补充说明",

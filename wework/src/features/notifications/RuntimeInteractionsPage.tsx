@@ -6,10 +6,14 @@ import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { NotificationEntitySurface } from './NotificationEntitySurface'
 import { openWeworkScheme } from './schemeEvents'
 import { weworkIssueScheme, weworkTaskScheme } from './scheme'
-import { issueWaitingSince } from '@wegent/collaboration'
+import { issueWaitingSince, issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
 import { IssueWaitingTime } from './IssueWaitingTime'
 import { usePendingProjectIssues } from './usePendingProjectIssues'
-import { issueHumanInteraction } from './issueHumanInteractions'
+import {
+  issueHumanInteraction,
+  issueQuestionIdentity,
+  issueQuestionHandoff,
+} from './issueHumanInteractions'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   INTERACTION_SOURCES,
@@ -33,6 +37,7 @@ interface PendingWorkRow {
   sourceMessageIds?: string[]
   waitingSince?: string | null
   projectItem?: boolean
+  dismissalId?: string
 }
 
 function originalUrl(row: PendingWorkRow): string {
@@ -68,6 +73,9 @@ export function RuntimeInteractionsPage({
   const discussion = useQuestionDiscussion()
   const { t } = useTranslation('common')
   const [history, setHistory] = useState(false)
+  const [dismissing, setDismissing] = useState(false)
+  const dismissingRef = useRef(false)
+  const [dismissFailed, setDismissFailed] = useState(false)
   const [originalNavigation, setOriginalNavigation] = useState<{ id: string; url: string } | null>(
     null
   )
@@ -118,22 +126,44 @@ export function RuntimeInteractionsPage({
     setHistory(false)
     setShowList(!selectedId)
   }
-  const projectRows = projectIssues.items.filter(
-    row =>
-      !row.item.human_requests?.some(
-        request =>
-          (request.status === 'pending' || request.status === 'answering') &&
-          interactions?.history.some(
-            accepted => accepted.id === issueHumanInteraction(request, row.store).id
-          )
-      ) &&
-      !interactions?.pending.some(
-        request =>
-          request.project?.store === row.store &&
-          String(request.project.projectId) === String(row.item.cloud_project_id) &&
-          request.project.issueId === row.item.id
-      )
-  )
+  const projectItemId = ({ item, store }: (typeof projectIssues.items)[number]) =>
+    `project-issue:${store}:${item.cloud_project_id}:${item.id}`
+  const projectRequests = (row: (typeof projectIssues.items)[number]) =>
+    pendingIssueHumanRequests(row.item).filter(request =>
+      issueNeedsUser({ ...row.item, human_requests: [request] }, row.userId)
+    )
+  const projectDismissalId = (row: (typeof projectIssues.items)[number]) => {
+    const requests = projectRequests(row)
+    const scope = requests.length
+      ? ':' +
+        JSON.stringify(
+          requests.map(request => [request.id, request.waiting_since ?? request.created_at]).sort()
+        )
+      : ''
+    return `${projectItemId(row)}:${issueWaitingSince(row.item, row.userId) ?? 'untracked'}${scope}`
+  }
+  const projectRows = projectIssues.items.filter(row => {
+    if (interactions?.isDismissed?.(projectDismissalId(row))) return false
+    const requests = projectRequests(row)
+    if (
+      requests.length > 0 &&
+      requests.every(request => {
+        const interaction = issueHumanInteraction(request, row.store)
+        return interactions?.isDismissed?.(
+          interaction.id,
+          issueQuestionIdentity(interaction),
+          issueQuestionHandoff(interaction)
+        )
+      })
+    )
+      return false
+    return !interactions?.pending.some(
+      request =>
+        request.project?.store === row.store &&
+        String(request.project.projectId) === String(row.item.cloud_project_id) &&
+        request.project.issueId === row.item.id
+    )
+  })
   const reportProjectPendingCount = interactions?.reportProjectPendingCount
   const projectCountKnown =
     active && !projectIssues.loading && !Object.values(projectIssues.errors).some(Boolean)
@@ -168,17 +198,64 @@ export function RuntimeInteractionsPage({
               ? item.sharedRequest?.created_at
               : undefined),
         })),
-        ...projectRows.map(({ item, store, userId }) => ({
-          id: `project-issue:${store}:${item.cloud_project_id}:${item.id}`,
-          source: 'project' as const,
-          timestamp: Date.parse(issueWaitingSince(item, userId) ?? item.updated_at),
-          title: item.project_name,
-          question: item.title,
-          originalUrl: weworkIssueScheme(String(item.cloud_project_id), item.id, store),
-          waitingSince: issueWaitingSince(item, userId),
-          projectItem: true,
-        })),
+        ...projectRows.map(projectRow => {
+          const { item, store, userId } = projectRow
+          return {
+            id: projectItemId(projectRow),
+            dismissalId: projectDismissalId(projectRow),
+            source: 'project' as const,
+            timestamp: Date.parse(issueWaitingSince(item, userId) ?? item.updated_at),
+            title: item.project_name,
+            question: item.title,
+            originalUrl: weworkIssueScheme(String(item.cloud_project_id), item.id, store),
+            waitingSince: issueWaitingSince(item, userId),
+            projectItem: true,
+          }
+        }),
       ]
+  const dismissRows = async (entries: PendingWorkRow[]) => {
+    if (dismissingRef.current) return
+    dismissingRef.current = true
+    setDismissing(true)
+    setDismissFailed(false)
+    try {
+      for (const entry of entries) {
+        if (interactions.busy.has(entry.id)) continue
+        const request = pending.find(item => item.id === entry.id)
+        const projectRow = projectRows.find(item => projectItemId(item) === entry.id)
+        const questions = projectRow
+          ? projectRequests(projectRow).map(item => issueHumanInteraction(item, projectRow.store))
+          : []
+        const targets = request
+          ? [request]
+          : questions.length
+            ? questions
+            : [
+                {
+                  id: entry.dismissalId ?? entry.id,
+                  source: entry.source,
+                  title: entry.title,
+                  question: entry.question,
+                  originalUrl: entry.originalUrl,
+                  answeredAt: Date.now(),
+                },
+              ]
+        let failed = false
+        for (const target of targets) {
+          try {
+            await interactions.dismiss(target)
+          } catch {
+            failed = true
+            setDismissFailed(true)
+          }
+        }
+        if (!failed) setSelected(current => (current === entry.id ? null : current))
+      }
+    } finally {
+      dismissingRef.current = false
+      setDismissing(false)
+    }
+  }
   const historical = interactions.history.find(item => item.id === selected)
   const row: PendingWorkRow | undefined = selected
     ? (rows.find(item => item.id === selected) ??
@@ -213,6 +290,17 @@ export function RuntimeInteractionsPage({
               {history ? interactions.history.length : pending.length + projectRows.length}
             </span>
           </h1>
+          {!history && (
+            <button
+              type="button"
+              data-testid="interactions-dismiss-all"
+              disabled={dismissing || !rows.length || interactions.busy.size > 0}
+              className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:min-h-8"
+              onClick={() => void dismissRows(rows)}
+            >
+              {t('interactions.dismiss_all')}
+            </button>
+          )}
           <button
             type="button"
             data-testid="interactions-history"
@@ -237,6 +325,11 @@ export function RuntimeInteractionsPage({
         </header>
         <div className="flex-1 overflow-y-auto px-2 pb-3">
           <InteractionDraftRecovery />
+          {dismissFailed && (
+            <p role="alert" className="px-3 py-2 text-sm text-status-error">
+              {t('interactions.dismiss_failed')}
+            </p>
+          )}
           {INTERACTION_SOURCES.map(source => {
             const entries = rows
               .filter(entry => entry.source === source)
@@ -293,24 +386,19 @@ export function RuntimeInteractionsPage({
                         />
                       </span>
                     </button>
-                    {!history &&
-                      !entry.projectItem &&
-                      !pending.find(item => item.id === entry.id)?.sharedRequest && (
-                        <button
-                          type="button"
-                          data-testid="interaction-dismiss"
-                          aria-label={t('interactions.skip')}
-                          title={t('interactions.skip')}
-                          disabled={interactions.busy.has(entry.id)}
-                          className="absolute right-1 top-2 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
-                          onClick={() => {
-                            const item = pending.find(item => item.id === entry.id)
-                            if (item) void interactions.dismiss(item)
-                          }}
-                        >
-                          <X className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                      )}
+                    {!history && (
+                      <button
+                        type="button"
+                        data-testid="interaction-dismiss"
+                        aria-label={t('interactions.skip')}
+                        title={t('interactions.skip')}
+                        disabled={dismissing || interactions.busy.has(entry.id)}
+                        className="absolute right-1 top-2 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+                        onClick={() => void dismissRows([entry])}
+                      >
+                        <X className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
