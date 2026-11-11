@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 
 import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
 import { verifyRuntimeRequestSecurity } from '../modules/runtime-security.mjs'
+import { waitForLogPattern } from '../modules/shared.mjs'
+import { readHarnessToolResultOrder } from '../modules/harness-tool-result-order.mjs'
 import {
   responseCompleted,
   responseCreated,
@@ -37,11 +39,13 @@ const CLAUDE_PARALLEL_TOOL_CALLS = [
     description: 'Complete the third parallel tool second',
   },
 ]
-const CLAUDE_PARALLEL_TOOL_RESULT_ORDER = [
-  CLAUDE_PARALLEL_TOOL_CALLS[0].id,
-  CLAUDE_PARALLEL_TOOL_CALLS[2].id,
-  CLAUDE_PARALLEL_TOOL_CALLS[1].id,
-]
+const CLAUDE_PARALLEL_TOOL_IDS = CLAUDE_PARALLEL_TOOL_CALLS.map(call => call.id)
+const CLAUDE_PARALLEL_INPUT_PATTERN = new RegExp(
+  'harness protocol input tool results tool_result_order=' +
+    CLAUDE_PARALLEL_TOOL_IDS.map(id => `(?=[^\\n]*${id})`).join('') +
+    '[^\\n]*\\n',
+  'u'
+)
 const HARNESS_PROMPT_MATCHERS = [
   { label: 'Inspect the current project', needle: 'Inspect the current project' },
   { label: CLAUDE_PARALLEL_TOOL_PROMPT, needle: CLAUDE_PARALLEL_TOOL_PROMPT },
@@ -103,12 +107,12 @@ function responsesToolOutputIds(body) {
     .map(item => item.call_id)
 }
 
-function assertClaudeParallelToolOutputs(body) {
+function assertClaudeParallelToolOutputs(body, receivedOrder) {
   const outputIds = responsesToolOutputIds(body)
   assert.deepEqual(
     outputIds,
-    CLAUDE_PARALLEL_TOOL_RESULT_ORDER,
-    'Claude Code did not return split parallel tool results in completion order'
+    receivedOrder,
+    'The protocol adapter changed the original Claude tool-result receipt order'
   )
   for (const call of CLAUDE_PARALLEL_TOOL_CALLS) {
     assert.equal(
@@ -621,9 +625,11 @@ export async function createDesktopScenario({
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
   workspacePath,
+  resultDir,
 }) {
   const executables = await resolveHarnessExecutables()
   const harnessModelRequests = []
+  let claudeToolResultOrder = null
   const capturePage = (control, name) => captureScreenshot(control, name, 'body')
   const captureWorkbench = (control, name) =>
     captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
@@ -691,7 +697,14 @@ export async function createDesktopScenario({
           )
           writeResponsesParallelToolCalls(response)
         } else {
-          assertClaudeParallelToolOutputs(body)
+          const log = await waitForLogPattern(
+            join(resultDir, 'executor.log'),
+            CLAUDE_PARALLEL_INPUT_PATTERN,
+            { timeoutMs: uiTimeoutMs }
+          )
+          claudeToolResultOrder = readHarnessToolResultOrder(log, CLAUDE_PARALLEL_TOOL_IDS)
+          assert.ok(claudeToolResultOrder, 'The original Claude tool receipts were not recorded')
+          assertClaudeParallelToolOutputs(body, claudeToolResultOrder)
           writeResponsesText(response, CLAUDE_PARALLEL_TOOL_COMPLETION)
         }
         return true
@@ -847,8 +860,7 @@ export async function createDesktopScenario({
                 request.prompt === CLAUDE_PARALLEL_TOOL_PROMPT &&
                 request.model === 'deepseek-v4-pro' &&
                 request.protocol === 'responses' &&
-                JSON.stringify(request.toolOutputIds) ===
-                  JSON.stringify(CLAUDE_PARALLEL_TOOL_RESULT_ORDER)
+                JSON.stringify(request.toolOutputIds) === JSON.stringify(claudeToolResultOrder)
             ),
             `Claude Code did not return the expected parallel tool outputs: ${JSON.stringify(requests)}`
           )
@@ -885,6 +897,7 @@ export async function createDesktopScenario({
         claudeCodeExecutable: executables.claudeCodeExecutable,
         kimiCodeExecutable: executables.kimiCodeExecutable,
         harnessModelRequests,
+        claudeToolResultOrder,
       }
     },
   }
