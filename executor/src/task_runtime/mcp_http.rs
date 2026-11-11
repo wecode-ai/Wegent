@@ -136,7 +136,12 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
     if let Some(endpoint) = active_endpoint() {
         return Ok(endpoint);
     }
+    #[cfg(test)]
+    startup_tests::waiter_entered();
     let guard = SPACE_MCP_START_LOCK.lock().await;
+    if let Some(endpoint) = active_endpoint() {
+        return Ok(endpoint);
+    }
     let database_path = LocalTaskStore::default_path();
     tokio::task::spawn_blocking(move || {
         // Cancellation must not release admission while initialization is still running.
@@ -153,6 +158,8 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
 fn start_space_mcp_http_endpoint(
     database_path: std::path::PathBuf,
 ) -> Result<SpaceMcpEndpoint, String> {
+    #[cfg(test)]
+    startup_tests::cold_startup_entered(&database_path);
     let started = Instant::now();
     let store = LocalTaskStore::open(database_path).map_err(|error| error.to_string())?;
     let runtime = TaskRuntime::new(store).map_err(|error| error.to_string())?;
@@ -608,6 +615,10 @@ fn json_rpc_http_error(id: Value, code: i64, message: &str, status: StatusCode) 
 #[cfg(test)]
 #[path = "mcp_http_control_tests.rs"]
 mod control_tests;
+
+#[cfg(test)]
+#[path = "mcp_http_startup_tests.rs"]
+mod startup_tests;
 
 #[cfg(test)]
 mod tests {
