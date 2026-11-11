@@ -4,11 +4,51 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { PassThrough } from 'node:stream'
 import { test } from 'vitest'
+import { createDesktopScenario as createNotifications } from '../e2e/desktop/scenarios/stand-in-notifications.scenario.mjs'
+import { createDesktopScenario as createModelExecution } from '../e2e/desktop/scenarios/stand-in-model-execution.scenario.mjs'
+import { REPLY_PREDICTION_PROMPT } from '../e2e/desktop/modules/response-protocol.mjs'
 import {
   assertSubscriptionModelRequest,
   createSubscriptionConfigRegression,
   implicitSubscriptionTask,
 } from '../e2e/desktop/modules/stand-in-subscription-config.mjs'
+
+test.each([
+  ['notifications', createNotifications],
+  ['model execution', createModelExecution],
+])('%s handles reply prediction before validating subscription task models', async (_, create) => {
+  const scenario = create({ uiTimeoutMs: 1000, modelResponseTimeoutMs: 1000 })
+  const request = text => {
+    const stream = new PassThrough()
+    stream.method = 'POST'
+    stream.headers = {}
+    stream.end(JSON.stringify({ model: 'gpt-5.6-sol', input: [{ role: 'user', content: text }] }))
+    return stream
+  }
+  let status
+  let output
+  const response = {
+    writeHead(value) {
+      status = value
+    },
+    end(value) {
+      output = value
+    },
+  }
+  const url = new URL('http://model.test/backend-api/codex/responses')
+  assert.equal(await scenario.handleHttp(request(REPLY_PREDICTION_PROMPT), response, url), true)
+  assert.equal(status, 200)
+  const events = output
+    .split('\n')
+    .filter(line => line.startsWith('data: {'))
+    .map(line => JSON.parse(line.slice(6)))
+  const answer = events.find(event => event.item?.role === 'assistant')
+  assert.deepEqual(JSON.parse(answer.item.content[0].text), { suggestion: null })
+  await assert.rejects(
+    () => scenario.handleHttp(request('SUBSCRIPTION_CONFIG_RELOAD-user'), response, url),
+    { code: 'ERR_ASSERTION', actual: 'gpt-5.6-sol', expected: 'gpt-6.1-sol' }
+  )
+})
 
 test('the implicit subscription regression submits no explicit fallback model', () => {
   const task = implicitSubscriptionTask(41, '/fixture/workspace')

@@ -248,9 +248,9 @@ export function createDesktopScenario(options) {
       )
         return false
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
+      if (handleModelMaintenanceRequest(body, response)) return true
       if (subscription.acceptsModelRequest(request, url, body)) {
-        if (handleEmptyReplyPrediction(body, response)) return true
-        if (handleModelMaintenanceRequest(body, response)) return true
         const latestUser = (body.input ?? []).filter(item => item.role === 'user').at(-1)
         const message = JSON.stringify(latestUser?.content ?? '')
         const fail = message.includes(`${marker}_CHAT_cloud`)
@@ -360,10 +360,12 @@ export function createDesktopScenario(options) {
         // public legacy-profile setup, so the UI edits the current saved version.
         await rpc('runtime.stand_in.personal.save', {
           userId,
-          settings: {
-            ...initial,
-            primary: { ...initial.primary, model: null, modelOptions: {} },
-          },
+          settings: initial.primary
+            ? {
+                ...initial,
+                primary: { ...initial.primary, model: null, modelOptions: {} },
+              }
+            : initial,
         })
         await reloadMainWindow(control, 'Stand-in settings did not reload after catalog cleanup')
         await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]')

@@ -1,10 +1,12 @@
 import { openStandInMemory } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
-import { MODEL_PROVIDER_ID, selectE2EModel } from '../modules/shared.mjs'
+import { MODEL_API_KEY, MODEL_PROVIDER_ID, selectE2EModel } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createMemoryConsolidation,
@@ -70,6 +72,13 @@ function injectedMemories(body) {
   return rows.filter(row => row.content.startsWith('MEMORY_LEARNING：'))
 }
 
+function respond(response, events) {
+  const id = `memory-learning-response-${Date.now()}`
+  response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+  response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
+  return true
+}
+
 /** Only model responses are scripted; tools, persistence and context refresh remain real. */
 export function createDesktopScenario({
   uiTimeoutMs,
@@ -78,17 +87,75 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const consolidation = createMemoryConsolidation({ uiTimeoutMs, modelResponseTimeoutMs })
+  let modelCatalog
   let phase
   let saved
+  let intakeRound = 0
   const completed = new Set()
+  function coordinatorEvents(body) {
+    const latest = (Array.isArray(body.input) ? body.input : [])
+      .filter(item => item.role === 'user')
+      .at(-1)
+    const text =
+      typeof body.input === 'string'
+        ? body.input
+        : typeof latest?.content === 'string'
+          ? latest.content
+          : (latest?.content ?? []).map(part => part.text ?? '').join('')
+    if (!text.startsWith('Review this silent intake batch')) return null
+    const readId = `memory-learning-intake-${intakeRound}`
+    const ignoreId = `${readId}-ignore`
+    const call = (name, id, args) =>
+      mcpToolRequestEvents(body, {
+        toolName: name,
+        directToolName: `mcp__wework_stand_in__${name}`,
+        argumentsValue: args,
+        searchCallId: `${id}-search`,
+        toolCallId: id,
+      }).events
+    if (requestContainsToolOutput(body, ignoreId)) {
+      assert.equal(JSON.parse(readMcpToolOutput(body, ignoreId)).status, 'pending')
+      intakeRound++
+      return [assistantMessage('显式记忆整理工作已在原任务中处理，无需重复派发。')]
+    }
+    if (!requestContainsToolOutput(body, readId)) return call('read_intake', readId, {})
+    const { events } = JSON.parse(readMcpToolOutput(body, readId)).snapshot
+    assert.ok(Array.isArray(events) && events.length > 0, 'Intake must contain work-state events')
+    assert.ok(
+      events.every(event => event.kind === 'work_state'),
+      'Memory learning may only ignore work-state events'
+    )
+    return call('ignore_events', ignoreId, {
+      eventIds: events.map(event => event.id),
+      reason: 'The explicitly requested memory review is handled in its existing work.',
+    })
+  }
   return {
+    async prepareApp({ appEnvironment }) {
+      const { stdout } = await promisify(execFile)(
+        appEnvironment.CODEX_BINARY_PATH,
+        ['debug', 'models', '--bundled'],
+        { env: appEnvironment, timeout: 10_000, maxBuffer: 8 * 1024 * 1024 }
+      )
+      modelCatalog = JSON.parse(stdout)
+      assert.ok(modelCatalog.models?.length > 0, 'Memory review requires native model capabilities')
+    },
     async handleHttp(req, response, url) {
+      if (req.method === 'GET' && ['/models', '/v1/models'].includes(url.pathname)) {
+        assert.equal(req.headers.authorization, `Bearer ${MODEL_API_KEY}`)
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify(modelCatalog))
+        return true
+      }
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
       if (handleModelMaintenanceRequest(body, response)) return true
+      if (isReplyPredictionRequest(body)) return false
+      const intake = coordinatorEvents(body)
+      if (intake) return respond(response, intake)
       if (consolidation.handleModel(body, response)) return true
-      if (isReplyPredictionRequest(body) || !phase) return false
+      if (!phase) return false
       const latest = [...(body.input ?? [])].reverse().find(item => item.role === 'user')
       if (!JSON.stringify(latest).includes(PROMPTS[phase])) return false
       const rows = injectedMemories(body)
@@ -136,10 +203,7 @@ export function createDesktopScenario({
         completed.add(phase)
         events = [assistantMessage(`MEMORY_LEARNING_DONE_${phase}`)]
       }
-      const id = `memory-learning-response-${Date.now()}`
-      response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
-      return true
+      return respond(response, events)
     },
     async verify(control) {
       const rpc = (method, payload) => requestExecutor(control, method, payload, uiTimeoutMs)
