@@ -37,6 +37,8 @@ import {
 } from '../e2e/desktop/upgrade-suite.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+// Electron-as-Node must treat delivered app.asar archives as physical files.
+process.noAsar = true
 const [assetsDirectory, platform, arch, channel, repository, releaseTag] = process.argv.slice(2)
 if (!assetsDirectory || !platform || !arch || !channel || !repository || !releaseTag)
   throw new Error('Expected assets, platform, architecture, channel, repository, and release tag')

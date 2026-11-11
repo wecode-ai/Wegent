@@ -21,6 +21,7 @@ import { createUpgradeGoalContinuity } from '../modules/upgrade-goal-continuity.
 import { createUpgradeAuxiliaryHistory } from '../modules/upgrade-auxiliary-history.mjs'
 import { assertUpgradeComposition } from '../modules/upgrade-selected-composition.mjs'
 import { createUpgradeWriterWait } from '../modules/upgrade-writer-wait.mjs'
+import { retainStoppedPreparationDiagnostics } from '../modules/upgrade-stopped-diagnostics.mjs'
 import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
 import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
@@ -927,6 +928,13 @@ export async function createDesktopScenario(options) {
         // Default-layout runs keep product log locations. Retain diagnostics before
         // the shared result compactor removes the isolated Home and its databases.
         if (usesDefaultUserData) {
+          await retainStoppedPreparationDiagnostics(
+            root,
+            pair.to.version,
+            join(resultDir, 'stopped-preparation-result.json')
+          ).catch(error =>
+            console.warn(`Cannot retain stopped preparation metadata: ${error.code ?? error.name}`)
+          )
           for (const [name, directory] of [
             ['electron-logs', join(dirname(electronUserDataDirectory), 'electron-logs')],
             ['release-logs', join(electronUserDataDirectory, 'logs')],

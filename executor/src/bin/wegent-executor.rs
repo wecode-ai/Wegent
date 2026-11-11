@@ -93,6 +93,7 @@ fn raise_open_files_soft_limit() {}
 
 fn main() {
     if env::args().nth(1).as_deref() == Some("--workbench-codex-providers-migrate") {
+        wegent_executor::logging::reserve_executor_stdout_for_protocol();
         let args: Vec<_> = env::args().skip(2).collect();
         let result = match args.as_slice() {
             [request, stopped, version]

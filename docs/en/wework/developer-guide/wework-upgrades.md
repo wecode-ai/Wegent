@@ -6,6 +6,12 @@ sidebar_position: 61
 
 ## Codex session provider migration
 
+Reserve stdout for the offline entry's single JSON completion response before migration starts;
+writer-lock contention and other diagnostics belong on stderr. Otherwise a successful migration
+can fail bridge JSON parsing and roll back unnecessarily. The real contention regression waits
+for the diagnostic before releasing the writer and verifies both the complete stdout protocol
+and the retained stderr diagnostic.
+
 Session conversion is separate from download-time environment preparation. The target's
 `DesktopRuntime.prepareExecutor` invokes its delivered executor's offline
 `--workbench-codex-providers-migrate` entry before constructing the managed executor and

@@ -36,6 +36,10 @@ macOS x64 使用上述明确的架构等价规则。
 Goal 恢复运行。不能将真实会话重写放进旧版仍在运行的 `release-preparation-cli` 预热阶段，
 也不能只依赖 Home 搬迁的 `beforeMove`：已搬迁的 Home 升级时不会再次搬迁。
 
+离线入口必须先为协议保留标准输出，只输出一份 JSON 完成结果；写入锁竞争等诊断走标准错误。
+否则即使迁移完成，桥接层也会因 JSON 被诊断日志污染而误判失败、回退旧版。真实锁竞争回归必须
+等到诊断出现后才释放写入者，同时验证整段标准输出可解析及诊断保留在标准错误。
+
 迁移持有 Home 进程锁、智能体执行锁及原生线程写入协调锁，只更改 rollout 的
 `session_meta.model_provider` 和 SQLite 的 `threads.model_provider`，统一逻辑身份为
 Wework router（持久化 ID 为单字节的 `~`）。短 ID 只替换原 JSON 的 provider 值，空余字节

@@ -3,8 +3,10 @@
 
 use std::{
     fs,
+    io::{BufRead, BufReader, Read},
     path::Path,
     process::{Child, Command, Output},
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -70,6 +72,26 @@ impl Drop for OwnedPreparation {
     }
 }
 
+fn capture_protocol_pipe(
+    pipe: impl Read + Send + 'static,
+    observed: mpsc::Sender<()>,
+) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(pipe);
+        let mut output = Vec::new();
+        loop {
+            let mut line = Vec::new();
+            if reader.read_until(b'\n', &mut line).unwrap() == 0 {
+                return output;
+            }
+            if String::from_utf8_lossy(&line).contains("codex provider writer lock unavailable") {
+                observed.send(()).unwrap();
+            }
+            output.extend(line);
+        }
+    })
+}
+
 #[test]
 fn stopped_wait_entry_resumes_after_native_writer_releases_coordination_and_unlinks_lease() {
     let root = tempfile::tempdir().unwrap();
@@ -83,11 +105,18 @@ fn stopped_wait_entry_resumes_after_native_writer_releases_coordination_and_unli
     let before = fs::read(&path).unwrap();
     let mut preparation = OwnedPreparation(
         command(root.path(), true, true)
+            .env("WEGENT_EXECUTOR_DISABLE_FILE_LOG", "1")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap(),
     );
+    let (observed, waiting) = mpsc::channel();
+    let stdout = capture_protocol_pipe(preparation.0.stdout.take().unwrap(), observed.clone());
+    let stderr = capture_protocol_pipe(preparation.0.stderr.take().unwrap(), observed);
+    waiting
+        .recv_timeout(Duration::from_secs(10))
+        .expect("Migration must reach the real contended writer before release");
     let observed = Instant::now();
     while observed.elapsed() < Duration::from_millis(100) {
         assert!(preparation.0.try_wait().unwrap().is_none());
@@ -117,6 +146,13 @@ fn stopped_wait_entry_resumes_after_native_writer_releases_coordination_and_unli
         );
         std::thread::sleep(Duration::from_millis(5));
     }
+    let response: Value = serde_json::from_slice(&stdout.join().unwrap())
+        .expect("Contended migration must reserve stdout for its JSON protocol");
+    assert_eq!(response["codex_provider_migration"], 1);
+    assert_eq!(response["complete"], true);
+    assert!(String::from_utf8(stderr.join().unwrap())
+        .unwrap()
+        .contains("codex provider writer lock unavailable"));
     let content = fs::read_to_string(path).unwrap();
     let (metadata, remaining) = content.split_once('\n').unwrap();
     assert_eq!(
