@@ -164,6 +164,22 @@ def verify_operator_cli(report, actor_id: int):
         return result
 
 
+def history_insert_observation_deadline(process, receipt_path) -> float:
+    """Wait for real asset preparation before timing the SQL fault injection."""
+    preparation_deadline = monotonic() + 30
+    while True:
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            raise AssertionError(
+                f"Writer exited before receipt preparation: {stdout}{stderr}"
+            )
+        if monotonic() >= preparation_deadline:
+            raise AssertionError("Writer did not persist receipts within 30 seconds")
+        if receipt_path.is_file():
+            return monotonic() + 20
+        Event().wait(0.03)
+
+
 def verify_operator_disconnect(report, actor_id, command, receipt_path) -> None:
     """Disconnect the actual writer after Thread/link/participant changes flush."""
     from sqlalchemy import text
@@ -229,7 +245,7 @@ def verify_operator_disconnect(report, actor_id, command, receipt_path) -> None:
         )
         waiter = None
         try:
-            deadline = monotonic() + 20
+            deadline = history_insert_observation_deadline(process, receipt_path)
             while monotonic() < deadline:
                 with get_db_session() as probe:
                     # Keep the holder's original transaction identity. A waiter

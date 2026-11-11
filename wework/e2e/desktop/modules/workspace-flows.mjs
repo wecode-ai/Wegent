@@ -96,6 +96,21 @@ export async function enterProjectCollaborationView(
 ) {
   const selector = `${contentSelector} [data-testid="collaboration-view-projects"]`
   await control.command('waitFor', selector, { visible: true, timeoutMs })
+  const targets = JSON.parse(
+    await control.command('getElementMetrics', selector, {
+      value: JSON.stringify({ attributeNames: ['aria-current'] }),
+    })
+  )
+  console.info(
+    '[desktop-e2e] project view click targets',
+    JSON.stringify(
+      targets.map(target => ({
+        rendered: target.rendered,
+        visible: target.visible,
+        current: target.attributes['aria-current'] === 'page',
+      }))
+    )
+  )
   await control.command('click', selector)
 }
 

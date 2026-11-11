@@ -27,6 +27,7 @@ import type { DeviceCommandApi } from '@/api/environment'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { CollaborationViewSwitcher } from './CollaborationViewSwitcher'
+import { reportCollaborationNavigation } from './collaborationNavigationDiagnostics'
 import { createGroupWorkspaceApi, groupBoardContext } from './groupWorkspaceApi'
 import { GroupConversation } from './GroupConversation'
 import { CreateGroupOrThread, GroupSettings } from './GroupManagementDialogs'
@@ -96,10 +97,14 @@ export function CollaborationGroupsSurface({
     if (leaveGuard.current) leaveGuard.current(action)
     else action()
   }, [])
-  const requestNavigate = (nextSearch: string, relatedThreadId?: string) =>
-    requestLeave(() =>
-      relatedThreadId ? onNavigate(nextSearch, relatedThreadId) : onNavigate(nextSearch)
-    )
+  const requestNavigate = (nextSearch: string, relatedThreadId?: string) => {
+    reportCollaborationNavigation('leave-requested', nextSearch)
+    requestLeave(() => {
+      reportCollaborationNavigation('leave-accepted', nextSearch)
+      if (relatedThreadId) onNavigate(nextSearch, relatedThreadId)
+      else onNavigate(nextSearch)
+    })
+  }
   const params = useMemo(() => new URLSearchParams(search), [search])
   const store = params.get('groupStore') ?? 'local'
   const groupId = params.get('groupId')
