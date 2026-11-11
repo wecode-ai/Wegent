@@ -25,7 +25,7 @@ test('release preparation compares the actual delivered directory through filesy
     ).rejects.toThrow('Target release identity does not match the selected package')
     await expect(
       assertReleasePreparationIdentity(selected, join(root, 'missing'), '1.1.0', 1, [1])
-    ).rejects.toThrow('ENOENT')
+    ).rejects.toThrow('Target release identity does not match the selected package')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

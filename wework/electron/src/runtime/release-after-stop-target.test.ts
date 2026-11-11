@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -23,7 +23,7 @@ afterEach(async () => {
 })
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'wework target data hook '))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'wework target data hook ')))
   roots.push(root)
   const store = new ReleaseStore(join(root, 'releases'))
   const source: DesktopRelease = {
@@ -44,6 +44,7 @@ async function fixture() {
     resources: join(root, 'target-resources'),
     packageSha256: 'a'.repeat(64),
   }
+  await mkdir(release.resources)
   await store.save(source)
   await atomicReleaseWrite(join(store.root, 'active'), source.id)
   await store.save(release)
@@ -66,6 +67,44 @@ async function fixture() {
   const metadata = { version: release.version, weworkAfterStopPreparation: 1, weworkDataSchema: 1 }
   return { root, store, release, request, requestFile, executor, metadata }
 }
+
+test.each(['request', 'stored', 'both'])(
+  'retains activation and package ownership through %s resource aliases',
+  async location => {
+    const { root, store, release, request, requestFile, metadata } = await fixture()
+    const resources = await realpath(release.resources)
+    const alias = join(root, 'target-resource-alias')
+    await symlink(resources, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    if (location !== 'request') await store.save({ ...release, resources: alias })
+    if (location !== 'stored') request.release.resources = alias
+    await writeFile(requestFile, JSON.stringify(request))
+    await expect(prepareStoppedReleaseData(requestFile, resources, metadata)).resolves.toEqual({
+      protocol: 1,
+      token: request.token,
+      releaseId: release.id,
+      complete: true,
+    })
+    expect(target.migrate).toHaveBeenCalledOnce()
+  }
+)
+
+test.each(['request', 'stored'])(
+  'rejects an unrelated %s resource directory before touching session data',
+  async location => {
+    const { root, store, release, request, requestFile, metadata } = await fixture()
+    const resources = await realpath(release.resources)
+    const unrelated = join(root, 'unrelated-resources')
+    await mkdir(unrelated)
+    if (location === 'stored') await store.save({ ...release, resources: unrelated })
+    else request.release.resources = unrelated
+    await writeFile(requestFile, JSON.stringify(request))
+    await expect(prepareStoppedReleaseData(requestFile, resources, metadata)).rejects.toThrow(
+      /Stopped-release/
+    )
+    expect(target.prepare).not.toHaveBeenCalled()
+    expect(target.migrate).not.toHaveBeenCalled()
+  }
+)
 
 test('only the target executor migrates source-owned Homes and completion gates the receipt response', async () => {
   const context = await fixture()

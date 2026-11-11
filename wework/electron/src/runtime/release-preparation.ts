@@ -1,10 +1,15 @@
-import { mkdir, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
 import { ComponentUpdateManager } from './component-update-manager.js'
 import { prepareCoreDshRuntime } from './core-dsh-runtime.js'
 import { cloneReleaseProfile, profileRevision } from './release-profile.js'
-import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
+import {
+  atomicReleaseWrite,
+  ReleaseStore,
+  sameReleasePath,
+  type DesktopRelease,
+} from './release-store.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { RotatingLog } from './rotating-log.js'
 import { recoverReleaseLayout } from './release-layout-recovery.js'
@@ -38,11 +43,7 @@ export async function assertReleasePreparationIdentity(
   )
     throw new Error('Target release identity does not match the selected package')
   // Module URLs resolve aliases such as macOS /tmp before reaching this CLI.
-  const [delivered, selected] = await Promise.all([
-    realpath(resources),
-    realpath(release.resources),
-  ])
-  if (delivered !== selected)
+  if (!(await sameReleasePath(resources, release.resources)))
     throw new Error('Target release identity does not match the selected package')
 }
 

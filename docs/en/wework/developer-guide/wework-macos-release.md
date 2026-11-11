@@ -125,10 +125,10 @@ independently built regression packages.
 Compatible manual rollback switches directly to the retained release. Incompatible
 rollback still requires confirmation before restoring the pre-update snapshot.
 
-Target preparation compares actual filesystem resource directories, accepting
-aliases such as macOS `/tmp` and `/private/tmp` when they resolve to the same
-delivered directory. Version and schema checks remain exact; unrelated or
-missing directories are rejected.
+Preparation, stopped-data validation, and startup handoffs share actual path
+identity, accepting aliases such as macOS `/tmp` and `/private/tmp` for the same
+location. Version and schema checks remain exact. Relative or missing paths,
+unrelated hosts, and links escaping release slots cannot gain activation ownership.
 
 Startup-failure rollback records identify the actual activation attempt and target
 package hash. Update checks still return a verified path, with a retry question in
