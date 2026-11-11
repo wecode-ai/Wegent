@@ -24,6 +24,7 @@ describe('managed executor runtime', () => {
     ]) {
       expect(executorRequestTimeoutMs(method)).toBe(21 * 60_000 + 5_000)
     }
+    expect(executorRequestTimeoutMs('executor.plugins.local_sync')).toBe(305_000)
     expect(executorRequestTimeoutMs('executor.health')).toBe(75_000)
   })
 

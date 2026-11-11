@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.runner_routing import ModelIdentity
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.model_aggregation_service import model_aggregation_service
 
 
@@ -43,6 +44,7 @@ def cloud_model_catalog(db: Session, user_id: int) -> list[dict]:
     ]
 
 
+@execution_resource_scope()
 def require_cloud_model(db: Session, user_id: int, model: ModelIdentity) -> dict:
     from app.services.llm_proxy_service import (
         resolve_llm_proxy_model_config,

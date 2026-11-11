@@ -149,30 +149,31 @@ test('keeps the real system-idle uninstall checkpoint isolated in the shared pol
   assert.deepEqual(overlaps, [])
 })
 
-test('separates Linux Core Python bootstrap from the competing cloud fixtures', async () => {
-  const checkpoint = 'python-runtime'
-  const cloudCheckpoints = ['collaboration-shared-core', 'collaboration-templates']
-  const independent = 'stand-in-memory-timer'
-  const active = new Set()
-  let independentRanWithPython = false
-  let cloudFixturesRanTogether = false
+for (const checkpoint of ['python-runtime', 'plugin-development']) {
+  test(`separates Linux Core ${checkpoint} from the competing cloud fixtures`, async () => {
+    const cloudCheckpoints = ['collaboration-shared-core', 'collaboration-templates']
+    const independent = 'stand-in-memory-timer'
+    const active = new Set()
+    let independentRanWithPython = false
+    let cloudFixturesRanTogether = false
 
-  await runWithCheckpointResources({
-    checkpoints: [checkpoint, independent, ...cloudCheckpoints],
-    workerCount: 4,
-    resourceFor: linuxCoreCheckpointResources,
-    run: async id => {
-      active.add(id)
-      if (active.has(checkpoint)) {
-        assert.ok(cloudCheckpoints.every(cloud => !active.has(cloud)))
-        independentRanWithPython ||= active.has(independent)
-      }
-      cloudFixturesRanTogether ||= cloudCheckpoints.every(cloud => active.has(cloud))
-      await new Promise(resolve => setImmediate(resolve))
-      active.delete(id)
-    },
+    await runWithCheckpointResources({
+      checkpoints: [checkpoint, independent, ...cloudCheckpoints],
+      workerCount: 4,
+      resourceFor: linuxCoreCheckpointResources,
+      run: async id => {
+        active.add(id)
+        if (active.has(checkpoint)) {
+          assert.ok(cloudCheckpoints.every(cloud => !active.has(cloud)))
+          independentRanWithPython ||= active.has(independent)
+        }
+        cloudFixturesRanTogether ||= cloudCheckpoints.every(cloud => active.has(cloud))
+        await new Promise(resolve => setImmediate(resolve))
+        active.delete(id)
+      },
+    })
+
+    assert.equal(independentRanWithPython, true)
+    assert.equal(cloudFixturesRanTogether, true)
   })
-
-  assert.equal(independentRanWithPython, true)
-  assert.equal(cloudFixturesRanTogether, true)
-})
+}

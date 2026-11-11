@@ -85,7 +85,24 @@ impl PluginAutoUpdateBatchResponse {
 async fn auto_update_installed_plugins(
     #[inject(state)] state: &AppState,
     #[auth] user: auth::InstalledPluginsUser,
+    delivery_mode: Option<String>,
 ) -> Result<PluginAutoUpdateBatchResponse, FastApiError> {
+    match delivery_mode.as_deref() {
+        None => {}
+        Some("local_pull_v1") if super::local_sync::enabled() => {}
+        Some("local_pull_v1") => {
+            return Err(FastApiError::detail(
+                brz_http_server::StatusCode::CONFLICT,
+                "LOCAL_SYNC_DISABLED",
+            ));
+        }
+        Some(_) => {
+            return Err(FastApiError::detail(
+                brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+                "LOCAL_SYNC_PROTOCOL_UNSUPPORTED",
+            ));
+        }
+    };
     let mysql = state.mysql.clone();
     let redis = state.redis.clone();
     let resolvers = state.entity_resolvers.clone();
