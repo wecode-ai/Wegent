@@ -14,7 +14,11 @@ function fixture({ lightweight = true, destroyed = false, detached = false } = {
     isDestroyed: () => false,
     executeJavaScript: vi.fn(async () => 'preserved extended input'),
   }
-  return { contents: { mainFrame: main } as never, main, sandbox }
+  const contents = {
+    mainFrame: main,
+    executeJavaScript: vi.fn(async () => 'preserved extended input'),
+  }
+  return { contents: contents as never, main, sandbox, execute: contents.executeJavaScript }
 }
 
 describe('workbench page controls', () => {
@@ -28,11 +32,40 @@ describe('workbench page controls', () => {
   })
 
   it('uses the extended application document when no lightweight frame exists', async () => {
-    const { contents, main } = fixture({ lightweight: false })
+    const { contents, main, execute } = fixture({ lightweight: false })
     await expect(evaluateWorkbenchPage(contents, 'document.title')).resolves.toBe(
       'preserved extended input'
     )
-    expect(main.executeJavaScript).toHaveBeenCalledWith('(document.title)', true)
+    expect(execute).toHaveBeenCalledWith('(document.title)', true)
+    expect(main.executeJavaScript).not.toHaveBeenCalled()
+  })
+
+  it('waits for the WebContents-managed extended page load without addressing its initial frame', async () => {
+    const { contents, main, execute } = fixture({ lightweight: false })
+    let finishLoading!: () => void
+    execute.mockImplementation(
+      () => new Promise(resolve => (finishLoading = () => resolve('loaded extended document')))
+    )
+    main.executeJavaScript.mockImplementation(() => new Promise<string>(() => {}))
+    let completed = false
+    const result = evaluateWorkbenchPage(contents, 'document.body.textContent').then(value => {
+      completed = true
+      return value
+    })
+    await Promise.resolve()
+    expect(completed).toBe(false)
+    expect(execute).toHaveBeenCalledWith('(document.body.textContent)', true)
+    expect(main.executeJavaScript).not.toHaveBeenCalled()
+    finishLoading()
+    await expect(result).resolves.toBe('loaded extended document')
+  })
+
+  it('propagates an extended WebContents operation failure', async () => {
+    const { contents, execute } = fixture({ lightweight: false })
+    execute.mockRejectedValueOnce(new Error('Extended page operation failed'))
+    await expect(evaluateWorkbenchPage(contents, 'missingOperation()')).rejects.toThrow(
+      'Extended page operation failed'
+    )
   })
 
   it.each([{ destroyed: true }, { detached: true }])(

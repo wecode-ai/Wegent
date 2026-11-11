@@ -49,15 +49,24 @@ export async function controlWorkbenchApp(
   const installation = (await host.list()).find(item => item.id === params.id)
   const available = contents && !contents.isDestroyed()
   if (params.action === 'snapshot') {
+    const frame =
+      available && installation?.flavor === 'lightweight' && !contents.isLoadingMainFrame()
+        ? contents.mainFrame.frames.find(frame => frame.name === LIGHTWEIGHT_WORKBENCH_FRAME_NAME)
+        : undefined
     return {
       running: installation?.state === 'running',
       visible: host.isViewVisible(params.id),
       url: available ? contents.getURL() : null,
       contentsId: available ? contents.id : null,
       presentation: installation?.presentation ?? null,
-      sdkAvailable: available
-        ? Boolean(await evaluateWorkbenchPage(contents, 'Boolean(window.weworkWorkbench)'))
-        : false,
+      sdkAvailable:
+        available &&
+        frame &&
+        !frame.isDestroyed() &&
+        !frame.detached &&
+        frame.url === 'about:srcdoc'
+          ? Boolean(await evaluateWorkbenchPage(contents, 'Boolean(window.weworkWorkbench)'))
+          : false,
     }
   }
   if (!available) throw new Error('Workbench window is not running')

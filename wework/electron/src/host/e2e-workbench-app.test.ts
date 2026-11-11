@@ -14,6 +14,7 @@ import {
 
 beforeEach(() => {
   vi.mocked(pendingWorkbenchInstallationWindow).mockReset().mockReturnValue(null)
+  vi.mocked(evaluateWorkbenchPage).mockReset()
 })
 
 afterEach(() => {
@@ -92,6 +93,40 @@ function navigationFixture(protectedFrame = true) {
     expect(contents.listenerCount('will-redirect')).toBe(protectedFrame ? 1 : 0)
   }
   return { contents, frame, url, run, emit, expectCleaned }
+}
+
+function snapshotFixture() {
+  vi.stubEnv('VITE_WEWORK_E2E', 'true')
+  vi.stubEnv('WEWORK_E2E_CONTROL_URL', 'http://127.0.0.1:1234')
+  vi.mocked(evaluateWorkbenchPage).mockReset().mockResolvedValue(true)
+  const frame = {
+    name: LIGHTWEIGHT_WORKBENCH_FRAME_NAME,
+    url: 'about:srcdoc',
+    detached: false,
+    isDestroyed: vi.fn(() => false),
+  }
+  const contents = {
+    id: 12,
+    isDestroyed: () => false,
+    getURL: () => 'http://127.0.0.1:9001/',
+    isLoadingMainFrame: vi.fn(() => false),
+    mainFrame: { frames: [frame] },
+  }
+  const installation = {
+    id: 'todo',
+    state: 'running',
+    visible: true,
+    presentation: 'tab',
+    flavor: 'lightweight',
+  }
+  const host = {
+    windowForId: () => null,
+    contentsForId: () => contents,
+    isViewVisible: vi.fn(() => true),
+    list: async () => [installation],
+  }
+  const run = () => controlWorkbenchApp(host as never, { action: 'snapshot', id: 'todo' }, vi.fn())
+  return { run, host, contents, frame, installation }
 }
 
 describe('isolated workbench E2E controls', () => {
@@ -275,21 +310,10 @@ describe('isolated workbench E2E controls', () => {
   })
 
   it('reports actual Host surface visibility while the installation still has an open tab', async () => {
-    vi.stubEnv('VITE_WEWORK_E2E', 'true')
-    vi.stubEnv('WEWORK_E2E_CONTROL_URL', 'http://127.0.0.1:1234')
-    vi.mocked(evaluateWorkbenchPage).mockResolvedValue(true)
-    const contents = { id: 12, isDestroyed: () => false, getURL: () => 'http://127.0.0.1:9001/' }
-    const host = {
-      windowForId: () => null,
-      contentsForId: () => contents,
-      isViewVisible: vi.fn(() => false),
-      list: async () => [{ id: 'todo', state: 'running', visible: true, presentation: 'tab' }],
-    }
+    const { run, host } = snapshotFixture()
     for (const visible of [false, true, false]) {
       host.isViewVisible.mockReturnValue(visible)
-      await expect(
-        controlWorkbenchApp(host as never, { action: 'snapshot', id: 'todo' }, vi.fn())
-      ).resolves.toEqual({
+      await expect(run()).resolves.toEqual({
         running: true,
         visible,
         url: 'http://127.0.0.1:9001/',
@@ -299,6 +323,57 @@ describe('isolated workbench E2E controls', () => {
       })
       expect(host.isViewVisible).toHaveBeenLastCalledWith('todo')
     }
+  })
+
+  it.each(['extended', 'loading', 'no child', 'blank child', 'destroyed child', 'detached child'])(
+    'reports native startup state without executing a renderer probe for %s',
+    async stage => {
+      const { run, contents, frame, installation } = snapshotFixture()
+      if (stage === 'extended') installation.flavor = 'extended'
+      if (stage === 'loading') contents.isLoadingMainFrame.mockReturnValue(true)
+      if (stage === 'no child') contents.mainFrame.frames = []
+      if (stage === 'blank child') frame.url = 'about:blank'
+      if (stage === 'destroyed child') frame.isDestroyed.mockReturnValue(true)
+      if (stage === 'detached child') frame.detached = true
+      vi.mocked(evaluateWorkbenchPage).mockImplementation(() => {
+        throw new Error('A startup snapshot must not enter an unready renderer')
+      })
+      await expect(run()).resolves.toMatchObject({
+        running: true,
+        visible: true,
+        url: 'http://127.0.0.1:9001/',
+        contentsId: 12,
+        presentation: 'tab',
+        sdkAvailable: false,
+      })
+      expect(evaluateWorkbenchPage).not.toHaveBeenCalled()
+    }
+  )
+
+  it('probes only the committed lightweight page after main-frame loading completes', async () => {
+    const { run, contents, frame } = snapshotFixture()
+    contents.isLoadingMainFrame.mockReturnValue(true)
+    frame.url = 'about:blank'
+    await expect(run()).resolves.toMatchObject({ sdkAvailable: false })
+    contents.isLoadingMainFrame.mockReturnValue(false)
+    await expect(run()).resolves.toMatchObject({ sdkAvailable: false })
+    expect(evaluateWorkbenchPage).not.toHaveBeenCalled()
+    frame.url = 'about:srcdoc'
+    vi.mocked(evaluateWorkbenchPage).mockResolvedValue(false)
+    await expect(run()).resolves.toMatchObject({ sdkAvailable: false })
+    vi.mocked(evaluateWorkbenchPage).mockResolvedValue(true)
+    await expect(run()).resolves.toMatchObject({ sdkAvailable: true })
+    expect(evaluateWorkbenchPage).toHaveBeenCalledTimes(2)
+    expect(evaluateWorkbenchPage).toHaveBeenLastCalledWith(
+      contents,
+      'Boolean(window.weworkWorkbench)'
+    )
+  })
+
+  it('propagates an actual committed lightweight SDK probe failure', async () => {
+    const { run } = snapshotFixture()
+    vi.mocked(evaluateWorkbenchPage).mockRejectedValue(new Error('SDK probe failed'))
+    await expect(run()).rejects.toThrow('SDK probe failed')
   })
 
   it('captures the Host contents and scopes saved page state to the E2E namespace', async () => {

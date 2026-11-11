@@ -1,13 +1,15 @@
 import type { WebContents } from 'electron'
+import { LIGHTWEIGHT_WORKBENCH_FRAME_NAME } from './lightweight-workbench-client.js'
 
 /** Native frame access supports opaque/OOPIF pages without weakening their sandbox. */
 export async function evaluateWorkbenchPage(
   contents: WebContents,
   expression: string
 ): Promise<unknown> {
-  const main = contents.mainFrame
-  const sandbox = main.frames.find(frame => frame.name === 'wework-workbench-lightweight')
-  const frame = sandbox ?? main
+  const frame = contents.mainFrame.frames.find(
+    candidate => candidate.name === LIGHTWEIGHT_WORKBENCH_FRAME_NAME
+  )
+  if (!frame) return contents.executeJavaScript(`(${expression})`, true)
   if (frame.isDestroyed() || frame.detached)
     throw new Error('Workbench page is no longer available')
   return frame.executeJavaScript(`(${expression})`, true)
