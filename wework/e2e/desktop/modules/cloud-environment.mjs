@@ -843,6 +843,7 @@ class RealCloudEnvironment {
       'WEGENT_APP_IPC_OWNER_TOKEN',
       'WEGENT_APP_IPC_TOKEN',
       'WEGENT_APP_LIFECYCLE_FD',
+      'WEGENT_RUNTIME_INSTANCE_ID',
     ]) {
       delete environment[key]
     }
