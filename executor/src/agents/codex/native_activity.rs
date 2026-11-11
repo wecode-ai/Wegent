@@ -233,10 +233,7 @@ impl CodexNativeActivity {
         observation: u64,
         starts_work: bool,
     ) -> bool {
-        let turn_running = self
-            .turns
-            .get(thread_id)
-            .is_some_and(|turns| !turns.is_empty());
+        let turn_running = self.has_active_turn(thread_id);
         self.goals
             .entry(thread_id.to_owned())
             .or_default()
@@ -301,6 +298,12 @@ impl CodexNativeActivity {
         }
         active
     }
+
+    fn has_active_turn(&self, thread_id: &str) -> bool {
+        self.turns
+            .get(thread_id)
+            .is_some_and(|turns| !turns.is_empty())
+    }
 }
 
 pub(super) enum CodexNativeRequest {
@@ -320,6 +323,18 @@ pub(super) enum CodexNativeRequest {
 }
 
 impl CodexAppServerSharedState {
+    pub(super) fn thread_has_active_turn(&self, thread_id: &str) -> bool {
+        self.active_threads.get(thread_id).copied().unwrap_or(0) > 0
+            || self.process.as_ref().is_some_and(|process| {
+                process
+                    .notifications
+                    .native_activity
+                    .lock()
+                    .expect("Codex native activity registry should not be poisoned")
+                    .has_active_turn(thread_id)
+            })
+    }
+
     pub(super) fn protected_turn_count(&self) -> usize {
         // Preparation owns the shared process before a native thread can be tracked.
         self.active_threads_snapshot().values().sum::<usize>() + self.preparing_turns.count()

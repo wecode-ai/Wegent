@@ -1,172 +1,84 @@
 import { useWorkbenchServiceConnections } from './workbenchServiceConnections'
-import { useWorkspaceTabDraftInput } from './useWorkspaceTabDraftInput'
-import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
-import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
-import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
-import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
+import { createHttpClient } from '@/api/http'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { createPluginApi } from '@/api/plugins'
+import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
+import {
+  bindComposerAppsSource,
+  notifyComposerAppsListeners,
+} from '@/components/chat/composer/composerAppsSnapshot'
+import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
+import { reportArchivedCleanupFailure } from '@/components/settings/archivedConversationsSettingsState'
 import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
-import { createPluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
-import {
-  isWegentManagedStorePlugin,
-  localMatchesCloudPlugin,
-} from '@wegent/chat-core/installed-plugin-merge'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-} from 'react'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
-import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
-import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
-import { localSkillReference } from '@/lib/local-skill-reference'
-import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import {
-  normalizeRuntimeWorkspacePath,
-  runtimeProjectToProject,
-  runtimeProjectUiId,
-} from '@/lib/runtime-project'
-import {
-  runtimeProjectSyncTargetKey,
-  type RuntimeProjectSyncTarget,
-} from '@/lib/runtime-project-identity'
-import {
-  createWorkbenchDeviceResolver,
-  resolveLocalWorkbenchDeviceId,
-} from '@/lib/workbench-device'
-import {
-  findActiveRuntimeProjectId,
-  getRuntimeProjectActivation,
-  getRuntimeRemoteProjectRegistrations,
-} from '@/lib/runtime-project-state'
-import {
-  assertLocalRuntimeSidebarIdentity,
-  getLocalRuntimeSourceIdentity,
-  type LocalRuntimeSidebarIdentity,
-} from '@/lib/local-runtime-sidebar-identity'
-import {
-  consumeWorkbenchNewChatRequest,
-  requestNewChatComposerFocus,
-  requestWorkbenchNewChat,
-  WORKBENCH_NEW_CHAT_REQUEST_EVENT,
-} from '@/lib/workbenchComposerFocus'
+import { disposeDesktopListener } from '@/desktop/disposeDesktopListener'
 import { installLocalWorkspaceOpenListener } from '@/desktop/localWorkspaceOpen'
 import {
   installMainRuntimeWorkChangedListener,
   notifyMainRuntimeWorkChanged,
 } from '@/desktop/runtimeWorkSync'
-import { disposeDesktopListener } from '@/desktop/disposeDesktopListener'
-import {
-  createLocalCodexPluginApi,
-  readLocalInstalledInventoryFromDisk,
-  peekLocalCodexPluginsReadState,
-} from '@/api/local/codexPlugins'
-import { createHttpClient } from '@/api/http'
-import { createPluginApi } from '@/api/plugins'
-import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
-import {
-  bindComposerAppsSource,
-  notifyComposerAppsListeners,
-} from '@/components/chat/composer/composerAppsSnapshot'
-import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
-import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
+import { CoreDshModelSync } from '@/features/dsh-models/CoreDshModelSyncBridge'
+import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 import { QuestionDiscussionScope } from '@/features/notifications/QuestionDiscussionScope'
-import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
+import { selectComposerPluginApps } from '@/features/plugins/pluginInventory'
 import { publishPluginInvocationCatalog } from '@/features/plugins/pluginInvocationTelemetry'
-import { sameLocalPluginSources } from '@/features/plugins/pluginInventorySources'
-import {
-  loadPluginInventory,
-  selectComposerPluginApps,
-  writePluginInventory,
-  hydratePluginInventoryLogos,
-  samePluginInstallations,
-  pluginInventoryReadIsCurrent,
-} from '@/features/plugins/pluginInventory'
 import {
   getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
   subscribePluginMarketplaceCache,
   type PluginMarketplaceCacheSnapshot,
 } from '@/features/plugins/pluginMarketplaceCache'
-import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
-import type {
-  LocalDeviceApp,
-  LocalDeviceSkill,
-  ModelCompatibilityDisabledReason,
-  ModelSelectionConfig,
-  PluginPathComponent,
-  ProjectExecutionMode,
-  ProjectWithTasks,
-  RuntimeContextUsage,
-  RuntimeWorkListResponse,
-  RuntimeTaskAddress,
-  RuntimeTaskQueueReorderRequest,
-  RuntimeGlobalIMNotificationUpdateRequest,
-  RuntimeTaskIMNotificationSubscriptionRequest,
-  UnifiedModel,
-  User,
-  UserPreferences,
-} from '@/types/api'
-import { useWorkbenchAttachments } from './useWorkbenchAttachments'
-import { useWorkbenchDeviceUpgrades } from './useWorkbenchDeviceUpgrades'
-import { useWorkbenchModels } from './useWorkbenchModels'
-import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
-import { useWorkbenchProjectActions } from './useWorkbenchProjectActions'
-import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
-import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
-import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
-import { useWorkbenchSkills } from './useWorkbenchSkills'
-import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
-import { createRuntimeWorkRefreshQueue } from './workbenchDataRefreshHelpers'
-import { useStableEvent } from './useStableEvent'
-import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
-import { reportArchivedCleanupFailure } from '@/components/settings/archivedConversationsSettingsState'
-import { useRuntimeTaskReminders } from './runtimeTaskReminders'
-import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
-import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import {
-  consumePluginTrial,
-  dismissTrialGuide,
-  FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
   LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
   PLUGIN_TRIAL_QUEUED_EVENT,
   recordPluginUsageFromInput,
-  shouldShowPluginTrialGuide,
 } from '@/features/plugins/pluginTrial'
+import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
+import { useOptionalWorkspaceTabActivity } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { useTranslation } from '@/hooks/useTranslation'
+import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { assertLocalRuntimeSidebarIdentity } from '@/lib/local-runtime-sidebar-identity'
+import { parseRuntimeTaskRoute } from '@/lib/navigation'
+import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { type RuntimeProjectSyncTarget } from '@/lib/runtime-project-identity'
+import {
+  findActiveRuntimeProjectId,
+  getRuntimeProjectActivation,
+  isDeviceRuntimeProject,
+} from '@/lib/runtime-project-state'
+import {
+  consumeWorkbenchNewChatRequest,
+  WORKBENCH_NEW_CHAT_REQUEST_EVENT,
+} from '@/lib/workbenchComposerFocus'
+import { normalizeAiModelId } from '@/telemetry/modelCatalog'
 import type {
-  WorkbenchContextValue,
-  WorkbenchPaneContextValue,
-  WorkbenchProviderProps,
-} from './workbenchContextTypes'
+  LocalDeviceApp,
+  LocalDeviceSkill,
+  PluginPathComponent,
+  ProjectExecutionMode,
+  RuntimeContextUsage,
+  RuntimeTaskAddress,
+  RuntimeTaskQueueReorderRequest,
+  User,
+  UserPreferences,
+} from '@/types/api'
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
-  getBlockedModelSelectionMessage,
-  getNewChatModelSelection,
-  getRuntimeTaskChatScopeKey,
-} from './workbenchProviderHelpers'
+  getProjectWorkPreferenceKey,
+  readProjectWorkPreference,
+  resolveProjectWorkPreferenceScope,
+} from './projectWorkPreferences'
+import { findModelForSelection, modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import {
-  queueWorkbenchWorkspaceLaunch,
-  type WorkbenchWorkspaceLaunchOptions,
-} from './workspaceLaunchRequest'
-import {
-  createRuntimeTaskLifecycleOwnershipView,
-  RuntimeTaskLifecycleProvider,
-  RuntimeTaskLifecycleStore,
-  useRuntimeTaskLifecycleStoreSnapshot,
-  useRuntimeTaskSummaryResolver,
-} from './runtimeTaskLifecycle'
-import {
-  applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  applyRuntimeConversationSubagentActivity,
   beginRuntimeGoalSnapshot,
   getRuntimeConversationMetadata,
   isRuntimeGoalSnapshotCurrent,
@@ -174,64 +86,118 @@ import {
   runtimeConversationKey,
   setRuntimeConversationTaskPlan,
   settleRuntimeConversationAcceptedMessage,
-  settleRuntimeConversationSubagents,
   settleRuntimeConversationGuidance,
+  settleRuntimeConversationSubagents,
   syncRuntimeConversationDeviceAliases,
 } from './runtimeConversationCache'
 import { getRuntimeConversationQueueController } from './runtimeConversationQueueController'
+import { registerRuntimeConversationStream } from './runtimeConversationStreamCoordinator'
+import { defaultNewChatModelSelection } from './runtimeModelSelection'
+import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
 import {
-  applyModelContextWindowOverride,
-  findModelForSelection,
-  modelSelectionFromRuntimeHandle,
-} from './runtimeContextUsage'
+  createRuntimeTaskLifecycleOwnershipView,
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+  useRuntimeTaskLifecycleStoreSnapshot,
+  useRuntimeTaskSummaryResolver,
+} from './runtimeTaskLifecycle'
+import { useRuntimeTaskReminders } from './runtimeTaskReminders'
+import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
+import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
+import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
+import { useStableEvent } from './useStableEvent'
+import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
+import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import {
-  findSelectableProject,
+  useApplyQueuedPluginTrial,
+  useApplyQueuedPluginTrialToFreshChat,
+  useConsumeQueuedPluginTrial,
+  useDismissTrialGuideForScope,
+  useSetComposerError,
+  useSetComposerErrorForScope,
+  useSetDraftInput,
+  useSetDraftInputForScope,
+  useShowTrialGuide,
+} from './useWorkbenchComposerCallbacks'
+import {
+  useResolveModelForAddress,
+  useResolveRuntimeContextUsage,
+} from './useWorkbenchContextCallbacks'
+import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
+import { useWorkbenchDeviceUpgrades } from './useWorkbenchDeviceUpgrades'
+import {
+  useHandleBlockedModelSelect,
+  useHandleBlockedModelSelection,
+  useHandleModelSelectorOpenChange,
+  usePersistNewChatModelSelection,
+  usePersistProjectWorkPreference,
+  useRequestTaskComposerCatalogs,
+  useSelectProjectExecutionMode,
+  useSetProjectWorktreeBranch,
+} from './useWorkbenchModelCallbacks'
+import { useWorkbenchModels } from './useWorkbenchModels'
+import {
+  useClearRemoteProjectSyncRemoval,
+  useEnqueueRemoteProjectStateMutation,
+  useGetRemoteProjectRegistrations,
+  useInvalidateRemoteProjectSync,
+  useMarkRuntimeTasksArchived,
+  useOpenStandaloneWorkspace,
+  useSelectProject,
+  useSelectProjectWorkspace,
+  useSelectStandaloneDevice,
+  useStartNewChat,
+} from './useWorkbenchNavigationCallbacks'
+import { useListLocalApps } from './useWorkbenchPluginCallbacks'
+import { useUpdateUserPreferences } from './useWorkbenchPreferenceCallbacks'
+import { useWorkbenchProjectActions } from './useWorkbenchProjectActions'
+import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
+import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
+import { useWorkbenchSkills } from './useWorkbenchSkills'
+import {
+  useGetImNotificationSettings,
+  useListImPrivateSessions,
+  useListLocalSkills,
+  useSetWorkbenchError,
+  useStartNewProjectChat,
+  useStartNewSkillChat,
+  useStartStandaloneChat,
+  useSubscribeRuntimeTaskNotifications,
+  useUnsubscribeRuntimeTaskNotifications,
+  useUpdateGlobalImNotification,
+} from './useWorkbenchTaskCallbacks'
+import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
+import { useWorkspaceTabDraftInput } from './useWorkspaceTabDraftInput'
+import type {
+  WorkbenchContextValue,
+  WorkbenchPaneContextValue,
+  WorkbenchProviderProps,
+} from './workbenchContextTypes'
+import { createRuntimeWorkRefreshQueue } from './workbenchDataRefreshHelpers'
+import { resolveWorkbenchOwnership } from './workbenchOwnership'
+import {
+  findFirstSelectableProject,
+  getModelSelectionScopeKey,
+  getNewChatModelSelection,
+  getProjectChatScopeKey,
+} from './workbenchProviderHelpers'
+import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
+import {
   findProjectDeviceWorkspace,
   findProjectMetadataDeviceWorkspace,
-  getRememberedStandaloneDeviceId,
-  getDefaultProjectDeviceWorkspaceId,
   readLastProjectId,
   resolveComposerProjectPluginNames,
-  writeLastProjectId,
 } from './workbenchRuntimeHelpers'
-import {
-  getProjectWorkPreferenceKey,
-  mergeProjectWorkPreference,
-  readProjectWorkPreference,
-  resolveProjectWorkPreferenceScope,
-} from './projectWorkPreferences'
-import { defaultNewChatModelSelection } from './runtimeModelSelection'
-import { resolveWorkbenchOwnership } from './workbenchOwnership'
 import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
 } from './workbenchServices'
-import { useOptionalWorkspaceTabActivity } from '@/features/workspace-tabs/workspaceTabsContextValue'
-import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
-import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
-import { normalizeAiModelId } from '@/telemetry/modelCatalog'
-import { CoreDshModelSync } from '@/features/dsh-models/CoreDshModelSyncBridge'
-import { registerRuntimeConversationStream } from './runtimeConversationStreamCoordinator'
 
 export type { WorkbenchServices } from './workbenchServices'
 
-const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
 const LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS = 250
 const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
 const RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS = [0, 250, 500, 1_000, 2_000, 3_000] as const
-
-function findFirstSelectableProject(
-  projects: ProjectWithTasks[],
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  projectIds: Array<number | null | undefined>
-): ProjectWithTasks | null {
-  for (const projectId of projectIds) {
-    if (!projectId) continue
-    const project = findSelectableProject(projects, runtimeWork, projectId)
-    if (project) return project
-  }
-  return null
-}
 
 export function WorkbenchProvider(props: WorkbenchProviderProps) {
   const cloudConnection = useOptionalCloudConnection()
@@ -445,25 +411,11 @@ function OwnedWorkbenchProvider({
   useLayoutEffect(() => {
     latestUserPreferencesRef.current = currentUser.preferences
   }, [currentUser.preferences])
-  const updateUserPreferences = useCallback(
-    async (patch: UserPreferences): Promise<UserPreferences> => {
-      const userApi = resolvedServices.userApi
-      if (!userApi) {
-        throw new Error('User preferences are unavailable')
-      }
-      const previousPreferences = latestUserPreferencesRef.current ?? {}
-      const updatedUser = await userApi.updateCurrentUser({ preferences: patch })
-      const preferences = {
-        ...previousPreferences,
-        ...patch,
-        ...(updatedUser.preferences ?? {}),
-      }
-      latestUserPreferencesRef.current = preferences
-      dispatch({ type: 'user_preferences_updated', preferences })
-      return preferences
-    },
-    [resolvedServices.userApi]
-  )
+  const updateUserPreferences = useUpdateUserPreferences({
+    resolvedServices,
+    latestUserPreferencesRef,
+    dispatch,
+  })
   useWorkbenchTelemetry({
     currentProject: state.currentProject,
     devices: state.devices,
@@ -499,245 +451,48 @@ function OwnedWorkbenchProvider({
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
   const trialPluginApp = trialPluginAppByScope[projectChatScopeKey]
-  const showTrialGuide = useCallback(
-    (title: string, app: LocalDeviceApp) => {
-      const guide = createPluginTrialGuide(title, app.trialTemplates, app)
-      if (!guide) return
-      setTrialPluginNameByScope(current => ({
-        ...current,
-        [projectChatScopeKey]: guide.pluginName,
-      }))
-      setTrialTemplatesByScope(current => ({ ...current, [projectChatScopeKey]: guide.templates }))
-      setTrialPluginAppByScope(current => ({ ...current, [projectChatScopeKey]: app }))
-    },
-    [projectChatScopeKey]
-  )
-  const setDraftInputForScope = useCallback(
-    (scopeKey: string, value: string) => {
-      writeDraftInputForScope(scopeKey, value)
-      if (!value.trim()) {
-        setTrialTemplatesByScope(current => {
-          if (!current[scopeKey]) return current
-          const next = { ...current }
-          delete next[scopeKey]
-          return next
-        })
-        setTrialPluginNameByScope(current => {
-          if (!current[scopeKey]) return current
-          const next = { ...current }
-          delete next[scopeKey]
-          return next
-        })
-        setTrialPluginAppByScope(current => {
-          if (!current[scopeKey]) return current
-          const next = { ...current }
-          delete next[scopeKey]
-          return next
-        })
-      }
-    },
-    [writeDraftInputForScope]
-  )
-  const setDraftInput = useCallback(
-    (value: string) => {
-      setDraftInputForScope(projectChatScopeKey, value)
-    },
-    [projectChatScopeKey, setDraftInputForScope]
-  )
-  const setComposerErrorForScope = useCallback((scopeKey: string, error: string | null) => {
-    setComposerErrorByScope(current => {
-      if (error) {
-        if (current[scopeKey] === error) return current
-        return { ...current, [scopeKey]: error }
-      }
-      if (!current[scopeKey]) return current
-      const next = { ...current }
-      delete next[scopeKey]
-      return next
-    })
-  }, [])
-  const setComposerError = useCallback(
-    (error: string | null) => setComposerErrorForScope(projectChatScopeKey, error),
-    [projectChatScopeKey, setComposerErrorForScope]
-  )
-  const dismissTrialGuideForScope = useCallback(() => {
-    if (trialPluginName.trim()) {
-      dismissTrialGuide(trialPluginName, projectChatScopeKey)
-    }
-    setTrialTemplatesByScope(current => {
-      if (!current[projectChatScopeKey]) return current
-      const next = { ...current }
-      delete next[projectChatScopeKey]
-      return next
-    })
-    setTrialPluginNameByScope(current => {
-      if (!current[projectChatScopeKey]) return current
-      const next = { ...current }
-      delete next[projectChatScopeKey]
-      return next
-    })
-    setTrialPluginAppByScope(current => {
-      if (!current[projectChatScopeKey]) return current
-      const next = { ...current }
-      delete next[projectChatScopeKey]
-      return next
-    })
-  }, [projectChatScopeKey, trialPluginName])
-  const applyQueuedPluginTrial = useCallback(
-    (scopeKey: string, trial: NonNullable<ReturnType<typeof consumePluginTrial>>) => {
-      setDraftInputForScope(scopeKey, trial.input)
-      const showGuide =
-        trial.pluginName.trim().length > 0 &&
-        shouldShowPluginTrialGuide(trial.pluginName, scopeKey) &&
-        trial.templates.length > 0
-      if (showGuide) {
-        setTrialPluginNameByScope(current => ({ ...current, [scopeKey]: trial.pluginName }))
-        setTrialTemplatesByScope(current => ({
-          ...current,
-          [scopeKey]: trial.templates.slice(0, 6),
-        }))
-        const app = trial.app
-        if (app) setTrialPluginAppByScope(current => ({ ...current, [scopeKey]: app }))
-        else {
-          setTrialPluginAppByScope(current => {
-            if (!current[scopeKey]) return current
-            const next = { ...current }
-            delete next[scopeKey]
-            return next
-          })
-        }
-        return
-      }
-      setTrialPluginNameByScope(current => {
-        if (!current[scopeKey]) return current
-        const next = { ...current }
-        delete next[scopeKey]
-        return next
-      })
-      setTrialTemplatesByScope(current => {
-        if (!current[scopeKey]) return current
-        const next = { ...current }
-        delete next[scopeKey]
-        return next
-      })
-      setTrialPluginAppByScope(current => {
-        if (!current[scopeKey]) return current
-        const next = { ...current }
-        delete next[scopeKey]
-        return next
-      })
-    },
-    [setDraftInputForScope]
-  )
-  const applyQueuedPluginTrialToFreshChat = useCallback(
-    (trial: NonNullable<ReturnType<typeof consumePluginTrial>>) => {
-      const nextStandaloneChatKey = state.standaloneChatKey + 1
-      const nextScopeKey = getProjectChatScopeKey({
-        currentRuntimeTask: null,
-        standaloneChatKey: nextStandaloneChatKey,
-      })
-      const project = trial.targetWorkspace
-        ? null
-        : (trial.targetProject ??
-          (state.currentProject
-            ? findFirstSelectableProject(state.projects, state.runtimeWork, [
-                state.currentProject.id,
-              ])
-            : null))
-
-      if (project) {
-        writeLastProjectId(ownershipKey, project.id)
-        dispatch({
-          type: 'project_workspace_selected',
-          project,
-          deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
-          startFreshChat: true,
-        })
-      } else {
-        writeLastProjectId(ownershipKey, null)
-        dispatch({
-          type: 'project_cleared',
-          standaloneDeviceId:
-            trial.targetWorkspace?.deviceId ??
-            getRememberedStandaloneDeviceId(user, state.devices, state.standaloneDeviceId),
-          standaloneWorkspacePath: trial.targetWorkspace?.path ?? null,
-          startFreshChat: true,
-        })
-      }
-
-      applyQueuedPluginTrial(nextScopeKey, trial)
-      navigateTo('/')
-      window.dispatchEvent(
-        new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
-          detail: { expectedValue: trial.input },
-        })
-      )
-    },
-    [
-      applyQueuedPluginTrial,
-      state.currentProject,
-      state.devices,
-      state.projects,
-      state.runtimeWork,
-      state.standaloneChatKey,
-      state.standaloneDeviceId,
-      user,
-      ownershipKey,
-    ]
-  )
-  const consumeQueuedPluginTrial = useCallback(() => {
-    const trial = consumePluginTrial()
-    if (!trial) return
-    if (trial.openInNewChat) {
-      applyQueuedPluginTrialToFreshChat(trial)
-      return
-    }
-    if (state.currentRuntimeTask) {
-      const currentScopeKey = getProjectChatScopeKey({
-        currentRuntimeTask: state.currentRuntimeTask,
-        standaloneChatKey: state.standaloneChatKey,
-      })
-      applyQueuedPluginTrial(currentScopeKey, trial)
-      navigateTo('/')
-      window.dispatchEvent(
-        new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
-          detail: { expectedValue: trial.input },
-        })
-      )
-      return
-    }
-
-    const nextStandaloneChatKey = state.standaloneChatKey + 1
-    const nextScopeKey = getProjectChatScopeKey({
-      currentRuntimeTask: null,
-      standaloneChatKey: nextStandaloneChatKey,
-    })
-    dispatch({
-      type: 'project_cleared',
-      standaloneDeviceId: getRememberedStandaloneDeviceId(
-        user,
-        state.devices,
-        state.standaloneDeviceId
-      ),
-      standaloneWorkspacePath: null,
-      startFreshChat: true,
-    })
-    applyQueuedPluginTrial(nextScopeKey, trial)
-    navigateTo('/')
-    window.dispatchEvent(
-      new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
-        detail: { expectedValue: trial.input },
-      })
-    )
-  }, [
-    applyQueuedPluginTrial,
-    applyQueuedPluginTrialToFreshChat,
-    state.currentRuntimeTask,
-    state.devices,
-    state.standaloneChatKey,
-    state.standaloneDeviceId,
+  const showTrialGuide = useShowTrialGuide({
+    setTrialPluginNameByScope,
+    projectChatScopeKey,
+    setTrialTemplatesByScope,
+    setTrialPluginAppByScope,
+  })
+  const setDraftInputForScope = useSetDraftInputForScope({
+    writeDraftInputForScope,
+    setTrialTemplatesByScope,
+    setTrialPluginNameByScope,
+    setTrialPluginAppByScope,
+  })
+  const setDraftInput = useSetDraftInput({ setDraftInputForScope, projectChatScopeKey })
+  const setComposerErrorForScope = useSetComposerErrorForScope({ setComposerErrorByScope })
+  const setComposerError = useSetComposerError({ setComposerErrorForScope, projectChatScopeKey })
+  const dismissTrialGuideForScope = useDismissTrialGuideForScope({
+    trialPluginName,
+    projectChatScopeKey,
+    setTrialTemplatesByScope,
+    setTrialPluginNameByScope,
+    setTrialPluginAppByScope,
+  })
+  const applyQueuedPluginTrial = useApplyQueuedPluginTrial({
+    setDraftInputForScope,
+    setTrialPluginNameByScope,
+    setTrialTemplatesByScope,
+    setTrialPluginAppByScope,
+  })
+  const applyQueuedPluginTrialToFreshChat = useApplyQueuedPluginTrialToFreshChat({
+    state,
+    ownershipKey,
+    dispatch,
     user,
-  ])
+    applyQueuedPluginTrial,
+  })
+  const consumeQueuedPluginTrial = useConsumeQueuedPluginTrial({
+    applyQueuedPluginTrialToFreshChat,
+    state,
+    applyQueuedPluginTrial,
+    dispatch,
+    user,
+  })
   const stableConsumeQueuedPluginTrial = useStableEvent(consumeQueuedPluginTrial)
 
   useEffect(() => {
@@ -750,69 +505,23 @@ function OwnedWorkbenchProvider({
   }, [consumePluginTrials, stableConsumeQueuedPluginTrial])
   useWorkbenchServiceConnections(resolvedServices)
 
-  const persistProjectWorkPreference = useCallback(
-    (
-      patch: {
-        executionMode?: ProjectExecutionMode
-        worktreeBranch?: string | null
-      },
-      errorMessage: string
-    ) => {
-      if (!projectWorkPreferenceScope || !projectWorkPreferenceKey) return
+  const persistProjectWorkPreference = usePersistProjectWorkPreference({
+    projectWorkPreferenceScope,
+    projectWorkPreferenceKey,
+    latestUserPreferencesRef,
+    dispatch,
+    resolvedServices,
+    projectWorkPreferenceMutationQueueRef,
+    activeProjectWorkPreferenceKeyRef,
+  })
 
-      const preferences = mergeProjectWorkPreference(
-        latestUserPreferencesRef.current,
-        projectWorkPreferenceScope,
-        patch
-      )
-      if (!preferences) return
-
-      latestUserPreferencesRef.current = preferences
-      dispatch({ type: 'user_preferences_updated', preferences })
-
-      const userApi = resolvedServices.userApi
-      if (!userApi) return
-      const scopeKey = projectWorkPreferenceKey
-      const mutation = () =>
-        userApi
-          .updateCurrentUser({
-            preferences: {
-              wework_project_work_preferences: preferences.wework_project_work_preferences,
-            },
-          })
-          .then(() => undefined)
-      const run = projectWorkPreferenceMutationQueueRef.current
-        .catch(() => undefined)
-        .then(mutation)
-      projectWorkPreferenceMutationQueueRef.current = run.then(
-        () => undefined,
-        () => undefined
-      )
-      void run.catch(() => {
-        if (activeProjectWorkPreferenceKeyRef.current === scopeKey) {
-          dispatch({ type: 'error_set', error: errorMessage })
-        }
-      })
-    },
-    [projectWorkPreferenceKey, projectWorkPreferenceScope, resolvedServices.userApi]
-  )
-
-  const selectProjectExecutionMode = useCallback(
-    (mode: ProjectExecutionMode) => {
-      if (state.currentRuntimeTask) return
-      const nextMode: ProjectExecutionMode =
-        mode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
-      setProjectExecutionMode(nextMode)
-      persistProjectWorkPreference(
-        {
-          executionMode: nextMode,
-          worktreeBranch: projectWorktreeBranch,
-        },
-        t('workbench.execution_mode_save_failed')
-      )
-    },
-    [persistProjectWorkPreference, projectWorktreeBranch, state.currentRuntimeTask, t]
-  )
+  const selectProjectExecutionMode = useSelectProjectExecutionMode({
+    state,
+    setProjectExecutionMode,
+    persistProjectWorkPreference,
+    projectWorktreeBranch,
+    t,
+  })
 
   useEffect(() => {
     const revision = projectWorkPreferenceSyncRevisionRef.current + 1
@@ -833,21 +542,13 @@ function OwnedWorkbenchProvider({
     }
   }, [currentUser.preferences, projectWorkPreferenceKey, projectWorkPreferenceScope])
 
-  const setProjectWorktreeBranch = useCallback(
-    (branchName: string | null) => {
-      if (state.currentRuntimeTask) return
-      const normalizedBranch = branchName?.trim() || null
-      setProjectWorktreeBranchState(normalizedBranch)
-      persistProjectWorkPreference(
-        {
-          executionMode: projectExecutionMode,
-          worktreeBranch: normalizedBranch,
-        },
-        t('workbench.project_worktree_branch_save_failed')
-      )
-    },
-    [persistProjectWorkPreference, projectExecutionMode, state.currentRuntimeTask, t]
-  )
+  const setProjectWorktreeBranch = useSetProjectWorktreeBranch({
+    state,
+    setProjectWorktreeBranchState,
+    persistProjectWorkPreference,
+    projectExecutionMode,
+    t,
+  })
   const projectModelSelection = useMemo(() => {
     if (state.currentRuntimeTask || !state.currentProject || !state.runtimeWork) return null
     const runtimeProject = state.runtimeWork.projects.find(
@@ -867,60 +568,22 @@ function OwnedWorkbenchProvider({
     }
     return projectModelSelection ?? getNewChatModelSelection(currentUser) ?? null
   }, [currentUser, projectModelSelection, resolveRuntimeTaskSummary, state.currentRuntimeTask])
-  const defaultModelSelectionConfig = useCallback(
-    (models: UnifiedModel[]) => defaultNewChatModelSelection(models),
-    []
-  )
-  const persistNewChatModelSelection = useCallback(
-    (selection: ModelSelectionConfig) => {
-      const preferences = {
-        ...(latestUserPreferencesRef.current ?? {}),
-        wework_new_chat_model_selection: selection,
-      }
-      latestUserPreferencesRef.current = preferences
-      dispatch({ type: 'user_preferences_updated', preferences })
-
-      const userApi = resolvedServices.userApi
-      if (!userApi) return
-      const mutation = () =>
-        userApi
-          .updateCurrentUser({
-            preferences: { wework_new_chat_model_selection: selection },
-          })
-          .then(() => undefined)
-      const run = modelSelectionMutationQueueRef.current.catch(() => undefined).then(mutation)
-      modelSelectionMutationQueueRef.current = run.then(
-        () => undefined,
-        () => undefined
-      )
-      void run.catch(() => {
-        dispatch({ type: 'error_set', error: '模型配置保存失败' })
-      })
-    },
-    [resolvedServices.userApi]
-  )
-  const handleBlockedModelSelection = useCallback(
-    (reason: ModelCompatibilityDisabledReason | 'locked', model?: UnifiedModel | null) => {
-      dispatch({
-        type: 'error_set',
-        error: getBlockedModelSelectionMessage(reason, model),
-      })
-    },
-    []
-  )
-  const handleBlockedModelSelect = useCallback((model: UnifiedModel, message?: string) => {
-    dispatch({
-      type: 'error_set',
-      error: message || getBlockedModelSelectionMessage('runtime_family_mismatch', model),
-    })
-  }, [])
+  const defaultModelSelectionConfig = defaultNewChatModelSelection
+  const persistNewChatModelSelection = usePersistNewChatModelSelection({
+    latestUserPreferencesRef,
+    dispatch,
+    resolvedServices,
+    modelSelectionMutationQueueRef,
+  })
+  const handleBlockedModelSelection = useHandleBlockedModelSelection({ dispatch })
+  const handleBlockedModelSelect = useHandleBlockedModelSelect({ dispatch })
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
   const taskComposerCatalogsRequired = loadTaskComposerCatalogs || taskComposerCatalogsRequested
   const taskComposerCatalogsEnabled =
     taskComposerCatalogsRequested || (loadTaskComposerCatalogs && state.runtimeWork !== null)
-  const requestTaskComposerCatalogs = useCallback(() => {
-    setTaskComposerCatalogsRequested(true)
-  }, [])
+  const requestTaskComposerCatalogs = useRequestTaskComposerCatalogs({
+    setTaskComposerCatalogsRequested,
+  })
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
     locked: false,
@@ -935,12 +598,7 @@ function OwnedWorkbenchProvider({
     onSelectionBlocked: handleBlockedModelSelection,
   })
   const { refreshModels } = modelSelection
-  const handleModelSelectorOpenChange = useCallback(
-    (open: boolean) => {
-      if (open) refreshModels()
-    },
-    [refreshModels]
-  )
+  const handleModelSelectorOpenChange = useHandleModelSelectorOpenChange({ refreshModels })
   const activeModel = useMemo(() => {
     if (!state.currentRuntimeTask) return null
     const configuredModel = findModelForSelection(modelSelection.models, modelSelectionConfig)
@@ -1021,68 +679,36 @@ function OwnedWorkbenchProvider({
     services: resolvedServices,
   })
 
-  const markRuntimeTasksArchived = useCallback(
-    (addresses: RuntimeTaskAddress[]) => {
-      // Successful explicit archival is authoritative even when another pane owns snapshot writes.
-      addresses.forEach(address => sharedLifecycleStore.remove(address))
-      markRuntimeTasksArchivedInView(addresses)
-    },
-    [markRuntimeTasksArchivedInView, sharedLifecycleStore]
-  )
+  const markRuntimeTasksArchived = useMarkRuntimeTasksArchived({
+    sharedLifecycleStore,
+    markRuntimeTasksArchivedInView,
+  })
 
   const sidebarDevicesRef = useRef(state.devices)
   useLayoutEffect(() => {
     sidebarDevicesRef.current = state.devices
   }, [state.devices])
 
-  const enqueueRemoteProjectStateMutation = useCallback(
-    <T,>(mutation: () => Promise<T>): Promise<T> => {
-      const run = remoteProjectMutationQueueRef.current.catch(() => undefined).then(mutation)
-      remoteProjectMutationQueueRef.current = run.then(
-        () => undefined,
-        () => undefined
-      )
-      return run
-    },
-    []
-  )
+  const enqueueRemoteProjectStateMutation = useEnqueueRemoteProjectStateMutation({
+    remoteProjectMutationQueueRef,
+  })
 
-  const invalidateRemoteProjectSync = useCallback((target: RuntimeProjectSyncTarget) => {
-    removedRemoteProjectsRef.current.push(target)
-    remoteProjectSyncRevisionRef.current += 1
-  }, [])
+  const invalidateRemoteProjectSync = useInvalidateRemoteProjectSync({
+    removedRemoteProjectsRef,
+    remoteProjectSyncRevisionRef,
+  })
 
-  const clearRemoteProjectSyncRemoval = useCallback(
-    (target: RuntimeProjectSyncTarget) => {
-      const devices = createWorkbenchDeviceResolver(state.devices)
-      const key = runtimeProjectSyncTargetKey(target, devices)
-      removedRemoteProjectsRef.current = removedRemoteProjectsRef.current.filter(
-        removed => runtimeProjectSyncTargetKey(removed, devices) !== key
-      )
-      remoteProjectSyncSignatureRef.current = ''
-    },
-    [state.devices]
-  )
+  const clearRemoteProjectSyncRemoval = useClearRemoteProjectSyncRemoval({
+    state,
+    removedRemoteProjectsRef,
+    remoteProjectSyncSignatureRef,
+  })
 
-  const getRemoteProjectRegistrations = useCallback(
-    (identity: LocalRuntimeSidebarIdentity) => {
-      assertLocalRuntimeSidebarIdentity(identity, identity)
-      removedRemoteProjectsRef.current = removedRemoteProjectsRef.current.filter(target => {
-        const source = getLocalRuntimeSourceIdentity(target)
-        return (
-          !source ||
-          (source.deviceId === identity.deviceId &&
-            source.runtimeInstanceId === identity.runtimeInstanceId)
-        )
-      })
-      return getRuntimeRemoteProjectRegistrations(getRuntimeWorkSnapshot(), identity.deviceId, {
-        localSidebarIdentity: identity,
-        devices: sidebarDevicesRef.current,
-        excludedTargets: removedRemoteProjectsRef.current,
-      })
-    },
-    [getRuntimeWorkSnapshot]
-  )
+  const getRemoteProjectRegistrations = useGetRemoteProjectRegistrations({
+    removedRemoteProjectsRef,
+    getRuntimeWorkSnapshot,
+    sidebarDevicesRef,
+  })
 
   useEffect(() => {
     if (syncRemoteProjects && !remoteProjectSyncActiveRef.current) {
@@ -1296,245 +922,47 @@ function OwnedWorkbenchProvider({
     refreshDevices,
   })
 
-  const selectProject = useCallback(
-    (projectId: number | null) => {
-      projectSelectionStartedRef.current = true
-      if (projectId === null) {
-        writeLastProjectId(ownershipKey, null)
-        dispatch({
-          type: 'project_cleared',
-          standaloneDeviceId: getRememberedStandaloneDeviceId(
-            user,
-            state.devices,
-            state.standaloneDeviceId
-          ),
-          standaloneWorkspacePath: null,
-        })
-        navigateTo('/')
-        return
-      }
-      const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
-      if (project) {
-        writeLastProjectId(ownershipKey, project.id)
-        dispatch({ type: 'project_selected', project })
-        navigateTo('/')
-      }
-    },
-    [state.devices, state.projects, state.runtimeWork, state.standaloneDeviceId, user, ownershipKey]
-  )
-
-  const selectProjectWorkspace = useCallback(
-    (projectId: number, deviceWorkspaceId: number | null) => {
-      projectSelectionStartedRef.current = true
-      const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
-      if (!project) return
-      writeLastProjectId(ownershipKey, project.id)
-      dispatch({
-        type: 'project_workspace_selected',
-        project,
-        deviceWorkspaceId,
-      })
-      navigateTo('/')
-    },
-    [state.projects, state.runtimeWork, ownershipKey]
-  )
-
-  const selectStandaloneDevice = useCallback(
-    (deviceId: string | null) => {
-      projectSelectionStartedRef.current = true
-      writeLastProjectId(ownershipKey, null)
-      const standaloneDeviceId = getPreferredStandaloneDeviceId(
-        state.devices,
-        deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
-      )
-      dispatch({
-        type: 'project_cleared',
-        standaloneDeviceId,
-        standaloneWorkspacePath: null,
-        startFreshChat: true,
-      })
-      navigateTo('/')
-    },
-    [
-      state.devices,
-      state.standaloneDeviceId,
-      user.preferences?.default_execution_target,
-      ownershipKey,
-    ]
-  )
-
-  const openStandaloneWorkspace = useCallback(
-    async (
-      deviceId: string,
-      workspacePath: string,
-      label?: string,
-      projectRoots?: string[],
-      launchOptions?: WorkbenchWorkspaceLaunchOptions
-    ) => {
-      projectSelectionStartedRef.current = true
-      const requestDeviceId = deviceId.trim()
-      const normalizedWorkspacePath = workspacePath.trim()
-      if (!requestDeviceId || !normalizedWorkspacePath) return
-      const normalizedLabel = label?.trim()
-      const normalizedRoots = Array.from(
-        new Set((projectRoots ?? []).map(root => root.trim()).filter(Boolean))
-      )
-
-      // CLI open uses the local-device alias. Resolve the real executor device id so
-      // online checks, composer enablement, and new-chat buttons match listDevices.
-      let devicesForResolution = state.devices
-      const needsDeviceLookup =
-        !devicesForResolution.some(device => device.device_id === requestDeviceId) &&
-        resolveLocalWorkbenchDeviceId(devicesForResolution, requestDeviceId) === requestDeviceId
-      if (needsDeviceLookup) {
-        try {
-          const listedDevices = await executorClient.commands.listDevices()
-          if (listedDevices.length > 0) {
-            devicesForResolution = listedDevices
-            dispatch({
-              type: 'devices_refreshed',
-              devices: listedDevices,
-              standaloneDeviceId: getPreferredStandaloneDeviceId(listedDevices, requestDeviceId),
-            })
-          }
-        } catch (error) {
-          console.warn('[Wework] Failed to load devices before opening workspace', error)
-        }
-      }
-
-      if (projectRoots && normalizedRoots.length > 0) {
-        const projectName =
-          normalizedLabel ||
-          normalizedWorkspacePath.split(/[\\/]/).filter(Boolean).at(-1) ||
-          'Project'
-        const response = await executorClient.runtime.upsertLocalRuntimeProject({
-          deviceId: requestDeviceId,
-          projectKey: crypto.randomUUID(),
-          name: projectName,
-          roots: normalizedRoots,
-          runtime: 'codex',
-        })
-        if (!response.accepted) {
-          throw new Error(response.error || 'Failed to register local project')
-        }
-        clearRemoteProjectSyncRemoval({
-          deviceId: response.deviceId,
-          projectKey: response.projectKey,
-        })
-        writeLastProjectId(
-          ownershipKey,
-          runtimeProjectUiId({
-            key: response.projectKey,
-            stateDeviceId: response.deviceId,
-            name: response.name,
-          })
-        )
-        await refreshWorkLists()
-        if (launchOptions) {
-          queueWorkbenchWorkspaceLaunch(response.deviceId, response.roots[0], launchOptions)
-        }
-        dispatch({
-          type: 'project_workspace_selected',
-          project: runtimeProjectToProject({
-            project: {
-              key: response.projectKey,
-              stateDeviceId: response.deviceId,
-              name: response.name,
-            },
-            deviceWorkspaces: [
-              {
-                deviceId: response.deviceId,
-                workspacePath: response.roots[0],
-                available: true,
-                tasks: [],
-              },
-            ],
-          }),
-          startFreshChat: true,
-        })
-        navigateTo('/')
-        return
-      }
-
-      const response = await executorClient.runtime.openRuntimeWorkspace({
-        deviceId: requestDeviceId,
-        workspacePath: normalizedWorkspacePath,
-        runtime: 'codex',
-        ...(normalizedLabel ? { label: normalizedLabel } : {}),
-      })
-      if (!response.accepted) {
-        throw new Error(response.error || 'Failed to register runtime workspace')
-      }
-      const openedWorkspacePath = response.workspacePath || normalizedWorkspacePath
-      clearRemoteProjectSyncRemoval({
-        deviceId: response.deviceId?.trim() || requestDeviceId,
-        projectKey: normalizeRuntimeWorkspacePath(openedWorkspacePath),
-      })
-      const openedDeviceId =
-        resolveLocalWorkbenchDeviceId(
-          devicesForResolution,
-          response.deviceId?.trim() || requestDeviceId
-        ) ||
-        response.deviceId?.trim() ||
-        requestDeviceId
-
-      writeLastProjectId(ownershipKey, null)
-      if (launchOptions) {
-        queueWorkbenchWorkspaceLaunch(openedDeviceId, openedWorkspacePath, launchOptions)
-      }
-      dispatch({
-        type: 'runtime_workspace_opened',
-        deviceId: openedDeviceId,
-        workspacePath: openedWorkspacePath,
-        label: normalizedLabel,
-      })
-      navigateTo('/')
-    },
-    [clearRemoteProjectSyncRemoval, executorClient, refreshWorkLists, state.devices, ownershipKey]
-  )
-
-  const startNewChat = useCallback(() => {
-    navigateTo('/')
-    if (!canNavigateWorkspaceTab()) {
-      requestWorkbenchNewChat()
-      return
-    }
-    const project = state.currentProject
-      ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
-      : null
-    if (project) {
-      writeLastProjectId(ownershipKey, project.id)
-      dispatch({
-        type: 'project_workspace_selected',
-        project,
-        deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
-      })
-      requestNewChatComposerFocus(workspaceTabId)
-      return
-    }
-
-    writeLastProjectId(ownershipKey, null)
-    dispatch({
-      type: 'project_cleared',
-      standaloneDeviceId: getRememberedStandaloneDeviceId(
-        user,
-        state.devices,
-        state.standaloneDeviceId
-      ),
-      standaloneWorkspacePath: null,
-    })
-    requestNewChatComposerFocus(workspaceTabId)
-  }, [
-    canNavigateWorkspaceTab,
-    state.currentProject,
-    state.devices,
-    state.projects,
-    state.runtimeWork,
-    state.standaloneDeviceId,
-    user,
-    workspaceTabId,
+  const selectProject = useSelectProject({
+    projectSelectionStartedRef,
     ownershipKey,
-  ])
+    dispatch,
+    user,
+    state,
+  })
+
+  const selectProjectWorkspace = useSelectProjectWorkspace({
+    projectSelectionStartedRef,
+    state,
+    ownershipKey,
+    dispatch,
+  })
+
+  const selectStandaloneDevice = useSelectStandaloneDevice({
+    projectSelectionStartedRef,
+    ownershipKey,
+    state,
+    user,
+    dispatch,
+  })
+
+  const openStandaloneWorkspace = useOpenStandaloneWorkspace({
+    projectSelectionStartedRef,
+    state,
+    executorClient,
+    dispatch,
+    clearRemoteProjectSyncRemoval,
+    ownershipKey,
+    refreshWorkLists,
+  })
+
+  const startNewChat = useStartNewChat({
+    canNavigateWorkspaceTab,
+    state,
+    ownershipKey,
+    dispatch,
+    workspaceTabId,
+    user,
+  })
 
   useEffect(() => {
     const startRequestedChat = () => {
@@ -1554,173 +982,37 @@ function OwnedWorkbenchProvider({
     )?.workspacePath ??
     state.standaloneWorkspacePath ??
     null
-  const listLocalSkills = useCallback(
-    async (forceReload = false) => {
-      const cwds = localSkillsWorkspacePath ? [localSkillsWorkspacePath] : []
-      const cacheKey = cwds.length > 0 ? cwds.join('\u0000') : 'default'
-
-      const cached = localSkillsCacheRef.current.get(cacheKey)
-      if (!forceReload && cached && cached.expiresAt > Date.now()) {
-        return cached.skills
-      }
-
-      const skills = await localPluginApi.listSkills({ cwds, forceReload })
-      localSkillsCacheRef.current.set(cacheKey, {
-        expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
-        skills,
-      })
-      return skills
-    },
-    [localPluginApi, localSkillsWorkspacePath]
-  )
+  const listLocalSkills = useListLocalSkills({
+    localSkillsWorkspacePath,
+    localSkillsCacheRef,
+    localPluginApi,
+  })
 
   const availableSkills = skillSelection.skills
   const setSelectedSkillsForScope = skillSelection.setSelectedSkillsForScope
-  const startNewSkillChat = useCallback(
-    async (
-      skillNames: string[],
-      options: { allowLocalSkills?: boolean } = {}
-    ): Promise<boolean> => {
-      const requestedNames = skillNames.map(name => name.trim()).filter(Boolean)
-      if (requestedNames.length === 0) {
-        return false
-      }
+  const startNewSkillChat = useStartNewSkillChat({
+    availableSkills,
+    listLocalSkills,
+    state,
+    setSelectedSkillsForScope,
+    setDraftInputForScope,
+    ownershipKey,
+    dispatch,
+    user,
+    workspaceTabId,
+  })
 
-      const requestedUnifiedSkills = requestedNames.map(name =>
-        availableSkills.find(
-          skill =>
-            skill.is_active && (skill.name === name || `${skill.namespace}:${skill.name}` === name)
-        )
-      )
-      const unresolvedNames = requestedNames.filter((_, index) => !requestedUnifiedSkills[index])
-      const localSkills =
-        options.allowLocalSkills !== false && unresolvedNames.length > 0
-          ? await listLocalSkills(true)
-          : []
-      const requestedLocalSkills = unresolvedNames.map(name =>
-        localSkills.find(
-          skill =>
-            skill.name === name || (!skill.name.includes(':') && name.endsWith(`:${skill.name}`))
-        )
-      )
-      if (requestedLocalSkills.some(skill => !skill)) return false
-      const resolvedLocalSkills = requestedLocalSkills.filter((skill): skill is LocalDeviceSkill =>
-        Boolean(skill)
-      )
+  const startStandaloneChat = useStartStandaloneChat({ ownershipKey, dispatch, user, state })
 
-      const nextScopeKey = getProjectChatScopeKey({
-        currentRuntimeTask: null,
-        standaloneChatKey: state.standaloneChatKey + 1,
-      })
-      setSelectedSkillsForScope(
-        nextScopeKey,
-        requestedUnifiedSkills.flatMap(skill =>
-          skill
-            ? [
-                {
-                  name: skill.name,
-                  namespace: skill.namespace,
-                  is_public: skill.is_public,
-                },
-              ]
-            : []
-        )
-      )
-      if (resolvedLocalSkills.length > 0) {
-        const references = resolvedLocalSkills.map((skill, index) => {
-          const requestedName = unresolvedNames[index]
-          const namespaceSeparator = requestedName.indexOf(':')
-          const mentionName =
-            namespaceSeparator > 0 ? requestedName.slice(0, namespaceSeparator) : skill.name
-          return localSkillReference(skill, mentionName)
-        })
-        const input = `${references.join(' ')} `
-        setDraftInputForScope(nextScopeKey, input)
-      }
-      writeLastProjectId(ownershipKey, null)
-      dispatch({
-        type: 'project_cleared',
-        standaloneDeviceId: getRememberedStandaloneDeviceId(
-          user,
-          state.devices,
-          state.standaloneDeviceId
-        ),
-        standaloneWorkspacePath: null,
-        startFreshChat: true,
-      })
-      navigateTo('/')
-      requestNewChatComposerFocus(workspaceTabId)
-      return true
-    },
-    [
-      availableSkills,
-      listLocalSkills,
-      setDraftInputForScope,
-      setSelectedSkillsForScope,
-      state.devices,
-      state.standaloneChatKey,
-      state.standaloneDeviceId,
-      user,
-      workspaceTabId,
-      ownershipKey,
-    ]
-  )
-
-  const startStandaloneChat = useCallback(() => {
-    writeLastProjectId(ownershipKey, null)
-    dispatch({
-      type: 'project_cleared',
-      standaloneDeviceId: getRememberedStandaloneDeviceId(
-        user,
-        state.devices,
-        state.standaloneDeviceId
-      ),
-      standaloneWorkspacePath: null,
-      startFreshChat: true,
-    })
-    navigateTo('/')
-  }, [state.devices, state.standaloneDeviceId, user, ownershipKey])
-
-  const startNewProjectChat = useCallback(
-    (projectId: number) => {
-      const deviceWorkspaceId = getDefaultProjectDeviceWorkspaceId(state.runtimeWork, projectId)
-      const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
-      if (!project) return
-      const blankScopeKey = getProjectChatScopeKey({
-        currentRuntimeTask: null,
-        standaloneChatKey: state.standaloneChatKey,
-      })
-      const blankAttachmentState = attachmentSelection.stateByScope[blankScopeKey]
-      const hasPreservedBlankComposerState =
-        Boolean(draftInputByScope[blankScopeKey]) ||
-        Boolean(
-          blankAttachmentState &&
-          (blankAttachmentState.attachments.length > 0 ||
-            blankAttachmentState.uploadingFiles.size > 0 ||
-            blankAttachmentState.errors.size > 0)
-        )
-      projectSelectionStartedRef.current = true
-      writeLastProjectId(ownershipKey, project.id)
-      dispatch({
-        type: 'project_workspace_selected',
-        project,
-        deviceWorkspaceId,
-        startFreshChat: Boolean(state.currentRuntimeTask && !hasPreservedBlankComposerState),
-      })
-      navigateTo('/')
-      requestNewChatComposerFocus(workspaceTabId)
-    },
-    [
-      attachmentSelection.stateByScope,
-      draftInputByScope,
-      state.currentRuntimeTask,
-      state.projects,
-      state.runtimeWork,
-      state.standaloneChatKey,
-      workspaceTabId,
-      ownershipKey,
-    ]
-  )
+  const startNewProjectChat = useStartNewProjectChat({
+    state,
+    attachmentSelection,
+    draftInputByScope,
+    projectSelectionStartedRef,
+    ownershipKey,
+    dispatch,
+    workspaceTabId,
+  })
 
   const runtimeTasks = useWorkbenchRuntimeTasks({
     ownershipKey,
@@ -1735,49 +1027,19 @@ function OwnedWorkbenchProvider({
     canNavigate: canNavigateWorkspaceTab,
   })
 
-  const listImPrivateSessions = useCallback(
-    () =>
-      resolvedServices.imSessionApi?.listPrivateSessions() ??
-      Promise.resolve({ total: 0, items: [] }),
-    [resolvedServices]
-  )
+  const listImPrivateSessions = useListImPrivateSessions({ resolvedServices })
 
-  const getImNotificationSettings = useCallback(() => {
-    if (!resolvedServices.runtimeWorkApi) {
-      return Promise.reject(new Error('Runtime work API is unavailable'))
-    }
-    return resolvedServices.runtimeWorkApi.getImNotificationSettings()
-  }, [resolvedServices])
+  const getImNotificationSettings = useGetImNotificationSettings({ resolvedServices })
 
-  const updateGlobalImNotification = useCallback(
-    (data: RuntimeGlobalIMNotificationUpdateRequest) => {
-      if (!resolvedServices.runtimeWorkApi) {
-        return Promise.reject(new Error('Runtime work API is unavailable'))
-      }
-      return resolvedServices.runtimeWorkApi.updateGlobalImNotification(data)
-    },
-    [resolvedServices]
-  )
+  const updateGlobalImNotification = useUpdateGlobalImNotification({ resolvedServices })
 
-  const subscribeRuntimeTaskNotifications = useCallback(
-    (data: RuntimeTaskIMNotificationSubscriptionRequest) => {
-      if (!resolvedServices.runtimeWorkApi) {
-        return Promise.reject(new Error('Runtime work API is unavailable'))
-      }
-      return resolvedServices.runtimeWorkApi.subscribeRuntimeTaskNotifications(data)
-    },
-    [resolvedServices]
-  )
+  const subscribeRuntimeTaskNotifications = useSubscribeRuntimeTaskNotifications({
+    resolvedServices,
+  })
 
-  const unsubscribeRuntimeTaskNotifications = useCallback(
-    (address: RuntimeTaskAddress) => {
-      if (!resolvedServices.runtimeWorkApi) {
-        return Promise.reject(new Error('Runtime work API is unavailable'))
-      }
-      return resolvedServices.runtimeWorkApi.unsubscribeRuntimeTaskNotifications(address)
-    },
-    [resolvedServices]
-  )
+  const unsubscribeRuntimeTaskNotifications = useUnsubscribeRuntimeTaskNotifications({
+    resolvedServices,
+  })
 
   const projectActions = useWorkbenchProjectActions({
     ownershipKey,
@@ -1815,10 +1077,7 @@ function OwnedWorkbenchProvider({
   })
   const stableSelectProject = useStableEvent(selectProject)
   const stableSetProjectExecutionMode = useStableEvent(selectProjectExecutionMode)
-  const setWorkbenchError = useCallback(
-    (error: string | null) => dispatch({ type: 'error_set', error }),
-    [dispatch]
-  )
+  const setWorkbenchError = useSetWorkbenchError({ dispatch })
   const stableSetWorkbenchError = useStableEvent(setWorkbenchError)
   const stableSetProjectWorktreeBranch = useStableEvent(setProjectWorktreeBranch)
   const stableSelectProjectWorkspace = useStableEvent(selectProjectWorkspace)
@@ -1833,43 +1092,14 @@ function OwnedWorkbenchProvider({
   const stableSearchRuntimeTranscriptForPane = useStableEvent(
     runtimeTasks.searchRuntimeTranscriptForPane
   )
-  const resolveRuntimeContextUsage = useCallback(
-    (address: RuntimeTaskAddress, usage: RuntimeContextUsage): RuntimeContextUsage => {
-      const taskSelection =
-        resolveRuntimeTaskSummary(address)?.modelSelection ??
-        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
-        null
-      const selectedModel = modelSelection.selectedModel
-      const taskModel = findModelForSelection(modelSelection.models, taskSelection)
-      const matchingSelectedModel =
-        taskSelection?.modelName &&
-        selectedModel?.name === taskSelection.modelName &&
-        (!taskSelection.modelType || selectedModel.type === taskSelection.modelType)
-          ? selectedModel
-          : null
-
-      return applyModelContextWindowOverride(usage, taskModel ?? matchingSelectedModel)
-    },
-    [modelSelection.models, modelSelection.selectedModel, resolveRuntimeTaskSummary]
-  )
-  const resolveModelForAddress = useCallback(
-    (address: RuntimeTaskAddress): UnifiedModel | null => {
-      const taskSelection =
-        resolveRuntimeTaskSummary(address)?.modelSelection ??
-        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
-        null
-      const selectedModel = modelSelection.selectedModel
-      const taskModel = findModelForSelection(modelSelection.models, taskSelection)
-      const matchingSelectedModel =
-        taskSelection?.modelName &&
-        selectedModel?.name === taskSelection.modelName &&
-        (!taskSelection.modelType || selectedModel.type === taskSelection.modelType)
-          ? selectedModel
-          : null
-      return taskModel ?? matchingSelectedModel
-    },
-    [modelSelection.models, modelSelection.selectedModel, resolveRuntimeTaskSummary]
-  )
+  const resolveRuntimeContextUsage = useResolveRuntimeContextUsage({
+    resolveRuntimeTaskSummary,
+    modelSelection,
+  })
+  const resolveModelForAddress = useResolveModelForAddress({
+    resolveRuntimeTaskSummary,
+    modelSelection,
+  })
   const knownModelIds = useMemo(() => {
     const ids = new Set<string>()
     for (const model of modelSelection.models) {
@@ -2317,185 +1547,15 @@ function OwnedWorkbenchProvider({
     projectPluginNamesRef.current = projectPluginNames
   }, [projectPluginNames])
 
-  const listLocalApps = useCallback(
-    async (options?: { supersedeInstalledRequest?: boolean }) => {
-      localAppsRequestedRef.current = true
-      const cacheKey = pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
-      const projectSnapshot = (snapshot: PluginMarketplaceCacheSnapshot | null) => {
-        if (snapshot)
-          publishPluginInvocationCatalog(snapshot.deviceId, snapshot.installedPlugins, [])
-        const apps = snapshot
-          ? selectComposerPluginApps(snapshot, projectPluginNamesRef.current ?? undefined)
-          : []
-        notifyComposerAppsListeners()
-        return apps
-      }
-      if (localAppsInflightRef.current) return localAppsInflightRef.current
-
-      const generation = localAppsLoadGenerationRef.current
-      const isCurrent = () => generation === localAppsLoadGenerationRef.current
-      const loadPromise = (async () => {
-        const deviceId =
-          peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId?.trim() ||
-          peekLocalCodexPluginsReadState()?.deviceId?.trim() ||
-          (await ensureLocalExecutorStarted()).deviceId?.trim()
-        if (!deviceId) throw new Error('Composer plugin inventory requires a device ID')
-        if (!isCurrent()) return []
-        const cached = getPluginMarketplaceCache(cacheKey)
-        const hasFreshInventory =
-          !options?.supersedeInstalledRequest &&
-          cached?.deviceId === deviceId &&
-          (cached.installedPluginsFetchedAt ?? 0) + LOCAL_SKILLS_CACHE_TTL_MS > Date.now() &&
-          [...(projectPluginNamesRef.current ?? [])].every(name =>
-            cached.installedPlugins.some(plugin => plugin.spec.source.pluginKey === name)
-          )
-        // Disk membership is cheap and can change outside this renderer (ZIP
-        // import, CLI, restart). Presentation freshness never replaces this read.
-        const localInstalled = readLocalInstalledInventoryFromDisk()
-        const cloudInstalled = (async () => {
-          if (!cloudConnection.isConnected) return undefined
-          if (hasFreshInventory) {
-            const local = await localInstalled
-            // Unknown managed files may be awaiting an acknowledged uninstall's cleanup.
-            if (
-              local.items.every(
-                plugin =>
-                  !isWegentManagedStorePlugin(plugin) ||
-                  cached.installedPlugins.some(installed =>
-                    localMatchesCloudPlugin(plugin, installed)
-                  )
-              )
-            )
-              return undefined
-          }
-          return (await cloudPluginApi.listInstalledPlugins(deviceId)).items
-        })()
-        const snapshot = await loadPluginInventory({
-          cacheKey,
-          deviceId,
-          readLocalInstalledPlugins: () => localInstalled,
-          listCloudInstalledPlugins: () => cloudInstalled,
-          isCurrent,
-          partial: true,
-          cloudMembershipAuthoritative: cloudConnection.isConnected,
-        })
-        if (!snapshot || !isCurrent()) return []
-        const apps = projectSnapshot(snapshot)
-
-        // Enrich the same domain cache asynchronously. Remote catalogs must not
-        // block locally installed plugins or overwrite a newer installation.
-        window.setTimeout(() => {
-          if (!isCurrent()) return
-          const installedAtStart = snapshot.installedPlugins
-          if (!hasFreshInventory)
-            void Promise.all([
-              localPluginApi.listInstalledPlugins({
-                requireComplete: true,
-              }),
-              cloudInstalled,
-            ])
-              .then(([local, cloud]) => {
-                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const current = getPluginMarketplaceCache(cacheKey)
-                if (!current || current.deviceId !== deviceId) return
-                if (!sameLocalPluginSources(current, snapshot)) return
-                if (!samePluginInstallations(current.installedPlugins, installedAtStart)) return
-                return loadPluginInventory({
-                  cacheKey,
-                  deviceId,
-                  readLocalInstalledPlugins: async () => local,
-                  listCloudInstalledPlugins: async () => cloud,
-                  isCurrent,
-                  cloudMembershipAuthoritative: cloudConnection.isConnected,
-                })
-              })
-              .catch(error => {
-                if (isCurrent())
-                  console.warn('[Wework] Failed to refresh complete plugin inventory.', error)
-              })
-
-          void hydratePluginInventoryLogos(
-            cacheKey,
-            snapshot,
-            plugin => {
-              const labels = plugin.metadata.labels
-              const id =
-                labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
-              return localPluginApi.readInstalledPluginForTrial(
-                typeof id === 'string' || typeof id === 'number' ? id : String(plugin.metadata.name)
-              )
-            },
-            isCurrent
-          ).catch(error => {
-            if (isCurrent()) console.warn('[Wework] Failed to enrich composer plugin logos.', error)
-          })
-
-          if (
-            cloudConnection.isConnected &&
-            cloudConnection.apiBaseUrl &&
-            cloudConnection.token &&
-            (options?.supersedeInstalledRequest ||
-              !snapshot.connectorAppsFetchedAt ||
-              snapshot.connectorAppsFetchedAt + LOCAL_SKILLS_CACHE_TTL_MS <= Date.now())
-          ) {
-            void listWegentInstalledConnectorApps(cloudConnection.apiBaseUrl, cloudConnection.token)
-              .then(async installedConnectors => {
-                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const connected = installedConnectors.apps.filter(
-                  app => app.enabled && app.callable
-                )
-                const synced = await requestLocalExecutor<{
-                  apps: Array<{ slug: string; skillPath: string }>
-                }>('runtime.connectors.apps.sync', {
-                  apps: connected.map(app => ({
-                    slug: app.slug,
-                    name: app.runtime_name ?? app.slug,
-                    description: app.description ?? '',
-                    tools: app.tool_summaries ?? [],
-                  })),
-                })
-                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const paths = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
-                if (getPluginMarketplaceCache(cacheKey)?.deviceId !== deviceId) return
-                writePluginInventory(cacheKey, deviceId, {
-                  connectorApps: connected
-                    .filter(app => !isSystemApplicationConnectorSlug(app.slug))
-                    .map(app => ({
-                      id: `wegent:${app.slug}`,
-                      name: app.runtime_name ?? app.slug,
-                      description: app.description ?? '',
-                      logoUrl: app.icon_url ?? null,
-                      isAccessible: true,
-                      isEnabled: true,
-                      pluginDisplayNames: ['Wegent Cloud'],
-                      source: 'wegent-connector',
-                      skillPath: paths.get(app.slug) ?? null,
-                    })),
-                })
-              })
-              .catch(error => {
-                if (isCurrent())
-                  console.warn('[Wework] Failed to load Wegent connector apps.', error)
-              })
-          }
-        }, 0)
-        return apps
-      })()
-      localAppsInflightRef.current = loadPromise
-      try {
-        return await loadPromise
-      } finally {
-        if (localAppsInflightRef.current === loadPromise) localAppsInflightRef.current = null
-      }
-    },
-    [
-      cloudConnection.apiBaseUrl,
-      cloudConnection.isConnected,
-      cloudConnection.token,
-      cloudPluginApi,
-      localPluginApi,
-    ]
-  )
+  const listLocalApps = useListLocalApps({
+    localAppsRequestedRef,
+    cloudConnection,
+    projectPluginNamesRef,
+    localAppsInflightRef,
+    localAppsLoadGenerationRef,
+    cloudPluginApi,
+    localPluginApi,
+  })
 
   // The shared inventory owns membership, enablement, metadata and authorization.
   // Project scope is a view projection and never mutates that shared snapshot.
@@ -2953,36 +2013,4 @@ function OwnedWorkbenchProvider({
       </AttachmentDownloadProvider>
     </RuntimeTaskLifecycleProvider>
   )
-}
-
-function getProjectChatScopeKey({
-  currentRuntimeTask,
-  standaloneChatKey,
-}: {
-  currentRuntimeTask: RuntimeTaskAddress | null
-  standaloneChatKey: number
-}): string {
-  if (currentRuntimeTask) {
-    return getRuntimeTaskChatScopeKey(currentRuntimeTask)
-  }
-  return `blank:${standaloneChatKey}`
-}
-
-function getModelSelectionScopeKey({
-  userId,
-  currentProjectId,
-  currentRuntimeTask,
-  standaloneChatKey,
-}: {
-  userId: number
-  currentProjectId: number | null
-  currentRuntimeTask: RuntimeTaskAddress | null
-  standaloneChatKey: number
-}): string {
-  if (currentRuntimeTask) {
-    return `user:${userId}:${getRuntimeTaskChatScopeKey(currentRuntimeTask)}`
-  }
-  return currentProjectId === null
-    ? `user:${userId}:new-task:standalone:${standaloneChatKey}`
-    : `user:${userId}:new-task:project:${currentProjectId}:${standaloneChatKey}`
 }
