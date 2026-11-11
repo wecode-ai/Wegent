@@ -78,8 +78,7 @@ export function ProjectAgentConfiguration({
     legacySourceAccess?.workspaceId !== workspaceId;
   const usesLocalAgentCreator =
     project.project_store === "local" && Boolean(host?.renderLocalAgentCreator);
-  const usesLocalAgentEditor =
-    project.project_store === "local" && Boolean(host?.renderLocalAgentEditor);
+  const usesProjectAgentEditor = Boolean(host?.renderProjectAgentEditor);
   const supportsAgentCreation =
     canBrowseSources &&
     Boolean(usesLocalAgentCreator || host?.renderAgentCreator);
@@ -533,10 +532,7 @@ export function ProjectAgentConfiguration({
     name: project.name ?? "",
     namespace: project.namespace ?? "default",
   };
-  const localAgentProjectId = scope === "project" ? project.id : undefined;
-  const canEditAgentResource = Boolean(
-    host?.renderLocalAgentEditor || host?.renderAgentEditor,
-  );
+  const agentProjectId = scope === "project" ? project.id : undefined;
 
   function renderCustomAgentCreator() {
     if (mode !== "create") return null;
@@ -548,7 +544,7 @@ export function ProjectAgentConfiguration({
       return host.renderLocalAgentCreator({
         onClose,
         onCreated: finishLocalAgentCreation,
-        projectId: localAgentProjectId,
+        projectId: agentProjectId,
       });
     }
     return host?.renderAgentCreator?.({
@@ -741,11 +737,11 @@ export function ProjectAgentConfiguration({
                           )}
                         </button>
                       ) : null}
-                      {canEditAgentResource &&
-                      agent.canEdit &&
+                      {agent.canEdit &&
                       ((agent.definitionSource === "project" &&
-                        usesLocalAgentEditor) ||
+                        usesProjectAgentEditor) ||
                         (agent.definitionSource === "shared_agent" &&
+                          host?.renderAgentEditor &&
                           agent.wegentTeamId !== null)) ? (
                         <button
                           className={styles.archiveButton}
@@ -825,10 +821,10 @@ export function ProjectAgentConfiguration({
 
           {editingAgent &&
           editingAgent.definitionSource === "project" &&
-          usesLocalAgentEditor &&
-          host?.renderLocalAgentEditor
-            ? host.renderLocalAgentEditor({
-                projectId: localAgentProjectId,
+          usesProjectAgentEditor &&
+          host?.renderProjectAgentEditor
+            ? host.renderProjectAgentEditor({
+                projectId: agentProjectId,
                 resourceId: editingAgent.id,
                 onClose: () => setEditingAgentId(null),
                 onSaved: async () => {

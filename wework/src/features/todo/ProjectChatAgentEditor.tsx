@@ -35,7 +35,10 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { isSupportedModelFamily } from '@/lib/model-ui'
 import type { ModelType, UnifiedSkill } from '@/types/api'
 
-type LocalAgentApi = ReturnType<typeof createLocalProjectChatAgentApi>
+export type ProjectChatAgentEditorApi = Pick<
+  ReturnType<typeof createLocalProjectChatAgentApi>,
+  'list' | 'create' | 'update' | 'listEnvironments' | 'listNativeModels' | 'listModels'
+>
 type SkillApi = Pick<ReturnType<typeof createAgentResourceApi>, 'listSkills'>
 
 function skillKey(skill: { name: string; namespace?: string }): string {
@@ -68,8 +71,9 @@ export function ProjectChatAgentEditor({
   skillApi,
   onClose,
   onSaved,
+  ownerLabel,
 }: {
-  api: LocalAgentApi
+  api: ProjectChatAgentEditorApi
   deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
   editingAgentId?: string
   modelApi: WorkbenchServices['modelApi']
@@ -78,6 +82,7 @@ export function ProjectChatAgentEditor({
   skillApi?: SkillApi
   onClose(): void
   onSaved(): Promise<void>
+  ownerLabel?: string
 }) {
   const { t } = useTranslation('common')
   const editing = Boolean(editingAgentId)
@@ -666,7 +671,7 @@ export function ProjectChatAgentEditor({
       namespace={namespace}
       onClose={onClose}
       onSave={() => void save()}
-      ownerLabel={t('workbench.project_chat_agent_env_local')}
+      ownerLabel={ownerLabel ?? t('workbench.project_chat_agent_env_local')}
       prompt={{
         label: t('workbench.agent_creator_prompt', '提示词'),
         onChange: value => {

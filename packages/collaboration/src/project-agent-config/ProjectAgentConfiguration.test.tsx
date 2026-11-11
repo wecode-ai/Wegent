@@ -161,7 +161,7 @@ const hostedCreationHost: ProjectAgentConfigurationHost = {
       </button>
     );
   },
-  renderLocalAgentEditor({ onClose, onSaved, projectId, resourceId }) {
+  renderProjectAgentEditor({ onClose, onSaved, projectId, resourceId }) {
     return (
       <div
         data-project-id={projectId}
@@ -681,37 +681,45 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
-  it("routes project Agent editing through the local Agent editor", async () => {
-    const { api } = createApi({
-      agents: [projectAgent({ runtime: "claude_code", wegent_team_id: null })],
-      workspaceAgents: [],
-    });
-    await renderHosted(api, {
-      target: { ...project, id: "local-project", project_store: "local" },
-    });
+  it.each(["local", "backend"] as const)(
+    "edits native project Agents in %s storage",
+    async (store) => {
+      const { api } = createApi({
+        agents: [
+          projectAgent({ runtime: "claude_code", wegent_team_id: null }),
+        ],
+        workspaceAgents: [],
+      });
+      await renderHosted(api, {
+        target: { ...project, id: "native-project", project_store: store },
+      });
 
-    await click("project-agent-edit-project-agent-1");
-    expect(element("hosted-local-agent-editor").dataset.resourceId).toBe(
-      "project-agent-1",
-    );
-    expect(
-      document.querySelector('[data-testid="hosted-agent-editor"]'),
-    ).toBeNull();
-  });
+      await click("project-agent-edit-project-agent-1");
+      expect(element("hosted-local-agent-editor").dataset.resourceId).toBe(
+        "project-agent-1",
+      );
+      expect(
+        document.querySelector('[data-testid="hosted-agent-editor"]'),
+      ).toBeNull();
+    },
+  );
 
-  it("keeps a shared Agent usable without exposing unauthorized configuration edits", async () => {
-    const { api } = createApi({
-      agents: [projectAgent({ can_edit: false })],
-    });
-    await renderHosted(api);
+  it.each([12, null])(
+    "does not expose unauthorized edits for Agent definition %s",
+    async (teamId) => {
+      const { api } = createApi({
+        agents: [projectAgent({ can_edit: false, wegent_team_id: teamId })],
+      });
+      await renderHosted(api);
 
-    expect(element("project-agent-row-project-agent-1")).toBeTruthy();
-    expect(
-      document.querySelector(
-        '[data-testid="project-agent-edit-project-agent-1"]',
-      ),
-    ).toBeNull();
-  });
+      expect(element("project-agent-row-project-agent-1")).toBeTruthy();
+      expect(
+        document.querySelector(
+          '[data-testid="project-agent-edit-project-agent-1"]',
+        ),
+      ).toBeNull();
+    },
+  );
 
   it("archives an existing project agent with optimistic concurrency", async () => {
     const { api, update } = createApi();
