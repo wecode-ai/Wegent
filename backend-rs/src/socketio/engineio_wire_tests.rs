@@ -898,7 +898,7 @@ async fn terminal_membership_receives_early_output_and_rolls_back_failed_attach(
                 "terminal:output",
                 "terminal:next",
                 None,
-                &ArgsTuple(&[data.clone()])
+                &ArgsTuple(std::slice::from_ref(&data))
             )
             .await,
         (1, 0),

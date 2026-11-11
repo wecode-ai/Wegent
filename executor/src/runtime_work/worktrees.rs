@@ -754,7 +754,9 @@ impl WorktreeManager {
         };
         // Wait without holding the registry lock, then validate the actual
         // directory immediately before mutation under its lifetime lock.
-        let _directory = wegent_workspace::workspace_lifetime::remove_directory(path)?;
+        let _directory = measure_stage(&record.worktree_id, "delete_directory_lock", || {
+            wegent_workspace::workspace_lifetime::remove_directory(path)
+        })?;
         ensure_managed_path(path, &known_roots)?;
         if path.try_exists().map_err(|error| error.to_string())? {
             let actual_path = fs::canonicalize(path).map_err(|error| error.to_string())?;
@@ -763,7 +765,7 @@ impl WorktreeManager {
                 .is_some_and(|expected| expected != &actual_path)
             {
                 return Err(worktree_target_conflict(
-                    "Managed worktree path changed while waiting for deletion".to_owned(),
+                    "Managed worktree path changed while waiting for deletion",
                 ));
             }
             if preserve_snapshot {
