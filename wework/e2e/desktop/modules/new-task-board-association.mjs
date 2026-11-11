@@ -128,7 +128,7 @@ export async function waitForViewedIssueRead(control, groupId, issueId) {
     assert.equal(issue.id, issueId)
     assert.equal(issue.group_id, groupId)
     assert.equal(issue.cloud_project_id, groupId)
-    if (issue.metadata.is_unread !== true) {
+    if (issue.metadata.is_unread === false) {
       console.log(
         `[e2e] Viewed Issue read confirmed before draft baseline: ${issue.id}, version=${issue.version}`
       )
