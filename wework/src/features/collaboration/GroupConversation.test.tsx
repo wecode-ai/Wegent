@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { CollaborationIssue, SharedWorkspaceApi } from '@wegent/collaboration'
-import type { ChatGroup, ChatGroupApi } from '@/api/chatGroups'
+import type { ChatGroup, ChatGroupApi, ThreadParticipation } from '@/api/chatGroups'
 import { GroupConversation } from './GroupConversation'
 import { groupBoardContext } from './groupWorkspaceApi'
 
@@ -40,6 +40,48 @@ const item: CollaborationIssue = {
 }
 
 describe('Thread reading and notification participation', () => {
+  it('keeps pending participation distinct from read-only permissions and an empty roster', async () => {
+    let resolveParticipation!: (value: ThreadParticipation) => void
+    const pending = new Promise<ThreadParticipation>(resolve => {
+      resolveParticipation = resolve
+    })
+    const api = {} as SharedWorkspaceApi
+    render(
+      <GroupConversation
+        group={group}
+        project={groupBoardContext(group, 'local')}
+        item={item}
+        items={[item]}
+        api={api}
+        catalog={api}
+        members={[]}
+        groups={{ participation: () => pending } as unknown as ChatGroupApi}
+        chat={undefined}
+        locale="zh-CN"
+        onOpenThread={vi.fn()}
+        onBack={vi.fn()}
+        onChanged={vi.fn()}
+        onClearFocus={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('thread-participation-loading')).toHaveTextContent('正在加载')
+    expect(screen.queryByText('0 人参与')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('group-readonly')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('thread-join')).not.toBeInTheDocument()
+    await act(async () => {
+      resolveParticipation({
+        current_user_id: 8,
+        participants: [],
+        joined: false,
+        can_comment: false,
+        show_in_sidebar: false,
+      })
+    })
+    expect(screen.queryByTestId('thread-participation-loading')).not.toBeInTheDocument()
+    expect(screen.getByText('0 人参与')).toBeVisible()
+    expect(screen.getByTestId('thread-join')).toHaveTextContent('加入并接收提醒')
+  })
+
   it('provides a named return to the originating board', async () => {
     const onBackToBoard = vi.fn()
     const api = {} as SharedWorkspaceApi

@@ -61,14 +61,16 @@ pnpm --filter wework e2e:desktop --segment collaboration-milestones
 
 Use isolated real Electron and the existing local/cloud Group checkpoints, including the real two-person cloud accounts, storage and devices. Only model services are scripted. Keep screenshots and logs local; the unified runner cleans fixture data and processes.
 
-1. Search a group board and open a Thread. **Back to board** must restore the same group, view, search and filters, with working cards.
-2. Search a project aggregation board and open a group-owned Thread. **Back to board** must restore the source project board and its filters. Direct chat/notification entries retain return to the owning group; navigation never joins or grants authority.
+1. Keep the previously saved group review view as the shared default, temporarily select the built-in board, and confirm it is not the shared default. Choose a non-default status, one tag, and a search term, then open a matching Thread and return. Assert the original group, exact selected view ID and name, status option value and label, single checked tag, search term, and card inside the matching column. Capture the full board before opening and after returning.
+2. Preserve the project shared default and create a project return-review view through the UI without selecting Set as default. Confirm the selected ID differs from the shared default. Set an appropriate non-default status, tag, and search term, open a group-owned Thread, and return. Check every property above plus the source project, storage location, and Projects view. Clear temporary filters and restore the prior selected view afterward without changing the shared default; temporary filters need not survive reload. Direct chat/notification entries still return to the owning group, without joining or granting authority.
 3. Switching accounts immediately removes the old account’s content and retained board state. Inactive boards clean up effects/subscriptions and revalidate current permissions/data on restoration.
 4. Both people show names and avatars. Exact current-human identity decides sides, never matching display names or an agent ID. Compare real avatar coordinates: self on the right and the other member on the left. System lifecycle messages remain centered and Thread entry cards remain clickable.
 5. Continue checking history focus, mentions, attachments, leaving and discussion after completion. Retain first-use, two-person discussion and both source-board return screenshots for independent review.
 6. After drilling into children outside the selected milestone, hiding and restoring the same board preserves the temporary drilldown. A project or view change clears the temporary drilldown while retaining the base milestone selection. Component regression also covers the existing caller without a default grouping.
 
 Current result: component and state-retention tests passed. Freshly built real Electron verified retained search after returning to both group and project aggregation boards. Real two-person discussion in both the main group and a Thread passed name, avatar and left/right coordinate assertions. Seven key screenshots covering return paths, lifecycle, two-person discussion and the Bot reply passed independent review.
+
+The non-default view, status, tag, and search round-trip assertions now extend the same `group-thread-collaboration` checkpoint and pass syntax, formatting, and lint checks. They still require real Electron CI on the latest commit and review of the before/after filtered-board screenshots. Earlier screenshots proved retained search and do not substitute for this stronger acceptance.
 
 ### Manual personal stand-in execution within a group
 

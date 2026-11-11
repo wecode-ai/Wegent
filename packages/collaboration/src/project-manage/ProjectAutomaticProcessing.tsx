@@ -883,7 +883,7 @@ export function ProjectAutomaticProcessing({
                 >
                   {translate(
                     'todo.automatic_processing_prompt_hint',
-                    '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
+                    '触发时发送给 AI，用于处理当前事项；留空按目标职责处理。'
                   )}
                 </p>
               </div>

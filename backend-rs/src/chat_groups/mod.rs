@@ -44,14 +44,12 @@ fn error(code: u16, message: &str) -> FastApiError {
     )
 }
 pub(crate) fn internal(cause: brz_mysql::MysqlError) -> FastApiError {
-    if let brz_mysql::MysqlError::InvalidQuery { reason } = &cause {
-        if let Some(reason) = reason.strip_prefix("chat-group:") {
-            if let Some((code, message)) = reason.split_once(':') {
-                if let Ok(code) = code.parse() {
-                    return error(code, message);
-                }
-            }
-        }
+    if let brz_mysql::MysqlError::InvalidQuery { reason } = &cause
+        && let Some(reason) = reason.strip_prefix("chat-group:")
+        && let Some((code, message)) = reason.split_once(':')
+        && let Ok(code) = code.parse()
+    {
+        return error(code, message);
     }
     tracing::error!(%cause,"chat group persistence failed");
     error(500, "Chat group operation failed")

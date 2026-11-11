@@ -192,15 +192,9 @@ mod tests {
 
     #[test]
     fn container_protocol_is_explicit_and_rejects_invalid_markers() {
-        assert_eq!(is_group(&json!({})).unwrap(), false);
-        assert_eq!(
-            is_group(&json!({"containerKind":"project"})).unwrap(),
-            false
-        );
-        assert_eq!(
-            is_group(&json!({"containerKind":"chat_group"})).unwrap(),
-            true
-        );
+        assert!(!is_group(&json!({})).unwrap());
+        assert!(!is_group(&json!({"containerKind":"project"})).unwrap());
+        assert!(is_group(&json!({"containerKind":"chat_group"})).unwrap());
         assert!(is_group(&json!({"containerKind":"group"})).is_err());
         assert!(is_group(&json!({"containerKind":null})).is_err());
     }

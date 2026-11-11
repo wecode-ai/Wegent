@@ -7,6 +7,7 @@ import { runChecked } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   inCollaborationSidebar,
+  enterProjectCollaborationView,
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
@@ -209,6 +210,7 @@ export function createDesktopScenario({
       await reloadMainWindow(control, 'The worktree policy renderer did not reconnect')
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await enterProjectCollaborationView(control, CONTENT)
       const toggle = inCollaborationSidebar(
         '[data-testid="collaboration-workspace-toggle-wework-local-workspace"]'
       )

@@ -86,8 +86,13 @@ export async function verifyGroupManualExecution({
   assert.deepEqual(await request(`/api/v1/loop-items/${issue.id}/tasks`), [])
 
   await participate(true)
+  const registeredDevice = await cloud.waitForConnectedAppDevice()
+  const identity = await rpc('runtime.stand_in.device_identity', {})
+  assert.equal(identity.deviceId, registeredDevice.app_device_id)
+  assert.equal(identity.backendDeviceId, registeredDevice.execution_target_id)
   const address = await rpc('runtime.stand_in.run', params)
-  assert.ok(address.taskId && address.deviceId)
+  assert.ok(address.taskId)
+  assert.equal(address.deviceId, identity.deviceId)
   await control.command('openWeworkScheme', 'body', {
     value: `wework://groups/backend/${encodeURIComponent(group.id)}/threads/${encodeURIComponent(issue.id)}`,
   })
@@ -104,7 +109,7 @@ export async function verifyGroupManualExecution({
   assert.equal(bindings.length, 1)
   assert.equal(bindings[0].task_user_id, owner.id)
   assert.equal(bindings[0].task_id, address.taskId)
-  assert.equal(bindings[0].device_id, address.deviceId)
+  assert.equal(bindings[0].device_id, identity.backendDeviceId)
   const current = await request(`/api/v1/loop-items/${issue.id}`)
   assert.equal(String(current.cloud_project_id), String(group.id))
   assert.equal(current.assignee_user_id, null)

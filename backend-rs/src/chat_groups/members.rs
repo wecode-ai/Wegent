@@ -49,7 +49,7 @@ async fn apply(
         if !actor.can_manage() { return Err(reject(403,"Group administration is required")) }
         if actor.status.as_deref() != Some("active") { return Err(reject(409,"Chat group is archived")) }
         let target: Option<ActiveUser> = tx.fetch_optional("SELECT id FROM users WHERE id=? AND is_active=1 FOR UPDATE",(input.user_id,)).await?;
-        if !target.is_some_and(|target|target.id == input.user_id) { return Err(reject(404,"Member not found")) }
+        if target.is_none_or(|target|target.id != input.user_id) { return Err(reject(404,"Member not found")) }
         let existing: Option<Existing> = tx.fetch_optional("SELECT role FROM resource_members WHERE resource_type='CollaborationChatGroup' AND resource_id=CAST(? AS SIGNED) AND entity_type='user' AND entity_id=? FOR UPDATE",(group_id,input.user_id.to_string())).await?;
         if existing.as_ref().is_some_and(|member|member.role == "Owner") {
             return Err(reject(409,"The group owner cannot be removed or demoted"));

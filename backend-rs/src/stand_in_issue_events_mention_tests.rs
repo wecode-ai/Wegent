@@ -90,7 +90,7 @@ async fn verify_missing_provider_scope_does_not_lock_other_indexes(
     let (entered, admitted) = tokio::sync::oneshot::channel();
     let (release, released) = tokio::sync::oneshot::channel();
     let pending = mysql.with_transaction(async |tx| {
-        crate::background_jobs::project::store::locked_existing(
+        crate::background_jobs::project::store::locked_live_existing(
             tx,
             "task",
             "provider-missing-scope",

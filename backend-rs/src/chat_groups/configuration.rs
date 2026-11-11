@@ -121,13 +121,12 @@ fn validate_views(config: &Value) -> Result<(), FastApiError> {
             {
                 return Err(invalid());
             }
-            if let Some(tags) = filter.get("tags") {
-                if !tags
+            if let Some(tags) = filter.get("tags")
+                && !tags
                     .as_array()
                     .is_some_and(|tags| tags.len() <= 50 && tags.iter().all(|tag| bounded(tag, 80)))
-                {
-                    return Err(invalid());
-                }
+            {
+                return Err(invalid());
             }
         }
         if let Some(sorts) = view.get("sorts") {

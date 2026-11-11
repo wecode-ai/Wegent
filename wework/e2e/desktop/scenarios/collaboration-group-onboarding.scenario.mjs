@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar, inProjectCreateDialog } from '../modules/workspace-flows.mjs'
+import {
+  enterProjectCollaborationView,
+  inCollaborationSidebar,
+  inProjectCreateDialog,
+} from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -41,6 +45,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await enterProjectCollaborationView(control, ACTIVE_WORKBENCH_SELECTOR)
       await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
         timeoutMs: uiTimeoutMs,
       })

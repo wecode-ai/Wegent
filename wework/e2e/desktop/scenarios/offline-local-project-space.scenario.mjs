@@ -5,6 +5,7 @@ import { verifyCollaborationScheduleViews } from '../modules/collaboration-sched
 import {
   captureVerificationScreenshot,
   completeLocalCollaborationFolderImport,
+  enterProjectCollaborationView,
   inCollaborationSidebar,
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
@@ -126,6 +127,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await enterProjectCollaborationView(control, ACTIVE_WORKBENCH_SELECTOR)
       await control.command('waitFor', scoped('[data-testid="wework-collaboration-platform"]'), {
         timeoutMs: uiTimeoutMs,
       })

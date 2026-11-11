@@ -203,7 +203,9 @@ export function GroupConversation({
             </div>
             <h1 className="text-heading-md truncate text-text-primary">{item.title}</h1>
             <p className="mt-1 text-xs text-text-muted">
-              {t('participants', { count: participation?.participants.length ?? 0 })}
+              {participation
+                ? t('participants', { count: participation.participants.length })
+                : !error && t('loading')}
             </p>
           </div>
           <button
@@ -384,7 +386,17 @@ export function GroupConversation({
       </div>
       <footer className="shrink-0 px-6 pb-5 pt-2">
         <div className="mx-auto max-w-3xl">
-          {item && participation && !participation.joined && group.status === 'active' ? (
+          {item && !participation ? (
+            !error && (
+              <p
+                role="status"
+                className="py-2 text-center text-sm text-text-muted"
+                data-testid="thread-participation-loading"
+              >
+                {t('loading')}
+              </p>
+            )
+          ) : item && participation && !participation.joined && group.status === 'active' ? (
             <div
               className="flex items-center gap-4 rounded-xl border border-border p-4"
               data-testid="thread-observer"

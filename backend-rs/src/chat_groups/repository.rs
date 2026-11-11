@@ -82,13 +82,13 @@ pub(crate) async fn lock_group_scope<T: MysqlTransaction>(
     let root: Option<Identity> = db.fetch_optional(
         format!("SELECT g.id FROM loop_items g WHERE g.id=? AND g.resource_type='chat_group' AND g.status IN ('active','archived') AND {ACTIVE} FOR UPDATE"), (id,),
     ).await?;
-    if !root.is_some_and(|root| root.id == id) {
+    if root.is_none_or(|root| root.id != id) {
         return Err(super::reject(404, "Chat group not found"));
     }
     let grant: Option<Identity> = db.fetch_optional(
         "SELECT CAST(id AS CHAR) AS id FROM resource_members WHERE resource_type='CollaborationChatGroup' AND resource_id=CAST(? AS SIGNED) AND entity_type='user' AND entity_id=? AND status='approved' AND role IN ('Owner','Maintainer','Developer','Viewer') FOR UPDATE", (id, actor.to_string()),
     ).await?;
-    if !grant.is_some_and(|grant| !grant.id.is_empty()) {
+    if grant.is_none_or(|grant| grant.id.is_empty()) {
         return Err(super::reject(404, "Chat group not found"));
     }
     Ok(())

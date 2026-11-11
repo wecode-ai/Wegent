@@ -7,6 +7,7 @@ runs:
       shell: bash
       run: |
         source .github/scripts/lib/apt-packages.sh
+        trap 'apt_failure_status=$?; report_apt_network_diagnostics; exit "$apt_failure_status"' ERR
         mapfile -t missing < <(find_missing_apt_packages skopeo umoci)
         if ((${#missing[@]})); then
           if ((EUID == 0)); then

@@ -129,7 +129,7 @@ async fn invite(
         #[derive(FromMysqlRow)] struct Membership { id:String }
         if !group.can_manage() {
             let joined:Option<Membership>=tx.fetch_optional("SELECT id FROM loop_items WHERE id=? AND resource_type='thread_participant' AND parent_id=? AND user_id=? AND status='active' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) FOR UPDATE",(participant_id(item_id,user.id),item_id,user.id)).await?;
-            if !joined.is_some_and(|row|!row.id.is_empty()) { return Err(super::reject(403,"Join the Thread before inviting participants")) }
+            if joined.is_none_or(|row|row.id.is_empty()) { return Err(super::reject(403,"Join the Thread before inviting participants")) }
         }
         let required=crate::loop_node_storage::required_columns(tx).await?;
         let sql=crate::loop_node_storage::insert_sql(&["id","resource_type","project_space","parent_id","user_id","status","metadata","sort_order","next_item_number","assignee_agent_id","version","created_at","updated_at"],&["?","'thread_participant'","'default'","?","?","'active'","?","0","1","''","1","UTC_TIMESTAMP()","UTC_TIMESTAMP()"],&required);

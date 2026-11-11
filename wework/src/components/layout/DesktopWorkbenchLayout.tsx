@@ -1165,6 +1165,7 @@ export function DesktopWorkbenchLayout({
                 />
               ) : (
                 <WeworkCollaborationPlatform
+                  workspaceTabId={workspaceTabId ?? ownedWorkspaceTab?.id}
                   user={workItemUser}
                   devices={state.devices}
                   localProjects={localTodoProjects}

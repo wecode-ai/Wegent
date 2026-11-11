@@ -8,6 +8,11 @@ import { ThreadCreateDialog } from '@/features/collaboration/ThreadCreateDialog'
 import { ThreadCreationHome } from '@/features/collaboration/ThreadCreationHome'
 import { useLegacyThreadDestination } from '@/features/collaboration/useLegacyThreadDestination'
 import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import {
+  retainBoardReturnOrigin,
+  type BoardReturnOrigin,
+} from '@/features/collaboration/boardReturnOrigin'
 import { Button } from '@/components/ui/button'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { useStandInProjects } from './useStandInProjects'
@@ -123,9 +128,7 @@ import type {
 import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
-import {
-  hydrateRuntimeTaskAddress,
-} from '@/features/workbench/workbenchRuntimeHelpers'
+import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import {
   isRuntimeTaskExecutionRunning,
   runtimeTaskTrackingExecutionStatus,
@@ -315,6 +318,7 @@ function workspaceExecutionAddress(
 }
 
 export interface WeworkCollaborationPlatformProps {
+  workspaceTabId?: string
   user: User
   devices?: DeviceInfo[]
   localProjects: ProjectWithTasks[]
@@ -1385,13 +1389,29 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   const cloud = useOptionalCloudConnection()
   const draftAccountScope = workbenchOwnershipKey(cloud, props.user)
   const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
-  const [search, setSearch] = useState(() => window.location.search)
-  const [boardReturn, setBoardReturn] = useState<{
-    scope: string
-    groupId: string
-    search: string
-  } | null>(null)
-  if (boardReturn && boardReturn.scope !== draftAccountScope) setBoardReturn(null)
+  const workspaceTabs = useOptionalWorkspaceTabs()
+  const ownedTab = workspaceTabs?.tabs.find(tab => tab.id === props.workspaceTabId)
+  const [browserSearch, setSearch] = useState(() => window.location.search)
+  const ownedQueryIndex = ownedTab?.contentRoute.indexOf('?') ?? -1
+  const search = props.workspaceTabId
+    ? ownedTab && ownedQueryIndex >= 0
+      ? ownedTab.contentRoute.slice(ownedQueryIndex)
+      : ''
+    : browserSearch
+  const navigationOwner = useRef({ scope: draftAccountScope, mounted: false })
+  useLayoutEffect(() => {
+    navigationOwner.current = { scope: draftAccountScope, mounted: true }
+    return () => {
+      navigationOwner.current.mounted = false
+    }
+  }, [draftAccountScope])
+  const canNavigate = useCallback(
+    () => navigationOwner.current.mounted && navigationOwner.current.scope === draftAccountScope,
+    [draftAccountScope]
+  )
+  const [boardReturn, setBoardReturn] = useState<BoardReturnOrigin | null>(null)
+  const currentBoardReturn = retainBoardReturnOrigin(boardReturn, draftAccountScope, search)
+  if (boardReturn && !currentBoardReturn) setBoardReturn(null)
   const [retainedView, setRetainedView] = useState(props.activeProjectRef ? 'projects' : 'groups')
   const view =
     new URLSearchParams(search).get('collaborationView') ??
@@ -1400,23 +1420,43 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   const [connectOpen, setConnectOpen] = useState(false)
   const savedGroupSearch = useRef('?collaborationView=groups')
   const savedProjectSearch = useRef(
-    new URLSearchParams(window.location.search).has('itemId')
-      ? '?collaborationView=projects'
-      : window.location.search
+    new URLSearchParams(search).has('itemId') ? '?collaborationView=projects' : search
   )
+  const rememberedAccountScope = useRef(draftAccountScope)
+  useLayoutEffect(() => {
+    if (rememberedAccountScope.current !== draftAccountScope) {
+      rememberedAccountScope.current = draftAccountScope
+      savedGroupSearch.current = '?collaborationView=groups'
+      savedProjectSearch.current = '?collaborationView=projects'
+    }
+  }, [draftAccountScope])
   useEffect(() => {
+    if (props.workspaceTabId) return
     const changed = () => setSearch(window.location.search)
     window.addEventListener('popstate', changed)
     return () => window.removeEventListener('popstate', changed)
-  }, [])
+  }, [props.workspaceTabId])
+  const publishSearch = useCallback(
+    (nextSearch: string, replace = false) => {
+      if (!canNavigate()) return
+      if (props.workspaceTabId) {
+        if (ownedTab && workspaceTabs)
+          workspaceTabs.updateTab(props.workspaceTabId, { contentRoute: `/todo${nextSearch}` })
+        return
+      }
+      setSearch(nextSearch)
+      if (replace) replaceTo(`/todo${nextSearch}`)
+      else navigateTo(`/todo${nextSearch}`)
+    },
+    [props.workspaceTabId, ownedTab, workspaceTabs, canNavigate, setSearch]
+  )
   const onNavigate = useCallback(
     (nextSearch: string) => {
+      if (!canNavigate()) return
       if (view === 'groups') savedGroupSearch.current = search
       else savedProjectSearch.current = search
       const next = new URLSearchParams(nextSearch)
-      setBoardReturn(current =>
-        current && next.get('groupId') === current.groupId && next.has('threadId') ? current : null
-      )
+      setBoardReturn(current => retainBoardReturnOrigin(current, draftAccountScope, nextSearch))
       if (next.size === 1 && next.has('collaborationView')) {
         const restored = new URLSearchParams(
           next.get('collaborationView') === 'groups'
@@ -1426,25 +1466,32 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         restored.set('collaborationView', next.get('collaborationView')!)
         nextSearch = `?${restored.toString()}`
       }
-      setSearch(nextSearch)
-      navigateTo(`/todo${nextSearch}`)
+      publishSearch(nextSearch)
     },
-    [search, view]
+    [search, view, publishSearch, canNavigate, draftAccountScope]
   )
   const openProjectThread: NonNullable<CollaborationHostAdapter['openGroupThread']> = (
     groupId,
     threadId,
     store
   ) => {
+    if (!canNavigate()) return
     const origin = new URLSearchParams(search)
     origin.set('collaborationView', 'projects')
     origin.delete('itemId')
     origin.delete('commentId')
     origin.delete('focusRequest')
-    setBoardReturn({ scope: draftAccountScope, groupId, search: `?${origin.toString()}` })
+    const groupStore = store === 'local' ? 'local' : 'cloud'
+    setBoardReturn({
+      scope: draftAccountScope,
+      store: groupStore,
+      groupId,
+      threadId,
+      search: `?${origin.toString()}`,
+    })
     const target = new URLSearchParams({
       collaborationView: 'groups',
-      groupStore: store === 'local' ? 'local' : 'cloud',
+      groupStore,
       groupId,
       threadId,
       groupTab: 'chat',
@@ -1501,10 +1548,10 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   ])
   const legacyParams = new URLSearchParams(search)
   const legacyStore = legacyParams.get('projectStore') === 'local' ? 'local' : 'cloud'
-  const resolveLegacyDestination = useCallback((nextSearch: string) => {
-    setSearch(nextSearch)
-    replaceTo(`/todo${nextSearch}`)
-  }, [])
+  const resolveLegacyDestination = useCallback(
+    (nextSearch: string) => publishSearch(nextSearch, true),
+    [publishSearch]
+  )
   const legacyDestination = useLegacyThreadDestination({
     api: sources.find(source => source.store === legacyStore)?.workspace,
     itemId: legacyParams.has('groupId') ? null : legacyParams.get('itemId'),
@@ -1586,10 +1633,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
           )}
           onNavigate={onNavigate}
           onBackToBoard={
-            boardReturn?.scope === draftAccountScope &&
-            boardReturn.groupId === new URLSearchParams(search).get('groupId')
-              ? () => onNavigate(boardReturn.search)
-              : undefined
+            currentBoardReturn ? () => onNavigate(currentBoardReturn.search) : undefined
           }
           onReady={onReady}
           onConnectCloud={cloud.isConnected ? undefined : () => setConnectOpen(true)}

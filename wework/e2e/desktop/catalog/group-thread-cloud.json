@@ -14,6 +14,7 @@
     "backend/app/services/delivery/storage.py",
     "backend/app/services/delivery/conditional_copy.py",
     "wework/e2e/desktop/fixtures/thread-migration-assets.py",
+    "wework/e2e/desktop/modules/real-object-storage.mjs",
     "wework/e2e/desktop/modules/group-thread-manual-execution.mjs",
     "wework/e2e/desktop/modules/group-thread-board-privacy.mjs",
     "wework/src/features/collaboration/*"

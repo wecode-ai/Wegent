@@ -361,6 +361,7 @@ pub(crate) fn control_mcp_client_config(
 }
 
 pub async fn run() -> Result<(), String> {
+    crate::logging::reserve_executor_stdout_for_protocol();
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
     let context = SpaceMcpRequestContext::from_env();
     let grant = context.grant();

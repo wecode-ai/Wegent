@@ -4,6 +4,9 @@ set -euo pipefail
 test "${CI:-}" = true
 test -f /.dockerenv
 
+source "$(dirname "$0")/lib/apt-packages.sh"
+trap 'apt_failure_status=$?; report_apt_network_diagnostics; exit "$apt_failure_status"' ERR
+
 # Use the reachable Ubuntu mirror while retaining the image's suites and
 # signing keyring. Only disposable CI containers use this source configuration.
 for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.{list,sources}; do

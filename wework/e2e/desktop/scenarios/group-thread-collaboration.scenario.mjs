@@ -4,6 +4,7 @@ import { URL } from 'node:url'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { createBoardReturnVerification } from '../modules/group-thread-board-return.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import { ensureTaskRowVisible } from '../modules/memory-tool-flows.mjs'
 import { readFile } from 'node:fs/promises'
@@ -44,6 +45,12 @@ export function createDesktopScenario({
     )
     return captureScreenshot(control, name, CONTENT)
   }
+
+  const {
+    selectFilters: selectReturnBoardFilters,
+    assertFilters: assertReturnBoardFilters,
+    readSelectedView,
+  } = createBoardReturnVerification(CONTENT, uiTimeoutMs)
 
   async function createPrivateSession(control, prompt, createWorkspace = false) {
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
@@ -310,6 +317,9 @@ export function createDesktopScenario({
       assert.ok(threadId && groupId, 'The new Thread did not expose its owning group route')
       const sidebarThread = `thread-nav-${threadId}`
       await wait(control, sidebarThread)
+      await control.command('waitFor', `${scoped('group-message-input')}[contenteditable="true"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
       await fill(control, 'group-message-input', DISCUSSION)
       await click(control, 'group-message-send')
       await wait(control, 'group-message-list', { text: DISCUSSION })
@@ -593,14 +603,34 @@ export function createDesktopScenario({
       await click(control, 'collaboration-tab-board')
       await wait(control, 'collaboration-board')
       await capture(control, 'group-thread-board.png')
-      await fill(control, 'cloud-board-search', '统一交付')
+      await click(control, 'board-view-picker')
+      await control.command('waitFor', `[data-testid="${savedViewId}"]`, { text: '默认' })
+      await control.command('click', '[data-testid="board-view-default"]')
+      await wait(control, 'board-view-picker', { text: builtInView })
+      assert.notEqual(savedViewId, 'board-view-default')
+      const groupFilters = await selectReturnBoardFilters(control, '待开始')
+      assert.equal(groupFilters.viewId, 'board-view-default')
+      await assertReturnBoardFilters(control, groupFilters, threadId)
+      await capture(control, 'group-thread-group-board-filtered-before-open.png')
       await click(control, `cloud-todo-card-${threadId}`)
       await wait(control, 'thread-back-to-board')
       await capture(control, 'group-thread-return-to-group-board.png')
       await click(control, 'thread-back-to-board')
       await wait(control, 'collaboration-board')
-      assert.equal(await control.command('getValue', scoped('cloud-board-search')), '统一交付')
+      await assertReturnBoardFilters(control, groupFilters, threadId)
+      const groupReturned = new URL(JSON.parse(await control.command('snapshot', CONTENT)).location)
+      assert.equal(groupReturned.searchParams.get('groupId'), groupId)
+      assert.equal(groupReturned.searchParams.get('groupTab'), 'board')
+      assert.equal(groupReturned.searchParams.get('groupStore'), 'local')
+      assert.equal(groupReturned.searchParams.get('collaborationView'), 'groups')
+      assert.equal(groupReturned.searchParams.get('threadId'), null)
+      await capture(control, 'group-thread-group-board-filtered-restored.png')
+      await control.command('select', scoped('cloud-board-group-filter'), { value: '' })
+      await click(control, 'cloud-board-tag-filter-clear')
       await fill(control, 'cloud-board-search', '')
+      await click(control, 'board-view-picker')
+      await control.command('click', `[data-testid="${savedViewId}"]`)
+      await wait(control, 'board-view-picker', { text: viewName })
 
       await click(control, 'group-tab-files')
       await click(control, 'cloud-folder-add')
@@ -713,7 +743,34 @@ export function createDesktopScenario({
       await wait(control, `cloud-todo-card-${threadId}`, { text: THREAD_TITLE })
       await wait(control, `thread-source-group-${threadId}`, { text: GROUP_NAME })
       await capture(control, 'group-thread-project-aggregate.png')
-      await fill(control, 'cloud-board-search', '统一交付')
+      const projectDefault = await readSelectedView(control)
+      assert.match(
+        projectDefault.text,
+        /默认/,
+        'The initial project view must be the shared default'
+      )
+      await click(control, 'board-view-picker')
+      await control.command('click', '[data-testid="board-view-new"]')
+      await control.command('fill', '[data-testid="board-view-name"]', {
+        value: '项目返回评审视图',
+      })
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="board-view-set-default"]:checked')
+        ),
+        0,
+        'Creating a temporary selected view must preserve the shared default'
+      )
+      await control.command('click', '[data-testid="board-view-save"]')
+      await control.command('waitFor', '[data-testid="board-view-editor"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await wait(control, 'board-view-picker', { text: '项目返回评审视图' })
+      const projectFilters = await selectReturnBoardFilters(control, '待确认')
+      assert.notEqual(projectFilters.viewId, projectDefault.id)
+      await assertReturnBoardFilters(control, projectFilters, threadId)
+      await capture(control, 'group-thread-project-board-filtered-before-open.png')
       await click(control, `cloud-todo-card-${threadId}`)
       await wait(control, 'thread-room', { text: THREAD_TITLE })
       const opened = new URL(JSON.parse(await control.command('snapshot', CONTENT)).location)
@@ -723,9 +780,19 @@ export function createDesktopScenario({
       await wait(control, 'thread-back-to-board')
       await click(control, 'thread-back-to-board')
       await wait(control, `cloud-todo-card-${threadId}`, { text: THREAD_TITLE })
-      assert.equal(await control.command('getValue', scoped('cloud-board-search')), '统一交付')
+      await assertReturnBoardFilters(control, projectFilters, threadId)
+      const projectReturned = new URL(
+        JSON.parse(await control.command('snapshot', CONTENT)).location
+      )
+      assert.equal(projectReturned.searchParams.get('projectStore'), 'local')
+      assert.equal(projectReturned.searchParams.get('projectId'), projectId)
+      assert.equal(projectReturned.searchParams.get('collaborationView'), 'projects')
       await capture(control, 'group-thread-return-to-project-board.png')
+      await control.command('select', scoped('cloud-board-group-filter'), { value: '' })
+      await click(control, 'cloud-board-tag-filter-clear')
       await fill(control, 'cloud-board-search', '')
+      await click(control, 'board-view-picker')
+      await control.command('click', `[data-testid="${projectDefault.id}"]`)
 
       await click(control, 'collaboration-view-projects')
       await control.command('clickWhenEnabled', scoped(projectTestId), {

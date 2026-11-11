@@ -4,6 +4,7 @@ import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   completeLocalCollaborationFolderImport,
+  enterLocalCollaborationWorkspace,
   enterProjectCollaborationView,
   inCollaborationSidebar,
 } from '../modules/workspace-flows.mjs'
@@ -47,19 +48,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'First use did not expose the standalone Agent destination'
       )
 
-      await control.command('click', sidebarScoped('[data-testid="collaboration-primary-home"]'))
+      await enterLocalCollaborationWorkspace(control, ACTIVE_WORKBENCH_SELECTOR)
       await control.command(
         'waitFor',
-        scoped('[data-testid="collaboration-first-project-starter"]'),
+        scoped('[data-testid="collaboration-workspace-project-create"]'),
         {
-          text: '开始第一个协作项目',
           timeoutMs: uiTimeoutMs,
         }
       )
       await capture(control, 'collaboration-first-use-01-welcome.png')
 
-      await control.command('click', scoped('[data-testid="collaboration-first-project-create"]'))
-      await control.command('click', '[data-testid="collaboration-first-project-create-folder"]')
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-workspace-project-create"]')
+      )
+      await control.command(
+        'click',
+        '[data-testid="collaboration-workspace-project-import-folder"]'
+      )
       await capture(control, 'collaboration-first-use-02-workspace.png')
       await completeLocalCollaborationFolderImport(control, PROJECT_NAME)
       await control.command('waitFor', scoped('[data-testid="collaboration-empty-project"]'), {
@@ -68,6 +74,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture(control, 'collaboration-first-use-04-project.png')
 
       await control.command('click', scoped('[data-testid="collaboration-empty-project-create"]'))
+      await control.command('chooseWhenEnabled', '[data-testid="thread-create-group-select"]', {
+        value: '__new__',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', '[data-testid="thread-create-new-group-name"]', {
+        value: `${PROJECT_NAME}协作群`,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="thread-create-group-next"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
         timeoutMs: uiTimeoutMs,
       })
@@ -88,20 +104,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         scoped('[data-testid="cloud-todo-create-confirm"]'),
         { timeoutMs: uiTimeoutMs }
       )
-      await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+      await control.command('waitFor', scoped('[data-testid="thread-room"]'), {
         text: ISSUE_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      assert.equal(
-        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
-        ISSUE_NAME,
-        'The first Issue did not open after creation'
-      )
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-assignee"]'), {
+      await control.command('click', scoped('[data-testid="thread-settings"]'))
+      await control.command('waitFor', scoped('[data-testid="thread-settings-panel"]'), {
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(
-        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-assignee"]')),
+        await control.command('getValue', scoped('[data-testid="thread-settings-title"]')),
+        ISSUE_NAME,
+        'The first Issue did not open after creation'
+      )
+      await control.command('waitFor', scoped('[data-testid="thread-settings-assignee"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await control.command('getValue', scoped('[data-testid="thread-settings-assignee"]')),
         ownerTarget,
         `The first Issue did not retain its human owner ${ownerName}`
       )
