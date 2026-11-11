@@ -2,6 +2,20 @@ import assert from 'node:assert/strict'
 import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
+async function openProjectAgentEditor(control, content, agent) {
+  await control.command(
+    'clickWhenEnabled',
+    `${content} [data-testid="project-agent-edit-${agent.id}"]`
+  )
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]')
+  await waitForBoardValue(
+    () => control.command('getValue', '[data-testid="cloud-project-chat-agent-display-name"]'),
+    agent.name,
+    'The definition form must finish loading before editing',
+    10_000
+  )
+}
+
 export async function verifyProjectAgentEditing(control, content, project, agent, request) {
   const scoped = testId => `${content} [data-testid="${testId}"]`
   const dialog = '[data-testid="cloud-project-chat-agent-editor"]'
@@ -9,14 +23,17 @@ export async function verifyProjectAgentEditing(control, content, project, agent
   const prompt = 'Edited project Agent prompt: keep the original execution policy.'
   await selectCollaborationProjectView(control, content, 'manage')
   await control.command('click', scoped('collaboration-project-settings-agents'))
-  await control.command('clickWhenEnabled', scoped(`project-agent-edit-${agent.id}`))
-  await control.command('waitFor', dialog)
-  await waitForBoardValue(
-    () => control.command('getValue', '[data-testid="cloud-project-chat-agent-display-name"]'),
-    agent.name,
-    'The definition form must finish loading before editing',
-    10_000
+  await openProjectAgentEditor(control, content, agent)
+  await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
+    value: 'Cancelled draft',
+  })
+  await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]')
+  await control.command('waitFor', dialog, { visible: false })
+  const unchanged = (await request(`/api/v1/cloud-projects/${project.id}/chat-agents`)).find(
+    row => row.id === agent.id
   )
+  assert.deepEqual(unchanged, agent, 'Cancelling edits must not write the Agent definition')
+  await openProjectAgentEditor(control, content, agent)
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: name,
   })
@@ -46,14 +63,7 @@ export async function verifyProjectAgentEditing(control, content, project, agent
       `Editing must preserve ${camel}`
     )
   }
-  await control.command('clickWhenEnabled', scoped(`project-agent-edit-${agent.id}`))
-  await control.command('waitFor', dialog)
-  await waitForBoardValue(
-    () => control.command('getValue', '[data-testid="cloud-project-chat-agent-display-name"]'),
-    name,
-    'The reopened definition form must load the saved Agent',
-    10_000
-  )
+  await openProjectAgentEditor(control, content, saved)
   assert.equal(
     await control.command('getValue', '[data-testid="cloud-project-chat-agent-display-name"]'),
     name
@@ -64,4 +74,32 @@ export async function verifyProjectAgentEditing(control, content, project, agent
   )
   await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]')
   await control.command('waitFor', dialog, { visible: false })
+  await verifyArchivedAgentEditing(control, content, project, saved, request)
+}
+
+async function verifyArchivedAgentEditing(control, content, project, agent, request) {
+  const scoped = testId => `${content} [data-testid="${testId}"]`
+  await control.command('clickWhenEnabled', scoped(`project-agent-archive-${agent.id}`))
+  await control.command('waitFor', scoped(`project-agent-unavailable-${agent.id}`), {
+    text: '已停用',
+  })
+  await openProjectAgentEditor(control, content, agent)
+  const prompt = 'Edited while disabled; saving must not reactivate this Agent.'
+  await control.command('fill', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
+    value: prompt,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]')
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
+    visible: false,
+  })
+  const rows = await request(
+    `/api/v1/cloud-projects/${project.id}/chat-agents?include_archived=true`
+  )
+  const saved = rows.find(row => row.id === agent.id)
+  assert.ok(saved, 'A disabled Agent must remain editable without recreating it')
+  assert.equal(saved.status, 'archived')
+  assert.equal(saved.systemPrompt ?? saved.system_prompt, prompt)
+  await control.command('waitFor', scoped(`project-agent-unavailable-${agent.id}`), {
+    text: '已停用',
+  })
 }

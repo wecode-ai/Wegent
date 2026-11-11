@@ -35,7 +35,13 @@ export function createProjectAgentEditorApi(
     listNativeModels: (environment, projectId) => catalog.listNativeModels(environment, projectId),
     listModels: () => catalog.listModels(),
     async list(projectId, options) {
-      return (await agents.list(projectId, options)).map(editorAgent)
+      return (
+        await agents.list(projectId, {
+          ...options,
+          includeArchived: true,
+          forceRefresh: true,
+        })
+      ).map(editorAgent)
     },
     async create(projectId, input) {
       return editorAgent(await agents.create(projectId, definitionInput({ ...input })))
