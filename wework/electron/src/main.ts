@@ -2816,7 +2816,9 @@ function startDesktopRuntime(): Promise<void> {
   runtimePhase = 'initializing'
   runtimeError = null
   lastStartupFailure = null
-  void pluginDevelopmentChildRuntime?.writeState('starting')
+  startStartupMaintenance('development status', () =>
+    pluginDevelopmentChildRuntime?.writeState('starting')
+  )
   notifyRuntimeChanged()
   runtimeStartPromise = (async () => {
     await configureDesktopRuntime()
@@ -2839,7 +2841,9 @@ function startDesktopRuntime(): Promise<void> {
     )
     runtimePhase = lastStartupFailure ? 'failed' : 'ready'
     if (lastStartupFailure) return
-    pluginDevelopmentChildRuntime?.startWatcher()
+    startStartupMaintenance('development watcher', () =>
+      pluginDevelopmentChildRuntime?.startWatcher()
+    )
     startStartupMaintenance('development status', () =>
       pluginDevelopmentChildRuntime?.writeState('ready')
     )
@@ -2869,9 +2873,11 @@ function startDesktopRuntime(): Promise<void> {
         error = rollbackError
       }
       recordStartupFailure(error, 'desktop_runtime')
-      await pluginDevelopmentChildRuntime?.writeState(
-        'error',
-        error instanceof Error ? error : new Error(String(error))
+      startStartupMaintenance('development error status', () =>
+        pluginDevelopmentChildRuntime?.writeState(
+          'error',
+          error instanceof Error ? error : new Error(String(error))
+        )
       )
       logStartupStep('desktop-runtime-start', 'failed', {
         errorType: error instanceof Error ? error.name : typeof error,
