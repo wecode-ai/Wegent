@@ -135,11 +135,11 @@ export function createInteractionDraftStore(accountKey: string) {
         const unsaved = pendingText.get(interaction.id)
         const text =
           unsaved !== undefined
-            ? unsaved || nativeReply?.text || ''
-            : nativeReply
-              ? nativeReply.text
-              : alreadyRetained && retained
-                ? retained.text
+            ? unsaved || (nativeReply && !alreadyRetained ? nativeReply.text : '')
+            : alreadyRetained && retained
+              ? retained.text
+              : nativeReply
+                ? nativeReply.text
                 : draftText(previous)
         if (!text) {
           // A native reply must never be acknowledged without a recoverable copy.

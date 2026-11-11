@@ -121,3 +121,55 @@ it('retains a late native reply when an earlier draft clear failed', async () =>
     expect.objectContaining({ text: 'Recover from the host queue' }),
   ])
 })
+
+it('preserves a user edit when acknowledgement and receipt persistence both fail', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  harness.desktop = true
+  harness.send.mockResolvedValue({ accepted: false, error: 'rejected' })
+  let replies = [{ id: 'native-edited', interactionId: '', text: 'Original native text' }]
+  let failedAcknowledgement = false
+  harness.host.mockImplementation(async (command: string) => {
+    if (command === 'notification.pendingReplies') return replies[0]?.interactionId ? replies : []
+    if (command === 'notification.acknowledgeReply') {
+      if (!failedAcknowledgement) {
+        failedAcknowledgement = true
+        throw new Error('host unavailable')
+      }
+      replies = []
+    }
+  })
+  const original = Storage.prototype.setItem
+  const handledWrite = vi
+    .spyOn(Storage.prototype, 'setItem')
+    .mockImplementation(function (key, value) {
+      if (key === prefix + 'native-replies') throw new Error('Quota exceeded')
+      return original.call(this, key, value)
+    })
+  const first = view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const id = context!.pending[0].id
+  replies[0].interactionId = id
+  act(() => harness.hostListeners.forEach(listener => listener({ type: 'notification-reply' })))
+  await waitFor(() => expect(failedAcknowledgement).toBe(true))
+  expect(localStorage.getItem(prefix + 'native-replies') ?? '').not.toContain('native-edited')
+  await waitFor(() => expect(context!.drafts[id]).toBe('Original native text'))
+
+  act(() => context!.setDraft(id, 'Edited after failed acknowledgement'))
+  await waitFor(() =>
+    expect(JSON.parse(localStorage.getItem(prefix + 'drafts')!)[id]).toMatchObject({
+      text: 'Edited after failed acknowledgement',
+      nativeReplyIds: ['native-edited'],
+    })
+  )
+
+  handledWrite.mockRestore()
+  first.unmount()
+  view()
+  await waitFor(() => expect(replies).toEqual([]))
+  expect(context!.drafts[id]).toBe('Edited after failed acknowledgement')
+  expect(JSON.parse(localStorage.getItem(prefix + 'drafts')!)[id]).toMatchObject({
+    text: 'Edited after failed acknowledgement',
+    nativeReplyIds: ['native-edited'],
+  })
+  expect(harness.send).toHaveBeenCalledOnce()
+})
