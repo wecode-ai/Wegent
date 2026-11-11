@@ -2040,7 +2040,8 @@ impl RuntimeWorkRpcHandler {
             ));
         };
 
-        let request = runtime_model_request(&link, &payload)?;
+        let mut request = runtime_model_request(&link, &payload)?;
+        self.apply_backend_connection(&mut request);
         let client = match self.codex_app_server.for_request(&request) {
             Ok(client) => client,
             Err(error) => return Ok(task_action_failure(&link, error)),
@@ -2065,19 +2066,20 @@ impl RuntimeWorkRpcHandler {
         thread_id: &str,
         request: ExecutionRequest,
     ) -> Result<Value, AppIpcError> {
-        let thread_id = match self
-            .resume_codex_thread_with_client(client, link, thread_id)
+        self.register_thread_event_route(
+            thread_id,
+            link.local_task_id.clone(),
+            request.clone(),
+            true,
+        );
+        self.ensure_notification_router().await;
+        let thread_path = runtime_thread_path_from_link(link);
+        // Retain the registered inference route until native compaction settles.
+        let (thread_id, _model_route) = match client
+            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
             .await
         {
-            Ok(resumed_thread_id) => resumed_thread_id,
-            Err(error) => return Ok(task_action_failure(link, error)),
-        };
-        // The compaction turn answers through the local model route, which only
-        // exists while a turn that registered it is alive. Register it for the
-        // duration of this action so compacting an idle thread still reaches a
-        // model instead of failing inside the Codex app-server.
-        let _model_route = match bind_codex_thread_model_route(&request, &thread_id) {
-            Ok(route) => route,
+            Ok(context) => context,
             Err(error) => return Ok(task_action_failure(link, error)),
         };
         self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);

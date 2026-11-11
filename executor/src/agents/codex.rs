@@ -4431,45 +4431,6 @@ fn bind_local_proxy_thread(
     Ok(())
 }
 
-/// Registers the local model route that serves a Codex thread and binds it to
-/// that thread.
-///
-/// A Codex thread reaches its model through the local `codex-router` route, and
-/// that route only exists while a turn that registered it is alive. Actions that
-/// drive an existing thread without spawning a turn must establish the route
-/// themselves, otherwise the thread cannot reach any model at all.
-///
-/// Returns `None` when the task talks to its provider directly instead of going
-/// through the local route, and a registration that must stay alive for as long
-/// as the thread needs the model otherwise.
-pub(crate) fn bind_codex_thread_model_route(
-    request: &ExecutionRequest,
-    thread_id: &str,
-) -> Result<Option<LocalProxyRegistration>, String> {
-    let Some((upstream, _)) = provider_routing::request_upstream(request)? else {
-        return Ok(None);
-    };
-    let mut upstream = upstream;
-    upstream.routing_model_id = codex_request_model(request);
-    inject_session_headers(&mut upstream.default_headers, &request.task_id);
-    let vision_sidecar =
-        vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?;
-    let registration = LocalProxyRegistration(local_model_proxy::register_with_vision_sidecar(
-        &request.task_id,
-        upstream,
-        vision_sidecar,
-    ));
-    registration.bind_thread(thread_id)?;
-    log_executor_event(
-        "codex thread model route bound",
-        &[
-            ("task_id", request.task_id.clone()),
-            ("thread_id", thread_id.to_owned()),
-        ],
-    );
-    Ok(Some(registration))
-}
-
 struct PreparedCodexExecutionRequest {
     request: ExecutionRequest,
     generated_files: Vec<PathBuf>,

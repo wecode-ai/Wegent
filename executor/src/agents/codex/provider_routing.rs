@@ -184,11 +184,9 @@ wire_api = "responses"
                 Some(codex_model_catalog::PROVIDER_ID)
             );
             assert!(launch.local_proxy_registration.is_some());
-            assert!(
-                bind_codex_thread_model_route(&request, &format!("thread-{user_config}"))
-                    .unwrap()
-                    .is_some()
-            );
+            let thread_id = format!("thread-{user_config}");
+            bind_local_proxy_thread(&launch, &thread_id).unwrap();
+            assert!(local_model_proxy::thread_has_bound_route(&thread_id));
         }
     }
 

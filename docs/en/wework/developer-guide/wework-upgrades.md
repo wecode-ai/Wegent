@@ -84,6 +84,11 @@ cannot serve the replacement response directly. Native OpenAI threads retain nat
 account authentication; public API threads use their HTTP provider. Fill omitted Agent Home identity
 from the original conversation without restoring old authentication tokens. Unsaved temporary
 threads retain direct execution.
+Context compaction also calls the model. After the shared app-server restarts, a cold thread must
+restore its complete inference context from the request's freshly resolved model configuration.
+A control-only resume must not inherit the process discovery profile's OpenAI compaction v2
+capability. Bind model routes and notification subscriptions before resume, retaining the route
+registration until native compaction completes. Native accounts retain their own compaction protocol.
 
 Server-created tasks must also retain one stable identity for the initial visible user message
 across provisional history, the execution request and native turn presentation bindings. Reconcile

@@ -3234,8 +3234,11 @@ fn binds_an_idle_thread_to_the_task_model_route() {
         "an idle thread starts without a bound route"
     );
 
-    let registration = bind_codex_thread_model_route(&request, "idle-thread-route-thread")
-        .expect("binding the task route should succeed")
+    let action = build_codex_launch_config(&request).expect("action should prepare inference");
+    bind_local_proxy_thread(&action, "idle-thread-route-thread").unwrap();
+    let registration = action
+        .local_proxy_registration
+        .as_ref()
         .expect("payload providers must route through the local model proxy");
     assert!(
         local_model_proxy::thread_has_bound_route("idle-thread-route-thread"),
@@ -3272,11 +3275,9 @@ fn skips_the_local_route_for_providers_that_are_reached_directly() {
         ..ExecutionRequest::default()
     };
 
-    assert!(
-        bind_codex_thread_model_route(&request, "direct-provider-thread")
-            .expect("a direct provider needs no local route")
-            .is_none()
-    );
+    let launch = build_codex_launch_config(&request).expect("direct provider should prepare");
+    bind_local_proxy_thread(&launch, "direct-provider-thread").unwrap();
+    assert!(launch.local_proxy_registration.is_none());
     let _ = fs::remove_dir_all(root);
 }
 

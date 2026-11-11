@@ -28,6 +28,9 @@ use wegent_executor::{
 #[path = "support/runtime_side_source_contract.rs"]
 mod runtime_side_source_contract;
 
+#[path = "support/runtime_compaction_context.rs"]
+mod runtime_compaction_context;
+
 #[path = "support/runtime_task_project_move.rs"]
 mod runtime_task_project_move;
 
