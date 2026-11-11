@@ -54,12 +54,21 @@ test.each([0, 1])(
         return user.user_name
       return undefined
     })
+    let pollingReady!: () => void
+    const polling = new Promise<void>(resolve => {
+      pollingReady = resolve
+    })
     const cloud = {
       backendUrl: 'http://127.0.0.1:8000',
       authToken: 'fixture-token',
       redisPort: 6379,
+      waitForAuthorizationPolling: vi.fn(() => polling),
     }
-    await expect(signInDesktopCloud({ command }, cloud)).resolves.toEqual(user)
+    const login = signInDesktopCloud({ command }, cloud)
+    await vi.waitFor(() => expect(cloud.waitForAuthorizationPolling).toHaveBeenCalledWith(id))
+    expect(pluginApi).toHaveBeenCalledTimes(1)
+    pollingReady()
+    await expect(login).resolves.toEqual(user)
     const focus = command.mock.calls.findIndex(([action]) => action === 'focusMainWindow')
     const connectedCard = command.mock.calls.findIndex(
       ([action, selector]) =>
@@ -70,6 +79,15 @@ test.each([0, 1])(
       command.mock.invocationCallOrder[focus]
     )
     expect(focus).toBeLessThan(connectedCard)
+    expect(command).toHaveBeenCalledWith(
+      'waitFor',
+      '[data-testid="cloud-connection-status-card"]',
+      {
+        text: user.user_name,
+        visible: true,
+        timeoutMs: 10_000,
+      }
+    )
     expect(commandOutputAsync).toHaveBeenCalledWith(
       join(redisRoot, process.platform === 'win32' ? 'redis-cli.exe' : 'redis-cli'),
       ['-p', '6379', '--raw', '--scan', '--pattern', '*wework_auth_session:*']

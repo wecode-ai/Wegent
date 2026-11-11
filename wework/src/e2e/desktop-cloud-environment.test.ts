@@ -117,3 +117,33 @@ test('a completed cloud turn remains an active conversation and must settle the 
   environment.runtimeTask.mockResolvedValue({ ...address, running: false, status: 'failed' })
   await expect(environment.waitForRuntimeTask(address)).rejects.toThrow('settled as failed')
 })
+
+test('authorization readiness requires a successful poll for the exact new session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-cloud-authorization-'))
+  const cloud = new RealCloudEnvironment({})
+  cloud.backendApiLogPath = join(directory, 'api.log')
+  const id = '12345678-1234-1234-1234-123456789abc'
+  const pending = `[API] GET /api/auth/wework/sessions/${id}/poll?poll_token=fixture-poll`
+  await writeFile(cloud.backendApiLogPath, `${pending} 500 0ms 200 0\n`)
+  const settled = vi.fn()
+  const ready = cloud.waitForAuthorizationPolling(id).then(settled)
+  try {
+    await appendFile(
+      cloud.backendApiLogPath,
+      '[API] GET /api/auth/wework/sessions/other-session/poll?poll_token=fixture-other 200 0ms\n'
+    )
+    const prematurelyReady = await Promise.race([
+      ready.then(() => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 150)),
+    ])
+    expect(prematurelyReady).toBe(false)
+  } finally {
+    await appendFile(cloud.backendApiLogPath, `${pending} 200 0ms\n`)
+    try {
+      await ready
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+  expect(settled).toHaveBeenCalledOnce()
+})
