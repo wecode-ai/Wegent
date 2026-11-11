@@ -14,6 +14,8 @@ sidebar_position: 12
 接单和完成结果作为两条独立评论出现。子代理执行期间仍可输入和发送评论，后续唤醒按顺序处理。
 直接回复分身评论时不必再次 @，回复会交给该原分身。私人聊天、推理和工具过程不会同步到评论区。
 
+Issue 中的分身回复以“所属用户 (角色)”署名，例如“张三 (助理)”，便于区分不同用户的分身。成员姓名暂不可用时显示用户编号；成员信息加载后显示姓名。
+
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
 
