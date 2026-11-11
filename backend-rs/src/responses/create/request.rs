@@ -691,7 +691,7 @@ async fn build_request_with_runtime(
     // `_apply_user_mcp_oauth_header` (`request_builder.py:2029-2036`).
     let tokens = crate::user_mcp_oauth::token_service(input.user_id, &state.mysql);
     let user_default_target_id = format!("user:{}", input.user_id);
-    let mut binding_refs = super::skills::list_user_default_skill_refs(
+    let binding_refs = super::skills::list_user_default_skill_refs(
         &state.mysql,
         input.user_id,
         &user_default_target_id,
@@ -700,13 +700,6 @@ async fn build_request_with_runtime(
     )
     .await
     .map_err(dependency)?;
-    let early_shell = if super::skills::binding_refs_restrict_shell(&binding_refs) {
-        let resolved = resolve_shell_type(state, input).await?;
-        super::skills::retain_shell_compatible_bindings(&mut binding_refs, &resolved.0);
-        Some(resolved)
-    } else {
-        None
-    };
     let mut skills = get_bot_skills(
         &state.mysql,
         &merged,
@@ -748,29 +741,9 @@ async fn build_request_with_runtime(
         Some(input.message),
     );
 
-    // Shell resolution (`_resolve_shell_info`) belongs to `_build_bot_config`
-    // (`request_builder.py:415`, shell at `:2219`), which runs after
-    // `_get_bot_skills` (`:393`). The Shell lookup keys the group gate by
-    // `team.user_id`, so resolving it earlier moves that owner's
-    // `iter_user_groups_with_roles` block — including its ERP identity and
-    // membership-cache reads — ahead of the Ghost/Skill reads
-    // (`request_builder.py:318-422`). The only earlier call is the binding
-    // filter above, exactly where the Source's cached `_resolve_shell_info`
-    // runs when an automatic binding restricts its Shells; reuse that result
-    // so the Shell is read once.
-    let (shell_type, base_image) = match early_shell {
-        Some(resolved) => resolved,
-        None => resolve_shell_type(state, input).await?,
-    };
-    // `_filter_runtime_skills` (`request_builder.py:461`): a Skill whose
-    // declared `bind_shells` does not bind this bot's Shell is dropped from
-    // the turn's selection, while a required preload stays strict. Selection
-    // happens before the metadata projection so `skills`, `skill_names`,
-    // `skill_configs` and `skill_refs` all carry the same set — the runtime
-    // request advertises `skill_refs` verbatim, so a dropped Skill must not
-    // survive there (or in the derived `preload_skill_refs`).
-    let runtime_skill_names = super::skills::select_runtime_skill_names(&skills, &shell_type)?;
-    super::skills::retain_runtime_skills(&mut skills, &runtime_skill_names);
+    // As in the Python builder, resolve the Bot's Shell after resolving its
+    // Skills. The legacy bindShells field is carried as Skill metadata.
+    let (shell_type, base_image) = resolve_shell_type(state, input).await?;
 
     // `_append_web_runtime_guidance` (`request_builder.py:551-566`): the
     // chat entry point injects the Wegent web runtime guidance into the
