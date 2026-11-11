@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { rm, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { TransportFaultProxy } from './transport-fault-proxy.mjs'
 import { managedRoot } from './managed-plugin-root.mjs'
@@ -124,13 +124,23 @@ export async function verifyPluginNativeAuth({
     const installed = await sync({ action: 'install', targetId: release.pluginId })
     const id = Number(installed.operation.plugin.metadata.labels.id)
     assert.ok(await managedRoot(executorHome, id))
-    await cloud.publishPluginRelease({
+    const upgrade = await cloud.publishPluginRelease({
       slug,
       version: '1.0.1',
       skills: { [slug]: `${slug} updated` },
     })
-    const updated = await sync({ action: 'update', targetId: id })
+    const updated = await sync({
+      action: 'update',
+      targetId: id,
+      payload: { releaseId: upgrade.releaseId },
+    })
     assert.equal(updated.operation.plugin.spec.version, '1.0.1')
+    const updatedRoot = await managedRoot(executorHome, id)
+    assert.ok(updatedRoot)
+    assert.equal(
+      JSON.parse(await readFile(join(updatedRoot, '.codex-plugin/plugin.json'), 'utf8')).version,
+      '1.0.1'
+    )
     await sync({ action: 'uninstall', targetId: id })
     assert.equal(await managedRoot(executorHome, id), null)
     assert.equal(JSON.parse(await localAuth('logout')).status, 'ok')
