@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils'
 import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
 import { canDiscussQuestion, useQuestionDiscussion } from './questionDiscussion'
 import { InteractionTime } from './InteractionTime'
+import { InteractionDraftRecovery } from './InteractionDraftRecovery'
 
 interface PendingWorkRow {
   id: string
@@ -247,6 +248,7 @@ export function RuntimeInteractionsPage({
           </button>
         </header>
         <div className="flex-1 overflow-y-auto px-2 pb-3">
+          <InteractionDraftRecovery />
           {INTERACTION_SOURCES.map(source => {
             const entries = rows
               .filter(entry => entry.source === source)
@@ -335,7 +337,12 @@ export function RuntimeInteractionsPage({
             </p>
           )}
           {Object.entries(errors)
-            .filter(([key]) => !pending.some(request => request.id === key))
+            .filter(
+              ([key]) =>
+                !pending.some(request => request.id === key) &&
+                !interactions.history.some(item => item.id === key) &&
+                !interactions.replyDrafts.some(draft => draft.interaction.id === key)
+            )
             .map(([key, error]) => (
               <p key={key} role="alert" className="px-3 py-2 text-sm text-status-error">
                 {error}

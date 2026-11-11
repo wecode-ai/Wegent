@@ -14,6 +14,7 @@ import { PersonalStandInWorkspace } from './PersonalStandInWorkspace'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import * as migration from './migrateStandIn'
 import { newStandInRole } from '@/api/personalStandIn'
+import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 
 const guard = vi.hoisted(() => vi.fn((action: () => void) => action()))
 const projectList = vi.hoisted(() => vi.fn(async () => []))
@@ -34,6 +35,7 @@ vi.mock('./StandInOverviewPage', () => ({
     userId,
     initialDeviceId,
     initialProfileId,
+    initialSelectedRoleId,
     headerActions,
     onSelectLocation,
     ref,
@@ -41,6 +43,7 @@ vi.mock('./StandInOverviewPage', () => ({
     userId: number
     initialDeviceId: string
     initialProfileId?: string
+    initialSelectedRoleId?: string
     headerActions: ReactNode
     onSelectLocation(device: string): void
     ref: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
@@ -53,7 +56,7 @@ vi.mock('./StandInOverviewPage', () => ({
           data-testid="retained-role-draft"
           data-owner={userId}
           data-device={initialDeviceId}
-          defaultValue={initialProfileId}
+          defaultValue={initialProfileId ?? initialSelectedRoleId}
         />
         <button data-testid="legacy-change-device" onClick={() => onSelectLocation('cloud-one')}>
           Legacy callback
@@ -116,6 +119,7 @@ function fixture(
       } as DeviceInfo,
     ],
     active: true,
+    entryRequestKey: 0,
     contentRoute: '/stand-in',
     onClose: vi.fn(),
     onOpenTask: vi.fn(),
@@ -129,6 +133,42 @@ function fixture(
   )
   return { props, workspace, binding, lifecycle, identity, personalGet }
 }
+
+it('reads the authoritative primary binding again when the workspace is explicitly reopened', async () => {
+  const f = fixture()
+  const view = render(f.workspace())
+  await waitFor(() =>
+    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+  )
+  f.binding.mockResolvedValue({
+    version: 4,
+    status: 'active',
+    target: { userId: 7, deviceId: 'cloud-one' },
+  })
+  view.rerender(f.workspace({ entryRequestKey: 1 }))
+  await waitFor(() =>
+    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
+  )
+  expect(f.lifecycle).not.toHaveBeenCalled()
+  expect(f.binding).toHaveBeenCalledTimes(2)
+})
+
+it('refreshes native data when the active page is opened again at the same route', async () => {
+  const f = fixture()
+  render(f.workspace())
+  await screen.findByTestId('retained-role-draft')
+  const reads = f.personalGet.mock.calls.length
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+        detail: { kind: 'task', contentRoute: '/stand-in' },
+      })
+    )
+  })
+  await waitFor(() => expect(f.binding).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(f.personalGet.mock.calls.length).toBeGreaterThan(reads))
+  expect(f.lifecycle).not.toHaveBeenCalled()
+})
 
 it('does not report another account while the instance binding is still unknown', async () => {
   const backendUrl = 'https://cloud.example.test/api/v1'
@@ -207,7 +247,18 @@ async function confirmStop() {
   await userEvent.click(screen.getByTestId('stand-in-instance-stop-confirm'))
 }
 
-it('has no profile selector and cannot change the bound device via legacy navigation', async () => {
+it('leaves the previous role location after stopping and binding a different primary device', async () => {
+  const f = fixture()
+  render(f.workspace({ contentRoute: '/stand-in?deviceId=mac&profileId=review' }))
+  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+  await confirmStop()
+  await userEvent.click(await screen.findByTestId('stand-in-instance-bind-7-cloud-one'))
+  await waitFor(() =>
+    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
+  )
+})
+
+it('keeps the primary binding while following an explicit role on another device', async () => {
   const f = fixture()
   const view = render(f.workspace())
   const field = await screen.findByTestId('retained-role-draft')
@@ -216,10 +267,12 @@ it('has no profile selector and cannot change the bound device via legacy naviga
   await userEvent.click(screen.getByTestId('legacy-change-device'))
   expect(field).toHaveAttribute('data-device', 'mac')
   expect(f.binding).toHaveBeenCalledTimes(1)
-  view.rerender(f.workspace({ contentRoute: '/stand-in?deviceId=cloud-one&profileId=other' }))
-  expect(screen.getByTestId('retained-role-draft')).toBe(field)
-  expect(field).toHaveValue('')
-  expect(field).toHaveAttribute('data-device', 'mac')
+  await act(async () =>
+    view.rerender(f.workspace({ contentRoute: '/stand-in?deviceId=cloud-one&profileId=other' }))
+  )
+  await waitFor(() => expect(screen.getByTestId('retained-role-draft')).toHaveValue('other'))
+  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
+  expect(f.binding).toHaveBeenCalledTimes(1)
 })
 
 it('honors an explicit project link only while establishing the first instance binding', async () => {

@@ -613,13 +613,13 @@ export function CustomModelCapabilitiesForm({
                                 <option value="native">
                                   {t(
                                     'workbench.local_model_codex_tool_compatibility_native',
-                                    '原生兼容（推荐）'
+                                    '原生兼容'
                                   )}
                                 </option>
                                 <option value="standard">
                                   {t(
                                     'workbench.local_model_codex_tool_compatibility_standard',
-                                    '仅兼容标准 Responses'
+                                    '仅兼容标准 Responses（推荐）'
                                   )}
                                 </option>
                               </select>

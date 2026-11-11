@@ -22,21 +22,25 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Vec<String>, AppIpcError> {
         let binding = &issue["human_task_binding"];
         // Invalid hints must reach normal assignment validation, not create intent.
-        if binding["humanAssignmentId"].as_str().is_none()
-            || super::stand_in::issue_assignment_event_id(binding).is_err()
+        let manual = configs
+            .first()
+            .is_some_and(|config| config["manual"] == true);
+        if !manual
+            && (binding["humanAssignmentId"].as_str().is_none()
+                || super::stand_in::issue_assignment_event_id(binding).is_err())
         {
             return Ok(Vec::new());
         }
-        let matching = if configs
-            .first()
-            .is_some_and(|config| config["manual"] == true)
-        {
+        let matching = if manual {
             configs.iter().collect()
         } else {
             super::personal_stand_in::matching_personal_roles(configs, issue)
         };
         let pending: Vec<&Value> = matching
             .into_iter()
+            // Admit new work only on its selected device. Existing reservations
+            // remain eligible; a rejected repeat cannot replace an older intent.
+            .filter(|config| self.stand_in_issue_runs_here(config, issue))
             .filter(|config| {
                 let task_id = self.stand_in_task_id(config, issue);
                 !self.stand_in_assignment_is_handled(config, &task_id, binding)
@@ -154,6 +158,9 @@ impl RuntimeWorkRpcHandler {
         if intent["deviceId"] != self.device_id {
             return Ok(());
         }
+        if intent["manual"] == true && intent["errorCode"] == "wrong_device" {
+            return Ok(());
+        }
         let connection = self.backend_connection_snapshot()?;
         if connection
             .as_ref()
@@ -180,6 +187,34 @@ impl RuntimeWorkRpcHandler {
         if !settings["lifecycle"]["status"].is_null() {
             return Ok(());
         }
+        if intent["manual"] == true {
+            let user = intent["userId"].as_i64().unwrap_or_default();
+            let role = intent["roleId"].as_str().unwrap_or_default();
+            if !crate::task_runtime::personal_stand_in::stand_in_identities(&settings)
+                .iter()
+                .any(|identity| identity["id"] == role)
+            {
+                return Ok(());
+            }
+            let mut config = store
+                .stand_in_settings(project, user, role)
+                .map_err(settings_error)?;
+            config["projectId"] = intent["projectId"].clone();
+            config["projectStore"] = json!("cloud");
+            config["userId"] = json!(user);
+            config["executionDeviceId"] = json!(self.device_id);
+            config["manual"] = json!(true);
+            config["recoveringDispatch"] = json!(true);
+            let issue = self.read_stand_in_issue(store, user, &json!({
+                "projectStore":"cloud", "cloudProjectId":project,"loopItemId":intent["issueId"]
+            })).await?;
+            let gate = self.task_send_gate(&format!(
+                "stand-in-issue:{project}:{}",
+                intent["issueId"].as_str().unwrap_or_default()
+            ));
+            let _guard = gate.lock().await;
+            return self.start_manual_stand_in_attempt(&config, &issue).await;
+        }
         let Some(mut config) = self
             .stand_in_project_configs(&[settings], project, "cloud")
             .into_iter()
@@ -187,13 +222,13 @@ impl RuntimeWorkRpcHandler {
         else {
             return Ok(());
         };
-        if config["enabled"] != true || config["executionDeviceId"] != self.device_id {
+        if config["enabled"] != true {
             return Err(AppIpcError::new(
                 "permission_denied",
                 "Stand-in dispatch is paused on this device",
             ));
         }
-        if intent["manual"] != true && config["handlingPolicy"]["automatic"] == false {
+        if config["handlingPolicy"]["automatic"] == false {
             return Ok(());
         }
         let issue_id = intent["issueId"].as_str().unwrap_or_default();
@@ -216,12 +251,14 @@ impl RuntimeWorkRpcHandler {
         if self.stand_in_assignment_is_handled(&config, &task_id, &intent["binding"]) {
             return Ok(());
         }
-        config["manual"] = intent["manual"].clone();
         config["intakeRouted"] = intent["intakeRouted"].clone();
         // Recheck inside the normal task gate as well: another dispatcher may
         // accept and fail a task between the observation above and gate acquisition.
         config["recoveringDispatch"] = json!(true);
-        self.start_cloud_stand_in_attempt(&[config], &issue).await
+        // The durable intent was admitted here before the role moved. Current
+        // ownership and execution permissions are still revalidated above/below.
+        config["executionDeviceId"] = json!(self.device_id);
+        self.start_cloud_assignment_attempt(&[config], &issue).await
     }
 }
 

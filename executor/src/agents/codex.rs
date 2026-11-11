@@ -4947,15 +4947,22 @@ fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<Strin
             CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE.to_owned(),
         ];
     }
-    if request
-        .extra
-        .get("origin")
-        .and_then(|origin| origin.get("type"))
-        .and_then(Value::as_str)
-        == Some("stand_in_identity")
+    let explicit_native_mode =
+        matches!(codex_collaboration_mode(request), Some("default" | "plan"));
+    if explicit_native_mode
+        || request
+            .extra
+            .get("origin")
+            .and_then(|origin| origin.get("type"))
+            .and_then(Value::as_str)
+            == Some("stand_in_identity")
     {
-        // Stand-in chat needs the native mailbox wait that also wakes on user input.
-        return vec![CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE.to_owned()];
+        // A resumed thread retains its agent family, including an earlier disabled state.
+        // Explicit native modes and stand-in chat require the V2 mailbox tools.
+        return vec![
+            "agents.enabled=true".to_owned(),
+            CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE.to_owned(),
+        ];
     }
     Vec::new()
 }
@@ -5133,23 +5140,22 @@ fn configured_codex_provider(
         .filter(|value| !value.is_empty())
         .unwrap_or("openai-responses")
         .to_owned();
-    let native_by_default = api_format == "openai-responses";
     let convert_custom_tools = api_format != "openai-responses"
         || provider_config
             .get("tool_profile")
             .or_else(|| provider_config.get("toolProfile"))
             .and_then(|value| value.as_str())
-            .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+            .map_or(true, |profile| !profile.eq_ignore_ascii_case("custom"));
     let native_tool_search = provider_config
         .get("native_tool_search")
         .or_else(|| provider_config.get("nativeToolSearch"))
         .and_then(|value| value.as_bool())
-        .unwrap_or(native_by_default);
+        .unwrap_or(false);
     let native_namespace_tools = provider_config
         .get("native_namespace_tools")
         .or_else(|| provider_config.get("nativeNamespaceTools"))
         .and_then(|value| value.as_bool())
-        .unwrap_or(native_by_default);
+        .unwrap_or(false);
     let request_path = match api_format.as_str() {
         "openai-chat-completions" => "/chat/completions",
         "anthropic-messages" => "/messages",

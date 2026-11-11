@@ -644,7 +644,7 @@ export function seedDesktopE2ELocalModels(
       displayName: 'Desktop E2E DeepSeek Pro Vision Main',
       modelId: 'deepseek-v4-pro',
       apiFormat: 'openai-responses' as const,
-      toolProfile: 'custom' as const,
+      toolProfile: 'function' as const,
       requestPath: '/v1/responses',
       contextWindow: 1_048_576,
       webSearchMode: 'live' as const,

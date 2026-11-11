@@ -89,6 +89,7 @@ classify_path() {
 
   case "$path" in
     backend/app/services/runtime_continuation.py | \
+      wework/e2e/desktop/modules/workbench-control-collaboration.mjs | \
       executor/src/runtime_work/reader* | \
       executor/src/workbench_control/* | \
       executor/src/runtime_work/handler/control.rs | \

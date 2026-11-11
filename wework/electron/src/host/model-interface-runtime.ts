@@ -1,24 +1,13 @@
 import type { ProviderModel, ResolvedProviderModel } from './model-configuration-contract.js'
 
-/** Resolve provider tool restrictions before foreground and background configuration diverge. */
+/** Default configured APIs to portable tools; native tools require an explicit selection. */
 export function modelInterfaceToolProfile(config: {
   apiFormat: string
   providerProfileId?: string
   toolProfile?: string | null
 }): NonNullable<ProviderModel['tool_profile']> {
   const value = config.toolProfile
-  const profile =
-    value === 'custom' || value === 'function' || value === 'shell'
-      ? value
-      : config.apiFormat === 'openai-responses'
-        ? 'custom'
-        : 'function'
-  // DeepSeek accepts custom apply_patch, but not Code Mode's custom exec.
-  return config.providerProfileId === 'deepseek' &&
-    config.apiFormat === 'openai-responses' &&
-    profile === 'custom'
-    ? 'function'
-    : profile
+  return value === 'custom' || value === 'function' || value === 'shell' ? value : 'function'
 }
 
 /** Normalized settings shared by ordinary tasks and device-owned runner models. */
@@ -52,7 +41,7 @@ export function modelInterfaceRuntimeConfig(
   reasoningEffort: string | null = null
 ): Record<string, unknown> {
   const nativeTools =
-    config.apiFormat === 'openai-responses' && config.codexToolCompatibility !== 'standard'
+    config.apiFormat === 'openai-responses' && config.codexToolCompatibility === 'native'
   const requestPath =
     config.requestPath ??
     (config.apiFormat === 'anthropic-messages'

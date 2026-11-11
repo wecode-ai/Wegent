@@ -238,6 +238,29 @@ async def test_initialization_lock_is_scoped_per_environment_and_device(
     ]
 
 
+@pytest.mark.parametrize(
+    ("code", "requires_sync"),
+    [
+        ("credentials-required", True),
+        ("authentication-failed", True),
+        ("ssh-authentication-failed", False),
+        ("network-error", False),
+        ("repository-inaccessible", False),
+    ],
+)
+def test_only_http_credentials_require_cloud_git_sync(
+    code: str, requires_sync: bool
+) -> None:
+    diagnostic = f'git-access:{{"code":"{code}","domain":"git.example"}}'
+
+    assert (
+        execution_environment_initialization._requires_git_configuration(
+            {"error": diagnostic}
+        )
+        is requires_sync
+    )
+
+
 @pytest.mark.asyncio
 async def test_initialization_syncs_git_credentials_to_remote_devices(
     monkeypatch: pytest.MonkeyPatch,
@@ -246,11 +269,18 @@ async def test_initialization_syncs_git_credentials_to_remote_devices(
         execution_environment_initialization,
         "execute_configured_device_command",
         AsyncMock(
-            return_value={
-                "success": True,
-                "exit_code": 0,
-                "stdout": {"workspacePath": "/workspace/environment"},
-            }
+            side_effect=[
+                {
+                    "success": False,
+                    "exit_code": None,
+                    "error": 'git-access:{"code":"credentials-required","domain":"git.example","message":"Configure Git"}',
+                },
+                {
+                    "success": True,
+                    "exit_code": 0,
+                    "stdout": {"workspacePath": "/workspace/environment"},
+                },
+            ]
         ),
     )
     sync = AsyncMock()
@@ -279,7 +309,7 @@ async def test_initialization_keeps_device_credentials_when_owner_has_no_account
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.services.device.git_credentials import (
-        DeviceGitCredentialResolutionError,
+        DeviceGitCredentialNoAccountsError,
     )
 
     execute = AsyncMock(
@@ -294,10 +324,11 @@ async def test_initialization_keeps_device_credentials_when_owner_has_no_account
         "execute_configured_device_command",
         execute,
     )
+    sync = AsyncMock(side_effect=DeviceGitCredentialNoAccountsError("none"))
     monkeypatch.setattr(
         execution_environment_initialization,
         "sync_git_accounts_to_device",
-        AsyncMock(side_effect=DeviceGitCredentialResolutionError("none")),
+        sync,
     )
     db = MagicMock()
     db.get.return_value = object()
@@ -313,13 +344,55 @@ async def test_initialization_keeps_device_credentials_when_owner_has_no_account
 
     assert result["status"] == "ready"
     assert execute.await_count == 1
+    sync.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_private_preflight_without_accounts_preserves_original_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.device.git_credentials import DeviceGitCredentialNoAccountsError
+
+    diagnostic = 'git-access:{"code":"credentials-required","domain":"git.example:8443","message":"Configure Git"}'
+    execute = AsyncMock(return_value={"success": False, "error": diagnostic})
+    sync = AsyncMock(side_effect=DeviceGitCredentialNoAccountsError("none"))
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        execute,
+    )
+    monkeypatch.setattr(
+        execution_environment_initialization, "sync_git_accounts_to_device", sync
+    )
+    db = MagicMock()
+    db.get.return_value = object()
+
+    result = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=db,
+            device=_remote_device(),
+            environment_id="private-project",
+            definition={"repositories": [PRIMARY_REPOSITORY], "setup_steps": []},
+        )
+    )
+
+    assert result["status"] == "error"
+    assert result["error"] == diagnostic
+    execute.assert_awaited_once()
+    sync.assert_awaited_once()
+    assert sync.await_args.kwargs["allow_empty"] is False
 
 
 @pytest.mark.asyncio
 async def test_initialization_surfaces_credential_sync_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    execute = AsyncMock()
+    execute = AsyncMock(
+        return_value={
+            "success": False,
+            "error": 'git-access:{"code":"credentials-required","domain":"git.example","message":"Configure Git"}',
+        }
+    )
     monkeypatch.setattr(
         execution_environment_initialization,
         "execute_configured_device_command",
@@ -343,8 +416,89 @@ async def test_initialization_surfaces_credential_sync_failures(
     )
 
     assert result["status"] == "error"
-    assert result["error"] == "device rejected the sync"
-    execute.assert_not_called()
+    assert json.loads(result["error"].removeprefix("git-access:")) == {
+        "code": "credentials-required",
+        "domain": "git.example",
+        "message": (
+            "Configure Git. Credential synchronization failed: device rejected the sync"
+        ),
+    }
+    assert result["workspace_path"] == ""
+    assert result["prepared_at"] is None
+    execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_invalid_owner_credentials_are_not_treated_as_no_accounts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.device.git_credentials import DeviceGitCredentialResolutionError
+
+    execute = AsyncMock(
+        return_value={
+            "success": False,
+            "error": 'git-access:{"code":"authentication-failed","domain":"git.example","message":"Rejected"}',
+        }
+    )
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        execute,
+    )
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "sync_git_accounts_to_device",
+        AsyncMock(
+            side_effect=DeviceGitCredentialResolutionError("Git token is invalid")
+        ),
+    )
+    db = MagicMock()
+    db.get.return_value = object()
+    result = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=db,
+            device=_remote_device(),
+            environment_id="project-1",
+            definition={"repositories": [PRIMARY_REPOSITORY], "setup_steps": []},
+        )
+    )
+    assert result["status"] == "error"
+    assert json.loads(result["error"].removeprefix("git-access:")) == {
+        "code": "authentication-failed",
+        "domain": "git.example",
+        "message": "Rejected. Credential synchronization failed: Git token is invalid",
+    }
+    assert result["workspace_path"] == ""
+    assert result["prepared_at"] is None
+    execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_preflight_failure_preserves_safe_domain_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    diagnostic = 'git-access:{"code":"credentials-required","domain":"git.example:8443","message":"Configure Git"}'
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        AsyncMock(
+            return_value={"success": False, "exit_code": None, "error": diagnostic}
+        ),
+    )
+    monkeypatch.setattr(
+        execution_environment_initialization, "sync_git_accounts_to_device", AsyncMock()
+    )
+    result = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=MagicMock(),
+            device=_remote_device(),
+            environment_id="project-1",
+            definition={"repositories": [PRIMARY_REPOSITORY], "setup_steps": []},
+        )
+    )
+    assert result["status"] == "error"
+    assert result["error"] == diagnostic
+    assert result["workspace_path"] == ""
 
 
 @pytest.mark.asyncio
