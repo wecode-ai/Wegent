@@ -59,6 +59,8 @@ For clone authentication failures, execution-environment device errors or Git au
 
 Pending business questions offer **Talk it through** on the task question card or in **Needs your input** question details. It opens a discussion tab alongside browser and files in the original task's right sidebar. See [Handle AI questions](./workbench.md#ai-questions) for its purpose and restrictions.
 
+Dismiss pending work: **Needs your input → cross beside an entry (Dismiss item)**, or **Needs your input → above the left list → Dismiss all**. These actions archive locally without answering questions or changing Issue state. See [Questions and project work](./workbench.md#ai-questions).
+
 When a question is already handled but a notification reply was not sent, **Needs your input → above the left list → Unsent replies** retains selectable text and offers **Discard this draft**. See [Handle AI questions](./workbench.md#ai-questions).
 
 From **Projects → New project → Cloud project** in the sidebar, you can add a device while choosing the remote host. See [Projects and workspaces](./projects.md#add-device-from-project).
