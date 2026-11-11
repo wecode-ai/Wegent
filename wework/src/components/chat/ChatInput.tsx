@@ -75,7 +75,7 @@ export interface ProjectChatControls {
   activeModelProvider?: string | null
   modelSwitchMode?: 'session'
   requiresNewSession?: boolean
-  onSessionStartConfirmed?(): void
+  onSessionStartConfirmed?(model: UnifiedModel): void
   selectedModelOptions: ModelOptions
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
@@ -259,7 +259,7 @@ interface PendingModelSelection {
   model: UnifiedModel | null
   options?: ModelOptions
   continueInNewConversation: boolean
-  onSessionStartConfirmed?: () => void
+  onSessionStartConfirmed?: (model: UnifiedModel) => void
 }
 
 function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel | null): boolean {
@@ -545,7 +545,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
       }
       return
     }
-    if (continueInNewConversation && model) onSessionStartConfirmed?.()
+    if (continueInNewConversation && model) onSessionStartConfirmed?.(model)
     applyModelSelection(model, options)
   }
   const cancelModelSelection = () => {

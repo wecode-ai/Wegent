@@ -37,16 +37,83 @@ const INITIAL_LIMITS = { contextWindow: 512_000, maxOutputTokens: 4096 }
 const UPDATED_LIMITS = { contextWindow: 768_000, maxOutputTokens: 16_384 }
 const OFFICIAL_MODEL = 'gpt-6.1-sol'
 const ORDINARY = '[data-workspace-tab-content="fixed-task"] [data-testid="desktop-workbench-main"]'
+const RETRY_HISTORY_CALL = 'retry-previous-conversation'
 
-export function executionModelEvents(body, { marker, cases, completed }) {
+function retryConversationHistory(body, { marker, retryTaskId, retryThreadId }) {
+  assert.ok(retryTaskId && retryThreadId, 'Retry must retain its original logical conversation')
+  const messages = (body.input ?? []).filter(item => ['user', 'assistant'].includes(item.role))
+  const message = messages.filter(item => item.role === 'user').at(-1)
+  const text =
+    typeof message?.content === 'string'
+      ? message.content
+      : (message?.content ?? []).map(part => part.text ?? '').join('')
+  assert.ok(
+    text.includes(`read_task(${JSON.stringify({ taskId: retryTaskId })})`),
+    'A new-session retry must identify the exact authorized conversation history'
+  )
+  assert.equal(
+    JSON.stringify(messages).includes(`${marker}_CHAT_`),
+    false,
+    'Retry must send the continuation prompt rather than replaying the original request'
+  )
+  assert.equal(
+    JSON.stringify(messages).includes(`${marker}_OFFICIAL`),
+    false,
+    'A cross-provider retry must not copy the previous official native session'
+  )
+  if (!requestContainsToolOutput(body, RETRY_HISTORY_CALL)) {
+    return {
+      events: mcpToolRequestEvents(body, {
+        toolName: 'read_task',
+        directToolName: 'mcp__wework_stand_in__read_task',
+        argumentsValue: { taskId: retryTaskId },
+        searchCallId: `${RETRY_HISTORY_CALL}-search`,
+        toolCallId: RETRY_HISTORY_CALL,
+      }).events,
+    }
+  }
+  const history = JSON.parse(readMcpToolOutput(body, RETRY_HISTORY_CALL))
+  assert.equal(history.success, true, 'Retry must successfully read real authorized history')
+  assert.equal(history.taskId, retryTaskId, 'Retry must read its exact original logical task')
+  assert.ok(Array.isArray(history.messages), 'Retry must consume actual conversation messages')
+  assert.notEqual(
+    history.hasMoreBefore,
+    true,
+    'The bounded retry fixture history must fit one page'
+  )
+  assert.ok(
+    history.messages.every(message => message.contentComplete !== false),
+    'The bounded retry fixture must read complete message content'
+  )
+  return { messages: history.messages }
+}
+
+export function executionModelEvents(body, context) {
+  const { marker, cases, completed } = context
   const latestUser = (body.input ?? []).filter(item => item.role === 'user').at(-1)
   const message = JSON.stringify(latestUser?.content ?? '')
   const retry = message.includes(RUNTIME_RETRY_CONTINUATION_PROMPT)
+  if (retry)
+    assert.ok(
+      [...cases.values()].some(testCase => testCase.upstream === body.model),
+      'The selected upstream model must receive the call'
+    )
+  const history = retry ? retryConversationHistory(body, context) : undefined
   const delegatedTaskId = message.match(/Wework delegated task result:.*?taskId=([^,\s]+)/)?.[1]
+  const candidates = [...cases.keys()].filter(name =>
+    history?.messages?.some(
+      item =>
+        item.role === 'user' && JSON.stringify(item.content).includes(`${marker}_CHAT_${name}`)
+    )
+  )
+  if (history?.messages)
+    assert.equal(candidates.length, 1, 'Read history must identify one unfinished request')
   const name = delegatedTaskId
     ? [...completed].find(([, taskId]) => taskId === delegatedTaskId)?.[0]
     : retry
-      ? [...cases.keys()].find(name => cases.get(name).retryContinuation)
+      ? history.messages
+        ? candidates[0]
+        : [...cases.keys()].find(name => cases.get(name).upstream === body.model)
       : [...cases.keys()].find(name =>
           ['CHAT', 'WORK'].some(kind => message.includes(`${marker}_${kind}_${name}`))
         )
@@ -57,18 +124,6 @@ export function executionModelEvents(body, { marker, cases, completed }) {
     'The selected upstream model must receive the call'
   )
   const testCase = cases.get(name)
-  if (retry) {
-    assert.equal(
-      message.includes(`${marker}_CHAT_${name}`),
-      false,
-      'Retry must send the continuation prompt rather than replaying the original request'
-    )
-    assert.equal(
-      JSON.stringify(body.input).includes(`${marker}_OFFICIAL`),
-      false,
-      'A cross-provider retry must not copy the previous official native session'
-    )
-  }
   const reasoning = message.includes(`${marker}_WORK_${name}`)
     ? testCase.reasoning
     : (testCase.conversationReasoning ?? testCase.reasoning)
@@ -86,6 +141,38 @@ export function executionModelEvents(body, { marker, cases, completed }) {
       'The refreshed output limit must reach the actual primary model request'
     )
   }
+  if (history?.events) return { name, events: history.events }
+  let retryEvidence
+  if (history) {
+    const request = history.messages.find(
+      item =>
+        item.role === 'user' && JSON.stringify(item.content).includes(`${marker}_CHAT_${name}`)
+    )
+    const progress = history.messages.find(
+      item =>
+        item.role === 'assistant' &&
+        JSON.stringify(item.content).includes(`${marker}_PROGRESS_${name}`)
+    )
+    assert.ok(progress, 'Retry must consume the completed progress from the failed native turn')
+    assert.ok(request.id && progress.id, 'Retry evidence must identify actual persisted messages')
+    assert.equal(
+      request.id,
+      context.retryMessageIds?.request,
+      'Retry must recover the exact request persisted in the failed original session'
+    )
+    assert.equal(
+      progress.id,
+      context.retryMessageIds?.progress,
+      'Retry must recover the exact completed progress persisted in the failed original session'
+    )
+    retryEvidence = {
+      taskId: context.retryTaskId,
+      threadId: context.retryThreadId,
+      name,
+      requestMessageId: request.id,
+      progressMessageId: progress.id,
+    }
+  }
   const resultEvents = delegatedTaskResultEvents(body)
   if (resultEvents) return { name, events: resultEvents }
   const callId = `create-${name}`
@@ -96,10 +183,11 @@ export function executionModelEvents(body, { marker, cases, completed }) {
     const result = JSON.parse(readMcpToolOutput(body, callId))
     assert.equal(result.success, true, 'The real primary stand-in must create its work')
     completed.set(name, result.taskId)
-    return { name, events: [assistantMessage(`工作已创建：${name}`)] }
+    return { name, events: [assistantMessage(`工作已创建：${name}`)], retryEvidence }
   }
   return {
     name,
+    retryEvidence,
     events: mcpToolRequestEvents(body, {
       toolName: 'create_task',
       directToolName: 'mcp__wework_stand_in__create_task',
@@ -128,6 +216,7 @@ export function createDesktopScenario(options) {
   let officialCalls = 0
   let officialFailures = 0
   let cloudRetryCalls = 0
+  let retryTaskId, retryThreadId, retryMessageIds, recoveredHistory
   return {
     ...catalog,
     appEnvironment,
@@ -175,7 +264,15 @@ export function createDesktopScenario(options) {
         if (fail) {
           officialFailures += 1
           assert.equal(officialFailures, 1, 'Only one extra official model turn may fail')
-          response.end(createSse([responseFailed(id, `${marker}_OFFICIAL_FAILED`)]))
+          const progress = assistantMessage(`${marker}_PROGRESS_cloud`)
+          progress.item.phase = 'commentary'
+          response.end(
+            createSse([
+              responseCreated(id),
+              progress,
+              responseFailed(id, `${marker}_OFFICIAL_FAILED`),
+            ])
+          )
           return true
         }
         response.end(
@@ -194,11 +291,15 @@ export function createDesktopScenario(options) {
       )
       if (!current || (!input.includes(marker) && !(current === 'cloud' && retry))) return false
       assert.equal(request.headers.authorization, `Bearer ${MODEL_API_KEY}`)
-      const { name, events } = executionModelEvents(body, {
+      const { name, events, retryEvidence } = executionModelEvents(body, {
         marker,
         cases: executionCases,
         completed,
+        retryTaskId,
+        retryThreadId,
+        retryMessageIds,
       })
+      if (retryEvidence) recoveredHistory = retryEvidence
       calls.set(name, (calls.get(name) ?? 0) + 1)
       if (name === 'cloud' && retry) cloudRetryCalls += 1
       const id = `model-execution-${Date.now()}`
@@ -251,7 +352,6 @@ export function createDesktopScenario(options) {
           model: CLOUD_MODEL,
           upstream: 'kimi-k3',
           type: 'public',
-          retryContinuation: true,
         },
         {
           name: 'custom',
@@ -322,6 +422,8 @@ export function createDesktopScenario(options) {
         assert.equal(officialTask.runtimeHandle.activeModelProvider ?? null, null)
         assert.ok(officialTask.threadId)
         primaryThreadId = officialTask.threadId
+        retryTaskId = primaryTaskId
+        retryThreadId = primaryThreadId
         await rpc('runtime.stand_in.conversation', {
           userId,
           message: `${marker}_CHAT_cloud`,
@@ -337,6 +439,28 @@ export function createDesktopScenario(options) {
         assert.equal(failed.threadId, primaryThreadId)
         assert.equal(failed.modelSelection, null)
         assert.equal(failed.runtimeHandle.activeModelProvider ?? null, null)
+        const failedHistory = await rpc('runtime.tasks.transcript', {
+          taskId: primaryTaskId,
+          limit: 100,
+          includeFullContent: true,
+        })
+        retryMessageIds = {}
+        for (const [role, content] of [
+          ['user', `${marker}_CHAT_cloud`],
+          ['assistant', `${marker}_PROGRESS_cloud`],
+        ]) {
+          const message = failedHistory.messages.find(
+            message =>
+              message.role === role &&
+              message.sessionThreadId === primaryThreadId &&
+              JSON.stringify(message.content).includes(content)
+          )
+          assert.ok(
+            message?.id,
+            'The failed original native turn must persist its actual request and progress'
+          )
+          retryMessageIds[role === 'user' ? 'request' : 'progress'] = message.id
+        }
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', CHAT)
         const { task: resolved } = await until(
@@ -551,6 +675,9 @@ export function createDesktopScenario(options) {
               'A cross-provider retry must create a new native session in the same stand-in'
             )
             assert.ok(cloudRetryCalls > 0, 'UI retry must reach the selected cloud model')
+            assert.equal(recoveredHistory?.taskId, primaryTaskId)
+            assert.equal(recoveredHistory?.threadId, primaryThreadId)
+            assert.equal(recoveredHistory?.name, 'cloud')
             assert.deepEqual(primary.runtimeHandle.origin, officialTask.runtimeHandle.origin)
             assert.equal(primary.workspacePath, officialTask.workspacePath)
             const rebound = await rpc('runtime.tasks.get', {
@@ -681,6 +808,7 @@ export function createDesktopScenario(options) {
         officialCalls,
         officialFailures,
         cloudRetryCalls,
+        recoveredHistory,
         calls: Object.fromEntries(calls),
         completed: Object.fromEntries(completed),
         catalogRequests: catalogProxy?.requests,

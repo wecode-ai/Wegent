@@ -168,11 +168,12 @@ impl RuntimeWorkRpcHandler {
                             "The selected local model is unavailable on this device",
                         )
                     })?;
-                payload["modelConfig"] = with_request_reasoning(&config, &payload["modelConfig"]);
+                payload["modelConfig"] =
+                    with_request_model_options(&config, &payload["modelConfig"]);
                 for key in ["executionRequest", "execution_request"] {
                     if let Some(request) = payload.get_mut(key).filter(|value| value.is_object()) {
                         request["model_config"] =
-                            with_request_reasoning(&config, &request["model_config"]);
+                            with_request_model_options(&config, &request["model_config"]);
                     }
                 }
             }
@@ -246,17 +247,19 @@ impl RuntimeWorkRpcHandler {
                     "The selected local model is unavailable on this device",
                 )
             })?;
-        request.model_config = with_request_reasoning(&resolved, &request.model_config);
+        request.model_config = with_request_model_options(&resolved, &request.model_config);
         Ok(())
     }
 }
 
-fn with_request_reasoning(authoritative: &Value, requested: &Value) -> Value {
+fn with_request_model_options(authoritative: &Value, requested: &Value) -> Value {
     let mut config = authoritative.clone();
-    // Credentials, endpoints and model identity remain device-owned. Reasoning
-    // is a per-turn user option, normalized by the runtime before execution.
-    if let Some(reasoning) = requested.get("reasoning").filter(|value| !value.is_null()) {
-        config["reasoning"] = reasoning.clone();
+    // Credentials, endpoints and model identity remain device-owned. Per-turn
+    // reasoning and service tier are validated by the runtime before execution.
+    for key in ["reasoning", "service_tier"] {
+        if let Some(value) = requested.get(key).filter(|value| !value.is_null()) {
+            config[key] = value.clone();
+        }
     }
     config
 }
@@ -351,16 +354,22 @@ mod tests {
         let handler = RuntimeWorkRpcHandler::new("device", "unused");
         let mut model = local_model("current-secret");
         model["modelConfig"]["reasoning"] = json!({"effort":"medium"});
+        model["modelConfig"]["service_tier"] = json!("default");
         handler
             .replace_local_runner_models(json!({"models":[model]}))
             .unwrap();
-        for effort in ["low", "high"] {
+        for (effort, speed) in [("low", "fast"), ("high", "flex")] {
             let mut request = ExecutionRequest {
                 model_config: json!({"model_id":"local-model:company","model_provider":"local-company",
                     "reasoning":{"effort":effort,"summary":"concise"},
                     "api_key":"untrusted-secret","responses_url":"https://untrusted.example"}),
                 ..Default::default()
             };
+            super::super::creation::apply_creation_options(
+                &mut request,
+                &json!({"modelOptions":{"speed":speed}}),
+            )
+            .unwrap();
             handler
                 .resolve_local_model_reference(&mut request, "work")
                 .unwrap();
@@ -369,6 +378,7 @@ mod tests {
                 json!({"effort":effort,"summary":"concise"})
             );
             assert_eq!(request.model_config["api_key"], "current-secret");
+            assert_eq!(request.model_config["service_tier"], speed);
             assert_eq!(
                 request.model_config["responses_url"],
                 "https://model.example/v1/messages"
@@ -382,17 +392,27 @@ mod tests {
         let handler = RuntimeWorkRpcHandler::new("device", "unused");
         let mut model = local_model("current-secret");
         model["modelConfig"]["reasoning"] = json!({"effort":"medium"});
+        model["modelConfig"]["service_tier"] = json!("default");
         handler
             .replace_local_runner_models(json!({"models":[model]}))
             .unwrap();
         let mut payload = json!({"runnerRouting":{"model":{"runtime":"codex","provider":"local-company","model_id":"local-model:company"}},
             "modelConfig":{"reasoning":{"effort":"low"},"api_key":"old"},
-            "executionRequest":{"model_config":{"reasoning":{"effort":"high"},"responses_url":"https://untrusted.example"}},
-            "execution_request":{"model_config":{"reasoning":null}}});
+            "executionRequest":{"model_config":{"reasoning":{"effort":"high"},"service_tier":"fast","responses_url":"https://untrusted.example"}},
+            "execution_request":{"model_config":{"reasoning":null,"service_tier":null}}});
         handler
             .materialize_local_runner_models(&mut payload)
             .unwrap();
         assert_eq!(payload["modelConfig"]["reasoning"]["effort"], "low");
+        assert_eq!(payload["modelConfig"]["service_tier"], "default");
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["service_tier"],
+            "fast"
+        );
+        assert_eq!(
+            payload["execution_request"]["model_config"]["service_tier"],
+            "default"
+        );
         assert_eq!(
             payload["executionRequest"]["model_config"]["reasoning"]["effort"],
             "high"

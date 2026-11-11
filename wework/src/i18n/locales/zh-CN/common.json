@@ -5953,6 +5953,7 @@
       "confirmation_runtime_unsupported": "需要操作前确认时，请选择 Codex 执行环境。",
       "conversation_runtime_unsupported": "分身聊天暂不支持 Claude Code，请在模型菜单中选择可用模型。",
       "conversation_provider_unavailable": "暂时无法读取当前会话的模型提供方，请重新打开模型菜单重试。",
+      "conversation_model_syncing": "正在同步会话的模型配置，请稍后重试。",
       "workspace_unavailable": "所选工作目录在此执行设备上不可用，请重新选择。",
       "workspace_not_git": "使用工作树需要 Git 仓库，请选择有效的仓库目录。",
       "connector_auth_required": "此连接需要授权，请完成账号授权后重试。",

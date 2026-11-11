@@ -14,6 +14,25 @@ const wake = user(
   'Wework delegated task result: resultId=result-cloud, taskId=child-cloud, status=done, errorCode=none'
 )
 const state = () => ({ marker, cases, completed: new Map([['cloud', 'child-cloud']]) })
+const retryTaskId = 'stand-in-chat-fixture-primary'
+const retryThreadId = 'previous-official-thread'
+const retryMessageIds = { request: 'unfinished-request', progress: 'completed-progress' }
+const retryPrompt = `${RETRY_CONTINUATION_PROMPT}\nRead authorized history with read_task(${JSON.stringify({ taskId: retryTaskId })}) before continuing.`
+const retryHistory = () => ({
+  success: true,
+  taskId: retryTaskId,
+  hasMoreBefore: false,
+  messages: [
+    { id: 'official-answer', role: 'assistant', content: `${marker}_OFFICIAL_DONE` },
+    { id: 'unfinished-request', role: 'user', content: `${marker}_CHAT_cloud` },
+    { id: 'completed-progress', role: 'assistant', content: `${marker}_PROGRESS_cloud` },
+  ].map(message => ({ ...message, contentComplete: true })),
+})
+const historyOutput = history => ({
+  type: 'function_call_output',
+  call_id: 'retry-previous-conversation',
+  output: [{ type: 'input_text', text: JSON.stringify(history) }],
+})
 
 describe('stand-in execution model fixture', () => {
   test.each([
@@ -56,32 +75,132 @@ describe('stand-in execution model fixture', () => {
     )
   })
 
-  test('routes a real retry continuation to cloud without replaying the official session', () => {
-    const context = state()
-    context.cases = new Map([['cloud', { upstream: 'kimi-k3', retryContinuation: true }]])
+  test('reads the exact original history before deciding which work a new-session retry continues', () => {
+    const context = { ...state(), retryTaskId, retryThreadId, retryMessageIds }
     const body = {
       model: 'kimi-k3',
-      input: [user(RETRY_CONTINUATION_PROMPT)],
+      input: [user(retryPrompt)],
       tools: [{ type: 'tool_search' }],
     }
     const result = executionModelEvents(body, context)
     expect(result.name).toBe('cloud')
-    expect(JSON.stringify(result.events)).toContain('create_task')
+    expect(JSON.stringify(result.events)).toContain('read_task')
+    expect(JSON.stringify(result.events)).not.toContain('create_task')
+    const direct = executionModelEvents(
+      {
+        ...body,
+        tools: [{ type: 'function', name: 'mcp__wework_stand_in__read_task', parameters: {} }],
+      },
+      context
+    )
+    const call = direct.events.find(
+      event => event.type === 'response.output_item.done' && event.item?.type === 'function_call'
+    ).item
+    expect(JSON.parse(call.arguments)).toEqual({ taskId: retryTaskId })
+    const resumed = { ...body, input: [...body.input, historyOutput(retryHistory())] }
+    const continued = executionModelEvents(resumed, context)
+    expect(continued.name).toBe('cloud')
+    expect(JSON.stringify(continued.events)).toContain('create_task')
+    expect(continued.retryEvidence).toEqual({
+      taskId: retryTaskId,
+      threadId: retryThreadId,
+      name: 'cloud',
+      requestMessageId: 'unfinished-request',
+      progressMessageId: 'completed-progress',
+    })
     expect(() => executionModelEvents({ ...body, model: 'gpt-6.1-sol' }, context)).toThrow(
       'The selected upstream model must receive the call'
     )
     expect(() => executionModelEvents(body, state())).toThrow(
-      'The model request must identify its own execution case'
+      'Retry must retain its original logical conversation'
     )
     expect(() =>
       executionModelEvents({ ...body, input: [user(`${marker}_OFFICIAL`), ...body.input] }, context)
     ).toThrow('A cross-provider retry must not copy the previous official native session')
     expect(() =>
       executionModelEvents(
-        { ...body, input: [user(`${RETRY_CONTINUATION_PROMPT}\n${marker}_CHAT_cloud`)] },
+        { ...body, input: [user(`${retryPrompt}\n${marker}_CHAT_cloud`)] },
         context
       )
     ).toThrow('Retry must send the continuation prompt rather than replaying the original request')
+    expect(() =>
+      executionModelEvents({ ...body, input: [user(RETRY_CONTINUATION_PROMPT)] }, context)
+    ).toThrow('A new-session retry must identify the exact authorized conversation history')
+    expect(() => executionModelEvents({ ...resumed, model: 'gpt-5.6-sol' }, context)).toThrow(
+      'The selected upstream model must receive the call'
+    )
+  })
+
+  test.each([
+    [
+      'denied history',
+      history => {
+        history.success = false
+      },
+      'successfully read real authorized history',
+    ],
+    [
+      'another task',
+      history => {
+        history.taskId = 'unrelated-task'
+      },
+      'exact original logical task',
+    ],
+    [
+      'another persisted request',
+      history => {
+        history.messages[1].id = 'unrelated-request'
+      },
+      'exact request persisted in the failed original session',
+    ],
+    [
+      'another persisted progress',
+      history => {
+        history.messages[2].id = 'unrelated-progress'
+      },
+      'exact completed progress persisted in the failed original session',
+    ],
+    [
+      'missing request',
+      history => {
+        history.messages = history.messages.filter(message => message.role !== 'user')
+      },
+      'identify one unfinished request',
+    ],
+    [
+      'missing progress',
+      history => {
+        history.messages = history.messages.filter(message => message.id !== 'completed-progress')
+      },
+      'completed progress from the failed native turn',
+    ],
+    [
+      'unread page',
+      history => {
+        history.hasMoreBefore = true
+      },
+      'history must fit one page',
+    ],
+    [
+      'truncated message',
+      history => {
+        history.messages[1].contentComplete = false
+      },
+      'read complete message content',
+    ],
+  ])('never guesses the unfinished request from %s', (_name, change, error) => {
+    const history = retryHistory()
+    change(history)
+    expect(() =>
+      executionModelEvents(
+        {
+          model: 'kimi-k3',
+          input: [user(retryPrompt), historyOutput(history)],
+          tools: [{ type: 'tool_search' }],
+        },
+        { ...state(), retryTaskId, retryThreadId, retryMessageIds }
+      )
+    ).toThrow(error)
   })
 
   test('reports the actual child answer after reading its transcript', () => {

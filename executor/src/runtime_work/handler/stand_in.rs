@@ -2,6 +2,7 @@
 use super::stand_in_agent::apply_stand_in_agent;
 use super::stand_in_workspace::apply_stand_in_workspace;
 use super::*;
+use crate::agents::normalize_reasoning_effort_alias;
 use crate::runtime_work::response::local_task_json;
 
 pub(super) fn stand_in_issue_identity(config: &Value, issue: &Value) -> String {
@@ -858,10 +859,18 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         agent: Option<Value>,
     ) -> Result<Value, AppIpcError> {
-        let options = config
+        let mut options = config
             .get("modelOptions")
             .map(super::creation::normalized_model_options)
             .unwrap_or_default();
+        // Provider identity comes from runner routing, never from saved user options.
+        options.remove("runnerModelProvider");
+        if let Some(effort) = options
+            .get_mut("reasoning")
+            .filter(|value| value.is_string())
+        {
+            *effort = json!(normalize_reasoning_effort_alias(effort.as_str().unwrap()));
+        }
         if let Some(agent) = agent {
             let catalog = self.runner_catalog().await?;
             apply_stand_in_agent(
@@ -873,16 +882,27 @@ impl RuntimeWorkRpcHandler {
             )?;
             if let Some(effort) = options.get("reasoning").and_then(Value::as_str) {
                 let selected = &payload["runnerRouting"]["model"];
-                let supported = catalog["models"].as_array().and_then(|models| {
-                    models.iter().find_map(|model| {
+                let model = catalog["models"].as_array().and_then(|models| {
+                    models.iter().find(|model| {
                         ["runtime", "provider", "model_id"]
                             .iter()
                             .all(|key| model.get(key) == selected.get(key))
-                            .then(|| model["supported_reasoning_efforts"].as_array())
-                            .flatten()
                     })
                 });
-                if supported.is_some_and(|efforts| !efforts.iter().any(|value| value == effort)) {
+                let is_default = model
+                    .and_then(|model| model["default_reasoning_effort"].as_str())
+                    .is_some_and(|value| normalize_reasoning_effort_alias(value) == effort);
+                let supported =
+                    model.and_then(|model| model["supported_reasoning_efforts"].as_array());
+                if !is_default
+                    && supported.is_some_and(|efforts| {
+                        !efforts.iter().any(|value| {
+                            value.as_str().is_some_and(|value| {
+                                normalize_reasoning_effort_alias(value) == effort
+                            })
+                        })
+                    })
+                {
                     return Err(AppIpcError::new(
                         "model_reasoning_unavailable",
                         "The selected model does not support the saved reasoning effort; update the stand-in model settings",
@@ -909,6 +929,12 @@ impl RuntimeWorkRpcHandler {
                 .entry("modelOptions")
                 .or_insert_with(|| json!({}));
             target.as_object_mut().unwrap().extend(options);
+        }
+        if let Some(effort) = payload["modelOptions"]
+            .get_mut("reasoning")
+            .filter(|value| value.is_string())
+        {
+            *effort = json!(normalize_reasoning_effort_alias(effort.as_str().unwrap()));
         }
         if payload["modelId"].is_string() {
             payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});

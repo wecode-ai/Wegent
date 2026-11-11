@@ -5958,6 +5958,7 @@
       "confirmation_runtime_unsupported": "Select Codex to require confirmation before acting.",
       "conversation_runtime_unsupported": "Stand-in chat does not yet support Claude Code. Choose an available model from the model menu.",
       "conversation_provider_unavailable": "Could not read this session’s model provider. Reopen the model menu to retry.",
+      "conversation_model_syncing": "Syncing the conversation’s model settings. Please try again shortly.",
       "workspace_unavailable": "The selected workspace is unavailable on this execution device. Select another workspace.",
       "workspace_not_git": "Worktrees require a Git repository. Select a repository directory.",
       "connector_auth_required": "This connection requires authorization. Authorize the account and try again.",

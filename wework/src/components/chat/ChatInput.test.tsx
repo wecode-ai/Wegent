@@ -836,6 +836,7 @@ describe('ChatInput', () => {
     view.rerender(input(false, confirmNewSession))
     await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
     expect(confirmOldSession).toHaveBeenCalledOnce()
+    expect(confirmOldSession).toHaveBeenCalledWith(model)
     expect(confirmNewSession).not.toHaveBeenCalled()
     expect(setSelectedModel).toHaveBeenCalledWith(model)
   })

@@ -5676,13 +5676,21 @@ fn normalize_reasoning(value: Option<&Value>) -> NormalizedReasoning {
 }
 
 fn normalize_reasoning_effort(value: Option<&str>) -> String {
-    let normalized = value
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .replace(' ', "_");
-    let aliased = match normalized.as_str() {
-        "" | "none" | "off" | "false" | "disabled" | "关闭" => DEFAULT_REASONING_EFFORT,
+    let aliased = normalize_reasoning_effort_alias(value.unwrap_or_default());
+    if matches!(
+        aliased.as_str(),
+        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    ) {
+        aliased
+    } else {
+        DEFAULT_REASONING_EFFORT.to_owned()
+    }
+}
+
+/// Canonicalize aliases without replacing unsupported or disabled values with a default.
+pub(crate) fn normalize_reasoning_effort_alias(value: &str) -> String {
+    let normalized = value.trim().to_ascii_lowercase().replace(' ', "_");
+    match normalized.as_str() {
         "minimal" | "低" | "轻度" | "最低" => "low",
         "中" | "中等" => "medium",
         "高" => "high",
@@ -5690,15 +5698,8 @@ fn normalize_reasoning_effort(value: Option<&str>) -> String {
         "最大" | "最高" | "maximum" => "max",
         "极高" => "ultra",
         value => value,
-    };
-    if matches!(
-        aliased,
-        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
-    ) {
-        aliased.to_owned()
-    } else {
-        DEFAULT_REASONING_EFFORT.to_owned()
     }
+    .to_owned()
 }
 
 fn normalize_service_tier(value: Option<&Value>) -> Option<String> {
