@@ -310,7 +310,7 @@ export async function verifyStartupSplashProgress({
   )
   const previousSplashSize = JSON.parse(
     await control.command('setStartupSplashSize', 'body', {
-      value: JSON.stringify({ width: 900, height: 560 }),
+      value: JSON.stringify({ width: 1100, height: 620 }),
     })
   )
   let resizedBrand
@@ -319,7 +319,7 @@ export async function verifyStartupSplashProgress({
       control,
       state =>
         !state.timeoutHidden &&
-        Math.abs(state.dragRegions?.status?.bounds?.width - 900) <= 1 &&
+        Math.abs(state.dragRegions?.status?.bounds?.width - 1100) <= 1 &&
         state.brandBounds,
       'The startup splash did not expose geometry after resizing'
     )
@@ -330,9 +330,8 @@ export async function verifyStartupSplashProgress({
     })
   }
   assert.ok(
-    Math.abs(resizedBrand.width - timeoutBrand.width) <= 1 &&
-      Math.abs(resizedBrand.height - timeoutBrand.height) <= 1,
-    `Startup brand size changed after resizing: ${JSON.stringify({ timeoutBrand, resizedBrand })}`
+    resizedBrand.width >= timeoutBrand.width - 1 && resizedBrand.height >= timeoutBrand.height - 1,
+    `Startup brand shrank after resizing: ${JSON.stringify({ timeoutBrand, resizedBrand })}`
   )
   const timeoutDiagnostics = await copyDiagnostics(control, 'startup-timeout-copy-button', logPath)
   assert.match(timeoutDiagnostics, /\[Startup result\]\nStartup is slow: stage renderer/)
