@@ -2988,12 +2988,20 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             error = f"任务回调注册失败：{exc}"
             delivered = False
             if streaming_emitter and hasattr(streaming_emitter, "emit_error"):
-                await streaming_emitter.emit_error(
-                    task_id=task_id,
-                    subtask_id=trigger_data["assistant_subtask"].id,
-                    error=error,
-                )
-                delivered = True
+                try:
+                    await streaming_emitter.emit_error(
+                        task_id=task_id,
+                        subtask_id=trigger_data["assistant_subtask"].id,
+                        error=error,
+                    )
+                    delivered = True
+                except Exception:
+                    self.logger.exception(
+                        "[%sHandler] Could not deliver callback registration "
+                        "failure to the card: task_id=%s",
+                        self._channel_type.value,
+                        task_id,
+                    )
             if not delivered:
                 await self.send_text_reply(message_context, error)
             return None

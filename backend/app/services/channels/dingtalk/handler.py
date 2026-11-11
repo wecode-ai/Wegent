@@ -471,7 +471,18 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
                     ),
                 )
             else:
-                await streaming_emitter.close()
+                try:
+                    await streaming_emitter.emit_error(
+                        task_id=task_id,
+                        subtask_id=streaming_emitter.subtask_id,
+                        error="聊天卡片创建失败，请检查模板配置后重试。",
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "[DingTalkHandler] Failed to finish unregistered card"
+                    )
+                finally:
+                    await streaming_emitter.close()
             raise
 
     async def _fail_unstarted_card_streaming_emitter(
