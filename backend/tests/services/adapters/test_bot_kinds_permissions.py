@@ -381,6 +381,47 @@ def test_team_context_cannot_authorize_unrelated_private_bot(
     assert exc_info.value.status_code == 403
 
 
+def test_team_editor_rename_conflicts_use_bot_owner_scope(
+    test_db,
+    test_user,
+    test_admin_user,
+):
+    namespace = Namespace(
+        name="team-rename-editors",
+        display_name="Team Rename Editors",
+        owner_user_id=test_admin_user.id,
+        visibility="private",
+        level="group",
+        is_active=True,
+    )
+    test_db.add(namespace)
+    test_db.commit()
+    _add_group_member(
+        test_db, namespace=namespace, user_id=test_user.id, role=BaseRole.Developer
+    )
+    bot = _create_bot(test_db, user_id=test_admin_user.id, name="rename-bot")
+    conflicting_bot = _create_bot(
+        test_db, user_id=test_admin_user.id, name="owner-existing-name"
+    )
+    team = _create_team(
+        test_db, user_id=test_admin_user.id, namespace=namespace.name, bot=bot
+    )
+    assert conflicting_bot.name != bot.name
+
+    with pytest.raises(HTTPException) as exc_info:
+        bot_kinds_service.update_with_user(
+            test_db,
+            bot_id=bot.id,
+            obj_in=BotUpdate(
+                name=conflicting_bot.name,
+                team_id=team.id,
+            ),
+            user_id=test_user.id,
+        )
+
+    assert exc_info.value.status_code == 400
+
+
 def test_team_reporter_cannot_update_private_bot_through_team(
     test_db,
     test_user,

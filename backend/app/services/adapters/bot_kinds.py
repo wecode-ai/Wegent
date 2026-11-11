@@ -1064,14 +1064,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 filter_conditions = [
                     Kind.kind == "Bot",
                     Kind.name == new_name,
-                    Kind.namespace == obj_in.namespace,
+                    Kind.namespace == bot.namespace,
                     Kind.is_active == True,
                     Kind.id != bot.id,
                 ]
 
                 # Only add user_id filter for default namespace
-                if obj_in.namespace == "default":
-                    filter_conditions.append(Kind.user_id == user_id)
+                if bot.namespace == "default":
+                    filter_conditions.append(Kind.user_id == bot.user_id)
 
                 conflict = db.query(Kind).filter(*filter_conditions).first()
                 if conflict:
@@ -1127,7 +1127,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
             if shell is None:
                 try:
-                    shell_info = get_shell_info_by_name(db, new_shell_name, user_id)
+                    shell_info = get_shell_info_by_name(db, new_shell_name, bot.user_id)
                 except ValueError as e:
                     raise HTTPException(status_code=400, detail=str(e))
 
@@ -1147,7 +1147,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 bot.json = bot_crd.model_dump()
                 flag_modified(bot, "json")
                 shell = get_shell_by_name(
-                    db, new_shell_name, user_id, shell_ref.namespace
+                    db, new_shell_name, bot.user_id, shell_ref.namespace
                 )
 
         if "agent_config" in update_data:
@@ -1232,7 +1232,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
                 # Get the new model for response using type hint
                 model = self._get_model_by_name_and_type(
-                    db, model_name, model_namespace, user_id, model_type
+                    db,
+                    model_name,
+                    model_namespace,
+                    bot.user_id,
+                    model_type,
+                    viewer_id=user_id,
                 )
                 return_agent_config = new_agent_config
             else:
