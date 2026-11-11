@@ -33,6 +33,7 @@ from app.services.chat.config.model_lookup import (
     allowed_model_names_for_team,
     resolve_model_name_for_bot,
 )
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.model_capabilities import normalize_model_capabilities
 from shared.codex_model_catalog import codex_catalog_model_id_from_config
 from shared.models.execution import ExecutionRequest
@@ -487,6 +488,7 @@ def extract_and_process_model_config(
     return model_config
 
 
+@execution_resource_scope()
 def build_agent_config_for_bot(
     db: Session,
     bot: Kind,
@@ -535,6 +537,7 @@ def build_agent_config_for_bot(
     return model_config_dict
 
 
+@execution_resource_scope()
 def get_model_config_for_bot(
     db: Session,
     bot: Kind,

@@ -511,7 +511,7 @@ async fn find_model_with_namespace<R: Redis>(
         return Ok(Some(model));
     }
     // `Search group models`: `get_user_groups(db, user_id)`.
-    let user_groups = user_groups(mysql, resolvers, redis, user_id).await?;
+    let user_groups = user_groups(mysql, &resolvers.for_execution(), redis, user_id).await?;
     if !user_groups.is_empty() {
         let rows = named_kind_rows(
             mysql,

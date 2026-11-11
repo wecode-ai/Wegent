@@ -30,6 +30,12 @@ pub enum ResolutionPurpose {
 
 #[async_trait]
 pub trait EntityResolver<R: Redis>: Send + Sync {
+    /// External directories may remain available for sharing while execution
+    /// requires grants that can be checked without that directory.
+    fn allows_execution(&self) -> bool {
+        true
+    }
+
     async fn match_bindings(
         &self,
         registry: &EntityResolvers<R>,
@@ -94,6 +100,36 @@ impl<R: Redis> Clone for EntityResolvers<R> {
 }
 
 impl<R: Redis> EntityResolvers<R> {
+    /// Keep the configured provider unless its adapter explicitly excludes
+    /// directory-derived grants from execution.
+    pub fn execution_directory<'a>(
+        &self,
+        provider: &'a dyn wegent_directory::erp_provider::ErpProvider<R>,
+    ) -> &'a dyn wegent_directory::erp_provider::ErpProvider<R> {
+        if provider.entity_type().is_some_and(|kind| {
+            self.resolvers
+                .get(kind)
+                .is_some_and(|resolver| !resolver.allows_execution())
+        }) {
+            &wegent_directory::erp_provider::NoopErpProvider
+        } else {
+            provider
+        }
+    }
+
+    /// Apply adapter execution policies while preserving namespace grants.
+    pub fn for_execution(&self) -> Self {
+        Self {
+            resolvers: self
+                .resolvers
+                .iter()
+                .filter(|(_, resolver)| resolver.allows_execution())
+                .map(|(name, resolver)| (name.clone(), Arc::clone(resolver)))
+                .collect(),
+            active: self.active.clone(),
+        }
+    }
+
     /// Public defaults include namespace membership backed by the shared database.
     pub fn public(mysql: brz_mysql::MysqlService) -> Self {
         let mut registry = Self {

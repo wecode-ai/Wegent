@@ -20,6 +20,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.services import model_credential_service
 from app.services.chat.config.model_resolver import extract_and_process_model_config
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.group_permission import get_user_groups
 from app.services.wework_model_config import (
     positive_token_limit,
@@ -388,6 +389,7 @@ def _validate_model_access(
         )
 
 
+@execution_resource_scope()
 def resolve_llm_proxy_model_config(
     db: Session,
     current_user: User,

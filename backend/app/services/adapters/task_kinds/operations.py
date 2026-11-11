@@ -34,6 +34,7 @@ from app.schemas.task import (
 )
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.pipeline_stage import pipeline_stage_service
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
 from app.services.task_status import (
@@ -480,6 +481,7 @@ class TaskOperationsMixin:
             "apiVersion": "agent.wecode.io/v1",
         }
 
+    @execution_resource_scope()
     def _get_team_for_new_task(
         self, db: Session, obj_in: TaskCreate, user: User
     ) -> Optional[Kind]:

@@ -25,6 +25,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.device_service import device_service
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.loop_item_executions.cancellation import execution_cancellation_target
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.runtime_cancellation import emit_runtime_cancellations
@@ -104,6 +105,7 @@ def scan_robot_queue(self) -> dict:
             }
 
 
+@execution_resource_scope()
 def _queued_devices(db) -> list[tuple[int, str]]:
     loop_item_execution_service.prepare_queued_assignments(db)
     bound_rows = db.execute(
