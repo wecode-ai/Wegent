@@ -21,6 +21,7 @@ mod desired_capabilities;
 mod handler;
 mod item;
 mod online_route;
+mod plugin_sync_protocol;
 mod record_sync_result;
 mod registration_sync;
 pub(crate) mod removal_sync;

@@ -114,6 +114,8 @@ struct RecordingState {
     evals: Vec<Vec<String>>,
     lists: std::collections::HashMap<String, Vec<String>>,
     published: Vec<Value>,
+    /// Every raw command rendered as space-joined arguments (`PUBLISH ...`).
+    commands: Vec<String>,
 }
 
 impl RecordingRedis {
@@ -162,6 +164,19 @@ impl brz_redis::Redis for RecordingRedis {
                 .push((key.clone(), captured[4].as_bytes().to_vec()));
         }
         R::from_redis_value(&brz_redis::Value::Int(1))
+    }
+
+    async fn command<R>(&self, command: brz_redis::Cmd) -> brz_redis::RedisResult<R>
+    where
+        R: brz_redis::FromRedisValue + Send,
+    {
+        let rendered = (0..command.arg_count())
+            .filter_map(|index| command.arg_at(index))
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.state.lock().expect("state").commands.push(rendered);
+        R::from_redis_value(&brz_redis::Value::Int(0))
     }
 
     async fn get<K, R>(&self, key: K) -> brz_redis::RedisResult<Option<R>>
@@ -726,4 +741,166 @@ fn task_status_frame_matches_the_terminal_status() {
     assert!(python_dumps(&payload).starts_with(
         "{\"task_id\": 7, \"status\": \"FAILED\", \"progress\": null, \"completed_at\": \""
     ));
+}
+
+#[tokio::test]
+async fn the_parsed_start_emits_chat_start_and_task_created() {
+    let redis = RecordingRedis::default();
+    let mut emitter =
+        StatusUpdatingEmitter::new(redis.clone(), 893_490_636_671_579, 893_490_636_671_584)
+            .with_created_task(CreatedTask {
+                user_id: 6501,
+                team_id: 110_467,
+                team_name: "wegent-chat".into(),
+                title: "根据这份材料模版".into(),
+                is_group_chat: false,
+                project_id: 0,
+            });
+    // Production feeds the parsed `response.created` START to `emit`.
+    let mut event = crate::internal_callback::parser::shared()
+        .parse(
+            893_490_636_671_579,
+            893_490_636_671_584,
+            Some(4),
+            "response.created",
+            &serde_json::json!({"shell_type": "Chat", "bot_name": "wegent-chat"}),
+        )
+        .expect("start parsed")
+        .expect("start event");
+    emitter.emit(&mut event).await.expect("start emitted");
+
+    let state = redis.state.lock().expect("state");
+    let published = &state.published;
+    assert_eq!(published.len(), 2, "{published:?}");
+    assert_eq!(published[0]["event"], "chat:start");
+    assert_eq!(published[0]["room"], "task:893490636671579");
+    assert_eq!(published[0]["data"][0]["bot_name"], "wegent-chat");
+    assert_eq!(published[1]["event"], "task:created");
+    assert_eq!(published[1]["room"], "user:6501");
+    assert_eq!(published[1]["data"][0]["team_name"], "wegent-chat");
+}
+
+/// `_dispatch_chat_shell_sse` awaits the wrapped emitter's `emit_start`
+/// before the POST: it publishes `chat:start` / `task:created` only, and the
+/// `chat:task_streaming` marker is established later by the parsed
+/// `response.created` START.
+#[tokio::test]
+async fn the_pre_http_start_forwards_without_writing_a_redis_marker() {
+    let redis = RecordingRedis::default();
+    let mut emitter =
+        StatusUpdatingEmitter::new(redis.clone(), 893_490_636_671_579, 893_490_636_671_584)
+            .with_created_task(CreatedTask {
+                user_id: 6501,
+                team_id: 110_467,
+                team_name: "wegent-chat".into(),
+                title: "根据这份材料模版".into(),
+                is_group_chat: false,
+                project_id: 0,
+            });
+    emitter
+        .emit_start_forward_only(
+            Some(4),
+            &serde_json::json!({"shell_type": "Chat", "bot_name": "wegent-chat"}),
+        )
+        .await
+        .expect("start forwarded");
+
+    let guard = redis.state.lock().expect("state");
+    assert!(
+        guard.calls.is_empty(),
+        "the pre-HTTP START must not write the task marker: {:?}",
+        guard.calls
+    );
+    assert!(guard.sets.is_empty(), "{:?}", guard.sets);
+    assert!(guard.commands.is_empty(), "{:?}", guard.commands);
+    assert_eq!(guard.published.len(), 2, "{:?}", guard.published);
+    assert_eq!(guard.published[0]["event"], "chat:start");
+    assert_eq!(guard.published[1]["event"], "task:created");
+}
+
+/// The parsed `response.created` START runs the full `emit`, so it is the
+/// point that establishes the `chat:task_streaming` marker.
+#[tokio::test]
+async fn the_parsed_start_establishes_the_task_streaming_marker() {
+    let redis = RecordingRedis::default();
+    let mut emitter =
+        StatusUpdatingEmitter::new(redis.clone(), 893_490_636_671_579, 893_490_636_671_584);
+    // Production feeds the parsed `response.created` START to `emit`.
+    let mut event = crate::internal_callback::parser::shared()
+        .parse(
+            893_490_636_671_579,
+            893_490_636_671_584,
+            Some(4),
+            "response.created",
+            &serde_json::json!({"shell_type": "Chat", "bot_name": "wegent-chat"}),
+        )
+        .expect("start parsed")
+        .expect("start event");
+    emitter.emit(&mut event).await.expect("start persisted");
+
+    let calls = redis.state.lock().expect("state").calls.clone();
+    assert!(
+        calls
+            .iter()
+            .any(|call| call == "SET chat:task_streaming:893490636671579"),
+        "{calls:?}"
+    );
+}
+
+/// `websocket.py:_load_context_briefs` -> `emit_chat_done`: the DONE frame
+/// always carries the completed subtask's committed briefs under `contexts`;
+/// the error frame (`emit_chat_error`) has no such field.
+#[tokio::test]
+async fn the_done_frame_publishes_the_contexts_field() {
+    let redis = RecordingRedis::default();
+    let mut event = ExecutionEvent::new(
+        crate::internal_callback::event::EventType::Done,
+        893_490_636_671_579,
+        893_490_636_671_584,
+    );
+    event.message_id = Some(4);
+    let contexts = json!([{
+        "id": 11,
+        "context_type": "attachment",
+        "name": "a.txt",
+        "status": "ready",
+    }]);
+    emit_done_frames(
+        &redis,
+        &event,
+        Some(6501),
+        &json!({"value": "x"}),
+        None,
+        Some(&contexts),
+    )
+    .await
+    .expect("done frames");
+
+    {
+        let state = redis.state.lock().expect("state");
+        let done = state
+            .published
+            .iter()
+            .find(|message| message["event"] == "chat:done")
+            .expect("chat:done publish");
+        assert_eq!(done["data"][0]["contexts"], contexts);
+    }
+
+    let redis = RecordingRedis::default();
+    let mut event = ExecutionEvent::new(
+        crate::internal_callback::event::EventType::Error,
+        893_490_636_671_579,
+        893_490_636_671_584,
+    );
+    event.error = Some("boom".to_owned());
+    emit_error_frames(&redis, &event, Some(6501))
+        .await
+        .expect("error frames");
+    let state = redis.state.lock().expect("state");
+    let error = state
+        .published
+        .iter()
+        .find(|message| message["event"] == "chat:error")
+        .expect("chat:error publish");
+    assert!(error["data"][0].get("contexts").is_none(), "{error}");
 }

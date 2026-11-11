@@ -17,29 +17,28 @@ from app.models.kind import Kind
 from app.schemas.device import DeviceType
 from app.services.device.command_service import execute_configured_device_command
 from app.services.device.git_credentials import (
-    DeviceGitCredentialResolutionError,
+    DeviceGitCredentialNoAccountsError,
     sync_git_accounts_to_device,
 )
 from app.services.device.identity import record_route_id
 from app.services.device.remote_control_policy import device_kind_type
 from app.services.device.runtime_route import runtime_device_route_id
 from shared.models.db import User
+from shared.telemetry.decorators import trace_async
 
 
-async def _sync_device_git_credentials(db: Any, device: Kind) -> None:
+async def _sync_device_git_credentials(db: Any, device: Kind) -> bool:
     """Provision the owner's Git accounts onto managed remote devices.
 
-    Preparation declares device-local Git credentials, so a managed remote or
-    cloud device must receive the accounts before cloning; without them the
-    clone fails deep inside the executor with a raw credential error. Local
-    and App installations resolve credentials from the machine's own Git
-    setup, so syncing there would edit the user's personal Git configuration.
+    Called only after the actual device reports an authentication preflight
+    failure. Local and App installations keep the machine's native Git setup;
+    empty account lists never clear a device's existing credentials.
     """
     if device_kind_type(device) not in {DeviceType.CLOUD, DeviceType.REMOTE}:
-        return
+        return False
     user = db.get(User, int(device.user_id))
     if user is None:
-        return
+        return False
     try:
         await sync_git_accounts_to_device(
             db,
@@ -47,12 +46,26 @@ async def _sync_device_git_credentials(db: Any, device: Kind) -> None:
             device_id=record_route_id(device),
             allow_empty=False,
         )
-    except DeviceGitCredentialResolutionError:
-        # No Git accounts configured for the owner. Refuse to clear whatever
-        # the device already has and let preparation continue; public
-        # repositories do not need credentials, and a missing private
-        # credential surfaces as the repository error below.
-        return
+    except DeviceGitCredentialNoAccountsError:
+        # Preserve the original preflight error without clearing device credentials.
+        return False
+    return True
+
+
+def _requires_git_configuration(result: dict[str, Any]) -> bool:
+    """Only the Executor's structured auth failure can trigger credential sync."""
+    message = str(result.get("error") or "")
+    prefix = "git-access:"
+    if prefix not in message:
+        return False
+    try:
+        failure = json.loads(message.split(prefix, 1)[1])
+        return failure.get("code") in {
+            "credentials-required",
+            "authentication-failed",
+        }
+    except (ValueError, AttributeError):
+        return False
 
 
 def execution_environment_fingerprint(definition: dict[str, Any]) -> str:
@@ -130,6 +143,7 @@ def merge_execution_environment_device_state(
     return merged
 
 
+@trace_async("initialize_execution_environment", "backend.execution_environment")
 async def initialize_execution_environment(
     *,
     db: Any,
@@ -178,9 +192,7 @@ async def initialize_execution_environment(
                 "on this device",
             )
         try:
-            if repositories:
-                await _sync_device_git_credentials(db, device)
-            result = await execute_configured_device_command(
+            command_args = dict(
                 db=db,
                 user_id=int(device.user_id),
                 device_id=record_route_id(device),
@@ -200,6 +212,27 @@ async def initialize_execution_environment(
                 max_output_bytes=5 * 1024 * 1024,
                 allow_internal=True,
             )
+            # The actual device is authoritative: public repositories and native
+            # credentials must work even when the owner has no cloud accounts.
+            result = await execute_configured_device_command(**command_args)
+            if not result.get("success") and _requires_git_configuration(result):
+                try:
+                    synced = await _sync_device_git_credentials(db, device)
+                except Exception as sync_error:
+                    failure = json.loads(
+                        str(result["error"]).split("git-access:", 1)[1]
+                    )
+                    failure["message"] = (
+                        f"{failure.get('message') or 'Git authentication failed'}. "
+                        f"Credential synchronization failed: {sync_error}"
+                    )
+                    raise RuntimeError(
+                        f"git-access:{json.dumps(failure, ensure_ascii=False)}"
+                    ) from sync_error
+                if synced:
+                    # Synchronization is not proof of repository access. Prepare
+                    # again once, reusing completed checkouts.
+                    result = await execute_configured_device_command(**command_args)
             if not bool(result.get("success")) or result.get("exit_code") != 0:
                 error_message = str(
                     result.get("stderr")

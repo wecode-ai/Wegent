@@ -257,6 +257,46 @@ fn legacy_settings_without_optional_name_remain_editable_after_migration() {
 }
 
 #[test]
+fn importing_legacy_project_roles_rebinds_all_stale_device_ids() {
+    for initial_device in ["", "mac"] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        for (index, device) in ["stale-one", "stale-two"].iter().enumerate() {
+            let mut legacy = role(&format!("role-{index}"));
+            legacy["executionDeviceId"] = json!(device);
+            legacy["projectId"] = json!(format!("project-{index}"));
+            legacy["projectStore"] = json!("cloud");
+            legacy["userId"] = json!(7);
+            connection.execute("INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_settings',?2,'now','now')", rusqlite::params![format!("legacy-{index}"), legacy.to_string()]).unwrap();
+        }
+        store.personal_stand_in(7, initial_device).unwrap();
+        let imported = store.personal_stand_in(7, "mac").unwrap();
+        assert_eq!(imported["executionDeviceId"], "mac");
+        assert_eq!(imported["roles"].as_array().unwrap().len(), 2);
+        for role in imported["roles"].as_array().unwrap() {
+            assert_eq!(role["executionDeviceId"], "mac");
+        }
+    }
+}
+
+#[test]
+fn project_role_save_keeps_primary_device_while_preserving_the_role_device() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let personal = store.personal_stand_in(7, "mac").unwrap();
+    store.save_personal_stand_in(7, "mac", personal).unwrap();
+    let mut draft = store.stand_in_settings("project", 7, "default").unwrap();
+    draft["projectStore"] = json!("cloud");
+    draft["executionDeviceId"] = json!("remote");
+    store.save_stand_in_settings("project", 7, draft).unwrap();
+    let saved = store.personal_stand_in(7, "").unwrap();
+    assert_eq!(saved["executionDeviceId"], "mac");
+    assert_eq!(saved["roles"][0]["executionDeviceId"], "remote");
+}
+
+#[test]
 fn old_agent_bindings_are_removed_atomically_without_changing_identity_or_grants() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("tasks.sqlite");

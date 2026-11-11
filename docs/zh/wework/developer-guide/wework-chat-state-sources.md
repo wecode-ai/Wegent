@@ -19,6 +19,16 @@ sidebar_position: 18
 
 ## 单任务刷新与列表开销
 
+`runtime.work.changed` 和跨窗口任务变更共用串行刷新队列：读取未结束时，
+后续事件只标记一次待刷新；结束后再读取最新快照，不并发发出多份完整列表。
+队列销毁后不再补发请求，读取错误保留在诊断日志中，下一次事件可重新刷新。
+
+`runtime.tasks.list`（包括通知中心的缓存待办轮询）只读取 Runtime 任务清单，
+不能逐条打开 Issue 数据库、申请写事务或回写 Issue 状态。
+Issue 状态投影由执行生命周期、绑定完成和显式 `todos.list` 协调负责。
+`inventory_read_tests` 使用合成的大历史库验证缓存扫描不写入 Issue 库且生命周期
+仍能同步状态；桌面 `idle-executor-requests` 检查点另验证变更事件突发不会产生重叠列表读取。
+
 Goal 更新、清除和轮次结束后的状态确认只刷新对应执行：存在单任务查询能力时，
 `refreshRuntimeTask` 调用拥有者的 `runtime.tasks.get`，不能为每次事件读取整台设备的
 `runtime.tasks.list`。不存在的任务返回空，读取失败直接传播，不能再用全量列表重试。
@@ -213,6 +223,12 @@ Codex app-server 的 `turn/start` 返回值是新 turn 身份的权威来源。e
 同一轮次的迟到启动通知也不能恢复已经停止的状态。
 Goal 的原生续跑可能超过本地请求的生命周期，即使请求控制记录已清理，仍应能引导
 原生状态中的运行轮次；等待下一轮时只做有界等待，不另建引导状态。
+
+会话恢复接入与共享进程保护使用不同的忙碌条件。`thread/resume` 等待本地执行持有者和
+原生活跃 turn 结束，但不能仅因 Goal 仍为 active 就阻塞：没有活跃 turn 的 Goal 可能
+必须先恢复会话才能继续。活跃 Goal 仍保护共享进程，阻止后台空闲重启或配置改写；
+恢复时若需更新 MCP 权限或运行指令，仍须等待旧订阅的 `thread/closed` 后才能重载。
+恢复过程保留原会话、目标创建时间和累计用量，不通过清除或重建 Goal 解除接入等待。
 
 用户发送引导时，Wework 先把引导消息乐观插入当前 turn，再调用
 `runtime.tasks.guidance`。如果 Codex `turn/steer` 明确返回预期 turn ID 与实际活跃

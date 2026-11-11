@@ -35,6 +35,8 @@ The durable queue, atomic claim, and Runtime acceptance control task delivery. A
 Routed work notifies eligible devices using their owners' connection identities, after checking current grants, models, and Issue runner affinity.
 `LOCAL_RUNTIME_WORK_POLL_INTERVAL` overrides the default five-second interval. Reconnection and availability notifications still initiate an immediate pull.
 
+Running and terminal Runtime observations both lock and refresh their execution before writing back, preserving the execution-to-activity lock order. Acceptance acknowledgements or lease updates must not drop an already-received `response.created` because of a stale version. Device and owner matching, monotonic event sequences, and terminal-state protection remain unchanged.
+
 ## Stand-in assignment identities
 
 For a direct human assignment, `human_task_binding.assignmentId` identifies the

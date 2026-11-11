@@ -20,6 +20,18 @@ accepted user reply in the view layer.
 
 ## Point Refreshes and List Costs
 
+`runtime.work.changed` and cross-window work changes share a serial refresh queue.
+Events arriving during a read mark one trailing invalidation instead of starting overlapping
+full-list requests. Disposal drops trailing work; read failures remain observable and a later
+event can recover.
+
+`runtime.tasks.list`, including cached notification inventory polling, only reads the Runtime
+catalog. It must not reopen the Issue database, acquire write transactions, or reproject Issue
+statuses for each task. Lifecycle transitions, completed bindings, and explicit `todos.list`
+reconciliation own those projections. `inventory_read_tests` uses synthetic long-lived history
+to verify read isolation and lifecycle projection. The desktop `idle-executor-requests`
+checkpoint additionally covers burst invalidations without overlapping list reads.
+
 Goal updates, clearing, and post-turn settlement checks refresh only the affected execution.
 When point lookup is available, `refreshRuntimeTask` calls its owner's `runtime.tasks.get`,
 not the device-wide `runtime.tasks.list` for every event. Missing tasks return null and lookup
@@ -255,6 +267,16 @@ request, and a delayed start notification for the same turn cannot revive a
 stopped state. Native Goal continuations can outlive local request controls and must
 remain guidable through their native running turn. Waiting for the next turn
 is bounded and does not create another guidance state.
+
+Resume admission and shared-process protection use different busy conditions.
+`thread/resume` waits for local execution owners and native active turns, but an
+active Goal alone must not block admission: a Goal without a live turn may need
+the resume before it can continue. Active Goals still protect the shared process
+against background idle restarts and configuration mutations. Reloading MCP
+authority or runtime instructions during recovery still waits for the old
+subscription's `thread/closed`. Recovery preserves the original thread, Goal
+creation time and accumulated usage instead of clearing or recreating the Goal
+to unblock admission.
 
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If

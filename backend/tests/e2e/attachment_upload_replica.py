@@ -12,6 +12,7 @@ No application services, SQL drivers, storage backends or HTTP calls are mocked.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
@@ -22,6 +23,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from urllib.parse import urlparse
 
+import socketio
 from attachment_replica_fixture import ReplicaFixture, execute, gateway
 from redis import Redis
 from sqlalchemy.orm import Session
@@ -98,6 +100,73 @@ class AttachmentUploadReplica(unittest.TestCase):
         self.assertEqual(row["binary_data"], content)
         self.assertEqual(json.loads(row["type_data"])["file_size"], len(content))
         return context_id
+
+    def test_memory_enabled_chat_ack_reads_the_committed_user_subtask(self) -> None:
+        """The post-commit memory reload must succeed before a replica catches up."""
+        name = "replica-chat"
+        with Session(self.fixture.db) as db:
+            for kind, spec in (
+                ("Bot", {}),
+                (
+                    "Team",
+                    {
+                        "collaborationModel": "solo",
+                        "members": [{"botRef": {"name": name, "namespace": "default"}}],
+                        "requiresWorkspace": False,
+                        "bind_mode": ["chat"],
+                    },
+                ),
+            ):
+                resource = Kind(
+                    kind=kind,
+                    name=name,
+                    namespace="default",
+                    user_id=self.user.id,
+                    is_active=True,
+                    json={"kind": kind, "spec": spec},
+                )
+                db.add(resource)
+            db.flush()
+            team_id = resource.id
+            db.commit()
+        self.fixture.sync()
+        with self.fixture.paused():
+            ack = asyncio.run(self.send_memory_chat(team_id))
+            self.assertNotIn("error", ack)
+            for server, count in ((self.fixture.primary, 1), (self.fixture.replica, 0)):
+                self.assertEqual(
+                    execute(
+                        server,
+                        f"SELECT COUNT(*) FROM `{self.fixture.database}`.subtasks "
+                        "WHERE id=:id AND task_id=:task_id",
+                        id=ack["subtask_id"],
+                        task_id=ack["task_id"],
+                    ).scalar_one(),
+                    count,
+                )
+
+    async def send_memory_chat(self, team_id: int) -> dict:
+        socket = socketio.AsyncClient(reconnection=False)
+        try:
+            await socket.connect(
+                str(self.client.base_url),
+                auth={"token": self.headers["Authorization"].removeprefix("Bearer ")},
+                namespaces=["/chat"],
+                transports=["websocket"],
+            )
+            return await socket.call(
+                "chat:send",
+                {
+                    "team_id": team_id,
+                    "task_type": "chat",
+                    "message": "A plain group message with Memory enabled",
+                    "is_group_chat": True,
+                },
+                namespace="/chat",
+                timeout=15,
+            )
+        finally:
+            await socket.disconnect()
 
     def test_new_upload_returns_committed_row_when_replica_is_missing_it(self) -> None:
         """A new upload must return 200 even while its row cannot reach the replica."""
@@ -275,7 +344,7 @@ if __name__ == "__main__":
     result = unittest.TextTestRunner(verbosity=2).run(
         unittest.defaultTestLoader.loadTestsFromTestCase(AttachmentUploadReplica)
     )
-    success = result.wasSuccessful() and result.testsRun == 4 and not result.skipped
+    success = result.wasSuccessful() and result.testsRun == 5 and not result.skipped
     (report / "result.json").write_text(
         json.dumps(
             {

@@ -1,7 +1,5 @@
 import type { DeviceInfo } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useContext } from 'react'
-import { StandInBindingContext } from './StandInBindingContext'
 
 export function StandInDeviceSelect({
   value,
@@ -9,27 +7,32 @@ export function StandInDeviceSelect({
   devices,
   disabled,
   onChange,
+  testId = 'stand-in-device',
+  ariaLabel,
+  readOnly = false,
 }: {
   value: string
   currentDeviceId: string
   devices: DeviceInfo[]
   disabled: boolean
   onChange(value: string): void
+  testId?: string
+  ariaLabel?: string
+  readOnly?: boolean
 }) {
   const { t } = useTranslation('common')
-  const binding = useContext(StandInBindingContext)
-  if (binding) {
+  if (readOnly) {
     return (
       <span className="px-2 text-sm text-text-secondary">
-        {devices.find(device => device.device_id === binding.deviceId)?.name ??
-          (binding.deviceId === currentDeviceId ? t('standIn.current_device') : binding.deviceId)}
+        {devices.find(device => device.device_id === value)?.name ??
+          (value === currentDeviceId ? t('standIn.current_device') : value)}
       </span>
     )
   }
   return (
     <select
-      data-testid="stand-in-device"
-      aria-label={t('standIn.device')}
+      data-testid={testId}
+      aria-label={ariaLabel ?? t('standIn.device')}
       value={value}
       disabled={disabled}
       onChange={event => onChange(event.target.value)}

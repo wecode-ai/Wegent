@@ -315,10 +315,12 @@ mod tests {
 
         assert!(table.matches(&Method::POST, "/api/v1/responses"));
         assert!(!table.matches(&Method::POST, "/api/v1/responses/"));
-        for path in ["/socket.io", "/socket.io/"] {
-            assert!(!table.matches(&Method::GET, path));
-            assert!(!table.matches(&Method::POST, path));
-        }
+        // `/socket.io/` is now Rust-owned for both transports; the collection
+        // path without the trailing slash stays on the Python fallback.
+        assert!(!table.matches(&Method::GET, "/socket.io"));
+        assert!(!table.matches(&Method::POST, "/socket.io"));
+        assert!(table.matches(&Method::GET, "/socket.io/"));
+        assert!(table.matches(&Method::POST, "/socket.io/"));
         assert!(!table.matches(&Method::POST, "/api/v1/responses/resp_123/cancel"));
         assert!(table.matches(&Method::GET, "/api/v1/responses/resp_123"));
         assert!(table.matches(&Method::DELETE, "/api/v1/responses/resp_123"));

@@ -26,6 +26,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<(), AppIpcError> {
+        if payload["commentId"].is_string() {
+            return self.process_stand_in_issue_mention(payload).await;
+        }
         let (Some(project), Some(issue_id), Some(assignment)) = (
             payload["projectId"].as_str(),
             payload["itemId"].as_str(),
@@ -84,8 +87,11 @@ impl RuntimeWorkRpcHandler {
         if super::personal_stand_in::matching_personal_roles(&configs, &issue)
             .iter()
             .all(|role| {
-                self.local_task_link(&self.stand_in_task_id(role, &issue["human_task_binding"]))
-                    .is_some()
+                self.stand_in_assignment_is_handled(
+                    role,
+                    &self.stand_in_task_id(role, &issue),
+                    &issue["human_task_binding"],
+                )
             })
         {
             return Ok(());
@@ -190,12 +196,12 @@ mod tests {
             }))
             .await
             .unwrap_err();
-        assert_eq!(error.code, "assignment_already_handled");
+        assert_eq!(error.code, "wrong_device");
         assert_eq!(
             error.message,
-            "This assignment has already been handled or is no longer active"
+            "Open the existing Issue conversation on its owning device"
         );
-        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.bindings.load(Ordering::SeqCst), 2);
         assert!(fixture.handler.local_task_links(true).is_empty());
     }
@@ -275,6 +281,7 @@ mod tests {
         fixture.handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: "stand-in-human-default".into(),
             status: "failed".into(),
+            runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"default","userId":7,"projectStore":"cloud","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"}}),
             ..RuntimeTaskLink::default()
         });
         fixture

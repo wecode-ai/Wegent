@@ -182,6 +182,8 @@ mod stand_in_events;
 mod stand_in_execution;
 mod stand_in_history;
 mod stand_in_ingress;
+mod stand_in_issue_mentions;
+mod stand_in_issue_replies;
 mod stand_in_lifecycle;
 mod stand_in_memory;
 mod stand_in_memory_progress;
@@ -584,6 +586,7 @@ pub struct RuntimeWorkRpcHandler {
     /// carry credentials, so turns fill them from here before launching the
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    backend_device_route: Option<Arc<Mutex<Option<String>>>>,
 }
 
 struct CodexRuntimeProxyConfig {
@@ -955,6 +958,7 @@ impl RuntimeWorkRpcHandler {
                 crate::agents::wework_codex_home(),
             ),
             backend_connection: Arc::new(Mutex::new(None)),
+            backend_device_route: None,
         };
         for (local_task_id, turn) in handler
             .active_goal_turns
@@ -1015,6 +1019,11 @@ impl RuntimeWorkRpcHandler {
         handler
     }
 
+    pub fn with_backend_device_route(mut self, route: Arc<Mutex<Option<String>>>) -> Self {
+        self.backend_device_route = Some(route);
+        self
+    }
+
     pub fn with_backend_connection(
         mut self,
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
@@ -1028,6 +1037,7 @@ impl RuntimeWorkRpcHandler {
         self.resume_cloud_collaboration_rounds();
         for link in self.local_task_links(false) {
             self.sync_issue_human_requests(&link.local_task_id);
+            self.sync_stand_in_issue_replies(&link.local_task_id);
         }
         self.start_supervisor_scheduler();
         self

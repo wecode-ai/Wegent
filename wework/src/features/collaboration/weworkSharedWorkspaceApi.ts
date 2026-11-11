@@ -592,8 +592,10 @@ export function createWeworkDeliverySharedWorkspaceApi(
           })
         ).items.map(toIssue)
       },
-      markRead(issueId, activitySequence) {
-        return deliveryApi.markLoopItemRead(issueId, activitySequence).then(toIssue)
+      markRead(issueId, activitySequence, contentRevision) {
+        return deliveryApi
+          .markLoopItemRead(issueId, activitySequence, contentRevision)
+          .then(toIssue)
       },
     },
     attachments: {

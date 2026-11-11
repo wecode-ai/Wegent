@@ -27,7 +27,6 @@ import {
   interactionResponse,
   interactionId,
   interactionSource,
-  interactionOriginalScheme,
   canReplyToInteraction,
   interactionAllowsNativeReply,
   readRuntimeInteractions,
@@ -48,25 +47,29 @@ import {
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
 import { isPersonalStandInTask } from '@/features/workbench/runtimeTaskNotificationContent'
 import { weworkInteractionScheme } from './scheme'
-import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { replyToInteractionProject } from './interactionProjectReply'
 import { prepareRuntimeContinuationModel } from '@/features/workbench/runtimeContinuationModel'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { logInteractionLoadFailure } from './interactionDiagnostics'
-import { persistInteractionArchive } from './interactionArchive'
+import { interactionHistoryEntry, persistInteractionArchive } from './interactionArchive'
+import { useInteractionDrafts } from './useInteractionDrafts'
+import { useNativeInteractionReplies } from './useNativeInteractionReplies'
+import { useRuntimeInteractionSettlements } from './useRuntimeInteractionSettlements'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { isRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCacheStore'
 import {
-  readInteractionDrafts,
   readInteractionHistory,
   saveInteractionState,
   readPendingInteractionCache,
   pendingInteractionCache,
 } from './interactionStorage'
 
-type RuntimeInteractionSnapshot = Omit<RuntimeInteractionsValue, 'drafts' | 'setDraft'>
+type RuntimeInteractionSnapshot = Omit<
+  RuntimeInteractionsValue,
+  'drafts' | 'replyDrafts' | 'setDraft' | 'discardDraft'
+>
 
 export function RuntimeInteractionsProvider({
   accountKey,
@@ -79,31 +82,8 @@ export function RuntimeInteractionsProvider({
     accountKey: string
     value: RuntimeInteractionSnapshot
   } | null>(null)
-  const draftKey = `wework.interactions:${accountKey}:drafts`
-  const [draftState, setDraftState] = useState(() => ({
-    key: draftKey,
-    values: readInteractionDrafts(draftKey),
-  }))
-  if (draftState.key !== draftKey) {
-    setDraftState({ key: draftKey, values: readInteractionDrafts(draftKey) })
-  }
-  // Controlled inputs must receive edits directly, without the snapshot's
-  // effect-driven publication round trip interrupting native IME composition.
-  const setDraft = useCallback(
-    (id: string, text: string) => {
-      setDraftState(current => {
-        if (current.key !== draftKey) return current
-        const values = { ...current.values }
-        if (text) values[id] = text
-        else delete values[id]
-        return { key: draftKey, values }
-      })
-    },
-    [draftKey]
-  )
-  useEffect(() => {
-    saveInteractionState(draftState.key, draftState.values)
-  }, [draftState])
+  const { drafts, replyDrafts, setDraft, discardDraft, retainDraft, retainedReply } =
+    useInteractionDrafts(accountKey)
   const publish = useCallback(
     (value: RuntimeInteractionSnapshot) => setSnapshot({ accountKey, value }),
     [accountKey]
@@ -112,7 +92,7 @@ export function RuntimeInteractionsProvider({
     <RuntimeInteractionsContext.Provider
       value={
         snapshot?.accountKey === accountKey
-          ? { ...snapshot.value, drafts: draftState.values, setDraft }
+          ? { ...snapshot.value, drafts, replyDrafts, setDraft, discardDraft }
           : null
       }
     >
@@ -122,6 +102,8 @@ export function RuntimeInteractionsProvider({
         accountKey={accountKey}
         publish={publish}
         setDraft={setDraft}
+        retainDraft={retainDraft}
+        retainedReply={retainedReply}
       />
       <QuestionDiscussionProvider accountKey={accountKey}>{children}</QuestionDiscussionProvider>
     </RuntimeInteractionsContext.Provider>
@@ -132,10 +114,14 @@ function RuntimeInteractionsState({
   accountKey,
   publish,
   setDraft,
+  retainDraft,
+  retainedReply,
 }: {
   accountKey: string
   publish: (value: RuntimeInteractionSnapshot) => void
   setDraft: RuntimeInteractionsValue['setDraft']
+  retainDraft: ReturnType<typeof useInteractionDrafts>['retainDraft']
+  retainedReply: ReturnType<typeof useInteractionDrafts>['retainedReply']
 }) {
   const source = useNotificationTaskSource()
   const tabs = useWorkspaceTabs()
@@ -198,10 +184,6 @@ function RuntimeInteractionsState({
     () => new Set(history.filter(item => !item.resolvedIssueQuestion).map(item => item.id))
   )
   const submittedRef = useRef(submitted)
-  const handledNativeReplies = useMemo(
-    () => createStandInRecordStore(`wework.interactions:${accountKey}:native-replies`),
-    [accountKey]
-  )
   const delivered = useMemo(
     () => createStandInRecordStore(`wework.interactions:${accountKey}:delivered`),
     [accountKey]
@@ -238,14 +220,7 @@ function RuntimeInteractionsState({
       await persistInteractionArchive(
         historyKey,
         {
-          id: item.id,
-          source: interactionSource(item),
-          title: item.task.task.title,
-          question: item.question,
-          address: item.task.address,
-          originalUrl: interactionOriginalScheme(item),
-          sourceMessageIds: item.sourceMessageIds,
-          answeredAt,
+          ...interactionHistoryEntry(item, answeredAt),
           ...(resolvedIssueQuestion ? { resolvedIssueQuestion } : {}),
         },
         failedArchiveWrites.current,
@@ -472,6 +447,7 @@ function RuntimeInteractionsState({
                 for (const answered of requests.filter(request => request.answered)) {
                   operation = 'archive'
                   stage = `archive:${answered.requestKey}`
+                  await retainDraft(interactionHistoryEntry(answered, answered.createdAt))
                   await archive(answered)
                   localStorage.removeItem(acceptancePrefix + answered.id)
                 }
@@ -513,7 +489,7 @@ function RuntimeInteractionsState({
         if (mounted.current) setLoading(false)
       }
     },
-    [acceptancePrefix, archive, archiveResolved, t]
+    [acceptancePrefix, archive, archiveResolved, retainDraft, t]
   )
   const signature = JSON.stringify(
     source?.items.map(item => [
@@ -594,12 +570,9 @@ function RuntimeInteractionsState({
     saveInteractionState(cacheKey, pendingInteractionCache(pending))
   }, [cacheKey, pending])
 
-  const markHandled = useCallback(
+  const clearReplyDraft = useCallback(
     (id: string) => {
-      submittedRef.current = new Set(submittedRef.current).add(id)
-      setSubmitted(submittedRef.current)
       setDraft(id, '')
-      setNoticeIds(current => current.filter(value => value !== id))
       setErrors(current => {
         const next = { ...current }
         delete next[id]
@@ -608,6 +581,23 @@ function RuntimeInteractionsState({
     },
     [setDraft]
   )
+  const markHandled = useCallback((id: string) => {
+    submittedRef.current = new Set(submittedRef.current).add(id)
+    setSubmitted(submittedRef.current)
+    setNoticeIds(current => current.filter(value => value !== id))
+  }, [])
+  const settleFromConversation = useCallback(
+    (item: RuntimeInteraction) =>
+      navigator.locks.request(historyKey + ':' + item.id, async () => {
+        await retainDraft(interactionHistoryEntry(item, Date.now()))
+        await archive(item, Date.now())
+        saveInteractionState(acceptancePrefix + item.id, true)
+        // A task answer settles the question, not another sender's unsent text.
+        if (mounted.current) markHandled(item.id)
+      }),
+    [acceptancePrefix, archive, historyKey, markHandled, retainDraft]
+  )
+  useRuntimeInteractionSettlements(pending, settleFromConversation)
   const dismiss = useCallback(
     async (item: RuntimeInteraction) => {
       if (item.sharedRequest || inFlight.current.has(item.id)) return
@@ -619,13 +609,14 @@ function RuntimeInteractionsState({
           saveInteractionState(acceptancePrefix + item.id, true)
           if (!mounted.current) return
           markHandled(item.id)
+          clearReplyDraft(item.id)
         })
       } finally {
         inFlight.current.delete(item.id)
         if (mounted.current) setBusy(new Set(inFlight.current))
       }
     },
-    [acceptancePrefix, archive, historyKey, markHandled]
+    [acceptancePrefix, archive, clearReplyDraft, historyKey, markHandled]
   )
   const respond = useCallback(
     async (
@@ -649,17 +640,9 @@ function RuntimeInteractionsState({
           row =>
             row.resolvedIssueQuestion && matchesIssueResolution(item, row.resolvedIssueQuestion)
         )
-      const clearHandledDraft = () => {
-        setDraft(item.id, '')
-        setErrors(current => {
-          const next = { ...current }
-          delete next[item.id]
-          return next
-        })
-      }
       try {
         if (confirmedResolved()) {
-          clearHandledDraft()
+          await retainDraft(interactionHistoryEntry(item, Date.now())).catch(console.error)
           return false
         }
         if (item.sharedRequest) {
@@ -685,7 +668,7 @@ function RuntimeInteractionsState({
         return await navigator.locks.request(historyKey + ':' + item.id, async () => {
           if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
           if (confirmedResolved()) {
-            clearHandledDraft()
+            await retainDraft(interactionHistoryEntry(item, Date.now())).catch(console.error)
             return false
           }
           // The request lock and persisted acceptance are shared by every workbench window.
@@ -698,7 +681,7 @@ function RuntimeInteractionsState({
           ) {
             submittedRef.current = new Set(submittedRef.current).add(item.id)
             setSubmitted(submittedRef.current)
-            clearHandledDraft()
+            await retainDraft(interactionHistoryEntry(item, Date.now())).catch(console.error)
             return false
           }
           // Revalidate the exact request before answering; old notifications are not authority.
@@ -761,9 +744,13 @@ function RuntimeInteractionsState({
           const accepted = result.accepted ?? ('success' in result && result.success)
           if (!accepted) throw new Error(result.error || t('notifications.failed'))
           saveInteractionState(acceptancePrefix + item.id, true)
-          await archive(item, Date.now())
+          // Delivery is already accepted. Archive failure must never reclassify it as unsent.
+          await archive(item, Date.now()).catch(error =>
+            logInteractionLoadFailure('archive', error, item.task.address)
+          )
           if (!mounted.current) return true
           markHandled(item.id)
+          clearReplyDraft(item.id)
           setReplyNotice(t('interactions.reply_success'))
           // Refresh failure must never turn an accepted answer into a failed send.
           void sourceRef.current?.refresh?.().catch(console.error)
@@ -795,9 +782,11 @@ function RuntimeInteractionsState({
     [
       acceptancePrefix,
       archive,
+      clearReplyDraft,
       historyKey,
       markHandled,
       refresh,
+      retainDraft,
       setDraft,
       t,
       refreshIssueInteractions,
@@ -862,75 +851,27 @@ function RuntimeInteractionsState({
     t,
   ])
 
-  useEffect(() => {
-    if (
-      !isElectronRuntime() ||
-      getDesktopWindowLabel() !== 'main' ||
-      !source?.services?.runtimeWorkApi
-    )
-      return
-    let active = true
-    let draining = false
-    const drain = async () => {
-      if (draining) return
-      draining = true
-      try {
-        const replies = await invokeDesktopHost<
-          Array<{ id: string; interactionId: string; text: string }>
-        >('notification.pendingReplies', { accountKey })
-        for (const reply of replies) {
-          if (!active || !mounted.current) return
-          if (
-            handledNativeReplies.getSnapshot()[reply.id] ||
-            submittedRef.current.has(reply.interactionId)
-          ) {
-            await invokeDesktopHost('notification.acknowledgeReply', { id: reply.id, accountKey })
-            continue
-          }
-          const item = [
-            ...Object.values(loadedRef.current).flat(),
-            ...issueInteractions.items,
-          ].find(item => item.id === reply.interactionId)
-          // Cached entries cannot authorize a response; leave the host reply queued.
-          if (!item || item.cached || inFlight.current.has(item.id)) continue
-          setDraft(item.id, reply.text)
-          const accepted = await respond(item, reply.text, { clientMessageId: reply.id })
-          // Accepted sends must be acknowledged even if a refresh replaced this effect.
-          // Failed sends remain editable drafts, unless their account has unmounted.
-          if (accepted || mounted.current) {
-            handledNativeReplies.write({
-              ...handledNativeReplies.getSnapshot(),
-              [reply.id]: { version: 'handled', savedAt: Date.now() },
-            })
-            await invokeDesktopHost('notification.acknowledgeReply', { id: reply.id, accountKey })
-          }
-          if (!active) return
-        }
-      } catch (error) {
-        console.error('[Wework] Could not handle notification reply', error)
-      } finally {
-        draining = false
-      }
-    }
-    const unsubscribe = subscribeDesktopHostEvents(event => {
-      if (event.type === 'notification-reply') void drain()
-    })
-    void drain()
-    const timer = window.setInterval(() => void drain(), 5000)
-    return () => {
-      window.clearInterval(timer)
-      active = false
-      unsubscribe()
-    }
-  }, [
+  const isHandled = useCallback(
+    (id: string) =>
+      submittedRef.current.has(id) || localStorage.getItem(acceptancePrefix + id) !== null,
+    [acceptancePrefix]
+  )
+  const nativeItems = useMemo(
+    () => [...Object.values(loaded).flat(), ...issueInteractions.items],
+    [loaded, issueInteractions.items]
+  )
+  const isBusy = useCallback((id: string) => inFlight.current.has(id), [])
+  useNativeInteractionReplies({
     accountKey,
-    handledNativeReplies,
-    loaded,
-    issueInteractions.items,
+    enabled: Boolean(source?.services?.runtimeWorkApi),
+    items: nativeItems,
+    isHandled,
+    isBusy,
     respond,
     setDraft,
-    source?.services?.runtimeWorkApi,
-  ])
+    retainDraft,
+    retainedReply,
+  })
 
   const notice = noticeIds.map(id => pending.find(item => item.id === id)).find(Boolean) ?? null
   useEffect(() => {

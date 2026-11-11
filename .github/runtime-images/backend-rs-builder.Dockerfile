@@ -24,6 +24,7 @@ RUN mkdir -p src && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && cargo build --release --locked --bin wegent-backend-rs
 
 FROM ${DEPS_IMAGE} AS build
+COPY shared/assets/codex-models /workspace/shared/assets/codex-models
 COPY backend-rs/src ./src
 COPY backend-rs/examples ./examples
 COPY backend-rs/migrations ./migrations

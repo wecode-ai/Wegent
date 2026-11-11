@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { isPersonalStandInTask } from '@/features/workbench/runtimeTaskNotificationContent'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
@@ -69,7 +70,12 @@ export function useUnlistedStandInTasks(
           })
           if (!mounted.current || attempted.current.get(candidate.key) !== candidate.signature)
             return
-          if (response.origin?.initiatedBy !== 'stand_in') {
+          if (
+            response.origin?.initiatedBy !== 'stand_in' &&
+            !isPersonalStandInTask({
+              task: { ...result.task, runtimeHandle: { origin: response.origin } },
+            })
+          ) {
             if (response.origin) ordinary.current.add(candidate.key)
             return
           }

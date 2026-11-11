@@ -21,6 +21,13 @@ import {
   selectTool,
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
+import {
+  answerWithNativeReplyStorageFailure,
+  NATIVE_RECOVERY_TEXT,
+  verifyNativeReplyRecoveryAfterReload,
+} from '../modules/native-reply-recovery.mjs'
+import { openInteractionDraftWindow } from '../modules/interaction-draft-windows.mjs'
 
 const PROMPT = 'WEWORK_CONSECUTIVE_ASYNC_QUESTIONS'
 const COMPLETE = 'WEWORK_CONSECUTIVE_ANSWERS_ACCEPTED'
@@ -36,6 +43,8 @@ export function createDesktopScenario({
   workspacePath,
   resultDir,
   workbenchReadyTimeoutMs,
+  electronUserDataDirectory,
+  restartDesktopApp,
 }) {
   let active = false
   let releaseSecond
@@ -53,6 +62,10 @@ export function createDesktopScenario({
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       if (!JSON.stringify(body).includes(PROMPT)) return false
+      assert.ok(
+        !JSON.stringify(body).includes(NATIVE_RECOVERY_TEXT),
+        'A failed native reply was resent to the model'
+      )
       const id = `consecutive-${Date.now()}`
       let events
       if (!requestContainsToolOutput(body, 'consecutive-first')) {
@@ -115,60 +128,73 @@ export function createDesktopScenario({
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       try {
         await control.command('waitFor', CARD, { text: FIRST, visible: true })
-        await control.command('focus', INPUT)
-        await control.command('fill', INPUT, { value: 'STAFF' })
-        const readQuestions = async () => {
-          const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-          const task = snapshot.pane.currentRuntimeTask
-          const messages = JSON.parse(
-            await control.command('getRuntimeConversationMessages', 'body', {
-              value: JSON.stringify({ deviceId: task.deviceId, taskId: task.taskId }),
-            })
-          )
-          return {
-            input: await control.command('getValue', INPUT),
-            inputAttribute: await control.command('getAttribute', INPUT, { value: 'value' }),
-            mountId: await control.command(
-              'getAttribute',
-              `${CARD} [data-testid="request-user-input-question-question_1"]`,
-              { value: 'id' }
-            ),
-            questions: messages.flatMap(message =>
-              (message.blocks ?? []).flatMap(block =>
-                block.renderPayload?.kind === 'request_user_input' ? [block.renderPayload] : []
-              )
-            ),
+        await control.command('waitFor', '[data-testid="runtime-interaction-notice"]', {
+          visible: true,
+        })
+        const draftWindow = await openInteractionDraftWindow({
+          control,
+          electronUserDataDirectory,
+          question: FIRST,
+        })
+        try {
+          await control.command('focus', INPUT)
+          await control.command('fill', INPUT, { value: 'STAFF' })
+          const readQuestions = async () => {
+            const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+            const task = snapshot.pane.currentRuntimeTask
+            const messages = JSON.parse(
+              await control.command('getRuntimeConversationMessages', 'body', {
+                value: JSON.stringify({ deviceId: task.deviceId, taskId: task.taskId }),
+              })
+            )
+            return {
+              input: await control.command('getValue', INPUT),
+              inputAttribute: await control.command('getAttribute', INPUT, { value: 'value' }),
+              mountId: await control.command(
+                'getAttribute',
+                `${CARD} [data-testid="request-user-input-question-question_1"]`,
+                { value: 'id' }
+              ),
+              questions: messages.flatMap(message =>
+                (message.blocks ?? []).flatMap(block =>
+                  block.renderPayload?.kind === 'request_user_input' ? [block.renderPayload] : []
+                )
+              ),
+            }
           }
-        }
-        const firstState = await readQuestions()
-        await writeFile(
-          join(resultDir, 'consecutive-question-first-draft.json'),
-          JSON.stringify(firstState, null, 2)
-        )
-        assert.equal(
-          firstState.input,
-          'STAFF',
-          'Establish the first draft before releasing further questions'
-        )
-        assert.equal(firstState.inputAttribute, 'STAFF', 'React must retain the first draft')
-        releaseSecond()
-        await control.command('waitFor', CARD, { text: THIRD, visible: true })
-        await writeFile(
-          join(resultDir, 'consecutive-question-identities.json'),
-          JSON.stringify(
-            {
-              first: firstState,
-              afterArrival: await readQuestions(),
-            },
-            null,
-            2
+          const firstState = await readQuestions()
+          await writeFile(
+            join(resultDir, 'consecutive-question-first-draft.json'),
+            JSON.stringify(firstState, null, 2)
           )
-        )
-        assert.equal(
-          await control.command('getValue', INPUT),
-          'STAFF',
-          'New questions must preserve the first draft'
-        )
+          assert.equal(
+            firstState.input,
+            'STAFF',
+            'Establish the first draft before releasing further questions'
+          )
+          assert.equal(firstState.inputAttribute, 'STAFF', 'React must retain the first draft')
+          await draftWindow.verifyMerge()
+          releaseSecond()
+          await control.command('waitFor', CARD, { text: THIRD, visible: true })
+          await writeFile(
+            join(resultDir, 'consecutive-question-identities.json'),
+            JSON.stringify(
+              {
+                first: firstState,
+                afterArrival: await readQuestions(),
+              },
+              null,
+              2
+            )
+          )
+          assert.equal(
+            await control.command('getValue', INPUT),
+            'STAFF',
+            'New questions must preserve the first draft'
+          )
+        } finally {
+          await draftWindow.close()
+        }
         const text = await control.command('getText', CARD)
         assert.ok(
           text.indexOf(FIRST) < text.indexOf(SECOND) && text.indexOf(SECOND) < text.indexOf(THIRD)
@@ -183,7 +209,26 @@ export function createDesktopScenario({
           'click',
           `${CARD} [data-testid=${JSON.stringify(`request-user-input-option-${thirdId}-1`)}]`
         )
-        await control.command('click', `${CARD} [data-testid="request-user-input-submit-button"]`)
+        // Two async requests contain three questions; draft selection does not settle either.
+        await verifyPendingInteractionsTab(control, 2)
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot => snapshot.pane?.status?.isBusy === false,
+          'The native reply fixture requires a completed question-producing turn'
+        )
+        const recovery = await answerWithNativeReplyStorageFailure(control, {
+          electronUserDataDirectory,
+          question: FIRST,
+          submit: () =>
+            control.command('click', `${CARD} [data-testid="request-user-input-submit-button"]`),
+          waitForTaskAnswer: () =>
+            control.command(
+              'waitFor',
+              `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-question-reply"]`,
+              { text: THIRD, visible: true }
+            ),
+        })
+        await verifyPendingInteractionsTab(control, 0)
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -208,6 +253,27 @@ export function createDesktopScenario({
           0,
           'Answered questions must remain settled after reloading'
         )
+        await verifyPendingInteractionsTab(control, 0)
+        await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
+        const pendingPage = '[data-testid="runtime-interactions-page"]'
+        await control.command(
+          'waitFor',
+          `${pendingPage} [data-testid="interactions-pending-count"]`,
+          {
+            text: '0',
+            visible: true,
+          }
+        )
+        for (const testId of ['interaction-list-item', 'request-user-input-card']) {
+          assert.equal(
+            Number(
+              await control.command('getElementCount', `${pendingPage} [data-testid="${testId}"]`)
+            ),
+            0,
+            'Reopening pending work must not restore an answered question'
+          )
+        }
+        await verifyNativeReplyRecoveryAfterReload(control, recovery, restartDesktopApp)
       } finally {
         active = false
         releaseSecond()

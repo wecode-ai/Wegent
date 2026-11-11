@@ -17,6 +17,8 @@ const syncGitAccounts = vi.hoisted(() => vi.fn())
 const cloudConnection = vi.hoisted(() => ({
   isConnected: true,
   apiBaseUrl: 'https://cloud.example.com/api',
+  backendUrl: 'https://backend.example.com',
+  webUrl: 'https://cloud.example.com',
   token: 'cloud-token',
   refreshUser: vi.fn(),
 }))
@@ -87,6 +89,7 @@ describe('GitHostingSettingsPage', () => {
   beforeEach(() => {
     cloudConnection.isConnected = true
     cloudConnection.apiBaseUrl = 'https://cloud.example.com/api'
+    cloudConnection.webUrl = 'https://cloud.example.com'
     cloudConnection.token = 'cloud-token'
     getGitHostingCliStatus.mockReset()
     updateAppPreferences.mockReset()
@@ -234,6 +237,25 @@ describe('GitHostingSettingsPage', () => {
     expect(screen.queryByTestId('git-hosting-cli-gitlab-copy-login')).not.toBeInTheDocument()
   })
 
+  test('syncs cloud Git accounts only to an explicitly selected eligible device', async () => {
+    render(<DeviceGitSyncSection />)
+
+    expect(await screen.findAllByText('gitlab · git.example.com')).toHaveLength(2)
+    expect(screen.getByTestId('git-device-sync-duplicate-warning')).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Remote One · remote' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Busy Cloud · cloud' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Local One · local' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('git-device-sync-submit')).toBeDisabled()
+
+    await userEvent.selectOptions(screen.getByTestId('git-device-sync-select'), 'remote-1')
+    await userEvent.click(screen.getByTestId('git-device-sync-submit'))
+
+    await waitFor(() => expect(syncGitAccounts).toHaveBeenCalledWith('remote-1', false))
+    expect(await screen.findByTestId('git-device-sync-result')).toHaveTextContent(
+      'CLI 未安装，Git 凭据已写入；仓库访问仍需检查'
+    )
+  })
+
   test('shows CLI failure detail from the device sync result', async () => {
     syncGitAccounts.mockResolvedValue({
       device_id: 'remote-1',
@@ -260,7 +282,7 @@ describe('GitHostingSettingsPage', () => {
     await userEvent.click(screen.getByTestId('git-device-sync-submit'))
 
     expect(await screen.findByTestId('git-device-sync-result')).toHaveTextContent(
-      'CLI 登录失败，Git 认证已生效（exit=1 error validating token: unauthorized）'
+      'CLI 登录失败，Git 凭据已写入；仓库访问仍需检查（exit=1 error validating token: unauthorized）'
     )
   })
 
@@ -284,12 +306,75 @@ describe('GitHostingSettingsPage', () => {
 
     await screen.findByText('云端尚未配置 Git 账户。')
     await userEvent.selectOptions(screen.getByTestId('git-device-sync-select'), 'remote-1')
-    await userEvent.click(screen.getByTestId('git-device-sync-submit'))
+    expect(screen.getByTestId('git-device-sync-submit')).toBeDisabled()
+    await userEvent.click(screen.getByTestId('git-device-sync-clear'))
 
     expect(screen.getByTestId('git-device-sync-clear-dialog')).toBeInTheDocument()
     expect(syncGitAccounts).not.toHaveBeenCalled()
     await userEvent.click(screen.getByTestId('git-device-sync-clear-confirm'))
     await waitFor(() => expect(syncGitAccounts).toHaveBeenCalledWith('remote-1', true))
+  })
+
+  test('guides missing accounts to the actual cloud Git settings without clearing credentials', async () => {
+    getGitAccountSyncSummary.mockResolvedValue({
+      accounts: [],
+      effective_count: 0,
+      duplicate_count: 0,
+    })
+    render(<DeviceGitSyncSection />)
+    await screen.findByText('云端尚未配置 Git 账户。')
+    await userEvent.click(screen.getByTestId('git-device-sync-configure'))
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      'https://cloud.example.com/settings?tab=integrations#git-accounts',
+      { source: 'device-git-settings' }
+    )
+    expect(syncGitAccounts).not.toHaveBeenCalled()
+  })
+
+  test('waits for Web metadata without sending users to Backend or clearing credentials', async () => {
+    cloudConnection.webUrl = ''
+    const { rerender } = render(<DeviceGitSyncSection />)
+    await screen.findByTestId('git-device-sync-accounts')
+    expect(screen.queryByTestId('git-device-sync-configure')).not.toBeInTheDocument()
+    expect(openExternalUrl).not.toHaveBeenCalled()
+    expect(syncGitAccounts).not.toHaveBeenCalled()
+    cloudConnection.webUrl = 'https://cloud.example.com'
+    rerender(<DeviceGitSyncSection />)
+    await userEvent.click(screen.getByTestId('git-device-sync-configure'))
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      'https://cloud.example.com/settings?tab=integrations#git-accounts',
+      { source: 'device-git-settings' }
+    )
+    expect(syncGitAccounts).not.toHaveBeenCalled()
+  })
+
+  test('shows managed cleanup and terminal restart guidance', async () => {
+    syncGitAccounts.mockResolvedValue({
+      device_id: 'remote-1',
+      status: 'synced_with_warnings',
+      synced_domains: ['git.example.com'],
+      removed_domains: [],
+      duplicate_domains: [],
+      identity_warning_domains: [],
+      cli: [
+        {
+          provider: 'glab',
+          domain: 'git.example.com',
+          status: 'configured',
+          reason_code: null,
+          detail: null,
+        },
+      ],
+      warning_codes: ['stale_cleanup_failed'],
+    })
+    render(<DeviceGitSyncSection />)
+
+    await screen.findAllByText('gitlab · git.example.com')
+    await userEvent.selectOptions(screen.getByTestId('git-device-sync-select'), 'remote-1')
+    await userEvent.click(screen.getByTestId('git-device-sync-submit'))
+
+    expect(await screen.findByTestId('git-device-sync-managed-warning')).toBeInTheDocument()
+    expect(screen.getByTestId('git-device-sync-terminal-hint')).toBeInTheDocument()
   })
 
   test('shows disconnected and load failure states without selecting a device', async () => {

@@ -15,6 +15,10 @@ const ensureConnected = vi.fn().mockResolvedValue(undefined);
 const connect = vi.fn().mockResolvedValue(undefined);
 const disconnect = vi.fn();
 const dispose = vi.fn();
+const unsubscribeReconnect = vi.fn();
+const onReconnect = vi.fn<(_callback: () => void) => () => void>(
+  () => unsubscribeReconnect,
+);
 
 vi.mock("./socket", () => ({
   createSocketClient: vi.fn(() => ({
@@ -23,6 +27,7 @@ vi.mock("./socket", () => ({
     connect,
     disconnect,
     dispose,
+    onReconnect,
   })),
 }));
 
@@ -36,6 +41,8 @@ describe("createCloudRuntimeIpcClient", () => {
     connect.mockClear();
     disconnect.mockClear();
     dispose.mockClear();
+    onReconnect.mockClear();
+    unsubscribeReconnect.mockClear();
   });
 
   it("decompresses large runtime results returned through the socket acknowledgement", async () => {
@@ -472,6 +479,74 @@ describe("createCloudRuntimeIpcClient", () => {
 
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(connect).toHaveBeenCalledWith(undefined, true);
+    expect(ensureConnected).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates missed history after reconnect and detaches both listeners", async () => {
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+    const handler = vi.fn();
+    const cleanup = await client.subscribe(handler);
+    expect(handler).not.toHaveBeenCalled();
+    const reconnect = onReconnect.mock.calls[0][0];
+
+    reconnect();
+
+    expect(handler).toHaveBeenCalledExactlyOnceWith({
+      event: "executor.event_lagged",
+      payload: { skipped: 0, reason: "transport_reconnected" },
+    });
+    cleanup();
+    expect(unsubscribeReconnect).toHaveBeenCalledTimes(1);
+    expect(socket.off).toHaveBeenCalledWith(
+      "runtime:event",
+      socket.on.mock.calls[0][1],
+    );
+  });
+
+  it("registers the event listener before the connection handshake finishes", async () => {
+    const event = {
+      event: "response.completed",
+      payload: { taskId: "cloud-task" },
+    };
+    connect.mockImplementationOnce(async () => {
+      socket.on.mock.calls.find(([name]) => name === "runtime:event")![1](
+        event,
+      );
+    });
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+    const handler = vi.fn();
+
+    await client.subscribe(handler);
+
+    expect(handler).toHaveBeenCalledExactlyOnceWith(event);
+  });
+
+  it("cleans up failed subscriptions and rejects a reconnect that never becomes ready", async () => {
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+    connect.mockRejectedValueOnce(new Error("Network unavailable"));
+    await expect(client.subscribe(vi.fn())).rejects.toThrow(
+      "Network unavailable",
+    );
+    expect(socket.off).toHaveBeenCalledWith(
+      "runtime:event",
+      expect.any(Function),
+    );
+    expect(unsubscribeReconnect).toHaveBeenCalledTimes(1);
+
+    ensureConnected.mockRejectedValueOnce(new Error("Handshake timed out"));
+    await expect(client.reconnect()).rejects.toThrow("Handshake timed out");
   });
   it("resolves the current Web socket endpoint and token after credentials change", async () => {
     let token = "first-token";
@@ -513,6 +588,39 @@ describe("createCloudRuntimeIpcClient", () => {
     expect(socket.off).toHaveBeenCalledWith(name, listener);
     client.dispose();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the event subscription across an initial connection timeout", async () => {
+    socket.connected = false;
+    ensureConnected.mockRejectedValueOnce(
+      new Error("Socket.IO connection timed out"),
+    );
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+    const handler = vi.fn();
+    const subscription = client.subscribe(handler);
+    await expect(subscription).resolves.toEqual(expect.any(Function));
+    const unsubscribe = await subscription;
+    expect(ensureConnected).not.toHaveBeenCalled();
+    expect(connect).toHaveBeenCalledOnce();
+    expect(socket.on.mock.invocationCallOrder[0]).toBeLessThan(
+      connect.mock.invocationCallOrder[0],
+    );
+
+    socket.connected = true;
+    const [name, listener] = socket.on.mock.calls[0];
+    const event = {
+      event: "response.completed",
+      payload: { taskId: "task-1" },
+    };
+    listener(event);
+    expect(handler).toHaveBeenCalledWith(event);
+    unsubscribe();
+    expect(socket.off).toHaveBeenCalledWith(name, listener);
+    client.dispose();
   });
 
   it("requires an actual device address before connecting or sending", async () => {

@@ -76,7 +76,7 @@ export function BackgroundTerminalsSummary({
         ))}
       </div>
       {error && (
-        <p role="alert" className="mt-1 text-sm text-destructive">
+        <p role="alert" className="mt-1 text-sm text-destructive wework:text-red-500">
           {error}
         </p>
       )}

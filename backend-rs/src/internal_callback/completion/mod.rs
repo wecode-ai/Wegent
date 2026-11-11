@@ -35,6 +35,7 @@ use serde_json::Value;
 use crate::executor_manager::ExecutorManager;
 
 pub(crate) use collect::collect_completed_result;
+pub(crate) use events::publish_task_completed_for_owner;
 pub(crate) use persist::{mark_subtask_running, persist_completed_result, update_task_status};
 pub(crate) use sql::Tables;
 

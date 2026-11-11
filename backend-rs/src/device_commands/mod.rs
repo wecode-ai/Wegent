@@ -138,6 +138,7 @@ pub struct DeviceCommandSpec {
 pub(crate) struct CommandDefinition {
     pub command: Cow<'static, str>,
     pub post_processor: Option<Cow<'static, str>>,
+    pub native_git: bool,
 }
 
 /// `CommandRegistryError`: invalid registry state or command definition.
@@ -290,6 +291,7 @@ pub(crate) fn resolve_local_device_command(
     Ok(default.map(|definition| CommandDefinition {
         command: Cow::Borrowed(definition.command),
         post_processor: definition.post_processor.map(Cow::Borrowed),
+        native_git: matches!(key, "git_clone" | "git_branch" | "git_branch_list"),
     }))
 }
 
@@ -328,6 +330,7 @@ fn parse_definition(
             }
             Ok(CommandDefinition {
                 command: Cow::Owned(command.to_string()),
+                native_git: false,
                 post_processor: default
                     .and_then(|definition| definition.post_processor)
                     .map(Cow::Borrowed),
@@ -358,6 +361,7 @@ fn parse_definition(
             };
             Ok(CommandDefinition {
                 command: Cow::Owned(command.to_string()),
+                native_git: false,
                 post_processor,
             })
         }
@@ -465,6 +469,7 @@ fn python_repr_string(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn every_default_command_resolves_and_splits() {
@@ -503,6 +508,28 @@ mod tests {
     fn blank_keys_resolve_to_nothing() {
         assert_eq!(resolve_local_device_command("   ").unwrap(), None);
         assert_eq!(resolve_local_device_command("not_a_command").unwrap(), None);
+    }
+
+    #[test]
+    fn native_git_identity_requires_a_builtin_definition() {
+        for key in ["git_clone", "git_branch", "git_branch_list"] {
+            let definition = resolve_local_device_command(key).unwrap().unwrap();
+            assert!(definition.native_git);
+            let default = default_command(key);
+            for raw in [
+                json!(definition.command),
+                json!({"command":definition.command}),
+                json!("git --version"),
+            ] {
+                assert!(!parse_definition(key, &raw, default).unwrap().native_git);
+            }
+        }
+        assert!(
+            !resolve_local_device_command("pwd")
+                .unwrap()
+                .unwrap()
+                .native_git
+        );
     }
 
     #[test]

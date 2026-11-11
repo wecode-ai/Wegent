@@ -1,9 +1,15 @@
 // @vitest-environment node
 import { describe, expect, test } from 'vitest'
 import {
+  MATRIX_PROVIDER_INSTRUCTIONS,
+  MATRIX_LEGACY_INSTRUCTIONS,
+} from '../e2e/desktop/modules/model-native-catalog.mjs'
+import {
   assertProgressiveHi,
+  assertCodeModeMatrixRequest,
   assertRequiredToolInventory,
   MATRIX_REQUIRED_TOOLS,
+  INITIAL_CONTEXT_TOKEN_LIMIT,
   MATRIX_UNUSED_SKILL_CANARY,
   countModelRequest,
   MATRIX_MCP_DESCRIPTION,
@@ -14,7 +20,7 @@ import {
   assertCodeModeRequest,
 } from '../e2e/desktop/modules/model-wire-contract.mjs'
 
-const baseInstructions = "You are Codex, Wework's coding assistant."
+const baseInstructions = 'You are Codex, an agent based on GPT-6.'
 const script = 'text(await tools.apply_patch("line 1\\n中文\\nline 3"))'
 const result = { callId: 'native-call', script, marker: 'REAL_EXEC_RESULT' }
 const budget = { encoding: 'o200k_base', tokens: 500, bytes: 1200 }
@@ -24,23 +30,45 @@ const wrapper = {
   parameters: { type: 'object', properties: { input: { type: 'string' } }, required: ['input'] },
 }
 
-function request(protocol) {
+test('configured Codex matrix providers require portable Responses declarations', () => {
+  const model = { protocol: 'responses', source: 'codex' }
+  const body = { tools: [{ ...wrapper, type: 'function', name: 'functions__exec' }] }
+  expect(() => assertCodeModeMatrixRequest(body, model)).not.toThrow()
+  expect(() => assertCodeModeMatrixRequest({ tools: [exec] }, model)).toThrow(
+    'must default to function tools'
+  )
+  expect(() =>
+    assertCodeModeMatrixRequest(
+      {
+        input: [
+          {
+            type: 'additional_tools',
+            tools: [{ type: 'namespace', name: 'functions', tools: [exec] }],
+          },
+        ],
+      },
+      model
+    )
+  ).toThrow('current tool declarations')
+})
+
+function request(protocol, instructions = baseInstructions) {
   if (protocol === 'chat')
     return {
       messages: [
-        { role: 'system', content: baseInstructions },
+        { role: 'system', content: instructions },
         { role: 'user', content: 'hi' },
       ],
       tools: [{ type: 'function', function: wrapper }],
     }
   if (protocol === 'anthropic')
     return {
-      system: baseInstructions,
+      system: instructions,
       messages: [{ role: 'user', content: 'hi' }],
       tools: [{ ...wrapper, input_schema: wrapper.parameters }],
     }
   return {
-    instructions: baseInstructions,
+    instructions,
     input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
     tools: [{ ...exec }],
   }
@@ -79,6 +107,22 @@ function output(protocol, callId = result.callId, input = script) {
 
 for (const protocol of ['responses', 'chat', 'anthropic']) {
   describe(`${protocol} model-side acceptance oracle`, () => {
+    test('preserves the upstream canonical template instead of requiring a Wework replacement', () => {
+      const body = request(protocol, MATRIX_PROVIDER_INSTRUCTIONS)
+      expect(() => assertProgressiveHi(body, { protocol, source: 'codex' }, budget)).not.toThrow()
+      const legacy = request(protocol, MATRIX_LEGACY_INSTRUCTIONS)
+      expect(() => assertProgressiveHi(legacy, { protocol, source: 'codex' }, budget)).toThrow(
+        'canonical'
+      )
+      const duplicate = request(
+        protocol,
+        MATRIX_PROVIDER_INSTRUCTIONS + '\n' + MATRIX_PROVIDER_INSTRUCTIONS
+      )
+      expect(() => assertProgressiveHi(duplicate, { protocol, source: 'codex' }, budget)).toThrow(
+        'exactly once'
+      )
+    })
+
     test('accepts the bootstrap without expanding undiscovered tools', () => {
       const body = request(protocol)
       expect(assertProgressiveHi(body, { protocol }, budget)).toEqual(budget)
@@ -129,14 +173,14 @@ test('Lite input declarations are checked even when top-level tools is absent', 
   )
 })
 
-test('the hard threshold rejects 7000 rather than only requests above it', () => {
+test('the native context budget rejects its exact threshold', () => {
   expect(() =>
     assertProgressiveHi(
       request('responses'),
       { protocol: 'responses' },
-      { ...budget, tokens: 7000 }
+      { ...budget, tokens: INITIAL_CONTEXT_TOKEN_LIMIT }
     )
-  ).toThrow('must be < 7000')
+  ).toThrow(`must be < ${INITIAL_CONTEXT_TOKEN_LIMIT}`)
 })
 
 test('the pinned tokenizer includes declarations in input and every other request field', () => {
@@ -148,10 +192,10 @@ test('the pinned tokenizer includes declarations in input and every other reques
   })
   const large = countModelRequest(body)
   expect(small.encoding).toBe('o200k_base')
-  expect(small.tokens).toBeLessThan(7000)
-  expect(large.tokens).toBeGreaterThan(7000)
+  expect(small.tokens).toBeLessThan(INITIAL_CONTEXT_TOKEN_LIMIT)
+  expect(large.tokens).toBeGreaterThan(INITIAL_CONTEXT_TOKEN_LIMIT)
   expect(() => assertProgressiveHi(body, { protocol: 'responses' }, large)).toThrow(
-    'must be < 7000'
+    `must be < ${INITIAL_CONTEXT_TOKEN_LIMIT}`
   )
 }, 30_000)
 

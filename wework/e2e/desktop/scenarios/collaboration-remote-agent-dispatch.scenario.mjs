@@ -27,6 +27,7 @@ import {
   responseCompleted,
   responseCreated,
   selectProgrammaticExec,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 import {
   REMOTE_DOCKER_DEVICE_ID,
@@ -626,13 +627,14 @@ export function createDesktopScenario({
               `text(${JSON.stringify(MANUAL_READ_OK)})`,
             ].join('\n')
           )
-          const event = selectedToolCall(MANUAL_READ_CALL, { codeMode: selection }).at(-1)
-          writeEvents(response, responseId, [event])
+          writeEvents(
+            response,
+            responseId,
+            selectedToolCall(MANUAL_READ_CALL, { codeMode: selection })
+          )
           return true
         }
-        const output = body.input.find(
-          item => item.type === 'custom_tool_call_output' && item.call_id === MANUAL_READ_CALL
-        )?.output
+        const output = toolOutputText(body, MANUAL_READ_CALL)
         assert.ok(
           JSON.stringify(output)?.includes(MANUAL_READ_OK),
           `The real bound Issue read did not succeed: ${JSON.stringify(output)}`

@@ -131,6 +131,13 @@ export function weworkDestinationRoute(
     return `/pending-interactions?${new URLSearchParams({ interaction: JSON.stringify([destination.deviceId, destination.taskId, destination.requestKey]) })}`
   }
   if (destination.kind === 'task') {
+    const standIn = /^stand-in-chat-(\d+)-(primary|role-(.+))$/.exec(destination.taskId)
+    if (standIn)
+      return `/stand-in?${new URLSearchParams({
+        deviceId: destination.deviceId,
+        userId: standIn[1],
+        profileId: standIn[2] === 'primary' ? '@primary' : standIn[3],
+      })}`
     return `/runtime-tasks?${new URLSearchParams({ deviceId: destination.deviceId, taskId: destination.taskId })}`
   }
   if (destination.kind === 'smart-app') {

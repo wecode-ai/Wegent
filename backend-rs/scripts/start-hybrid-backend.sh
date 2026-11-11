@@ -254,25 +254,33 @@ echo "Dotenv file: $RS_ENV_FILE"
 RUST_PID=$!
 write_state
 
-wait_for_rust() {
+wait_for_backend() {
+    local pid=$1
+    local port=$2
+    local label=$3
     local timeout=${WEGENT_PYTHON_READY_TIMEOUT:-180}
     local deadline=$((SECONDS + timeout))
-    while kill -0 "$RUST_PID" 2>/dev/null; do
-        if (exec 3<>"/dev/tcp/127.0.0.1/$PUBLIC_PORT") 2>/dev/null; then
+    while kill -0 "$pid" 2>/dev/null; do
+        if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
             return 0
         fi
         if [ "$SECONDS" -ge "$deadline" ]; then
-            echo "Error: Rust gateway did not become ready within ${timeout}s" >&2
+            echo "Error: $label did not become ready within ${timeout}s" >&2
             return 1
         fi
         sleep 3
     done
-    wait "$RUST_PID" || true
-    echo "Error: Rust gateway exited before becoming ready" >&2
-    return 1
+    echo "Error: $label exited before becoming ready" >&2
+    # Keep signal/failure status across the listener-to-supervisor handoff.
+    # A clean exit still failed to provide a ready service.
+    if wait "$pid"; then
+        return 1
+    else
+        return $?
+    fi
 }
 
-wait_for_rust
+wait_for_backend "$RUST_PID" "$PUBLIC_PORT" "Rust gateway"
 
 echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 (
@@ -299,26 +307,7 @@ echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT
 PYTHON_PID=$!
 write_state
 
-wait_for_python() {
-    local timeout=${WEGENT_PYTHON_READY_TIMEOUT:-180}
-    local deadline=$((SECONDS + timeout))
-    while kill -0 "$PYTHON_PID" 2>/dev/null; do
-        if (exec 3<>"/dev/tcp/127.0.0.1/$PYTHON_UPSTREAM_PORT") 2>/dev/null; then
-            return 0
-        fi
-        if [ "$SECONDS" -ge "$deadline" ]; then
-            echo "Error: Python upstream did not become ready within ${timeout}s" >&2
-            return 1
-        fi
-        sleep 3
-    done
-    wait "$PYTHON_PID" || true
-    echo "Error: Python upstream exited before becoming ready" >&2
-    return 1
-}
-
-wait_for_python
-
+wait_for_backend "$PYTHON_PID" "$PYTHON_UPSTREAM_PORT" "Python upstream"
 
 while kill -0 "$PYTHON_PID" 2>/dev/null && kill -0 "$RUST_PID" 2>/dev/null; do
     sleep 1

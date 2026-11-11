@@ -82,7 +82,7 @@ function FontSizeControl({
           event.preventDefault()
           commit(event.currentTarget)
         }}
-        className="h-8 w-16 rounded-lg border border-border bg-background px-2 text-right text-sm text-text-primary shadow-sm outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20"
+        className="h-8 w-16 rounded-lg border border-border bg-background px-2 text-right text-sm text-text-primary shadow-sm outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 wework:keyboard:focus:border-blue-500 wework:keyboard:focus:ring-blue-500/20"
       />
       <span className="text-sm text-text-secondary">px</span>
     </div>
@@ -515,7 +515,10 @@ export function AppearanceSettingsPage() {
             )
           })}
           {backgroundError && (
-            <p data-testid="appearance-background-error" className="text-sm text-destructive">
+            <p
+              data-testid="appearance-background-error"
+              className="text-sm text-destructive wework:text-red-500"
+            >
               {backgroundError}
             </p>
           )}

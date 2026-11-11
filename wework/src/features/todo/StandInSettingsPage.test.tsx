@@ -1,4 +1,5 @@
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
+import type { StandInExecutorApi } from '@/api/standIn'
 import {
   CloudConnectionContext,
   type CloudConnectionContextValue,
@@ -70,6 +71,55 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('saves the role device while keeping draft text and leaving old workspace settings at the source', async () => {
+    const role = {
+      ...newStandInRole('mac', 'review'),
+      name: 'Review',
+      model: { runtime: 'codex' as const, provider: 'openai', model_id: 'old-model' },
+      modelOptions: { effort: 'high' },
+      workspace: {
+        projectKey: 'repo',
+        workspacePath: '/old/repo',
+        executionMode: 'current_workspace' as const,
+      },
+    }
+    const { props } = fixture({ roles: [role] })
+    props.devices.push({ id: 2, device_id: 'remote', name: 'Remote', status: 'online' })
+    const api = props.services.standInApi as StandInExecutorApi
+    const source = await api.personalGet(7, 'mac')
+    const profiles = new Map<string, PersonalStandInSettings>([
+      ['mac', source],
+      ['remote', { userId: 7, executionDeviceId: 'remote', version: 0, roles: [] }],
+    ])
+    api.personalGet = vi.fn(async (_user, device) => structuredClone(profiles.get(device!)!))
+    api.personalSave = vi.fn(async (_user, value, device) => {
+      const saved = structuredClone({ ...value, version: value.version + 1 })
+      profiles.set(device!, saved)
+      return saved
+    })
+    const onSaved = vi.fn()
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialProfileId="review" onSaved={onSaved} />)
+    await user.type(await screen.findByTestId('stand-in-role-name'), ' revised')
+    expect(screen.getByTestId('stand-in-role-device')).toHaveAccessibleName('执行设备')
+    await user.selectOptions(screen.getByTestId('stand-in-role-device'), 'remote')
+    expect(screen.getByTestId('stand-in-role-name')).toHaveValue('Review revised')
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce())
+    expect(profiles.get('remote')!.roles[0]).toMatchObject({
+      id: 'review',
+      name: 'Review revised',
+      executionDeviceId: 'remote',
+    })
+    expect(profiles.get('remote')!.roles[0].model).toBeUndefined()
+    expect(profiles.get('remote')!.roles[0].modelOptions).toBeUndefined()
+    expect(profiles.get('remote')!.roles[0].workspace).toBeUndefined()
+    expect(profiles.get('mac')!.roles[0]).toMatchObject({
+      ...role,
+      executionDeviceId: 'remote',
+    })
+  })
+
   it('provides clickable paths from role source details back to connections and settings', async () => {
     const { props } = fixture()
     const user = userSetup()
@@ -251,7 +301,7 @@ describe('Personal stand-in settings', () => {
     expect(screen.getByTestId('stand-in-role-name')).toHaveValue(' changed')
   })
 
-  it('does not request cloud agents or show login warnings when disconnected', async () => {
+  it('keeps local role settings usable without embedding IM connection controls', async () => {
     const { props, personalAgents } = fixture()
     render(
       <CloudConnectionContext.Provider
@@ -263,7 +313,11 @@ describe('Personal stand-in settings', () => {
     expect(await screen.findByTestId('stand-in-role-name')).toBeEnabled()
     expect(screen.queryByTestId('stand-in-agent')).not.toBeInTheDocument()
     expect(personalAgents).not.toHaveBeenCalled()
-    expect(screen.queryByText(/登录|加载个人智能体/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/加载个人智能体/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText(/登录/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-im-channels')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-im-connections')).not.toBeInTheDocument()
   })
 
   it('keeps secondary settings scoped to the selected stand-in without another picker', async () => {

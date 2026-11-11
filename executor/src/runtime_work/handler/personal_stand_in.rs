@@ -235,6 +235,9 @@ impl RuntimeWorkRpcHandler {
         }
         let count = identities.len();
         for (index, identity) in identities.iter_mut().enumerate() {
+            if !self.stand_in_role_runs_here(identity) {
+                continue;
+            }
             let id = if has_primary && index + 1 == count {
                 json!("@primary")
             } else {

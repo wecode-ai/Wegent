@@ -4,6 +4,74 @@ import { testLocalModelConnection } from './localModelConnectionTest'
 const APPLY_PATCH_PROBE =
   '*** Begin Patch\n*** Add File: wework-capability-probe.txt\n+PING\n*** End Patch\n'
 
+function functionProbeResponse(argumentsValue: unknown, streamed: boolean): Response {
+  const item = {
+    id: 'call_1',
+    type: 'function_call',
+    name: 'wework_capability_probe',
+    arguments: argumentsValue,
+  }
+  if (!streamed) return new Response(JSON.stringify({ output: [item] }))
+  const events = [
+    { type: 'response.output_item.added', item: { ...item, arguments: '' } },
+    { type: 'response.function_call_arguments.done', item_id: item.id, arguments: argumentsValue },
+    { type: 'response.completed', response: { output: [] } },
+  ]
+  return new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''), {
+    headers: { 'Content-Type': 'text/event-stream' },
+  })
+}
+
+describe.each([false, true])('Responses function probe streamed=%s', streamed => {
+  test.each([
+    undefined,
+    '',
+    'not-json',
+    '{}',
+    '[]',
+    '{"input":null}',
+    '{"input":42}',
+    '{"input":""}',
+    '{"input":"PONG"}',
+  ])('rejects invalid or mismatched exact arguments: %s', async argumentsValue => {
+    await expect(
+      testLocalModelConnection(
+        { baseUrl: 'https://custom.example', modelId: 'custom' },
+        {
+          fetcher: vi.fn().mockResolvedValue(functionProbeResponse(argumentsValue, streamed)),
+        }
+      )
+    ).rejects.toThrow('required capability probe tool call')
+  })
+  test('accepts valid exact arguments, including an empty final streamed output', async () => {
+    await expect(
+      testLocalModelConnection(
+        { baseUrl: 'https://custom.example', modelId: 'custom' },
+        {
+          fetcher: vi.fn().mockResolvedValue(functionProbeResponse('{"input":"PING"}', streamed)),
+        }
+      )
+    ).resolves.toEqual({ status: 200, toolCalling: true })
+  })
+  test('relaxed matching accepts a different populated input but still requires the schema', async () => {
+    for (const [argumentsValue, accepted] of [
+      ['{"input":"PONG"}', true],
+      ['{"input":" "}', false],
+      ['{}', false],
+    ] as const) {
+      const result = testLocalModelConnection(
+        { baseUrl: 'https://custom.example', modelId: 'custom' },
+        {
+          fetcher: vi.fn().mockResolvedValue(functionProbeResponse(argumentsValue, streamed)),
+          verifyExactProbePayload: false,
+        }
+      )
+      if (accepted) await expect(result).resolves.toEqual({ status: 200, toolCalling: true })
+      else await expect(result).rejects.toThrow('required capability probe tool call')
+    }
+  })
+})
+
 describe('localModelConnectionTest', () => {
   test.each([
     '*** Begin Patch\n*** Add File: probe.txt\n+PING\n*** End Patch',
@@ -20,7 +88,7 @@ describe('localModelConnectionTest', () => {
       )
       await expect(
         testLocalModelConnection(
-          { baseUrl: 'https://models.local/v1', modelId: 'deepseek-flash' },
+          { baseUrl: 'https://models.local/v1', modelId: 'deepseek-flash', toolProfile: 'custom' },
           { fetcher, verifyExactProbePayload: false }
         )
       ).resolves.toEqual({ status: 200, toolCalling: true })
@@ -34,7 +102,7 @@ describe('localModelConnectionTest', () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ output: [item] })))
     await expect(
       testLocalModelConnection(
-        { baseUrl: 'https://models.local/v1', modelId: 'gpt-5' },
+        { baseUrl: 'https://models.local/v1', modelId: 'gpt-5', toolProfile: 'custom' },
         { fetcher, verifyExactProbePayload: false }
       )
     ).rejects.toThrow('required capability probe tool call')
@@ -63,7 +131,13 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'apply_patch', input: APPLY_PATCH_PROBE }],
+          output: [
+            {
+              type: 'function_call',
+              name: 'wework_capability_probe',
+              arguments: '{"input":"PING"}',
+            },
+          ],
         }),
         {
           status: 200,
@@ -101,13 +175,13 @@ describe('localModelConnectionTest', () => {
           content: [
             {
               type: 'input_text',
-              text: `Call apply_patch with this exact patch:\n${APPLY_PATCH_PROBE}`,
+              text: 'Call the capability probe with value PING.',
             },
           ],
         },
       ],
       stream: true,
-      tools: [{ type: 'custom', name: 'apply_patch' }],
+      tools: [{ type: 'function', name: 'wework_capability_probe' }],
     })
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('max_output_tokens')
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('tool_choice')
@@ -159,6 +233,7 @@ describe('localModelConnectionTest', () => {
         {
           baseUrl: 'https://models.local/v1',
           modelId: 'gpt-5',
+          toolProfile: 'custom',
         },
         { fetcher }
       )
@@ -180,6 +255,7 @@ describe('localModelConnectionTest', () => {
         {
           baseUrl: 'https://models.local/v1',
           modelId: 'gpt-5',
+          toolProfile: 'custom',
         },
         { fetcher }
       )
@@ -240,7 +316,13 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'apply_patch', input: APPLY_PATCH_PROBE }],
+          output: [
+            {
+              type: 'function_call',
+              name: 'wework_capability_probe',
+              arguments: '{"input":"PING"}',
+            },
+          ],
         })
       )
     )
@@ -264,7 +346,13 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'apply_patch', input: APPLY_PATCH_PROBE }],
+          output: [
+            {
+              type: 'function_call',
+              name: 'wework_capability_probe',
+              arguments: '{"input":"PING"}',
+            },
+          ],
         })
       )
     )
