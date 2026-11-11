@@ -146,7 +146,13 @@ async function archiveFixture({ rejectConfirmation = false, corruptVersion = nul
   }
 }
 
-function identityFixture({ rejectConfiguration = false, inheritedOwnerActions = false } = {}) {
+async function identityFixture({
+  rejectConfiguration = false,
+  inheritedOwnerActions = false,
+} = {}) {
+  const translations = JSON.parse(
+    await readFile(new URL('../src/i18n/locales/zh-CN/common.json', import.meta.url), 'utf8')
+  )
   const installationId = 'dsh-e2e-smoke'
   const publicationId = 7
   const marketId = 23
@@ -168,6 +174,8 @@ function identityFixture({ rejectConfiguration = false, inheritedOwnerActions = 
   let selectedTab = 'management'
   let location = '/sites?app_type=smart_app&view=owned'
   let removing = null
+  let deepLinkId = null
+  let missingAttempts = 0
   const response = (result, error) =>
     JSON.stringify({
       status: error ? 400 : 200,
@@ -222,7 +230,12 @@ function identityFixture({ rejectConfiguration = false, inheritedOwnerActions = 
         pending = true
         events.push('install:pending')
       } else if (action === 'click') {
-        if (selector.includes('smart-app-remove-local-confirm')) {
+        if (selector.includes('smart-app-deep-link-retry')) {
+          assert.equal(deepLinkId, 2147483647)
+          assert.equal(missingAttempts, 1)
+          missingAttempts += 1
+          events.push('deep-link:retry')
+        } else if (selector.includes('smart-app-remove-local-confirm')) {
           if (removing === installationId) localInstalled = false
           else {
             assert.equal(removing, `market-${marketId}`)
@@ -240,6 +253,7 @@ function identityFixture({ rejectConfiguration = false, inheritedOwnerActions = 
         }
       } else if (action === 'openWeworkScheme') {
         const id = Number(new URL(options.value).pathname.slice(1))
+        deepLinkId = id
         if (id === marketId && marketInstalled) {
           assert.equal(
             presentation,
@@ -253,9 +267,32 @@ function identityFixture({ rejectConfiguration = false, inheritedOwnerActions = 
         } else {
           assert.equal(marketInstalled, false)
           events.push(id === marketId ? 'deep-link:uninstalled' : 'deep-link:missing')
+          if (id !== marketId) missingAttempts = 1
           location = `/sites?app_type=smart_app&smartAppId=${id}`
         }
       } else if (action === 'waitFor') {
+        if (selector.includes('smart-app-deep-link-install-prompt')) {
+          assert.equal(deepLinkId, marketId)
+          assert.equal(marketInstalled, false)
+          assert.equal(options.timeoutMs, 10_000)
+          assert.equal(
+            options.text,
+            translations.workbench.smart_apps_deep_link_install_title,
+            'Uninstalled deep link must match the current translated install prompt'
+          )
+          events.push('copy:install-prompt')
+        }
+        if (selector.includes('smart-app-deep-link-error')) {
+          assert.equal(deepLinkId, 2147483647)
+          assert.equal(missingAttempts === 1 || missingAttempts === 2, true)
+          assert.equal(options.timeoutMs, 10_000)
+          assert.equal(
+            options.text,
+            translations.workbench.smart_apps_deep_link_unavailable,
+            'Unknown deep link must match the current translated unavailable error'
+          )
+          events.push(missingAttempts === 1 ? 'copy:unknown' : 'copy:retry')
+        }
         if (selector.includes('harness-app-start-market-')) {
           assert.equal(pending, false, 'Native installation confirmation is still pending')
           assert.equal(marketInstalled, true)
@@ -272,6 +309,7 @@ function identityFixture({ rejectConfiguration = false, inheritedOwnerActions = 
     },
   }
   return {
+    control,
     events,
     run: () =>
       verifySmartAppMarketplaceIdentity({
@@ -340,7 +378,7 @@ test('archive lifecycle rejects the obsolete Smart Workbench import failure copy
 })
 
 test('marketplace identity accepts native installation and configures its own tab before checking deep-link reuse', async () => {
-  const app = identityFixture()
+  const app = await identityFixture()
   await app.run()
   assert.deepEqual(app.events.slice(0, 5), [
     'install:pending',
@@ -352,6 +390,10 @@ test('marketplace identity accepts native installation and configures its own ta
   assert.ok(app.events.includes('deep-link:uninstalled'))
   assert.ok(app.events.includes('deep-link:missing'))
   assert.deepEqual(
+    app.events.filter(event => event.startsWith('copy:') || event === 'deep-link:retry'),
+    ['copy:install-prompt', 'copy:unknown', 'deep-link:retry', 'copy:retry']
+  )
+  assert.deepEqual(
     app.events.filter(event => event.startsWith('screenshot:')),
     [
       'screenshot:harness-apps-15b-marketplace-identity.png',
@@ -362,7 +404,7 @@ test('marketplace identity accepts native installation and configures its own ta
 })
 
 test('marketplace identity propagates Host configuration failure before deep-link launch', async () => {
-  const app = identityFixture({ rejectConfiguration: true })
+  const app = await identityFixture({ rejectConfiguration: true })
   await assert.rejects(app.run(), /Host smartApps.configure returned HTTP 400/)
   assert.equal(
     app.events.some(event => event.startsWith('deep-link:')),
@@ -371,6 +413,53 @@ test('marketplace identity propagates Host configuration failure before deep-lin
 })
 
 test('marketplace identity still rejects owner actions inherited from the same-name publication', async () => {
-  const app = identityFixture({ inheritedOwnerActions: true })
+  const app = await identityFixture({ inheritedOwnerActions: true })
   await assert.rejects(app.run(), /Market installation inherited historical owner actions/)
+})
+
+test.each([
+  {
+    phase: 'install prompt',
+    selector: '[data-testid="smart-app-deep-link-install-prompt"]',
+    occurrence: 1,
+    obsolete: '此智能工作台尚未安装',
+    error: /Uninstalled deep link must match the current translated install prompt/,
+    prior: [],
+  },
+  {
+    phase: 'unknown target',
+    selector: '[data-testid="smart-app-deep-link-error"]',
+    occurrence: 1,
+    obsolete: '未找到此智能工作台',
+    error: /Unknown deep link must match the current translated unavailable error/,
+    prior: ['copy:install-prompt'],
+  },
+  {
+    phase: 'unknown target retry',
+    selector: '[data-testid="smart-app-deep-link-error"]',
+    occurrence: 2,
+    obsolete: '未找到此智能工作台',
+    error: /Unknown deep link must match the current translated unavailable error/,
+    prior: ['copy:install-prompt', 'copy:unknown', 'deep-link:retry'],
+  },
+])('marketplace identity rejects obsolete copy at $phase', async entry => {
+  const app = await identityFixture()
+  const command = app.control.command
+  let seen = 0
+  app.control.command = (action, selector, options = {}) => {
+    const target = action === 'waitFor' && selector === entry.selector
+    if (target) seen += 1
+    return command(
+      action,
+      selector,
+      target && seen === entry.occurrence ? { ...options, text: entry.obsolete } : options
+    )
+  }
+  await assert.rejects(app.run(), entry.error)
+  assert.equal(seen, entry.occurrence)
+  assert.deepEqual(
+    app.events.filter(event => event.startsWith('copy:') || event === 'deep-link:retry'),
+    entry.prior
+  )
+  assert.equal(app.events.includes('screenshot:harness-apps-15d-deep-link-retry.png'), false)
 })

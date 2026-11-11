@@ -39,7 +39,7 @@ export async function verifyRunningSmartAppInstallRejected(
   assert.equal(preview.manifest.version, NEXT_VERSION)
   const params = { archivePath, expectedSha256: preview.sha256, modelKey: `${modelKey}-blocked` }
   const error = await invoke(control, origin, 'smartApps.install', params, false)
-  assert.equal(error?.message, 'Stop the Smart app before installing a new version')
+  assert.equal(error?.message, 'Stop the workbench before installing a new version')
   const after = (await invoke(control, origin, 'smartApps.list')).find(
     item => item.id === installationId
   )
