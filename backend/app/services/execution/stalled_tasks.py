@@ -146,6 +146,18 @@ class StalledSubtaskSweeper:
             # no longer queued; an unknown answer also keeps it alive.
             if await executor_dispatch_pending(candidate.task_id) is not False:
                 return None
+            # A warm-pool runtime can start before its name reaches the subtask
+            # row. A live task heartbeat proves the executor was dispatched, so
+            # this is not an executor-not-started case.
+            if await executor_heartbeat_alive(candidate.task_id) is True:
+                logger.info(
+                    "[StalledTasks] Exempting subtask task_id=%s subtask_id=%s "
+                    "reason=live_executor_heartbeat last_update=%s",
+                    candidate.task_id,
+                    candidate.subtask_id,
+                    candidate.updated_at,
+                )
+                return None
             try:
                 evidence = await has_execution_evidence(
                     candidate.task_id,
