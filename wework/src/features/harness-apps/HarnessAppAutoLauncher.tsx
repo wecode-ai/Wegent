@@ -5,7 +5,11 @@ import {
   clearHarnessAppLaunch,
   failHarnessAppLaunch,
 } from './harnessAppLaunchState'
-import { registerHarnessAppTab } from './harnessAppTabs'
+import {
+  harnessAppKey,
+  registerHarnessAppTab,
+  resolveRunningHarnessAppInstallation,
+} from './harnessAppTabs'
 import { notifyHarnessAppInstallationsChanged } from './harnessAppInstallationsChanged'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
@@ -25,22 +29,29 @@ export function HarnessAppAutoLauncher({
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
+    if (resolveRunningHarnessAppInstallation(harnessAppKey(installationId))) {
+      if (isElectronRuntime()) clearHarnessAppLaunch(installationId)
+      onStartupSettled?.(installationId)
+      return
+    }
     let disposed = false
     beginHarnessAppLaunch(installationId, t('workbench.smart_apps_title', '工作台'), () =>
       setAttempt(value => value + 1)
     )
     void (async () => {
       if (disposed) return
-      const running = await harnessAppsApi.open(installationId, 'tab')
+      const running = await harnessAppsApi.open(installationId, 'tab', { activateTab: false })
       if (disposed) return
-      if (!running.webUrl)
-        throw new Error(t('workbench.smart_apps_missing_web_url', '工作台没有返回可用地址'))
-      registerHarnessAppTab(running)
-      notifyHarnessAppInstallationsChanged({
-        type: 'updated',
-        installationId,
-        installation: running,
-      })
+      if (running.presentation === 'tab') {
+        if (!running.webUrl)
+          throw new Error(t('workbench.smart_apps_missing_web_url', '工作台没有返回可用地址'))
+        registerHarnessAppTab(running)
+        notifyHarnessAppInstallationsChanged({
+          type: 'updated',
+          installationId,
+          installation: running,
+        })
+      }
       if (isElectronRuntime()) clearHarnessAppLaunch(installationId)
     })()
       .catch(error => {

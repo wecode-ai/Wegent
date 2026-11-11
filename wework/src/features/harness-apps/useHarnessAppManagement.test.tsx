@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   register: vi.fn(),
   unregister: vi.fn(),
   openTab: vi.fn(),
+  selectTab: vi.fn(),
+  workspaceOpenTab: vi.fn(),
   closeTab: vi.fn(),
 }))
 vi.mock('@/api/local/harnessApps', () => ({ harnessAppsApi: mocks }))
@@ -20,6 +22,9 @@ vi.mock('./harnessAppTabs', () => ({
 }))
 const tabs = {
   tabs: [{ id: 'tab-1', contentRoute: '/app/harness-smart-app-1' }],
+  activeTabId: 'tab-1',
+  openTab: mocks.workspaceOpenTab,
+  selectTab: mocks.selectTab,
   closeTab: mocks.closeTab,
 }
 vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
@@ -64,20 +69,68 @@ describe('useHarnessAppManagement', () => {
     onBusyChange = vi.fn(),
     onRefresh = vi.fn()
   const renderManagement = () =>
-    renderHook(() =>
-      useHarnessAppManagement({ installations: [], onError, onBusyChange, onRefresh })
-    )
+    renderHook(() => useHarnessAppManagement({ onError, onBusyChange, onRefresh }))
   beforeEach(() => {
     vi.clearAllMocks()
+    tabs.activeTabId = 'tab-1'
+    mocks.selectTab.mockImplementation((id: string) => {
+      tabs.activeTabId = id
+    })
     onRefresh.mockResolvedValue(undefined)
   })
-  test('opens the Host default window without creating a tab or requiring renderer models', async () => {
+  test('does not register presentations when the management hook mounts or rerenders', () => {
+    const { rerender } = renderManagement()
+    rerender()
+    expect(mocks.register).not.toHaveBeenCalled()
+  })
+  test.each(['tab', 'window'] as const)(
+    'preserves a newer user selection when a delayed %s open response completes',
+    async presentation => {
+      const hostInstallation = { ...running, presentation }
+      let completeOpen!: (installation: HarnessAppInstallation) => void
+      mocks.open.mockReturnValue(
+        new Promise<HarnessAppInstallation>(resolve => {
+          completeOpen = resolve
+        })
+      )
+      const { result } = renderManagement()
+      let opening!: Promise<void>
+      act(() => {
+        opening = result.current.open(installed, presentation)
+      })
+      mocks.register(hostInstallation)
+      mocks.openTab(tabs, hostInstallation)
+      act(() => tabs.selectTab('management'))
+      mocks.register.mockClear()
+      mocks.openTab.mockClear()
+      mocks.selectTab.mockClear()
+
+      await act(async () => {
+        completeOpen(hostInstallation)
+        await opening
+      })
+
+      expect(tabs.activeTabId).toBe('management')
+      expect(mocks.register).not.toHaveBeenCalled()
+      expect(mocks.unregister).not.toHaveBeenCalled()
+      expect(mocks.openTab).not.toHaveBeenCalled()
+      expect(mocks.workspaceOpenTab).not.toHaveBeenCalled()
+      expect(mocks.selectTab).not.toHaveBeenCalled()
+      expect(mocks.closeTab).not.toHaveBeenCalled()
+      expect(onRefresh).toHaveBeenCalledOnce()
+      expect(onBusyChange.mock.calls).toEqual([[installed.id], [null]])
+    }
+  )
+  test('opens the Host default window and refreshes without mutating renderer presentations', async () => {
     mocks.open.mockResolvedValue({ ...running, presentation: 'window' })
     const { result } = renderManagement()
     await act(async () => result.current.start(installed))
     expect(mocks.open).toHaveBeenCalledWith(installed.id, undefined)
     expect(mocks.openTab).not.toHaveBeenCalled()
-    expect(mocks.closeTab).toHaveBeenCalledWith('tab-1')
+    expect(mocks.closeTab).not.toHaveBeenCalled()
+    expect(mocks.register).not.toHaveBeenCalled()
+    expect(mocks.unregister).not.toHaveBeenCalled()
+    expect(onRefresh).toHaveBeenCalledOnce()
   })
   test('switches the existing runtime to a tab using one Host open', async () => {
     const tab = { ...running, presentation: 'tab' }
@@ -85,8 +138,10 @@ describe('useHarnessAppManagement', () => {
     const { result } = renderManagement()
     await act(async () => result.current.open(running, 'tab'))
     expect(mocks.open).toHaveBeenCalledWith(installed.id, 'tab')
-    expect(mocks.register).toHaveBeenCalledWith(tab)
-    expect(mocks.openTab).toHaveBeenCalledWith(tabs, tab)
+    expect(mocks.register).not.toHaveBeenCalled()
+    expect(mocks.openTab).not.toHaveBeenCalled()
+    expect(mocks.closeTab).not.toHaveBeenCalled()
+    expect(onRefresh).toHaveBeenCalledOnce()
     expect(mocks.stop).not.toHaveBeenCalled()
   })
   test('keeps Host errors visible and refreshes only after successful actions', async () => {

@@ -1,9 +1,16 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
-import { useEffect, useState } from 'react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
+import type { HarnessAppInstallation } from '@/api/local/harnessApps'
+import {
+  openHarnessAppTab,
+  registerHarnessAppTab,
+  resolveRunningHarnessAppInstallation,
+  unregisterHarnessAppTab,
+} from '@/features/harness-apps/harnessAppTabs'
 import { WeworkSchemeBridge } from './WeworkSchemeBridge'
 import { openWeworkScheme } from './schemeEvents'
 import { weworkInteractionScheme } from './scheme'
@@ -13,6 +20,13 @@ import {
 } from '@/features/cloud-connection/CloudConnectionContext'
 
 vi.mock('@/lib/runtime-environment', () => ({ isElectronRuntime: () => false }))
+const { listInstallations, openInstallation } = vi.hoisted(() => ({
+  listInstallations: vi.fn(),
+  openInstallation: vi.fn(),
+}))
+vi.mock('@/api/local/harnessApps', () => ({
+  harnessAppsApi: { list: listInstallations, open: openInstallation },
+}))
 
 function TabsProbe() {
   const { tabs, activeTab } = useWorkspaceTabs()
@@ -25,7 +39,7 @@ function TabsProbe() {
   )
 }
 
-function Harness({ tabs }: { tabs: WorkspaceTab[] }) {
+function Harness({ tabs, children }: { tabs: WorkspaceTab[]; children?: ReactNode }) {
   const [location, setLocation] = useState(() => ({
     pathname: window.location.pathname,
     search: window.location.search,
@@ -52,15 +66,104 @@ function Harness({ tabs }: { tabs: WorkspaceTab[] }) {
     >
       <WeworkSchemeBridge />
       <TabsProbe />
+      {children}
     </WorkspaceTabsProvider>
   )
 }
 
 beforeEach(() => {
+  vi.clearAllMocks()
   localStorage.clear()
   window.history.replaceState({}, '', '/todo')
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  unregisterHarnessAppTab('research-local')
+})
+
+function HostOpenControls({ installation }: { installation: HarnessAppInstallation }) {
+  const tabs = useWorkspaceTabs()
+  return (
+    <>
+      <button
+        data-testid="host-activate-app"
+        onClick={() => {
+          registerHarnessAppTab(installation)
+          openHarnessAppTab(tabs, installation)
+        }}
+      >
+        Host activation
+      </button>
+      <button data-testid="user-select-management" onClick={() => tabs.selectTab('management')}>
+        Management
+      </button>
+    </>
+  )
+}
+
+test('a delayed running-app deep-link response preserves real tab routing and Host registration', async () => {
+  const installation: HarnessAppInstallation = {
+    id: 'research-local',
+    smartAppId: 42,
+    manifest: {
+      name: 'research',
+      displayName: 'Research desk',
+      description: 'Research workbench',
+      version: '1.0.0',
+      type: 'deepseek-harness-plugin-bundle',
+      entry: { installPackage: 'packages/app', profile: 'default' },
+      requirements: { dsh: '>=0.1.0', node: '>=22' },
+    },
+    webUrl: 'http://127.0.0.1:39000/',
+    state: 'running',
+    presentation: 'tab',
+    packagePath: '/tmp/research',
+    sha256: 'hash',
+    modelKey: null,
+    resident: false,
+    runtimeVersion: null,
+    error: null,
+    source: 'market',
+    grantedCapabilities: { decisionModel: false },
+  }
+  listInstallations.mockResolvedValue([installation])
+  let completeOpen!: (value: HarnessAppInstallation) => void
+  openInstallation.mockReturnValue(
+    new Promise<HarnessAppInstallation>(resolve => {
+      completeOpen = resolve
+    })
+  )
+  window.history.replaceState({}, '', '/sites')
+  render(
+    <Harness
+      tabs={[
+        {
+          id: 'management',
+          kind: 'auxiliary',
+          title: 'Workbenches',
+          contentRoute: '/sites',
+          fixed: true,
+        },
+      ]}
+    >
+      <HostOpenControls installation={installation} />
+    </Harness>
+  )
+  act(() => openWeworkScheme('wework://smart-apps/42'))
+  await waitFor(() => expect(openInstallation).toHaveBeenCalledExactlyOnceWith(installation.id))
+  fireEvent.click(screen.getByTestId('host-activate-app'))
+  expect(screen.getByTestId('active-route')).toHaveTextContent('/app/harness-research-local')
+  fireEvent.click(screen.getByTestId('user-select-management'))
+  expect(screen.getByTestId('active-tab')).toHaveTextContent('management')
+
+  await act(async () => completeOpen({ ...installation, webUrl: 'http://127.0.0.1:39001/' }))
+
+  expect(screen.getByTestId('active-tab')).toHaveTextContent('management')
+  expect(screen.getByTestId('active-route')).toHaveTextContent('/sites')
+  expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
+  expect(new URLSearchParams(window.location.search).get('workspaceTab')).toBe('management')
+  expect(resolveRunningHarnessAppInstallation('harness-research-local')).toBe(installation)
+})
 
 test('interaction deep links reuse a restored pending-route tab when the canonical tab points elsewhere', () => {
   render(

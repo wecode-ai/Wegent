@@ -16,6 +16,7 @@ const {
   listHarnessApps,
   openWorkbench,
   registerHarnessAppTab,
+  unregisterHarnessAppTab,
   invokeDesktopHost,
   isElectronRuntime,
   getDesktopWindowLabel,
@@ -26,6 +27,7 @@ const {
   listHarnessApps: vi.fn(),
   openWorkbench: vi.fn(),
   registerHarnessAppTab: vi.fn(),
+  unregisterHarnessAppTab: vi.fn(),
   invokeDesktopHost: vi.fn(),
   isElectronRuntime: vi.fn(() => false),
   getDesktopWindowLabel: vi.fn(() => 'main'),
@@ -38,6 +40,7 @@ const workspaceTabs = vi.hoisted(() => ({
   activeTabId: '',
   openTab: vi.fn(),
   selectTab: vi.fn(),
+  closeTab: vi.fn(),
 }))
 vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
   useWorkspaceTabs: () => workspaceTabs,
@@ -53,6 +56,7 @@ vi.mock('@/api/local/harnessApps', () => ({
 vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
   openHarnessAppTab,
   registerHarnessAppTab,
+  unregisterHarnessAppTab,
 }))
 
 beforeEach(() => {
@@ -336,12 +340,58 @@ describe('Wework scheme bridge', () => {
       })
 
       await waitFor(() => expect(openWorkbench).toHaveBeenCalledWith(installation.id))
-      if (presentation === 'tab') {
-        await waitFor(() =>
-          expect(openHarnessAppTab).toHaveBeenCalledWith(expect.anything(), installation)
-        )
-        expect(registerHarnessAppTab).toHaveBeenCalledWith(installation)
-      } else expect(openHarnessAppTab).not.toHaveBeenCalled()
+      expect(openHarnessAppTab).not.toHaveBeenCalled()
+      expect(registerHarnessAppTab).not.toHaveBeenCalled()
+      expect(openTab).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['tab', 'window'] as const)(
+    'acknowledges a delayed native %s open without overriding a newer user selection',
+    async presentation => {
+      isElectronRuntime.mockReturnValue(true)
+      const installation = {
+        id: 'research-local',
+        smartAppId: 42,
+        manifest: { displayName: 'Research desk' },
+        webUrl: 'http://127.0.0.1:3000',
+        state: 'running',
+        presentation,
+      }
+      listHarnessApps.mockResolvedValue([installation])
+      let completeOpen!: (value: typeof installation) => void
+      openWorkbench.mockReturnValue(
+        new Promise<typeof installation>(resolve => {
+          completeOpen = resolve
+        })
+      )
+      invokeDesktopHost.mockImplementation(async (capability: string) =>
+        capability === 'navigation.pendingSchemes'
+          ? [{ id: 42, url: 'wework://smart-apps/42' }]
+          : undefined
+      )
+      render(<WeworkSchemeBridge />)
+      await waitFor(() => expect(openWorkbench).toHaveBeenCalledExactlyOnceWith(installation.id))
+      expect(invokeDesktopHost).not.toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 42 })
+      registerHarnessAppTab(installation)
+      openHarnessAppTab(workspaceTabs, installation)
+      workspaceTabs.selectTab('management')
+      workspaceTabs.activeTabId = 'management'
+      registerHarnessAppTab.mockClear()
+      openHarnessAppTab.mockClear()
+      workspaceTabs.selectTab.mockClear()
+
+      await act(async () => completeOpen(installation))
+
+      await waitFor(() =>
+        expect(invokeDesktopHost).toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 42 })
+      )
+      expect(workspaceTabs.activeTabId).toBe('management')
+      expect(registerHarnessAppTab).not.toHaveBeenCalled()
+      expect(unregisterHarnessAppTab).not.toHaveBeenCalled()
+      expect(openHarnessAppTab).not.toHaveBeenCalled()
+      expect(workspaceTabs.selectTab).not.toHaveBeenCalled()
+      expect(workspaceTabs.closeTab).not.toHaveBeenCalled()
       expect(openTab).not.toHaveBeenCalled()
     }
   )
@@ -360,6 +410,39 @@ describe('Wework scheme bridge', () => {
       })
     )
     expect(openHarnessAppTab).not.toHaveBeenCalled()
+  })
+
+  it('keeps the targeted recovery route and native acknowledgement when a running open fails', async () => {
+    isElectronRuntime.mockReturnValue(true)
+    const failure = new Error('runtime unavailable')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    listHarnessApps.mockResolvedValue([{ id: 'research-local', smartAppId: 42, state: 'running' }])
+    openWorkbench.mockRejectedValue(failure)
+    invokeDesktopHost.mockImplementation(async (capability: string) =>
+      capability === 'navigation.pendingSchemes'
+        ? [{ id: 42, url: 'wework://smart-apps/42' }]
+        : undefined
+    )
+    render(<WeworkSchemeBridge />)
+
+    await waitFor(() =>
+      expect(invokeDesktopHost).toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 42 })
+    )
+
+    expect(warn).toHaveBeenCalledWith('[Wework] Failed to resolve Smart app deep link', failure)
+    expect(openTab).toHaveBeenCalledExactlyOnceWith('auxiliary', {
+      title: '工作台',
+      contentRoute: '/sites?app_type=smart_app&smartAppId=42',
+    })
+    const acknowledgementIndex = invokeDesktopHost.mock.calls.findIndex(
+      ([capability]) => capability === 'navigation.acknowledgeScheme'
+    )
+    expect(openTab.mock.invocationCallOrder[0]).toBeLessThan(
+      invokeDesktopHost.mock.invocationCallOrder[acknowledgementIndex]
+    )
+    expect(registerHarnessAppTab).not.toHaveBeenCalled()
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it('routes a stopped Smart app through its targeted start flow', async () => {

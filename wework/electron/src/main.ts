@@ -2977,10 +2977,10 @@ async function initializeDesktopRuntime(): Promise<void> {
         if (!desktopRuntime?.state().ready)
           throw new Error(runtimeError ?? 'Desktop runtime is unavailable')
       },
-      showTab: async (installation, signal) => {
-        await reactivateMainWindow()
-        signal?.throwIfAborted()
-        desktopHostEvents.publish('workbench.open-tab', { installation })
+      showTab: async (installation, signal, activateTab) => {
+        if (activateTab) await reactivateMainWindow()
+        signal.throwIfAborted()
+        desktopHostEvents.publish('workbench.open-tab', { installation, activateTab })
       },
       hideTab: async installationId => {
         desktopHostEvents.publish('workbench.close-tab', { installationId })

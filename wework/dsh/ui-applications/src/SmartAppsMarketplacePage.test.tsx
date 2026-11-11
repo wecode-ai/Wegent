@@ -4,7 +4,7 @@ import {
   HARNESS_APP_INSTALLATIONS_CHANGED_EVENT,
   notifyHarnessAppInstallationsChanged,
 } from '@/features/harness-apps/harnessAppInstallationsChanged'
-import { openHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
+import { openHarnessAppTab, registerHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
 import { localHarnessModelOptionKey } from '@/features/local-harness/localHarnessModels'
 import type { UnifiedModel } from '@/types/api'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -214,6 +214,7 @@ describe('SmartAppsMarketplacePage', () => {
     window.history.replaceState({}, '', '/')
     workbenchModels.current = [harnessModel]
     vi.mocked(openHarnessAppTab).mockClear()
+    vi.mocked(registerHarnessAppTab).mockClear()
     navigateTo.mockReset()
     queuePluginReferenceTrial.mockReset().mockReturnValue(true)
     queueSmartAppDevelopmentPreview.mockReset()
@@ -1317,8 +1318,33 @@ describe('SmartAppsMarketplacePage', () => {
     listInstalled.mockResolvedValue([installation])
     render(<SmartAppsMarketplacePage api={api([])} mode="owned" targetSmartAppId={7} />)
     await waitFor(() => expect(openInstalled).toHaveBeenCalledWith(installation.id, undefined))
-    await waitFor(() => expect(openHarnessAppTab).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(screen.getByTestId(`harness-app-start-${installation.id}`)).toBeEnabled()
+    )
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+    expect(registerHarnessAppTab).not.toHaveBeenCalled()
     expect(screen.getByTestId(`harness-app-model-${installation.id}`)).toBeInTheDocument()
+  })
+
+  test('does not register running presentations from the initial or refreshed catalog', async () => {
+    listInstalled.mockResolvedValue([
+      {
+        ...importedInstallation,
+        state: 'running',
+        webUrl: 'http://localhost:9000',
+        presentation: 'tab',
+      },
+    ])
+    const { rerender } = render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+    await screen.findByTestId(`smart-app-created-item-${importedInstallation.id}`)
+    expect(registerHarnessAppTab).not.toHaveBeenCalled()
+
+    rerender(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(2))
+    expect(registerHarnessAppTab).not.toHaveBeenCalled()
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+    expect(openInstalled).not.toHaveBeenCalled()
   })
 
   test('ignores a pending target lookup after the API is removed', async () => {

@@ -239,7 +239,11 @@ export const harnessAppsApi = {
       releaseId: source?.releaseId ?? null,
     })
   },
-  open(installationId: string, presentation?: WorkbenchPresentation) {
+  open(
+    installationId: string,
+    presentation?: WorkbenchPresentation,
+    options?: { activateTab?: boolean }
+  ) {
     const startupId = crypto.randomUUID()
     trackBusinessEvent('smart_app_start_attempted', { startup_id: startupId })
     return observeOperation(
@@ -248,6 +252,7 @@ export const harnessAppsApi = {
         invokeDesktopHost<WorkbenchInstallation>('smartApps.open', {
           installationId,
           ...(presentation ? { presentation } : {}),
+          ...(options?.activateTab !== undefined ? { activateTab: options.activateTab } : {}),
         }),
       result => result.state === 'running',
       { properties: { startup_id: startupId } }

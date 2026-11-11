@@ -111,6 +111,19 @@ describe('harnessAppsApi', () => {
     })
   })
 
+  test('restores a tab through the same Host open lifecycle without activating it', async () => {
+    const running = { state: 'running', presentation: 'tab' }
+    mocks.desktopInvoke.mockResolvedValueOnce(running)
+    await expect(harnessAppsApi.open('workbench', 'tab', { activateTab: false })).resolves.toBe(
+      running
+    )
+    expect(mocks.desktopInvoke).toHaveBeenCalledExactlyOnceWith('smartApps.open', {
+      installationId: 'workbench',
+      presentation: 'tab',
+      activateTab: false,
+    })
+  })
+
   test('prepares a development runtime through the preview-only Host entry', async () => {
     await harnessAppsApi.preparePreview('workbench')
     expect(mocks.desktopInvoke).toHaveBeenCalledExactlyOnceWith('smartApps.preparePreview', {

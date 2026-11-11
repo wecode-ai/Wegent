@@ -9,12 +9,14 @@ const mocks = vi.hoisted(() => ({
   register: vi.fn(),
   openTab: vi.fn(),
   closeTab: vi.fn(),
+  updateTab: vi.fn(),
   notify: vi.fn(),
   subscribe: vi.fn(),
 }))
 const workspaceTabs = {
   tabs: [{ id: 'app', contentRoute: '/app/harness-app-1' }],
   closeTab: mocks.closeTab,
+  updateTab: mocks.updateTab,
 }
 vi.mock('@/api/dsh/desktopHost', () => ({ subscribeDesktopHostEvents: mocks.subscribe }))
 vi.mock('@/api/local/harnessApps', () => ({
@@ -95,6 +97,100 @@ describe('ElectronWorkbenchTabBridge', () => {
     })
     expect(mocks.openTab).not.toHaveBeenCalled()
     expect(mocks.unregister).toHaveBeenCalledWith('app-2')
+  })
+
+  test('attaches a restored tab without selecting it over the current tab', async () => {
+    render(<ElectronWorkbenchTabBridge />)
+    const listener = mocks.subscribe.mock.calls[0][0] as (event: DesktopHostEvent) => void
+    const installation = {
+      id: 'app-1',
+      webUrl: 'http://localhost:9000',
+      manifest: { displayName: 'Calculator' },
+    }
+    await act(async () =>
+      listener({
+        sequence: 1,
+        type: 'workbench.open-tab',
+        payload: { installation, activateTab: false },
+      })
+    )
+    expect(mocks.register).toHaveBeenCalledWith(installation)
+    expect(mocks.updateTab).toHaveBeenCalledExactlyOnceWith('app', {
+      title: 'Calculator',
+      contentRoute: '/app/harness-app-1',
+    })
+    expect(mocks.openTab).not.toHaveBeenCalled()
+  })
+
+  test('does not reopen a restored tab closed before the Host attachment arrives', async () => {
+    workspaceTabs.tabs = []
+    render(<ElectronWorkbenchTabBridge />)
+    const listener = mocks.subscribe.mock.calls[0][0] as (event: DesktopHostEvent) => void
+    await act(async () =>
+      listener({
+        sequence: 1,
+        type: 'workbench.open-tab',
+        payload: {
+          installation: {
+            id: 'app-1',
+            webUrl: 'http://localhost:9000',
+            manifest: { displayName: 'Calculator' },
+          },
+          activateTab: false,
+        },
+      })
+    )
+    expect(mocks.register).not.toHaveBeenCalled()
+    expect(mocks.openTab).not.toHaveBeenCalled()
+    expect(mocks.updateTab).not.toHaveBeenCalled()
+  })
+
+  test('preserves explicit activation when a passive attachment shares its Host batch', async () => {
+    render(<ElectronWorkbenchTabBridge />)
+    const listener = mocks.subscribe.mock.calls[0][0] as (event: DesktopHostEvent) => void
+    const installation = {
+      id: 'app-1',
+      webUrl: 'http://localhost:9000',
+      manifest: { displayName: 'Calculator' },
+    }
+    await act(async () => {
+      listener({
+        sequence: 1,
+        type: 'workbench.open-tab',
+        payload: { installation, activateTab: true },
+      })
+      listener({
+        sequence: 2,
+        type: 'workbench.open-tab',
+        payload: { installation, activateTab: false },
+      })
+    })
+    expect(mocks.openTab).toHaveBeenCalledExactlyOnceWith(workspaceTabs, installation)
+    expect(mocks.updateTab).not.toHaveBeenCalled()
+  })
+
+  test('does not let a passive attachment supersede a close in the same Host batch', async () => {
+    render(<ElectronWorkbenchTabBridge />)
+    const listener = mocks.subscribe.mock.calls[0][0] as (event: DesktopHostEvent) => void
+    await act(async () => {
+      listener({ sequence: 1, type: 'workbench.close-tab', payload: { installationId: 'app-1' } })
+      listener({
+        sequence: 2,
+        type: 'workbench.open-tab',
+        payload: {
+          installation: {
+            id: 'app-1',
+            webUrl: 'http://localhost:9000',
+            manifest: { displayName: 'Calculator' },
+          },
+          activateTab: false,
+        },
+      })
+    })
+    expect(mocks.closeTab).toHaveBeenCalledExactlyOnceWith('app')
+    expect(mocks.register).not.toHaveBeenCalled()
+    expect(mocks.openTab).not.toHaveBeenCalled()
+    expect(mocks.updateTab).not.toHaveBeenCalled()
   })
   test('does not apply close policy again when the Host explicitly hides a background-disabled app', async () => {
     const view = render(<ElectronWorkbenchTabBridge />)

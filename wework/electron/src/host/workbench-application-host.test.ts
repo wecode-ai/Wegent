@@ -146,6 +146,7 @@ async function fixture(ensureServices = async () => {}) {
     return surface
   })
   const showTab = vi.fn<WorkbenchApplicationHostOptions['showTab']>(async () => {})
+  const hideTab = vi.fn<WorkbenchApplicationHostOptions['hideTab']>(async () => {})
   const confirmInstall = vi.fn(async () => true)
   const host = new WorkbenchApplicationHost({
     manager: manager as unknown as SmartAppManager,
@@ -161,7 +162,7 @@ async function fixture(ensureServices = async () => {}) {
     parent: () => parent,
     ensureServices,
     showTab,
-    hideTab: async () => {},
+    hideTab,
     createTodoProject: async () => '/todo',
     createSurface,
     confirmInstall,
@@ -175,6 +176,7 @@ async function fixture(ensureServices = async () => {}) {
     surface,
     createSurface,
     showTab,
+    hideTab,
     parent,
     contents,
     confirmInstall,
@@ -462,6 +464,264 @@ describe('unified workbench Host lifecycle', () => {
     expect(createSurface).toHaveBeenCalledOnce()
     expect((await host.configure('notes', { presentation: 'tab' })).flavor).toBe('lightweight')
     expect((await manager.get()).presentation).toBe('tab')
+  })
+  test('restores a saved tab without activating it or changing its presentation', async () => {
+    const { host, manager, showTab, surface } = await fixture()
+    await manager.update('notes', { presentation: 'tab' })
+    manager.update.mockClear()
+
+    const restored = await host.open('notes', 'tab', false)
+
+    expect(restored.presentation).toBe('tab')
+    expect(restored.visible).toBe(true)
+    expect(showTab).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'notes', presentation: 'tab' }),
+      expect.any(AbortSignal),
+      false
+    )
+    expect(manager.update).not.toHaveBeenCalled()
+    expect(surface.showWindow).not.toHaveBeenCalled()
+  })
+  test('repeated explicit tab opens keep activating the same runtime and page', async () => {
+    const { host, manager, createSurface, showTab } = await fixture()
+
+    await host.open('notes', 'tab')
+    await host.open('notes', 'tab')
+
+    expect(showTab).toHaveBeenCalledTimes(2)
+    for (const call of showTab.mock.calls) expect(call[2]).toBe(true)
+    expect(manager.start).toHaveBeenCalledOnce()
+    expect(createSurface).toHaveBeenCalledOnce()
+  })
+  test('restoring an obsolete tab closes only the stale tab and preserves the independent window', async () => {
+    const { host, manager, hideTab, showTab, surface } = await fixture()
+    await host.open('notes', 'window')
+    hideTab.mockClear()
+    vi.mocked(surface.hide).mockClear()
+    vi.mocked(surface.showWindow).mockClear()
+    manager.update.mockClear()
+
+    const restored = await host.open('notes', 'tab', false)
+
+    expect(restored.presentation).toBe('window')
+    expect(restored.visible).toBe(true)
+    expect(hideTab).toHaveBeenCalledExactlyOnceWith('notes')
+    expect(showTab).not.toHaveBeenCalled()
+    expect(manager.update).not.toHaveBeenCalled()
+    expect(surface.hide).not.toHaveBeenCalled()
+    expect(surface.showWindow).not.toHaveBeenCalled()
+  })
+  test('restoring an obsolete tab never starts a saved independent window', async () => {
+    const { host, manager, hideTab, createSurface } = await fixture()
+
+    expect((await host.open('notes', 'tab', false)).presentation).toBe('window')
+
+    expect(hideTab).toHaveBeenCalledExactlyOnceWith('notes')
+    expect(createSurface).not.toHaveBeenCalled()
+    expect(manager.start).not.toHaveBeenCalled()
+  })
+  test('a passive restore cannot open a window configured while its runtime is preparing', async () => {
+    const ready = deferred()
+    const entered = deferred()
+    const { host, manager, showTab, hideTab, createSurface } = await fixture(async () => {
+      entered.resolve()
+      await ready.promise
+    })
+    await manager.update('notes', { presentation: 'tab' })
+    const restored = host.open('notes', 'tab', false)
+    await entered.promise
+
+    await host.configure('notes', { presentation: 'window' })
+    ready.resolve()
+
+    expect((await restored).presentation).toBe('window')
+    expect(hideTab).toHaveBeenCalledExactlyOnceWith('notes')
+    expect(showTab).not.toHaveBeenCalled()
+    expect(createSurface).not.toHaveBeenCalled()
+  })
+  test('a passive restore cannot publish a tab configured as a window while its surface is loading', async () => {
+    const ready = deferred()
+    const { host, manager, showTab, hideTab, createSurface, surface } = await fixture()
+    Object.assign(surface, { ready: ready.promise })
+    await manager.update('notes', { presentation: 'tab' })
+    const restored = host.open('notes', 'tab', false)
+    await vi.waitFor(() => expect(createSurface).toHaveBeenCalledOnce())
+
+    await host.configure('notes', { presentation: 'window' })
+    ready.resolve()
+
+    expect((await restored).presentation).toBe('window')
+    expect(hideTab).toHaveBeenCalledExactlyOnceWith('notes')
+    expect(showTab).not.toHaveBeenCalled()
+    expect(surface.hide).not.toHaveBeenCalled()
+    expect(surface.showWindow).not.toHaveBeenCalled()
+  })
+  test('a newer explicit tab supersedes a passive restore rechecking its saved window configuration', async () => {
+    const ready = deferred()
+    const readReady = deferred()
+    const readEntered = deferred()
+    const { host, manager, showTab, hideTab, createSurface, surface } = await fixture()
+    Object.assign(surface, { ready: ready.promise })
+    await manager.update('notes', { presentation: 'tab' })
+    const restored = host.open('notes', 'tab', false)
+    await vi.waitFor(() => expect(createSurface).toHaveBeenCalledOnce())
+    await host.configure('notes', { presentation: 'window' })
+    const previous = await manager.get()
+    manager.get.mockImplementationOnce(async () => {
+      readEntered.resolve()
+      await readReady.promise
+      return previous
+    })
+    ready.resolve()
+    await readEntered.promise
+
+    const explicit = host.open('notes', 'tab')
+    readReady.resolve()
+    await restored
+
+    expect((await explicit).presentation).toBe('tab')
+    expect(hideTab).not.toHaveBeenCalled()
+    expect(showTab.mock.calls.map(call => call[2])).toEqual([true])
+  })
+  test.each(['tab', 'window'] as const)(
+    'a passive restore joins a pending explicit %s request without superseding it',
+    async presentation => {
+      const ready = deferred()
+      const entered = deferred()
+      const { host, manager, showTab, surface } = await fixture(async () => {
+        entered.resolve()
+        await ready.promise
+      })
+      const explicit = host.open('notes', presentation)
+      await entered.promise
+
+      const restored = host.open('notes', 'tab', false)
+      expect(restored).toBe(explicit)
+      ready.resolve()
+
+      expect((await restored).presentation).toBe(presentation)
+      expect(manager.start).toHaveBeenCalledOnce()
+      if (presentation === 'tab') expect(showTab.mock.calls.map(call => call[2])).toEqual([true])
+      else {
+        expect(showTab).not.toHaveBeenCalled()
+        expect(surface.showWindow).toHaveBeenCalledOnce()
+      }
+    }
+  )
+  test.each(['tab', 'window'] as const)(
+    'an explicit %s request supersedes an in-flight passive restore',
+    async presentation => {
+      const ready = deferred()
+      const entered = deferred()
+      const { host, manager, showTab, surface } = await fixture(async () => {
+        entered.resolve()
+        await ready.promise
+      })
+      await manager.update('notes', { presentation: 'tab' })
+      const restored = host.open('notes', 'tab', false)
+      await entered.promise
+
+      const explicit = host.open('notes', presentation)
+      ready.resolve()
+      await restored
+
+      expect((await explicit).presentation).toBe(presentation)
+      expect((await manager.get()).presentation).toBe(presentation)
+      expect(manager.start).toHaveBeenCalledOnce()
+      if (presentation === 'tab') expect(showTab.mock.calls.map(call => call[2])).toEqual([true])
+      else {
+        expect(showTab).not.toHaveBeenCalled()
+        expect(surface.showWindow).toHaveBeenCalledOnce()
+      }
+    }
+  )
+  test('a restore delayed reading old configuration cannot close a newer explicit tab', async () => {
+    const ready = deferred()
+    const entered = deferred()
+    const { host, manager, showTab, hideTab } = await fixture()
+    const previous = await manager.get()
+    manager.get.mockImplementationOnce(async () => {
+      entered.resolve()
+      await ready.promise
+      return previous
+    })
+    const restored = host.open('notes', 'tab', false)
+    await entered.promise
+
+    await host.open('notes', 'tab')
+    ready.resolve()
+
+    expect((await restored).presentation).toBe('tab')
+    expect(hideTab).not.toHaveBeenCalled()
+    expect(showTab.mock.calls.map(call => call[2])).toEqual([true])
+  })
+  test('a restore delayed reading configuration cannot bypass a newly claimed installation', async () => {
+    const readReady = deferred()
+    const readEntered = deferred()
+    const consentReady = deferred<boolean>()
+    const consentEntered = deferred()
+    const { host, manager, confirmInstall, showTab } = await fixture()
+    await manager.update('notes', { presentation: 'tab' })
+    const installation = await manager.get()
+    manager.get.mockImplementationOnce(async () => {
+      readEntered.resolve()
+      await readReady.promise
+      return installation
+    })
+    confirmInstall.mockImplementationOnce(async () => {
+      consentEntered.resolve()
+      return consentReady.promise
+    })
+    const restored = host.open('notes', 'tab', false)
+    const rejected = expect(restored).rejects.toThrow('installation is being confirmed')
+    await readEntered.promise
+
+    const installing = host.authorizeInstallation(installation)
+    await consentEntered.promise
+    readReady.resolve()
+    await rejected
+    consentReady.resolve(false)
+    await installing
+
+    expect(showTab).not.toHaveBeenCalled()
+    expect(manager.start).not.toHaveBeenCalled()
+  })
+  test('hide cancels a passive restore before it can publish its tab', async () => {
+    const ready = deferred()
+    const entered = deferred()
+    const { host, manager, showTab } = await fixture(async () => {
+      entered.resolve()
+      await ready.promise
+    })
+    await manager.update('notes', { presentation: 'tab' })
+    const restored = host.open('notes', 'tab', false)
+    await entered.promise
+
+    await host.hide('notes')
+    ready.resolve()
+
+    expect((await restored).visible).toBe(false)
+    expect(showTab).not.toHaveBeenCalled()
+    expect(manager.stop).not.toHaveBeenCalled()
+  })
+  test('stop cancels a passive restore without starting its prepared runtime', async () => {
+    const ready = deferred()
+    const entered = deferred()
+    const { host, manager, showTab } = await fixture(async () => {
+      entered.resolve()
+      await ready.promise
+    })
+    await manager.update('notes', { presentation: 'tab' })
+    const restored = host.open('notes', 'tab', false)
+    const canceled = expect(restored).rejects.toThrow('canceled')
+    await entered.promise
+
+    await host.stop('notes')
+    await canceled
+    ready.resolve()
+
+    expect(showTab).not.toHaveBeenCalled()
+    expect(manager.start).not.toHaveBeenCalled()
   })
   test('native close follows background policy while explicit hide preserves the runtime', async () => {
     const { host, manager, surface, close } = await fixture()

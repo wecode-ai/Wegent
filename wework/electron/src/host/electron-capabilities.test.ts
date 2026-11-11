@@ -213,6 +213,47 @@ describe('Smart App verification capabilities', () => {
     expect(open).toHaveBeenCalledExactlyOnceWith('app-1')
     expect(start).not.toHaveBeenCalled()
   })
+  test.each([undefined, true, false])(
+    'passes tab activation intent %s to the installation owner',
+    async activateTab => {
+      const open = vi.fn(async () => ({ state: 'running' }))
+      const { router } = createIsolatedClipboardRouter(
+        true,
+        undefined,
+        {},
+        {
+          workbenches: () => ({ open }) as never,
+        }
+      )
+
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.open', {
+        installationId: 'app-1',
+        presentation: 'tab',
+        ...(activateTab === undefined ? {} : { activateTab }),
+      })
+
+      expect(open).toHaveBeenCalledExactlyOnceWith('app-1', 'tab', activateTab)
+    }
+  )
+  test.each(['false', 0, null])('rejects invalid tab activation intent %s', async activateTab => {
+    const open = vi.fn()
+    const { router } = createIsolatedClipboardRouter(
+      true,
+      undefined,
+      {},
+      {
+        workbenches: () => ({ open }) as never,
+      }
+    )
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.open', {
+        installationId: 'app-1',
+        activateTab,
+      })
+    ).rejects.toThrow()
+    expect(open).not.toHaveBeenCalled()
+  })
   test('requires native installation approval for a copied marketplace workbench', async () => {
     const pending = { id: 'copied', authorized: false }
     const copyToDirectory = vi.fn(async () => pending)

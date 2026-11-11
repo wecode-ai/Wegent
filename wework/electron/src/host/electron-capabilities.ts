@@ -1310,7 +1310,8 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.open', params =>
     workbenches().open(
       stringParam(params, 'installationId'),
-      optionalStringParam(params, 'presentation') as 'window' | 'tab' | undefined
+      optionalStringParam(params, 'presentation') as 'window' | 'tab' | undefined,
+      booleanParam(params, 'activateTab')
     )
   )
   router.register('smartApps.hide', params =>

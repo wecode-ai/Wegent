@@ -12,7 +12,6 @@ import { openRuntimeInteractionsTab } from './runtimeInteractionsNavigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getDshApps, resolveDshApp } from '@/features/dsh-runtime/dshApps'
 import { subscribeDshSlot, WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-import { openHarnessAppTab, registerHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
 
 function openAuxiliaryRoute(
   tabs: ReturnType<typeof useWorkspaceTabs>,
@@ -95,11 +94,7 @@ export function WeworkSchemeBridge() {
             item => item.smartAppId === destination.smartAppId
           )
           if (installation?.state === 'running') {
-            const opened = await harnessAppsApi.open(installation.id)
-            if (opened.presentation === 'tab') {
-              registerHarnessAppTab(opened)
-              openHarnessAppTab(tabsRef.current, opened)
-            }
+            await harnessAppsApi.open(installation.id)
             return true
           }
         } catch (error) {

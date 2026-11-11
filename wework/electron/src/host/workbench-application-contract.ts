@@ -28,7 +28,11 @@ export interface WorkbenchService {
   list(): Promise<WorkbenchInstallation[]>
   install(projectPath: string): Promise<WorkbenchInstallation | null>
   createTodo(): Promise<WorkbenchInstallation | null>
-  open(id: string, presentation?: WorkbenchPresentation): Promise<WorkbenchInstallation>
+  open(
+    id: string,
+    presentation?: WorkbenchPresentation,
+    activateTab?: boolean
+  ): Promise<WorkbenchInstallation>
   hide(id: string): Promise<void>
   stop(id: string): Promise<void>
   remove(id: string): Promise<void>

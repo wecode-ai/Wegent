@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import {
   harnessAppsApi,
   type HarnessAppInstallation,
@@ -9,23 +9,16 @@ import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContext
 import { useTranslation } from '@/hooks/useTranslation'
 import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
 import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
-import {
-  harnessAppRoute,
-  openHarnessAppTab,
-  registerHarnessAppTab,
-  unregisterHarnessAppTab,
-} from './harnessAppTabs'
+import { harnessAppRoute, unregisterHarnessAppTab } from './harnessAppTabs'
 import { clearHarnessAppLaunch } from './harnessAppLaunchState'
 
 interface HarnessAppManagementOptions {
-  installations: HarnessAppInstallation[]
   onBusyChange: (installationId: string | null) => void
   onError: (message: string | null) => void
   onRefresh: () => Promise<void>
 }
 
 export function useHarnessAppManagement({
-  installations,
   onBusyChange,
   onError,
   onRefresh,
@@ -37,17 +30,6 @@ export function useHarnessAppManagement({
     () => listLocalHarnessModelOptions('opencode', projectChat.models),
     [projectChat.models]
   )
-
-  useEffect(() => {
-    installations
-      .filter(
-        installation =>
-          installation.state === 'running' &&
-          installation.webUrl &&
-          installation.presentation === 'tab'
-      )
-      .forEach(installation => registerHarnessAppTab(installation))
-  }, [installations])
 
   const hasSelectedModel = useCallback(
     (installation: HarnessAppInstallation) =>
@@ -79,14 +61,7 @@ export function useHarnessAppManagement({
       onBusyChange(installation.id)
       onError(null)
       try {
-        const running = await harnessAppsApi.open(installation.id, presentation)
-        if (running.presentation === 'tab') {
-          registerHarnessAppTab(running)
-          openHarnessAppTab(workspaceTabs, running)
-        } else {
-          closeAppTabs(installation.id)
-          unregisterHarnessAppTab(installation.id)
-        }
+        await harnessAppsApi.open(installation.id, presentation)
         await onRefresh()
       } catch (error) {
         onError(
@@ -100,7 +75,7 @@ export function useHarnessAppManagement({
         onBusyChange(null)
       }
     },
-    [closeAppTabs, onBusyChange, onError, onRefresh, t, workspaceTabs]
+    [onBusyChange, onError, onRefresh, t]
   )
 
   const start = open

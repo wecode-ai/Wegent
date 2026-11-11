@@ -48,7 +48,11 @@ export interface WorkbenchApplicationHostOptions {
   installationPreloadPath: string
   parent(): BrowserWindow | null
   ensureServices(): Promise<void>
-  showTab(installation: WorkbenchInstallation, signal?: AbortSignal): Promise<void>
+  showTab(
+    installation: WorkbenchInstallation,
+    signal: AbortSignal,
+    activateTab: boolean
+  ): Promise<void>
   hideTab(id: string): Promise<void>
   createTodoProject(locale: string): Promise<string>
   confirmInstall?(
@@ -286,19 +290,52 @@ export class WorkbenchApplicationHost implements WorkbenchService {
       this.installing.delete(id)
     }
   }
-  open(id: string, presentation?: WorkbenchPresentation): Promise<WorkbenchInstallation> {
+  open(
+    id: string,
+    presentation?: WorkbenchPresentation,
+    activateTab = true
+  ): Promise<WorkbenchInstallation> {
     workbenchId(id)
     if (presentation !== undefined && presentation !== 'window' && presentation !== 'tab')
       throw new Error('Invalid workbench presentation')
+    if (typeof activateTab !== 'boolean') throw new Error('Invalid workbench tab activation')
     this.assertActive()
     this.assertNotRemoving(id)
     this.assertNotInstalling(id)
+    if (!activateTab) {
+      const existing = this.opening.get(id)
+      if (existing && this.openingGenerations.get(id) === this.generation(id)) return existing
+      return this.restoreTab(id)
+    }
+    return this.requestPresentation(id, presentation, activateTab)
+  }
+  private async restoreTab(id: string): Promise<WorkbenchInstallation> {
+    const generation = this.generation(id)
+    const revision = this.viewRevisions.get(id) ?? 0
+    const installation = await this.options.manager.get(id)
+    this.assertOpening(id, generation)
+    if (revision !== (this.viewRevisions.get(id) ?? 0)) {
+      return this.opening.get(id) ?? this.snapshot(await this.options.manager.get(id))
+    }
+    this.assertNotRemoving(id)
+    this.assertNotInstalling(id)
+    if (installation.presentation !== 'tab') {
+      await this.options.hideTab(id)
+      return this.snapshot(await this.options.manager.get(id))
+    }
+    return this.requestPresentation(id, undefined, false)
+  }
+  private requestPresentation(
+    id: string,
+    presentation: WorkbenchPresentation | undefined,
+    activateTab: boolean
+  ): Promise<WorkbenchInstallation> {
     const revision = this.advanceViewRevision(id)
     if (presentation) this.requestedPresentation.set(id, presentation)
     const existing = this.opening.get(id)
     if (existing && this.openingGenerations.get(id) === this.generation(id))
       return existing.then(() => {
-        if (this.viewRevisions.get(id) === revision) return this.open(id, presentation)
+        if (this.viewRevisions.get(id) === revision) return this.open(id, presentation, activateTab)
         return this.options.manager.get(id).then(item => this.snapshot(item))
       })
     const generation = this.generation(id)
@@ -309,6 +346,7 @@ export class WorkbenchApplicationHost implements WorkbenchService {
     const operation = this.openPresentation(
       id,
       presentation,
+      activateTab,
       generation,
       revision,
       cancellation.signal,
@@ -624,6 +662,7 @@ export class WorkbenchApplicationHost implements WorkbenchService {
   private async openPresentation(
     id: string,
     presentation: WorkbenchPresentation | undefined,
+    activateTab: boolean,
     generation: number,
     revision: number,
     signal: AbortSignal,
@@ -635,6 +674,10 @@ export class WorkbenchApplicationHost implements WorkbenchService {
     const current = () => this.viewRevisions.get(id) === revision && !viewSignal.aborted
     if (!current()) return this.snapshot(installation)
     const target = installation.presentation ?? 'window'
+    if (!activateTab && target !== 'tab') {
+      await this.options.hideTab(id)
+      return this.snapshot(await this.options.manager.get(id))
+    }
     let surface = this.surfaces.get(id)
     if (!surface) {
       surface = (this.options.createSurface ?? createWorkbenchSurface)(installation, () => {
@@ -651,12 +694,21 @@ export class WorkbenchApplicationHost implements WorkbenchService {
       }
     }
     if (!current()) return this.snapshot(installation)
+    if (!activateTab) {
+      installation = await this.options.manager.get(id)
+      this.assertOpening(id, generation)
+      if (!current()) return this.snapshot(installation)
+      if (installation.presentation !== 'tab') {
+        await this.options.hideTab(id)
+        return this.snapshot(installation)
+      }
+    }
     if (target === 'tab') {
       surface.hide()
       const presentationSignal = AbortSignal.any([signal, viewSignal])
       try {
         await abortable(
-          this.options.showTab(this.snapshot(installation), presentationSignal),
+          this.options.showTab(this.snapshot(installation), presentationSignal, activateTab),
           presentationSignal
         )
       } catch (error) {

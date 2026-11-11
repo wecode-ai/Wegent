@@ -346,7 +346,6 @@ export function SmartAppsMarketplacePage({
     start: startInstalledApp,
     stop: stopInstalledApp,
   } = useHarnessAppManagement({
-    installations: activeInstallations,
     onBusyChange: setBusy,
     onError: setError,
     onRefresh: refresh,
