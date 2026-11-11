@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 export class PreferencesStore {
   private operation = Promise.resolve()
   private closed = false
+  private readFailure: unknown = null
 
   constructor(private readonly dataDirectory: string) {}
 
@@ -18,7 +19,9 @@ export class PreferencesStore {
 
   update(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.serial(async () => {
-      const preferences = { ...(await this.readFile()), ...patch }
+      const current = await this.readFile()
+      if (this.readFailure) throw this.readFailure
+      const preferences = { ...current, ...patch }
       const path = this.path()
       await mkdir(dirname(path), { recursive: true, mode: 0o700 })
       const temporary = `${path}.${process.pid}.tmp`
@@ -39,6 +42,7 @@ export class PreferencesStore {
   }
 
   private async readFile(): Promise<Record<string, unknown>> {
+    this.readFailure = null
     let content: string
     try {
       content = await readFile(this.path(), 'utf8')
@@ -46,7 +50,11 @@ export class PreferencesStore {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
       // A permission, sharing, or I/O error says nothing about the contents:
       // keep the file where it is instead of moving valid settings aside.
-      throw error
+      this.readFailure = error
+      console.warn('[Preferences] Settings are temporarily read-only', {
+        reason: describeError(error),
+      })
+      return {}
     }
     try {
       const value = JSON.parse(content) as unknown

@@ -24,6 +24,7 @@ export interface RendererStorageCleanup {
 export class RendererStorageStore {
   private operation = Promise.resolve()
   private closed = false
+  private readFailure: unknown = null
 
   constructor(
     private readonly dataDirectory: string,
@@ -62,6 +63,7 @@ export class RendererStorageStore {
     return this.serial(async () => {
       const state = await this.readFile()
       if (state) return state.entries
+      if (this.readFailure) return seed
 
       await this.writeFile({ version: 1, entries: seed })
       this.notifyUpdate({ clear: false, changes: seed })
@@ -72,6 +74,7 @@ export class RendererStorageStore {
   update(update: RendererStorageUpdate): Promise<void> {
     return this.serial(async () => {
       const state = await this.readFile()
+      if (this.readFailure) throw this.readFailure
       const entries = Object.create(null) as Record<string, string>
       if (!update.clear && state) {
         for (const [key, value] of Object.entries(state.entries)) {
@@ -111,15 +114,25 @@ export class RendererStorageStore {
   }
 
   private async readFile(): Promise<RendererStorageState | null> {
+    this.readFailure = null
     try {
       const value = JSON.parse(await readFile(this.path(), 'utf8')) as unknown
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('Invalid renderer storage state')
       const record = value as Partial<RendererStorageState>
-      if (record.version !== 1 || !validEntries(record.entries)) return null
+      if (record.version !== 1 || !validEntries(record.entries))
+        throw new Error('Invalid renderer storage entries')
       return { version: 1, entries: record.entries }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw error
+      // JSON errors may include a source excerpt containing stored credentials.
+      this.readFailure = new Error(
+        'Stored application state is unreadable; the original file is preserved'
+      )
+      console.warn('[renderer-storage] Stored state is temporarily read-only', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
+      return null
     }
   }
 
@@ -139,7 +152,8 @@ export class RendererStorageStore {
       return { version: 1, origins: record.origins }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw error
+      console.warn('[renderer-storage] Origin history is unavailable', error)
+      return null
     }
   }
 

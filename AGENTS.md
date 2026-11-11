@@ -90,6 +90,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 - Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
 - If repeated attempts fail to fix the same problem, promptly stop adding patches. Complete root-cause investigation and analysis, obtain concrete evidence of the cause, and only then resume fixing it.
+- Wework must remain openable when application-managed startup checks fail, including data corruption, missing credentials, and failed updates or migrations. Isolate the affected operation or capability; never use data or credential protection as a reason to prevent opening the entire application. Follow the [startup availability contract](wework/AGENTS.md#startup-availability-and-fault-isolation).
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.

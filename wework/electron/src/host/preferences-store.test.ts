@@ -83,14 +83,17 @@ describe('PreferencesStore', () => {
     warning.mockRestore()
   })
 
-  test('propagates read errors without moving the file aside', async () => {
+  test('opens with defaults but refuses to overwrite an unreadable file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-preferences-'))
     roots.push(root)
     const path = join(root, 'app-preferences.json')
     await mkdir(path)
     const store = new PreferencesStore(root)
 
-    const error = (await store.read().catch(caught => caught)) as NodeJS.ErrnoException
+    await expect(store.read()).resolves.toEqual({})
+    const error = (await store
+      .update({ theme: 'dark' })
+      .catch(caught => caught)) as NodeJS.ErrnoException
 
     expect(['EISDIR', 'EPERM', 'EACCES']).toContain(error.code)
     expect((await stat(path)).isDirectory()).toBe(true)

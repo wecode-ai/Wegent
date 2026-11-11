@@ -17,6 +17,26 @@ async function createStore(): Promise<{ root: string; store: RendererStorageStor
 }
 
 describe('RendererStorageStore', () => {
+  it.each(['{broken-json', '{"version":9,"entries":{"credential":"keep"}}'])(
+    'keeps the renderer available without replacing damaged durable state: %s',
+    async damaged => {
+      const { root, store } = await createStore()
+      const path = join(root, 'renderer-local-storage.json')
+      await writeFile(path, damaged)
+      await expect(store.initialize({ appearance: 'light' })).resolves.toEqual({
+        appearance: 'light',
+      })
+      await expect(store.read()).resolves.toEqual({})
+      await expect(
+        store.update({ clear: false, changes: { appearance: 'dark' } })
+      ).rejects.toThrow()
+      expect(await readFile(path, 'utf8')).toBe(damaged)
+      await writeFile(path, '{"version":1,"entries":{"credential":"repaired"}}')
+      await expect(store.read()).resolves.toEqual({ credential: 'repaired' })
+      await store.update({ clear: false, changes: { appearance: 'dark' } })
+      expect(await store.read()).toEqual({ credential: 'repaired', appearance: 'dark' })
+    }
+  )
   it('notifies login observers after persistence without allowing them to fail storage updates', async () => {
     const { root } = await createStore()
     const onUpdate = vi.fn(() => {

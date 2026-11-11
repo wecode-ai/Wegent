@@ -14,8 +14,6 @@ import {
   type LocalExecutorLog,
   type LocalExecutorStatus,
 } from '@/desktop/localExecutor'
-import { reportDesktopStartupFailure } from '@/desktop/startupFailure'
-import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 
 function getLocalExecutorLogDisplayPath(): string {
   return getPlatform() === 'win'
@@ -268,15 +266,6 @@ export function LocalRuntimeInitializer({
     }
   }, [enabled, fallbackError, runtimeErrorText])
 
-  useEffect(() => {
-    if (state.phase !== 'failed' || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
-      return
-    }
-    void reportDesktopStartupFailure(state.cause, 'local_runtime_initialize').catch(error => {
-      console.error('[Wework] Failed to report the local runtime startup error', error)
-    })
-  }, [state])
-
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')
     let log: LocalExecutorLog | null = null
@@ -308,19 +297,43 @@ export function LocalRuntimeInitializer({
     }
   }, [startupReady, state.error, state.phase, t])
 
-  const canMountChildren = state.phase === 'ready'
-  const canRevealChildren = canMountChildren
-  const shouldShowStartupScreen = !canRevealChildren
+  const canMountChildren = state.phase !== 'starting' || startupAttempt > 0
   const failed = state.phase === 'failed'
 
   return (
     <>
-      {canMountChildren && (
-        <div hidden={!canRevealChildren} aria-hidden={!canRevealChildren}>
-          {children}
-        </div>
+      {canMountChildren && <div>{children}</div>}
+      {failed && (
+        <aside
+          data-testid="local-runtime-initializer"
+          role="status"
+          className="fixed inset-x-4 bottom-4 z-50 mx-auto flex max-w-2xl items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-text-primary shadow-sm"
+        >
+          <AlertCircle className="h-4 w-4 shrink-0 text-text-secondary" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">{t('service_unavailable_title')}</p>
+            <p className="text-xs text-text-secondary">{t('service_unavailable_description')}</p>
+            {state.error && (
+              <p
+                data-testid="local-runtime-error"
+                className="break-words text-xs text-text-secondary"
+              >
+                {state.error}
+              </p>
+            )}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void retryInitialize()}
+            data-testid="local-runtime-retry-button"
+          >
+            <RefreshCw className="h-4 w-4" />
+            {t('retry')}
+          </Button>
+        </aside>
       )}
-      {shouldShowStartupScreen && (
+      {!canMountChildren && (
         <main
           data-testid="local-runtime-initializer"
           className="relative flex h-screen min-h-[520px] items-center justify-center overflow-hidden bg-base px-6 py-10 text-text-primary"
@@ -332,50 +345,12 @@ export function LocalRuntimeInitializer({
             <MacOSTitleBarDragRegion className="h-full w-full" />
           </div>
           <section className="flex w-full max-w-[520px] flex-col items-center text-center">
-            {failed ? (
-              <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary">
-                <AlertCircle className="h-6 w-6 text-amber-600" />
-              </div>
-            ) : null}
-            <h1 className="heading-base">{failed ? t('failed_title') : t('starting_title')}</h1>
+            <h1 className="heading-base">{t('starting_title')}</h1>
             <p className="mt-3 max-w-[360px] text-sm leading-6 text-text-secondary">
-              {failed ? t('failed_description') : t('starting_description')}
+              {t('starting_description')}
             </p>
-
-            {failed && (
-              <div className="mt-6 w-full rounded-lg border border-border bg-surface px-4 py-3 text-left">
-                {state.error && (
-                  <p
-                    data-testid="local-runtime-error"
-                    className="break-words text-sm leading-6 text-text-primary"
-                  >
-                    {state.error}
-                  </p>
-                )}
-                <div className="mt-3 text-xs leading-5 text-text-secondary">
-                  <span className="font-medium">{t('log_label')}: </span>
-                  <code className="break-all rounded bg-base px-1.5 py-0.5 text-text-primary">
-                    {getLocalExecutorLogDisplayPath()}
-                  </code>
-                </div>
-              </div>
-            )}
-
-            {!failed && slowStartupTimedOut && (
+            {slowStartupTimedOut && (
               <SlowStartupHelp copyState={copyDebugState} onCopyDebugInfo={handleCopyDebugInfo} />
-            )}
-
-            {failed && (
-              <Button
-                type="button"
-                variant="primary"
-                className="mt-6 h-10 min-w-[112px]"
-                onClick={() => void retryInitialize()}
-                data-testid="local-runtime-retry-button"
-              >
-                <RefreshCw className="h-4 w-4" />
-                {t('retry')}
-              </Button>
             )}
           </section>
         </main>

@@ -131,6 +131,7 @@ import {
   type StartupSplashTheme,
 } from './host/startup-splash.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
+import { showStartupRecovery } from './host/startup-recovery-window.js'
 import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
 import { activateTrayAction, ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon, trayIconFilename } from './host/tray-icon.js'
@@ -347,8 +348,6 @@ if (desktopDataPaths) {
     }
   } catch (error) {
     console.error('[startup] application data migration failed', error)
-    dialog.showErrorBox('Wework', error instanceof Error ? error.message : String(error))
-    app.exit(1)
     throw error
   }
 } else {
@@ -691,9 +690,9 @@ const appUpdates = new AppUpdateService({
   },
   onInstallFailure: (error, stopping) => {
     if (!stopping) return
-    dialog.showErrorBox('Wework', error instanceof Error ? error.message : 'Update failed')
-    app.relaunch()
-    app.exit(1)
+    void showStartupRecovery(error).catch(recoveryError =>
+      console.error('[app-update] recovery window failed', recoveryError)
+    )
   },
   updateBaseUrl,
 })
@@ -2379,9 +2378,14 @@ async function configureDesktopRuntime(): Promise<void> {
   )
   startupProgress.report('services')
   logStartupStep('embedded-browser-bridge', 'started')
-  environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
-  logStartupStep('embedded-browser-bridge', 'completed')
-  Object.assign(environment, embeddedBrowserBridge.environment())
+  try {
+    environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
+    Object.assign(environment, embeddedBrowserBridge.environment())
+    logStartupStep('embedded-browser-bridge', 'completed')
+  } catch (error) {
+    console.warn('[browser] Browser bridge is unavailable', error)
+    logStartupStep('embedded-browser-bridge', 'failed')
+  }
   desktopControlBridge = new WeworkDesktopControlBridge({
     instanceId: desktopControlInstanceId(),
     instanceKind: pluginDevelopmentInstance ? 'core-dsh-plugin-development' : 'main',
@@ -2418,9 +2422,14 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('desktop-control-bridge', 'started')
   if (pythonRuntimeEnabled) {
     // Executors inherit the Python capability only after its listener is ready.
-    await desktopControlBridge.start()
-    Object.assign(environment, desktopControlBridge.environment())
-    logStartupStep('desktop-control-bridge', 'completed')
+    try {
+      await desktopControlBridge.start()
+      Object.assign(environment, desktopControlBridge.environment())
+      logStartupStep('desktop-control-bridge', 'completed')
+    } catch (error) {
+      console.warn('[desktop-control] Desktop control and plugin Python are unavailable', error)
+      logStartupStep('desktop-control-bridge', 'failed')
+    }
   } else {
     startStartupMaintenance('desktop control bridge', async () => {
       await desktopControlBridge!.start()
@@ -2815,6 +2824,13 @@ function startDesktopRuntime(): Promise<void> {
     startupProgress.report('core-dsh')
     await desktopRuntime?.start()
     logStartupStep('core-dsh-start', 'completed')
+    if (packagedApplication && process.platform === 'win32')
+      startStartupMaintenance('installed release registration', async () => {
+        const installed = await appUpdates.reconcileInstalledRelease(
+          (await runningDesktopComponents()).paths
+        )
+        if (installed) process.env.WEWORK_ACTIVE_RELEASE_ID = installed.id
+      })
     startStartupMaintenance('tray status', () => trayNativeStatus?.start())
     await loadPrimaryDshView()
     startStartupMaintenance('workspace window restoration', restoreFixedWorkspaceWindows)
@@ -3018,7 +3034,12 @@ if (hasSingleInstanceLock) {
     })
     .catch(error => {
       console.error('[startup] failed to initialize desktop host', error)
-      dialog.showErrorBox('Wework', error instanceof Error ? error.message : String(error))
+      void showStartupRecovery(error)
+        .then(() => {
+          mainWindow?.hide()
+          startupSplashWindow?.hide()
+        })
+        .catch(recoveryError => console.error('[startup] recovery window failed', recoveryError))
     })
 }
 
