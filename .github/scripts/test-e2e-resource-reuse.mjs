@@ -20,6 +20,7 @@ test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositor
   const input = [
     "URIs: http://archive.ubuntu.com/ubuntu/",
     "URIs: https://security.ubuntu.com/ubuntu",
+    "deb http://azure.archive.ubuntu.com/ubuntu/ resolute main universe",
     "URIs: mirror+file:/etc/apt/apt-mirrors.txt",
     "Suites: noble noble-updates noble-security resolute",
     "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
@@ -36,10 +37,15 @@ test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositor
   assert.equal(result.status, 0, result.stderr);
   assert.equal(
     result.stdout,
-    input.replace(
-      /http:\/\/archive\.ubuntu\.com\/ubuntu\/|https:\/\/security\.ubuntu\.com\/ubuntu|mirror\+file:\/etc\/apt\/apt-mirrors\.txt/g,
-      "http://mirrors.edge.kernel.org/ubuntu",
-    ),
+    [
+      "URIs: http://mirrors.edge.kernel.org/ubuntu",
+      "URIs: http://mirrors.edge.kernel.org/ubuntu",
+      "deb http://mirrors.edge.kernel.org/ubuntu resolute main universe",
+      "URIs: http://mirrors.edge.kernel.org/ubuntu",
+      "Suites: noble noble-updates noble-security resolute",
+      "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
+      "deb https://deb.nodesource.com/node_24.x nodistro main",
+    ].join("\n"),
   );
 });
 
