@@ -50,6 +50,7 @@
   "files": "群文件",
   "noResults": "没有符合筛选条件的事项",
   "retry": "重试",
+  "threadReadFailed": "已读状态未能更新，事项内容仍可查看。",
   "emptyTitle": "从一个群开始协作",
   "emptyHint": "无需创建项目，即可建群交流；具体工作可发起事项。",
   "selectGroup": "选择一个群，继续协作",

@@ -281,6 +281,7 @@ function EmbeddedThreadRoom({
       />
       <GroupConversation
         key={`${accountScope}:${store}:${data.group.id}:${data.item.id}`}
+        active={props.active ?? true}
         {...actions}
         group={data.group}
         project={groupBoardContext(data.group, store)}

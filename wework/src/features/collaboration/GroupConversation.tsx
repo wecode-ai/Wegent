@@ -36,6 +36,7 @@ import { ThreadHierarchySection } from './ThreadHierarchySection'
 import { threadLifecycleLabel } from './threadLifecycle'
 import type { ThreadActionContext } from './threadActions'
 import { useFocusedComment } from '@/features/todo/useFocusedComment'
+import { useThreadContentRead } from './useThreadContentRead'
 
 export function GroupConversation({
   group,
@@ -64,6 +65,7 @@ export function GroupConversation({
   focusedCommentId = null,
   focusRequestKey = null,
   onClearFocus,
+  active = true,
 }: {
   group: ChatGroup
   project: CollaborationProject
@@ -91,6 +93,7 @@ export function GroupConversation({
   focusedCommentId?: string | null
   focusRequestKey?: string | null
   onClearFocus(): void
+  active?: boolean
 }) {
   const { t } = useTranslation('collaboration')
   const [participationState, setParticipationState] = useState<{
@@ -139,6 +142,17 @@ export function GroupConversation({
     'chat_group'
   )
   const scroll = useRef<HTMLDivElement>(null)
+  const contentRead = useThreadContentRead({
+    api,
+    accountScope,
+    groupId: group.id,
+    actorId: participation?.current_user_id ?? stream.currentUserId,
+    item,
+    active,
+    loaded: Boolean(chat) && !stream.loading && !stream.error,
+    viewport: scroll,
+    onRead: onChanged,
+  })
   const menuTrigger = useRef<HTMLButtonElement>(null)
   const follow = useRef(true)
   const focused = useFocusedComment(
@@ -379,6 +393,18 @@ export function GroupConversation({
         {(error || stream.error) && (
           <div role="alert" className="shrink-0 px-6 py-2 text-sm text-destructive">
             {error || (focusedCommentId ? t('messageUnavailable') : stream.error)}
+          </div>
+        )}
+        {contentRead.failed && (
+          <div
+            role="alert"
+            className="shrink-0 px-6 py-2 text-sm text-destructive"
+            data-testid="thread-read-error"
+          >
+            {t('threadReadFailed')}
+            <Button variant="ghost" data-testid="thread-read-retry" onClick={contentRead.retry}>
+              {t('retry')}
+            </Button>
           </div>
         )}
         {stream.historyView && (

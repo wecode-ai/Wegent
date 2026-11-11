@@ -50,6 +50,7 @@
   "files": "Group files",
   "noResults": "No Threads match this filter",
   "retry": "Retry",
+  "threadReadFailed": "Read status could not be updated. Thread content is still available.",
   "emptyTitle": "Start collaborating in a group",
   "emptyHint": "Create a group to talk without a project. Start Threads for specific work.",
   "selectGroup": "Choose a group to continue",

@@ -701,6 +701,21 @@ export async function createDesktopScenario({
       const observer = await request(`/api/v1/loop-items/${threadId}`, { token: memberToken })
       assert.equal(observer.joined, false)
       assert.equal(observer.permissions.comment, false)
+      assert.ok(Number.isSafeInteger(observer.content_revision))
+      const observerRead = await request(`/api/v1/loop-items/${threadId}/read`, {
+        token: memberToken,
+        method: 'POST',
+        body: { activity_sequence: 0, content_revision: observer.content_revision },
+      })
+      assert.equal(observerRead.content_revision, observer.content_revision)
+      assert.equal(observerRead.is_unread, false)
+      assert.equal(observerRead.activity_read_sequence, observer.activity_read_sequence)
+      assert.equal(
+        (await request(`/api/v1/loop-items/${threadId}/participation`, { token: memberToken }))
+          .joined,
+        false,
+        'Reading content must not join the Thread or subscribe to continuing notifications'
+      )
       const memberConnection = await connectSocket(memberToken)
       const packets = []
       memberConnection.on('wework:project_chat:message:created', message => packets.push(message))

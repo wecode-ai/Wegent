@@ -32,6 +32,20 @@ run_apt_with_diagnostics() {
           timeout 2 getent "$apt_family" "$apt_host"
         done
       done
+      if command -v curl >/dev/null; then
+        local apt_url
+        for apt_url in \
+          http://mirrors.edge.kernel.org/ubuntu/ \
+          https://mirrors.edge.kernel.org/ubuntu/ \
+          https://archive.ubuntu.com/ubuntu/ \
+          https://security.ubuntu.com/ubuntu/; do
+          printf 'APT IPv4 transport probe=%s\n' "$apt_url"
+          curl --ipv4 --head --silent --show-error --output /dev/null \
+            --connect-timeout 2 --max-time 3 \
+            --write-out 'http=%{http_code} remote=%{remote_ip} connect=%{time_connect} total=%{time_total}\n' \
+            "$apt_url" || true
+        done
+      fi
     } >&2 || true
   fi
   return "$apt_status"

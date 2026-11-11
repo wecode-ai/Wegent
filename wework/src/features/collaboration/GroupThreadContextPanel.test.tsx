@@ -183,6 +183,11 @@ describe('embedded Group Thread context', () => {
       <GroupThreadContextPanel {...f.props} item={{ ...f.props.item, version: 2 }} />
     )
     await screen.findByText('Updated by Runtime')
+    expect(host.room?.active).toBe(true)
+    mounted.rerender(
+      <GroupThreadContextPanel {...f.props} active={false} item={{ ...f.props.item, version: 2 }} />
+    )
+    expect(host.room?.active).toBe(false)
   })
 
   it('loads the real related item before delegating and rejects a foreign Group target', async () => {
