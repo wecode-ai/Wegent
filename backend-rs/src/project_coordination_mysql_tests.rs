@@ -259,6 +259,40 @@ async fn issue_mention_wakeups_are_atomic_deduplicated_and_recipient_owned() {
     .await;
 }
 
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn first_mentions_for_distinct_recipients_do_not_take_gap_locks() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        let start = std::sync::Arc::new(tokio::sync::Barrier::new(4));
+        let enqueue = |user| {
+            let mysql = mysql.clone();
+            let start = start.clone();
+            async move {
+                mysql
+                    .with_transaction(async |tx| {
+                        start.wait().await;
+                        crate::stand_in_issue_events::enqueue_mention_on(
+                            tx,
+                            user,
+                            "1001",
+                            "issue",
+                            "first-concurrent-mention",
+                        )
+                        .await
+                    })
+                    .await
+                    .unwrap();
+            }
+        };
+        tokio::join!(enqueue(1), enqueue(7), enqueue(8), enqueue(9));
+        for user in [1, 7, 8, 9] {
+            verify_mention_inbox(&mysql, user, 1).await;
+        }
+    })
+    .await;
+}
+
 async fn verify_mention_inbox(mysql: &MysqlService, user: i64, count: usize) {
     let inbox = store::get(
         mysql,
