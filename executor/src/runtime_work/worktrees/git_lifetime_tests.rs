@@ -118,6 +118,17 @@ async fn assert_git_cleanup_waits(nested: bool) {
 #[cfg(unix)]
 #[tokio::test]
 async fn cleanup_revalidates_parent_after_waiting_for_git() {
+    assert_cleanup_revalidates_parent(false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cleanup_revalidates_managed_root_after_waiting_for_git() {
+    assert_cleanup_revalidates_parent(true).await;
+}
+
+#[cfg(unix)]
+async fn assert_cleanup_revalidates_parent(replace_root: bool) {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
     super::tests::initialize_repository(&source);
@@ -135,8 +146,14 @@ async fn cleanup_revalidates_parent_after_waiting_for_git() {
         .await
         .unwrap();
     let target = root.path().join("unrelated");
-    fs::create_dir_all(target.join(path.file_name().unwrap())).unwrap();
-    let sentinel = target.join(path.file_name().unwrap()).join("preserve.txt");
+    let replaced = if replace_root {
+        root.path().join("managed")
+    } else {
+        path.parent().unwrap().to_path_buf()
+    };
+    let victim = target.join(path.strip_prefix(&replaced).unwrap());
+    fs::create_dir_all(&victim).unwrap();
+    let sentinel = victim.join("preserve.txt");
     fs::write(&sentinel, "unrelated data").unwrap();
     let delete_path = path.clone();
     let (finished, mut finishing) = tokio::sync::oneshot::channel();
@@ -148,14 +165,18 @@ async fn cleanup_revalidates_parent_after_waiting_for_git() {
             .await
             .is_err()
     );
-    let parent = path.parent().unwrap();
-    fs::rename(parent, parent.with_extension("original")).unwrap();
-    std::os::unix::fs::symlink(&target, parent).unwrap();
+    fs::rename(&replaced, replaced.with_extension("original")).unwrap();
+    std::os::unix::fs::symlink(&target, &replaced).unwrap();
     drop(access);
     let result = tokio::time::timeout(Duration::from_secs(10), finishing)
         .await
         .unwrap()
         .unwrap();
-    assert!(result.unwrap_err().contains("outside managed roots"));
+    let expected = if replace_root {
+        "path changed while waiting"
+    } else {
+        "outside managed roots"
+    };
+    assert!(result.unwrap_err().contains(expected));
     assert_eq!(fs::read_to_string(sentinel).unwrap(), "unrelated data");
 }

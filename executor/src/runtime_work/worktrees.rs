@@ -747,11 +747,25 @@ impl WorktreeManager {
                 .ok_or_else(|| "Managed worktree was not found".to_owned())?;
             (record, state.known_roots)
         };
+        let expected_path = if path.try_exists().map_err(|error| error.to_string())? {
+            Some(fs::canonicalize(path).map_err(|error| error.to_string())?)
+        } else {
+            None
+        };
         // Wait without holding the registry lock, then validate the actual
         // directory immediately before mutation under its lifetime lock.
         let _directory = wegent_workspace::workspace_lifetime::remove_directory(path)?;
         ensure_managed_path(path, &known_roots)?;
-        if path.exists() {
+        if path.try_exists().map_err(|error| error.to_string())? {
+            let actual_path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+            if expected_path
+                .as_ref()
+                .is_some_and(|expected| expected != &actual_path)
+            {
+                return Err(worktree_target_conflict(
+                    "Managed worktree path changed while waiting for deletion".to_owned(),
+                ));
+            }
             if preserve_snapshot {
                 validate_record_worktree_identity(&record, path)?;
             } else {
