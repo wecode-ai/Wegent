@@ -9,6 +9,8 @@ use tokio::process::Child;
 pub(super) struct ExitProgress {
     pub(super) reaped: bool,
     last_error: Option<String>,
+    #[cfg(target_os = "linux")]
+    waiting_thread_process: Option<u32>,
 }
 
 impl ExitProgress {
@@ -16,7 +18,7 @@ impl ExitProgress {
         if self.reaped {
             return true;
         }
-        match reap_stopped_group(child) {
+        match self.reap_stopped_group(child) {
             Ok(done) => {
                 self.reaped = done;
                 done
@@ -73,22 +75,47 @@ pub(super) fn status(child: &Child) -> io::Result<Option<ExitStatus>> {
     }
 }
 
-fn reap_stopped_group(child: &mut Child) -> io::Result<bool> {
-    if child.id().is_none() {
-        return Ok(child.try_wait()?.is_some());
-    }
-    if status(child)?.is_none() {
-        return Ok(false);
-    }
-    let group = child.id().expect("unreaped owned child retains its PID");
-    if descendants_running(group)? {
-        // SAFETY: the unreaped leader reserves this owned group against PID reuse.
-        unsafe {
-            libc::kill(-(group as libc::pid_t), libc::SIGKILL);
+impl ExitProgress {
+    fn reap_stopped_group(&mut self, child: &mut Child) -> io::Result<bool> {
+        if child.id().is_none() {
+            return Ok(child.try_wait()?.is_some());
         }
-        return Ok(false);
+        if status(child)?.is_none() {
+            return Ok(false);
+        }
+        let group = child.id().expect("unreaped owned child retains its PID");
+        #[cfg(target_os = "linux")]
+        let running = if let Some((pid, member)) = live_descendant(group)? {
+            if matches!(member.state, 'Z' | 'X')
+                && member.thread_count > 1
+                && self.waiting_thread_process != Some(pid)
+            {
+                super::log_executor_event(
+                    "codex process group waiting for native worker threads",
+                    &[
+                        ("process_id", group.to_string()),
+                        ("native_process_id", pid.to_string()),
+                        ("state", member.state.to_string()),
+                        ("thread_count", member.thread_count.to_string()),
+                    ],
+                );
+                self.waiting_thread_process = Some(pid);
+            }
+            true
+        } else {
+            false
+        };
+        #[cfg(target_os = "macos")]
+        let running = descendants_running(group)?;
+        if running {
+            // SAFETY: the unreaped leader reserves this owned group against PID reuse.
+            unsafe {
+                libc::kill(-(group as libc::pid_t), libc::SIGKILL);
+            }
+            return Ok(false);
+        }
+        Ok(child.try_wait()?.is_some())
     }
-    Ok(child.try_wait()?.is_some())
 }
 
 /// The leader stays owned until every member that can retain native files exits.
@@ -122,7 +149,7 @@ pub(super) fn descendants_running(group: u32) -> io::Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn descendants_running(group: u32) -> io::Result<bool> {
+fn live_descendant(group: u32) -> io::Result<Option<(u32, ProcessStat)>> {
     for entry in std::fs::read_dir("/proc")? {
         let entry = entry?;
         let Some(pid) = entry
@@ -135,8 +162,9 @@ pub(super) fn descendants_running(group: u32) -> io::Result<bool> {
         if pid == group {
             continue;
         }
-        let source = match std::fs::read_to_string(entry.path().join("stat")) {
-            Ok(source) => source,
+        let member = match process_stat(pid) {
+            Ok(Some(member)) => member,
+            Ok(None) => continue,
             Err(error)
                 if matches!(
                     error.kind(),
@@ -147,16 +175,70 @@ pub(super) fn descendants_running(group: u32) -> io::Result<bool> {
             }
             Err(error) => return Err(error),
         };
-        let Some((_, fields)) = source.rsplit_once(')') else {
-            continue;
-        };
-        let mut fields = fields.split_whitespace();
-        let state = fields.next();
-        let process_group = fields.nth(1).and_then(|value| value.parse::<u32>().ok());
-        // Zombies have closed their files, even when container PID 1 has not reaped them.
-        if process_group == Some(group) && !matches!(state, Some("Z" | "X")) {
-            return Ok(true);
+        if member.process_group == group && member.has_live_threads() {
+            return Ok(Some((pid, member)));
         }
     }
-    Ok(false)
+    Ok(None)
+}
+
+#[cfg(all(target_os = "linux", test))]
+pub(super) fn descendants_running(group: u32) -> io::Result<bool> {
+    live_descendant(group).map(|member| member.is_some())
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(super) struct ProcessStat {
+    pub(super) state: char,
+    pub(super) process_group: u32,
+    pub(super) thread_count: usize,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl ProcessStat {
+    fn has_live_threads(&self) -> bool {
+        // A zombie main thread can leave other threads holding the shared file table.
+        !matches!(self.state, 'Z' | 'X') || self.thread_count > 1
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn process_stat(pid: u32) -> io::Result<Option<ProcessStat>> {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).map(|source| parse_process_stat(&source))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_process_stat(source: &str) -> Option<ProcessStat> {
+    let fields = source
+        .rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    Some(ProcessStat {
+        state: fields.first()?.chars().next()?,
+        process_group: fields.get(2)?.parse().ok()?,
+        thread_count: fields.get(17)?.parse().ok()?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_zombie_main_thread_does_not_prove_the_shared_file_table_is_closed() {
+        for (state, threads, live) in [
+            ('Z', 2, true),
+            ('Z', 1, false),
+            ('X', 1, false),
+            ('S', 1, true),
+        ] {
+            let source = format!(
+                "42 (native (worker)) {state} 1 7 {} {threads}",
+                vec!["0"; 14].join(" ")
+            );
+            let member = super::parse_process_stat(&source).unwrap();
+            assert_eq!(member.process_group, 7);
+            assert_eq!(member.thread_count, threads);
+            assert_eq!(member.has_live_threads(), live);
+        }
+    }
 }

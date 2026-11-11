@@ -63,6 +63,12 @@ cleanup of unrelated runtime profiles must not remove it.
 On Unix, a wrapper's exit does not prove its native descendants have stopped. Reserve the leader
 PID until its owned process group exits, then reap the leader and release the Home lease and catalog.
 An exit notification alone cannot admit migration. Windows retains its whole-tree termination flow.
+On Linux, a zombie main thread can leave workers holding the shared file table. Check the thread
+count in `/proc/<pid>/stat` before treating it as a resource-free, single-thread zombie.
+Diagnostics retain kernel lock records and the owner's state, process group and thread count;
+[`/proc/<pid>/fd` can disappear after the main thread exits](https://man7.org/linux/man-pages/man5/proc_pid_fd.5.html).
+A real multithreaded Linux regression exits the main thread while a worker holds a file lock,
+then verifies that retirement waits for the full thread group and the actual lock release.
 Catalog edits use the existing idle restart and active-work confirmation flow. Explicit native
 catalog configuration in the Home remains authoritative. Local discovery adds no resident process
 and does not serialize model requests from separate threads.

@@ -248,4 +248,79 @@ mod tests {
             "Home ownership was released while the wrapped native process was alive"
         );
     }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn zombie_native_main_thread_keeps_its_live_writer_in_the_exit_barrier() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("writer.c");
+        let binary = root.path().join("writer");
+        std::fs::write(
+            &source,
+            include_str!("../../../tests/fixtures/native_writer_zombie.c"),
+        )
+        .unwrap();
+        let compilation = std::process::Command::new("cc")
+            .args(["-pthread", "-o"])
+            .arg(&binary)
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(
+            compilation.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compilation.stderr)
+        );
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command
+            .args(["-c", "\"$1\" \"$2\" & exit 0", "--"])
+            .arg(binary)
+            .arg(root.path())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        super::super::configure_codex_app_server_process_group(&mut command);
+        let raw = command.spawn().unwrap();
+        let group = raw.id().unwrap();
+        let mut child = CodexAppServerChild::new(raw, None);
+        let pid = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(ready) = std::fs::read_to_string(root.path().join("writer-ready")) {
+                    let pid = ready.parse::<u32>().unwrap();
+                    let member = super::super::process_exit::process_stat(pid)
+                        .unwrap()
+                        .unwrap();
+                    if member.state == 'Z' && child.try_wait().unwrap().is_some() {
+                        assert!(member.thread_count > 1);
+                        break pid;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let probe = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.path().join("writer.lock"))
+            .unwrap();
+        let held = probe.try_lock_exclusive().is_err();
+        let live = super::super::process_exit::descendants_running(group).unwrap();
+        let visible_main_files = std::fs::read_dir(format!("/proc/{pid}/fd"))
+            .is_ok_and(|mut files| files.next().is_some());
+        child.kill().await.unwrap();
+        assert!(held, "The native worker did not own its real file lock");
+        assert!(
+            !visible_main_files,
+            "The fixture did not reproduce the hidden main-thread FD table"
+        );
+        assert!(
+            live,
+            "A zombie main thread hid a live native writer from the exit barrier"
+        );
+        probe
+            .try_lock_exclusive()
+            .expect("Native writer lock remained after the full group exit");
+    }
 }
