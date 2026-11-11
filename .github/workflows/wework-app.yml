@@ -324,13 +324,6 @@ jobs:
             }
           '
 
-      - name: Verify native launcher before packaging
-        shell: bash
-        run: |
-          node --test wework/scripts/build-launcher.test.mjs
-          rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
-          "$RUNNER_TEMP/wework-launcher-tests.exe"
-
       - name: Install workspace dependencies
         id: workspace-install
         shell: bash
@@ -350,6 +343,13 @@ jobs:
 
       - name: Synchronize desktop build version
         run: node wework/scripts/sync-desktop-release-version.mjs "${{ needs.prepare-release.outputs.version }}"
+
+      - name: Verify native launcher before packaging
+        shell: bash
+        run: |
+          node --test wework/scripts/build-launcher.test.mjs
+          rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
+          "$RUNNER_TEMP/wework-launcher-tests.exe"
 
       - name: Prepare Apple signing keychain
         if: matrix.platform == 'macos'
