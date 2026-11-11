@@ -383,6 +383,7 @@ export function ProjectAgentConfiguration({
     const nextAgents = await api.agents.list(project.id, {
       includeArchived: canManage && scope === "project",
     });
+    setLoadError(null);
     setAgents(
       nextAgents
         .map(normalizeProjectAgent)

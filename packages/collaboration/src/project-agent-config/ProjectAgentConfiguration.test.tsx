@@ -737,6 +737,35 @@ describe("ProjectAgentConfiguration", () => {
     },
   );
 
+  it("clears a failed refresh when a later edit refresh succeeds", async () => {
+    const row = projectAgent({ runtime: "codex", wegent_team_id: null });
+    const { api, list } = createApi({ agents: [row] });
+    await renderHosted(api);
+    await click("project-agent-edit-project-agent-1");
+    list.mockRejectedValueOnce(new Error("List refresh unavailable"));
+    await click("hosted-local-agent-save");
+    expect(element("project-agent-config-error").textContent).toContain(
+      "List refresh unavailable",
+    );
+    expect((element("project-agent-add") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    await click("project-agent-edit-project-agent-1");
+    list.mockResolvedValueOnce([
+      { ...row, name: "Latest saved name", version: 3 },
+    ]);
+    await click("hosted-local-agent-save");
+    expect(
+      document.querySelector('[data-testid="project-agent-config-error"]'),
+    ).toBeNull();
+    expect(element("project-agent-row-project-agent-1").textContent).toContain(
+      "Latest saved name",
+    );
+    expect((element("project-agent-add") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
   it.each([12, null])(
     "does not expose unauthorized edits for Agent definition %s",
     async (teamId) => {
