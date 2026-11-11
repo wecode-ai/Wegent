@@ -1,8 +1,9 @@
 // @vitest-environment node
 
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { executionModelEvents } from '../e2e/desktop/scenarios/stand-in-model-execution.scenario.mjs'
 import { RETRY_CONTINUATION_PROMPT } from '../e2e/desktop/modules/shared.mjs'
+import { waitForDeliveredCloudCatalog } from '../e2e/desktop/modules/stand-in-catalog-delivery.mjs'
 
 const marker = 'MODEL_EXECUTION_FIXTURE'
 const cases = new Map([
@@ -32,6 +33,96 @@ const historyOutput = history => ({
   type: 'function_call_output',
   call_id: 'retry-previous-conversation',
   output: [{ type: 'input_text', text: JSON.stringify(history) }],
+})
+
+describe('stand-in catalog delivery diagnostics', () => {
+  const snapshot = {
+    timeOrigin: 1000,
+    network: [
+      {
+        path: '/api/models/unified',
+        initiatorType: 'fetch',
+        startTime: 10,
+        duration: 30,
+        serverTiming: [
+          { name: 'wework-e2e-response', description: 'forbidden-server-description' },
+        ],
+      },
+      { path: '/api/other', initiatorType: 'fetch', startTime: 20, duration: 50 },
+    ],
+  }
+  const delivered = {
+    method: 'GET',
+    path: '/api/models/unified',
+    status: 200,
+    receivedAt: new Date(1020).toISOString(),
+    completedAt: new Date(1030).toISOString(),
+    responseCompleted: true,
+  }
+
+  test('retains the existing delivery predicate and reads one control snapshot', async () => {
+    const control = { command: vi.fn(async () => JSON.stringify(snapshot)) }
+    const proxy = { requests: [{ ...delivered, status: 500 }, delivered] }
+    await expect(waitForDeliveredCloudCatalog(control, proxy, 1)).resolves.toBe(delivered)
+    expect(control.command).toHaveBeenCalledExactlyOnceWith('getWorkbenchDebugSnapshot', 'body')
+  })
+
+  test('logs only safe request fields and renderer evidence once on timeout', async () => {
+    vi.useFakeTimers()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const request = {
+        ...delivered,
+        receivedAt: new Date(2000).toISOString(),
+        headers: { authorization: 'forbidden-header' },
+        body: 'forbidden-body',
+        query: 'forbidden-query',
+        requestIdFingerprint: 'forbidden-fingerprint',
+      }
+      const control = { command: vi.fn(async () => JSON.stringify(snapshot)) }
+      const outcome = waitForDeliveredCloudCatalog(control, { requests: [request] }).catch(
+        error => error
+      )
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect((await outcome).message).toBe(
+        'The previous cloud catalog request did not finish in the renderer'
+      )
+      expect(log).toHaveBeenCalledExactlyOnceWith('[stand-in-model-catalog] Delivery timeout', {
+        requests: [{ ...delivered, receivedAt: request.receivedAt }],
+        renderer: {
+          timeOrigin: 1000,
+          resourceCount: 2,
+          latestCompletion: 1070,
+          catalogTimings: [
+            { path: '/api/models/unified', startedAt: 1010, completedAt: 1040, durationMs: 30 },
+          ],
+        },
+      })
+      expect(JSON.stringify(log.mock.calls)).not.toContain('forbidden-')
+    } finally {
+      log.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  test('preserves the original snapshot failure without another diagnostic request', async () => {
+    const error = new Error('snapshot transport failed')
+    const control = {
+      command: vi.fn(async () => {
+        throw error
+      }),
+    }
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(waitForDeliveredCloudCatalog(control, { requests: [delivered] })).rejects.toBe(
+        error
+      )
+      expect(control.command).toHaveBeenCalledTimes(1)
+      expect(log).not.toHaveBeenCalled()
+    } finally {
+      log.mockRestore()
+    }
+  })
 })
 
 describe('stand-in execution model fixture', () => {

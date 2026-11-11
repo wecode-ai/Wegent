@@ -4,7 +4,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createCatalogScenario } from './stand-in-model-catalog.scenario.mjs'
 import { requestExecutor, writeCodexModelConfig } from '../modules/executor-rpc.mjs'
-import { completedApiResourceTimings, until } from '../modules/plugin-regression-fixture.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
+import { waitForDeliveredCloudCatalog } from '../modules/stand-in-catalog-delivery.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import {
@@ -865,28 +866,6 @@ function withModelLimits(modelJson, limits) {
       },
     },
   }
-}
-
-async function waitForDeliveredCloudCatalog(control, catalogProxy, requestStart = 0) {
-  return until(
-    async () => {
-      const timings = await completedApiResourceTimings(control, '/api/models/unified')
-      const request = catalogProxy.requests
-        .slice(requestStart)
-        .filter(entry => entry.method === 'GET' && entry.path === '/api/models/unified')
-        .at(-1)
-      if (!request?.responseCompleted || request.status !== 200) return null
-      const receivedAt = Date.parse(request.receivedAt)
-      return timings.some(
-        timing =>
-          Math.floor(timing.startedAt) <= receivedAt && Math.ceil(timing.completedAt) >= receivedAt
-      )
-        ? request
-        : null
-    },
-    request => Boolean(request),
-    'The previous cloud catalog request did not finish in the renderer'
-  )
 }
 
 /** Refresh real Backend bytes in the mounted chat without another model turn or app lifecycle. */
