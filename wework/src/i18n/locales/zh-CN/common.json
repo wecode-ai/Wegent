@@ -5535,7 +5535,7 @@
     "device_label": "设备",
     "local_project": "本地项目",
     "workspace_label": "工作区",
-    "title": "我的分身",
+    "title": "我的助理",
     "close": "关闭",
     "auto": "自动处理",
     "prompt": "你希望分身怎么做？（选填）",
@@ -5551,7 +5551,7 @@
     "reload": "重新加载",
     "view_devices": "查看设备情况",
     "saved": "分身设置已保存",
-    "enabled": "我的分身 · 自动处理已开启",
+    "enabled": "我的助理 · 自动处理已开启",
     "project_enabled": "自动处理已开启",
     "description": "忙碌时，让分身替你接手任务。它会处理新分配给你的任务，完成后由你检查结果。",
     "inherit_environment": "设备默认工作区",
@@ -6113,7 +6113,7 @@
       "repository_help": "选择你有访问权限的仓库。"
     },
     "onboarding": {
-      "title": "开始使用我的分身",
+      "title": "开始使用我的助理",
       "review_add": "添加每周复盘",
       "description": "从一件具体的事开始，逐步把重复工作交给分身。",
       "loading": "正在读取分身功能设置…",

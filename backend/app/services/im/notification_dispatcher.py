@@ -502,8 +502,7 @@ class IMNotificationDispatcher:
         if not recipient_id:
             return ""
 
-        session.proactive_recipient_id = recipient_id
-        await im_session_service.save_session(session)
+        await im_session_service.set_proactive_recipient_id(session, recipient_id)
         return recipient_id
 
     async def _send_telegram(

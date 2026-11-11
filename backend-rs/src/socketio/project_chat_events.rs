@@ -391,9 +391,8 @@ async fn send_message(
     if let Some(reply_preview) = reply.preview.filter(|preview| !preview.is_empty()) {
         target["replyPreview"] = json!(reply_preview);
     }
-    let (saved, pending) = state
-        .mysql
-        .with_transaction(async |tx| {
+    let (saved, pending) =
+        crate::transaction_outcome::run_mysql_with_deadlock_retry(&state.mysql, async |tx| {
             let item = match request.task_id.as_deref() {
                 Some(item) => {
                     crate::background_jobs::project::store::locked_existing(tx, "task", item)

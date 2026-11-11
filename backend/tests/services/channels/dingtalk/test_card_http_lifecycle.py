@@ -130,3 +130,188 @@ async def test_failed_card_registration_closes_emitter(monkeypatch):
         await handler._register_streaming_emitter(101, emitter, object())
 
     emitter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_card_registration_failure_finishes_card(monkeypatch):
+    """Runtime cards must not remain loading after their binding cannot be saved."""
+    handler = DingTalkChannelHandler(channel_id=77)
+    monkeypatch.setattr(
+        handler,
+        "_bind_chat_card",
+        AsyncMock(side_effect=RuntimeError("binding failed")),
+    )
+    monkeypatch.setattr(
+        handler,
+        "_fail_private_im_runtime_continuation",
+        AsyncMock(),
+    )
+    emitter = SimpleNamespace(chat_card=object(), subtask_id=42, close=AsyncMock())
+
+    with pytest.raises(RuntimeError, match="binding failed"):
+        await handler._register_streaming_emitter(
+            "runtime:device-1:task-1", emitter, object()
+        )
+
+    handler._fail_private_im_runtime_continuation.assert_awaited_once()
+    kwargs = handler._fail_private_im_runtime_continuation.await_args.kwargs
+    assert kwargs["callback_key"] == "runtime:device-1:task-1"
+    assert "任务可能仍在运行" in kwargs["error"]
+
+
+@pytest.mark.asyncio
+async def test_failed_callback_registration_drops_card_address(monkeypatch):
+    """A card that cannot be registered must stop being quotable."""
+    handler = DingTalkChannelHandler(channel_id=77)
+    emitter = SimpleNamespace(
+        chat_card=object(),
+        subtask_id=42,
+        card_instance_id="card-1",
+        close=AsyncMock(),
+    )
+    context = SimpleNamespace(extra_data={}, conversation_id="group-a")
+    service = SimpleNamespace(
+        save_callback_info=AsyncMock(side_effect=RuntimeError("cache down")),
+        register_emitter=AsyncMock(),
+    )
+    delete = AsyncMock()
+    monkeypatch.setattr(handler, "_bind_chat_card", AsyncMock())
+    monkeypatch.setattr(handler, "get_callback_service", lambda: service)
+    monkeypatch.setattr("app.services.channels.dingtalk.handler.delete_binding", delete)
+    monkeypatch.setattr(handler, "_fail_unstarted_card_task", AsyncMock())
+    monkeypatch.setattr(handler, "send_text_reply", AsyncMock())
+
+    with pytest.raises(RuntimeError, match="cache down"):
+        await handler._register_streaming_emitter(101, emitter, context)
+
+    delete.assert_awaited_once_with(77, "card-1")
+    emitter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_card_registration_finishes_card_before_closing(monkeypatch):
+    """The failed card must not reuse an HTTP client after it has been closed."""
+    handler = DingTalkChannelHandler(channel_id=77)
+    calls: list[str] = []
+    transport_closed = False
+
+    class FakeTransport:
+        card_instance_id = "card-1"
+        out_track_id = "track-1"
+
+        async def update(self, _content):
+            assert not transport_closed
+            calls.append("http-update")
+
+        async def fail(self, _content):
+            assert not transport_closed
+            calls.append("http-fail")
+
+        async def close(self):
+            nonlocal transport_closed
+            transport_closed = True
+            calls.append("http-close")
+
+    class FakeCard(StreamingResponseEmitter):
+        def __init__(self):
+            super().__init__(
+                SimpleNamespace(
+                    _access_token={
+                        "accessToken": "test-token",
+                        "expireTime": float("inf"),
+                    }
+                ),
+                None,
+                existing_card_instance_id="card-1",
+                chat_card=DingTalkChatCardConfig(template_id="test.schema"),
+            )
+            self._card = FakeTransport()
+
+        async def _stop_updates(self):
+            return None
+
+    emitter = FakeCard()
+    emitter.subtask_id = 42
+    original_finish = emitter._finish_card
+
+    async def finish(content, *, failed=False):
+        assert not transport_closed
+        calls.append("card-finish")
+        await original_finish(content, failed=failed)
+
+    monkeypatch.setattr(emitter, "_finish_card", finish)
+    monkeypatch.setattr(handler, "_bind_chat_card", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.channels.dingtalk.handler.delete_binding", AsyncMock()
+    )
+    service = SimpleNamespace(
+        save_callback_info=AsyncMock(side_effect=RuntimeError("cache down")),
+        register_emitter=AsyncMock(),
+    )
+    monkeypatch.setattr(handler, "get_callback_service", lambda: service)
+    context = SimpleNamespace(extra_data={}, conversation_id="group-a")
+    with pytest.raises(RuntimeError, match="cache down"):
+        await handler._register_streaming_emitter(101, emitter, context)
+
+    assert calls == ["card-finish", "http-update", "http-fail", "http-close"]
+    assert transport_closed
+    assert emitter._finished
+
+
+@pytest.mark.asyncio
+async def test_failed_card_error_delivery_still_closes_card(monkeypatch):
+    """An API failure cannot prevent HTTP cleanup or the original error."""
+    handler = DingTalkChannelHandler(channel_id=77)
+    emitter = SimpleNamespace(
+        chat_card=object(),
+        subtask_id=42,
+        card_instance_id="card-1",
+        close=AsyncMock(),
+        emit_error=AsyncMock(side_effect=RuntimeError("client closed")),
+    )
+    context = SimpleNamespace(extra_data={}, conversation_id="group-a")
+    service = SimpleNamespace(
+        save_callback_info=AsyncMock(side_effect=RuntimeError("cache down")),
+        register_emitter=AsyncMock(),
+    )
+    monkeypatch.setattr(handler, "_bind_chat_card", AsyncMock())
+    monkeypatch.setattr(handler, "get_callback_service", lambda: service)
+    monkeypatch.setattr(
+        "app.services.channels.dingtalk.handler.delete_binding", AsyncMock()
+    )
+    monkeypatch.setattr(handler, "send_text_reply", AsyncMock())
+
+    with pytest.raises(RuntimeError, match="cache down"):
+        await handler._register_streaming_emitter(101, emitter, context)
+
+    emitter.emit_error.assert_awaited_once()
+    emitter.close.assert_awaited_once()
+    handler.send_text_reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failed_binding_leaves_no_address_to_drop(monkeypatch):
+    """Nothing was written, so the cleanup must not delete a foreign address."""
+    handler = DingTalkChannelHandler(channel_id=77)
+    emitter = SimpleNamespace(
+        chat_card=object(),
+        subtask_id=42,
+        card_instance_id=None,
+        close=AsyncMock(),
+    )
+    delete = AsyncMock()
+    monkeypatch.setattr(
+        handler,
+        "_bind_chat_card",
+        AsyncMock(side_effect=RuntimeError("binding failed")),
+    )
+    monkeypatch.setattr("app.services.channels.dingtalk.handler.delete_binding", delete)
+    monkeypatch.setattr(handler, "_fail_unstarted_card_task", AsyncMock())
+    monkeypatch.setattr(handler, "send_text_reply", AsyncMock())
+
+    with pytest.raises(RuntimeError, match="binding failed"):
+        await handler._register_streaming_emitter(
+            101, emitter, SimpleNamespace(extra_data={}, conversation_id="group-a")
+        )
+
+    delete.assert_not_awaited()

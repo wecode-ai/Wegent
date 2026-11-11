@@ -2176,6 +2176,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyLastUserMessageEdit({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        restartDesktopApp,
       })
       console.log(`Wework desktop message-edit E2E passed. Evidence: ${resultDir}`)
       return
@@ -3862,7 +3863,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       })
 
       phase = 'edit-last-user-message'
-      await verifyLastUserMessageEdit({ composerSelector, control })
+      await verifyLastUserMessageEdit({ composerSelector, control, restartDesktopApp })
       await ensureTaskRowVisible(control, secondTaskRowTestId)
       await control.command('clickWhenEnabled', `[data-testid="${secondTaskRowTestId}"]`, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
