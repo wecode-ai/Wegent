@@ -14,7 +14,14 @@ export class PreferencesStore {
   }
 
   read(): Promise<Record<string, unknown>> {
-    return this.serial(() => this.readFile())
+    return this.readSnapshot().then(snapshot => snapshot.preferences)
+  }
+
+  readSnapshot(): Promise<{ preferences: Record<string, unknown>; readable: boolean }> {
+    return this.serial(async () => {
+      const preferences = await this.readFile()
+      return { preferences, readable: this.readFailure === null }
+    })
   }
 
   update(patch: Record<string, unknown>): Promise<Record<string, unknown>> {

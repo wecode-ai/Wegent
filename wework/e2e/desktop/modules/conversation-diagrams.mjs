@@ -13,7 +13,10 @@ import {
 import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForElementCount } from './harness-app-fixture.mjs'
 
-import { DIAGRAM_REGRESSION_MARKER } from './conversation-diagram-fixture.mjs'
+import {
+  DIAGRAM_REGRESSION_LAST_SECTION,
+  DIAGRAM_REGRESSION_MARKER,
+} from './conversation-diagram-fixture.mjs'
 
 export async function verifyConversationDiagrams(control, composerSelector, restoreTaskRow) {
   const selector = id => `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="${id}"]`
@@ -25,7 +28,7 @@ export async function verifyConversationDiagrams(control, composerSelector, rest
     await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
     await sendPrompt(control, composerSelector, `${FRESH_CHAT_PROMPT} ${DIAGRAM_REGRESSION_MARKER}`)
     await control.command('waitFor', selector('message-assistant'), {
-      text: 'Diagram regression section 16',
+      text: `Diagram regression section ${DIAGRAM_REGRESSION_LAST_SECTION}`,
     })
     await control.command('scrollToRatioAsUser', scroller, { value: '0.5' })
     await control.command('waitFor', `${preview}[data-diagram-status="ready"]`)
@@ -57,7 +60,7 @@ export async function verifyConversationDiagrams(control, composerSelector, rest
     await control.command('waitFor', `${preview}[data-diagram-status="ready"]`)
     await control.command('scrollToRatioAsUser', scroller, { value: '1' })
     await control.command('waitFor', selector('message-assistant'), {
-      text: 'Diagram regression section 16',
+      text: `Diagram regression section ${DIAGRAM_REGRESSION_LAST_SECTION}`,
       stableMs: 300,
     })
     await waitForElementCount(
@@ -93,7 +96,18 @@ export async function verifyConversationDiagrams(control, composerSelector, rest
     ])
     await writeFile(
       join(resultDir, 'conversation-diagram-failure.json'),
-      JSON.stringify({ error: String(error), diagnostics }, null, 2)
+      JSON.stringify(
+        {
+          error: error instanceof Error ? error.stack : String(error),
+          diagnostics: diagnostics.map(result =>
+            result.status === 'fulfilled'
+              ? result
+              : { status: result.status, reason: String(result.reason?.stack ?? result.reason) }
+          ),
+        },
+        null,
+        2
+      )
     ).catch(captureError => console.error('Cannot save diagram failure diagnostics', captureError))
     throw error
   } finally {

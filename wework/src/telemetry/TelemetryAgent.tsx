@@ -16,6 +16,7 @@ import { getTelemetryConfig } from './config'
 import { setTelemetryUser } from './identity'
 import { useAuth } from '@/features/auth/useAuth'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useSessionTelemetryConsent } from './sessionConsent'
 import { trackEvent, useTelemetryEnabled } from './client'
 import { createTelemetryDispatcher } from './dispatcher'
 import type { AnalyticsEvent, AnalyticsEventName } from './events'
@@ -140,14 +141,17 @@ export function TelemetryAgent() {
     }
   }, [telemetryUser])
   const appPreferences = useAppPreferencesState()
+  const sessionConsent = useSessionTelemetryConsent()
   const { pathname, search } = useTelemetryLocation()
   const routes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
   const feature = routes.find(route => route.path === pathname)?.telemetryFeature
   const telemetryEnabled = useTelemetryEnabled()
   const telemetryExplicitlyDisabled =
-    appPreferences?.loaded === true &&
-    appPreferences.preferences.telemetryConsentAsked === true &&
-    appPreferences.preferences.telemetryEnabled !== true
+    sessionConsent !== undefined
+      ? !sessionConsent
+      : appPreferences?.loaded === true &&
+        appPreferences.preferences.telemetryConsentAsked === true &&
+        appPreferences.preferences.telemetryEnabled !== true
   const electronRuntime = isElectronRuntime()
   const lastRouteKeyRef = useRef<string | null>(null)
   const pendingDesktopStartupEventsRef = useRef<DesktopStartupAnalyticsEvent[]>([])

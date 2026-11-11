@@ -56,6 +56,7 @@ beforeEach(() => {
     fixture.closed?.()
   })
   fixture.window.loadFile.mockResolvedValue(undefined)
+  fixture.logs.mockResolvedValue('')
 })
 
 test('opens a recovery window without using persistent profile storage or exiting', async () => {
@@ -102,6 +103,8 @@ test('shares one recovery window and displays the latest error', async () => {
   expect(fixture.copy).toHaveBeenCalledWith('third')
   await invoke({ sender: { id: 17 } }, 'logs')
   expect(fixture.logs).toHaveBeenCalledWith('/logs')
+  fixture.logs.mockResolvedValueOnce('The log folder is unavailable')
+  await expect(invoke({ sender: { id: 17 } }, 'logs')).rejects.toThrow('log folder')
   await expect(invoke({ sender: { id: 17 } }, 'delete-data')).rejects.toThrow('Unknown')
 })
 

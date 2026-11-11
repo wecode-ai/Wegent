@@ -1,3 +1,4 @@
+import { setSessionTelemetryConsent } from '@/telemetry/sessionConsent'
 import type { AppPreferences } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
@@ -171,6 +172,7 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
 
 describe('GeneralSettingsPage', () => {
   beforeEach(() => {
+    setSessionTelemetryConsent(undefined)
     getAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockReset()
     applyLanguagePreferenceMock.mockReset()

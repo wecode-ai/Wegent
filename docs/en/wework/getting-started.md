@@ -39,7 +39,7 @@ Adding a project does not move its files. Removing a local project from Wework d
 
 ## Startup recovery
 
-Wework keeps an operable window available when release records, migrations, credentials, or local components fail. Unaffected workbench features remain available; an unavailable local service shows a notice with a retry action. When settings or durable state cannot be read, the interface uses temporary state and refuses to overwrite the original file. Saving can resume after the file is repaired.
+Wework keeps an operable window available when release records, migrations, credentials, or local components fail. Unaffected workbench features remain available; an unavailable local service shows a notice with a retry action above the workbench content, without covering the composer. When settings or durable state cannot be read, the interface uses temporary state and refuses to overwrite the original file. Saving can resume after the file is repaired. When the Codex credential preference is unreadable, Wework neither imports nor deletes credentials automatically; repair settings and restart Wework to restore those capabilities.
 
 The workbench also remains available if its first state save fails. That state stays temporarily in memory and is not yet saved to disk. After the write failure is repaired, subsequent saves preserve the initial state.
 

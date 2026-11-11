@@ -32,6 +32,9 @@ mod diagnostics;
 use diagnostics::measure_stage;
 
 #[cfg(test)]
+#[path = "worktrees/git_lifetime_tests.rs"]
+mod git_lifetime_tests;
+#[cfg(test)]
 mod persistence_tests;
 
 const STATE_VERSION: u64 = 5;
@@ -737,21 +740,22 @@ impl WorktreeManager {
             let mut state = self.load();
             discover_worktrees(&mut state, &self.device_id);
             ensure_managed_path(path, &state.known_roots)?;
-            let record = state
+            state
                 .records
                 .get(&key)
                 .cloned()
-                .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-            if path.exists() {
-                if preserve_snapshot {
-                    validate_record_worktree_identity(&record, path)?;
-                } else {
-                    validate_deletable_worktree_identity(&record, path)?;
-                }
-            }
-            record
+                .ok_or_else(|| "Managed worktree was not found".to_owned())?
         };
-
+        // Wait without holding the registry lock, then validate the actual
+        // directory immediately before mutation under its lifetime lock.
+        let _directory = wegent_workspace::workspace_lifetime::remove_directory(path)?;
+        if path.exists() {
+            if preserve_snapshot {
+                validate_record_worktree_identity(&record, path)?;
+            } else {
+                validate_deletable_worktree_identity(&record, path)?;
+            }
+        }
         operation(&mut record)?;
 
         record.state = if preserve_snapshot && record.snapshot_ref.is_some() {

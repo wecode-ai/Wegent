@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { saveTelemetryConsent, setSessionTelemetryConsent } from './sessionConsent'
 import { TelemetryBridge } from './TelemetryBridge'
 
 const mocks = vi.hoisted(() => ({
@@ -45,6 +46,7 @@ vi.mock('@/desktop/appPreferences', () => ({
 
 describe('TelemetryBridge', () => {
   beforeEach(() => {
+    setSessionTelemetryConsent(undefined)
     mocks.installTelemetry.mockClear()
     mocks.setTelemetryEnabled.mockClear()
     mocks.track.mockClear()
@@ -98,7 +100,7 @@ describe('TelemetryBridge', () => {
     })
   })
 
-  it('persists declining without initializing telemetry', async () => {
+  it('applies declining without enabling telemetry', async () => {
     mocks.preferences.preferences.telemetryConsentAsked = false
 
     render(<TelemetryBridge />)
@@ -110,95 +112,72 @@ describe('TelemetryBridge', () => {
         telemetryEnabled: false,
       })
     })
-    expect(mocks.installTelemetry).not.toHaveBeenCalled()
+    expect(mocks.installTelemetry).toHaveBeenCalledWith(false)
+    expect(mocks.installTelemetry).not.toHaveBeenCalledWith(true)
   })
 
-  it('shows a retryable error when saving the consent choice never settles', async () => {
-    vi.useFakeTimers()
-    try {
-      mocks.preferences.preferences.telemetryConsentAsked = false
-      mocks.updateAppPreferences.mockReturnValue(new Promise(() => {}))
-
-      render(<TelemetryBridge />)
-      fireEvent.click(screen.getByTestId('telemetry-consent-decline'))
-
-      expect(screen.getByTestId('telemetry-consent-decline')).toBeDisabled()
-
-      await vi.advanceTimersByTimeAsync(10_000)
-
-      await vi.waitFor(() => {
-        expect(screen.getByTestId('telemetry-consent-decline')).not.toBeDisabled()
-        expect(screen.getByRole('alert')).toBeInTheDocument()
-      })
-    } finally {
-      vi.useRealTimers()
-    }
+  it('closes the prompt and keeps telemetry disabled when declining cannot be saved', async () => {
+    mocks.preferences.preferences.telemetryConsentAsked = false
+    mocks.updateAppPreferences.mockRejectedValue(new Error('EACCES'))
+    render(<TelemetryBridge />)
+    fireEvent.click(screen.getByTestId('telemetry-consent-decline'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
+    )
+    expect(mocks.setTelemetryEnabled).toHaveBeenCalledWith(false)
+    expect(mocks.installTelemetry).not.toHaveBeenCalledWith(true)
   })
 
-  it('lets a retry start a fresh save after a timed-out attempt never settles', async () => {
-    vi.useFakeTimers()
-    try {
-      mocks.preferences.preferences.telemetryConsentAsked = false
-      mocks.updateAppPreferences.mockImplementationOnce(() => new Promise(() => {}))
-
-      render(<TelemetryBridge />)
-      fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
-
-      await vi.advanceTimersByTimeAsync(10_000)
-      await vi.waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
-
-      fireEvent.click(screen.getByTestId('telemetry-consent-decline'))
-      await vi.waitFor(() => {
-        expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
-          telemetryConsentAsked: true,
-          telemetryEnabled: false,
-        })
-      })
-    } finally {
-      vi.useRealTimers()
-    }
+  it('does not block the workbench while consent persistence never settles', async () => {
+    mocks.preferences.preferences.telemetryConsentAsked = false
+    mocks.updateAppPreferences.mockReturnValue(new Promise(() => {}))
+    render(<TelemetryBridge />)
+    fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
+    )
+    expect(mocks.installTelemetry).toHaveBeenCalledWith(true)
   })
 
-  it('re-asserts the latest choice when a superseded save completes late', async () => {
-    vi.useFakeTimers()
-    try {
-      mocks.preferences.preferences.telemetryConsentAsked = false
-      let releaseFirstSave: (() => void) | null = null
-      mocks.updateAppPreferences.mockImplementationOnce(
-        () =>
-          new Promise<void>(resolve => {
-            releaseFirstSave = () => resolve()
-          })
-      )
+  it('allows a later settings choice while an earlier save is still pending', async () => {
+    mocks.preferences.preferences.telemetryConsentAsked = false
+    mocks.updateAppPreferences.mockImplementationOnce(() => new Promise(() => {}))
+    render(<TelemetryBridge />)
+    fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
+    await act(async () => {
+      await saveTelemetryConsent(false)
+    })
+    expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
+      telemetryConsentAsked: true,
+      telemetryEnabled: false,
+    })
+    expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(false)
+  })
 
-      render(<TelemetryBridge />)
-      fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
-
-      await vi.advanceTimersByTimeAsync(10_000)
-      await vi.waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
-
-      fireEvent.click(screen.getByTestId('telemetry-consent-decline'))
-      await vi.waitFor(() => {
-        expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
-          telemetryConsentAsked: true,
-          telemetryEnabled: false,
+  it('reasserts the latest explicit choice after an older save finishes late', async () => {
+    mocks.preferences.preferences.telemetryConsentAsked = false
+    let finishFirst: ((value: unknown) => void) | undefined
+    mocks.updateAppPreferences.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishFirst = resolve
         })
-      })
-      expect(mocks.updateAppPreferences).toHaveBeenCalledTimes(2)
-
-      // The abandoned accept save completes late; it must re-assert the
-      // latest decline choice so the stale value does not win.
-      releaseFirstSave?.()
-      await vi.waitFor(() => {
-        expect(mocks.updateAppPreferences).toHaveBeenCalledTimes(3)
-        expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
-          telemetryConsentAsked: true,
-          telemetryEnabled: false,
-        })
-      })
-    } finally {
-      vi.useRealTimers()
-    }
+    )
+    render(<TelemetryBridge />)
+    fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
+    await act(async () => {
+      await saveTelemetryConsent(false)
+    })
+    expect(mocks.updateAppPreferences).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      finishFirst?.(undefined)
+    })
+    await waitFor(() => expect(mocks.updateAppPreferences).toHaveBeenCalledTimes(3))
+    expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
+      telemetryConsentAsked: true,
+      telemetryEnabled: false,
+    })
+    expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(false)
   })
 
   it('enables telemetry by default without prompting in development builds', async () => {

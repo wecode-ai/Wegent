@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { AlertCircle, Check, Copy, RefreshCw } from 'lucide-react'
+import { AlertCircle, Check, Copy } from 'lucide-react'
+import { LocalRuntimeNoticeContext } from './localRuntimeNoticeContext'
 import { Button } from '@/components/ui/button'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -302,36 +303,12 @@ export function LocalRuntimeInitializer({
 
   return (
     <>
-      {canMountChildren && <div>{children}</div>}
-      {failed && (
-        <aside
-          data-testid="local-runtime-initializer"
-          role="status"
-          className="fixed inset-x-4 bottom-4 z-50 mx-auto flex max-w-2xl items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-text-primary shadow-sm"
+      {canMountChildren && (
+        <LocalRuntimeNoticeContext.Provider
+          value={failed ? { error: state.error, retry: () => void retryInitialize() } : null}
         >
-          <AlertCircle className="h-4 w-4 shrink-0 text-text-secondary" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">{t('service_unavailable_title')}</p>
-            <p className="text-xs text-text-secondary">{t('service_unavailable_description')}</p>
-            {state.error && (
-              <p
-                data-testid="local-runtime-error"
-                className="break-words text-xs text-text-secondary"
-              >
-                {state.error}
-              </p>
-            )}
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void retryInitialize()}
-            data-testid="local-runtime-retry-button"
-          >
-            <RefreshCw className="h-4 w-4" />
-            {t('retry')}
-          </Button>
-        </aside>
+          <div>{children}</div>
+        </LocalRuntimeNoticeContext.Provider>
       )}
       {!canMountChildren && (
         <main

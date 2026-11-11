@@ -222,7 +222,7 @@ export function prepareManagedExecutorEnvironment(
   const executorHome = managedExecutorHome(options)
   const codexHome = options.environment.WEGENT_CODEX_HOME?.trim() || join(executorHome, 'codex')
   const nativeCodexHome = resolveNativeCodexHome(options.environment, codexHome)
-  if (nativeCodexHome) {
+  if (nativeCodexHome && options.environment.WEWORK_CODEX_SUBSCRIPTION_ENABLED !== 'unavailable') {
     if (isCodexSubscriptionEnabled(options.environment)) {
       try {
         prepareCodexAuth(

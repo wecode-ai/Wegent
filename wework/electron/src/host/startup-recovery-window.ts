@@ -61,7 +61,11 @@ async function openRecoveryWindow(): Promise<BrowserWindow> {
     }
     if (action === 'state') return { phase: 'failed', ready: false, error: failure }
     if (action === 'copy') return clipboard.writeText(failure)
-    if (action === 'logs') return shell.openPath(app.getPath('logs'))
+    if (action === 'logs') {
+      const error = await shell.openPath(app.getPath('logs'))
+      if (error) throw new Error(error)
+      return
+    }
     if (action === 'retry') {
       app.relaunch()
       app.quit()

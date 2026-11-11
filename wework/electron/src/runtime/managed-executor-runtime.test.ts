@@ -14,6 +14,44 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('managed executor runtime', () => {
+  test.each([false, true])(
+    'does not import or remove credentials when consent is unknown: %s',
+    async existing => {
+      const directory = await temporaryDirectory('managed-auth-unknown-')
+      try {
+        const native = join(directory.path, 'native')
+        const managed = join(directory.path, 'managed')
+        await mkdir(native)
+        await mkdir(managed)
+        await writeFile(join(native, 'auth.json'), 'synthetic-native-account')
+        if (existing) {
+          await writeFile(join(managed, 'auth.json'), 'synthetic-managed-account')
+          await writeFile(join(managed, '.wework-managed-auth'), '')
+        }
+        prepareManagedExecutorEnvironment({
+          dataDirectory: directory.path,
+          environment: {
+            VITE_WEWORK_E2E: 'true',
+            WEWORK_E2E_NATIVE_CODEX_HOME: native,
+            WEGENT_CODEX_HOME: managed,
+            WEWORK_CODEX_SUBSCRIPTION_ENABLED: 'unavailable',
+          },
+        })
+        expect(await readFile(join(native, 'auth.json'), 'utf8')).toBe('synthetic-native-account')
+        if (existing) {
+          expect(await readFile(join(managed, 'auth.json'), 'utf8')).toBe(
+            'synthetic-managed-account'
+          )
+          expect(await readFile(join(managed, '.wework-managed-auth'), 'utf8')).toBe('')
+        } else
+          await expect(readFile(join(managed, 'auth.json'))).rejects.toMatchObject({
+            code: 'ENOENT',
+          })
+      } finally {
+        await directory.remove()
+      }
+    }
+  )
   test('keeps the runtime available after credential import fails and can import after repair', async () => {
     const directory = await temporaryDirectory('managed-auth-unavailable-')
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})

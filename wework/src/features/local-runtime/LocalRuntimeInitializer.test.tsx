@@ -9,6 +9,7 @@ import {
   readLocalExecutorLog,
 } from '@/desktop/localExecutor'
 import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
+import { LocalRuntimeNotice } from './LocalRuntimeNotice'
 
 const desktopHostInvokeMock = vi.hoisted(() => vi.fn())
 
@@ -59,6 +60,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -79,6 +81,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -134,6 +137,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -237,6 +241,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -263,6 +268,7 @@ describe('LocalRuntimeInitializer', () => {
 
     const { rerender } = render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <MountProbe onMount={onMount} />
       </LocalRuntimeInitializer>
     )
@@ -272,6 +278,7 @@ describe('LocalRuntimeInitializer', () => {
 
     rerender(
       <LocalRuntimeInitializer startupReady>
+        <LocalRuntimeNotice />
         <MountProbe onMount={onMount} />
       </LocalRuntimeInitializer>
     )
@@ -289,6 +296,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -310,6 +318,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -331,6 +340,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -348,6 +358,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )

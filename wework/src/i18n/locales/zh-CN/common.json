@@ -3138,7 +3138,6 @@
     "telemetry_consent_privacy": "不会采集聊天、提示词、模型回复、代码、文件名、文件路径、终端内容或凭据。你可以随时在“设置 > 通用 > 隐私”中修改选择。",
     "telemetry_consent_decline": "不共享",
     "telemetry_consent_accept": "允许共享",
-    "telemetry_consent_save_failed": "无法保存你的选择，请重试。",
     "general_settings_language_title": "语言",
     "general_settings_language_preference": "界面语言",
     "general_settings_language_description": "更改 Wework 界面和系统托盘菜单使用的语言。",

@@ -549,6 +549,7 @@ jobs:
         run: |
           cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
           cargo test --all-features --lib deferred_worktree_rebases_project_roots_using_path_identity
+          cargo test -p wegent-executor --all-features --lib cleanup_waits_for_owned_git_on_exit_timeout_and_cancellation
 
       - name: Run native clone platform regressions
         if: ${{ !cancelled() }}

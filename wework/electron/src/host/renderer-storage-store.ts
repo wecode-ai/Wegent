@@ -33,7 +33,15 @@ export class RendererStorageStore {
   ) {}
 
   close(): Promise<void> {
+    if (this.closed) return this.operation
     this.closed = true
+    this.operation = this.operation.then(async () => {
+      const state = await this.readFile()
+      if (this.readFailure) throw this.readFailure
+      if (!state && this.pendingSeed) {
+        await this.writeFile({ version: 1, entries: this.pendingSeed })
+      }
+    })
     return this.operation
   }
 
@@ -136,8 +144,10 @@ export class RendererStorageStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
       // JSON errors may include a source excerpt containing stored credentials.
+      const code = (error as NodeJS.ErrnoException).code
+      const suffix = typeof code === 'string' && /^E[A-Z0-9]+$/.test(code) ? ` (${code})` : ''
       this.readFailure = new Error(
-        'Stored application state is unreadable; the original file is preserved'
+        `Stored application state is unreadable; the original file is preserved${suffix}`
       )
       console.warn('[renderer-storage] Stored state is temporarily read-only', {
         errorType: error instanceof Error ? error.name : typeof error,

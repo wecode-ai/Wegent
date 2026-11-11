@@ -5,6 +5,7 @@ import { useContext, useEffect, useRef } from 'react'
 import { useNotificationTaskSource } from '@/features/notifications/NotificationTaskSourceContext'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useSessionTelemetryConsent } from './sessionConsent'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { standInCollectionSince, useTelemetryEnabled } from './client'
 import {
@@ -18,14 +19,18 @@ export function StandInTelemetryAgent() {
   const source = useNotificationTaskSource()
   const cloud = useContext(CloudConnectionContext)
   const preferences = useAppPreferencesState()
+  const sessionConsent = useSessionTelemetryConsent()
   const enabled = useTelemetryEnabled()
-  const policy = enabled
-    ? true
-    : preferences?.loaded &&
-        preferences.preferences.telemetryConsentAsked === true &&
-        preferences.preferences.telemetryEnabled !== true
-      ? false
-      : null
+  const policy =
+    sessionConsent !== undefined
+      ? sessionConsent
+      : enabled
+        ? true
+        : preferences?.loaded &&
+            preferences.preferences.telemetryConsentAsked === true &&
+            preferences.preferences.telemetryEnabled !== true
+          ? false
+          : null
   const userId = cloud?.user?.id ?? source?.userId
   const accountKey = JSON.stringify([cloud?.apiBaseUrl ?? 'local', userId])
   const api = source?.services?.standInApi

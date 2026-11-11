@@ -6,6 +6,7 @@ import {
   verifyStartupFaultIsolation,
 } from '../modules/startup-fault-isolation.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 
 async function reloadWorkbench(control, timeoutMs) {
   const before = control.readyCount
@@ -61,16 +62,22 @@ export async function createDesktopScenario({
   let environment
   let replacement
   let appPid
+  const preferences = join(electronUserDataDirectory, 'app-preferences.json')
+  const preferencesBackup = `${preferences}.startup-original`
   const metadata = JSON.parse(
     await readFile(new URL('../../../electron/package.json', import.meta.url), 'utf8')
   )
   return {
+    appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
     appProcessStarted(child) {
       appPid = child.pid
     },
     async prepareApp(input) {
       appBinary = input.appBinary
       environment = input.appEnvironment
+      // A real unreadable settings path must not authorize credential changes or hide the UI.
+      await rename(preferences, preferencesBackup)
+      await mkdir(preferences)
       if (process.platform === 'win32') {
         assert.equal(environment.WEWORK_RELEASE_SUPERVISED || '', '')
         replacement = await seedInstalledRelease({
@@ -85,6 +92,18 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      await waitForClosedStartupSplash(control)
+      const windowState = JSON.parse(await control.command('getNativeWindowState', 'body'))
+      assert.equal(windowState.visible, true, 'Unreadable preferences left the workbench hidden')
+      await rm(preferences, { recursive: true })
+      await rename(preferencesBackup, preferences)
+      await control.command('setAppPreferences', 'body', {
+        value: JSON.stringify({ telemetryConsentAsked: true, telemetryEnabled: false }),
+      })
+      await writeFile(
+        join(resultDir, 'startup-preferences-unavailable-result.json'),
+        JSON.stringify({ workbenchVisible: true, startupSplashClosed: true })
+      )
       if (replacement) {
         const current = await waitForValue(
           async () => {

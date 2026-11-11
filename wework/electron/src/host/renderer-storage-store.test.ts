@@ -17,6 +17,42 @@ async function createStore(): Promise<{ root: string; store: RendererStorageStor
 }
 
 describe('RendererStorageStore', () => {
+  it('refuses a snapshot boundary until temporary initial state can be persisted', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    const blocked = `${path}.${process.pid}.tmp`
+    await mkdir(blocked)
+    await store.initialize({ credential: 'synthetic-temporary-account' })
+    await expect(store.close()).rejects.toThrow()
+    await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('persists temporary state before closing when its write path is repaired', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    const blocked = `${path}.${process.pid}.tmp`
+    await mkdir(blocked)
+    const seed = { credential: 'synthetic-temporary-account' }
+    await store.initialize(seed)
+    await rm(blocked, { recursive: true })
+    await store.close()
+    expect(JSON.parse(await readFile(path, 'utf8')).entries).toEqual(seed)
+  })
+
+  it('preserves unreadable state and refuses to certify it as a snapshot-ready store', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    await writeFile(path, '{invalid')
+    await expect(store.initialize({})).resolves.toEqual({})
+    await expect(store.close()).rejects.toThrow('unreadable')
+    expect(await readFile(path, 'utf8')).toBe('{invalid')
+  })
+  it('retains the filesystem error code without exposing stored contents', async () => {
+    const { root, store } = await createStore()
+    await mkdir(join(root, 'renderer-local-storage.json'))
+    await expect(store.initialize({})).resolves.toEqual({})
+    await expect(store.update({ clear: false, changes: {} })).rejects.toThrow(/EISDIR|EACCES|EPERM/)
+  })
   it('keeps initial browser state available when its first durable write fails', async () => {
     const { root, store } = await createStore()
     const path = join(root, 'renderer-local-storage.json')

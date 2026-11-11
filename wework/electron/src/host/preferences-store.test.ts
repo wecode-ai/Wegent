@@ -11,6 +11,22 @@ afterEach(async () => {
 })
 
 describe('PreferencesStore', () => {
+  test('distinguishes unavailable preferences from fresh defaults and explicit opt-out', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-preferences-availability-'))
+    roots.push(root)
+    const store = new PreferencesStore(root)
+    const path = join(root, 'app-preferences.json')
+    await expect(store.readSnapshot()).resolves.toEqual({ preferences: {}, readable: true })
+    await mkdir(path)
+    await expect(store.readSnapshot()).resolves.toEqual({ preferences: {}, readable: false })
+    await expect(store.update({ localCodexSubscriptionEnabled: true })).rejects.toThrow()
+    await rm(path, { recursive: true })
+    await store.update({ localCodexSubscriptionEnabled: false })
+    await expect(store.readSnapshot()).resolves.toEqual({
+      preferences: { localCodexSubscriptionEnabled: false },
+      readable: true,
+    })
+  })
   test('drains accepted writes and rejects later writers before an upgrade snapshot', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-preferences-close-'))
     roots.push(root)
