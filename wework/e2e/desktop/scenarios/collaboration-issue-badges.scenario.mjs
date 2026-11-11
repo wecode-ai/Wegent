@@ -58,6 +58,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'))
       await control.command('waitFor', scoped('[data-testid="thread-room"]'), { text: ISSUE_NAME })
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="group-message-input"][contenteditable="true"]'),
+        { visible: true, timeoutMs: uiTimeoutMs }
+      )
       await control.command('fill', scoped('[data-testid="group-message-input"]'), {
         value: `Also review ${MR_URL}?view=changes and ${PR_URL}/files#diff. Ignore https://github.com/wecode-ai/Wegent/issues/1`,
       })

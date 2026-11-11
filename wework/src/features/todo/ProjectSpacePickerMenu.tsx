@@ -51,11 +51,11 @@ export function ProjectSpacePickerMenu({
   }, [onClose, triggerRef])
   useOutsideClick(containerRef, true, onClose, outsideRefs)
 
-  const localLabel = t('workbench.project_picker_local', '本地项目')
-  const cloudLabel = t('workbench.project_picker_cloud', '云端项目')
+  const localLabel = t('workbench.project_picker_local', '本地')
+  const cloudLabel = t('workbench.project_picker_cloud', '云端')
   const searchLabel = onCreateThread
     ? t('collaboration:workTargetSearch')
-    : t('workbench.project_picker_search', '搜索项目名称、空间或标识…')
+    : t('workbench.project_picker_search', '搜索项目名称、来源或标识…')
   const targetsLabel = onCreateThread
     ? t('collaboration:workTargets')
     : t('workbench.project_picker_projects', '项目')
@@ -141,7 +141,7 @@ export function ProjectSpacePickerMenu({
         <h2 id={titleId} className="text-base font-medium">
           {onCreateThread
             ? t('collaboration:chooseWorkTarget')
-            : t('workbench.project_picker_title', '加入项目空间')}
+            : t('workbench.project_picker_title', '选择项目')}
         </h2>
         <div className="mt-3 flex gap-2">
           <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border px-2 keyboard:focus-within:ring-1 keyboard:focus-within:ring-focus/70 max-md:h-11 wework:keyboard:focus-within:ring-blue-500/70">
@@ -195,7 +195,7 @@ export function ProjectSpacePickerMenu({
           </div>
           <select
             data-testid="project-space-picker-sort"
-            aria-label={t('workbench.project_picker_sort', '项目排序')}
+            aria-label={t('workbench.project_picker_sort', '名称排序')}
             value={order}
             onChange={event => {
               setOrder(event.target.value as ProjectSpacePickerOrder)
@@ -214,13 +214,13 @@ export function ProjectSpacePickerMenu({
       </header>
       <div className="flex h-80 min-h-0">
         <nav
-          aria-label={t('workbench.project_picker_space', '所属空间')}
+          aria-label={t('workbench.project_picker_space', '来源')}
           className="w-40 shrink-0 overflow-y-auto border-r border-border p-1 max-md:w-28"
         >
           <div className="px-2 py-1 text-xs text-text-muted">
-            {t('workbench.project_picker_space', '所属空间')}
+            {t('workbench.project_picker_space', '来源')}
           </div>
-          {[{ key: null, label: t('workbench.project_picker_all', '全部空间') }, ...groups].map(
+          {[{ key: null, label: t('workbench.project_picker_all', '全部来源') }, ...groups].map(
             group => (
               <button
                 key={group.key ?? 'all'}
@@ -312,7 +312,7 @@ export function ProjectSpacePickerMenu({
               data-testid="project-space-picker-empty"
               className="flex flex-1 items-center justify-center px-3 py-8 text-center text-sm text-text-muted"
             >
-              {t('workbench.project_picker_empty', '没有匹配的项目，试试其他关键词或空间')}
+              {t('workbench.project_picker_empty', '没有匹配结果，试试其他关键词或来源')}
             </div>
           ) : null}
         </div>
@@ -343,7 +343,7 @@ export function ProjectSpacePickerMenu({
             className="flex h-9 items-center gap-2 rounded-lg px-2 text-left text-sm text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 max-md:h-11 wework:keyboard:focus-visible:ring-blue-500/70"
           >
             <X className="h-4 w-4 shrink-0" aria-hidden="true" />
-            {t('workbench.clear_extra_project_space', '不加入其他项目空间')}
+            {t('workbench.clear_extra_project_space', '不关联其他事项')}
           </button>
         ) : null}
         <span className="ml-auto pr-2 text-xs text-text-muted max-md:hidden">
