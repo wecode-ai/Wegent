@@ -20,6 +20,7 @@ use tokio::sync::Notify;
 
 mod digest_tests;
 mod journal_tests;
+mod runtime_token_tests;
 mod scanning_tests;
 
 #[derive(Default)]
@@ -141,8 +142,10 @@ impl Fixture {
 
     async fn with_recovery(plan: Plan, reply: RecoveryReply) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_url = format!("http://{}", listener.local_addr().unwrap());
         let connection = ConnectionConfig {
-            backend_url: format!("http://{}", listener.local_addr().unwrap()),
+            backend_url: backend_url.clone(),
+            socket_url: backend_url,
             auth_token: "test-token".into(),
             ..Default::default()
         };

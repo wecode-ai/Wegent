@@ -17,15 +17,12 @@ impl LocalBackendConnectionController {
         let file = tokio::task::spawn_blocking(move || recovery::lock_file(&lock_path))
             .await
             .map_err(|_| error("plugin_local_journal_unavailable"))??;
-        if self
-            .state
-            .lock()
-            .await
-            .profile
-            .as_ref()
-            .map(|p| &p.connection)
-            != Some(connection)
-        {
+        // Socket replacement invalidates the captured installer; Runtime token
+        // renewal preserves it and must not reject queued work or scan results.
+        if !self.state.lock().await.profile.as_ref().is_some_and(|p| {
+            same_account_connection(&p.connection, connection)
+                && p.connection.socket_url == connection.socket_url
+        }) {
             return Err(error("plugin_route_profile_mismatch"));
         }
         Ok(LocalSyncLease {

@@ -1,7 +1,7 @@
 //! Hold the actual synchronous scan callback, without holding a Tokio worker.
 use super::*;
 
-async fn held_scan(
+pub(super) async fn held_scan(
     phase: usize,
     unconfirmed: bool,
 ) -> (
@@ -40,7 +40,7 @@ async fn held_scan_for(
     (fixture, held, full)
 }
 
-async fn settle_recovery(fixture: &Fixture, unconfirmed: bool) {
+pub(super) async fn settle_recovery(fixture: &Fixture, unconfirmed: bool) {
     tokio::time::timeout(Duration::from_secs(3), fixture.recovery_entered.notified())
         .await
         .expect("Pending submission waited for the content scan");

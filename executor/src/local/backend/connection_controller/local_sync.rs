@@ -23,6 +23,11 @@ struct LocalSyncSession<'a> {
     path: &'a Path,
 }
 
+// Account HTTP does not consume Socket routes or Runtime credentials.
+fn same_account_connection(current: &ConnectionConfig, expected: &ConnectionConfig) -> bool {
+    current.backend_url == expected.backend_url && current.auth_token == expected.auth_token
+}
+
 fn error(code: &str) -> AppIpcError {
     AppIpcError::new(code, code)
 }
@@ -526,10 +531,10 @@ impl LocalBackendConnectionController {
         // Profile replacement fences the shared installer as well as this HTTP scope.
         {
             let state = self.state.lock().await;
-            if state.profile.as_ref().map(|p| &p.connection.auth_token)
-                != Some(&connection.auth_token)
-                || state.profile.as_ref().map(|p| &p.connection.backend_url)
-                    != Some(&connection.backend_url)
+            if !state
+                .profile
+                .as_ref()
+                .is_some_and(|p| same_account_connection(&p.connection, connection))
             {
                 return Err(error("plugin_route_profile_mismatch"));
             }

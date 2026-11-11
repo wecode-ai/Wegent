@@ -124,7 +124,11 @@ impl LocalBackendConnectionController {
     ) -> Result<(), AppIpcError> {
         {
             let state = self.state.lock().await;
-            if state.profile.as_ref().map(|profile| &profile.connection) != Some(connection) {
+            if !state
+                .profile
+                .as_ref()
+                .is_some_and(|profile| same_account_connection(&profile.connection, connection))
+            {
                 return Err(error("plugin_route_profile_mismatch"));
             }
         }
