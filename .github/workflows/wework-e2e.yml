@@ -142,22 +142,6 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Diagnose desktop image DNS
-        if: steps.desktop-image-check.outputs.exists == 'false'
-        run: |
-          cat /etc/resolv.conf
-          for dns_host in archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com deb.nodesource.com github.com; do
-            echo "Host DNS: $dns_host"
-            getent ahostsv4 "$dns_host" || echo "Host DNS failed: $dns_host"
-          done
-          docker run --rm ubuntu:24.04 bash -c '
-            cat /etc/resolv.conf
-            for dns_host in archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com deb.nodesource.com github.com; do
-              echo "Container DNS: $dns_host"
-              getent ahostsv4 "$dns_host" || echo "Container DNS failed: $dns_host"
-            done
-          '
-
       - name: Set up Docker Buildx
         if: steps.browser-image-check.outputs.exists == 'false' || steps.desktop-image-check.outputs.exists == 'false'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f

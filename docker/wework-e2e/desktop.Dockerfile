@@ -7,11 +7,11 @@ ARG UV_VERSION=0.11.17
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Match the GitHub-hosted Ubuntu runner's primary archive while preserving
-# Ubuntu's suites and signing keyring inside the build container.
-RUN sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu#http://azure.archive.ubuntu.com/ubuntu#g' \
+# Use the independently hosted kernel.org mirror while preserving Ubuntu's
+# suites and archive signing keyring. Package signatures remain mandatory.
+RUN sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu#http://mirrors.edge.kernel.org/ubuntu#g' \
       /etc/apt/sources.list.d/ubuntu.sources \
-  && getent ahostsv4 azure.archive.ubuntu.com \
+  && getent ahostsv4 mirrors.edge.kernel.org \
   && apt-get -o APT::Update::Error-Mode=any update \
   && apt-get install -y --no-install-recommends \
     apparmor \
