@@ -127,6 +127,8 @@ export function ProjectChatAgentEditor({
   const [savedSkills, setSavedSkills] = useState<UnifiedAgentDefinition['skills']>([])
   const deviceState = useCurrentAgentDevice(deviceApi, pluginApi, capabilitiesActive)
   const defaultDeviceAgent = isDefaultLocalAgentName(name)
+  const preserveRouting = editing && !routing.changed && !defaultDeviceAgent
+  const routingReady = preserveRouting || routing.valid
   const [legacyConfig, setLegacyConfig] = useState<{
     capabilityDescription: string
     maxConcurrentExecutions: number
@@ -316,7 +318,7 @@ export function ProjectChatAgentEditor({
 
   const save = async () => {
     if (busy || loadingAgent) return
-    if (defaultDeviceAgent ? allowedModels.length === 0 : !routing.valid) {
+    if (defaultDeviceAgent ? allowedModels.length === 0 : !routingReady) {
       setError(t('workbench.agent_creator_model_required', '请选择模型'))
       return
     }
@@ -366,23 +368,30 @@ export function ProjectChatAgentEditor({
             : [],
         mcpServers,
       }
+      const modelConfiguration = preserveRouting
+        ? {}
+        : {
+            executionPolicy: defaultDeviceAgent
+              ? undefined
+              : (routing.executionPolicy ?? undefined),
+            modelPolicy: defaultDeviceAgent ? undefined : (routing.modelPolicy ?? undefined),
+            model: defaultDeviceAgent
+              ? definition.model.name
+              : (routing.model?.cloud_model?.name ?? routing.model?.model_id ?? null),
+            modelType: defaultDeviceAgent
+              ? definition.model.type
+              : (routing.model?.cloud_model?.type ?? 'runtime'),
+            modelNamespace: defaultDeviceAgent
+              ? definition.model.namespace
+              : (routing.model?.cloud_model?.namespace ?? 'default'),
+            allowedModels: defaultDeviceAgent ? allowedModels : [definition.model],
+          }
       const input = {
+        ...modelConfiguration,
         name: definition.name,
         displayName: definition.displayName,
         namespace: definition.namespace,
         runtime,
-        executionPolicy: defaultDeviceAgent ? undefined : (routing.executionPolicy ?? undefined),
-        modelPolicy: defaultDeviceAgent ? undefined : (routing.modelPolicy ?? undefined),
-        model: defaultDeviceAgent
-          ? definition.model.name
-          : (routing.model?.cloud_model?.name ?? routing.model?.model_id ?? null),
-        modelType: defaultDeviceAgent
-          ? definition.model.type
-          : (routing.model?.cloud_model?.type ?? 'runtime'),
-        modelNamespace: defaultDeviceAgent
-          ? definition.model.namespace
-          : (routing.model?.cloud_model?.namespace ?? 'default'),
-        allowedModels: defaultDeviceAgent ? allowedModels : [definition.model],
         capabilityDescription: legacyConfig.capabilityDescription,
         capabilityMode: definition.capabilityMode,
         systemPrompt: definition.systemPrompt,
@@ -714,7 +723,7 @@ export function ProjectChatAgentEditor({
       }
       saveDisabled={
         loadingAgent ||
-        (defaultDeviceAgent ? allowedModels.length === 0 : !routing.valid) ||
+        (defaultDeviceAgent ? allowedModels.length === 0 : !routingReady) ||
         (capabilityMode === 'manual' &&
           capabilitiesActive &&
           (loadingSkills || loadingPlugins || Boolean(skillLoadError || pluginLoadError)))

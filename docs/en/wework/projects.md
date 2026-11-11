@@ -215,7 +215,7 @@ Local spaces save the agent configuration in the project, preserving its resourc
 
 ### Agent capabilities and disabled state
 
-Open **Project settings → AI team → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. The Edit action requires permission to edit the Agent definition; shared use permission does not grant editing permission. Click **Save** to apply changes and refresh the project list. A failed save keeps the form open with its values and an error.
+Open **Project settings → AI team → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. The Edit action requires permission to edit the Agent definition; shared use permission does not grant editing permission. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
 
 In a global, space or project agent create/settings form, check resource ownership and choose the capability source:
 

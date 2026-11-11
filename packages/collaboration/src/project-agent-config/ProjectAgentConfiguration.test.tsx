@@ -704,6 +704,39 @@ describe("ProjectAgentConfiguration", () => {
     },
   );
 
+  it.each(["local", "backend"] as const)(
+    "retries a failed %s list refresh without repeating the completed save",
+    async (store) => {
+      const onAgentsChange = vi.fn();
+      const row = projectAgent({ runtime: "codex", wegent_team_id: null });
+      const { api, list, update } = createApi({ agents: [row] });
+      await renderHosted(api, {
+        target: { ...project, project_store: store },
+        onAgentsChange,
+      });
+      await click("project-agent-edit-project-agent-1");
+      list.mockRejectedValueOnce(new Error("List refresh unavailable"));
+      await click("hosted-local-agent-save");
+      expect(
+        document.querySelector('[data-testid="hosted-local-agent-editor"]'),
+      ).toBeNull();
+      expect(element("project-agent-config-error").textContent).toContain(
+        "List refresh unavailable",
+      );
+      expect(
+        element("project-agent-row-project-agent-1").textContent,
+      ).toContain(row.name);
+      expect(onAgentsChange).toHaveBeenCalledOnce();
+      list.mockResolvedValueOnce([{ ...row, name: "Saved name", version: 2 }]);
+      await click("project-agent-config-retry");
+      expect(
+        element("project-agent-row-project-agent-1").textContent,
+      ).toContain("Saved name");
+      expect(update).not.toHaveBeenCalled();
+      expect(onAgentsChange).toHaveBeenCalledOnce();
+    },
+  );
+
   it.each([12, null])(
     "does not expose unauthorized edits for Agent definition %s",
     async (teamId) => {

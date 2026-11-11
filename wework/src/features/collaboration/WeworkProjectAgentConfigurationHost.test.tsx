@@ -69,15 +69,22 @@ function setRichInputValue(testId: string, value: string) {
 }
 
 describe('weworkProjectAgentConfigurationHost', () => {
-  it.each(['active', 'archived'])(
-    'edits a %s cloud project definition without changing execution bindings',
-    async status => {
+  it.each([
+    ['active', true],
+    ['archived', true],
+    ['active', false],
+    ['archived', false],
+  ] as const)(
+    'edits a %s cloud project definition with routing configured=%s without changing execution bindings',
+    async (status, hasPolicies) => {
       const agent = {
         id: 'cloud-native-agent',
         name: 'Imported Agent',
         runtime: 'codex',
-        executionPolicy: { mode: 'fixed', environment_id: '1' },
-        modelPolicy: { mode: 'fixed', model: codexModel },
+        executionPolicy: hasPolicies ? { mode: 'fixed', environment_id: '1' } : undefined,
+        modelPolicy: hasPolicies ? { mode: 'fixed', model: codexModel } : undefined,
+        model: 'existing-model',
+        modelType: 'user',
         capabilityMode: 'manual',
         systemPrompt: 'Original prompt',
         additionalSkills: [{ name: 'review', namespace: 'default' }],
@@ -156,8 +163,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
           name: 'Edited Agent',
           systemPrompt: 'Updated prompt',
           version: 7,
-          executionPolicy: agent.executionPolicy,
-          modelPolicy: agent.modelPolicy,
           capabilityMode: 'manual',
           additionalSkills: agent.additionalSkills,
           mcpServers: agent.mcpServers,
@@ -166,6 +171,11 @@ describe('weworkProjectAgentConfigurationHost', () => {
       )
       const input = update.mock.calls[0][2]
       for (const field of [
+        'executionPolicy',
+        'modelPolicy',
+        'model',
+        'modelType',
+        'modelNamespace',
         'executionEnvironment',
         'executionMode',
         'executionDeviceId',

@@ -159,6 +159,9 @@ export function ProjectAgentConfiguration({
 
   useEffect(() => {
     setAgents([]);
+  }, [api, project.id, canManage, scope]);
+
+  useEffect(() => {
     setWorkspaceAgents([]);
     setCandidateError(null);
     setSelectedTeamId("");
@@ -432,6 +435,25 @@ export function ProjectAgentConfiguration({
     }
   }
 
+  async function finishAgentEdit() {
+    setEditingAgentId(null);
+    onAgentsChange?.();
+    try {
+      await reloadAgents();
+    } catch (cause) {
+      setLoadError(
+        errorMessage(
+          cause,
+          translate(
+            "todo.load_project_agents_failed",
+            "加载项目智能体配置失败",
+          ),
+        ),
+      );
+      onError();
+    }
+  }
+
   async function saveEditedAgent(saved: { name: string; teamId: number }) {
     const agent = editingAgent;
     if (!agent) return;
@@ -445,9 +467,7 @@ export function ProjectAgentConfiguration({
           ...(saved.name ? { name: saved.name } : {}),
         });
       }
-      await reloadAgents();
-      setEditingAgentId(null);
-      onAgentsChange?.();
+      await finishAgentEdit();
     } catch (cause) {
       setError(
         errorMessage(
@@ -604,11 +624,7 @@ export function ProjectAgentConfiguration({
         ) : null}
       </div>
 
-      {loading ? (
-        <p className={styles.empty} data-testid="project-agent-config-loading">
-          {translate("common.loading", "加载中…")}
-        </p>
-      ) : loadError ? (
+      {loadError ? (
         <div
           role="alert"
           className={styles.error}
@@ -624,7 +640,12 @@ export function ProjectAgentConfiguration({
             {translate("common.retry", "重试")}
           </button>
         </div>
-      ) : (
+      ) : null}
+      {loading && agents.length === 0 ? (
+        <p className={styles.empty} data-testid="project-agent-config-loading">
+          {translate("common.loading", "加载中…")}
+        </p>
+      ) : !loadError || agents.length > 0 ? (
         <>
           {agents.length ? (
             <div className={styles.list} data-testid="project-agent-list">
@@ -827,11 +848,7 @@ export function ProjectAgentConfiguration({
                 projectId: agentProjectId,
                 resourceId: editingAgent.id,
                 onClose: () => setEditingAgentId(null),
-                onSaved: async () => {
-                  await reloadAgents();
-                  setEditingAgentId(null);
-                  onAgentsChange?.();
-                },
+                onSaved: finishAgentEdit,
               })
             : editingAgent &&
                 editingAgent.definitionSource === "shared_agent" &&
@@ -848,7 +865,7 @@ export function ProjectAgentConfiguration({
                 })
               : null}
         </>
-      )}
+      ) : null}
       {error && !composerOpen ? (
         <p className={styles.error} data-testid="project-agent-config-error">
           {error}
