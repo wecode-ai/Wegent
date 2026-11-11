@@ -255,8 +255,76 @@ async fn issue_mention_wakeups_are_atomic_deduplicated_and_recipient_owned() {
         assert!(rollback.is_err());
         verify_mention_inbox(&mysql, 7, 3).await;
         verify_mention_inbox(&mysql, 8, 1).await;
+        verify_independent_first_inboxes(&mysql).await;
+        verify_stale_inbox_snapshot(&mysql).await;
     })
     .await;
+}
+
+async fn verify_independent_first_inboxes(mysql: &MysqlService) {
+    mysql
+        .execute("INSERT INTO users VALUES (10,true)", ())
+        .await
+        .unwrap();
+    let (entered, admitted) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let first = mysql.with_transaction(async |tx| {
+        crate::stand_in_issue_events::enqueue_mention_on(tx, 9, "1001", "issue", "held").await?;
+        entered.send(()).unwrap();
+        released.await.unwrap();
+        Ok(())
+    });
+    let independent = async {
+        admitted.await.unwrap();
+        let result = mysql
+            .with_transaction(async |tx| {
+                tx.execute("SET SESSION innodb_lock_wait_timeout=1", ())
+                    .await?;
+                let result = crate::stand_in_issue_events::enqueue_mention_on(
+                    tx,
+                    10,
+                    "1002",
+                    "other-issue",
+                    "independent",
+                )
+                .await;
+                tx.execute("SET SESSION innodb_lock_wait_timeout=50", ())
+                    .await?;
+                result
+            })
+            .await;
+        release.send(()).unwrap();
+        result
+    };
+    let (first, independent) = tokio::join!(first, independent);
+    first.unwrap();
+    independent.expect("a held first inbox must not block another recipient's first inbox");
+}
+
+async fn verify_stale_inbox_snapshot(mysql: &MysqlService) {
+    mysql
+        .execute("INSERT INTO users VALUES (11,true)", ())
+        .await
+        .unwrap();
+    mysql
+        .with_transaction(async |tx| {
+            let _: (i64,) = tx.fetch_one("SELECT COUNT(*) FROM loop_items", ()).await?;
+            mysql
+                .with_transaction(async |peer| {
+                    crate::stand_in_issue_events::enqueue_mention_on(
+                        peer, 11, "1001", "issue", "first",
+                    )
+                    .await
+                })
+                .await?;
+            crate::stand_in_issue_events::enqueue_mention_on(tx, 11, "1001", "issue", "first")
+                .await?;
+            crate::stand_in_issue_events::enqueue_mention_on(tx, 11, "1001", "issue", "second")
+                .await
+        })
+        .await
+        .unwrap();
+    verify_mention_inbox(mysql, 11, 2).await;
 }
 
 async fn verify_mention_inbox(mysql: &MysqlService, user: i64, count: usize) {

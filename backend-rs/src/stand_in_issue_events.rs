@@ -36,39 +36,58 @@ pub(crate) async fn enqueue_mention_on(
         .await?
         .ok_or(brz_mysql::MysqlError::RowNotFound)?;
     let inbox_id = format!("stand-in-inbox:{user}");
-    let sequence = match store::locked(tx, "stand_in_issue_inbox", &inbox_id).await? {
-        Some(inbox) => inbox.next_item_number,
-        None => {
-            store::insert(
-                tx,
-                "stand_in_issue_inbox",
-                json!({
-                    "id":inbox_id,"user_id":user,"next_item_number":1
-                }),
-            )
-            .await?;
-            1
-        }
-    };
-    if store::locked(tx, "stand_in_issue_event", &id)
+    let sequence = inbox_sequence(tx, user, &inbox_id).await?;
+    if store::locked_existing(tx, "stand_in_issue_event", &id)
         .await?
         .is_some()
     {
         return Ok(());
     }
-    store::insert(
+    let inserted = store::insert(
         tx,
         "stand_in_issue_event",
         json!({
             "id":id,"parent_id":inbox_id,"user_id":user,"sort_order":sequence,"metadata":payload
         }),
     )
-    .await?;
+    .await;
+    match inserted {
+        Ok(_) => {}
+        // A repeatable-read snapshot may precede another committed delivery.
+        Err(error) if error.database_code() == Some(1062) => return Ok(()),
+        Err(error) => return Err(error),
+    }
     tx.execute(
         "UPDATE loop_items SET next_item_number=? WHERE id=? AND resource_type='stand_in_issue_inbox' AND user_id=?",
         (sequence + 1, inbox_id.as_str(), user),
     ).await?;
     Ok(())
+}
+
+async fn inbox_sequence(tx: &mut impl MysqlTransaction, user: i64, id: &str) -> MysqlResult<i64> {
+    use crate::background_jobs::project::store;
+
+    // The recipient row serializes creation; missing keys must not gap-lock peers.
+    if let Some(inbox) = store::locked_existing(tx, "stand_in_issue_inbox", id).await? {
+        return Ok(inbox.next_item_number);
+    }
+    match store::insert(
+        tx,
+        "stand_in_issue_inbox",
+        json!({"id":id,"user_id":user,"next_item_number":1}),
+    )
+    .await
+    {
+        Ok(_) => Ok(1),
+        Err(error) if error.database_code() == Some(1062) => {
+            // Recheck current state when the transaction's older snapshot missed it.
+            store::locked(tx, "stand_in_issue_inbox", id)
+                .await?
+                .map(|inbox| inbox.next_item_number)
+                .ok_or(brz_mysql::MysqlError::RowNotFound)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[derive(Default, Deserialize)]
