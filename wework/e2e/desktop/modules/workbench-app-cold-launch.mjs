@@ -128,15 +128,17 @@ async function inspectColdApp({
     startupTimeoutMs
   )
   const installation = installations.find(value => value.id === installationId)
-  assert.match(installation.webUrl, /^http:\/\/127\.0\.0\.1:\d+\//)
+  assert.match(installation.webUrl, /^http:\/\/127\.0\.0\.1:\d+(?:[/?#]|$)/)
+  const pageUrl = new URL(installation.webUrl).href
+  const matchesPage = value => URL.canParse(value.url) && new URL(value.url).href === pageUrl
   const devtools = await createDevtoolsClient(resultDir, STEP_TIMEOUT_MS)
   const targets = await until(
     () => devtools({ action: 'targets' }),
-    values => values.some(value => value.url === installation.webUrl),
+    values => values.some(matchesPage),
     'The cold startup did not open its DSH workbench window',
     startupTimeoutMs
   )
-  const target = targets.find(value => value.url === installation.webUrl)
+  const target = targets.find(matchesPage)
   try {
     const document = await until(
       () => readSandboxDocument(devtools, target.id),

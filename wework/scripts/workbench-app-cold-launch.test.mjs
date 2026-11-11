@@ -16,6 +16,8 @@ async function fixture(
     appRunning = true,
     crossProcess = false,
     shortcutExecutable,
+    runtimeUrl = 'http://127.0.0.1:9123',
+    pageUrl = new URL(runtimeUrl).href,
   } = {}
 ) {
   const resultDir = await mkdtemp(join(tmpdir(), 'wework-app-cold-protocol-'))
@@ -25,10 +27,10 @@ async function fixture(
     manifest: { name: 'todo', displayName: 'Todo' },
     visible: true,
     state: appRunning ? 'running' : 'installed',
-    webUrl: 'http://127.0.0.1:9123/',
+    webUrl: runtimeUrl,
   }
   const targets = [
-    { id: 4, type: 'browserView', url: app.webUrl },
+    { id: 4, type: 'browserView', url: pageUrl },
     { id: 6, type: 'window', url: '' },
   ]
   if (extraRenderer) targets.push({ id: 5, url: 'http://127.0.0.1/workbench' })
@@ -170,7 +172,7 @@ async function fixture(
   }
 }
 
-test('cold start observes the authenticated Host and sandbox document while allowing the required DSH runtime', async t => {
+test('cold start matches the actual DSH origin to its canonical page URL while verifying Host and sandbox state', async t => {
   const { run, restarts, commands, protocol } = await fixture(t)
   await run()
   assert.equal(restarts.length, 2)
@@ -184,6 +186,44 @@ test('cold start observes the authenticated Host and sandbox document while allo
   )
   assert.ok(protocol.some(value => value.method === 'Runtime.releaseObject'))
 })
+
+test('cold start preserves the complete installed page URL identity', async t => {
+  const { run } = await fixture(t, {
+    runtimeUrl: 'http://127.0.0.1:9123/app?entry=todo#tasks',
+  })
+  await run()
+})
+
+for (const [part, pageUrl] of Object.entries({
+  protocol: 'https://127.0.0.1:9123/',
+  host: 'http://localhost:9123/',
+  port: 'http://127.0.0.1:9124/',
+  path: 'http://127.0.0.1:9123/another-app',
+  query: 'http://127.0.0.1:9123/?another-app=true',
+  fragment: 'http://127.0.0.1:9123/#another-app',
+})) {
+  test(`cold start rejects a page with a different ${part}`, async t => {
+    const { run, restarts, protocol } = await fixture(t, { pageUrl })
+    await assert.rejects(run(), /did not open its DSH workbench window/)
+    assert.equal(protocol.length, 0, 'An unrelated page must never be inspected')
+    assert.equal(restarts.length, 2)
+    assert.equal(restarts[1], undefined)
+  })
+}
+
+for (const runtimeUrl of ['https://127.0.0.1:9123', 'http://localhost:9123', 'http://127.0.0.1']) {
+  test(`cold start rejects an installed address outside IPv4 loopback HTTP with an explicit port: ${runtimeUrl}`, async t => {
+    const { run, restarts, protocol } = await fixture(t, { runtimeUrl })
+    await assert.rejects(run(), error => {
+      assert.ok(error instanceof assert.AssertionError)
+      assert.equal(error.actual, runtimeUrl)
+      return true
+    })
+    assert.equal(protocol.length, 0)
+    assert.equal(restarts.length, 2)
+    assert.equal(restarts[1], undefined)
+  })
+}
 
 test('an unrelated main renderer fails the cold-start gate and restores the normal process', async t => {
   const { run, restarts } = await fixture(t, { extraRenderer: true })
