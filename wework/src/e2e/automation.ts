@@ -2886,6 +2886,23 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         phase: 'press',
       })
       return ''
+    case 'setStartupSplashSize': {
+      const nextSize = JSON.parse(command.value ?? '{}') as { width?: number; height?: number }
+      if (
+        !Number.isFinite(nextSize.width) ||
+        !Number.isFinite(nextSize.height) ||
+        Number(nextSize.width) <= 0 ||
+        Number(nextSize.height) <= 0
+      ) {
+        throw new Error('setStartupSplashSize requires positive width and height')
+      }
+      return JSON.stringify(
+        await invokeDesktopHost('e2e.setStartupSplashSize', {
+          width: Number(nextSize.width),
+          height: Number(nextSize.height),
+        })
+      )
+    }
     case 'setMainWindowSize': {
       const nextSize = JSON.parse(command.value ?? '{}') as {
         width?: number
