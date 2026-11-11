@@ -113,6 +113,10 @@ describe('startup brand animation lifecycle', () => {
     expect(resized.width).toBeCloseTo(initial.width, 8)
     expect(resized.height).toBeCloseTo(initial.height, 8)
     expect(resized.bottom).toBeLessThanOrEqual((783 - growth - 12) * 2 + 1e-8)
+    expect(JSON.parse(canvas.dataset.startupLogoBounds!)).toMatchObject({
+      height: expect.closeTo(resized.height, 8),
+      width: expect.closeTo(resized.width, 8),
+    })
     expect(slowCard.hidden).toBe(state !== 'slow')
     expect(timeoutNote.hidden).toBe(state !== 'timeout')
     expect(timeoutActions.hidden).toBe(state !== 'timeout')

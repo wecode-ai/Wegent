@@ -81,6 +81,43 @@ describe('native startup splash observations', () => {
     })
   })
 
+  test('reports rendered startup brand bounds and toast operation sequence', async () => {
+    const brandBounds = {
+      bottom: 480,
+      height: 160,
+      left: 100,
+      right: 500,
+      top: 320,
+      width: 400,
+    }
+    const window = {
+      isDestroyed: () => false,
+      webContents: {
+        executeJavaScript: async (script: string) =>
+          runInNewContext(script, {
+            currentUpdate: null,
+            structuredClone,
+            getComputedStyle: () => ({ color: '', fontSize: '', getPropertyValue: () => '' }),
+            document: {
+              getElementById: (id: string) => {
+                if (id === 'startup-brand-canvas') {
+                  return { dataset: { startupLogoBounds: JSON.stringify(brandBounds) } }
+                }
+                if (id === 'startup-toast') {
+                  return { dataset: { sequence: '7' }, hidden: false, textContent: 'Copied' }
+                }
+                return undefined
+              },
+              querySelectorAll: () => [],
+            },
+          }),
+      },
+    }
+    const snapshot = await inspectStartupSplash(window as unknown as BrowserWindow)
+    expect(snapshot.brandBounds).toEqual(brandBounds)
+    expect(snapshot.toastSequence).toBe(7)
+  })
+
   test('retains a slow state that ended before the workbench controller connected', async () => {
     vi.useFakeTimers()
     const window = new EventEmitter()
@@ -109,18 +146,31 @@ describe('native startup splash observations', () => {
     let snapshot: StartupSplashInspection = {
       progress: null,
       toastHidden: true,
+      toastSequence: 0,
       toastText: '',
     }
     const observer = observeStartupSplash(window as BrowserWindow, async () => snapshot)
     await vi.advanceTimersByTimeAsync(50)
-    snapshot = { toastHidden: false, toastText: 'Diagnostics copied', progress: null }
+    snapshot = {
+      toastHidden: false,
+      toastSequence: 1,
+      toastText: 'Diagnostics copied',
+      progress: null,
+    }
     await vi.advanceTimersByTimeAsync(50)
     snapshot = { ...snapshot, toastHidden: true }
     await vi.advanceTimersByTimeAsync(50)
+    snapshot = { ...snapshot, toastHidden: false, toastSequence: 2 }
+    await vi.advanceTimersByTimeAsync(50)
     const result = await observer.inspect()
-    expect(result.toastHidden).toBe(true)
+    expect(result.toastHidden).toBe(false)
+    expect(result.toastSequence).toBe(2)
     expect(result.observations).toContainEqual(
-      expect.objectContaining({ toastHidden: false, toastText: 'Diagnostics copied' })
+      expect.objectContaining({
+        toastHidden: false,
+        toastSequence: 1,
+        toastText: 'Diagnostics copied',
+      })
     )
     window.emit('closed')
   })

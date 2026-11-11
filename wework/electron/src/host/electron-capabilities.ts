@@ -300,6 +300,10 @@ export interface ElectronE2EHost {
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   startupSplashInspect: () => Promise<Record<string, unknown>>
   startupSplashClick: (testId: string) => Promise<void>
+  startupSplashSize: (
+    width: number,
+    height: number
+  ) => Promise<{ width: number; height: number; maximized: boolean }>
   startupLogPath: (path: string | null) => void
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
@@ -389,6 +393,7 @@ export function createElectronCapabilityRouter(
     startupSplashSnapshot: () => null,
     startupSplashInspect: () => Promise.reject(new Error('Startup splash is unavailable')),
     startupSplashClick: () => Promise.reject(new Error('Startup splash is unavailable')),
+    startupSplashSize: () => Promise.reject(new Error('Startup splash is unavailable')),
     startupLogPath: () => undefined,
     trayActivate: () => false,
     traySetState: () => undefined,
@@ -924,6 +929,12 @@ export function createElectronCapabilityRouter(
     }
     return e2eHost.startupSplashClick(testId)
   })
+  router.register('e2e.setStartupSplashSize', params =>
+    e2eHost.startupSplashSize(
+      requiredIntegerParam(params, 'width'),
+      requiredIntegerParam(params, 'height')
+    )
+  )
   router.register('e2e.setStartupLogPath', params => {
     assertE2EEnabled('Startup log directory failure fixture')
     return e2eHost.startupLogPath(nullableStringParam(params, 'path') ?? null)

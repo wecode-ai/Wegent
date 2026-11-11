@@ -78,6 +78,7 @@ let pendingResetMode = null
 let actionPending = false
 let confirmationTrigger = null
 let toastTimer = 0
+let toastSequence = 0
 let progressTimer = 0
 let progressFrame = null
 let displayedProgress = 0
@@ -174,6 +175,7 @@ function showToast(message) {
   if (!toastElement) return
   if (toastTimer) window.clearTimeout?.(toastTimer)
   toastElement.textContent = message
+  toastElement.dataset.sequence = String(++toastSequence)
   toastElement.hidden = false
   toastTimer = window.setTimeout(() => {
     toastElement.hidden = true

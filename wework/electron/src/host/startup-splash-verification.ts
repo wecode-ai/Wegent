@@ -35,6 +35,7 @@ export function observeStartupSplash(
         snapshot.recoveryHidden,
         snapshot.toastText,
         snapshot.toastHidden,
+        snapshot.toastSequence,
       ])
       if (state !== previousState) {
         observations.push({ ...snapshot, capturedAt: Date.now() })
@@ -67,6 +68,8 @@ export async function inspectStartupSplash(
     const activity = document.getElementById('splash-activity')
     const style = activity ? getComputedStyle(activity) : null
     const progress = document.getElementById('splash-progress')
+    const brandCanvas = document.getElementById('startup-brand-canvas')
+    const toast = document.getElementById('startup-toast')
     const region = element => {
       if (!element) return null
       const bounds = element.getBoundingClientRect()
@@ -92,6 +95,10 @@ export async function inspectStartupSplash(
       recoveryHidden: hidden('startup-recovery'),
       toastText: text('startup-toast'),
       toastHidden: hidden('startup-toast'),
+      toastSequence: Number(toast?.dataset.sequence ?? 0),
+      brandBounds: brandCanvas?.dataset.startupLogoBounds
+        ? JSON.parse(brandCanvas.dataset.startupLogoBounds)
+        : null,
       progressClassName: progress?.className,
       progressNow: progress?.getAttribute('aria-valuenow'),
       dragRegions: {

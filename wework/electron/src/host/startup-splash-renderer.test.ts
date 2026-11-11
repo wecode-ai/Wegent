@@ -916,6 +916,7 @@ describe('startup splash renderer', () => {
     await setImmediate()
     expect(element('#startup-copy-diagnostics').textContent).toBe(recoveryCopyLabel)
     expect(element('#startup-toast').textContent).toContain('诊断信息已复制')
+    expect(element('#startup-toast').dataset.sequence).toBe('1')
     element('#startup-open-logs').click()
     await vi.waitFor(() => expect(openLogs).toHaveBeenCalledOnce())
 
@@ -923,6 +924,7 @@ describe('startup splash renderer', () => {
     await vi.waitFor(() => expect(copy).toHaveBeenCalledTimes(2))
     await setImmediate()
     expect(element('#startup-timeout-copy').textContent).toBe(timeoutCopyLabel)
+    expect(element('#startup-toast').dataset.sequence).toBe('2')
     element('#startup-timeout-open-logs').click()
     await vi.waitFor(() => expect(openLogs).toHaveBeenCalledTimes(2))
   })

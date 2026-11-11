@@ -369,6 +369,7 @@
           '--startup-logo-mask',
           'linear-gradient(transparent, transparent)'
         )
+        delete canvas.dataset.startupLogoBounds
         maskGeometry = ''
         return
       }
@@ -376,6 +377,19 @@
       const geometry = [canvas.width, canvas.height, fit, offsetX, offsetY].join(',')
       if (geometry !== maskGeometry) {
         updateLogoMask(canvas, logo, viewport.transform)
+        const ratio = viewport.pixelRatio
+        const left = (offsetX + (CENTER_X - logo.halfWidth) * fit) / ratio
+        const top = (offsetY + (CENTER_Y - logo.halfHeight) * fit) / ratio
+        const width = (logo.halfWidth * 2 * fit) / ratio
+        const height = (logo.halfHeight * 2 * fit) / ratio
+        canvas.dataset.startupLogoBounds = JSON.stringify({
+          left,
+          top,
+          right: left + width,
+          bottom: top + height,
+          width,
+          height,
+        })
         maskGeometry = geometry
       }
       const opacity = String(smooth(3.05, WAITING_START_MS / 1000, time))

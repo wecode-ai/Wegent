@@ -109,6 +109,7 @@ export const HOST_CAPABILITIES = [
   'e2e.getStartupSplashSnapshot',
   'e2e.inspectStartupSplash',
   'e2e.clickStartupSplash',
+  'e2e.setStartupSplashSize',
   'e2e.setStartupLogPath',
   'e2e.getTraySnapshot',
   'e2e.getApplicationMenuSnapshot',
