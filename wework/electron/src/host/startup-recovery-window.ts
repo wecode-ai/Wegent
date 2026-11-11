@@ -6,9 +6,20 @@ const CHANNEL = 'startup-recovery-window'
 let recoveryWindow: BrowserWindow | null = null
 let opening: Promise<BrowserWindow> | null = null
 let failure = ''
+let recoveryActive = false
+
+/** Reopening the app must not return to a stopped or uninitialized workbench. */
+export function focusStartupRecoveryIfActive(): boolean {
+  if (!recoveryActive) return false
+  void showStartupRecovery(failure).catch(error => {
+    console.error('[startup-recovery] Cannot restore recovery window', error)
+  })
+  return true
+}
 
 /** Open without loading application stores, credentials, migrations, or runtimes. */
 export function showStartupRecovery(error: unknown): Promise<BrowserWindow> {
+  recoveryActive = true
   failure = error instanceof Error ? error.message : String(error)
   if (recoveryWindow && !recoveryWindow.isDestroyed()) {
     recoveryWindow.show()

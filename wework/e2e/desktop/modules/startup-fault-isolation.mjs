@@ -106,6 +106,7 @@ export async function verifyStartupFaultIsolation({ appBinary, environment, resu
       assert.equal(result.error, undefined, result.error)
       assert.equal(result.visible, true)
       assert.equal(result.retryEnabled, true)
+      assert.equal(result.reopened, true)
       assert.equal(result.state.ready, false, 'Recovery must not certify a healthy release')
       assert.ok(result.state.error)
       assert.equal(await readFile(credentials, 'utf8'), saved)
@@ -125,6 +126,8 @@ function recoveryWindowAssertion(evidencePath) {
     const output = ${JSON.stringify(evidencePath)}
     const deadline = Date.now() + 10_000
     let checking = false
+    let reopenRequested = false
+    let companion = null
     const timer = setInterval(async () => {
       if (checking) return
       checking = true
@@ -142,8 +145,20 @@ function recoveryWindowAssertion(evidencePath) {
           if (Date.now() > deadline) throw new Error('Recovery was not operable')
           return
         }
+        if (!reopenRequested) {
+          const { join } = require('node:path')
+          const recovery = require(join(app.getAppPath(), 'dist', 'host', 'startup-recovery-window.js'))
+          // Keep a real host window alive, as happens after a late startup/install failure.
+          companion = new BrowserWindow({show:false,webPreferences:{partition:'startup-recovery-companion',sandbox:true,contextIsolation:true,nodeIntegration:false}})
+          await new Promise(resolve => { window.once('closed', resolve); window.close() })
+          if (!recovery.focusStartupRecoveryIfActive()) throw new Error('Recovery activation was not handled')
+          reopenRequested = true
+          return
+        }
         clearInterval(timer)
-        fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,state}))
+        companion.destroy()
+        companion = null
+        fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state}))
         app.exit(0)
       } catch (error) {
         clearInterval(timer)

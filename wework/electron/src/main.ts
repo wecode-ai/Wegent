@@ -131,7 +131,10 @@ import {
   type StartupSplashTheme,
 } from './host/startup-splash.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
-import { showStartupRecovery } from './host/startup-recovery-window.js'
+import {
+  focusStartupRecoveryIfActive,
+  showStartupRecovery,
+} from './host/startup-recovery-window.js'
 import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
 import { activateTrayAction, ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon, trayIconFilename } from './host/tray-icon.js'
@@ -729,6 +732,7 @@ app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
   }
   if (workspaceOpenRequest) queueWorkspaceOpenRequest(workspaceOpenRequest)
   if (keepE2EWindowInBackground) return
+  if (focusStartupRecoveryIfActive()) return
   if (focusStartupSplashIfActive()) return
   if (!mainWindow) return
   if (mainWindow.isMinimized()) mainWindow.restore()
@@ -1785,6 +1789,7 @@ const rendererStartupReady = createStartupReadyHandler(async (source: string) =>
 })
 
 async function reactivateMainWindow(): Promise<void> {
+  if (focusStartupRecoveryIfActive()) return
   if (focusStartupSplashIfActive()) return
   if (quitting) return
   const target = mainWindow

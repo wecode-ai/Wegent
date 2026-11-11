@@ -105,6 +105,25 @@ test('shares one recovery window and displays the latest error', async () => {
   await expect(invoke({ sender: { id: 17 } }, 'delete-data')).rejects.toThrow('Unknown')
 })
 
+test('app activation reopens closed recovery without requiring a workbench or runtime', async () => {
+  const { focusStartupRecoveryIfActive, showStartupRecovery } =
+    await import('./startup-recovery-window.js')
+  expect(focusStartupRecoveryIfActive()).toBe(false)
+  expect(fixture.create).not.toHaveBeenCalled()
+  await showStartupRecovery(new Error('services stopped during failed installation'))
+  fixture.closed?.()
+  expect(fixture.handlers.size).toBe(0)
+  expect(focusStartupRecoveryIfActive()).toBe(true)
+  await vi.waitFor(() => expect(fixture.create).toHaveBeenCalledTimes(2))
+  const invoke = fixture.handlers.get('startup-recovery-window')!
+  expect(await invoke({ sender: { id: 17 } }, 'state')).toEqual({
+    phase: 'failed',
+    ready: false,
+    error: 'services stopped during failed installation',
+  })
+  expect(fixture.quit).not.toHaveBeenCalled()
+})
+
 test('releases a failed window so a later explicit retry can open it', async () => {
   fixture.window.loadFile.mockRejectedValueOnce(new Error('file unavailable'))
   const { showStartupRecovery } = await import('./startup-recovery-window.js')
