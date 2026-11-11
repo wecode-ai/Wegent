@@ -369,6 +369,10 @@ export function createDesktopScenario(options) {
         })
         await reloadMainWindow(control, 'Stand-in settings did not reload after catalog cleanup')
         await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-workspace-tab-content="fixed-task"] [data-testid="new-chat-button"]'
+        )
         await control.command('waitFor', ORDINARY)
         await openExplicitModelMenu(control, `${ORDINARY} [data-testid="model-selector-button"]`)
         await control.command(
@@ -376,6 +380,10 @@ export function createDesktopScenario(options) {
           '[data-testid="model-selector-menu"] [data-testid^="model-option-"][aria-checked="true"]'
         )
         await control.command('press', 'body', { key: 'Escape' })
+        const ordinaryDraft = `${marker}_ORDINARY_UNSENT`
+        await control.command('fill', `${ORDINARY} [data-testid="chat-message-input"]`, {
+          value: ordinaryDraft,
+        })
         const ordinary = {
           model: await control.command(
             'getText',
@@ -383,6 +391,7 @@ export function createDesktopScenario(options) {
           ),
           draft: await control.command('getText', `${ORDINARY} [data-testid="chat-message-input"]`),
         }
+        assert.equal(ordinary.draft.trim(), ordinaryDraft)
         // The native catalog has one configured provider, so establish the real
         // official identity before creating its persistent conversation session.
         await setCatalogProvider('openai', OFFICIAL_MODEL)
@@ -714,6 +723,7 @@ export function createDesktopScenario(options) {
               'clickWhenEnabled',
               '[data-testid="workspace-tab-select-fixed-task"]'
             )
+            await control.command('navigate', 'body', { value: '/?workspaceTab=fixed-task' })
             await control.command('waitFor', ORDINARY)
             assert.equal(
               await control.command('getText', `${ORDINARY} [data-testid="model-selector-button"]`),

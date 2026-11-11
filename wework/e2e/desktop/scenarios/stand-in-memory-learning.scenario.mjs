@@ -6,7 +6,12 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
-import { MODEL_API_KEY, MODEL_PROVIDER_ID, selectE2EModel } from '../modules/shared.mjs'
+import {
+  DEFAULT_MODEL_ID,
+  MODEL_API_KEY,
+  MODEL_PROVIDER_ID,
+  selectE2EModel,
+} from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createMemoryConsolidation,
@@ -219,7 +224,10 @@ export function createDesktopScenario({
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', CHAT)
-        await selectE2EModel(control, undefined, undefined, CHAT)
+        const initialModel = modelCatalog.models.find(model => model.slug === DEFAULT_MODEL_ID)
+        assert.ok(initialModel, 'The owner chat model is missing from the native catalog')
+        assert.equal(typeof initialModel.display_name, 'string')
+        await selectE2EModel(control, DEFAULT_MODEL_ID, initialModel.display_name, CHAT)
         for (const name of Object.keys(PROMPTS)) {
           phase = name
           await control.command('fill', `${CHAT} [data-testid="chat-message-input"]`, {

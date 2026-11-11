@@ -319,7 +319,15 @@ export function createSubscriptionConfigRegression() {
           savedConfig,
           'Execution must not rewrite the saved model or provider'
         )
-        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await control.command('press', 'body', { key: 'Escape' })
+        await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
+          visible: false,
+        })
+        await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-workspace-tab-content="fixed-task"] [data-testid="personal-stand-in-button"]'
+        )
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
         await openStandInSettings(control)
         await control.command(
