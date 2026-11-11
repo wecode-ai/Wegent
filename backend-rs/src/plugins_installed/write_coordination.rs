@@ -184,10 +184,10 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         })
         .await
         .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")));
-        if matches!(&result, Ok(_) | Err(MysqlError::InvalidQuery { .. })) {
-            if let Some(lease) = bootstrap {
-                lease.release().await;
-            }
+        if matches!(&result, Ok(_) | Err(MysqlError::InvalidQuery { .. }))
+            && let Some(lease) = bootstrap
+        {
+            lease.release().await;
         }
         result
     }

@@ -406,7 +406,6 @@ where
         .fetch_all(DESIRED_INSTALLS_QUERY, (user_id,))
         .await?;
     installs.retain(|row| installed_ids.is_none_or(|ids| ids.contains(&row.id)));
-    let desired_ids: Vec<i64> = installs.iter().map(|installed| installed.id).collect();
     let mut flush = PendingFlush::default();
     let plugin_results: Vec<(i64, SyncItem)> = result
         .plugins
@@ -416,14 +415,17 @@ where
     // Source `_record_removed_installs` receives `set(plugin_results)`: a
     // reported plugin item acknowledges its install attempt even when a newer
     // uninstall already removed it from the desired set.
-    let reported_ids: Vec<i64> = plugin_results.iter().map(|(id, _)| *id).collect();
+    let retained_ids: Vec<i64> = installs
+        .iter()
+        .map(|installed| installed.id)
+        .chain(plugin_results.iter().map(|(id, _)| *id))
+        .collect();
     record_removed_installs(
         session,
         user_id,
         &canonical_id,
         result,
-        &desired_ids,
-        &reported_ids,
+        &retained_ids,
         &mut flush,
         installed_ids,
     )
@@ -665,8 +667,7 @@ async fn record_removed_installs<Q>(
     user_id: i64,
     device_id: &str,
     result: &SyncResult,
-    desired_ids: &[i64],
-    reported_ids: &[i64],
+    retained_ids: &[i64],
     flush: &mut PendingFlush,
     installed_ids: Option<&[i64]>,
 ) -> MysqlResult<()>
@@ -681,9 +682,7 @@ where
         if !installed_ids.is_none_or(|ids| ids.contains(&row.installed_kind_id)) {
             continue;
         }
-        if desired_ids.contains(&row.installed_kind_id)
-            || reported_ids.contains(&row.installed_kind_id)
-        {
+        if retained_ids.contains(&row.installed_kind_id) {
             continue;
         }
         if result.success {
