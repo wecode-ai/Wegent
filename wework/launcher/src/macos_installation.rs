@@ -324,6 +324,10 @@ mod tests {
         }
 
         fn attach(&mut self, read_only: bool) {
+            eprintln!(
+                "Fixture attach: mount={:?}, read_only={read_only}",
+                self.mount
+            );
             assert!(Command::new("/usr/bin/hdiutil")
                 .args(["attach", "-quiet", "-nobrowse"])
                 .arg(if read_only { "-readonly" } else { "-readwrite" })
@@ -338,7 +342,7 @@ mod tests {
 
         fn detach(&mut self) {
             let detached = Command::new("/usr/bin/hdiutil")
-                .arg("detach")
+                .args(["detach", "-verbose", "-debug"])
                 .arg(&self.mount)
                 .output()
                 .unwrap();
@@ -348,10 +352,16 @@ mod tests {
                     .arg(&self.mount)
                     .output();
                 eprintln!("Fixture mount holders: {holders:?}");
+                let volume = Command::new("/usr/sbin/diskutil")
+                    .arg("info")
+                    .arg(&self.mount)
+                    .output();
+                eprintln!("Fixture volume state: {volume:?}");
             }
             assert!(
                 detached.status.success(),
-                "Fixture detach failed ({}): stdout={}, stderr={}",
+                "Fixture detach failed at {:?} ({}): stdout={}, stderr={}",
+                self.mount,
                 detached.status,
                 String::from_utf8_lossy(&detached.stdout),
                 String::from_utf8_lossy(&detached.stderr)
