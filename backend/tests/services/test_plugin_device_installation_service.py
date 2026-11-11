@@ -402,7 +402,8 @@ async def test_all_device_materialization_waits_in_its_own_worker_session(monkey
         assert sessions == []
         return [{"device_id": "desktop"}]
 
-    def acquire(db, user_id):
+    def acquire(db, user_id, *, installed_id):
+        assert installed_id == 11
         db.touch()
         assert db is not request_db
         assert threading.get_ident() != loop_thread

@@ -4,20 +4,10 @@
 
 //! `POST /api/plugins/installed/auto-update-batch` implementation.
 //!
-//! The endpoint advances at most one cloud-marketplace installation per call.
-//! It coordinates the user's plugin writes through the shared Redis lease,
-//! then reads the active `InstalledPlugin` kinds rows and keeps the rows
-//! whose stored `spec.source.type == "marketplace"`, `spec.updatePolicy ==
-//! "auto"` and whose `pluginId`/`releaseId` are integers, reloads those
-//! plugins and their current/latest releases, then applies the same
-//! marketplace access checks as `GET /api/plugins/marketplace`. A candidate is
-//! eligible when its plugin is published and its installed release differs
-//! from the plugin's latest release, and the latest release is ready and has
-//! passed scanning. The first `AUTO_UPDATE_BATCH_SIZE` candidates are applied
-//! through the shared installed-payload builder, preserving the row's
-//! `enabled`, `componentStates` and `updatePolicy`. The endpoint always
-//! commits one pinned transaction with business-record revision checks,
-//! including an empty batch.
+//! Candidate discovery runs outside write leases. A busy installation is
+//! skipped so another eligible plugin can advance. The selected installation
+//! is revalidated and updated in one pinned transaction under its Redis lease,
+//! preserving runtime preferences and checking both intent and write revisions.
 
 use std::collections::{HashMap, HashSet};
 
@@ -127,7 +117,7 @@ where
         })?
 }
 
-/// The lease serializes these rows with authentication and installation.
+/// Discover candidates without preventing authentication or installation.
 async fn list_installed_kinds<T>(
     transaction: &mut T,
     user_id: i64,
@@ -276,47 +266,96 @@ where
     M: Mysql,
     R: brz_redis::Redis,
 {
-    let lease = PluginWriteLease::acquire(redis, user_id).await?;
-    let result = tokio::time::timeout_at(lease.deadline, async {
-        lease.ensure_policy(mysql).await?;
-        let (catalog_revision, installed_rows) = mysql
-            .with_transaction(async |transaction| {
-                let revision = lease.read_revision(transaction).await?;
-                let installed_rows = list_installed_kinds(transaction, user_id).await?;
-                Ok((revision, installed_rows))
-            })
-            .await?;
-        // Catalog and permission resolvers may borrow additional pool
-        // connections. Complete them before pinning the write connection.
-        let catalog =
-            load_auto_update_catalog(mysql, redis, resolvers, user_id, &installed_rows).await?;
-        // The write transaction reads the shared parent before installation
-        // state; its final CAS also detects commits from an expired worker.
-        mysql
-            .with_transaction(async |transaction| {
-                lease.verify_owned().await?;
-                let revision = lease.read_revision(transaction).await?;
-                // Catalog loading releases its connection before permission
-                // resolvers borrow from the pool. Reject it if any plugin
-                // writer committed while those dependencies were loading.
-                if revision != catalog_revision {
-                    return Err(coordination_error("plugin_write_conflict"));
-                }
-                let response = if let Some(catalog) = catalog.as_ref() {
-                    let installed_rows = list_installed_kinds(transaction, user_id).await?;
-                    apply_auto_update_batch(transaction, catalog, &installed_rows, user_id).await?
+    if redis.is_none() {
+        return Err(coordination_error("plugin_write_unavailable"));
+    }
+    let installed_rows = mysql
+        .with_transaction(async |tx| list_installed_kinds(tx, user_id).await)
+        .await?;
+    let Some(catalog) =
+        load_auto_update_catalog(mysql, redis, resolvers, user_id, &installed_rows).await?
+    else {
+        return Ok(PluginAutoUpdateBatchResponse::empty());
+    };
+    let eligible = eligible_rows(&installed_rows);
+    let pending = candidates(
+        &eligible,
+        &catalog.plugins_by_id,
+        &catalog.releases_by_id,
+        user_id,
+        &catalog.grants_by_plugin_id,
+        catalog.access_context.as_ref(),
+    );
+    if pending.is_empty() {
+        return Ok(PluginAutoUpdateBatchResponse::empty());
+    }
+    super::plugin_sync_protocol::ensure_sync_state(mysql, redis, user_id).await?;
+    let total = pending.len();
+    let mut lease: Option<PluginWriteLease<'_, R>> = None;
+    let mut selected = Vec::new();
+    for (installed, _, _) in pending {
+        match PluginWriteLease::acquire_names_wait(
+            redis,
+            user_id,
+            vec![installed.name.clone()],
+            std::time::Duration::ZERO,
+        )
+        .await
+        {
+            Ok(part) => {
+                let part = part.for_installations(vec![installed.id]);
+                if let Some(group) = lease.as_mut() {
+                    group.include(part);
                 } else {
-                    PluginAutoUpdateBatchResponse::empty()
-                };
-                lease.commit_revision(transaction, revision).await?;
-                Ok(response)
-            })
-            .await
-    })
+                    lease = Some(part);
+                }
+                selected.push(installed.id);
+                if selected.len() == AUTO_UPDATE_BATCH_SIZE {
+                    break;
+                }
+            }
+            Err(error)
+                if super::write_coordination::plugin_write_error_code(&error)
+                    == Some("plugin_write_busy") =>
+            {
+                continue;
+            }
+            Err(error) => {
+                if let Some(group) = lease {
+                    group.release().await;
+                }
+                return Err(error);
+            }
+        }
+    }
+    let Some(lease) = lease else {
+        return Err(coordination_error("plugin_write_busy"));
+    };
+    let outcome = tokio::time::timeout_at(
+        lease.deadline,
+        mysql.with_transaction(async |tx| {
+            let revisions = lease.read_plugin_revisions(tx).await?;
+            let mut current = list_installed_kinds(tx, user_id).await?;
+            current.retain(|row| selected.contains(&row.id));
+            let mut response = apply_auto_update_batch(tx, &catalog, &current, user_id).await?;
+            if response.updated_count > 0 {
+                let mut query = &mut *tx;
+                super::plugin_sync_protocol::touch_desired_state(&mut query, user_id).await?;
+            }
+            lease.commit_plugin_revisions(tx, revisions).await?;
+            response.remaining_count = total.saturating_sub(response.updated.len());
+            Ok(response)
+        }),
+    )
     .await
     .unwrap_or_else(|_| Err(coordination_error("plugin_write_lease_lost")));
-    lease.release().await;
-    result
+    if matches!(
+        &outcome,
+        Ok(_) | Err(brz_mysql::MysqlError::InvalidQuery { .. })
+    ) {
+        lease.release().await;
+    }
+    outcome
 }
 
 struct AutoUpdateCatalog {
@@ -425,19 +464,24 @@ async fn advance_installation<T: MysqlTransaction>(
     user_id: i64,
 ) -> MysqlResult<()> {
     let revision = business_revision(&installed.json.0.to_value())?;
+    let write_revision =
+        super::write_coordination::installation_write_revision(&installed.json.0.to_value())?;
     payload["spec"]["revision"] = Value::from(revision + 1);
+    payload["spec"]["writeRevision"] = Value::from(write_revision);
     let execution = transaction
         .execute(
             "UPDATE kinds SET json=?, updated_at=NOW() WHERE kinds.id = ? \
              AND user_id = ? AND kind = 'InstalledPlugin' AND namespace = 'default' \
              AND name = ? AND is_active IS true AND \
-             COALESCE(JSON_EXTRACT(json, '$.spec.revision'), 0) = ?",
+             COALESCE(JSON_EXTRACT(json, '$.spec.revision'), 0) = ? AND \
+             COALESCE(JSON_EXTRACT(json, '$.spec.writeRevision'), 0) = ?",
             (
                 serde_json::to_string(&payload).expect("payload serializes"),
                 installed.id,
                 user_id,
                 installed.name.as_str(),
                 revision,
+                write_revision,
             ),
         )
         .await?;

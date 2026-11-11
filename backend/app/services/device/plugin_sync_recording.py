@@ -52,7 +52,12 @@ def current_legacy_plugin_ids(
 
 
 def record_versioned_result(
-    recorder: Any, db: Session, user_id: int, result: DeviceCapabilitySyncResult
+    recorder: Any,
+    db: Session,
+    user_id: int,
+    result: DeviceCapabilitySyncResult,
+    *,
+    installed_ids: list[int] | None = None,
 ) -> None:
     from app.services.device.capability_sync_service import (
         device_capability_sync_service,
@@ -83,7 +88,9 @@ def record_versioned_result(
             if row.installed_kind_id not in expected
         )
     ids = sorted(set(expected) | removed_ids)
-    # The account write lease and revision CAS serialize this refresh with
+    if installed_ids is not None:
+        ids = [item for item in ids if item in installed_ids]
+    # The installation leases and parent CAS serialize this refresh with
     # install/remove transactions. No network work occurs inside the lease.
     installs = (
         db.query(Kind)

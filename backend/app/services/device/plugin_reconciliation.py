@@ -16,7 +16,7 @@ from app.services.plugin_device_installation_service import (
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_write_coordination import (
-    acquire_plugin_write_lock,
+    acquire_plugin_write_locks,
     configure_plugin_session,
 )
 from shared.telemetry.decorators import trace_async
@@ -47,7 +47,15 @@ def record_reconciliation_result(
     """Validate and persist the acknowledged snapshot under one write lease."""
     with get_db_session() as db:
         configure_plugin_session(db)
-        acquire_plugin_write_lock(db, user_id)
+        scopes = plugin_device_installation_service._response_scopes(
+            db,
+            user_id,
+            DeviceCapabilitySyncResponse(results=[result]),
+            None,
+        )
+        acquire_plugin_write_locks(
+            db, ((user_id, installed_id) for installed_id in scopes)
+        )
         latest = device_capability_sync_service.build_desired_plugins(
             db, user_id=user_id, device_id=device_id
         )

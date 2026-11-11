@@ -17,9 +17,7 @@ use brz_mysql::MysqlResult;
 use chrono::{Local, NaiveDateTime};
 use serde_json::{Map, Value};
 
-use crate::device_identity::{
-    PluginDeviceInstallationRow, plugin_device_id_on, reconcile_plugin_device_rows_on,
-};
+use crate::device_identity::{PluginDeviceInstallationRow, plugin_device_id_on};
 use crate::plugins_marketplace::db::{InstalledKindRow, KIND_COLUMNS};
 use crate::plugins_marketplace::query::PluginQuery;
 
@@ -358,6 +356,19 @@ pub async fn record_device_sync_result<Q>(
 where
     Q: PluginQuery,
 {
+    record_device_sync_result_for_installs(session, user_id, result, guard, None).await
+}
+
+pub(crate) async fn record_device_sync_result_for_installs<Q>(
+    session: &mut Q,
+    user_id: i64,
+    result: &SyncResult,
+    guard: Option<&dyn crate::device_identity::LeaseCheck>,
+    installed_ids: Option<&[i64]>,
+) -> MysqlResult<()>
+where
+    Q: PluginQuery,
+{
     // `_record_device_sync_result`: a versioned snapshot serializes with the
     // account protocol state before the alias reconciliation reads rows. Its
     // `lock_plugin_sync_state` re-enters `acquire_plugin_write_lock`, and the
@@ -373,16 +384,28 @@ where
     // `reconcile_plugin_device_rows` owns the first flush boundaries: the
     // superseded alias DELETE batch and the selected canonical `device_id`
     // assignment (dirty even when the value is unchanged).
-    reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id, guard)
-        .await?;
+    crate::device_identity::reconcile_plugin_device_rows_for_installs_on::<
+        _,
+        PluginDeviceInstallationRow,
+    >(session, user_id, guard, installed_ids)
+    .await?;
     let canonical_id = plugin_device_id_on(session, user_id, &result.device_id).await?;
     if let Some(payload) = &result.desired_plugin_snapshot {
-        return record_versioned_result(session, user_id, &canonical_id, result, payload, guard)
-            .await;
+        return record_versioned_result(
+            session,
+            user_id,
+            &canonical_id,
+            result,
+            payload,
+            guard,
+            installed_ids,
+        )
+        .await;
     }
-    let installs: Vec<InstalledKindRow> = session
+    let mut installs: Vec<InstalledKindRow> = session
         .fetch_all(DESIRED_INSTALLS_QUERY, (user_id,))
         .await?;
+    installs.retain(|row| installed_ids.is_none_or(|ids| ids.contains(&row.id)));
     let desired_ids: Vec<i64> = installs.iter().map(|installed| installed.id).collect();
     let mut flush = PendingFlush::default();
     let plugin_results: Vec<(i64, SyncItem)> = result
@@ -402,6 +425,7 @@ where
         &desired_ids,
         &reported_ids,
         &mut flush,
+        installed_ids,
     )
     .await?;
     for installed in &installs {
@@ -442,6 +466,7 @@ async fn record_versioned_result<Q>(
     result: &SyncResult,
     payload: &Value,
     guard: Option<&dyn crate::device_identity::LeaseCheck>,
+    installed_ids: Option<&[i64]>,
 ) -> MysqlResult<()>
 where
     Q: PluginQuery,
@@ -476,6 +501,7 @@ where
     ids.extend(removed_ids.iter().copied());
     ids.sort_unstable();
     ids.dedup();
+    ids.retain(|id| installed_ids.is_none_or(|owned| owned.contains(id)));
     let (filter, id_arguments) = crate::sql_support::id_in_clause("kinds.id", &ids);
     let statement = format!(
         "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.kind = \
@@ -642,6 +668,7 @@ async fn record_removed_installs<Q>(
     desired_ids: &[i64],
     reported_ids: &[i64],
     flush: &mut PendingFlush,
+    installed_ids: Option<&[i64]>,
 ) -> MysqlResult<()>
 where
     Q: PluginQuery,
@@ -651,6 +678,9 @@ where
         .await?;
     let now = Local::now().naive_local();
     for row in rows {
+        if !installed_ids.is_none_or(|ids| ids.contains(&row.installed_kind_id)) {
+            continue;
+        }
         if desired_ids.contains(&row.installed_kind_id)
             || reported_ids.contains(&row.installed_kind_id)
         {

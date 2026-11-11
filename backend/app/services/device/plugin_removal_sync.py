@@ -32,7 +32,6 @@ _inflight: set[tuple[int, str]] = set()
 
 def prepare_plugin_removal(db: Session, user_id: int, installed_id: int) -> None:
     """Stage durable cleanup in the same transaction as the account removal."""
-    acquire_plugin_write_lock(db, user_id)
     installed = (
         db.query(Kind)
         .filter_by(
@@ -45,6 +44,7 @@ def prepare_plugin_removal(db: Session, user_id: int, installed_id: int) -> None
     )
     if installed is None:
         return
+    acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
     # Older/uploaded installations may not yet have materialization rows.
     devices = (
         db.query(Kind)

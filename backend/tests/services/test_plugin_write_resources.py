@@ -6,9 +6,11 @@ import pytest
 from sqlalchemy import create_engine, event
 
 from app.services import plugin_write_resources as resources
+from app.services.plugin_write_resources import redis_client as real_redis_client
 
 
 def test_redis_commands_have_short_timeouts_and_no_network_retry(monkeypatch):
+    monkeypatch.setattr(resources, "redis_client", real_redis_client)
     factory = Mock()
     monkeypatch.setattr(resources, "_redis", None)
     monkeypatch.setattr(resources.Redis, "from_url", factory)
@@ -83,3 +85,32 @@ def test_redis_close_failure_still_disposes_every_policy_pool(monkeypatch):
     assert not resources._policy_engines
     for engine in engines:
         engine.dispose.assert_called_once()
+
+
+@pytest.mark.parametrize("scope", ["policy", "sync"])
+def test_metadata_bootstrap_redis_failure_keeps_the_coordination_contract(
+    monkeypatch, scope
+):
+    from types import SimpleNamespace
+
+    from redis.exceptions import ConnectionError
+
+    from app.core.distributed_lock import distributed_lock
+    from app.services.plugin_policy_revision import _materialize_default
+    from app.services.plugin_sync_revision import materialize_sync_state
+    from app.services.plugin_write_errors import PluginWriteError
+
+    db = SimpleNamespace(
+        info={},
+        get_bind=lambda: SimpleNamespace(
+            dialect=SimpleNamespace(name="mysql"),
+        ),
+    )
+    monkeypatch.setattr(
+        distributed_lock, "owned_lock", Mock(side_effect=ConnectionError("fixture"))
+    )
+    with pytest.raises(PluginWriteError, match="plugin_write_unavailable"):
+        if scope == "policy":
+            _materialize_default(db, 913)
+        else:
+            materialize_sync_state(db, 913, {"spec": {"generation": 0}})

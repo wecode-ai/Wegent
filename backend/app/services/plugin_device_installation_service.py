@@ -27,7 +27,10 @@ from app.services.plugin_device_identity import (
     plugin_device_id,
     reconcile_plugin_device_rows,
 )
-from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_coordination import (
+    acquire_plugin_write_lock,
+    acquire_plugin_write_locks,
+)
 from app.services.plugin_write_operations import run_plugin_operation
 
 logger = logging.getLogger(__name__)
@@ -87,7 +90,7 @@ class PluginDeviceInstallationService:
         reset_failures: bool,
     ) -> None:
         """Revalidate and materialize desired state inside one worker transaction."""
-        acquire_plugin_write_lock(db, user_id)
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_kind_id)
         installed = (
             db.query(Kind)
             .filter_by(
@@ -107,7 +110,7 @@ class PluginDeviceInstallationService:
         if current_release_id != desired_release_id:
             db.commit()
             return
-        reconcile_plugin_device_rows(db, user_id)
+        reconcile_plugin_device_rows(db, user_id, installed_ids=[installed_kind_id])
         seen_device_ids: set[str] = set()
         for submitted_device_id in device_ids:
             device_id = plugin_device_id(db, user_id, submitted_device_id)
@@ -143,7 +146,7 @@ class PluginDeviceInstallationService:
     def mark_uninstalling(
         self, db: Session, *, user_id: int, installed_kind_id: int, commit: bool = True
     ) -> None:
-        acquire_plugin_write_lock(db, user_id)
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_kind_id)
         rows = (
             db.query(PluginDeviceInstallation)
             .filter(
@@ -169,9 +172,14 @@ class PluginDeviceInstallationService:
     ) -> None:
         """Remove materialized rows only for devices that confirmed uninstall."""
         if any(item.desired_plugin_snapshot is not None for item in response.results):
-            self.record_sync_response(db, user_id=user_id, response=response)
+            self.record_sync_response(
+                db,
+                user_id=user_id,
+                response=response,
+                installed_ids=[installed_kind_id],
+            )
             return
-        acquire_plugin_write_lock(db, user_id)
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_kind_id)
         installed = (
             db.query(Kind)
             .filter_by(
@@ -208,6 +216,7 @@ class PluginDeviceInstallationService:
         *,
         user_id: int,
         response: DeviceCapabilitySyncResponse,
+        installed_ids: list[int] | None = None,
     ) -> None:
         for attempt in range(1, DEVICE_SYNC_WRITE_ATTEMPTS + 1):
             try:
@@ -216,10 +225,16 @@ class PluginDeviceInstallationService:
                     for item in response.results
                 ):
                     lock_plugin_sync_state(db, user_id)
-                reconcile_plugin_device_rows(db, user_id)
+                scopes = self._response_scopes(db, user_id, response, installed_ids)
+                acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
+                reconcile_plugin_device_rows(db, user_id, installed_ids=scopes)
                 for device_result in response.results:
                     self._record_device_sync_result(
-                        db, user_id, device_result, reconcile=False
+                        db,
+                        user_id,
+                        device_result,
+                        reconcile=False,
+                        installed_ids=scopes,
                     )
                 db.commit()
                 return
@@ -247,7 +262,8 @@ class PluginDeviceInstallationService:
         if any(item.desired_plugin_snapshot is not None for item in response.results):
             self.record_sync_response(db, user_id=user_id, response=response)
             return
-        reconcile_plugin_device_rows(db, user_id)
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_kind_id)
+        reconcile_plugin_device_rows(db, user_id, installed_ids=[installed_kind_id])
         installed = next(
             (
                 item
@@ -300,7 +316,6 @@ class PluginDeviceInstallationService:
         reported_plugins: list[PluginDeviceReportItem],
     ) -> list[int]:
         """Mark locally present plugins as installed without pushing packages."""
-        reconcile_plugin_device_rows(db, user_id)
         normalized_device_id = plugin_device_id(db, user_id, device_id)
         reports_by_id = {
             report.installedPluginId: report for report in reported_plugins
@@ -308,6 +323,13 @@ class PluginDeviceInstallationService:
         if not normalized_device_id or not reports_by_id:
             db.commit()
             return []
+        scopes = [
+            row.id
+            for row in self._desired_installs(db, user_id)
+            if row.id in reports_by_id
+        ]
+        acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
+        reconcile_plugin_device_rows(db, user_id, installed_ids=scopes)
         acknowledged_ids: list[int] = []
         for installed in self._desired_installs(db, user_id):
             report = reports_by_id.get(installed.id)
@@ -332,11 +354,20 @@ class PluginDeviceInstallationService:
         result: DeviceCapabilitySyncResult,
         *,
         reconcile: bool = True,
+        installed_ids: list[int] | None = None,
     ) -> None:
+        if installed_ids is None:
+            installed_ids = self._response_scopes(
+                db,
+                user_id,
+                DeviceCapabilitySyncResponse(success=result.success, results=[result]),
+                None,
+            )
         if reconcile and result.desired_plugin_snapshot is not None:
             lock_plugin_sync_state(db, user_id)
         if reconcile:
-            reconcile_plugin_device_rows(db, user_id)
+            acquire_plugin_write_locks(db, ((user_id, item) for item in installed_ids))
+            reconcile_plugin_device_rows(db, user_id, installed_ids=installed_ids)
         result = result.model_copy(
             update={"device_id": plugin_device_id(db, user_id, result.device_id)}
         )
@@ -346,9 +377,15 @@ class PluginDeviceInstallationService:
                 record_versioned_result,
             )
 
-            record_versioned_result(self, db, user_id, result)
+            record_versioned_result(
+                self, db, user_id, result, installed_ids=installed_ids
+            )
             return
-        installs = self._desired_installs(db, user_id)
+        installs = [
+            row
+            for row in self._desired_installs(db, user_id)
+            if row.id in installed_ids
+        ]
         if snapshot is not None:
             from app.services.device.plugin_sync_recording import (
                 current_legacy_plugin_ids,
@@ -365,7 +402,12 @@ class PluginDeviceInstallationService:
         }
         if snapshot is None or snapshot.get("mode") == "replace":
             self._record_removed_installs(
-                db, user_id, result, desired_ids, set(plugin_results)
+                db,
+                user_id,
+                result,
+                desired_ids,
+                set(plugin_results),
+                installed_ids=installed_ids,
             )
         for installed in installs:
             if confirmed is not None and installed.id not in confirmed:
@@ -427,6 +469,8 @@ class PluginDeviceInstallationService:
         result: DeviceCapabilitySyncResult,
         desired_ids: set[int],
         reported_ids: set[int],
+        *,
+        installed_ids: list[int] | None = None,
     ) -> None:
         rows = (
             db.query(PluginDeviceInstallation)
@@ -437,6 +481,8 @@ class PluginDeviceInstallationService:
             .all()
         )
         for row in rows:
+            if installed_ids is not None and row.installed_kind_id not in installed_ids:
+                continue
             if (
                 row.installed_kind_id in desired_ids
                 or row.installed_kind_id in reported_ids
@@ -547,7 +593,8 @@ class PluginDeviceInstallationService:
         manual_retry: bool = False,
     ) -> int:
         """Prepare one plugin device row without changing unrelated plugins."""
-        reconcile_plugin_device_rows(db, user_id)
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_kind_id)
+        reconcile_plugin_device_rows(db, user_id, installed_ids=[installed_kind_id])
         normalized_device_id = plugin_device_id(db, user_id, device_id)
         installed = next(
             (
@@ -682,6 +729,45 @@ class PluginDeviceInstallationService:
             if isinstance(value, str) and value.strip():
                 return value.strip()
         return None
+
+    def _response_scopes(
+        self,
+        db: Session,
+        user_id: int,
+        response: DeviceCapabilitySyncResponse,
+        installed_ids: list[int] | None,
+    ) -> list[int]:
+        if not response.results:
+            return []
+        owned = {
+            row.id
+            for row in db.query(Kind.id)
+            .filter_by(
+                user_id=user_id,
+                kind="InstalledPlugin",
+                namespace="default",
+            )
+            .all()
+        }
+        if installed_ids is not None:
+            return sorted(owned.intersection(installed_ids))
+        selected: set[int] = set()
+        for result in response.results:
+            snapshot = result.desired_plugin_snapshot
+            if (
+                snapshot is None
+                or snapshot.get("mode") == "replace"
+                or (snapshot.get("plugin_sync") or {}).get("complete")
+            ):
+                return sorted(owned)
+            selected.update(
+                item["installed_plugin_id"] for item in snapshot.get("plugins") or []
+            )
+            selected.update(
+                item["installed_plugin_id"]
+                for item in snapshot.get("removed_plugins") or []
+            )
+        return sorted(owned.intersection(selected))
 
     def _desired_installs(self, db: Session, user_id: int) -> list[Kind]:
         return (

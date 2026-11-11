@@ -594,6 +594,7 @@ def test_new_uninstall_fences_same_release_reinstall_receipt(test_db, test_user)
     test_db.refresh(row)
     assert row.state == "pending"
     install = _payload(test_db, installed)
+    test_db.refresh(installed)
     installed.is_active = False
     service.mark_uninstalling(
         test_db, user_id=test_user.id, installed_kind_id=installed.id

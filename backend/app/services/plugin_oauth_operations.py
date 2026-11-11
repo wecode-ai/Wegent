@@ -30,7 +30,9 @@ class PluginOAuthOperations:
         device_id: str,
         request: PluginNativeExecution,
     ) -> dict:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(
+            db, user_id, installed_id=request.installed_plugin_id
+        )
         package, connection, credential = self.execution.resolve(
             db, user_id=user_id, device_id=device_id, request=request
         )
@@ -91,7 +93,9 @@ class PluginOAuthOperations:
     def finish(
         self, db: Session, *, user_id: int, device_id: str, request: PluginOAuthFinish
     ) -> dict:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(
+            db, user_id, connection_id=request.connection_id
+        )
         row = self.connections._get(db, user_id, request.connection_id)
         spec = dict(row.json["spec"])
         operation = spec.get("oauthRefresh") or {}

@@ -25,7 +25,7 @@ use super::desired_capabilities::{
     build_desired_capabilities_for_registration, capability_snapshot,
 };
 use super::online_route::{OnlineRouteResolution, resolve_online_route, supports_plugin_delta};
-use super::record_sync_result::{SyncResult, record_device_sync_result};
+use super::record_sync_result::SyncResult;
 use super::sync_device::{DESIRED_STATE_SYNC_ATTEMPTS, ack_argument, log_build_error};
 
 /// `REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS`: the registration-time deadline.
@@ -53,19 +53,28 @@ pub(crate) async fn prepare_plugins_for_registered_device(
     // (`plugin_marketplace_service.py:173`) and the source's `before_commit`
     // hook flushes the pending writes and then advances the policy revision in
     // the same transaction (`plugin_write_coordination.py:243-256`).
-    let lease =
-        match super::write_coordination::PluginWriteLease::acquire(state.redis.as_ref(), user_id)
-            .await
-        {
-            Ok(lease) => lease,
-            Err(error) if super::write_coordination::is_plugin_write_error(&error) => {
-                return PluginPreparation::Deferred;
-            }
-            Err(error) => {
-                tracing::error!(%error, user_id, "Plugin write lease acquisition failed");
-                return PluginPreparation::Failed;
-            }
-        };
+    let lease = match async {
+        super::plugin_sync_protocol::ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id)
+            .await?;
+        super::write_coordination::PluginWriteLease::acquire_installed(
+            &state.mysql,
+            state.redis.as_ref(),
+            user_id,
+            None,
+        )
+        .await
+    }
+    .await
+    {
+        Ok(lease) => lease,
+        Err(error) if super::write_coordination::is_plugin_write_error(&error) => {
+            return PluginPreparation::Deferred;
+        }
+        Err(error) => {
+            tracing::error!(%error, user_id, "Plugin write lease acquisition failed");
+            return PluginPreparation::Failed;
+        }
+    };
     let outcome = state
         .mysql
         .with_transaction_options(
@@ -77,32 +86,36 @@ pub(crate) async fn prepare_plugins_for_registered_device(
                 // connection the transaction already owns; a missing, duplicated,
                 // malformed or inactive policy skips only the revision CAS, while
                 // transport failures stay errors.
-                let revision = lease.read_policy_revision(&mut *session).await?;
+                let revisions = lease.read_plugin_revisions(&mut *session).await?;
                 // Source initial acquire: the policy read is followed by the
                 // lease's `owned` GET before any business read.
                 lease.verify_owned().await?;
-                super::catalog_reconcile::reconcile_stale_installed_catalog_refs(
+                let changed = super::catalog_reconcile::reconcile_installed_catalog_refs(
                     &mut session,
                     state.redis.as_ref(),
                     &state.entity_resolvers,
                     user_id,
+                    lease.installation_ids(),
                 )
                 .await?;
                 // `ensure_pending_for_device` enters
                 // `reconcile_plugin_device_rows`, whose reentrant acquire only
                 // checks ownership again (no second SET).
                 lease.verify_owned().await?;
-                super::sync_device::ensure_pending_for_device(
+                super::sync_device::ensure_pending_for_installs(
                     &mut session,
                     user_id,
                     device_id,
                     Some(&lease),
+                    lease.installation_ids(),
                 )
                 .await?;
-                match revision {
-                    Some(revision) => lease.commit_revision(&mut *session, revision).await,
-                    None => Ok(()),
+                if changed > 0 {
+                    super::plugin_sync_protocol::touch_desired_state(&mut session, user_id).await?;
                 }
+                lease
+                    .commit_plugin_revisions(&mut *session, revisions)
+                    .await
             },
         )
         .await;
@@ -136,16 +149,25 @@ pub(crate) async fn record_registration_sync_result(
     // second root transaction (`plugin_device_identity.py:118-124`), with the
     // source's `before_flush`/`before_commit` ownership checks and revision
     // advance.
-    let lease =
-        match super::write_coordination::PluginWriteLease::acquire(state.redis.as_ref(), user_id)
-            .await
-        {
-            Ok(lease) => lease,
-            Err(error) => {
-                tracing::error!(%error, user_id, "Sync result plugin write lease failed");
-                return;
-            }
-        };
+    let lease = match async {
+        super::plugin_sync_protocol::ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id)
+            .await?;
+        super::write_coordination::PluginWriteLease::acquire_installed(
+            &state.mysql,
+            state.redis.as_ref(),
+            user_id,
+            None,
+        )
+        .await
+    }
+    .await
+    {
+        Ok(lease) => lease,
+        Err(error) => {
+            tracing::error!(%error, user_id, "Sync result plugin write lease failed");
+            return;
+        }
+    };
     let outcome = state
         .mysql
         .with_transaction_options(
@@ -155,13 +177,19 @@ pub(crate) async fn record_registration_sync_result(
                 let mut session = &mut *transaction;
                 // Source order: policy SELECT, then the initial ownership
                 // check, then the business reads; the commit check follows.
-                let revision = lease.read_policy_revision(&mut *session).await?;
+                let revisions = lease.read_plugin_revisions(&mut *session).await?;
                 lease.verify_owned().await?;
-                record_device_sync_result(&mut session, user_id, result, Some(&lease)).await?;
-                match revision {
-                    Some(revision) => lease.commit_revision(&mut *session, revision).await,
-                    None => Ok(()),
-                }
+                super::record_sync_result::record_device_sync_result_for_installs(
+                    &mut session,
+                    user_id,
+                    result,
+                    Some(&lease),
+                    lease.installation_ids(),
+                )
+                .await?;
+                lease
+                    .commit_plugin_revisions(&mut *session, revisions)
+                    .await
             },
         )
         .await;

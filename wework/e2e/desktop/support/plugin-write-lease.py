@@ -35,10 +35,11 @@ def main() -> None:
     user_id = int(os.environ["WEWORK_E2E_PLUGIN_USER_ID"])
     if user_id <= 0:
         raise ValueError("The lease fixture requires a positive user ID")
-    key = f"wegent:plugin-write:{user_id}"
+    name = os.environ.get("WEWORK_E2E_PLUGIN_NAME", "")
+    key = f"wegent:plugin-write:{user_id}:{name}"
     client = Redis.from_url(url, socket_connect_timeout=1, socket_timeout=2)
     mode = os.environ.get("WEWORK_E2E_PLUGIN_FAULT", "lease")
-    if mode in {"user-row", "device-row"}:
+    if mode in {"user-row", "device-row", "plugin-row"}:
         options = json.loads(os.environ["WEWORK_E2E_PLUGIN_MYSQL"])
         if options["host"] != "127.0.0.1" or not options["database"].startswith(
             "wework_e2e_"
@@ -47,7 +48,25 @@ def main() -> None:
         with pymysql.connect(**options, user="root", autocommit=False) as db:
             try:
                 with db.cursor() as cursor:
-                    if mode == "device-row":
+                    if mode == "plugin-row":
+                        record_id = int(os.environ["WEWORK_E2E_DEVICE_RECORD_ID"])
+                        if record_id <= 0:
+                            raise ValueError(
+                                "The fixture requires a positive record ID"
+                            )
+                        # Avoid secondary-index next-key locks on other plugins.
+                        cursor.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                        cursor.execute(
+                            "UPDATE kinds FORCE INDEX (PRIMARY) SET json=json WHERE id=%s AND user_id=%s "
+                            "AND namespace='default' AND kind='InstalledPlugin'",
+                            (record_id, user_id),
+                        )
+                        cursor.execute(
+                            "SELECT name FROM kinds WHERE id=%s AND user_id=%s "
+                            "AND namespace='default' AND kind='InstalledPlugin'",
+                            (record_id, user_id),
+                        )
+                    elif mode == "device-row":
                         record_id = int(os.environ["WEWORK_E2E_DEVICE_RECORD_ID"])
                         if record_id <= 0:
                             raise ValueError(
@@ -62,9 +81,23 @@ def main() -> None:
                         cursor.execute(
                             "SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,)
                         )
-                    if cursor.fetchone() is None:
+                    row = cursor.fetchone()
+                    if row is None:
                         raise ValueError("The fixture row does not exist")
-                emit("ready")
+                    if mode == "plugin-row":
+                        key = f"wegent:plugin-write:{user_id}:{row[0]}"
+                if mode == "plugin-row":
+
+                    def observe_scope():
+                        with Redis.from_url(url).monitor() as monitor:
+                            emit("ready")
+                            for command in monitor.listen():
+                                if command["command"].startswith(f"SET {key} "):
+                                    emit("contended")
+
+                    threading.Thread(target=observe_scope, daemon=True).start()
+                else:
+                    emit("ready")
                 if sys.stdin.read():
                     raise ValueError("The row lock accepts only stdin closure")
             finally:
@@ -87,6 +120,8 @@ def main() -> None:
         return
     if mode != "lease":
         raise ValueError("Unknown coordination fault")
+    if not name or name == "undefined":
+        raise ValueError("The fixture requires a plugin scope")
     lock = client.lock(key, timeout=30, blocking_timeout=10, thread_local=False)
     if not lock.acquire():
         raise RuntimeError("The fixture could not acquire the plugin write lease")

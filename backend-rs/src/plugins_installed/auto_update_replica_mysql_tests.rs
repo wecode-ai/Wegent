@@ -8,7 +8,7 @@ use super::*;
 use anyhow::{Context, Result, ensure};
 use brz_redis::{Redis, cmd};
 
-const KEY: &str = "wegent:plugin-write:7";
+const KEY: &str = "wegent:plugin-write:7:example";
 const BARRIER: &str = "wegent:plugin-write-test:replication-barrier";
 
 struct Replica {
@@ -157,8 +157,8 @@ async fn persisted_state(mysql: &MysqlService) -> MysqlResult<(i64, i64)> {
         (),
     ).await?;
     let revision: i64 = mysql.fetch_one(
-        "SELECT CAST(JSON_EXTRACT(json,'$.spec.revision') AS SIGNED) FROM kinds \
-         WHERE user_id=7 AND kind='ConnectorAuthPolicy' AND namespace='plugin-auth' AND name='account'",
+        "SELECT COALESCE(CAST(JSON_EXTRACT(json,'$.spec.writeRevision') AS SIGNED),0) FROM kinds \
+         WHERE user_id=7 AND kind='InstalledPlugin' AND namespace='default' AND name='example'",
         (),
     ).await?;
     Ok((release, revision))
@@ -186,7 +186,7 @@ async fn verify_current_owner(
     );
     ensure!(
         persisted_state(mysql).await? == (2, revision + 1),
-        "batch and policy must commit"
+        "batch and plugin fence must commit"
     );
     replica.assert_frozen(stale_owner).await?;
     ensure!(
@@ -213,7 +213,8 @@ async fn verify_replaced_owner(
         .await?
         .expect("fixture installation is eligible");
     replica.follow(primary).await?;
-    let lease = PluginWriteLease::acquire(Some(&replica.routed), 7).await?;
+    let lease =
+        PluginWriteLease::acquire_installed(mysql, Some(&replica.routed), 7, Some(&[1])).await?;
     let token = primary
         .get::<_, String>(KEY)
         .await?
@@ -237,7 +238,7 @@ async fn verify_replaced_owner(
     );
     ensure!(
         persisted_state(mysql).await? == before,
-        "installation and policy CAS must roll back"
+        "installation and plugin CAS must roll back"
     );
     ensure!(
         primary.get::<_, String>(KEY).await?.as_deref() == Some("successor"),
@@ -258,7 +259,7 @@ async fn write_before_replacement<T: MysqlTransaction>(
     replica: &Replica,
     token: &str,
 ) -> MysqlResult<()> {
-    let revision = lease.read_revision(transaction).await?;
+    let revision = lease.read_plugin_revisions(transaction).await?;
     let installed = list_installed_kinds(transaction, 7).await?;
     assert_eq!(
         apply_auto_update_batch(transaction, catalog, &installed, 7)
@@ -290,5 +291,5 @@ async fn write_before_replacement<T: MysqlTransaction>(
         tokio::time::Instant::now() < lease.deadline,
         "ownership replacement must be rejected before the operation budget expires"
     );
-    lease.commit_revision(transaction, revision).await
+    lease.commit_plugin_revisions(transaction, revision).await
 }

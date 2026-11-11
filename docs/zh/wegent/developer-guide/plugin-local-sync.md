@@ -11,7 +11,7 @@ sidebar_position: 59
 - `InstalledPlugin/default` 仍是账号期望状态的唯一来源，原安装、更新、卸载和包下载能力继续复用。
 - 不新增表、迁移或 `plugin-local-sync` 命名空间记录；不保存独立操作、执行快照或回执账本。
 - 原 `PluginSyncState/plugin-sync/account` 继续保存 generation 和设备水位。`spec.localIntentOrders` 保存每实例、每插件的顺序水位；`spec.localIntents` 每实例、每插件仅保留一个最新受理标记，包含 operation ID、请求摘要、顺序、安装 ID、动作及安装 revision，不包含完整插件副本或历史。
-- 期望状态、最新受理标记与顺序水位在原账号 Redis 写锁和 revision CAS 下同事务提交。旧客户端的写入和 Socket generation 更新保留这些字段。
+- 期望状态、最新受理标记与顺序水位在插件 Redis 租约和 CAS 下同事务提交。旧客户端的写入和 Socket generation 更新保留这些字段。
 - Native journal 按 Backend 和账号隔离，原请求在 HTTP 之前原子落盘，不保存 token。实际文件、manifest 和运行时配置由统一安装器管理。HTTP 和 Socket 共享安装器、generation、tombstone、校验与发布保护。
 
 ## 核心流程
@@ -39,7 +39,46 @@ pending 恢复先于完整内容扫描启动。全量指纹在阻塞线程执行
 
 扫描复用已有单调意图顺序号识别新的前台请求。pending 的受理、明确拒绝及 superseded 归档属于恢复进度，可以合并而不触发重扫；归档引起的对账标记和缓存失效仍被保留。
 
+## 插件级写入协调
+
+Redis key 为 `wegent:plugin-write:{user_id}:{InstalledPlugin.name}`。名称复用原稳定派生规则，首次安装前即可计算；已有历史名称的安装还取得原记录的租约。设备号不能用于账号状态的锁，否则两台设备可以同时改变同一安装。
+
+租约 TTL 为 30 秒，Python 每 10 秒续期，事务预算为 20 秒，单插件最多等待 3 秒。批量操作排序后逐个尝试，多个目标时不等待忙锁，并在失败时先回滚再释放已取得的租约。不同插件的网络下载、适配器执行和 journal HTTP 不持有公共用户锁；本机安装器保留原逐插件准备锁和短暂的 manifest 发布锁。
+
+`InstalledPlugin.spec.writeRevision` 是认证、设备记录和安装的共同提交栅栏。提交以原写版本为条件递增；安装 JSON 整体替换同时比较并保留写版本。原 `spec.revision` 仍表示安装意图，仅安装、更新、卸载等期望状态改变时推进。软卸载保留原安装行及版本，重装继续使用；迟到回执同时检查 generation、水位和当前期望状态。
+
+健康目录只读检查不取得插件写租约；检测到目录漂移或重复安装后，才对需修复的记录加锁并重新核验。
+
+现有 `PluginSyncState` 只承担短暂的同步元数据写入：不同插件的意图按各自 JSON 路径原子合并；快照先读元数据版本、再读插件，最后将 generation 与版本一起 CAS。期望状态事务同时推进元数据版本，避免旧内容获得更新的 generation。CAS 冲突需回滚并重新构造快照；不增加表或 `FOR UPDATE`。
+
+认证提交还校验真实的账号自动授权策略版本，最后用条件空更新保护该共享设置直到提交；普通认证不递增策略版本，安装／更新／卸载不依赖此策略。只有真正的账户开关和首次元数据初始化使用短暂的专用元数据租约。
+
+```mermaid
+sequenceDiagram
+    participant C as 客户端或认证任务
+    participant R as Redis 插件租约
+    participant B as Backend 事务
+    participant D as kinds 与关联记录
+    C->>R: 取得用户与插件名称的租约
+    R-->>C: 唯一 owner token 与 TTL
+    C->>B: 执行目标插件操作
+    B->>D: 读取安装 writeRevision
+    B->>D: 写入安装、认证或设备状态
+    B->>R: 校验 owner 与事务预算
+    B->>D: CAS 安装 writeRevision
+    alt 版本和租约有效
+        B->>D: COMMIT
+    else 冲突或租约失效
+        B->>D: ROLLBACK
+    end
+    B->>R: 按 owner token 释放租约
+```
+
+首次安装尚无安装行，先取得 Redis NX 租约，并读取现有 `PluginSyncState.spec.creationRevisions[安装名称]` 的计数。首次插入提交时只 CAS 对应插件的计数；计数随卸载保留，使租约过期的旧首次安装无法晚于后续安装／卸载提交。不同插件比较各自的槽位，只有最终元数据写入短暂共享数据库行，不跨网络或适配器等待持有它。已有安装行仍使用自身的 `writeRevision`。请求重试继续复用原最新受理标记和顺序水位。
+
 ## 部署与验证
+
+插件租约协议的 key 与旧用户锁不同，不能让新旧 Python／Rust 写入进程混跑。上线必须先停止受理并排空旧写事务，再统一切换两种 Backend；回滚采用同样步骤。不能仅靠滚动发布保证互斥。现有 v2 客户端协议不变，新桌面版本才具有本机并行执行能力。
 
 默认 `PLUGIN_LOCAL_SYNC_ENABLED=false`。全部 Python、Rust、网关和 Runtime 副本部署完成后才启用。未携带新模式的旧接口逻辑不变；旧客户端仍走原路径。合同 3 与原 PR 内的合同 2 不混用，不能把新查询参数被旧副本忽略视为受理成功。
 
@@ -61,16 +100,17 @@ Executor 复用现有 Broker、统一适配器及后台认证循环。Broker 随
 仍检查原 `deviceGrants` 和 Runtime 绑定。
 
 复用 `ConnectorConnection`、`ConnectorMigration`、`ConnectorTransfer`、本机认证策略及
-原账号写锁，不新增表、列或独立执行账本。现有 JSON 增加本机密钥授权 `localGrants`、
+插件级写租约，不新增表、列或独立执行账本。现有 JSON 增加本机密钥授权 `localGrants`、
 来源观察值 `nativeAuthSources`、待登录 generation 和 Native 刷新／撤销租约归属。
 旧接口写凭证时保留适用的本机字段，认证定义变化或退出认证时撤销本机授权。
 独占转移先持久化原 escrow，再由统一适配器确认本机 detach；丢失受理响应不得覆盖 escrow。
 OAuth 刷新结果不确定时要求重新登录，不重复消费可能已旋转的 refresh token。
 
-没有新增定时器：认证及撤销复用现有 15 秒循环，失败冷却和撤销退避保持原机制；
-无已安装插件时自动导出直接结束。原凭证交换由 Socket 改为小型账号 HTTP 查询，
-业务读取、状态查询及 prepare 不推进数据库 revision；会话续期复用桌面现有刷新定时器，
-临时失败复用 30 秒重试。安装 pending 的原请求、顺序保护和完整对账调度不变。
+自动认证复用原后台任务：启动、Backend 重连、托管插件清单变更，以及本机登录／退出成功时触发。清单事件只处理内容发生变化且仍启用的托管插件；登录事件只清除该插件的冷却。正常巡检间隔为 300 秒，按进程加入 ±30 秒抖动；事件不会推迟巡检。每批最多 16 个插件，一次巡检处理所有批次，单批适配器并发最多 4。失败按 30、60、300 秒退避，移除插件后清除重试。成功后的冷却不会产生每分钟轮询。撤销任务保留原 15 秒检查及其退避；会话刷新沿用原机制。
+
+凭据登记、OAuth 更新或独占转移成功提交后，Rust Backend 通过现有 Socket.IO Redis 适配器向同账号发送 `plugin.auth.changed`，只包含安装 ID。Cloud／Remote 执行器按该 ID 立即重做授权同步，继续检查现有账号策略和设备权限；本机执行器不消费此通知，避免导出回环。通知丢失时由低频巡检补齐。
+
+新版 Native HTTP 的业务读取、状态查询及 prepare 不推进安装写版本；旧 Socket 的本地设备自动认证 `prepare_only` 也只读，不取得整批插件写租约。创建认证意图、写入凭据时才取得目标安装租约并校验 CAS。空清单不查询 Backend 的自动导出接口。安装 pending 的原请求与顺序保护继续复用。
 
 真实 HTTP／MySQL／Redis 回归覆盖无 Device 会话、跨用户／密钥隔离、Python 密文格式、
 刷新与撤销、独占 escrow 重放；现有 `plugin-account-auth-password` CI checkpoint 追加

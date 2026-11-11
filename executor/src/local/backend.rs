@@ -552,6 +552,11 @@ where
             DEVICE_SYNC_CAPABILITIES_EVENT,
             self.capability_sync_handler(),
         );
+        if matches!(self.client.config.device_type.as_str(), "cloud" | "remote") {
+            self.client
+                .transport
+                .on("plugin.auth.changed", self.plugin_auth_changed_handler());
+        }
         self.client.transport.on(
             DEVICE_START_TERMINAL_SESSION_EVENT,
             self.session_start_handler(SessionType::Terminal),

@@ -50,7 +50,7 @@ def _prepare_cloud_sync_after_local_change(
     db: Session, *, user_id: int, installed_id: int
 ) -> tuple[bool, int | None]:
     configure_plugin_session(db)
-    acquire_plugin_write_lock(db, user_id)
+    acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
     row = (
         db.query(Kind)
         .filter_by(

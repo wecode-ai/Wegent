@@ -12,7 +12,7 @@ from app.services.device.runtime_route import (
     resolve_runtime_route_identity,
     runtime_device_route_id,
 )
-from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_coordination import acquire_plugin_write_locks
 
 
 def resolve_plugin_runtime_device_id(
@@ -115,18 +115,23 @@ def plugin_device_rows(
     }
 
 
-def reconcile_plugin_device_rows(db: Session, user_id: int) -> None:
+def reconcile_plugin_device_rows(
+    db: Session, user_id: int, *, installed_ids: list[int] | None = None
+) -> None:
     """Converge legacy alias rows within the caller's write transaction.
 
     Keep the last reported state, including failures and retry counts. A fresh
     device acknowledgement, not the account's desired version, confirms success.
     """
-    acquire_plugin_write_lock(db, user_id)
-    rows = (
-        db.query(PluginDeviceInstallation)
-        .filter(PluginDeviceInstallation.user_id == user_id)
-        .all()
+    query = db.query(PluginDeviceInstallation).filter(
+        PluginDeviceInstallation.user_id == user_id
     )
+    if installed_ids is not None:
+        query = query.filter(
+            PluginDeviceInstallation.installed_kind_id.in_(installed_ids)
+        )
+    rows = query.all()
+    acquire_plugin_write_locks(db, ((user_id, row.installed_kind_id) for row in rows))
     selected = coalesce_plugin_device_rows(db, rows)
     retained_ids = {row.id for row in selected.values()}
     for row in rows:

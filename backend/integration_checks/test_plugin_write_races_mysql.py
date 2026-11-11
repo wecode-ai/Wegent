@@ -153,8 +153,8 @@ def test_catalog_republish_does_not_block_first_publish_in_preceding_gap(session
             ).delete(synchronize_session=False)
 
 
-def lock_key(context: Context) -> str:
-    return f"wegent:plugin-write:{context.user_id}"
+def lock_key(context: Context, name: str = "mysql-auth-fixture") -> str:
+    return f"wegent:plugin-write:{context.user_id}:{name}"
 
 
 def lifecycle(context: Context, db: Session, action: str) -> dict:
@@ -180,7 +180,9 @@ def run_ordered(
         with context.sessions() as db:
             establish_snapshot(db, context)
             attempted.set()
-            acquire_plugin_write_lock(db, context.user_id)
+            acquire_plugin_write_lock(
+                db, context.user_id, installed_id=context.plugin_id
+            )
             acquired.set()
             try:
                 result = waiting(db)
@@ -191,7 +193,9 @@ def run_ordered(
                 return error.code
 
     with context.sessions() as holder, ThreadPoolExecutor(max_workers=1) as pool:
-        acquire_plugin_write_lock(holder, context.user_id)
+        acquire_plugin_write_lock(
+            holder, context.user_id, installed_id=context.plugin_id
+        )
         with coordination._redis_client().monitor() as monitor:
             pending = pool.submit(worker)
             try:
@@ -264,23 +268,23 @@ def test_same_user_contention_is_retryable_after_the_holder_rolls_back(context):
     client = coordination._redis_client()
     with context.sessions() as holder:
         automation.configure(holder, context.user_id, False)
-        token = client.get(lock_key(context))
+        token = client.get(lock_key(context, "@account-policy"))
         with context.sessions() as blocked:
             with pytest.raises(PluginWriteError) as failure:
                 automation.configure(blocked, context.user_id, True)
             assert failure.value.code == "plugin_write_busy"
             assert failure.value.status_code == 503
-            assert client.get(lock_key(context)) == token
+            assert client.get(lock_key(context, "@account-policy")) == token
             blocked.rollback()
         holder.rollback()
 
-    assert not client.exists(lock_key(context))
+    assert not client.exists(lock_key(context, "@account-policy"))
     with context.sessions.begin() as retry:
         assert automation.configure(retry, context.user_id, True) == {"enabled": True}
     with context.sessions() as db:
         policies = automation._policy(db, context.user_id).all()
         assert len(policies) == 1 and policies[0].json["spec"]["enabled"] is True
-    assert not client.exists(lock_key(context))
+    assert not client.exists(lock_key(context, "@account-policy"))
 
 
 def test_another_user_enrolls_while_the_same_account_identity_is_uncommitted(
@@ -518,10 +522,14 @@ def test_expired_first_upload_rolls_back_its_install_and_binary_after_successor_
             )
         old_id = int(old_install.metadata["labels"]["id"])
         assert stale.query(SkillBinary).filter_by(kind_id=old_id).count() == 1
-        lease = stale.info["plugin_write_leases"][context.user_id]
+        lease = stale.info["plugin_write_leases"][
+            (context.user_id, service._safe_kind_name("concurrent-upload"))
+        ]
         # A process can pause immediately after its last successful Redis check.
         lease.check = lambda: None
-        assert client.pexpire(lock_key(context), 100)
+        assert client.pexpire(
+            lock_key(context, service._safe_kind_name("concurrent-upload")), 100
+        )
 
         with context.sessions() as successor:
             recovered = service.upload_plugin(
@@ -560,7 +568,9 @@ def test_expired_first_upload_rolls_back_its_install_and_binary_after_successor_
             .all()
         )
         assert len(binaries) == 1 and binaries[0].kind_id == recovered_id
-    assert not client.exists(lock_key(context))
+    assert not client.exists(
+        lock_key(context, service._safe_kind_name("concurrent-upload"))
+    )
 
 
 def test_stale_automation_cannot_insert_an_intent_after_logout_commits(
@@ -574,7 +584,7 @@ def test_stale_automation_cannot_insert_an_intent_after_logout_commits(
 
     def logout_before_intent_insert(db: Session, user_id: int, spec: dict):
         # The real automation has already read the enabled local-auth policy.
-        lease = db.info["plugin_write_leases"][context.user_id]
+        lease = db.info["plugin_write_leases"][(context.user_id, "mysql-auth-fixture")]
         lease.check = lambda: None
         assert client.pexpire(lock_key(context), 100)
         with context.sessions.begin() as successor:

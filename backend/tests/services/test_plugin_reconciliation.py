@@ -64,7 +64,12 @@ def reconciliation(monkeypatch):
     }
     desired = Mock(return_value=snapshot)
     monkeypatch.setattr(module, "desired_plugins", desired)
-    monkeypatch.setattr(module, "acquire_plugin_write_lock", Mock())
+    monkeypatch.setattr(module, "acquire_plugin_write_locks", Mock())
+    monkeypatch.setattr(
+        module.plugin_device_installation_service,
+        "_response_scopes",
+        lambda *args: [12],
+    )
     monkeypatch.setattr(
         module.device_capability_sync_service,
         "build_desired_plugins",
@@ -251,7 +256,12 @@ async def test_reconciliation_waits_leave_loop_responsive_and_sessions_in_worker
         snapshot,
     )
     monkeypatch.setattr(
-        module, "acquire_plugin_write_lock", lambda db, _: operation(db, "acquire")
+        module.plugin_device_installation_service,
+        "_response_scopes",
+        lambda *args: [12],
+    )
+    monkeypatch.setattr(
+        module, "acquire_plugin_write_locks", lambda db, _: operation(db, "acquire")
     )
     monkeypatch.setattr(
         module.device_capability_sync_service, "sync_device_payload", dispatch
@@ -455,7 +465,13 @@ async def test_final_snapshot_and_ack_share_one_owned_lease_until_commit(
     )
 
     def observe_lease(operation, db):
-        lease = db.info["plugin_write_leases"][user_id]
+        leases = [
+            lease
+            for (owner, name), lease in db.info["plugin_write_leases"].items()
+            if owner == user_id and not name.startswith("@")
+        ]
+        assert len(leases) == 1
+        lease = leases[0]
         assert lease.lock.owned(), "Final snapshot and ACK must retain the lease"
         observed.append((operation, db, lease, threading.get_ident()))
 

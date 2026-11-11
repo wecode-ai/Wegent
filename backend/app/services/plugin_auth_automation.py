@@ -17,7 +17,10 @@ from app.services.plugin_account_connections import (
 )
 from app.services.plugin_auth_execution import package_metadata
 from app.services.plugin_auth_migrations import PluginAuthMigrationService
-from app.services.plugin_write_coordination import configure_auth_policy
+from app.services.plugin_write_coordination import (
+    acquire_plugin_write_locks,
+    configure_auth_policy,
+)
 from shared.telemetry.decorators import trace_sync
 
 POLICY_KIND = "ConnectorAuthPolicy"
@@ -68,6 +71,18 @@ class PluginAuthAutomationService:
         )
         if identity is None:
             raise PluginAccountAuthError("plugin_auth_device_not_found", 404)
+        if not prepare_only:
+            owned = (
+                db.query(Kind.id)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "InstalledPlugin",
+                    Kind.namespace == "default",
+                    Kind.id.in_(installed_ids),
+                )
+                .all()
+            )
+            acquire_plugin_write_locks(db, ((user_id, row.id) for row in owned))
         self.grant_current_device(db, user_id=user_id, device_id=device_id)
         if identity.device_type not in {DeviceType.LOCAL, DeviceType.APP}:
             return {result_key: []}
@@ -197,6 +212,18 @@ class PluginAuthAutomationService:
             return
         logical, binding = self.connections._device_binding(db, user_id, device_id)
         rows = self.connections._query(db, user_id).populate_existing().all()
+        installed_ids = {row.json["spec"]["installedPluginId"] for row in rows}
+        owned = (
+            db.query(Kind.id)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "InstalledPlugin",
+                Kind.namespace == "default",
+                Kind.id.in_(installed_ids),
+            )
+            .all()
+        )
+        acquire_plugin_write_locks(db, ((user_id, row.id) for row in owned))
         for row in rows:
             spec = dict(row.json["spec"])
             if (

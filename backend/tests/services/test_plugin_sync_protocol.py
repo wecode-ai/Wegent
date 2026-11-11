@@ -163,7 +163,7 @@ def test_failed_snapshot_rolls_back_sequence_and_releases_lock(snapshot_sessions
     assert recovered["plugin_sync"]["generation"] == 1
 
 
-@pytest.mark.parametrize("failure", ["lease_lost", "revision_conflict"])
+@pytest.mark.parametrize("failure", ["deleted_state", "revision_conflict"])
 def test_failed_coordination_rolls_back_generation_and_watermark(
     snapshot_sessions, plugin_write_backend, failure
 ):
@@ -183,30 +183,21 @@ def test_failed_coordination_rolls_back_generation_and_watermark(
             complete=False,
             installed_plugin_ids=[456],
         )
-        if failure == "lease_lost":
-            plugin_write_backend.values.pop("wegent:plugin-write:1")
+        # Bypass ORM hooks to inject a database-level competing write.
+        from sqlalchemy import text
+
+        if failure == "deleted_state":
+            db.execute(text("DELETE FROM kinds WHERE id=:id"), {"id": state.id})
         else:
-            policy = (
-                db.query(Kind)
-                .filter_by(
-                    user_id=1,
-                    kind="ConnectorAuthPolicy",
-                    namespace="plugin-auth",
-                    name="account",
-                )
-                .one()
+            db.execute(
+                text(
+                    "UPDATE kinds SET json=json_set(json,'$.spec.revision',99) WHERE id=:id"
+                ),
+                {"id": state.id},
             )
-            document = deepcopy(policy.json)
-            document["spec"]["revision"] += 1
-            policy.json = document
-            db.flush()
         return _load_empty(db)
 
-    expected_error = (
-        "plugin_write_lease_lost"
-        if failure == "lease_lost"
-        else "plugin_write_conflict"
-    )
+    expected_error = "plugin_write_conflict"
     with pytest.raises(PluginWriteError, match=expected_error):
         load_versioned_plugin_payload(
             snapshot_sessions,
@@ -221,8 +212,9 @@ def test_failed_coordination_rolls_back_generation_and_watermark(
         assert state.json["spec"]["generation"] == 7
         assert plugin_snapshot_watermark(state, "device", 123) == 7
         assert plugin_snapshot_watermark(state, "device", 456) == 0
-        policy = db.query(Kind).filter_by(kind="ConnectorAuthPolicy", user_id=1).one()
-        assert policy.json["spec"]["revision"] == 1
+        assert (
+            db.query(Kind).filter_by(kind="ConnectorAuthPolicy", user_id=1).count() == 0
+        )
 
     recovered = load_versioned_plugin_payload(
         snapshot_sessions, user_id=1, load_payload=_load_empty, complete=False

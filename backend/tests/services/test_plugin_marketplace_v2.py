@@ -1780,13 +1780,14 @@ def test_personal_plugin_revocation_updates_all_recipients_atomically(
         assert installed.json["spec"] == {
             "pluginId": plugin.id,
             "revision": 5,
+            "writeRevision": 1,
             "enabled": False,
             "installState": "uninstalled",
             "componentStates": {"review": False},
         }
     policies = test_db.query(Kind).filter(Kind.kind == "ConnectorAuthPolicy").all()
     assert {row.user_id for row in policies} == {user.id for user in recipients}
-    assert all(row.json["spec"]["revision"] == 4 for row in policies)
+    assert all(row.json["spec"]["revision"] == 3 for row in policies)
     assert not plugin_write_backend.values
 
 
@@ -1802,7 +1803,8 @@ def test_personal_plugin_revocation_busy_recipient_preserves_every_record(
 ):
     service, plugin, recipients, installations = shared_personal_plugin
     recipient_ids = sorted(user.id for user in recipients)
-    busy_key = f"wegent:plugin-write:{recipient_ids[-1]}"
+    targets = sorted(zip(recipients, installations), key=lambda pair: pair[0].id)
+    busy_key = f"wegent:plugin-write:{targets[-1][0].id}:{targets[-1][1].name}"
     busy_lock = plugin_write_backend.lock(
         busy_key, timeout=30, blocking_timeout=0, thread_local=False
     )
@@ -1829,7 +1831,8 @@ def test_personal_plugin_revocation_busy_recipient_preserves_every_record(
             )
 
         assert [call.args[0] for call in lock_factory.call_args_list] == [
-            f"wegent:plugin-write:{user_id}" for user_id in recipient_ids
+            f"wegent:plugin-write:{user.id}:{installed.name}"
+            for user, installed in targets
         ]
         test_db.refresh(plugin)
         assert plugin.status == "published"
@@ -1874,7 +1877,7 @@ def test_access_revocation_does_not_lock_retained_recipient(
 ):
     service, plugin, recipients, installations = shared_personal_plugin
     retained = recipients[0]
-    retained_key = f"wegent:plugin-write:{retained.id}"
+    retained_key = f"wegent:plugin-write:{retained.id}:{installations[0].name}"
     retained_lock = plugin_write_backend.lock(
         retained_key, timeout=30, blocking_timeout=0, thread_local=False
     )
@@ -1901,7 +1904,8 @@ def test_access_revocation_does_not_lock_retained_recipient(
             for recipient, installed in zip(recipients[1:], installations[1:])
         }
         assert {call.args[0] for call in lock_factory.call_args_list} == {
-            f"wegent:plugin-write:{user.id}" for user in recipients[1:]
+            f"wegent:plugin-write:{user.id}:{installed.name}"
+            for user, installed in zip(recipients[1:], installations[1:])
         }
         test_db.refresh(installations[0])
         assert installations[0].is_active is True

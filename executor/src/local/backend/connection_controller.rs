@@ -43,6 +43,7 @@ pub struct LocalBackendConnectionController {
     connection_status: Arc<AtomicBool>,
     device_route_id: Arc<StdMutex<Option<String>>>,
     local_sync_lock: Arc<Mutex<()>>,
+    local_sync_foreground: Arc<StdMutex<std::collections::HashMap<std::path::PathBuf, usize>>>,
     plugin_auth: crate::plugin_account_auth::local_http::LocalAuthContext,
 }
 
@@ -134,6 +135,7 @@ impl LocalBackendConnectionController {
             connection_status: Arc::new(AtomicBool::new(false)),
             device_route_id,
             local_sync_lock: Arc::new(Mutex::new(())),
+            local_sync_foreground: Arc::new(StdMutex::new(std::collections::HashMap::new())),
         };
         controller.replace_connection(initial_profile, false).await;
         controller

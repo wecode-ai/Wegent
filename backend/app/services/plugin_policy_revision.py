@@ -1,18 +1,20 @@
 """Optimistic transaction versions on the existing account-auth policy.
 
-The real policy is the common business parent of a user's plugin writes.
-The caller holds the Redis lease while first creation rechecks its identity.
+This revision protects authentication decisions against actual policy edits.
+Installation writes use their own parent fences. Initialization is briefly leased.
 """
 
 import logging
 from dataclasses import dataclass
 from typing import Any
 
+from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.engine import Connection, Row
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.distributed_lock import DistributedLockUnavailableError
 from app.models.kind import Kind
 from app.services.plugin_write_errors import PluginWriteError
 from app.services.plugin_write_resources import policy_engine
@@ -99,8 +101,61 @@ def _materialize_default(db: Session, user_id: int) -> None:
         _initialize_default(db, user_id)
         return
     engine = bind.engine if isinstance(bind, Connection) else bind
-    with Session(policy_engine(engine)) as initial, initial.begin():
-        _initialize_default(initial, user_id)
+    from app.core.distributed_lock import distributed_lock
+    from app.services.plugin_write_resources import redis_client
+
+    existing = db.info.get("plugin_write_leases", {}).get((user_id, "@account-policy"))
+    lock = None
+    if existing is None:
+        try:
+            lock = distributed_lock.owned_lock(
+                f"wegent:plugin-write:{user_id}:@account-policy",
+                expire_seconds=30,
+                blocking_timeout=3,
+                redis_client=redis_client(),
+            )
+            if not lock.acquire():
+                raise PluginWriteError("plugin_write_busy")
+        except (RedisError, DistributedLockUnavailableError):
+            raise PluginWriteError("plugin_write_unavailable") from None
+    try:
+        with Session(policy_engine(engine)) as initial, initial.begin():
+            _initialize_default(initial, user_id)
+    finally:
+        if lock is not None:
+            try:
+                lock.release()
+            except RedisError:
+                logger.warning(
+                    "Plugin policy initialization lease release failed user_id=%s",
+                    user_id,
+                )
+
+
+def validate_policy_revision(db: Session, expected: PolicyRevision) -> None:
+    """Validate the real policy dependency without advancing its business version.
+
+    The conditional no-op UPDATE excludes a simultaneous policy change until
+    COMMIT. Re-reading on READ COMMITTED also works with drivers reporting
+    changed rows rather than matched rows for the unchanged document.
+    """
+    db.query(Kind).filter(
+        Kind.id == expected.row_id,
+        *_identity(expected.user_id),
+        Kind.is_active.is_(True),
+        func.coalesce(Kind.json["spec"]["revision"].as_integer(), 0)
+        == expected.revision,
+    ).update({Kind.json: Kind.json}, synchronize_session=False)
+    row = _load(db, expected.user_id)
+    if (
+        row is None
+        or row.is_active is not True
+        or (
+            row.id != expected.row_id
+            or row.json.get("spec", {}).get("revision", 0) != expected.revision
+        )
+    ):
+        raise PluginWriteError("plugin_write_conflict")
 
 
 def _initialize_default(db: Session, user_id: int) -> None:

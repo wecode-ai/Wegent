@@ -405,6 +405,18 @@ impl LocalBackendConnectionController {
             return Ok(capabilities);
         }
 
+        let targeted = params["action"].is_string()
+            || params["installedPluginId"]
+                .as_u64()
+                .is_some_and(|id| id > 0)
+                && params["full"] != true;
+        let _foreground = targeted.then(|| {
+            scanning::ForegroundOperation::begin(self.local_sync_foreground.clone(), &path)
+        });
+        if !targeted && self.has_foreground_plugin_operation(&path) {
+            return Err(error("plugin_local_sync_busy"));
+        }
+
         let mut lease = Some(self.acquire_local_sync_lease(&connection, &path).await?);
         let journal = load_journal(&path)?;
         self.apply_local_plugin_sync(
@@ -473,7 +485,11 @@ impl LocalBackendConnectionController {
         if let Some(request) = &selected {
             recovery::record_submission_attempt(&mut journal, operation.unwrap());
             persist(path, &journal)?;
+            drop(lease.take());
             let outcome = submit(connection, instance, request, &self.base_config.device_id).await;
+            journal = self
+                .resume_local_sync_journal(connection, path, lease)
+                .await?;
             recovery::record_submission_result(&mut journal, operation.unwrap(), &outcome);
             persist(path, &journal)?;
             if !matches!(outcome, Ok(SubmitOutcome::Accepted)) {
@@ -514,7 +530,7 @@ impl LocalBackendConnectionController {
             .map(str::to_owned);
         // Recovery may have settled while the scan ran. Use its current status
         // without losing original requests or replaying an old journal snapshot.
-        let pending = journal["pending"].as_array().unwrap();
+        let pending = journal["pending"].as_array().unwrap().clone();
         let operation_ids: Vec<String> = if let Some(operation) = operation {
             vec![operation.to_owned()]
         } else if !targeted {
@@ -527,7 +543,22 @@ impl LocalBackendConnectionController {
         } else {
             Vec::new()
         };
-        let snapshot=post(connection,"/api/plugins/local-sync",&json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id})).await?;
+        if !targeted && self.has_foreground_plugin_operation(path) {
+            return Err(error("plugin_local_sync_busy"));
+        }
+        let plan_order = journal["nextIntentOrder"].clone();
+        let plan_request = json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id});
+        drop(lease.take());
+        let snapshot = post(connection, "/api/plugins/local-sync", &plan_request).await?;
+        journal = self
+            .resume_local_sync_journal(connection, path, lease)
+            .await?;
+        if !targeted
+            && (journal["nextIntentOrder"] != plan_order
+                || self.has_foreground_plugin_operation(path))
+        {
+            return Err(error("plugin_local_sync_busy"));
+        }
         // Profile replacement fences the shared installer as well as this HTTP scope.
         {
             let state = self.state.lock().await;
@@ -541,7 +572,7 @@ impl LocalBackendConnectionController {
         }
         if snapshot["unchanged"] == true {
             if !verified
-                || !pending.is_empty()
+                || !journal["pending"].as_array().unwrap().is_empty()
                 || journal["reconcilePending"] == true
                 || snapshot["revision"] != journal["revision"]
             {
@@ -572,12 +603,16 @@ impl LocalBackendConnectionController {
         }
         journal["reconcilePending"] = json!(true);
         persist(path, &journal)?;
+        drop(lease.take());
         let result = local_result(
             &snapshot["payload"],
             handler
                 .handle_sync_capabilities(snapshot["payload"].clone())
                 .await,
         );
+        journal = self
+            .resume_local_sync_journal(connection, path, lease)
+            .await?;
         let completed = result["success"] == true
             && result["plugins"].as_array().is_some_and(|items| {
                 items
@@ -585,7 +620,8 @@ impl LocalBackendConnectionController {
                     .all(|item| matches!(item["status"].as_str(), Some("synced" | "removed")))
             });
         if completed {
-            journal["revision"] = if targeted {
+            let intervening = journal["nextIntentOrder"] != plan_order;
+            journal["revision"] = if targeted || intervening {
                 Value::Null
             } else {
                 snapshot["revision"].clone()
@@ -604,13 +640,32 @@ impl LocalBackendConnectionController {
                         .is_some_and(|id| operation_ids.iter().any(|item| item == id))
                 });
             }
-            journal["reconcilePending"] = json!(targeted);
+            journal["reconcilePending"] = json!(
+                targeted || intervening || !journal["pending"].as_array().unwrap().is_empty()
+            );
         }
         persist(path, &journal)?;
         if !completed {
+            if result["success"] == true
+                && result["plugins"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item["status"] == "superseded"))
+            {
+                if targeted {
+                    if let Some(operation) = operation {
+                        retire_superseded(&mut journal, operation);
+                        persist(path, &journal)?;
+                    }
+                }
+                return Err(error(if targeted {
+                    "INTENT_SUPERSEDED"
+                } else {
+                    "plugin_local_sync_busy"
+                }));
+            }
             return Err(error("plugin_local_apply_failed"));
         }
-        if !targeted {
+        if !targeted && journal["nextIntentOrder"] == plan_order {
             let digest = self
                 .scan_local_plugin_content(&session, &mut journal, lease)
                 .await?;

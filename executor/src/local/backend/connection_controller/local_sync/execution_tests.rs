@@ -48,6 +48,7 @@ enum Plan {
     UnexpectedUnchanged,
     FailedApplication,
     HeldHttp,
+    HeldTargetHttp,
     HeldApplication,
 }
 
@@ -103,7 +104,10 @@ impl CapabilitySyncRpcHandler for Installer {
             let removed = payload["removed_plugins"]
                 .as_array()
                 .is_some_and(|items| !items.is_empty());
-            json!({"success":success,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":[{"id":8,"status":if !success {"failed"}else if removed {"removed"}else{"synced"}}]})
+            let id = payload["plugins"][0]["installed_plugin_id"]
+                .as_u64()
+                .unwrap_or(8);
+            json!({"success":success,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":[{"id":id,"status":if !success {"failed"}else if removed {"removed"}else{"synced"}}]})
         })
     }
 }
@@ -202,7 +206,7 @@ impl Fixture {
                             return Json(json!({"enabled":true,"protocolVersion":1,"contractRevision":3,"accountId":1})).into_response();
                         }
                         plans.lock().unwrap().push(body.clone());
-                        if matches!(plan, Plan::HeldHttp) {
+                        if matches!(plan, Plan::HeldHttp) || (matches!(plan, Plan::HeldTargetHttp) && body["installedPluginId"] == 8) {
                             entered.notify_one();
                             release.notified().await;
                         }
@@ -221,7 +225,8 @@ impl Fixture {
                         }
                         let operation = body["operationId"].as_str();
                         let removed = operation.is_some_and(|id| removals.lock().unwrap().get(id) == Some(&true));
-                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":8}])},"removed_plugins":if removed {json!([{"installed_plugin_id":8}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
+                        let installed_id = body["installedPluginId"].as_u64().unwrap_or(8);
+                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":installed_id}])},"removed_plugins":if removed {json!([{"installed_plugin_id":installed_id}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
                     }
                 }
             }))
@@ -456,4 +461,49 @@ async fn a_targeted_update_does_not_replay_unrelated_pending_work() {
     let state = load_journal(&fixture.path).unwrap();
     assert!(state["pending"][0]["lastAttemptAt"].is_null());
     assert_eq!(state["pending"][0]["operationId"], "original");
+}
+
+#[tokio::test]
+async fn targeted_http_wait_does_not_hold_another_plugins_journal() {
+    let fixture = Arc::new(Fixture::new(Plan::HeldTargetHttp, true).await);
+    let slow = tokio::spawn({
+        let fixture = fixture.clone();
+        async move { fixture.sync(json!({"installedPluginId":8})).await }
+    });
+    tokio::time::timeout(Duration::from_secs(3), fixture.installer.entered.notified())
+        .await
+        .unwrap();
+    let fast = tokio::time::timeout(
+        Duration::from_secs(3),
+        fixture.sync(json!({"installedPluginId":9})),
+    )
+    .await
+    .expect("An unrelated plugin waited for the slow HTTP request")
+    .unwrap();
+    assert_eq!(fast["localCompleted"], true);
+    assert!(!slow.is_finished());
+    assert_eq!(
+        load_journal(&fixture.path).unwrap()["pending"][0]["operationId"],
+        "original"
+    );
+    fixture.installer.release.notify_one();
+    assert_eq!(slow.await.unwrap().unwrap()["localCompleted"], true);
+}
+
+#[tokio::test]
+async fn foreground_scope_is_released_on_cancellation_and_full_sync_defers() {
+    let fixture = Fixture::new(Plan::Valid, true).await;
+    let foreground = scanning::ForegroundOperation::begin(
+        fixture.controller.local_sync_foreground.clone(),
+        &fixture.path,
+    );
+    assert_eq!(
+        fixture.sync(json!({"full":true})).await.unwrap_err().code,
+        "plugin_local_sync_busy"
+    );
+    drop(foreground);
+    assert!(!fixture
+        .controller
+        .has_foreground_plugin_operation(&fixture.path));
+    assert!(fixture.sync(json!({"installedPluginId":9})).await.is_ok());
 }

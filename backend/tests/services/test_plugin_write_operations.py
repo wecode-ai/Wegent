@@ -22,7 +22,7 @@ async def test_operation_owns_transaction_and_releases_lease(
     sessions = []
     session_factory = operations.get_db_session
     original_configure = operations.configure_plugin_session
-    failure = PluginWriteError("plugin_write_conflict")
+    failure = PluginWriteError("plugin_write_lease_lost")
     events = []
 
     @contextmanager
@@ -43,7 +43,7 @@ async def test_operation_owns_transaction_and_releases_lease(
     def mutate(*, db, name):
         assert db is sessions[0] and db is not test_db
         events.append(("mutate", threading.get_ident()))
-        acquire_plugin_write_lock(db, user_id)
+        acquire_plugin_write_lock(db, user_id, name=name)
         db.add(
             Kind(
                 user_id=user_id,

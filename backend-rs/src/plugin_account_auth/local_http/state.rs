@@ -15,6 +15,14 @@ struct Row {
     is_active: bool,
 }
 
+pub(super) async fn write_targets(
+    tx: &mut impl MysqlTransaction,
+    principal: &Principal,
+    data: &Value,
+) -> MysqlResult<Vec<i64>> {
+    crate::plugin_account_auth::write_targets::resolve(tx, principal.user_id, data).await
+}
+
 fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }

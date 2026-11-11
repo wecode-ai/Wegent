@@ -86,3 +86,48 @@ def test_compaction_ranks_latest_by_update_time_instead_of_insert_id(
     assert compact_batch(test_db, test_user.id, 100) == 1
     assert test_db.query(Kind.id).filter(Kind.id == latest.id).one().id == latest.id
     assert compact_batch(test_db, test_user.id, 100) == 0
+
+
+def test_compaction_rechecks_a_reused_slot_after_acquiring_its_plugin_lease(
+    test_db, test_user, monkeypatch
+):
+    from scripts import compact_plugin_auth_migrations as compactor
+
+    parent = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="mail",
+        json={"spec": {}},
+        is_active=True,
+    )
+    test_db.add(parent)
+    test_db.flush()
+    old = add_row(
+        test_db,
+        test_user,
+        1,
+        json={
+            "spec": {
+                "automatic": True,
+                "source_identity": "mail",
+                "connector_slug": "mail",
+                "device_id": "local",
+                "expires_at": 1,
+                "installed_plugin_id": parent.id,
+            }
+        },
+    )
+    add_row(test_db, test_user, 2)
+
+    def reused(db, targets):
+        assert list(targets) == [(test_user.id, parent.id)]
+        old.is_active = True
+        old.updated_at = datetime(2026, 1, 2)
+        old.json = {"spec": {**old.json["spec"], "expires_at": 4_000_000_000}}
+        db.flush()
+
+    monkeypatch.setattr(compactor, "acquire_plugin_write_locks", reused)
+
+    assert compact_batch(test_db, test_user.id, 100) == 0
+    assert test_db.get(Kind, old.id).is_active is True

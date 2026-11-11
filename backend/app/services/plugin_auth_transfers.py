@@ -28,7 +28,7 @@ from app.services.plugin_account_connections import (
 from app.services.plugin_auth_execution import package_metadata
 from app.services.plugin_auth_migrations import PluginAuthMigrationService
 from app.services.plugin_oauth_credentials import token_payload
-from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_revision import require_plugin_write_leases
 from shared.telemetry.decorators import trace_sync
 
 TRANSFER_KIND = "ConnectorTransfer"
@@ -38,7 +38,7 @@ def require_no_pending_transfer(
     db: Session, user_id: int, source: str, connector: str, account: str
 ) -> None:
     """Check the coordinated account reservation before replacing credentials."""
-    acquire_plugin_write_lock(db, user_id)
+    require_plugin_write_leases(db, user_id)
     pending = (
         db.query(Kind.id)
         .filter(
@@ -65,7 +65,9 @@ class PluginAuthTransferService:
         self, db: Session, *, user_id: int, request: PluginMigrationCreate
     ) -> PluginMigrationResponse | None:
         """An explicit UI action may rebind escrow to a restarted source runtime."""
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(
+            db, user_id, installed_id=request.installed_plugin_id
+        )
         logical, binding = self.connections._device_binding(
             db, user_id, request.device_id
         )
@@ -123,7 +125,9 @@ class PluginAuthTransferService:
         device_id: str,
         request: PluginNativeEnrollment,
     ) -> dict:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(
+            db, user_id, migration_id=request.migration_id
+        )
         existing = self._query(db, user_id, request.migration_id).first()
         if existing is not None:
             self._validated(db, user_id, device_id, existing)
@@ -199,7 +203,7 @@ class PluginAuthTransferService:
     def prepare(
         self, db: Session, *, user_id: int, device_id: str, migration_id: str
     ) -> dict:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id, migration_id=migration_id)
         row = self._get(db, user_id, migration_id)
         plugin, definition = self._validated(db, user_id, device_id, row)
         spec = row.json["spec"]
@@ -225,7 +229,7 @@ class PluginAuthTransferService:
         migration_id: str,
     ) -> PluginAccountConnectionResponse:
         """Native-only confirmation after the source adapter's durable detach."""
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id, migration_id=migration_id)
         row = self._get(db, user_id, migration_id)
         self._validated(db, user_id, device_id, row)
         spec = deepcopy(row.json["spec"])
@@ -283,7 +287,7 @@ class PluginAuthTransferService:
         self, db: Session, *, user_id: int, device_id: str, migration_id: str
     ) -> dict:
         """Native-only receipt: the adapter durably fenced off this transfer ID."""
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id, migration_id=migration_id)
         row = self._get(db, user_id, migration_id)
         self._validated(db, user_id, device_id, row, allow_aborted=True)
         spec = deepcopy(row.json["spec"])

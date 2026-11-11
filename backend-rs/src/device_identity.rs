@@ -639,16 +639,18 @@ pub(crate) trait LeaseCheck: Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = MysqlResult<()>> + Send + 'a>>;
 }
 
-pub(crate) async fn reconcile_plugin_device_rows_on<Q, R>(
+pub(crate) async fn reconcile_plugin_device_rows_for_installs_on<Q, R>(
     query: &mut Q,
     user_id: i64,
     guard: Option<&dyn LeaseCheck>,
+    installed_ids: Option<&[i64]>,
 ) -> MysqlResult<Vec<R>>
 where
     Q: PluginQuery,
     R: ReconcileRow + Clone + FromMysqlRow + Send,
 {
-    let rows: Vec<R> = query.fetch_all(RECONCILE_SELECT_QUERY, (user_id,)).await?;
+    let mut rows: Vec<R> = query.fetch_all(RECONCILE_SELECT_QUERY, (user_id,)).await?;
+    rows.retain(|row| installed_ids.is_none_or(|ids| ids.contains(&row.installed_kind_id())));
     let selected = coalesce_plugin_device_rows_on(query, rows.clone()).await?;
     converge_plugin_device_rows(query, rows, &selected, guard).await
 }

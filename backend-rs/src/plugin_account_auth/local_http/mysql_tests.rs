@@ -140,6 +140,24 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     let opened = api.session(proof.clone(), 200).await;
     api.session(proof, 401).await;
     let token = opened["native_token"].as_str().unwrap();
+    let missing = api
+        .call(
+            token,
+            "plugin.auth.oauth.revoke.begin",
+            json!({"connection_id": "c".repeat(64)}),
+            409,
+        )
+        .await;
+    assert_eq!(missing["detail"], "plugin_auth_connection_not_found");
+    let expired = api
+        .call(
+            token,
+            "plugin.auth.transfer.finish",
+            json!({"migration_id": "d".repeat(64)}),
+            409,
+        )
+        .await;
+    assert_eq!(expired["detail"], "plugin_auth_migration_expired");
     assert_eq!(opened["account_id"], OWNER);
     assert!(
         crate::auth::verify_token(&state.auth, token).is_err(),
