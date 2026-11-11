@@ -77,6 +77,12 @@ enum DirectoryMode {
     Exclusive,
 }
 
+struct GitProcess {
+    child: tokio::process::Child,
+    tree: ProcessTreeGuard,
+    attached: std::io::Result<()>,
+}
+
 enum DirectoryGuard {
     Read {
         _guards: Vec<tokio::sync::OwnedRwLockReadGuard<()>>,
@@ -191,14 +197,21 @@ async fn capture_git(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    let mut tree = ProcessTreeGuard::prepare_child(&mut command)
+        .map_err(|error| git_error(error.to_string(), false))?;
     let child = command
         .spawn()
         .map_err(|error| git_error(error.to_string(), false))?;
+    let attached = tree.attach_child(&child);
     let (cancellation, cancelled) = tokio::sync::oneshot::channel();
     // Dropping the caller signals the owner, which kills and reaps the process
     // before releasing its directory. A dropped wait_with_output cannot do that.
     let result = tokio::spawn(supervise_git(
-        child,
+        GitProcess {
+            child,
+            tree,
+            attached,
+        },
         access,
         cwd.map(Path::to_path_buf),
         input.map(Vec::from),
@@ -213,7 +226,7 @@ async fn capture_git(
 }
 
 async fn supervise_git(
-    mut child: tokio::process::Child,
+    process: GitProcess,
     access: Option<DirectoryGuard>,
     cwd: Option<std::path::PathBuf>,
     input: Option<Vec<u8>>,
@@ -221,15 +234,20 @@ async fn supervise_git(
     max_output_bytes: usize,
     mut cancelled: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<GitCapture, GitRunError> {
+    let GitProcess {
+        mut child,
+        mut tree,
+        attached,
+    } = process;
     let pid = child.id();
     let access = Arc::new(access);
-    let mut tree = ProcessTreeGuard::new(pid);
     log_git_directory_use("native git directory acquired", cwd.as_deref(), pid);
     let stdout = read_owned_pipe(child.stdout.take(), Arc::clone(&access), max_output_bytes);
     let stderr = read_owned_pipe(child.stderr.take(), Arc::clone(&access), max_output_bytes);
     let stdin = child.stdin.take();
     let result = {
         let capture = async {
+            attached?;
             let (status, stdout, stderr, ()) = tokio::try_join!(
                 child.wait(),
                 finish_pipe(stdout),
@@ -291,31 +309,7 @@ fn read_owned_pipe<Reader: tokio::io::AsyncRead + Unpin + Send + 'static>(
     // retain a pipe after Git exits, so keep directory access until its EOF.
     tokio::spawn(async move {
         let _access = access;
-        let result = read_pipe(pipe, max_output_bytes).await;
-        #[cfg(windows)]
-        crate::logging::log_executor_event(
-            "native git output pipe closed",
-            &[
-                ("ok", result.is_ok().to_string()),
-                (
-                    "bytes",
-                    result
-                        .as_ref()
-                        .map(Vec::len)
-                        .unwrap_or_default()
-                        .to_string(),
-                ),
-                (
-                    "error",
-                    result
-                        .as_ref()
-                        .err()
-                        .map(ToString::to_string)
-                        .unwrap_or_default(),
-                ),
-            ],
-        );
-        result
+        read_pipe(pipe, max_output_bytes).await
     })
 }
 
@@ -474,7 +468,9 @@ mod pipe_lifetime_tests {
             .kill_on_drop(true);
         hide_windows_console(&mut command);
         clear_local_git_env(command.as_std_mut());
+        let mut tree = ProcessTreeGuard::prepare_child(&mut command).unwrap();
         let mut child = command.spawn().unwrap();
+        tree.attach_child(&child).unwrap();
         let access = Arc::new(Some(DirectoryGuard::Read {
             _guards: crate::workspace_lifetime::use_directory(root.path())
                 .await
@@ -487,6 +483,7 @@ mod pipe_lifetime_tests {
             .unwrap()
             .unwrap()
             .success());
+        tree.disarm();
         drop(stdout);
         drop(stderr);
         drop(access);
@@ -498,12 +495,64 @@ mod pipe_lifetime_tests {
         assert!(time::timeout(Duration::from_millis(50), &mut finishing)
             .await
             .is_err());
-        std::fs::write(release, "release").unwrap();
+        std::fs::write(&release, "release").unwrap();
         let guard = time::timeout(Duration::from_secs(10), finishing)
             .await
             .unwrap()
             .unwrap()
             .unwrap();
+        drop(guard);
+        #[cfg(windows)]
+        {
+            std::fs::remove_file(&release).unwrap();
+            assert_cancelled_orphaned_git_is_reaped(root.path(), &mut command).await;
+            assert!(
+                !release.exists(),
+                "Cancellation must not rely on the release marker"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    async fn assert_cancelled_orphaned_git_is_reaped(root: &Path, command: &mut Command) {
+        let mut tree = ProcessTreeGuard::prepare_child(command).unwrap();
+        let mut child = command.spawn().unwrap();
+        let attached = tree.attach_child(&child);
+        assert!(attached.is_ok(), "Cannot contain Git: {attached:?}");
+        assert!(time::timeout(Duration::from_secs(10), child.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success());
+        let access = Some(DirectoryGuard::Read {
+            _guards: crate::workspace_lifetime::use_directory(root)
+                .await
+                .unwrap(),
+        });
+        let (cancel, cancelled) = tokio::sync::oneshot::channel();
+        drop(cancel);
+        let result = supervise_git(
+            GitProcess {
+                child,
+                tree,
+                attached,
+            },
+            access,
+            Some(root.to_path_buf()),
+            None,
+            time::Instant::now() + Duration::from_secs(30),
+            4096,
+            cancelled,
+        )
+        .await;
+        assert_eq!(result.unwrap_err().message, "Git request was cancelled");
+        let guard = time::timeout(
+            Duration::from_secs(2),
+            crate::workspace_lifetime::remove_directory_async(root),
+        )
+        .await
+        .expect("Cancelled descendants kept the directory occupied")
+        .unwrap();
         drop(guard);
     }
 
