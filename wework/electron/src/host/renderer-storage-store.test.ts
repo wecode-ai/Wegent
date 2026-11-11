@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +17,25 @@ async function createStore(): Promise<{ root: string; store: RendererStorageStor
 }
 
 describe('RendererStorageStore', () => {
+  it('keeps initial browser state available when its first durable write fails', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    const blocked = `${path}.${process.pid}.tmp`
+    await mkdir(blocked)
+    const seed = { appearance: 'dark', credential: 'synthetic-kept-session' }
+
+    await expect(store.initialize(seed)).resolves.toEqual(seed)
+    await expect(store.read()).resolves.toEqual(seed)
+    await expect(store.update({ clear: false, changes: { appearance: 'light' } })).rejects.toThrow()
+    await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
+    await rm(blocked, { recursive: true })
+    await store.update({ clear: false, changes: { appearance: 'light' } })
+    expect(await store.read()).toEqual({ ...seed, appearance: 'light' })
+    expect(JSON.parse(await readFile(path, 'utf8')).entries).toEqual({
+      ...seed,
+      appearance: 'light',
+    })
+  })
   it.each(['{broken-json', '{"version":9,"entries":{"credential":"keep"}}'])(
     'keeps the renderer available without replacing damaged durable state: %s',
     async damaged => {

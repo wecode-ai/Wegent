@@ -25,6 +25,7 @@ export class RendererStorageStore {
   private operation = Promise.resolve()
   private closed = false
   private readFailure: unknown = null
+  private pendingSeed: Record<string, string> | null = null
 
   constructor(
     private readonly dataDirectory: string,
@@ -56,7 +57,7 @@ export class RendererStorageStore {
   }
 
   read(): Promise<Record<string, string>> {
-    return this.serial(async () => (await this.readFile())?.entries ?? {})
+    return this.serial(async () => (await this.readFile())?.entries ?? this.pendingSeed ?? {})
   }
 
   initialize(seed: Record<string, string>): Promise<Record<string, string>> {
@@ -65,9 +66,17 @@ export class RendererStorageStore {
       if (state) return state.entries
       if (this.readFailure) return seed
 
-      await this.writeFile({ version: 1, entries: seed })
-      this.notifyUpdate({ clear: false, changes: seed })
-      return seed
+      const entries = (this.pendingSeed ??= { ...seed })
+      try {
+        await this.writeFile({ version: 1, entries })
+      } catch (error) {
+        console.warn('[renderer-storage] Initial state remains temporary', {
+          errorType: error instanceof Error ? error.name : typeof error,
+        })
+        return entries
+      }
+      this.notifyUpdate({ clear: false, changes: entries })
+      return entries
     })
   }
 
@@ -76,8 +85,8 @@ export class RendererStorageStore {
       const state = await this.readFile()
       if (this.readFailure) throw this.readFailure
       const entries = Object.create(null) as Record<string, string>
-      if (!update.clear && state) {
-        for (const [key, value] of Object.entries(state.entries)) {
+      if (!update.clear) {
+        for (const [key, value] of Object.entries(state?.entries ?? this.pendingSeed ?? {})) {
           entries[key] = value
         }
       }
@@ -122,6 +131,7 @@ export class RendererStorageStore {
       const record = value as Partial<RendererStorageState>
       if (record.version !== 1 || !validEntries(record.entries))
         throw new Error('Invalid renderer storage entries')
+      this.pendingSeed = null
       return { version: 1, entries: record.entries }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -159,6 +169,7 @@ export class RendererStorageStore {
 
   private async writeFile(state: RendererStorageState): Promise<void> {
     await this.writeJsonFile(this.path(), state)
+    this.pendingSeed = null
   }
 
   private async writeOriginFile(state: RendererStorageOriginState): Promise<void> {

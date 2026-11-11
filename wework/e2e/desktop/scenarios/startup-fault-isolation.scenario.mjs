@@ -1,11 +1,56 @@
 import assert from 'node:assert/strict'
-import { access, readFile, realpath, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   seedInstalledRelease,
   verifyStartupFaultIsolation,
 } from '../modules/startup-fault-isolation.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+
+async function reloadWorkbench(control, timeoutMs) {
+  const before = control.readyCount
+  await control.command('reloadApp', 'body')
+  await control.awaitReadyAfter(before, timeoutMs)
+  await control.command('waitFor', '[data-testid="app-shell"]', { timeoutMs })
+}
+
+async function verifyInitialStorageWriteFailure({ control, data, pid, resultDir, timeoutMs }) {
+  const path = join(data, 'renderer-local-storage.json')
+  const original = await readFile(path)
+  const seed = JSON.parse(original)
+  const marker = 'wework.e2e.initialPersistence'
+  seed.entries[marker] = 'preserved'
+  const seeded = JSON.stringify(seed)
+  const backup = `${path}.startup-original`
+  const blocked = `${path}.${pid}.tmp`
+  try {
+    await writeFile(path, seeded)
+    await reloadWorkbench(control, timeoutMs)
+    await control.command('flushRendererStorage', 'body')
+    await mkdir(blocked)
+    await rename(path, backup)
+    const preserved = await readFile(backup, 'utf8')
+    assert.equal(JSON.parse(preserved).entries[marker], 'preserved')
+    await reloadWorkbench(control, timeoutMs)
+    await assert.rejects(access(path), { code: 'ENOENT' })
+    assert.ok(
+      (await readFile(backup, 'utf8')) === preserved,
+      'Startup changed the preserved browser-state snapshot'
+    )
+
+    await rm(blocked, { recursive: true })
+    await reloadWorkbench(control, timeoutMs)
+    assert.equal(JSON.parse(await readFile(path, 'utf8')).entries[marker], 'preserved')
+    await writeFile(
+      join(resultDir, 'startup-first-write-result.json'),
+      JSON.stringify({ workbenchAvailable: true, seedPreserved: true, persistenceRepaired: true })
+    )
+  } finally {
+    await rm(blocked, { recursive: true, force: true })
+    await writeFile(path, original)
+    await rm(backup, { force: true })
+  }
+}
 
 export async function createDesktopScenario({
   resultDir,
@@ -15,10 +60,14 @@ export async function createDesktopScenario({
   let appBinary
   let environment
   let replacement
+  let appPid
   const metadata = JSON.parse(
     await readFile(new URL('../../../electron/package.json', import.meta.url), 'utf8')
   )
   return {
+    appProcessStarted(child) {
+      appPid = child.pid
+    },
     async prepareApp(input) {
       appBinary = input.appBinary
       environment = input.appEnvironment
@@ -97,6 +146,14 @@ export async function createDesktopScenario({
       } finally {
         await writeFile(durableState, original)
       }
+      assert.ok(Number.isInteger(appPid) && appPid > 0)
+      await verifyInitialStorageWriteFailure({
+        control,
+        data: electronUserDataDirectory,
+        pid: appPid,
+        resultDir,
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
     },
   }
 }

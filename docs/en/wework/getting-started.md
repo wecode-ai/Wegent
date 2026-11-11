@@ -41,4 +41,6 @@ Adding a project does not move its files. Removing a local project from Wework d
 
 Wework keeps an operable window available when release records, migrations, credentials, or local components fail. Unaffected workbench features remain available; an unavailable local service shows a notice with a retry action. When settings or durable state cannot be read, the interface uses temporary state and refuses to overwrite the original file. Saving can resume after the file is repaired.
 
+The workbench also remains available if its first state save fails. That state stays temporarily in memory and is not yet saved to disk. After the write failure is repaired, subsequent saves preserve the initial state.
+
 If the core runtime cannot load, Wework opens an independent **Wework Recovery Center**. Choose **Copy diagnostics** for the failure details or **Open log folder** to inspect logs, then choose **Retry startup** after repairing the cause. These actions do not automatically clear tasks, configuration, credentials, or snapshots. Opening recovery does not certify that the normal runtime is healthy.
