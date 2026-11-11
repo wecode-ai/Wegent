@@ -6,31 +6,47 @@ import { inspectBeforeStart } from './inspect-before-start.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 
+export async function seedInstalledRelease({ data, appBinary, version, id = 'installed-fixture' }) {
+  const releases = join(data, 'releases')
+  const slot = join(releases, 'slots', id)
+  await mkdir(slot, { recursive: true })
+  const descriptor = {
+    schemaVersion: 1,
+    id,
+    version,
+    executable: appBinary,
+    resources: slot,
+    runtimeRoot: join(slot, 'runtimes'),
+    profileRoot: join(slot, 'profile'),
+    dataSchema: 1,
+    readableDataSchemas: [1],
+  }
+  const descriptorPath = join(slot, 'release.json')
+  const original = JSON.stringify(descriptor)
+  await writeFile(descriptorPath, original)
+  await writeFile(join(releases, 'active'), id)
+  return { releases, descriptor, descriptorPath, original }
+}
+
 /** Exercise the delivered bootstrap, real IPC/preload, and recovery window. */
 export async function verifyStartupFaultIsolation({ appBinary, environment, resultDir, version }) {
   for (const fault of ['invalid-release', 'mismatched-host', 'missing-profile']) {
     const root = join(resultDir, 'startup-fault-isolation', fault)
     const data = join(root, 'user-data')
-    const releases = join(data, 'releases')
-    const slot = join(releases, 'slots', 'installed-fixture')
-    await mkdir(slot, { recursive: true })
+    const {
+      releases,
+      descriptor,
+      descriptorPath,
+      original: validDescriptor,
+    } = await seedInstalledRelease({
+      data,
+      appBinary,
+      version: fault === 'mismatched-host' ? '0.0.0' : version,
+    })
     const credentials = join(data, 'cloud-credentials.json')
     const saved = 'synthetic-credential-must-remain-unchanged'
     await writeFile(credentials, saved)
-    await writeFile(join(releases, 'active'), 'installed-fixture')
-    const descriptor = {
-      schemaVersion: 1,
-      id: 'installed-fixture',
-      version: fault === 'mismatched-host' ? '0.0.0' : version,
-      executable: appBinary,
-      resources: slot,
-      runtimeRoot: join(slot, 'runtimes'),
-      profileRoot: join(slot, 'profile'),
-      dataSchema: 1,
-      readableDataSchemas: [1],
-    }
-    const original = fault === 'invalid-release' ? '{broken-release' : JSON.stringify(descriptor)
-    const descriptorPath = join(slot, 'release.json')
+    const original = fault === 'invalid-release' ? '{broken-release' : validDescriptor
     await writeFile(descriptorPath, original)
     const evidencePath = join(resultDir, `startup-fault-${fault}.json`)
     const child = spawn(
