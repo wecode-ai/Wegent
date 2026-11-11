@@ -629,6 +629,7 @@ export async function createDesktopScenario({
     captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
 
   return {
+    appEnvironment: { WEGENT_HARNESS_PROTOCOL_DIAGNOSTICS: '1' },
     async handleHttp(request, response, url) {
       if (request.method !== 'POST') return false
       if (!['/v1/chat/completions', '/v1/responses'].includes(url.pathname)) return false
