@@ -41,6 +41,8 @@ done
                 "proxy-startup",
                 binary.to_str().unwrap(),
                 events,
+                None,
+                None,
             );
             let premature = handler.read_codex_rate_limits().await;
             let native_started = home.path().join("native-started").exists();
