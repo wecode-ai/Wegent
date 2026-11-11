@@ -1622,6 +1622,7 @@ async function verifyLastUserMessageEdit({ composerSelector, control, restartDes
     text: MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await selectE2EModel(control)
 
   await control.command(
     'hover',
