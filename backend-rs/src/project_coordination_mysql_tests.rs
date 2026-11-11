@@ -202,6 +202,57 @@ async fn verify(mysql: &MysqlService) {
 
 #[tokio::test]
 #[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn execution_bindings_preserve_database_generated_columns() {
+    with_schema(1, |mysql| async move {
+        mysql.execute(
+            "CREATE TABLE loop_items (
+                id VARCHAR(64) PRIMARY KEY,
+                resource_type VARCHAR(32) NOT NULL,
+                public_id VARCHAR(64) NULL,
+                project_key VARCHAR(64) NULL,
+                storage_prefix VARCHAR(64) NULL,
+                unique_public_id VARCHAR(64) GENERATED ALWAYS AS (NULLIF(public_id,'')) STORED UNIQUE,
+                unique_project_key VARCHAR(64) GENERATED ALWAYS AS (NULLIF(project_key,'')) VIRTUAL UNIQUE,
+                unique_storage_prefix VARCHAR(64) GENERATED ALWAYS AS (NULLIF(storage_prefix,'')) STORED UNIQUE
+            ) ENGINE=InnoDB",
+            (),
+        ).await.unwrap();
+        for values in [
+            json!({"public_id":"binding","project_key":"project","storage_prefix":"prefix"}),
+            json!({}),
+            json!({}),
+        ] {
+            let id = mysql.with_transaction(async |tx| {
+                store::insert(tx, "execution", values.clone()).await
+            }).await.unwrap();
+            let row: brz_mysql::MysqlRow = mysql.fetch_one(
+                "SELECT public_id,unique_public_id,project_key,unique_project_key,storage_prefix,unique_storage_prefix FROM loop_items WHERE id=?",
+                (id,),
+            ).await.unwrap();
+            for (source, generated) in [
+                ("public_id", "unique_public_id"),
+                ("project_key", "unique_project_key"),
+                ("storage_prefix", "unique_storage_prefix"),
+            ] {
+                let expected = values[source].as_str().map(str::to_owned);
+                assert_eq!(row.get::<String>(source).unwrap(), expected);
+                assert_eq!(row.get::<String>(generated).unwrap(), expected);
+            }
+        }
+        mysql.with_transaction(async |tx| {
+            let values = json!({"id":"once","public_id":"once"});
+            store::insert_once(tx, "execution", values.clone()).await?;
+            store::insert_once(tx, "execution", values).await
+        }).await.unwrap();
+        let row: brz_mysql::MysqlRow = mysql.fetch_one(
+            "SELECT COUNT(*) AS count FROM loop_items WHERE unique_public_id='once'", (),
+        ).await.unwrap();
+        assert_eq!(row.get_required::<i64>("count").unwrap(), 1);
+    }).await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
 async fn binding_cas_and_immediate_role_revocation_use_the_project_contract() {
     with_schema(4, |mysql| async move { verify(&mysql).await }).await;
 }

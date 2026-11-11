@@ -16,6 +16,10 @@ Revision assets live under `backend-rs/migrations/revisions/` and are embedded t
 
 Original Alembic scripts and legacy Wiki SQL live under `backend-rs/migrations/reference/` for Python-only operation and compatibility comparisons. Rust does not load those Python scripts.
 
+### Business writes and generated columns
+
+The shared project-row writer reads writable columns from MySQL metadata. Both ordinary and idempotent inserts exclude columns with a nonempty `GENERATION_EXPRESSION`, leaving their values to the database. Explicitly inserting NULL into a generated column is invalid even when it is nullable: MySQL returns error 3105 and rolls back the task-claim transaction. Nullable `public_id`, `project_key`, and `storage_prefix` values remain NULL so records without identifiers do not collide on unique keys. This write-path fix does not change the schema or require a migration.
+
 ## Commands
 
 From `backend-rs`, using the development database configuration:
