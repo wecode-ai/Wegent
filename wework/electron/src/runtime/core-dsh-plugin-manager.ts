@@ -122,6 +122,13 @@ export interface CoreDshPluginInstallRequest {
   spec: string
 }
 
+export async function authorizeCoreDshPluginInstall(
+  request: CoreDshPluginInstallRequest,
+  confirm: CoreDshPluginManagerOptions['confirmInstall']
+): Promise<void> {
+  if (!(await confirm?.(request))) throw new Error('Core plugin installation was cancelled')
+}
+
 export class CoreDshPluginManager {
   private readonly profileRoot: string
   private readonly runCommand: CommandRunner
@@ -163,7 +170,10 @@ export class CoreDshPluginManager {
       },
       async () => {
         validateSpec(spec)
-        await this.authorizeInstall({ action: 'install', spec: spec.trim() })
+        await authorizeCoreDshPluginInstall(
+          { action: 'install', spec: spec.trim() },
+          this.options.confirmInstall
+        )
       }
     )
   }
@@ -209,7 +219,10 @@ export class CoreDshPluginManager {
         const manifest = await this.readManifest()
         const source = manifest.dependencies?.[name]
         if (!source) throw new Error(`${name} is not installed`)
-        await this.authorizeInstall({ action: 'update', spec: `${name}@${source}` })
+        await authorizeCoreDshPluginInstall(
+          { action: 'update', spec: `${name}@${source}` },
+          this.options.confirmInstall
+        )
       }
     )
   }
@@ -254,12 +267,6 @@ export class CoreDshPluginManager {
       () => undefined
     )
     return next
-  }
-
-  private async authorizeInstall(request: CoreDshPluginInstallRequest): Promise<void> {
-    if (!(await this.options.confirmInstall?.(request))) {
-      throw new Error('Core plugin installation was cancelled')
-    }
   }
 
   private mutate(

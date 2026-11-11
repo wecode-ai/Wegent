@@ -4,8 +4,10 @@ import { watch, type FSWatcher } from 'node:fs'
 import { access, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
+  authorizeCoreDshPluginInstall,
   validateCoreDshDevelopmentPlugin,
   type CoreDshDevelopmentPlugin,
+  type CoreDshPluginInstallRequest,
 } from './core-dsh-plugin-manager.js'
 import { RotatingLog } from './rotating-log.js'
 import { terminateProcessTree } from './runtime-supervisor.js'
@@ -73,6 +75,7 @@ export interface PluginDevelopmentManagerOptions {
   args: string[]
   environment: NodeJS.ProcessEnv
   userDataDirectory: string
+  confirmInstall?: (request: CoreDshPluginInstallRequest) => Promise<boolean>
   watch?: typeof watch
   onStateChanged?: (session: PluginDevelopmentSession) => void
   onProjectClassificationChanged?: (classification: PluginDevelopmentProjectClassification) => void
@@ -277,6 +280,11 @@ export class PluginDevelopmentManager {
       await this.command('focus')
       return this.session
     }
+    // The public development entry can execute linked source just like installation.
+    await authorizeCoreDshPluginInstall(
+      { action: 'install', spec: `link:${plugin.sourceRoot}` },
+      this.options.confirmInstall
+    )
     await this.stop()
 
     const id = pluginDevelopmentId(plugin.sourceRoot)

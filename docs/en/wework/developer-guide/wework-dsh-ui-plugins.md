@@ -181,6 +181,8 @@ and preflights `dsh --profile wework-core --dump-config`; it restores the
 snapshot on failure. Plugins must not depend on immediate hot activation after
 installation.
 
+The isolated development entry requires the same native source confirmation before creating a child process, linking source, and starting HMR. Cancellation preserves the existing development session; focusing a running session does not install it again.
+
 When copying the Demo:
 
 1. Replace the npm package name, Loader entry id, and every contribution id.

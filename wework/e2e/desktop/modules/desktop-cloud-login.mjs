@@ -77,6 +77,8 @@ export async function signInDesktopCloud(
     signal: AbortSignal.timeout(timeoutMs),
   })
   assert.equal(approved.status, 'approved')
+  // Return from the system browser before asserting the desktop's visible connection state.
+  await control.command('focusMainWindow', 'body')
   await control.command('waitFor', testId('cloud-connection-status-card'), {
     text: user.user_name,
     visible: true,

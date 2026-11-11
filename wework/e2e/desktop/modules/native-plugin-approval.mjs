@@ -9,6 +9,7 @@ const TITLE = 'Confirm Core plugin installation'
 export async function withNativePluginDecision(control, operation, { allow = true } = {}) {
   const pid = control.applicationProcessId
   assert.ok(Number.isSafeInteger(pid) && pid > 0, 'An isolated Electron PID is required')
+  await control.command('focusMainWindow', 'body')
   const abort = new AbortController()
   const decision = clickNativeDecision(pid, allow, abort.signal)
   try {

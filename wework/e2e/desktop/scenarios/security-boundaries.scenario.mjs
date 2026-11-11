@@ -233,7 +233,7 @@ export function createDesktopScenario({
             sourceSha: process.env.GITHUB_SHA ?? null,
             checks: [
               'real-cloud-login-restart-refresh-authentication-and-logout-marker',
-              'native-plugin-install-and-update-cancel-and-allow',
+              'native-plugin-install-update-and-development-cancel-and-allow',
               'docx-unsafe-links-inert-and-https-preserved',
               'renderer-secure-storage-denied',
               'model-key-protected-and-native-authentication-after-restart',

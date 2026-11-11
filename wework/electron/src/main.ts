@@ -2318,6 +2318,8 @@ async function configureDesktopRuntime(): Promise<void> {
       ...currentElectronLaunch(),
       environment,
       userDataDirectory: app.getPath('userData'),
+      confirmInstall: request =>
+        confirmCoreDshPluginInstall(request, mainWindow, nativeDialogLanguage),
       onStateChanged: state => {
         desktopHostEvents.publish(
           'plugin-development.state',

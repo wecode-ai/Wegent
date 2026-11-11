@@ -75,6 +75,8 @@ From **Wework plugins**, install a plugin from an npm package, Git source, or ab
 
 Wework validates the resulting DSH profile after each install, update, enable, disable, or uninstall operation. If validation fails, it restores the previous dependencies and configuration so the runtime is not left unbootable. After successful changes, continue managing plugins and choose **Restart plugin runtime** once when ready. Enabled and disabled states persist across Wework restarts.
 
+Starting a plugin development instance also requires confirmation of the linked absolute source directory. Cancellation preserves the current development instance and starts no process. Once allowed, the development session executes that source and its subsequent HMR changes.
+
 ## Import a personal plugin
 
 On the **Plugins** page, choose **Create → Import plugin** to import a standard ZIP package that follows the `wework-plugins` format. The ZIP root must contain `.codex-plugin/plugin.json`, and any Skills or MCP servers must be included in the same plugin package. Encrypted or password-protected ZIP files are not supported.

@@ -60,6 +60,16 @@ test.each([0, 1])(
       redisPort: 6379,
     }
     await expect(signInDesktopCloud({ command }, cloud)).resolves.toEqual(user)
+    const focus = command.mock.calls.findIndex(([action]) => action === 'focusMainWindow')
+    const connectedCard = command.mock.calls.findIndex(
+      ([action, selector]) =>
+        action === 'waitFor' && selector === '[data-testid="cloud-connection-status-card"]'
+    )
+    expect(focus).toBeGreaterThan(-1)
+    expect(vi.mocked(pluginApi).mock.invocationCallOrder.at(-1)).toBeLessThan(
+      command.mock.invocationCallOrder[focus]
+    )
+    expect(focus).toBeLessThan(connectedCard)
     expect(commandOutputAsync).toHaveBeenCalledWith(
       join(redisRoot, process.platform === 'win32' ? 'redis-cli.exe' : 'redis-cli'),
       ['-p', '6379', '--raw', '--scan', '--pattern', '*wework_auth_session:*']

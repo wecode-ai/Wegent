@@ -159,6 +159,8 @@ Core DSH。每次安装或更新先通过原生窗口确认来源和执行风险
 `dsh.bundle.patch`、执行 `dsh --profile wework-core --dump-config` 预检；失败时
 恢复快照。插件不能依赖“安装后立即热生效”。
 
+独立插件开发入口也必须先通过同一原生来源确认，允许后才创建子进程、链接源码并启动 HMR。取消时保留已有开发会话；已运行会话的聚焦操作不会再次安装。
+
 复制 Demo 开发自己的插件时：
 
 1. 更换 npm 包名、Loader entry id 和所有 contribution id。

@@ -103,7 +103,7 @@ export async function verifyNativePluginAdmission({
   )
   const profileBefore = await readFile(profilePath, 'utf8')
   // Use the existing package-transaction budget: pnpm and validation are serial,
-  // and the measured install alone takes over nine seconds before native consent.
+  // and the measured install alone takes over nine seconds in addition to native consent.
   const packageTransaction = { timeoutMs: 60_000 }
   const install = () =>
     invokeLocalHost(
@@ -134,4 +134,32 @@ export async function verifyNativePluginAdmission({
     { name: 'dsh-security-approval' },
     packageTransaction
   )
+
+  const develop = () =>
+    invokeLocalHost(
+      control,
+      'pluginDevelopment.start',
+      { sourceRoot: pluginRoot },
+      packageTransaction
+    )
+  await assert.rejects(withNativePluginDecision(control, develop, { allow: false }), /cancelled/)
+  assert.deepEqual(await invokeLocalHost(control, 'pluginDevelopment.list'), [])
+  try {
+    const session = await withNativePluginDecision(control, develop)
+    assert.ok(session.electronPid > 0)
+    await until(
+      () => invokeLocalHost(control, 'pluginDevelopment.list'),
+      sessions =>
+        sessions.some(
+          item => item.id === session.id && item.status === 'ready' && item.coreDshPid > 0
+        ),
+      'Native-approved development source did not start its real Core runtime',
+      60_000
+    )
+  } finally {
+    await invokeLocalHost(control, 'pluginDevelopment.stop', undefined, packageTransaction)
+  }
+  const [stopped] = await invokeLocalHost(control, 'pluginDevelopment.list')
+  assert.equal(stopped.status, 'stopped')
+  assert.equal(stopped.electronPid, null)
 }
