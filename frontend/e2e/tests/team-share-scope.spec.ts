@@ -422,10 +422,9 @@ test.describe('Agent share scope', () => {
       await expect(dialog).toBeHidden({ timeout: 30000 })
 
       await expect
-        .poll(
-          () => readLeaderBotPrompt(fixture.reporterApi, fixture.groupTeamBotId),
-          { timeout: 20000 }
-        )
+        .poll(() => readLeaderBotPrompt(fixture.developerApi, fixture.groupTeamBotId), {
+          timeout: 20000,
+        })
         .toBe('Updated by a group editor with only Team permission.')
     } finally {
       await page.context().close()
