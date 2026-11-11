@@ -102,10 +102,6 @@ export interface HarnessAppSavedExport extends HarnessAppExport {
   destinationPath: string
 }
 
-export interface SmartAppStartOptions {
-  installationId: string
-}
-
 export type HarnessAppVerificationStage =
   | 'environment'
   | 'manifest'
@@ -243,24 +239,19 @@ export const harnessAppsApi = {
       releaseId: source?.releaseId ?? null,
     })
   },
-  start(options: SmartAppStartOptions) {
+  open(installationId: string, presentation?: WorkbenchPresentation) {
     const startupId = crypto.randomUUID()
     trackBusinessEvent('smart_app_start_attempted', { startup_id: startupId })
     return observeOperation(
       'smart_app.start',
       () =>
-        invokeDesktopHost<HarnessAppInstallation>('smartApps.start', {
-          installationId: options.installationId,
+        invokeDesktopHost<WorkbenchInstallation>('smartApps.open', {
+          installationId,
+          ...(presentation ? { presentation } : {}),
         }),
       result => result.state === 'running',
       { properties: { startup_id: startupId } }
     )
-  },
-  open(installationId: string, presentation?: WorkbenchPresentation) {
-    return invokeDesktopHost<WorkbenchInstallation>('smartApps.open', {
-      installationId,
-      ...(presentation ? { presentation } : {}),
-    })
   },
   preparePreview(installationId: string) {
     return invokeDesktopHost<HarnessAppInstallation>('smartApps.preparePreview', { installationId })
