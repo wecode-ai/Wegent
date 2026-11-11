@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { Activity, createElement, type ReactNode } from 'react'
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { useStandardCloudBoardController } from '../../../../packages/collaboration/src/project-board/useStandardCloudBoardController'
@@ -21,6 +22,34 @@ function setup(data = issues) {
 }
 
 describe('milestone filter drilldown', () => {
+  it('retains temporary drilldown across Activity restoration but clears it on real scope changes', () => {
+    let mode: 'visible' | 'hidden' = 'visible'
+    const { result, rerender } = renderHook(
+      ({ projectId, view }) => useMilestoneFilter(projectId, view, issues),
+      {
+        initialProps: { projectId: 'p', view: 'board' },
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(Activity, { mode }, children),
+      }
+    )
+    act(() => result.current.select('m'))
+    act(() => result.current.openChildren(issues[0]))
+    expect(result.current.filteredIssues).toHaveLength(4)
+    mode = 'hidden'
+    rerender({ projectId: 'p', view: 'board' })
+    mode = 'visible'
+    rerender({ projectId: 'p', view: 'board' })
+    expect(result.current.value).toBe('all')
+    expect(result.current.filteredIssues).toHaveLength(4)
+    rerender({ projectId: 'p', view: 'table' })
+    rerender({ projectId: 'p', view: 'board' })
+    expect(result.current.value).toBe('m')
+    act(() => result.current.openChildren(issues[0]))
+    rerender({ projectId: 'q', view: 'board' })
+    rerender({ projectId: 'p', view: 'board' })
+    expect(result.current.value).toBe('m')
+  })
+
   it('temporarily includes counted children and restores selection at the root in the same event', () => {
     const { result } = setup()
     act(() => result.current.select('m'))

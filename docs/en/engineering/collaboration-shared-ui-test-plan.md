@@ -66,8 +66,9 @@ Use isolated real Electron and the existing local/cloud Group checkpoints, inclu
 3. Switching accounts immediately removes the old account’s content and retained board state. Inactive boards clean up effects/subscriptions and revalidate current permissions/data on restoration.
 4. Both people show names and avatars. Exact current-human identity decides sides, never matching display names or an agent ID. Compare real avatar coordinates: self on the right and the other member on the left. System lifecycle messages remain centered and Thread entry cards remain clickable.
 5. Continue checking history focus, mentions, attachments, leaving and discussion after completion. Retain first-use, two-person discussion and both source-board return screenshots for independent review.
+6. After drilling into children outside the selected milestone, hiding and restoring the same board preserves the temporary drilldown. A project or view change clears the temporary drilldown while retaining the base milestone selection. Component regression also covers the existing caller without a default grouping.
 
-Current result: component and state-retention tests passed; real Electron acceptance of the new UI remains outstanding.
+Current result: component and state-retention tests passed. Freshly built real Electron verified retained search after returning to both group and project aggregation boards. Real two-person cloud discussion passed name, avatar and left/right coordinate assertions; independent review of the key screenshots is in progress.
 
 ### Manual personal stand-in execution within a group
 
@@ -77,8 +78,9 @@ This case verifies the existing personal stand-in path without deciding shared g
 2. Leave the Thread and launch manually: reject for missing participation, without a model request or cloud private-task binding.
 3. Join and launch manually: create and complete a real native Codex conversation, showing its explicitly public final reply in the Thread.
 4. Verify the original executor/device binding, group ownership and unchanged human assignment; retain the actual screenshot. Explicit public stand-in replies are distinct from separately bound private task history, which must never be automatically synchronized.
+5. Another group Viewer reads an empty execution-binding list. Removing their group access makes the same request return 404.
 
-Status: registered within the existing `group-thread-cloud` CI shard; real acceptance is running and remains unverified.
+Status: registered within the existing `group-thread-cloud` CI shard. The complete real cloud case passed: unjoined rejection, joined execution, original executor/device binding, no human assignment before or after execution, private-binding isolation from another Viewer, and 404 after access removal.
 
 Cloud Group cases reuse the existing cloud checkpoint, real Rust/Python services,
 database and object storage. Do not replace internal services with mocks.

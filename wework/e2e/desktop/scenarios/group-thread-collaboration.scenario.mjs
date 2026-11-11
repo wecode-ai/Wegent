@@ -19,7 +19,7 @@ const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = testId => `${CONTENT} [data-testid="${testId}"]`
 const GROUP_NAME = `独立群协作验收-${process.pid}`
 const THREAD_TITLE = `统一交付入口-${process.pid}`
-const DISCUSSION = `只属于 Thread 的讨论-${process.pid}`
+const DISCUSSION = `只属于事项的讨论-${process.pid}`
 const PRIVATE_RESULT = 'GROUP_THREAD_PRIVATE_RUNTIME_COMPLETE'
 
 /** Establish all prerequisites through the real local UI, including standalone runs. */
@@ -95,7 +95,7 @@ export function createDesktopScenario({
     })
     const completed = await rpc('todos.create', {
       project_id: projectId,
-      todo: { title: '已完成的历史 Thread', status: 'completed' },
+      todo: { title: '已完成的历史事项', status: 'completed' },
     })
     const comment = await rpc('todos.comment.create', {
       comment: {
@@ -340,7 +340,7 @@ export function createDesktopScenario({
       await control.command('selectFile', scoped('group-message-file'), {
         filename: 'thread-review.txt',
         mimeType: 'text/plain',
-        value: Buffer.from('Thread 附件验收内容').toString('base64'),
+        value: Buffer.from('事项附件验收内容').toString('base64'),
       })
       await control.command('waitFor', scoped(`cloud-task-activity-card-attachments-${threadId}`), {
         text: 'thread-review.txt',
@@ -377,7 +377,7 @@ export function createDesktopScenario({
         '尚未保存的草稿'
       )
       await fill(control, 'thread-settings-title', THREAD_TITLE)
-      await fill(control, 'thread-settings-description', '验收群与 Thread 的独立生命周期')
+      await fill(control, 'thread-settings-description', '验收群与事项的独立生命周期')
       const today = new Intl.DateTimeFormat('sv-SE').format(new Date())
       await fill(control, 'thread-settings-start', `${today}T09:00`)
       await fill(control, 'thread-settings-due', `${today}T17:00`)
@@ -412,7 +412,7 @@ export function createDesktopScenario({
       await wait(control, 'thread-settings-tags-tag-自定义/待评审')
       assert.equal(
         await control.command('getValue', scoped('thread-settings-description')),
-        '验收群与 Thread 的独立生命周期'
+        '验收群与事项的独立生命周期'
       )
       assert.equal(
         await control.command('getValue', scoped('thread-notification-preference')),
@@ -658,7 +658,7 @@ export function createDesktopScenario({
 
       // Project classification must preserve the Thread's real owning group.
       await click(control, 'collaboration-view-projects')
-      await createLocalCollaborationProject(control, CONTENT, `Thread聚合项目-${process.pid}`)
+      await createLocalCollaborationProject(control, CONTENT, `事项聚合项目-${process.pid}`)
       const projectTestId = await control.command(
         'getAttribute',
         `${CONTENT} [data-testid^="collaboration-workspace-project-"][aria-current="page"]`,
@@ -745,7 +745,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
         text: GROUP_NAME,
       })
-      const projectThreadTitle = `从项目创建的群内Thread-${process.pid}`
+      const projectThreadTitle = `从项目创建的群内事项-${process.pid}`
       await control.command('fill', '[data-testid="cloud-todo-title"]', {
         value: projectThreadTitle,
       })
@@ -838,7 +838,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
         text: '未关联项目',
       })
-      const standaloneTitle = `无需项目的Thread-${process.pid}`
+      const standaloneTitle = `无需项目的事项-${process.pid}`
       await control.command('fill', '[data-testid="cloud-todo-title"]', { value: standaloneTitle })
       assert.equal(
         await control.command('getAttribute', '[data-testid="cloud-todo-detail-description"]', {

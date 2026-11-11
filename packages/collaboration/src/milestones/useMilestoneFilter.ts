@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { collectIssueSubtreeIds } from "../board";
 import { collectIssueChildrenProgress } from "../project-board/IssueChildrenProgress";
 import type { CollaborationIssue } from "../types";
@@ -16,6 +16,7 @@ export function useMilestoneFilter(
     projectId: string;
     rootId: string;
   } | null>(null);
+  const previousScope = useRef({ projectId, view });
   const baseValue =
     selection?.projectId === projectId && selection ? selection.value : "all";
   const temporary = view === "board" && drilldown?.projectId === projectId;
@@ -25,6 +26,12 @@ export function useMilestoneFilter(
   );
 
   useEffect(() => {
+    if (
+      previousScope.current.projectId === projectId &&
+      previousScope.current.view === view
+    )
+      return;
+    previousScope.current = { projectId, view };
     setDrilldown(null);
   }, [projectId, view]);
 

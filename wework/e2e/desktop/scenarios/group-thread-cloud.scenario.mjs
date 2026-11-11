@@ -40,7 +40,7 @@ export async function createDesktopScenario({
   let messageSequence = 0
   let manualModelRequests = 0
   const sockets = new Set()
-  const title = `云端群 Thread 验收-${process.pid}`
+  const title = `云端群事项验收-${process.pid}`
   const groupName = `云端独立群-${process.pid}`
   const wait = (control, id, extra = {}) =>
     control.command('waitFor', scoped(id), { timeoutMs: uiTimeoutMs, ...extra })
@@ -97,7 +97,7 @@ export async function createDesktopScenario({
     }
   }
 
-  async function send(token, content, { denied = false, connection } = {}) {
+  async function send(token, content, { denied = false, connection, taskId = threadId } = {}) {
     const socket = connection ?? (await connectSocket(token))
     try {
       const ack = await socket
@@ -105,7 +105,7 @@ export async function createDesktopScenario({
         .emitWithAck('wework:project_chat:message:send', {
           projectId: groupId,
           containerKind: 'chat_group',
-          taskId: threadId,
+          taskId,
           clientMessageId: `cloud-thread-${process.pid}-${++messageSequence}`,
           content,
         })
@@ -762,6 +762,39 @@ export async function createDesktopScenario({
       const discussion = await control.command('getText', scoped('group-message-list'))
       assert.ok(discussion.includes(owner.user_name) && discussion.includes(member.user_name))
       await capture(control, 'cloud-thread-two-person-discussion.png')
+
+      await click(control, 'thread-back-to-group')
+      await wait(control, 'group-room')
+      await send(cloud.authToken, '主群中我的消息显示在右侧', { taskId: null })
+      await send(memberToken, '主群中另一位成员的消息显示在左侧', {
+        taskId: null,
+        connection: memberConnection,
+      })
+      await wait(control, 'group-message-list', { text: '主群中另一位成员的消息显示在左侧' })
+      const mainSelf = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${CONTENT} [data-message-side="self"] [data-testid^="group-message-avatar-"]`
+        )
+      )
+      const mainOther = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${CONTENT} [data-message-side="other"] [data-testid^="group-message-avatar-"]`
+        )
+      )
+      assert.ok(mainSelf.length && mainOther.length, 'Main group must show both sender avatars')
+      assert.ok(
+        mainSelf[0].left > mainOther[0].left,
+        'Main group self messages must be on the right'
+      )
+      const mainDiscussion = await control.command('getText', scoped('group-message-list'))
+      assert.ok(
+        mainDiscussion.includes(owner.user_name) && mainDiscussion.includes(member.user_name)
+      )
+      await capture(control, 'cloud-main-group-two-person-discussion.png')
+      await click(control, `thread-nav-${threadId}`)
+      await wait(control, 'thread-room', { text: title })
 
       const other = (
         await request('/api/v1/chat-groups', {

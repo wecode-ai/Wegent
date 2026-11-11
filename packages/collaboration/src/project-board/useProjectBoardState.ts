@@ -54,7 +54,8 @@ export function useProjectBoardState({
 
   useEffect(() => {
     if (
-      initializedScope.current?.defaultGroupBy === defaultGroupBy &&
+      initializedScope.current &&
+      initializedScope.current.defaultGroupBy === defaultGroupBy &&
       initializedScope.current.personalGroupStorageKey ===
         personalGroupStorageKey &&
       initializedScope.current.viewScope === viewScope
