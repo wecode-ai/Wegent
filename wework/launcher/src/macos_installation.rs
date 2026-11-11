@@ -357,6 +357,7 @@ mod tests {
                     .arg(&self.mount)
                     .output();
                 eprintln!("Fixture volume state: {volume:?}");
+                report_image_device(&self.root, &detached.stderr);
             }
             assert!(
                 detached.status.success(),
@@ -368,6 +369,59 @@ mod tests {
             );
             self.mounted = false;
         }
+    }
+
+    fn report_image_device(root: &Path, stderr: &[u8]) {
+        let image_info = Command::new("/usr/bin/hdiutil").arg("info").output();
+        if let Ok(info) = image_info {
+            for image in String::from_utf8_lossy(&info.stdout)
+                .split("================================================")
+            {
+                if image.contains(&root.to_string_lossy().to_string()) {
+                    eprintln!("Fixture attached image: {image}");
+                }
+            }
+        }
+        let stderr = String::from_utf8_lossy(stderr);
+        let Some(device) = stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("unmount_and_eject(")?.strip_suffix(')'))
+        else {
+            return;
+        };
+        let Some(number) = device.strip_prefix("disk") else {
+            return;
+        };
+        let number: String = number.chars().take_while(char::is_ascii_digit).collect();
+        if number.is_empty() {
+            return;
+        }
+        let disk = format!("disk{number}");
+        let holders = Command::new("/usr/bin/sudo")
+            .args(["-n", "/usr/sbin/lsof", "-nP"])
+            .arg(format!("/dev/{disk}"))
+            .arg(format!("/dev/r{disk}"))
+            .output();
+        eprintln!("Fixture device holders: {holders:?}");
+        let predicate = format!(
+            "(process == 'diskarbitrationd' OR process == 'diskimages-helper') AND eventMessage CONTAINS '{disk}'"
+        );
+        let events = Command::new("/usr/bin/sudo")
+            .args([
+                "-n",
+                "/usr/bin/log",
+                "show",
+                "--last",
+                "2m",
+                "--style",
+                "compact",
+                "--info",
+                "--debug",
+                "--predicate",
+            ])
+            .arg(predicate)
+            .output();
+        eprintln!("Fixture device arbitration: {events:?}");
     }
 
     impl Drop for MountedImage {
