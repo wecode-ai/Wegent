@@ -36,6 +36,102 @@ function fixture() {
   } as unknown as WorkbenchServices
 }
 
+it.each(['native', 'cloud'] as const)(
+  'permits the ready %s execution model while the other catalog is still pending',
+  async source => {
+    const services = fixture()
+    const cloud: UnifiedModel = {
+      name: 'cloud-fast-sol',
+      modelId: native.model_id,
+      type: 'public',
+      provider: 'openai',
+      namespace: 'default',
+      resourceUserId: 7,
+      config: { protocol: 'openai-responses' },
+    }
+    let finishNative!: (value: { models: RunnerModel[] }) => void
+    let finishCloud!: (value: { data: UnifiedModel[] }) => void
+    if (source === 'native') {
+      vi.mocked(services.modelApi.listModels).mockImplementationOnce(
+        () => new Promise(resolve => (finishCloud = resolve))
+      )
+    } else {
+      vi.mocked(services.standInApi!.catalog).mockImplementationOnce(
+        () => new Promise(resolve => (finishNative = resolve))
+      )
+      vi.mocked(services.modelApi.listModels).mockResolvedValue({ data: [cloud] })
+    }
+    const saved = {
+      ...settings,
+      model: source === 'native' ? null : cloudRunnerModelIdentity(cloud, 'codex'),
+    }
+    if (source === 'cloud') {
+      expect(saved.model).toMatchObject({ source: 'cloud', cloud_model: { name: cloud.name } })
+    }
+    const { result, unmount } = renderHook(() => useStandInConversationModel(services, saved))
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      expect(result.current.unavailable).toBe(false)
+      expect(
+        selectedModelExecutionFields(
+          result.current.selectedModel,
+          result.current.selectedModelOptions
+        )
+      ).toMatchObject({
+        modelId: source === 'native' ? native.model_id : cloud.name,
+        modelType: source === 'native' ? 'runtime' : 'public',
+      })
+      await act(async () => {
+        finishNative?.({ models: [] })
+        finishCloud?.({ data: [] })
+      })
+      expect(result.current.loading).toBe(false)
+      expect(result.current.unavailable).toBe(false)
+      expect(result.current.selectedModel?.type).toBe(source === 'native' ? 'runtime' : 'public')
+    } finally {
+      finishNative?.({ models: [] })
+      finishCloud?.({ data: [] })
+      unmount()
+    }
+  }
+)
+
+it('discards a response completed while inactive and revalidates before sending after activation', async () => {
+  const services = fixture()
+  let finish!: (value: { models: RunnerModel[] }) => void
+  vi.mocked(services.standInApi!.catalog).mockImplementationOnce(
+    () => new Promise(resolve => (finish = resolve))
+  )
+  const { result, rerender, unmount } = renderHook(
+    ({ active }) => useStandInConversationModel(services, settings, active),
+    { initialProps: { active: true } }
+  )
+  try {
+    expect(result.current.loading).toBe(true)
+    await waitFor(() => expect(services.standInApi!.catalog).toHaveBeenCalledOnce())
+    rerender({ active: false })
+    await act(async () => finish({ models: [{ ...native, label: 'Stale inactive model' }] }))
+    expect(result.current.loading).toBe(true)
+    expect(result.current.models.map(model => model.displayName)).not.toContain(
+      'Stale inactive model'
+    )
+    rerender({ active: true })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.unavailable).toBe(false)
+    expect(result.current.selectedModel?.displayName).toBe(native.label)
+    expect(
+      selectedModelExecutionFields(
+        result.current.selectedModel,
+        result.current.selectedModelOptions
+      )
+    ).toMatchObject({ modelId: native.model_id, modelType: 'runtime' })
+    expect(services.standInApi!.catalog).toHaveBeenCalledTimes(2)
+  } finally {
+    finish({ models: [] })
+    unmount()
+  }
+})
+
 it('inherits the saved effort and uses the device default when no model was selected', async () => {
   const services = fixture()
   const { result, rerender } = renderHook(
@@ -282,6 +378,7 @@ it('blocks saved Claude immediately and permits explicit Codex recovery without 
     expect(result.current.unavailableReason).toBe('conversation_runtime_unsupported')
     act(() => result.current.setSelectedModelOption('reasoning', 'medium'))
     expect(result.current.unavailableReason).toBe('conversation_runtime_unsupported')
+    await waitFor(() => expect(services.standInApi!.catalog).toHaveBeenCalledOnce())
     await act(async () => finish({ models: [claude, codex, native] }))
     expect(result.current.loading).toBe(false)
     expect(result.current.models.map(model => model.runtime?.family)).toEqual(['codex', 'codex'])

@@ -53,12 +53,14 @@ function Fixture({
   save,
   initial,
   initialModel,
+  initialModelOptions,
   services,
   showPrompt = true,
 }: {
   save: ReturnType<typeof vi.fn>
   initial?: WorkspaceStandInSettings['workspace']
   initialModel?: WorkspaceStandInSettings['model']
+  initialModelOptions?: WorkspaceStandInSettings['modelOptions']
   services?: WorkbenchServices
   showPrompt?: boolean
 }) {
@@ -69,6 +71,7 @@ function Fixture({
     version: 0,
     workspace: initial,
     model: initialModel,
+    modelOptions: initialModelOptions,
   })
   const [valid, setValid] = useState(false)
   return (
@@ -241,6 +244,74 @@ describe('Stand-in configuration composer', () => {
       expect.objectContaining({ model: expect.objectContaining({ model_id: 'default-model' }) })
     )
   })
+
+  it.each(['low', 'none'] as const)(
+    'saves the displayed reasoning selection when the next model supports %s',
+    async reasoning => {
+      const save = vi.fn<(draft: WorkspaceStandInSettings) => Promise<boolean>>(async () => true)
+      const highModel = {
+        runtime: 'codex' as const,
+        provider: 'openai',
+        model_id: 'high-capable',
+        label: 'High capable',
+        is_default: true,
+        default_reasoning_effort: 'high',
+        supported_reasoning_efforts: ['low', 'high'],
+      }
+      const nextModel = {
+        ...highModel,
+        model_id: reasoning === 'low' ? 'low-only' : 'no-reasoning',
+        label: reasoning === 'low' ? 'Low only' : 'No reasoning',
+        is_default: false,
+        default_reasoning_effort: reasoning === 'low' ? 'low' : undefined,
+        supported_reasoning_efforts: reasoning === 'low' ? ['low'] : [],
+      }
+      const services = {
+        standInApi: { catalog: vi.fn(async () => ({ models: [highModel, nextModel] })) },
+        modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+      } as unknown as WorkbenchServices
+      render(
+        <Fixture
+          save={save}
+          services={services}
+          initialModel={highModel}
+          initialModelOptions={{
+            reasoning: 'high',
+            reasoningEffort: 'high',
+            permissionMode: 'read-only',
+            custom: 'kept',
+          }}
+        />
+      )
+      await waitFor(() =>
+        expect(screen.getByTestId('model-selector-button')).toHaveTextContent('High capable 高')
+      )
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+      await userEvent.click(screen.getByTestId(`model-option-${runnerModelKey(nextModel)}`))
+      await userEvent.keyboard('{Escape}')
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent(
+        reasoning === 'low' ? 'Low only 轻度' : 'No reasoning'
+      )
+      await userEvent.click(screen.getByTestId('stand-in-save'))
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: expect.objectContaining({ model_id: nextModel.model_id }),
+          modelOptions: expect.objectContaining({
+            permissionMode: 'read-only',
+            custom: 'kept',
+          }),
+        })
+      )
+      const savedOptions = save.mock.calls[0][0].modelOptions
+      expect(savedOptions).not.toHaveProperty('reasoningEffort')
+      if (reasoning === 'low') {
+        expect(savedOptions).toHaveProperty('reasoning', 'low')
+      } else {
+        expect(savedOptions).not.toHaveProperty('reasoning')
+      }
+    }
+  )
+
   it.each(['native', 'cloud'] as const)(
     'separates same-name account and cloud models and saves the %s identity',
     async source => {

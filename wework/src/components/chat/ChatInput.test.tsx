@@ -745,6 +745,101 @@ describe('ChatInput', () => {
     expect(setSelectedModel).not.toHaveBeenCalled()
   })
 
+  test.each([true, false])(
+    'confirms same-name provider replacement only in stand-in session mode (%s)',
+    async session => {
+      const model: UnifiedModel = {
+        name: 'same-model',
+        type: 'runtime',
+        provider: 'local',
+        isActive: true,
+        config: { weworkModelKind: 'codex-provider', codexProviderId: 'company' },
+      }
+      const setSelectedModel = vi.fn()
+      const continueInNewConversation = vi.fn()
+      render(
+        <ChatInput
+          value="Keep the draft"
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: model,
+            activeModel: model,
+            activeModelSelection: {
+              modelName: model.name,
+              modelType: 'runtime',
+              options: { codexProviderId: 'openai' },
+            },
+            modelSwitchMode: session ? 'session' : undefined,
+            setSelectedModel,
+            continueInNewConversation,
+          })}
+        />
+      )
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+      await userEvent.click(screen.getByTestId('model-option-same-model'))
+      if (session) {
+        expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+          'Your next message will start a new session here.'
+        )
+        expect(setSelectedModel).not.toHaveBeenCalled()
+        await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+      } else {
+        expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+      }
+      expect(setSelectedModel).toHaveBeenCalledWith(model)
+      expect(continueInNewConversation).not.toHaveBeenCalled()
+    }
+  )
+
+  test('binds recovery confirmation to the session dialog even when provider metadata arrives late', async () => {
+    const model: UnifiedModel = {
+      name: 'same-model',
+      type: 'runtime',
+      provider: 'local',
+      isActive: true,
+      config: { weworkModelKind: 'codex-official' },
+    }
+    const confirmOldSession = vi.fn()
+    const confirmNewSession = vi.fn()
+    const setSelectedModel = vi.fn()
+    const input = (requiresNewSession: boolean, onSessionStartConfirmed: () => void) => (
+      <ChatInput
+        value="Keep the draft"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          activeModel: model,
+          selectedModel: model,
+          activeModelProvider: 'openai',
+          modelSwitchMode: 'session',
+          requiresNewSession,
+          onSessionStartConfirmed,
+          setSelectedModel,
+        })}
+      />
+    )
+    const view = render(input(true, confirmOldSession))
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-option-same-model'))
+    await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
+    expect(confirmOldSession).not.toHaveBeenCalled()
+    expect(setSelectedModel).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-option-same-model'))
+    view.rerender(input(false, confirmNewSession))
+    await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+    expect(confirmOldSession).toHaveBeenCalledOnce()
+    expect(confirmNewSession).not.toHaveBeenCalled()
+    expect(setSelectedModel).toHaveBeenCalledWith(model)
+  })
+
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {

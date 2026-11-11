@@ -14,11 +14,12 @@ import { useStandInModels } from './useStandInModels'
 
 export function useStandInConversationModel(
   services: WorkbenchServices | undefined,
-  settings: WorkspaceStandInSettings
+  settings: WorkspaceStandInSettings,
+  active = true
 ): ConversationModelControls {
   // Stand-in conversations require the Codex approval path. Other profile uses
   // retain their saved runtime catalog through useStandInModels's default.
-  const catalog = useStandInModels(services, settings, 'codex')
+  const catalog = useStandInModels(services, settings, 'codex', active)
   const savedOptions = standInModelOptions(settings.modelOptions ?? {})
   const inheritedOptions = {
     ...(catalog.selectedModel ? getDefaultModelOptions(catalog.selectedModel) : {}),
@@ -43,6 +44,7 @@ export function useStandInConversationModel(
     ? (catalog.models.find(model => isSameModelSelection(model, requestedModel)) ?? requestedModel)
     : null
   const selectedIdentity = catalog.resolve(model)
+  const loading = catalog.isLoadingModel(model)
   const unsupported = (selectedIdentity?.runtime ?? model?.runtime?.family) === 'claude_code'
   const options =
     selection?.model === undefined
@@ -54,8 +56,9 @@ export function useStandInConversationModel(
     models: catalog.models,
     selectedModel: model,
     selectedModelOptions: options,
-    loading: catalog.loading,
-    unavailable: unsupported || (!catalog.loading && !selectedIdentity),
+    loading,
+    unavailable: unsupported || (!loading && !selectedIdentity),
+    error: catalog.error,
     unavailableReason: unsupported ? 'conversation_runtime_unsupported' : undefined,
     onModelSelectorOpenChange: open => {
       if (open) catalog.refresh()

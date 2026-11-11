@@ -4,6 +4,7 @@ import { useRuntimeInteractionInputHost } from '@/features/notifications/useRunt
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { deliverNativeConversationMessage } from './nativeConversationDelivery'
 import type { ConversationModelControls } from './conversationModelControls'
+import { useStandInActiveModelProvider } from './useStandInActiveModelProvider'
 import { StandInNotificationPrompt } from '@/features/todo/StandInNotificationPrompt'
 import {
   createPluginTrialGuide,
@@ -246,11 +247,32 @@ export function TemporaryChatPanel({
   const activeModel = modelControls
     ? findModelForSelection(modelControls.models, activeModelSelection)
     : taskModelSelection?.activeModel
+  const {
+    provider: activeModelProvider,
+    pending: activeProviderPending,
+    failed: activeProviderFailed,
+    refresh: refreshActiveProvider,
+  } = useStandInActiveModelProvider({
+    enabled: Boolean(modelControls) && active,
+    api: services.standInApi,
+    address,
+    threadId: activeThreadId,
+    selection: activeModelSelection,
+    runtimeHandle: taskLifecycle?.task?.runtimeHandle ?? address?.runtimeHandle,
+  })
+  const activeSessionKey =
+    address && activeThreadId
+      ? JSON.stringify([address.deviceId, address.taskId, activeThreadId])
+      : null
+  const [confirmedSessionKey, setConfirmedSessionKey] = useState<string | null>(null)
+  const explicitNewSession = Boolean(activeSessionKey && confirmedSessionKey === activeSessionKey)
   const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
   const globalSelectedModelOptions =
     projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
   const taskModelIdentityPending = modelControls
-    ? modelControls.loading || Boolean(modelControls.unavailable)
+    ? modelControls.loading ||
+      Boolean(modelControls.unavailable) ||
+      (activeProviderPending && !explicitNewSession)
     : Boolean(
         address &&
         !taskModelSelection?.taskSelection &&
@@ -258,7 +280,10 @@ export function TemporaryChatPanel({
       )
   const modelError = modelControls?.unavailableReason
     ? t(`standIn.errors.${modelControls.unavailableReason}`)
-    : null
+    : (modelControls?.error ??
+      (activeProviderFailed && !explicitNewSession
+        ? t('standIn.errors.conversation_provider_unavailable')
+        : null))
   const [trialGuide, setTrialGuide] = useState<PluginTrialGuide | null>(null)
   const sideChatProjectChat = useMemo(
     () => ({
@@ -304,11 +329,18 @@ export function TemporaryChatPanel({
             ...modelControls,
             activeModel: activeThreadId ? activeModel : null,
             activeModelSelection: activeThreadId ? activeModelSelection : null,
+            activeModelProvider,
             modelSwitchMode: 'session' as const,
+            requiresNewSession: activeProviderPending,
+            onSessionStartConfirmed: () => setConfirmedSessionKey(activeSessionKey),
             continueInNewConversation: undefined,
             isModelSelectionReady: !taskModelIdentityPending,
             getSelectedModel: () => modelControls.selectedModel,
             getSelectedModelOptions: () => modelControls.selectedModelOptions,
+            onModelSelectorOpenChange: (open: boolean) => {
+              modelControls.onModelSelectorOpenChange?.(open)
+              if (open && activeProviderPending) refreshActiveProvider()
+            },
           }
         : {}),
       hasConversationContext: Boolean(address),
@@ -334,6 +366,10 @@ export function TemporaryChatPanel({
       activeThreadId,
       activeModel,
       activeModelSelection,
+      activeModelProvider,
+      activeProviderPending,
+      refreshActiveProvider,
+      activeSessionKey,
     ]
   )
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
@@ -616,6 +652,50 @@ export function TemporaryChatPanel({
     return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
   }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection, modelControls])
 
+  const sessionStartFields = useMemo(
+    () =>
+      modelControls &&
+      activeThreadId &&
+      (explicitNewSession ||
+        requiresNewConversationForModelSwitch(
+          activeModel,
+          modelControls.selectedModel,
+          activeModelSelection,
+          activeModelProvider
+        ))
+        ? { startNewSession: true, expectedThreadId: activeThreadId }
+        : {},
+    [
+      modelControls,
+      activeThreadId,
+      activeModel,
+      activeModelSelection,
+      activeModelProvider,
+      explicitNewSession,
+    ]
+  )
+  const canSendWithCurrentModel = useCallback(() => {
+    if (nativeConversation && taskLifecycle?.interactionStatus) {
+      setError(t('standIn.native_input_pending'))
+      return false
+    }
+    if (!taskModelIdentityPending) return true
+    if (modelError) return false
+    setError(
+      modelControls?.unavailable
+        ? t('standIn.errors.model_unavailable')
+        : '正在同步任务模型配置，请稍后重试'
+    )
+    return false
+  }, [
+    nativeConversation,
+    taskLifecycle?.interactionStatus,
+    taskModelIdentityPending,
+    modelError,
+    modelControls?.unavailable,
+    t,
+  ])
+
   useEffect(() => {
     if (!address) return
     console.info('[runtime-v2] task conversation identity resolved', {
@@ -711,19 +791,7 @@ export function TemporaryChatPanel({
       const message = (valueOverride ?? input).trim()
       if (!message) return false
       if (nativeConversation && nativeSubmission.current) return false
-      if (nativeConversation && taskLifecycle?.interactionStatus) {
-        setError(t('standIn.native_input_pending'))
-        return false
-      }
-      if (taskModelIdentityPending) {
-        if (modelControls?.unavailableReason) return false
-        setError(
-          modelControls?.unavailable
-            ? t('standIn.errors.model_unavailable')
-            : '正在同步任务模型配置，请稍后重试'
-        )
-        return false
-      }
+      if (!canSendWithCurrentModel()) return false
       setError(null)
       setInput('')
       setTrialGuide(null)
@@ -743,15 +811,7 @@ export function TemporaryChatPanel({
         createdAt: new Date().toISOString(),
         attachments: persistAttachmentReferences(currentAttachments),
         ...selectedModelFields,
-        ...(modelControls &&
-        activeThreadId &&
-        requiresNewConversationForModelSwitch(
-          activeModel,
-          modelControls.selectedModel,
-          activeModelSelection
-        )
-          ? { startNewSession: true, expectedThreadId: activeThreadId }
-          : {}),
+        ...sessionStartFields,
       }
       if (nativeConversation && address) {
         nativeSubmission.current = true
@@ -949,7 +1009,6 @@ export function TemporaryChatPanel({
       address,
       nativeConversation,
       paneStatus.isBusy,
-      taskLifecycle?.interactionStatus,
       queuePort,
       sendRuntimePaneGuidance,
       t,
@@ -969,11 +1028,8 @@ export function TemporaryChatPanel({
       interruptAndSendRuntimePaneMessage,
       source,
       sendEphemeral,
-      taskModelIdentityPending,
-      modelControls,
-      activeModel,
-      activeModelSelection,
-      activeThreadId,
+      canSendWithCurrentModel,
+      sessionStartFields,
       updateAddress,
       setInput,
     ]
@@ -1068,6 +1124,7 @@ export function TemporaryChatPanel({
   const retryFailedMessage = useCallback(
     async (message: WorkbenchMessage): Promise<boolean> => {
       if (!address || retryInFlightRef.current) return false
+      if (modelControls && !canSendWithCurrentModel()) return false
       retryInFlightRef.current = true
       setError(null)
       try {
@@ -1075,7 +1132,7 @@ export function TemporaryChatPanel({
         await retryRuntimeConversation({
           messageId: message.id,
           messages,
-          request: { address, ...selectedModelFields, ...runtimeContext },
+          request: { address, ...selectedModelFields, ...runtimeContext, ...sessionStartFields },
           labels: {
             continue: t('workbench.retry_continue_message'),
             missing: t('workbench.retry_message_missing'),
@@ -1116,6 +1173,9 @@ export function TemporaryChatPanel({
       sendRuntimePaneMessage,
       lifecycleStore,
       t,
+      modelControls,
+      canSendWithCurrentModel,
+      sessionStartFields,
     ]
   )
 

@@ -839,8 +839,11 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
     ) -> Result<Value, AppIpcError> {
         let agent = {
-            config["model"].is_object().then(|| json!({
-                "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"],
+            let has_reasoning = super::creation::normalized_model_options(&config["modelOptions"])
+                .get("reasoning")
+                .is_some_and(Value::is_string);
+            (config["model"].is_object() || has_reasoning).then(|| json!({
+                "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"].as_str().unwrap_or("codex"),
                 "execution_policy":{"mode":"fixed","environment_id":self.device_id},
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
@@ -855,6 +858,10 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         agent: Option<Value>,
     ) -> Result<Value, AppIpcError> {
+        let options = config
+            .get("modelOptions")
+            .map(super::creation::normalized_model_options)
+            .unwrap_or_default();
         if let Some(agent) = agent {
             let catalog = self.runner_catalog().await?;
             apply_stand_in_agent(
@@ -864,6 +871,24 @@ impl RuntimeWorkRpcHandler {
                 &self.device_id,
                 config.get("model").filter(|model| model.is_object()),
             )?;
+            if let Some(effort) = options.get("reasoning").and_then(Value::as_str) {
+                let selected = &payload["runnerRouting"]["model"];
+                let supported = catalog["models"].as_array().and_then(|models| {
+                    models.iter().find_map(|model| {
+                        ["runtime", "provider", "model_id"]
+                            .iter()
+                            .all(|key| model.get(key) == selected.get(key))
+                            .then(|| model["supported_reasoning_efforts"].as_array())
+                            .flatten()
+                    })
+                });
+                if supported.is_some_and(|efforts| !efforts.iter().any(|value| value == effort)) {
+                    return Err(AppIpcError::new(
+                        "model_reasoning_unavailable",
+                        "The selected model does not support the saved reasoning effort; update the stand-in model settings",
+                    ));
+                }
+            }
             self.materialize_runner_cloud_models(&mut payload).await?;
         } else {
             let mut request = ExecutionRequest {
@@ -877,19 +902,13 @@ impl RuntimeWorkRpcHandler {
                 .insert("origin".into(), payload["origin"].clone());
             payload["executionRequest"] = json!(request);
         }
-        if let Some(options) = config
-            .get("modelOptions")
-            .filter(|options| options.is_object())
-        {
+        if !options.is_empty() {
             let target = payload
                 .as_object_mut()
                 .unwrap()
                 .entry("modelOptions")
                 .or_insert_with(|| json!({}));
-            target
-                .as_object_mut()
-                .unwrap()
-                .extend(super::creation::normalized_model_options(options));
+            target.as_object_mut().unwrap().extend(options);
         }
         if payload["modelId"].is_string() {
             payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});

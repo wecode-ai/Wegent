@@ -412,7 +412,48 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
             explicit["executionRequest"]["runtime_permission_profile"],
             ":read-only"
         );
+        let mut unsupported = store.personal_stand_in(7, "device").unwrap();
+        unsupported["primary"]["modelOptions"] = json!({});
+        unsupported["primary"]["modelOptions"][effort_key] = json!("max");
+        let saved = store
+            .save_personal_stand_in(7, "device", unsupported)
+            .unwrap();
+        let error = handler
+            .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "model_reasoning_unavailable");
+        assert!(saved["primary"]["model"].is_null());
+        let direct_error = handler
+            .prepare_stand_in_execution(json!({"message":"Direct work"}), &saved["primary"])
+            .await
+            .unwrap_err();
+        assert_eq!(direct_error.code, "model_reasoning_unavailable");
+        assert_eq!(store.personal_stand_in(7, "device").unwrap(), saved);
     }
+    let mut model_list = json!({"data":[{
+        "id":"review-default","model":"review-default","isDefault":true,
+        "defaultReasoningEffort":"low","supportedReasoningEfforts":[]
+    }]});
+    fs::write(root.path().join("model_list.json"), model_list.to_string()).unwrap();
+    let no_supported_efforts = handler
+        .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+        .await
+        .unwrap_err();
+    assert_eq!(no_supported_efforts.code, "model_reasoning_unavailable");
+    model_list["data"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("supportedReasoningEfforts");
+    fs::write(root.path().join("model_list.json"), model_list.to_string()).unwrap();
+    let without_capabilities = handler
+        .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+        .await
+        .unwrap();
+    assert_eq!(
+        without_capabilities["executionRequest"]["model_config"]["reasoning"]["effort"],
+        "max"
+    );
     assert!(handler
         .prepare_stand_in_schedule(&automation(), json!({"message":"External work"}))
         .await

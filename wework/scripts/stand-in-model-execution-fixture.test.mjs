@@ -2,6 +2,7 @@
 
 import { describe, expect, test } from 'vitest'
 import { executionModelEvents } from '../e2e/desktop/scenarios/stand-in-model-execution.scenario.mjs'
+import { RETRY_CONTINUATION_PROMPT } from '../e2e/desktop/modules/shared.mjs'
 
 const marker = 'MODEL_EXECUTION_FIXTURE'
 const cases = new Map([
@@ -53,6 +54,34 @@ describe('stand-in execution model fixture', () => {
     expect(() => executionModelEvents({ ...body, model: 'gpt-6.1-sol' }, state())).toThrow(
       'The selected upstream model must receive the call'
     )
+  })
+
+  test('routes a real retry continuation to cloud without replaying the official session', () => {
+    const context = state()
+    context.cases = new Map([['cloud', { upstream: 'kimi-k3', retryContinuation: true }]])
+    const body = {
+      model: 'kimi-k3',
+      input: [user(RETRY_CONTINUATION_PROMPT)],
+      tools: [{ type: 'tool_search' }],
+    }
+    const result = executionModelEvents(body, context)
+    expect(result.name).toBe('cloud')
+    expect(JSON.stringify(result.events)).toContain('create_task')
+    expect(() => executionModelEvents({ ...body, model: 'gpt-6.1-sol' }, context)).toThrow(
+      'The selected upstream model must receive the call'
+    )
+    expect(() => executionModelEvents(body, state())).toThrow(
+      'The model request must identify its own execution case'
+    )
+    expect(() =>
+      executionModelEvents({ ...body, input: [user(`${marker}_OFFICIAL`), ...body.input] }, context)
+    ).toThrow('A cross-provider retry must not copy the previous official native session')
+    expect(() =>
+      executionModelEvents(
+        { ...body, input: [user(`${RETRY_CONTINUATION_PROMPT}\n${marker}_CHAT_cloud`)] },
+        context
+      )
+    ).toThrow('Retry must send the continuation prompt rather than replaying the original request')
   })
 
   test('reports the actual child answer after reading its transcript', () => {

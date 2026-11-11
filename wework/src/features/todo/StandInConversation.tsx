@@ -52,13 +52,17 @@ export function StandInConversation({
   const [attempt, setAttempt] = useState(0)
   const taskId = standInConversationTaskId(userId, roleId)
   const workbench = useContext(WorkbenchContext)
-  const modelControls = useStandInConversationModel(services ?? workbench?.services, {
-    ...settings,
-    executionDeviceId: deviceId,
-    enabled: true,
-    prompt: '',
-    version: 0,
-  })
+  const modelControls = useStandInConversationModel(
+    services ?? workbench?.services,
+    {
+      ...settings,
+      executionDeviceId: deviceId,
+      enabled: true,
+      prompt: '',
+      version: 0,
+    },
+    active
+  )
   const aliases = getUnambiguousWorkbenchDeviceAliases(workbench?.state.devices ?? [])
   const persistedTaskExists = Boolean(
     workbench?.runtimeTaskReminders.items.some(

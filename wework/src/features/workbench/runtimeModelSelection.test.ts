@@ -9,6 +9,20 @@ import {
 } from './runtimeModelSelection'
 
 describe('runtimeModelSelection', () => {
+  test('uses native thread provider metadata even when the same-name catalog entry has changed', () => {
+    const replacement: UnifiedModel = {
+      name: 'same-model',
+      type: 'runtime',
+      provider: 'local',
+      config: { weworkModelKind: 'codex-provider', codexProviderId: 'company' },
+    }
+    expect(requiresNewConversationForModelSwitch(replacement, replacement, null, 'openai')).toBe(
+      true
+    )
+    expect(requiresNewConversationForModelSwitch(replacement, replacement, null, 'company')).toBe(
+      false
+    )
+  })
   test.each<{
     name: string
     source: ModelSelectionConfig

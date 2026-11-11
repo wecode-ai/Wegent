@@ -7,6 +7,7 @@ export interface ConversationModelControls {
   loading: boolean
   unavailable?: boolean
   unavailableReason?: 'conversation_runtime_unsupported'
+  error?: string | null
   onModelSelectorOpenChange?(open: boolean): void
   setSelectedModel(model: UnifiedModel | null): void
   setSelectedModelAndOptions(model: UnifiedModel, options: ModelOptions): void

@@ -106,6 +106,19 @@ it('treats the cloud transport task_not_found as an empty first-conversation loo
   expect(request).toHaveBeenCalledWith('runtime.tasks.get', { taskId: 'new-conversation' }, 'cloud')
 })
 
+it('resolves a legacy session provider only when explicitly requested on its owner', async () => {
+  const request = vi.fn().mockResolvedValue({ success: true })
+  const api = createStandInExecutorApi(request)
+  await api.readTask('owner', 'conversation')
+  expect(request).toHaveBeenLastCalledWith('runtime.tasks.get', { taskId: 'conversation' }, 'owner')
+  await api.readTask('owner', 'conversation', { resolveActiveProvider: true })
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.tasks.get',
+    { taskId: 'conversation', resolveActiveProvider: true },
+    'owner'
+  )
+})
+
 it.each(['permission_denied', 'task_archived', 'cloud_unavailable'])(
   'preserves %s errors while looking up a conversation',
   async code => {

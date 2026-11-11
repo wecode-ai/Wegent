@@ -72,7 +72,10 @@ export interface ProjectChatControls {
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
   activeModelSelection?: ModelSelectionConfig | null
+  activeModelProvider?: string | null
   modelSwitchMode?: 'session'
+  requiresNewSession?: boolean
+  onSessionStartConfirmed?(): void
   selectedModelOptions: ModelOptions
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
@@ -256,6 +259,7 @@ interface PendingModelSelection {
   model: UnifiedModel | null
   options?: ModelOptions
   continueInNewConversation: boolean
+  onSessionStartConfirmed?: () => void
 }
 
 function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel | null): boolean {
@@ -495,20 +499,26 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
 
   const requestModelSelection = (model: UnifiedModel | null, options?: ModelOptions) => {
     const selectionChangesModel = !isSameModel(controls.selectedModel, model)
-    const continueInNewConversation = requiresNewConversationForModelSwitch(
-      controls.activeModel,
-      model,
-      controls.activeModelSelection
-    )
+    const continueInNewConversation =
+      (controls.modelSwitchMode === 'session' && Boolean(controls.requiresNewSession && model)) ||
+      requiresNewConversationForModelSwitch(
+        controls.activeModel,
+        model,
+        controls.activeModelSelection,
+        controls.activeModelProvider
+      )
     if (
-      selectionChangesModel &&
-      ((controls.activeModel && !isSameModel(controls.activeModel, model)) ||
-        continueInNewConversation)
+      (controls.modelSwitchMode === 'session' && continueInNewConversation) ||
+      (selectionChangesModel &&
+        ((controls.activeModel && !isSameModel(controls.activeModel, model)) ||
+          continueInNewConversation))
     ) {
       setPendingModelSelection({
         model,
         options,
         continueInNewConversation,
+        onSessionStartConfirmed:
+          controls.modelSwitchMode === 'session' ? controls.onSessionStartConfirmed : undefined,
       })
       return false
     }
@@ -518,7 +528,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
 
   const confirmModelSelection = () => {
     if (!pendingModelSelection) return
-    const { model, options, continueInNewConversation } = pendingModelSelection
+    const { model, options, continueInNewConversation, onSessionStartConfirmed } =
+      pendingModelSelection
     setPendingModelSelection(null)
     if (continueInNewConversation && controls.modelSwitchMode !== 'session' && model) {
       if (controls.continueInNewConversation) {
@@ -534,6 +545,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
       }
       return
     }
+    if (continueInNewConversation && model) onSessionStartConfirmed?.()
     applyModelSelection(model, options)
   }
   const cancelModelSelection = () => {

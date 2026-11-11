@@ -18,23 +18,29 @@ function codexConversationProvider(
   return model.provider && model.provider !== 'local' ? 'router' : null
 }
 
+export function savedConversationProvider(
+  activeSelection?: ModelSelectionConfig | null
+): string | null {
+  const savedProviderId =
+    activeSelection?.options?.runnerModelProvider ?? activeSelection?.options?.codexProviderId
+  return activeSelection?.modelType && activeSelection.modelType !== 'runtime'
+    ? 'router'
+    : savedProviderId || null
+}
+
 export function requiresNewConversationForModelSwitch(
   activeModel: UnifiedModel | null | undefined,
   targetModel: UnifiedModel | null,
-  activeSelection?: ModelSelectionConfig | null
+  activeSelection?: ModelSelectionConfig | null,
+  activeProviderId?: string | null
 ): boolean {
   // A session's provider identity outlives its selectable catalog entry.
-  const savedProviderId =
-    activeSelection?.options?.runnerModelProvider ?? activeSelection?.options?.codexProviderId
-  const savedProvider =
-    activeSelection?.modelType && activeSelection.modelType !== 'runtime'
-      ? 'router'
-      : savedProviderId
-        ? savedProviderId === 'openai'
-          ? 'openai'
-          : 'router'
-        : null
-  const activeProvider = savedProvider ?? codexConversationProvider(activeModel)
+  const providerId = activeProviderId ?? savedConversationProvider(activeSelection)
+  const activeProvider = providerId
+    ? providerId === 'openai'
+      ? 'openai'
+      : 'router'
+    : codexConversationProvider(activeModel)
   const targetProvider = codexConversationProvider(targetModel)
   return Boolean(activeProvider && targetProvider && activeProvider !== targetProvider)
 }

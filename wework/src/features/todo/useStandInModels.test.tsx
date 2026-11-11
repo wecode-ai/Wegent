@@ -9,6 +9,7 @@ import {
 import type { UnifiedModel } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
+import { createModelApi } from '@/api/models'
 import { useStandInModels } from './useStandInModels'
 
 const native: RunnerModel = {
@@ -38,7 +39,9 @@ const settings: WorkspaceStandInSettings = {
 }
 
 function fixture(models = [cloud], nativeModels = [native]) {
-  const catalog = vi.fn<(deviceId: string) => Promise<{ models: RunnerModel[] }>>(async () => ({
+  const catalog = vi.fn<
+    (deviceId: string) => Promise<{ models: RunnerModel[]; errors?: string[] }>
+  >(async () => ({
     models: nativeModels,
   }))
   const listModels = vi.fn(async () => ({ data: models }))
@@ -63,6 +66,197 @@ function fixture(models = [cloud], nativeModels = [native]) {
 }
 
 describe('stand-in shared model catalog', () => {
+  it('treats native DTO errors as failures and never restores an invalidated account', async () => {
+    const { services, catalog } = fixture()
+    const { result } = renderHook(() => useStandInModels(services, { ...settings, model: native }))
+    await waitFor(() => expect(result.current.resolve(result.current.selectedModel)).not.toBeNull())
+    catalog.mockResolvedValue({ models: [], errors: ['codex_catalog_unavailable'] })
+    act(() => result.current.refresh())
+    await waitFor(() => expect(result.current.errors.native).toBeTruthy())
+    expect(result.current.resolve(result.current.selectedModel)).not.toBeNull()
+    expect(result.current.unavailable).toBe(false)
+    act(() => window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT)))
+    expect(result.current.resolve(result.current.selectedModel)).toBeNull()
+    await waitFor(() => expect(result.current.errors.native).toBeTruthy())
+    expect(result.current.unavailable).toBe(true)
+    expect(result.current.defaultIdentity).toBeNull()
+  })
+
+  it.each(['codex', 'claude_code'] as const)(
+    'isolates another runtime DTO error from valid %s models',
+    async runtime => {
+      const selected = { ...native, runtime }
+      const { services, catalog } = fixture([], [selected])
+      catalog.mockResolvedValue({
+        models: [selected],
+        errors: [runtime === 'codex' ? 'claude_catalog_invalid' : 'codex_catalog_unavailable'],
+      })
+      const { result } = renderHook(() =>
+        useStandInModels(services, { ...settings, model: selected })
+      )
+      await waitFor(() =>
+        expect(result.current.resolve(result.current.selectedModel)).not.toBeNull()
+      )
+      expect(result.current.errors.native).toBeNull()
+      expect(result.current.unavailable).toBe(false)
+    }
+  )
+
+  it('publishes valid partial native models even when the runtime catalog reports a failure', async () => {
+    const selected = {
+      ...native,
+      provider: 'local-provider',
+      model_id: 'local-model:custom',
+      local_model_id: 'local-model:custom',
+      is_default: false,
+    }
+    const { services, catalog } = fixture([], [selected])
+    catalog.mockResolvedValue({ models: [selected], errors: ['codex_catalog_unavailable'] })
+    const { result } = renderHook(() =>
+      useStandInModels(services, { ...settings, model: selected })
+    )
+    await waitFor(() => expect(result.current.resolve(result.current.selectedModel)).not.toBeNull())
+    expect(result.current.unavailable).toBe(false)
+    expect(result.current.errors.native).toBeTruthy()
+    expect(result.current.defaultIdentity).toBeNull()
+  })
+
+  it('suspends inactive requests and revalidates cached identities when activated again', async () => {
+    const { services, catalog, listModels, listeners, notify } = fixture()
+    const { result, rerender, unmount } = renderHook(
+      ({ active }) => useStandInModels(services, { ...settings, model: native }, 'codex', active),
+      { initialProps: { active: false } }
+    )
+    let finish!: (value: { models: RunnerModel[] }) => void
+    try {
+      result.current.refresh()
+      expect(catalog).not.toHaveBeenCalled()
+      expect(listModels).not.toHaveBeenCalled()
+      expect(listeners.size).toBe(0)
+      rerender({ active: true })
+      await waitFor(() =>
+        expect(result.current.resolve(result.current.selectedModel)).toEqual({
+          runtime: native.runtime,
+          provider: native.provider,
+          model_id: native.model_id,
+        })
+      )
+      const cached = result.current.models[0]
+      rerender({ active: false })
+      expect(listeners.size).toBe(0)
+      expect(result.current.models[0]).toBe(cached)
+      expect(result.current.resolve(result.current.selectedModel)).toBeNull()
+      notify()
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+      result.current.refresh()
+      expect(catalog).toHaveBeenCalledOnce()
+      catalog.mockImplementationOnce(() => new Promise(resolve => (finish = resolve)))
+      rerender({ active: true })
+      expect(result.current.loading).toBe(true)
+      expect(result.current.models[0]).toBe(cached)
+      expect(result.current.resolve(result.current.selectedModel)).toBeNull()
+      await waitFor(() => expect(catalog).toHaveBeenCalledTimes(2))
+      await act(async () => finish({ models: [{ ...native, label: 'Revalidated model' }] }))
+      await waitFor(() => expect(result.current.unavailable).toBe(false))
+      expect(result.current.selectedModel?.displayName).toBe('Revalidated model')
+      expect(catalog).toHaveBeenCalledTimes(2)
+    } finally {
+      finish?.({ models: [] })
+      unmount()
+    }
+  })
+
+  it('forces a real Backend catalog refresh through listModels when refresh is not implemented', async () => {
+    const { services } = fixture()
+    const updated = { ...cloud, displayName: 'Updated cloud catalog' }
+    const get = vi.fn().mockResolvedValue({ data: [cloud] })
+    services.modelApi = createModelApi({ get })
+    const identity = cloudRunnerModelIdentity(cloud, 'codex')!
+    const { result } = renderHook(() =>
+      useStandInModels(services, { ...settings, model: identity })
+    )
+    await waitFor(() =>
+      expect(result.current.resolve(result.current.selectedModel)).toEqual(identity)
+    )
+    get.mockResolvedValue({ data: [updated] })
+    act(() => result.current.refresh())
+    await waitFor(() => expect(result.current.selectedModel).toBe(updated))
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(result.current.resolve(result.current.selectedModel)).toEqual(identity)
+  })
+
+  it.each(['native', 'cloud'] as const)(
+    'retains the %s identity after an ordinary refresh failure and clears it on a successful empty result',
+    async source => {
+      const { services, catalog, listModels } = fixture()
+      const identity =
+        source === 'native'
+          ? { runtime: native.runtime, provider: native.provider, model_id: native.model_id }
+          : cloudRunnerModelIdentity(cloud, 'codex')!
+      const { result } = renderHook(() =>
+        useStandInModels(services, { ...settings, model: identity })
+      )
+      await waitFor(() =>
+        expect(result.current.resolve(result.current.selectedModel)).toEqual(identity)
+      )
+      const selected = result.current.selectedModel
+      if (source === 'native') catalog.mockRejectedValueOnce(new Error('Device offline'))
+      else listModels.mockRejectedValueOnce({ status: 503 })
+      act(() => result.current.refresh())
+      await waitFor(() => expect(result.current.errors[source]).toBeTruthy())
+      expect(result.current.resolve(result.current.selectedModel)).toEqual(identity)
+      expect(result.current.selectedModel).toBe(selected)
+      expect(result.current.unavailable).toBe(false)
+      expect(result.current.error).toBe(result.current.errors[source])
+      expect(result.current.errors[source === 'native' ? 'cloud' : 'native']).toBeNull()
+      if (source === 'native') catalog.mockResolvedValueOnce({ models: [] })
+      else listModels.mockResolvedValueOnce({ data: [] })
+      act(() => result.current.refresh())
+      await waitFor(() => expect(result.current.unavailable).toBe(true))
+      expect(result.current.errors[source]).toBeNull()
+      expect(result.current.resolve(result.current.selectedModel)).toBeNull()
+      expect(result.current.models).toHaveLength(1)
+    }
+  )
+
+  it.each(['native', 'cloud'] as const)(
+    'discards the %s identity after an explicit authorization failure',
+    async source => {
+      const { services, catalog, listModels } = fixture()
+      const identity =
+        source === 'native'
+          ? { runtime: native.runtime, provider: native.provider, model_id: native.model_id }
+          : cloudRunnerModelIdentity(cloud, 'codex')!
+      const { result } = renderHook(() =>
+        useStandInModels(services, { ...settings, model: identity })
+      )
+      await waitFor(() =>
+        expect(result.current.resolve(result.current.selectedModel)).toEqual(identity)
+      )
+      if (source === 'native') catalog.mockRejectedValueOnce({ status: 403 })
+      else listModels.mockRejectedValueOnce({ code: 'permission_denied' })
+      act(() => result.current.refresh())
+      await waitFor(() => expect(result.current.errors[source]).toBeTruthy())
+      expect(result.current.unavailable).toBe(true)
+      expect(result.current.resolve(result.current.selectedModel)).toBeNull()
+      expect(result.current.models).toHaveLength(1)
+    }
+  )
+
+  it('does not restore an invalidated native account after the local settings refresh fails', async () => {
+    const { services, catalog } = fixture()
+    const { result } = renderHook(() => useStandInModels(services, { ...settings, model: native }))
+    await waitFor(() => expect(result.current.resolve(result.current.selectedModel)).not.toBeNull())
+    catalog.mockRejectedValueOnce(new Error('Device offline'))
+    act(() => window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT)))
+    expect(result.current.resolve(result.current.selectedModel)).toBeNull()
+    await waitFor(() => expect(result.current.errors.native).toBeTruthy())
+    expect(result.current.unavailable).toBe(true)
+    expect(result.current.resolve(result.current.selectedModel)).toBeNull()
+    await waitFor(() => expect(result.current.models).toEqual([cloud]))
+    expect(result.current.defaultIdentity).toBeNull()
+  })
+
   it.each([
     ['missing', [{ ...native, is_default: false }]],
     ['empty', []],
@@ -127,6 +321,7 @@ describe('stand-in shared model catalog', () => {
       )
       try {
         expect(result.current.loading).toBe(true)
+        await waitFor(() => expect(listModels).toHaveBeenCalledOnce())
         act(changed)
         await waitFor(() => expect(result.current.selectedModel).toBe(cloud))
         await act(async () => finishOld({ data: [] }))
@@ -190,6 +385,7 @@ describe('stand-in shared model catalog', () => {
       expect(result.current.loading).toBe(true)
       expect(result.current.models).toEqual([])
       expect(old.listeners.size).toBe(0)
+      await waitFor(() => expect(next.listModels).toHaveBeenCalledOnce())
       await act(async () => finish({ data: [] }))
       expect(result.current.models).not.toContain(cloud)
       expect(result.current.loading).toBe(false)
@@ -267,6 +463,7 @@ describe('stand-in shared model catalog', () => {
       ({ deviceId }) => useStandInModels(services, { ...settings, executionDeviceId: deviceId }),
       { initialProps: { deviceId: 'mac' } }
     )
+    await waitFor(() => expect(catalog).toHaveBeenCalledWith('mac'))
     rerender({ deviceId: 'remote' })
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(catalog).toHaveBeenCalledWith('remote')

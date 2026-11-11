@@ -108,32 +108,32 @@ it.each([
 )
 
 it.each([
-  ['Asia/Shanghai', '2026/11/11 12:41', '11月11日', '12:41'],
-  ['America/Los_Angeles', '2026/11/10 20:41', '11月10日', '20:41'],
-])(
-  'shows one-time timing and next run in the device timezone %s',
-  (timezone, summary, date, time) => {
-    const DateTimeFormat = Intl.DateTimeFormat
-    const formatter = vi
-      .spyOn(Intl, 'DateTimeFormat')
-      .mockImplementation(function (locale, options) {
-        return new DateTimeFormat(locale, { timeZone: timezone, ...options })
-      })
-    try {
-      const row = renderSchedule({
-        ...scheduledReview,
-        timezone: 'UTC',
-        schedule: { type: 'one_time', executeAt: '2026-11-11T04:41:00Z' },
-        nextRunAt: '2026-11-11T04:41:00Z',
-      })
-      expect(row.getByText(summary)).toBeVisible()
-      expect(row.getByText(/下次运行/)).toHaveTextContent(date)
-      expect(row.getByText(/下次运行/)).toHaveTextContent(time)
-    } finally {
-      formatter.mockRestore()
-    }
+  ['Asia/Shanghai', '11月11日', '12:41'],
+  ['America/Los_Angeles', '11月10日', '20:41'],
+])('shows one-time timing and next run in the device timezone %s', (timezone, date, time) => {
+  const DateTimeFormat = Intl.DateTimeFormat
+  const summary = new DateTimeFormat('zh-CN', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+    timeZone: timezone,
+  }).format(new Date('2026-11-11T04:41:00Z'))
+  const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
+    return new DateTimeFormat(locale, { timeZone: timezone, ...options })
+  })
+  try {
+    const row = renderSchedule({
+      ...scheduledReview,
+      timezone: 'UTC',
+      schedule: { type: 'one_time', executeAt: '2026-11-11T04:41:00Z' },
+      nextRunAt: '2026-11-11T04:41:00Z',
+    })
+    expect(row.getByText(summary)).toBeVisible()
+    expect(row.getByText(/下次运行/)).toHaveTextContent(date)
+    expect(row.getByText(/下次运行/)).toHaveTextContent(time)
+  } finally {
+    formatter.mockRestore()
   }
-)
+})
 
 it('does not mislabel a monthly cron schedule as daily', () => {
   const row = renderSchedule({

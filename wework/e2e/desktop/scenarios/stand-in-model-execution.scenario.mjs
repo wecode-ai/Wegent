@@ -7,7 +7,10 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { completedApiResourceTimings, until } from '../modules/plugin-regression-fixture.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
-import { MODEL_API_KEY } from '../modules/shared.mjs'
+import {
+  MODEL_API_KEY,
+  RETRY_CONTINUATION_PROMPT as RUNTIME_RETRY_CONTINUATION_PROMPT,
+} from '../modules/shared.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { createSubscriptionConfigRegression } from '../modules/stand-in-subscription-config.mjs'
 import {
@@ -21,6 +24,7 @@ import {
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
+  responseFailed,
 } from '../modules/response-protocol.mjs'
 
 const PANEL = '[data-testid="stand-in-primary-profile"]'
@@ -37,12 +41,15 @@ const ORDINARY = '[data-workspace-tab-content="fixed-task"] [data-testid="deskto
 export function executionModelEvents(body, { marker, cases, completed }) {
   const latestUser = (body.input ?? []).filter(item => item.role === 'user').at(-1)
   const message = JSON.stringify(latestUser?.content ?? '')
+  const retry = message.includes(RUNTIME_RETRY_CONTINUATION_PROMPT)
   const delegatedTaskId = message.match(/Wework delegated task result:.*?taskId=([^,\s]+)/)?.[1]
   const name = delegatedTaskId
     ? [...completed].find(([, taskId]) => taskId === delegatedTaskId)?.[0]
-    : [...cases.keys()].find(name =>
-        ['CHAT', 'WORK'].some(kind => message.includes(`${marker}_${kind}_${name}`))
-      )
+    : retry
+      ? [...cases.keys()].find(name => cases.get(name).retryContinuation)
+      : [...cases.keys()].find(name =>
+          ['CHAT', 'WORK'].some(kind => message.includes(`${marker}_${kind}_${name}`))
+        )
   assert.ok(name, 'The model request must identify its own execution case')
   assert.equal(
     body.model,
@@ -50,6 +57,18 @@ export function executionModelEvents(body, { marker, cases, completed }) {
     'The selected upstream model must receive the call'
   )
   const testCase = cases.get(name)
+  if (retry) {
+    assert.equal(
+      message.includes(`${marker}_CHAT_${name}`),
+      false,
+      'Retry must send the continuation prompt rather than replaying the original request'
+    )
+    assert.equal(
+      JSON.stringify(body.input).includes(`${marker}_OFFICIAL`),
+      false,
+      'A cross-provider retry must not copy the previous official native session'
+    )
+  }
   const reasoning = message.includes(`${marker}_WORK_${name}`)
     ? testCase.reasoning
     : (testCase.conversationReasoning ?? testCase.reasoning)
@@ -107,6 +126,8 @@ export function createDesktopScenario(options) {
   const completed = new Map()
   const calls = new Map()
   let officialCalls = 0
+  let officialFailures = 0
+  let cloudRetryCalls = 0
   return {
     ...catalog,
     appEnvironment,
@@ -142,13 +163,21 @@ export function createDesktopScenario(options) {
         if (handleEmptyReplyPrediction(body, response)) return true
         if (handleModelMaintenanceRequest(body, response)) return true
         const latestUser = (body.input ?? []).filter(item => item.role === 'user').at(-1)
+        const message = JSON.stringify(latestUser?.content ?? '')
+        const fail = message.includes(`${marker}_CHAT_cloud`)
         assert.ok(
-          JSON.stringify(latestUser?.content ?? '').includes(`${marker}_OFFICIAL`),
+          message.includes(`${marker}_OFFICIAL`) || (fail && current === undefined),
           'A cloud or custom conversation must never fall back to the previous official provider'
         )
         officialCalls += 1
         const id = `official-model-execution-${officialCalls}`
         response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        if (fail) {
+          officialFailures += 1
+          assert.equal(officialFailures, 1, 'Only one extra official model turn may fail')
+          response.end(createSse([responseFailed(id, `${marker}_OFFICIAL_FAILED`)]))
+          return true
+        }
         response.end(
           createSse([
             responseCreated(id),
@@ -159,7 +188,11 @@ export function createDesktopScenario(options) {
         return true
       }
       const input = JSON.stringify(body.input ?? [])
-      if (!current || !input.includes(marker)) return false
+      const latestUser = (body.input ?? []).filter(item => item.role === 'user').at(-1)
+      const retry = JSON.stringify(latestUser?.content ?? '').includes(
+        RUNTIME_RETRY_CONTINUATION_PROMPT
+      )
+      if (!current || (!input.includes(marker) && !(current === 'cloud' && retry))) return false
       assert.equal(request.headers.authorization, `Bearer ${MODEL_API_KEY}`)
       const { name, events } = executionModelEvents(body, {
         marker,
@@ -167,6 +200,7 @@ export function createDesktopScenario(options) {
         completed,
       })
       calls.set(name, (calls.get(name) ?? 0) + 1)
+      if (name === 'cloud' && retry) cloudRetryCalls += 1
       const id = `model-execution-${Date.now()}`
       const completedResponse = responseCompleted(id)
       if (name === 'cloud') {
@@ -183,25 +217,6 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       await catalog.verify(control)
-      // The catalog check restores settings through RPC; reload the owner before editing again.
-      await reloadMainWindow(control, 'Stand-in settings did not reload after catalog cleanup')
-      await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]')
-      await control.command('waitFor', ORDINARY)
-      await openExplicitModelMenu(control, `${ORDINARY} [data-testid="model-selector-button"]`)
-      await control.command(
-        'waitFor',
-        '[data-testid="model-selector-menu"] [data-testid^="model-option-"][aria-checked="true"]'
-      )
-      await control.command('press', 'body', { key: 'Escape' })
-      const ordinary = {
-        model: await control.command(
-          'getText',
-          `${ORDINARY} [data-testid="model-selector-button"]`
-        ),
-        draft: await control.command('getText', `${ORDINARY} [data-testid="chat-message-input"]`),
-      }
-      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('waitFor', '[data-testid="stand-in-overview"]')
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
       const initial = await rpc('runtime.stand_in.personal.get', { userId })
       const primaryTaskId = `stand-in-chat-${userId}-primary`
@@ -211,11 +226,19 @@ export function createDesktopScenario(options) {
         model => model.runtime === 'codex' && model.provider === 'wework-e2e'
       )
       assert.ok(native, 'The isolated custom provider must be selectable')
-      const setCatalogProvider = provider =>
+      const previousConfig = await rpc('runtime.codex.app_server.request', {
+        method: 'config/read',
+        params: { includeLayers: false, cwd: null },
+      })
+      assert.equal(typeof previousConfig.config.model, 'string')
+      const setCatalogProvider = (provider, model = previousConfig.config.model) =>
         rpc('runtime.codex.app_server.request', {
           method: 'config/batchWrite',
           params: {
-            edits: [{ keyPath: 'model_provider', value: provider, mergeStrategy: 'replace' }],
+            edits: [
+              { keyPath: 'model_provider', value: provider, mergeStrategy: 'replace' },
+              { keyPath: 'model', value: model, mergeStrategy: 'replace' },
+            ],
             filePath: null,
             expectedVersion: null,
             reloadUserConfig: true,
@@ -228,6 +251,7 @@ export function createDesktopScenario(options) {
           model: CLOUD_MODEL,
           upstream: 'kimi-k3',
           type: 'public',
+          retryContinuation: true,
         },
         {
           name: 'custom',
@@ -240,9 +264,34 @@ export function createDesktopScenario(options) {
       ]
       for (const testCase of cases) executionCases.set(testCase.name, testCase)
       try {
+        // Reuse the existing owner reload after both catalog cleanup and the
+        // public legacy-profile setup, so the UI edits the current saved version.
+        await rpc('runtime.stand_in.personal.save', {
+          userId,
+          settings: {
+            ...initial,
+            primary: { ...initial.primary, model: null, modelOptions: {} },
+          },
+        })
+        await reloadMainWindow(control, 'Stand-in settings did not reload after catalog cleanup')
+        await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]')
+        await control.command('waitFor', ORDINARY)
+        await openExplicitModelMenu(control, `${ORDINARY} [data-testid="model-selector-button"]`)
+        await control.command(
+          'waitFor',
+          '[data-testid="model-selector-menu"] [data-testid^="model-option-"][aria-checked="true"]'
+        )
+        await control.command('press', 'body', { key: 'Escape' })
+        const ordinary = {
+          model: await control.command(
+            'getText',
+            `${ORDINARY} [data-testid="model-selector-button"]`
+          ),
+          draft: await control.command('getText', `${ORDINARY} [data-testid="chat-message-input"]`),
+        }
         // The native catalog has one configured provider, so establish the real
         // official identity before creating its persistent conversation session.
-        await setCatalogProvider('openai')
+        await setCatalogProvider('openai', OFFICIAL_MODEL)
         const official = (await rpc('runtime.runner.catalog', {})).models.find(
           model =>
             model.runtime === 'codex' &&
@@ -250,26 +299,12 @@ export function createDesktopScenario(options) {
             model.model_id === OFFICIAL_MODEL
         )
         assert.ok(official, 'The subscription must expose the real official runner catalog')
-        await openStandInSettings(control)
-        await openExplicitModelMenu(control, `${PANEL} [data-testid="model-selector-button"]`)
-        await control.command(
-          'clickWhenEnabled',
-          selector(`model-option-${JSON.stringify(['codex', 'openai', OFFICIAL_MODEL])}`)
-        )
-        await control.command('press', 'body', { key: 'Escape' })
-        const officialLabel = await control.command(
-          'getText',
-          `${PANEL} [data-testid="model-selector-button"]`
-        )
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
-        await control.command('waitFor', PANEL, { visible: false })
-        await control.command('waitFor', `${CHAT} [data-testid="model-selector-button"]`, {
-          text: officialLabel.trim(),
+        // No options means the real default-provider thread has no saved identity.
+        const officialAddress = await rpc('runtime.stand_in.conversation', {
+          userId,
+          message: `${marker}_OFFICIAL`,
         })
-        await control.command('fill', `${CHAT} [data-testid="chat-message-input"]`, {
-          value: `${marker}_OFFICIAL`,
-        })
-        await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
+        assert.equal(officialAddress.taskId, primaryTaskId)
         const { task: officialTask } = await until(
           () => rpc('runtime.tasks.get', { taskId: primaryTaskId }),
           result => {
@@ -281,9 +316,40 @@ export function createDesktopScenario(options) {
           'The primary conversation did not establish a real official-provider thread',
           options.modelResponseTimeoutMs
         )
-        assert.equal(officialTask.runtimeHandle.modelSelection.modelName, official.local_model_id)
+        assert.equal(officialCalls, 1)
+        assert.equal(officialTask.modelSelection, null)
+        assert.equal(officialTask.runtimeHandle.modelSelection ?? null, null)
+        assert.equal(officialTask.runtimeHandle.activeModelProvider ?? null, null)
         assert.ok(officialTask.threadId)
         primaryThreadId = officialTask.threadId
+        await rpc('runtime.stand_in.conversation', {
+          userId,
+          message: `${marker}_CHAT_cloud`,
+        })
+        const { task: failed } = await until(
+          () => rpc('runtime.tasks.get', { taskId: primaryTaskId }),
+          result => result.task?.status === 'failed' && result.task.running !== true,
+          'The official model did not expose its single real failed turn',
+          options.modelResponseTimeoutMs
+        )
+        assert.equal(officialCalls, 2)
+        assert.equal(officialFailures, 1)
+        assert.equal(failed.threadId, primaryThreadId)
+        assert.equal(failed.modelSelection, null)
+        assert.equal(failed.runtimeHandle.activeModelProvider ?? null, null)
+        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await control.command('waitFor', CHAT)
+        const { task: resolved } = await until(
+          () => rpc('runtime.tasks.get', { taskId: primaryTaskId }),
+          result => result.task?.runtimeHandle.activeModelProvider?.threadId === primaryThreadId,
+          'Opening the same legacy chat must resolve its provider through the owning Runtime'
+        )
+        assert.deepEqual(resolved.runtimeHandle.activeModelProvider, {
+          threadId: primaryThreadId,
+          provider: 'openai',
+        })
+        assert.equal(resolved.modelSelection, null)
+        await control.command('waitFor', `${CHAT} [data-testid="assistant-error-retry"]`)
         for (const testCase of cases) {
           current = testCase.name
           await openStandInSettings(control)
@@ -362,7 +428,11 @@ export function createDesktopScenario(options) {
             await control.command('waitFor', `${CHAT} [data-testid="send-message-button"]:disabled`)
             const previous = (await rpc('runtime.tasks.get', { taskId: primaryTaskId })).task
             assert.equal(previous.threadId, primaryThreadId)
-            assert.equal(previous.runtimeHandle.modelSelection.options.codexProviderId, 'openai')
+            assert.equal(previous.modelSelection, null)
+            assert.deepEqual(previous.runtimeHandle.activeModelProvider, {
+              threadId: primaryThreadId,
+              provider: 'openai',
+            })
             await control.command('clickWhenEnabled', selector(`model-option-${testCase.model}`))
             await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
               text: '下一条消息将在这里开启新会话',
@@ -402,7 +472,18 @@ export function createDesktopScenario(options) {
             `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
             { value: `${marker}_CHAT_${current}` }
           )
-          await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
+          await control.command(
+            'clickWhenEnabled',
+            `${CHAT} [data-testid="${current === 'cloud' ? 'assistant-error-retry' : 'send-message-button'}"]`
+          )
+          if (current === 'cloud') {
+            await until(
+              () => cloudRetryCalls,
+              count => count > 0,
+              'The failed official turn was not retried through the selected cloud model',
+              options.modelResponseTimeoutMs
+            )
+          }
           await until(
             () => rpc('runtime.tasks.get', { taskId: primaryTaskId }),
             result => {
@@ -467,7 +548,29 @@ export function createDesktopScenario(options) {
             assert.notEqual(
               primary.threadId,
               primaryThreadId,
-              'A cross-provider send must create a new native session in the same stand-in'
+              'A cross-provider retry must create a new native session in the same stand-in'
+            )
+            assert.ok(cloudRetryCalls > 0, 'UI retry must reach the selected cloud model')
+            assert.deepEqual(primary.runtimeHandle.origin, officialTask.runtimeHandle.origin)
+            assert.equal(primary.workspacePath, officialTask.workspacePath)
+            const rebound = await rpc('runtime.tasks.get', {
+              taskId: primaryTaskId,
+              resolveActiveProvider: true,
+            })
+            const activeProvider = rebound.task.runtimeHandle.activeModelProvider
+            assert.equal(activeProvider.threadId, primary.threadId)
+            assert.ok(activeProvider.provider)
+            assert.notEqual(
+              activeProvider.provider,
+              'openai',
+              'The new native thread must not reuse cached official-provider metadata'
+            )
+            assert.equal(
+              (
+                await control.command('getText', `${CHAT} [data-testid="chat-message-input"]`)
+              ).trim(),
+              `${marker}_CHAT_cloud`,
+              'Retry must preserve the unsent draft in the original conversation'
             )
             const history = await rpc('runtime.tasks.transcript', {
               taskId: primaryTaskId,
@@ -576,6 +679,8 @@ export function createDesktopScenario(options) {
       return {
         current,
         officialCalls,
+        officialFailures,
+        cloudRetryCalls,
         calls: Object.fromEntries(calls),
         completed: Object.fromEntries(completed),
         catalogRequests: catalogProxy?.requests,

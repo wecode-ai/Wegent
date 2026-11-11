@@ -369,14 +369,15 @@ export interface StandInExecutorApi {
   ): Promise<PersonalStandInSettings>
   readTask(
     deviceId: string,
-    taskId: string
+    taskId: string,
+    options?: { resolveActiveProvider?: boolean }
   ): Promise<{ success: boolean; task?: RuntimeTaskSummary; code?: string; error?: string }>
   assignmentTasks(
     userId: number,
     deviceId: string,
     assignments: Array<{ projectId: string; itemId: string; humanAssignmentId: string }>
   ): Promise<{ items: RuntimeTaskSummary[] }>
-  catalog(deviceId: string): Promise<{ models: RunnerModel[] }>
+  catalog(deviceId: string): Promise<{ models: RunnerModel[]; errors?: string[] }>
   run(
     projectId: string,
     issueId: string,
@@ -653,11 +654,11 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    readTask: async (deviceId, taskId) => {
+    readTask: async (deviceId, taskId, options) => {
       try {
         return await request<Awaited<ReturnType<StandInExecutorApi['readTask']>>>(
           'runtime.tasks.get',
-          { taskId },
+          { taskId, ...(options?.resolveActiveProvider ? { resolveActiveProvider: true } : {}) },
           deviceId
         )
       } catch (error) {
