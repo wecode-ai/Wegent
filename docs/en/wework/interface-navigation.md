@@ -94,7 +94,7 @@ Model selection during template import: [Collaboration templates and configurati
 
 | Search terms                                                                      | Detailed steps                                                             |
 | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Light apps, TODO notes, independent windows, background operation, desktop shortcuts | [Workbench applications](./workbench-apps.md); desktop: Sidebar → Applications → Workbenches → Mine |
+| Light apps, TODO notes, independent windows, background operation, desktop shortcuts | [Workbench applications](./workbench-apps.md); desktop: Sidebar → Applications → Workbenches → Mine, or Top tab bar → + → Manage Workbenches; no experimental switch required |
 | Space members, global agents/teams/devices, Runner, templates, milestones         | [Space and resource operations](./projects.md#workspace-resource-controls) |
 | Delete imported personal templates | [Collaboration templates and configuration sharing](./projects.md#template-controls) |
 | Collaboration → Devices → Delete offline device | [Offline device cleanup](./projects.md#offline-device-cleanup) |

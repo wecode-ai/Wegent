@@ -10,6 +10,8 @@ Smart apps and Light apps are unified as **Workbenches**, sharing DSH project fo
 
 On desktop, open **Sidebar → Applications → Workbenches → Mine**. No experimental switch is required. The marketplace requires a cloud connection; local creation and execution do not depend on the marketplace.
 
+The main window also offers **Top tab bar → + → Manage Workbenches**. Select an installed workbench's name in that menu to open it in a main-window tab. Both entries remain available regardless of the experimental-features setting.
+
 - **Create workbench**: enter a name and choose **Lightweight** for calculators and notes, or **Extended** for DSH services and plugins. Description and location are optional; Advanced allows editing the directory identifier. The default location is `WeworkSmartApps` under Documents. Creation opens a development conversation for the linked directory.
 - **Create TODO note**: review the native installation confirmation and requested system capabilities. Accepting installs and opens it; cancelling does neither.
 - **Link folder** / **Import workbench**: link DSH source or import a package. Review version and capabilities. Explicitly importing an old light-app directory converts it to DSH instead of retaining its old runtime.
