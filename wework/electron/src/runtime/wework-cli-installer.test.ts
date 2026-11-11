@@ -69,6 +69,10 @@ async function createCommandFixture(
   return path
 }
 
+async function readCommandLog(path: string): Promise<string[]> {
+  return (await readFile(path, 'utf8')).replace(/\r\n?/g, '\n').trim().split('\n')
+}
+
 afterEach(async () => {
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
@@ -127,7 +131,7 @@ describe('installWeworkCli', () => {
     const launcher = join(runtimeBin, process.platform === 'win32' ? 'wework.cmd' : 'wework')
     const desktop = resolveSpawnCommand(launcher, ['desktop', 'instances'])
     await execFileAsync(desktop.command, desktop.args, { env })
-    expect((await readFile(nodeLog, 'utf8')).trim().split('\n')).toEqual([
+    expect(await readCommandLog(nodeLog)).toEqual([
       join(runtimeBin, 'wework-cli.mjs'),
       'desktop',
       'instances',
@@ -135,7 +139,7 @@ describe('installWeworkCli', () => {
 
     const open = resolveSpawnCommand(launcher, [workspace])
     await execFileAsync(open.command, open.args, { env })
-    expect((await readFile(appLog, 'utf8')).trim().split('\n')).toEqual([
+    expect(await readCommandLog(appLog)).toEqual([
       'unset',
       '--open-workspace',
       await realpath(workspace),
