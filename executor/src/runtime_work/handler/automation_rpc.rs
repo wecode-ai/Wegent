@@ -251,6 +251,37 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn refresh_automation_model(&self, payload: &mut Value) -> Result<(), AppIpcError> {
+        self.refresh_automation_payload_model(payload).await?;
+        for path in [
+            "/runtimeHandle/collaborationMemberRuntimeProfiles",
+            "/runtime_handle/collaborationMemberRuntimeProfiles",
+        ] {
+            let Some(profiles) = payload.pointer_mut(path).and_then(Value::as_array_mut) else {
+                continue;
+            };
+            for profile in profiles {
+                if let Some(member) = profile.get_mut("runtimePayload") {
+                    self.refresh_automation_payload_model(member).await?;
+                }
+                if let Some(variants) = profile
+                    .get_mut("modelRuntimeProfiles")
+                    .and_then(Value::as_array_mut)
+                {
+                    for variant in variants {
+                        if let Some(member) = variant.get_mut("runtimePayload") {
+                            self.refresh_automation_payload_model(member).await?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn refresh_automation_payload_model(
+        &self,
+        payload: &mut Value,
+    ) -> Result<(), AppIpcError> {
         let Some(selection) = creation::normalized_selection(payload)? else {
             return Ok(());
         };
@@ -461,6 +492,9 @@ mod tests {
                 Json(json!({"data": if authorized { vec![json!({
                     "name":"shared-model","type":"public","namespace":"default",
                     "resourceUserId":0,"config":{"protocol":"openai-responses"}
+                }), json!({
+                    "name":"member-model","type":"group","namespace":"team",
+                    "resourceUserId":7,"config":{"protocol":"openai-responses"}
                 })] } else { vec![] }}))
             }),
         );
@@ -474,6 +508,53 @@ mod tests {
         })));
         let mut handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
         handler.backend_connection = connection.clone();
+        let cloud_member = json!({
+            "runtime":"codex","modelId":"member-model","modelType":"group",
+            "modelOptions":{"weworkCloudModelNamespace":"team","weworkCloudModelResourceUserId":"7"},
+            "executionRequest":{"model_config":{"api_key":"expired-member-token","native_tool_search":true}}
+        });
+        let native_member = json!({"modelId":"native-model","modelType":"runtime",
+            "executionRequest":{"model_config":{"api_key":"native-key"}}});
+        for key in ["runtimeHandle", "runtime_handle"] {
+            let mut payload = native_member.clone();
+            payload[key] = json!({"collaborationMemberRuntimeProfiles":[{
+                "memberIds":["member"],"runtimePayload":cloud_member,
+                "modelRuntimeProfiles":[{"runtimePayload":cloud_member},{"runtimePayload":native_member}]
+            }]});
+            handler
+                .refresh_automation_model(&mut payload)
+                .await
+                .unwrap();
+            let profile = &payload[key]["collaborationMemberRuntimeProfiles"][0];
+            for member in [
+                &profile["runtimePayload"],
+                &profile["modelRuntimeProfiles"][0]["runtimePayload"],
+            ] {
+                let config = &member["executionRequest"]["model_config"];
+                assert_eq!(config["api_key"], "current-token");
+                assert_eq!(config["default_headers"]["X-Wegent-Model-User-Id"], "7");
+                assert_eq!(config["default_headers"]["X-Wegent-Model-Type"], "group");
+                assert_eq!(
+                    config["default_headers"]["X-Wegent-Model-Namespace"],
+                    "team"
+                );
+                assert_eq!(config["native_tool_search"], true);
+            }
+            assert_eq!(
+                profile["modelRuntimeProfiles"][1]["runtimePayload"],
+                native_member
+            );
+            assert_eq!(
+                payload["executionRequest"],
+                native_member["executionRequest"]
+            );
+            payload[key]["collaborationMemberRuntimeProfiles"][0]["runtimePayload"]["modelId"] =
+                json!("removed-member");
+            assert!(handler
+                .refresh_automation_model(&mut payload)
+                .await
+                .is_err());
+        }
         for request_key in ["executionRequest", "execution_request"] {
             let mut payload = json!({
                 "schemaVersion":2,"runtime":"codex","message":"Run the scheduled work",
