@@ -246,7 +246,7 @@ pub(super) async fn exchange_on<T: MysqlTransaction>(
     Ok(json!({"success": true, "status": (!rows.is_empty()).then_some("need_login")}))
 }
 
-async fn set_policy<T: MysqlTransaction>(
+pub(super) async fn set_policy<T: MysqlTransaction>(
     transaction: &mut T,
     lease: &super::automation::Lease<'_>,
     user_id: i64,
@@ -268,8 +268,8 @@ async fn set_policy<T: MysqlTransaction>(
             .unwrap_or_default();
         pending.insert(binding.logical_device_id.clone(), binding.document.clone());
     }
-    let document =
-        python_json_value(&json!({"spec":{"enabled":binding.is_some(),"pendingLogins":pending}}));
+    let previous = row.as_ref().map(|row| &row.json["spec"]);
+    let document = python_json_value(&policy_document(previous, binding.is_some(), pending)?);
     lease
         .verify_owned()
         .await
@@ -290,6 +290,29 @@ async fn set_policy<T: MysqlTransaction>(
     }
     .map_err(|_| AuthFailure::Internal)?;
     Ok(())
+}
+
+fn policy_document(
+    previous: Option<&Value>,
+    enabled: bool,
+    pending: serde_json::Map<String, Value>,
+) -> Result<Value, AuthFailure> {
+    let mut spec = json!({"enabled":enabled,"pendingLogins":pending});
+    if let Some(previous) = previous {
+        if let Some(native) = previous.get("pendingNativeLogins") {
+            spec["pendingNativeLogins"] = if enabled { native.clone() } else { json!({}) };
+        }
+        if let Some(revision) = previous.get("revision") {
+            spec["revision"] = json!(
+                revision
+                    .as_i64()
+                    .filter(|v| *v >= 0 && *v < i64::MAX)
+                    .ok_or(AuthFailure::Refusal("plugin_auth_revision_conflict"))?
+                    + 1
+            );
+        }
+    }
+    Ok(json!({"spec":spec}))
 }
 
 async fn logout<T: MysqlTransaction>(
@@ -367,6 +390,35 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn legacy_login_preserves_native_generations_and_logout_invalidates_them() {
+        let previous = json!({"enabled":true,"pendingNativeLogins":{"key-a":"login-a","key-b":"login-b"},"revision":7});
+        let logged_in = policy_document(Some(&previous), true, serde_json::Map::new()).unwrap();
+        assert_eq!(
+            logged_in["spec"]["pendingNativeLogins"],
+            previous["pendingNativeLogins"]
+        );
+        assert_eq!(logged_in["spec"]["revision"], 8);
+        let logged_out =
+            policy_document(Some(&logged_in["spec"]), false, serde_json::Map::new()).unwrap();
+        assert_eq!(logged_out["spec"]["pendingNativeLogins"], json!({}));
+        assert_eq!(logged_out["spec"]["revision"], 9);
+        let later_login =
+            policy_document(Some(&logged_out["spec"]), true, serde_json::Map::new()).unwrap();
+        assert_eq!(later_login["spec"]["pendingNativeLogins"], json!({}));
+    }
+
+    #[test]
+    fn legacy_only_policies_keep_their_original_shape() {
+        let old = json!({"enabled":true,"pendingLogins":{}});
+        for previous in [None, Some(&old)] {
+            assert_eq!(
+                policy_document(previous, true, serde_json::Map::new()).unwrap(),
+                json!({"spec":old})
+            );
+        }
+    }
 
     #[test]
     fn the_policy_name_hashes_the_source_and_slug_with_a_newline() {

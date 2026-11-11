@@ -12,6 +12,20 @@ import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID } from './shared.mjs'
 const run = promisify(execFile)
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
+export async function restrictNativeRevocationToLocal(api, connection) {
+  const remoteIds = [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID]
+  const localIds = connection.device_ids.filter(id => !remoteIds.includes(id))
+  assert.equal(localIds.length, 1, 'Native isolation requires one granted desktop Runtime')
+  let current = connection
+  for (const id of remoteIds) {
+    current = await api(`/plugin-connections/${current.id}/devices/${id}`, 'DELETE', {
+      expected_revision: current.revision,
+    })
+  }
+  assert.deepEqual(current.device_ids, localIds, 'Remote revoke eligibility was not removed')
+  return current
+}
+
 export async function createNativeAccountFixture(resultDir, pluginRoot) {
   const buildRoot = join(resultDir, 'native-account-build')
   await mkdir(buildRoot, { recursive: true })
@@ -97,7 +111,7 @@ export async function verifyNativeAccountRuntimeIsolation({
       { mode: 0o600 }
     )
     await signalAutomaticRetry()
-    const native = await waitForValue(
+    let native = await waitForValue(
       () => connectionFor('native'),
       value =>
         value?.status === 'connected' &&
@@ -106,6 +120,10 @@ export async function verifyNativeAccountRuntimeIsolation({
       'An unrelated Python installation failure blocked the native provider enrollment'
     )
     await rm(source)
+    // Any granted Runtime can win the revocation lease. This checkpoint must
+    // prove the desktop's native adapter runs while its Python runtime is broken.
+    // Restrict only this fixture through the existing permission API before logout.
+    native = await restrictNativeRevocationToLocal(api, native)
     await api(`/plugin-connections/${native.id}`, 'DELETE', { expected_revision: native.revision })
     await waitForValue(
       () => connectionFor('native'),

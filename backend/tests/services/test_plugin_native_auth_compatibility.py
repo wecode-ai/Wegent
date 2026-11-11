@@ -6,10 +6,50 @@ import pytest
 
 from app.services.plugin_account_connections import PluginAccountAuthError
 from tests.services import test_plugin_account_connections as fixtures
+from tests.services.test_plugin_auth_local_lifecycle import (
+    call,
+    lifecycle,
+    local,
+)
 
 service = fixtures.service
 installed = fixtures.installed
 device = fixtures.device
+
+
+@pytest.mark.parametrize("action", ["login", "logout"])
+def test_legacy_lifecycle_preserves_or_invalidates_native_login_generations(
+    lifecycle, local, installed, test_db, test_user, action
+):
+    from app.models.kind import Kind
+
+    call(lifecycle, test_db, test_user, installed, "login")
+    row = (
+        test_db.query(Kind)
+        .filter_by(
+            user_id=test_user.id,
+            namespace="plugin-auth",
+            kind="ConnectorLocalAuthPolicy",
+        )
+        .one()
+    )
+    # Legacy-only rows retain the released representation.
+    assert set(row.json["spec"]) == {"enabled", "pendingLogins"}
+    native = {"desktop-a": "login-a", "desktop-b": "login-b"}
+    document = deepcopy(row.json)
+    document["spec"].update(pendingNativeLogins=native, revision=7)
+    row.json = document
+    test_db.flush()
+
+    call(lifecycle, test_db, test_user, installed, action)
+
+    assert row.json["spec"]["pendingNativeLogins"] == (
+        native if action == "login" else {}
+    )
+    assert row.json["spec"]["revision"] == 8
+    if action == "logout":
+        call(lifecycle, test_db, test_user, installed, "login")
+        assert row.json["spec"]["pendingNativeLogins"] == {}
 
 
 def test_legacy_enrollment_preserves_native_grants_and_logout_revokes_them(

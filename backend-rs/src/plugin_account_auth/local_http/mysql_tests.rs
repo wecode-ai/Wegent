@@ -8,6 +8,8 @@ use base64::{
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+mod recovery;
+
 const SIGNING: &str = "native-plugin-contract-test";
 const OWNER: i64 = 82001;
 const USER: &str = "native-plugin-owner";
@@ -366,6 +368,8 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         .call(token, "plugin.auth.oauth.begin", execution, 409)
         .await;
     assert_eq!(blocked["detail"], "plugin_auth_reconnect_required");
+    recovery::verify_refresh_relogin(&api, token, mysql).await?;
+    recovery::verify_interleaved_logins(&api, token, &state).await?;
     verify_unicode_account(&api, token, mysql).await?;
     verify_transfer(&api, token, mysql).await?;
     #[derive(brz_mysql::FromMysqlRow)]

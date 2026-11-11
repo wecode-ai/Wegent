@@ -327,8 +327,14 @@ async fn target(
         ) {
             return Err(fail("plugin_auth_revocation_pending"));
         }
-        if row.json["spec"]["oauthRefresh"]["state"] == "in_flight" {
+        let refresh = &row.json["spec"]["oauthRefresh"];
+        if refresh["state"] == "in_flight" && refresh["expiresAt"].as_i64().unwrap_or(0) > now() {
             return Err(fail("plugin_auth_refresh_in_progress"));
+        }
+        if matches!(refresh["state"].as_str(), Some("in_flight" | "uncertain")) && !fresh_login {
+            // An abandoned refresh may have consumed its token. Only an
+            // explicit login can replace it; automatic export must not retry it.
+            return Err(fail("plugin_auth_reconnect_required"));
         }
     }
     Ok(row)
@@ -368,9 +374,10 @@ async fn activate(
         &input.account_id,
         &previous["nativeAuthSources"][&p.thumbprint],
     )?;
-    // A previously exported local token may be older than a centrally refreshed
-    // token. The keyed observation must not replace that newer credential.
-    let unchanged = previous["nativeAuthSources"][&p.thumbprint] == observed
+    // Automatic exports cannot overwrite a newer central token. Explicit login
+    // replaces the credential and old refresh lease even for an unchanged source.
+    let unchanged = intent["loginGeneration"].is_null()
+        && previous["nativeAuthSources"][&p.thumbprint] == observed
         && previous["status"] == "connected"
         && previous["authDefinition"] == pkg.definition;
     let mut spec = previous.clone();
