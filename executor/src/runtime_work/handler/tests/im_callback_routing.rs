@@ -45,6 +45,15 @@ async fn persisted_im_queue_routes_each_native_reply_to_its_own_callback() {
         thread_id: Some("native-thread".into()),
         ..Default::default()
     });
+    // Both IM follow-ups are queued behind the currently running turn. Hold the
+    // task's active slot so a background scheduler sweep cannot drain the first
+    // callback while the test is enqueueing the second one.
+    handler
+        .turn_scheduler
+        .lock()
+        .expect("turn scheduler lock should not be poisoned")
+        .active_task_ids
+        .insert(task.into(), RuntimeTaskKind::Personal);
     for callback in ["im-first", "im-second"] {
         handler
             .queue_turn(queued_im_turn(task, callback))
