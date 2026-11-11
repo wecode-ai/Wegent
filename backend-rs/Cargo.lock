@@ -504,9 +504,9 @@ dependencies = [
 
 [[package]]
 name = "brz-mysql"
-version = "0.0.29"
+version = "0.0.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a0a88afd4d05fa949b168a17ef2bf17eeb937ac07371140c8fc48dafcf84ceb"
+checksum = "c308f1c526b5543eda61039e4c2a91633c385594f8a00ced85f03c0133ae5ea0"
 dependencies = [
  "async-stream",
  "brz-metrics",
@@ -525,9 +525,9 @@ dependencies = [
 
 [[package]]
 name = "brz-mysql-derive"
-version = "0.0.29"
+version = "0.0.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a11a4293123d420f47e385dbdb0d1dd225d7f7238d062359a84ecc08c4c0f796"
+checksum = "749d6d6e01b32948ff9be5a743ad86d8668be54c1ea4806f4175c66ac59b0b8e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1235,7 +1235,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2636,7 +2636,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

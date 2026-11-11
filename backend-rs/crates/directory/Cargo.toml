@@ -9,7 +9,7 @@ description = "Employee-directory provider contracts and profile values"
 [dependencies]
 async-trait = "0.1"
 brz-json = "=0.0.11"
-brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-mysql = { version = "=0.0.30", features = ["metrics", "slow-log"] }
 brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
 serde = { version = "1", features = ["derive"] }
 wegent-backend-persistence = { path = "../persistence" }

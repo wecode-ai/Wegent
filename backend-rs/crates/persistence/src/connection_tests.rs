@@ -25,6 +25,7 @@ fn public_pool_keeps_the_source_statement_horizon() {
 fn pool_acquisition_waits_as_long_as_the_source_pool_timeout() {
     // Arrange + Act: the pool options the application builds.
     let options = super::pool_options();
+    assert!(!options.test_before_acquire);
 
     // Assert: Source waits `DB_POOL_TIMEOUT` (30s) for a free slot. The driver
     // default is 2s, which killed a legitimate replay-served read while another

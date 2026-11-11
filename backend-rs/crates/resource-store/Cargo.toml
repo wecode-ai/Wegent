@@ -9,7 +9,7 @@ description = "Persisted CRD projections, references, and Kind lookup statements
 [dependencies]
 url = "2"
 brz-json = "=0.0.11"
-brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-mysql = { version = "=0.0.30", features = ["metrics", "slow-log"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
