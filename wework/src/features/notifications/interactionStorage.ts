@@ -1,4 +1,4 @@
-import type { InteractionHistory } from './RuntimeInteractionsContext'
+import type { InteractionHistory, InteractionReplyDraft } from './RuntimeInteractionsContext'
 import {
   interactionId,
   interactionOriginalScheme,
@@ -159,8 +159,7 @@ export function pendingInteractionCache(items: RuntimeInteraction[]) {
   }))
 }
 
-export function readInteractionHistory(key: string): InteractionHistory[] {
-  const value = read(key)
+function interactionHistoryRows(value: unknown): InteractionHistory[] {
   if (!Array.isArray(value)) return []
   return value
     .filter(
@@ -183,18 +182,38 @@ export function readInteractionHistory(key: string): InteractionHistory[] {
         (row.originalUrl === undefined || typeof row.originalUrl === 'string')
     )
     .sort((a, b) => b.answeredAt - a.answeredAt)
-    .slice(0, 100)
 }
 
-export function readInteractionDrafts(key: string): Record<string, string> {
+export function readInteractionHistory(key: string): InteractionHistory[] {
+  return interactionHistoryRows(read(key)).slice(0, 100)
+}
+
+export type InteractionDraftState = Record<string, string | InteractionReplyDraft>
+
+/** Recovery metadata belongs to the draft, not the bounded handled-history list. */
+export function readInteractionDraftState(key: string, historyKey: string): InteractionDraftState {
   const value = read(key)
-  return record(value)
-    ? Object.fromEntries(
-        Object.entries(value).filter(
-          (entry): entry is [string, string] => typeof entry[1] === 'string'
-        )
+  if (!record(value)) return {}
+  const history = interactionHistoryRows(read(historyKey))
+  return Object.fromEntries(
+    Object.entries(value).flatMap<[string, string | InteractionReplyDraft]>(([id, draft]) => {
+      if (typeof draft === 'string') {
+        const interaction = history.find(row => row.id === id)
+        return [[id, interaction ? { text: draft, interaction, nativeReplyIds: [] } : draft]]
+      }
+      if (
+        !record(draft) ||
+        typeof draft.text !== 'string' ||
+        !Array.isArray(draft.nativeReplyIds) ||
+        !draft.nativeReplyIds.every(id => typeof id === 'string')
       )
-    : {}
+        return []
+      const [interaction] = interactionHistoryRows([draft.interaction])
+      return interaction?.id === id
+        ? [[id, { text: draft.text, interaction, nativeReplyIds: draft.nativeReplyIds }]]
+        : []
+    })
+  )
 }
 
 export function saveInteractionState(key: string, value: unknown): boolean {

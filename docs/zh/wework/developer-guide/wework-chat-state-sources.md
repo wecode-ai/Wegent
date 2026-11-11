@@ -224,6 +224,12 @@ Codex app-server 的 `turn/start` 返回值是新 turn 身份的权威来源。e
 Goal 的原生续跑可能超过本地请求的生命周期，即使请求控制记录已清理，仍应能引导
 原生状态中的运行轮次；等待下一轮时只做有界等待，不另建引导状态。
 
+会话恢复接入与共享进程保护使用不同的忙碌条件。`thread/resume` 等待本地执行持有者和
+原生活跃 turn 结束，但不能仅因 Goal 仍为 active 就阻塞：没有活跃 turn 的 Goal 可能
+必须先恢复会话才能继续。活跃 Goal 仍保护共享进程，阻止后台空闲重启或配置改写；
+恢复时若需更新 MCP 权限或运行指令，仍须等待旧订阅的 `thread/closed` 后才能重载。
+恢复过程保留原会话、目标创建时间和累计用量，不通过清除或重建 Goal 解除接入等待。
+
 用户发送引导时，Wework 先把引导消息乐观插入当前 turn，再调用
 `runtime.tasks.guidance`。如果 Codex `turn/steer` 明确返回预期 turn ID 与实际活跃
 turn ID 不一致，executor 用返回的实际 ID 纠正本次引导目标并只重试一次，不回写

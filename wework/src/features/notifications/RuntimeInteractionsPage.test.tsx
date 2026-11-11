@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import {
@@ -83,9 +83,11 @@ function interactionValue(
     history: [],
     errors: {},
     drafts: {},
+    replyDrafts: [],
     busy: new Set(),
     loading: false,
     setDraft: vi.fn(),
+    discardDraft: vi.fn().mockResolvedValue(true),
     respond: vi.fn(),
     refresh: vi.fn(),
     open: vi.fn(),
@@ -182,6 +184,79 @@ it('hosts the original entity instead of building a separate approval or reply f
   )
   expect(screen.queryByTestId('interaction-reply')).not.toBeInTheDocument()
   expect(screen.queryByTestId('interaction-evidence')).not.toBeInTheDocument()
+})
+
+it.each([true, false])(
+  'recovers unsent text without reviving a handled question (desktop: %s)',
+  async desktop => {
+    viewport.twoPanes = desktop
+    const discardDraft = vi.fn().mockResolvedValue(true)
+    view(
+      undefined,
+      { [approval.id]: 'interactions.failed' },
+      {
+        pending: [],
+        history: [],
+        drafts: { [approval.id]: 'Unsent native reply', unrelated: 'Another task draft' },
+        replyDrafts: [
+          {
+            text: 'Unsent native reply',
+            nativeReplyIds: ['native-reply'],
+            interaction: {
+              id: approval.id,
+              title: interactionTask.task.title,
+              question: approval.question,
+              address: interactionTask.address,
+              answeredAt: Date.now(),
+            },
+          },
+        ],
+        discardDraft,
+      }
+    )
+    expect(screen.getByTestId('interactions-pending-count')).toHaveTextContent('0')
+    expect(screen.queryByTestId('interaction-list-item')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('test-original-entity')).not.toBeInTheDocument()
+    const draft = screen.getByTestId('interaction-unsent-text')
+    expect(draft).toHaveValue('Unsent native reply')
+    expect(draft).toHaveAttribute('readonly')
+    expect(screen.queryByText('Another task draft')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('interaction-discard-unsent'))
+    await waitFor(() => expect(discardDraft).toHaveBeenCalledWith(approval.id))
+  }
+)
+
+it('keeps unsent text visible and reports a failed discard', async () => {
+  const discardDraft = vi.fn().mockResolvedValue(false)
+  view(
+    undefined,
+    {},
+    {
+      pending: [],
+      replyDrafts: [
+        {
+          text: 'Unsent native reply',
+          nativeReplyIds: ['native-reply'],
+          interaction: {
+            id: approval.id,
+            title: interactionTask.task.title,
+            question: approval.question,
+            address: interactionTask.address,
+            answeredAt: Date.now(),
+          },
+        },
+      ],
+      discardDraft,
+    }
+  )
+
+  fireEvent.click(screen.getByTestId('interaction-discard-unsent'))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'interactions.discard_unsent_reply_failed'
+  )
+  expect(screen.getByTestId('interaction-unsent-text')).toHaveValue('Unsent native reply')
 })
 
 it.each([true, false])('shows request time in the list and detail (desktop: %s)', desktop => {
