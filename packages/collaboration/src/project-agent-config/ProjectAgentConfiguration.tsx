@@ -3,7 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import type { CollaborationTranslate } from "../i18n";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
@@ -109,6 +117,25 @@ export function ProjectAgentConfiguration({
   onErrorRef.current = onError;
   translateRef.current = translate;
 
+  const agentScope = useMemo(
+    () => ({ api, projectId: project.id, canManage, scope }),
+    [api, project.id, canManage, scope],
+  );
+  const activeAgentScope = useRef<typeof agentScope | null>(null);
+  const agentRequest = useRef(0);
+  useLayoutEffect(() => {
+    activeAgentScope.current = agentScope;
+    return () => {
+      activeAgentScope.current = null;
+    };
+  }, [agentScope]);
+  const isCurrentAgentRequest = useCallback(
+    (request: number) =>
+      activeAgentScope.current === agentScope &&
+      agentRequest.current === request,
+    [agentScope],
+  );
+
   useEffect(() => {
     if (
       !canManage ||
@@ -170,13 +197,14 @@ export function ProjectAgentConfiguration({
     setError(null);
     setLoadError(null);
     let active = true;
+    const request = ++agentRequest.current;
     setLoading(true);
     void api.agents
       .list(project.id, {
         includeArchived: canManage && scope === "project",
       })
       .then((nextAgents) => {
-        if (!active) return;
+        if (!active || !isCurrentAgentRequest(request)) return;
         setAgents(
           nextAgents
             .map(normalizeProjectAgent)
@@ -184,7 +212,7 @@ export function ProjectAgentConfiguration({
         );
       })
       .catch((cause) => {
-        if (!active) return;
+        if (!active || !isCurrentAgentRequest(request)) return;
         setLoadError(
           errorMessage(
             cause,
@@ -197,12 +225,12 @@ export function ProjectAgentConfiguration({
         onErrorRef.current();
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active && isCurrentAgentRequest(request)) setLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [api, project.id, canManage, scope, loadRevision]);
+  }, [api, project.id, canManage, scope, loadRevision, isCurrentAgentRequest]);
 
   useEffect(() => {
     if (
@@ -379,16 +407,27 @@ export function ProjectAgentConfiguration({
     }
   }
 
-  async function reloadAgents() {
-    const nextAgents = await api.agents.list(project.id, {
-      includeArchived: canManage && scope === "project",
-    });
-    setLoadError(null);
-    setAgents(
-      nextAgents
-        .map(normalizeProjectAgent)
-        .filter((item) => canManage || item.status !== "archived"),
-    );
+  async function reloadAgents(onFailure?: (cause: unknown) => void) {
+    if (activeAgentScope.current !== agentScope) return;
+    const request = ++agentRequest.current;
+    try {
+      const nextAgents = await api.agents.list(project.id, {
+        includeArchived: canManage && scope === "project",
+      });
+      if (!isCurrentAgentRequest(request)) return;
+      setLoadError(null);
+      setAgents(
+        nextAgents
+          .map(normalizeProjectAgent)
+          .filter((item) => canManage || item.status !== "archived"),
+      );
+    } catch (cause) {
+      if (!isCurrentAgentRequest(request)) return;
+      if (onFailure) onFailure(cause);
+      else throw cause;
+    } finally {
+      if (isCurrentAgentRequest(request)) setLoading(false);
+    }
   }
 
   async function finishLocalAgentCreation() {
@@ -437,11 +476,10 @@ export function ProjectAgentConfiguration({
   }
 
   async function finishAgentEdit() {
+    if (activeAgentScope.current !== agentScope) return;
     setEditingAgentId(null);
     onAgentsChange?.();
-    try {
-      await reloadAgents();
-    } catch (cause) {
+    await reloadAgents((cause) => {
       setLoadError(
         errorMessage(
           cause,
@@ -452,7 +490,7 @@ export function ProjectAgentConfiguration({
         ),
       );
       onError();
-    }
+    });
   }
 
   async function saveEditedAgent(saved: { name: string; teamId: number }) {
@@ -736,7 +774,7 @@ export function ProjectAgentConfiguration({
                                 status: "active",
                                 shareWithWorkspace: true,
                               })
-                              .then(reloadAgents)
+                              .then(() => reloadAgents())
                               .then(() => onAgentsChange?.())
                               .catch((cause) => {
                                 setError(

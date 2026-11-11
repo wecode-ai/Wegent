@@ -766,6 +766,100 @@ describe("ProjectAgentConfiguration", () => {
     );
   });
 
+  it.each([
+    ["success", "success"],
+    ["success", "failure"],
+    ["failure", "success"],
+    ["failure", "failure"],
+  ])(
+    "ignores an old project refresh %s after the new project load %s",
+    async (oldResult, newResult) => {
+      const first = projectAgent({ runtime: "codex", wegent_team_id: null });
+      const next = projectAgent({
+        id: "next-agent",
+        name: "Next project Agent",
+        runtime: "codex",
+        wegent_team_id: null,
+      });
+      const { api, list } = createApi({ agents: [first] });
+      await renderHosted(api);
+      let resolve!: (rows: WorkspaceProjectAgent[]) => void;
+      let reject!: (cause: Error) => void;
+      const pending = new Promise<WorkspaceProjectAgent[]>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      await click("project-agent-edit-project-agent-1");
+      list.mockImplementationOnce(() => pending);
+      await click("hosted-local-agent-save");
+      if (newResult === "success") list.mockResolvedValueOnce([next]);
+      else list.mockRejectedValueOnce(new Error("Next project unavailable"));
+      await renderHosted(api, { target: { ...project, id: "next-project" } });
+      await act(async () => {
+        if (oldResult === "success")
+          resolve([{ ...first, name: "Obsolete project Agent" }]);
+        else reject(new Error("Obsolete project unavailable"));
+      });
+      expect(
+        document.querySelector(
+          '[data-testid="project-agent-row-project-agent-1"]',
+        ),
+      ).toBeNull();
+      if (newResult === "success") {
+        expect(element("project-agent-row-next-agent").textContent).toContain(
+          next.name,
+        );
+        expect(
+          document.querySelector('[data-testid="project-agent-config-error"]'),
+        ).toBeNull();
+      } else {
+        expect(element("project-agent-config-error").textContent).toContain(
+          "Next project unavailable",
+        );
+        expect(
+          (element("project-agent-add") as HTMLButtonElement).disabled,
+        ).toBe(true);
+      }
+    },
+  );
+
+  it.each(["success", "failure"])(
+    "ignores an earlier edit refresh %s after a later edit refresh",
+    async (oldResult) => {
+      const row = projectAgent({ runtime: "codex", wegent_team_id: null });
+      const { api, list } = createApi({ agents: [row] });
+      await renderHosted(api);
+      let resolve!: (rows: WorkspaceProjectAgent[]) => void;
+      let reject!: (cause: Error) => void;
+      const pending = new Promise<WorkspaceProjectAgent[]>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      await click("project-agent-edit-project-agent-1");
+      list.mockImplementationOnce(() => pending);
+      await click("hosted-local-agent-save");
+      await click("project-agent-edit-project-agent-1");
+      list.mockResolvedValueOnce([
+        { ...row, name: "Latest saved name", version: 3 },
+      ]);
+      await click("hosted-local-agent-save");
+      await act(async () => {
+        if (oldResult === "success")
+          resolve([{ ...row, name: "Obsolete saved name", version: 2 }]);
+        else reject(new Error("Obsolete refresh unavailable"));
+      });
+      expect(
+        element("project-agent-row-project-agent-1").textContent,
+      ).toContain("Latest saved name");
+      expect(
+        document.querySelector('[data-testid="project-agent-config-error"]'),
+      ).toBeNull();
+      expect((element("project-agent-add") as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    },
+  );
+
   it.each([12, null])(
     "does not expose unauthorized edits for Agent definition %s",
     async (teamId) => {
