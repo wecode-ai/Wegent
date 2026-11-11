@@ -148,3 +148,5 @@ Open **bottom-left account menu → Settings**, then select the group and page b
 This page indexes locations; linked topic guides own detailed procedures to avoid duplicate instructions. Automated checks compare settings pages and registered sidebar entries against real DSH declarations in both languages, including names, groups and visibility flags. Additions, removals and renames must update this page in the same change.
 
 Composer controls, project menus and account menus still require manual code-review checks. Automated tests cannot prove that every button is documented or that the running layout matches. See repository `wework/AGENTS.md` for maintenance rules. Builds copy both documentation trees into bundled wework-docs; repository edits do not instantly update older installed versions.
+
+For recovery-center and local-service notices during launch, see [Startup recovery](./getting-started.md#startup-recovery).

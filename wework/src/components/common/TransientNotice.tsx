@@ -8,6 +8,7 @@ interface TransientNoticeProps {
   onClear: () => void
   horizontalAnchorRef?: RefObject<HTMLElement | null>
   visible?: boolean
+  action?: { label: string; testId: string; onClick: () => void; pending: boolean }
 }
 
 interface HorizontalPlacement {
@@ -23,15 +24,16 @@ export function TransientNotice({
   onClear,
   horizontalAnchorRef,
   visible = true,
+  action,
 }: TransientNoticeProps) {
   const [horizontalPlacement, setHorizontalPlacement] = useState<HorizontalPlacement | null>(null)
 
   useEffect(() => {
-    if (!message) return
+    if (!message || action) return
 
     const timeout = window.setTimeout(onClear, 2200)
     return () => window.clearTimeout(timeout)
-  }, [message, onClear])
+  }, [action, message, onClear])
 
   useLayoutEffect(() => {
     if (!message || !horizontalAnchorRef || !visible) return
@@ -84,6 +86,17 @@ export function TransientNotice({
       )}
     >
       {message}
+      {action && (
+        <button
+          type="button"
+          data-testid={action.testId}
+          disabled={action.pending}
+          onClick={action.onClick}
+          className="ml-3 min-h-11 min-w-11 underline disabled:opacity-50 md:min-h-7 md:min-w-7"
+        >
+          {action.label}
+        </button>
+      )}
     </div>
   )
 

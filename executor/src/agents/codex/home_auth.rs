@@ -18,6 +18,8 @@ pub(in crate::agents::codex) fn acquire_shared_auth(
     home: &Path,
     requested: Option<CodexAuthMode>,
 ) -> Result<FileLease, String> {
+    // A process can load credentials even when reusing another owner's mode.
+    super::require_known_auth_preference()?;
     fs::create_dir_all(home).map_err(|error| format!("create Codex Home: {error}"))?;
     let gate = FileLease(open_lock(&home.join(".wework-auth-start.lock"))?);
     gate.0

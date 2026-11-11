@@ -1,3 +1,4 @@
+import { setSessionTelemetryConsent } from '@/telemetry/sessionConsent'
 import type { AppPreferences } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
@@ -28,6 +29,7 @@ const defaultPreferences: AppPreferences = {
   experimentalFeaturesEnabled: false,
   telemetryConsentAsked: true,
   telemetryEnabled: true,
+  telemetryConsentRevision: 0,
   performanceRecordingEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -96,6 +98,7 @@ vi.mock('@/desktop/appPreferences', () => ({
     experimentalFeaturesEnabled: false,
     telemetryConsentAsked: true,
     telemetryEnabled: true,
+    telemetryConsentRevision: 0,
     performanceRecordingEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
@@ -171,6 +174,7 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
 
 describe('GeneralSettingsPage', () => {
   beforeEach(() => {
+    setSessionTelemetryConsent(undefined)
     getAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockReset()
     applyLanguagePreferenceMock.mockReset()
@@ -580,10 +584,13 @@ describe('GeneralSettingsPage', () => {
     await userEvent.click(toggle)
 
     await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
-        telemetryConsentAsked: true,
-        telemetryEnabled: false,
-      })
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith(
+        {
+          telemetryConsentAsked: true,
+          telemetryEnabled: false,
+        },
+        expect.any(Number)
+      )
     })
   })
 
