@@ -4251,16 +4251,18 @@ async fn terminate_codex_app_server_child(child: &mut Child) {
 }
 
 fn signal_codex_app_server_child(child: &mut Child) {
-    if matches!(child.try_wait(), Ok(Some(_))) {
-        return;
-    }
-
     #[cfg(unix)]
     if let Some(process_group_id) = child.id() {
+        // Signal the group before reaping its leader. The app-server can
+        // exit on stdin EOF while its tool children are still running.
         unsafe {
             let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGTERM);
             let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGKILL);
         }
+        return;
+    }
+
+    if matches!(child.try_wait(), Ok(Some(_))) {
         return;
     }
 
