@@ -217,6 +217,15 @@ impl SocketEmitters {
             .is_some_and(|operator| !operator.to(socket_id.to_owned()).sockets().is_empty())
     }
 
+    pub(crate) fn terminal_socket(
+        &self,
+        socket_id: &str,
+    ) -> Option<brz_socket_io::extract::SocketRef> {
+        self.io
+            .of(TERMINAL_NAMESPACE)?
+            .get_socket(socket_id.parse().ok()?)
+    }
+
     /// Whether this process still holds the addressed `/local-executor`
     /// session. A disconnected client has no local socket, so the source's
     /// `sio.call` has no local receiver and only the adapter frame is sent.

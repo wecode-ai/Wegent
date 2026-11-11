@@ -170,7 +170,10 @@ export interface ElectronDesktopServices {
   pendingSchemes: SchemeQueue
   openScheme: (url: string) => void
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
-  updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
+  updatePreferences?: (
+    patch: Record<string, unknown>,
+    expectedTelemetryConsentRevision?: number
+  ) => Promise<Record<string, unknown>>
   weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
@@ -1145,10 +1148,13 @@ export function createElectronCapabilityRouter(
     acknowledgeNotificationReply(stringParam(params, 'id'), stringParam(params, 'accountKey'))
   )
   router.register('preferences.get', () => preferences.read())
-  const updatePreferences = async (preferencePatch: Record<string, unknown>) => {
+  const updatePreferences = async (
+    preferencePatch: Record<string, unknown>,
+    expectedTelemetryConsentRevision?: number
+  ) => {
     const updated = desktopServices.updatePreferences
-      ? await desktopServices.updatePreferences(preferencePatch)
-      : await preferences.update(preferencePatch)
+      ? await desktopServices.updatePreferences(preferencePatch, expectedTelemetryConsentRevision)
+      : await preferences.update(preferencePatch, expectedTelemetryConsentRevision)
     if (typeof updated.preventSleepWhileTasksRunning === 'boolean') {
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
     }
@@ -1160,7 +1166,14 @@ export function createElectronCapabilityRouter(
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       invalidParam('patch')
     }
-    return updatePreferences(patch as Record<string, unknown>)
+    const expected = params.expectedTelemetryConsentRevision
+    if (
+      expected !== undefined &&
+      (typeof expected !== 'number' || !Number.isSafeInteger(expected) || expected < 0)
+    ) {
+      invalidParam('expectedTelemetryConsentRevision')
+    }
+    return updatePreferences(patch as Record<string, unknown>, expected as number | undefined)
   })
   router.register('runtime.changeWorkbenchMode', async (params, context) => {
     const mode = stringParam(params, 'mode')

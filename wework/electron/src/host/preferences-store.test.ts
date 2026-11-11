@@ -11,6 +11,35 @@ afterEach(async () => {
 })
 
 describe('PreferencesStore', () => {
+  test('rejects a stale window opt-in after another window saves a refusal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-consent-order-'))
+    roots.push(root)
+    const store = new PreferencesStore(root)
+    const oldWindowRevision = 0
+    await store.update({ telemetryConsentAsked: true, telemetryEnabled: false }, 0)
+    await expect(
+      store.update({ telemetryConsentAsked: true, telemetryEnabled: true }, oldWindowRevision)
+    ).rejects.toThrow('another window')
+    expect(await store.read()).toMatchObject({
+      telemetryEnabled: false,
+      telemetryConsentRevision: 1,
+    })
+    await store.update({ locale: 'zh-CN' })
+    await store.update({ telemetryConsentAsked: true, telemetryEnabled: true }, 1)
+    expect(await store.read()).toMatchObject({
+      telemetryEnabled: true,
+      telemetryConsentRevision: 2,
+    })
+    await store.update({ telemetryConsentAsked: true, telemetryEnabled: false }, oldWindowRevision)
+    expect(await store.read()).toMatchObject({
+      telemetryEnabled: false,
+      telemetryConsentRevision: 3,
+    })
+    await expect(new PreferencesStore(root).read()).resolves.toMatchObject({
+      telemetryEnabled: false,
+      telemetryConsentRevision: 3,
+    })
+  })
   test('distinguishes unavailable preferences from fresh defaults and explicit opt-out', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-preferences-availability-'))
     roots.push(root)

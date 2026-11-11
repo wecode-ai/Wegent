@@ -1481,7 +1481,8 @@ async function togglePopoutWindow(): Promise<void> {
 }
 
 async function updateDesktopPreferences(
-  patch: Record<string, unknown>
+  patch: Record<string, unknown>,
+  expectedTelemetryConsentRevision?: number
 ): Promise<Record<string, unknown>> {
   if (!desktopPreferences) throw new Error('Desktop preferences are unavailable')
   if (Object.hasOwn(patch, 'appearanceThemeSnapshot') && patch.appearanceThemeSnapshot !== null) {
@@ -1489,7 +1490,7 @@ async function updateDesktopPreferences(
     if (!snapshot) throw new Error('appearanceThemeSnapshot is invalid')
     patch = { ...patch, appearanceThemeSnapshot: snapshot }
   }
-  const updated = await desktopPreferences.update(patch)
+  const updated = await desktopPreferences.update(patch, expectedTelemetryConsentRevision)
   if (Object.hasOwn(patch, 'appearanceMode') || Object.hasOwn(patch, 'appearanceThemeSnapshot')) {
     desktopAppearance.update(updated)
   }

@@ -7,6 +7,7 @@ import {
 } from '../modules/startup-fault-isolation.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
+import { waitForSnapshot } from '../modules/shared.mjs'
 
 async function reloadWorkbench(control, timeoutMs) {
   const before = control.readyCount
@@ -99,15 +100,6 @@ export async function createDesktopScenario({
       // A real unreadable settings path must not authorize credential changes or hide the UI.
       await rename(preferences, preferencesBackup)
       await mkdir(preferences)
-      if (process.platform === 'win32') {
-        assert.equal(environment.WEWORK_RELEASE_SUPERVISED || '', '')
-        replacement = await seedInstalledRelease({
-          data: electronUserDataDirectory,
-          appBinary,
-          version: '0.0.0',
-          id: 'installed-before-manual-replacement',
-        })
-      }
     },
     async verify(control) {
       await control.command('waitFor', '[data-testid="app-shell"]', {
@@ -116,47 +108,25 @@ export async function createDesktopScenario({
       await waitForClosedStartupSplash(control)
       const windowState = JSON.parse(await control.command('getNativeWindowState', 'body'))
       assert.equal(windowState.visible, true, 'Unreadable preferences left the workbench hidden')
+      await control.command('waitFor', '[data-testid="telemetry-consent-retry"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await rm(preferences, { recursive: true })
       await rename(preferencesBackup, preferences)
-      await control.command('setAppPreferences', 'body', {
-        value: JSON.stringify({ telemetryConsentAsked: true, telemetryEnabled: false }),
-      })
+      await control.command('clickWhenEnabled', '[data-testid="telemetry-consent-retry"]')
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('telemetry-consent-retry'),
+        'Retry did not persist the consent choice after settings were repaired',
+        workbenchReadyTimeoutMs
+      )
+      const repairedPreferences = JSON.parse(await control.command('getAppPreferences', 'body'))
+      assert.equal(repairedPreferences.telemetryConsentAsked, true)
+      assert.equal(repairedPreferences.telemetryEnabled, false)
       await writeFile(
         join(resultDir, 'startup-preferences-unavailable-result.json'),
         JSON.stringify({ workbenchVisible: true, startupSplashClosed: true })
       )
-      if (replacement) {
-        const current = await waitForValue(
-          async () => {
-            const id = (await readFile(join(replacement.releases, 'active'), 'utf8')).trim()
-            return JSON.parse(
-              await readFile(join(replacement.releases, 'slots', id, 'release.json'), 'utf8')
-            )
-          },
-          release => release.version === metadata.version,
-          'The manually replaced host did not reconcile its actual installed release',
-          workbenchReadyTimeoutMs
-        )
-        assert.equal(current.executable, appBinary)
-        assert.equal(current.retainedRelease, replacement.descriptor.id)
-        assert.equal(
-          current.profileRoot,
-          await realpath(join(electronUserDataDirectory, 'dsh-core', 'profiles', 'wework-core'))
-        )
-        assert.equal(await readFile(replacement.descriptorPath, 'utf8'), replacement.original)
-        const prepared = JSON.parse(
-          await readFile(join(replacement.releases, 'slots', current.id, 'prepared.json'), 'utf8')
-        )
-        assert.ok(prepared.components.executor)
-        assert.ok(prepared.components.codex)
-        for (const [id, path] of Object.entries(prepared.components)) {
-          if (id !== 'contentSha256') await access(path)
-        }
-        await writeFile(
-          join(resultDir, 'manual-install-reconciliation.json'),
-          JSON.stringify({ current, prepared })
-        )
-      }
       await verifyStartupFaultIsolation({
         appBinary,
         environment,
@@ -222,6 +192,51 @@ export async function createDesktopScenario({
         resultDir,
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      // Selection routes later Windows launches through the native supervisor.
+      // Verify manual replacement after the storage cases finish their restarts.
+      if (process.platform === 'win32') {
+        assert.equal(environment.WEWORK_RELEASE_SUPERVISED || '', '')
+        await restartDesktopApp(async () => {
+          replacement = await seedInstalledRelease({
+            data: electronUserDataDirectory,
+            appBinary,
+            version: '0.0.0',
+            id: 'installed-before-manual-replacement',
+          })
+        })
+      }
+      if (replacement) {
+        const current = await waitForValue(
+          async () => {
+            const id = (await readFile(join(replacement.releases, 'active'), 'utf8')).trim()
+            return JSON.parse(
+              await readFile(join(replacement.releases, 'slots', id, 'release.json'), 'utf8')
+            )
+          },
+          release => release.version === metadata.version,
+          'The manually replaced host did not reconcile its actual installed release',
+          workbenchReadyTimeoutMs
+        )
+        assert.equal(current.executable, appBinary)
+        assert.equal(current.retainedRelease, replacement.descriptor.id)
+        assert.equal(
+          current.profileRoot,
+          await realpath(join(electronUserDataDirectory, 'dsh-core', 'profiles', 'wework-core'))
+        )
+        assert.equal(await readFile(replacement.descriptorPath, 'utf8'), replacement.original)
+        const prepared = JSON.parse(
+          await readFile(join(replacement.releases, 'slots', current.id, 'prepared.json'), 'utf8')
+        )
+        assert.ok(prepared.components.executor)
+        assert.ok(prepared.components.codex)
+        for (const [id, path] of Object.entries(prepared.components)) {
+          if (id !== 'contentSha256') await access(path)
+        }
+        await writeFile(
+          join(resultDir, 'manual-install-reconciliation.json'),
+          JSON.stringify({ current, prepared })
+        )
+      }
     },
   }
 }

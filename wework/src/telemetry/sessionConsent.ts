@@ -11,6 +11,10 @@ let generation = 0
 let revision = 0
 const listeners = new Set<() => void>()
 
+export function isLatestTelemetryConsentChoice(value: boolean): boolean {
+  return latestChoice === value
+}
+
 export function setSessionTelemetryConsent(value: boolean | undefined): void {
   if (value === undefined) {
     generation += 1
@@ -57,11 +61,11 @@ export function useSessionTelemetryConsentAsked(): boolean {
   return asked
 }
 
-export function saveTelemetryConsent(value: boolean) {
+export function saveTelemetryConsent(value: boolean, expectedRevision: number) {
   setSessionTelemetryConsent(value)
   const currentGeneration = generation
   pending += 1
-  return persistChoice(value, currentGeneration).finally(() => {
+  return persistChoice(value, currentGeneration, expectedRevision).finally(() => {
     if (currentGeneration !== generation) return
     pending -= 1
     if (pending === 0 && persistedChoice === true && latestChoice === true) choice = undefined
@@ -71,16 +75,20 @@ export function saveTelemetryConsent(value: boolean) {
 
 async function persistChoice(
   value: boolean,
-  currentGeneration: number
+  currentGeneration: number,
+  expectedRevision: number
 ): ReturnType<typeof updateAppPreferences> {
-  const preferences = await updateAppPreferences({
-    telemetryConsentAsked: true,
-    telemetryEnabled: value,
-  })
+  const preferences = await updateAppPreferences(
+    {
+      telemetryConsentAsked: true,
+      telemetryEnabled: value,
+    },
+    expectedRevision
+  )
   if (currentGeneration !== generation) return preferences
   // An older request can finish after a later explicit choice from settings.
   if (latestChoice !== undefined && latestChoice !== value)
-    return persistChoice(latestChoice, currentGeneration)
+    return persistChoice(latestChoice, currentGeneration, preferences.telemetryConsentRevision)
   persistedChoice = value
   return preferences
 }

@@ -199,7 +199,7 @@ export function GeneralSettingsPage() {
     try {
       const nextPreferences =
         key === 'telemetryEnabled'
-          ? await saveTelemetryConsent(value)
+          ? await saveTelemetryConsent(value, preferences.telemetryConsentRevision)
           : await updateAppPreferences({ [key]: value })
       setPreferences(nextPreferences)
     } catch (saveError) {

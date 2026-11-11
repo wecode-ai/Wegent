@@ -136,6 +136,7 @@ import { nextConnectorSyncRevision } from '@/features/cloud-connection/connector
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import type { LocalPluginInventoryRead } from '@/features/plugins/pluginInventorySources'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
+import { saveTelemetryConsent } from '@/telemetry/sessionConsent'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
@@ -2775,6 +2776,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         })),
       })
       return JSON.stringify(updated.localHarnesses)
+    }
+    case 'getAppPreferences':
+      return JSON.stringify(await getAppPreferences())
+    case 'setTelemetryConsent': {
+      const { enabled, expectedRevision } = JSON.parse(command.value ?? '{}') as {
+        enabled: boolean
+        expectedRevision: number
+      }
+      return JSON.stringify(await saveTelemetryConsent(enabled, expectedRevision))
     }
     case 'setAppPreferences': {
       const patch = JSON.parse(command.value ?? '{}') as AppPreferencesPatch

@@ -607,15 +607,16 @@ pub async fn worktree_remove(
     let call_timeout = GIT_CALL_TIMEOUT.min(Duration::from_secs_f64(timeout_seconds.max(1.0)));
     let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
     let args = owned_args(&["worktree", "remove", "--force", &target]);
-    let (stdout, stderr, success) = run_git(
+    let (stdout, stderr, success) = crate::local::native_git::run_git_capture_for_removal(
         &args,
-        Some(Path::new(&target)),
+        Path::new(&target),
         &process_env,
         call_timeout,
         max_output_bytes,
     )
     .await
-    .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
+    .map(|capture| (capture.stdout, capture.stderr, capture.success))
+    .unwrap_or_else(|error| (Vec::new(), error.message, false));
     build_result(started_at, success, stdout, stderr, None)
 }
 

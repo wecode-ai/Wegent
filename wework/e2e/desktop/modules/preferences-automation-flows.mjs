@@ -72,6 +72,21 @@ async function verifyTelemetryPreference(control) {
     'false',
     'Disabling telemetry was not persisted'
   )
+  const refusal = JSON.parse(await control.command('getAppPreferences', 'body'))
+  assert.equal(refusal.telemetryEnabled, false)
+  assert.ok(refusal.telemetryConsentRevision > 0)
+  await assert.rejects(
+    control.command('setTelemetryConsent', 'body', {
+      value: JSON.stringify({
+        enabled: true,
+        expectedRevision: refusal.telemetryConsentRevision - 1,
+      }),
+    }),
+    /changed in another window/
+  )
+  const afterStaleOptIn = JSON.parse(await control.command('getAppPreferences', 'body'))
+  assert.equal(afterStaleOptIn.telemetryEnabled, false, 'A stale opt-in replaced the saved refusal')
+  assert.equal(afterStaleOptIn.telemetryConsentRevision, refusal.telemetryConsentRevision)
   await control.command('click', '[data-testid="settings-back-button"]')
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {

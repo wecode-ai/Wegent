@@ -36,8 +36,11 @@ export class DesktopPreferencesController {
     }
   }
 
-  update(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const result = this.operation.then(() => this.apply(patch))
+  update(
+    patch: Record<string, unknown>,
+    expectedTelemetryConsentRevision?: number
+  ): Promise<Record<string, unknown>> {
+    const result = this.operation.then(() => this.apply(patch, expectedTelemetryConsentRevision))
     this.operation = result.then(
       () => undefined,
       () => undefined
@@ -45,13 +48,17 @@ export class DesktopPreferencesController {
     return result
   }
 
-  private async apply(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async apply(
+    patch: Record<string, unknown>,
+    expectedTelemetryConsentRevision?: number
+  ): Promise<Record<string, unknown>> {
     const changesShortcut = Object.hasOwn(patch, 'popoutWindowShortcut')
     const changesRecording = Object.hasOwn(patch, 'performanceRecordingEnabled')
     if (changesRecording && typeof patch.performanceRecordingEnabled !== 'boolean') {
       throw new Error('performanceRecordingEnabled must be a boolean')
     }
-    if (!changesShortcut && !changesRecording) return this.store.update(patch)
+    if (!changesShortcut && !changesRecording)
+      return this.store.update(patch, expectedTelemetryConsentRevision)
 
     const snapshot = await this.store.readSnapshot()
     if (!snapshot.readable)
@@ -66,7 +73,7 @@ export class DesktopPreferencesController {
           patch.performanceRecordingEnabled === true
         )
       }
-      return await this.store.update(patch)
+      return await this.store.update(patch, expectedTelemetryConsentRevision)
     } catch (error) {
       try {
         if (changesShortcut) {

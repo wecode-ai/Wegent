@@ -24,11 +24,31 @@ export class PreferencesStore {
     })
   }
 
-  update(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+  update(
+    patch: Record<string, unknown>,
+    expectedTelemetryConsentRevision?: number
+  ): Promise<Record<string, unknown>> {
     return this.serial(async () => {
       const current = await this.readFile()
       if (this.readFailure) throw this.readFailure
+      const revision =
+        Number.isSafeInteger(current.telemetryConsentRevision) &&
+        Number(current.telemetryConsentRevision) >= 0
+          ? Number(current.telemetryConsentRevision)
+          : 0
+      if (
+        patch.telemetryEnabled === true &&
+        expectedTelemetryConsentRevision !== undefined &&
+        expectedTelemetryConsentRevision !== revision
+      )
+        throw new Error('Telemetry preference changed in another window; refresh and retry')
       const preferences = { ...current, ...patch }
+      delete preferences.telemetryConsentRevision
+      if (typeof patch.telemetryEnabled === 'boolean') {
+        preferences.telemetryConsentRevision = revision + 1
+      } else if (Object.hasOwn(current, 'telemetryConsentRevision')) {
+        preferences.telemetryConsentRevision = revision
+      }
       const path = this.path()
       await mkdir(dirname(path), { recursive: true, mode: 0o700 })
       const temporary = `${path}.${process.pid}.tmp`

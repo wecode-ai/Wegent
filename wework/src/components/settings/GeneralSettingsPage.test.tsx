@@ -29,6 +29,7 @@ const defaultPreferences: AppPreferences = {
   experimentalFeaturesEnabled: false,
   telemetryConsentAsked: true,
   telemetryEnabled: true,
+  telemetryConsentRevision: 0,
   performanceRecordingEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -97,6 +98,7 @@ vi.mock('@/desktop/appPreferences', () => ({
     experimentalFeaturesEnabled: false,
     telemetryConsentAsked: true,
     telemetryEnabled: true,
+    telemetryConsentRevision: 0,
     performanceRecordingEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
@@ -582,10 +584,13 @@ describe('GeneralSettingsPage', () => {
     await userEvent.click(toggle)
 
     await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
-        telemetryConsentAsked: true,
-        telemetryEnabled: false,
-      })
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith(
+        {
+          telemetryConsentAsked: true,
+          telemetryEnabled: false,
+        },
+        expect.any(Number)
+      )
     })
   })
 

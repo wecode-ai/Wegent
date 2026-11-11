@@ -276,7 +276,7 @@ jobs:
       - name: Verify account HTTP plugin snapshots without Device registration
         working-directory: backend-rs
         env:
-          PLUGIN_LOCAL_SYNC_ENABLED: 'true'
+          PLUGIN_LOCAL_SYNC_ENABLED: "true"
           WEWORK_PLUGIN_CREDENTIAL_KEYS: '{"native-test":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
           WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: native-test
           SECRET_KEY: plugin-local-contract-test
@@ -578,6 +578,7 @@ jobs:
           cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
           cargo test --all-features --lib deferred_worktree_rebases_project_roots_using_path_identity
           cargo test -p wegent-executor --all-features --lib cleanup_waits_for_owned_git_on_exit_timeout_and_cancellation
+          cargo test -p wegent-workspace --all-features --lib pipe_lifetime_tests
 
       - name: Run native clone platform regressions
         if: ${{ !cancelled() }}

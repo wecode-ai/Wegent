@@ -62,6 +62,10 @@ pub async fn use_directory(path: &Path) -> Result<Vec<OwnedRwLockReadGuard<()>>,
     Ok(guards)
 }
 
+pub async fn remove_directory_async(path: &Path) -> Result<OwnedRwLockWriteGuard<()>, String> {
+    Ok(access(path)?.write_owned().await)
+}
+
 /// Like the synchronous filesystem mutation it protects, call outside async workers.
 pub fn remove_directory(path: &Path) -> Result<OwnedRwLockWriteGuard<()>, String> {
     let lock = access(path)?;

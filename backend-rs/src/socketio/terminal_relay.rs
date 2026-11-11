@@ -55,6 +55,48 @@ struct TerminalState {
     authorization: Option<TerminalRecord>,
 }
 
+/// Receive output before activating its producer; roll back failed or cancelled attaches.
+pub(crate) struct TerminalRoomMembership {
+    socket: brz_socket_io::extract::SocketRef,
+    room: String,
+    previous_room: Option<String>,
+    rollback: bool,
+}
+
+impl TerminalRoomMembership {
+    pub(crate) fn join(
+        socket: brz_socket_io::extract::SocketRef,
+        session_id: &str,
+        previous_session_id: Option<&str>,
+    ) -> Self {
+        let room = format!("terminal:{session_id}");
+        socket.join(room.clone());
+        Self {
+            socket,
+            room,
+            previous_room: previous_session_id
+                .filter(|previous| *previous != session_id)
+                .map(|previous| format!("terminal:{previous}")),
+            rollback: previous_session_id != Some(session_id),
+        }
+    }
+
+    pub(crate) fn commit(&mut self) {
+        if let Some(previous) = self.previous_room.take() {
+            self.socket.leave(previous);
+        }
+        self.rollback = false;
+    }
+}
+
+impl Drop for TerminalRoomMembership {
+    fn drop(&mut self) {
+        if self.rollback {
+            self.socket.leave(self.room.clone());
+        }
+    }
+}
+
 impl TerminalSession {
     /// `on_connect`: bind the verified user and the token expiry.
     pub(crate) fn new(identity: &Identity, token: Option<&str>) -> Self {
@@ -150,6 +192,12 @@ pub(crate) async fn attach(
             json!({"error": "Terminal executor is offline"}),
         ));
     }
+    let socket = runtime
+        .emitters()
+        .terminal_socket(socket_id)
+        .ok_or_else(|| ClientError::new("SESSION_CLOSED", "Terminal connection is closed"))?;
+    let mut membership =
+        TerminalRoomMembership::join(socket, &session_id, previous_session_id.as_deref());
     let attach_payload = request.payload(&record.session_id, offered, socket_id);
     let attach_result = call_terminal_executor(
         state,
@@ -194,6 +242,7 @@ pub(crate) async fn attach(
         current.authorization = Some(record.clone());
     }
     tracing::info!(user_id, session_id, "terminal attached");
+    membership.commit();
     Ok(Reply::payload(json!({
         "success": true,
         "protocol_version": selected,
@@ -201,8 +250,7 @@ pub(crate) async fn attach(
         "device_id": record.device_id,
         "project_id": record.project_id,
         "path": record.path,
-    }))
-    .join(format!("terminal:{session_id}")))
+    })))
 }
 
 /// `on_terminal_ack`.

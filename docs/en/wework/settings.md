@@ -67,6 +67,8 @@ The workbench remains open when the settings file is damaged or unreadable, and 
 
 Refusing data collection on first use or in privacy settings takes effect immediately. Enabling collection requires a successfully saved global preference, and a refusal saved by another window also applies. A failed save does not block the workbench; the next launch uses the saved preference or asks again. A later explicit choice takes precedence, so an older request completing late cannot re-enable collection after refusal.
 
+If saving the first choice fails, a notice at the top of the workbench offers **Retry** while the workbench remains usable. Retry reads the latest settings before saving again. After another window changes the preference, an opt-in based on an older revision is rejected. Refusing collection is allowed even from an older revision.
+
 Saving a UI preference, changing scheduler limits and replacing an executable have different activation rules. Follow restart prompts for Node.js and coding tools; saved preferences do not imply that existing processes have already changed.
 
 ### System drag panel and stash

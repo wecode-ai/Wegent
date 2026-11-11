@@ -7,11 +7,16 @@ const mocks = vi.hoisted(() => ({
   installTelemetry: vi.fn().mockResolvedValue(undefined),
   preferences: {
     loaded: true,
-    preferences: { telemetryConsentAsked: true, telemetryEnabled: true },
+    preferences: {
+      telemetryConsentAsked: true,
+      telemetryEnabled: true,
+      telemetryConsentRevision: 0,
+    },
   },
   setTelemetryEnabled: vi.fn().mockResolvedValue(undefined),
   track: vi.fn(),
   updateAppPreferences: vi.fn().mockResolvedValue(undefined),
+  getAppPreferences: vi.fn(),
   officialRelease: true,
   electronRuntime: false,
 }))
@@ -42,6 +47,7 @@ vi.mock('./config', () => ({
 
 vi.mock('@/desktop/appPreferences', () => ({
   updateAppPreferences: mocks.updateAppPreferences,
+  getAppPreferences: mocks.getAppPreferences,
 }))
 
 describe('TelemetryBridge', () => {
@@ -51,10 +57,14 @@ describe('TelemetryBridge', () => {
     mocks.setTelemetryEnabled.mockClear()
     mocks.track.mockClear()
     mocks.updateAppPreferences.mockReset()
+    mocks.getAppPreferences
+      .mockReset()
+      .mockImplementation(async () => mocks.preferences.preferences)
     mocks.updateAppPreferences.mockImplementation(async patch => {
       Object.assign(mocks.preferences.preferences, patch)
       return mocks.preferences.preferences
     })
+    mocks.preferences.preferences.telemetryConsentRevision = 0
     mocks.preferences.loaded = true
     mocks.preferences.preferences.telemetryConsentAsked = true
     mocks.preferences.preferences.telemetryEnabled = true
@@ -96,10 +106,13 @@ describe('TelemetryBridge', () => {
     fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
 
     await waitFor(() => {
-      expect(mocks.updateAppPreferences).toHaveBeenCalledWith({
-        telemetryConsentAsked: true,
-        telemetryEnabled: true,
-      })
+      expect(mocks.updateAppPreferences).toHaveBeenCalledWith(
+        {
+          telemetryConsentAsked: true,
+          telemetryEnabled: true,
+        },
+        expect.any(Number)
+      )
     })
   })
 
@@ -110,10 +123,13 @@ describe('TelemetryBridge', () => {
     fireEvent.click(screen.getByTestId('telemetry-consent-decline'))
 
     await waitFor(() => {
-      expect(mocks.updateAppPreferences).toHaveBeenCalledWith({
-        telemetryConsentAsked: true,
-        telemetryEnabled: false,
-      })
+      expect(mocks.updateAppPreferences).toHaveBeenCalledWith(
+        {
+          telemetryConsentAsked: true,
+          telemetryEnabled: false,
+        },
+        expect.any(Number)
+      )
     })
     expect(mocks.installTelemetry).toHaveBeenCalledWith(false)
     expect(mocks.installTelemetry).not.toHaveBeenCalledWith(true)
@@ -141,6 +157,30 @@ describe('TelemetryBridge', () => {
     )
     expect(mocks.installTelemetry).not.toHaveBeenCalled()
     expect(mocks.setTelemetryEnabled).not.toHaveBeenCalled()
+  })
+
+  it('shows an unsaved choice and retries with the latest host consent revision', async () => {
+    mocks.preferences.preferences.telemetryConsentAsked = false
+    mocks.updateAppPreferences.mockRejectedValueOnce(new Error('EACCES'))
+    render(<TelemetryBridge />)
+    fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
+    const retry = await screen.findByTestId('telemetry-consent-retry')
+    expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
+    expect(mocks.installTelemetry).not.toHaveBeenCalled()
+    mocks.getAppPreferences.mockResolvedValue({ telemetryConsentRevision: 7 })
+    fireEvent.click(retry)
+    await waitFor(() =>
+      expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith(
+        {
+          telemetryConsentAsked: true,
+          telemetryEnabled: true,
+        },
+        7
+      )
+    )
+    await waitFor(() =>
+      expect(screen.queryByTestId('telemetry-consent-retry')).not.toBeInTheDocument()
+    )
   })
 
   it('initializes directly with saved consent after the first opt-in finishes', async () => {
@@ -208,7 +248,7 @@ describe('TelemetryBridge', () => {
     })
     const view = render(<TelemetryBridge />)
     await act(async () => {
-      await saveTelemetryConsent(false)
+      await saveTelemetryConsent(false, mocks.preferences.preferences.telemetryConsentRevision)
     })
     await waitFor(() => expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(false))
 
@@ -223,12 +263,15 @@ describe('TelemetryBridge', () => {
     render(<TelemetryBridge />)
     fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
     await act(async () => {
-      await saveTelemetryConsent(false)
+      await saveTelemetryConsent(false, mocks.preferences.preferences.telemetryConsentRevision)
     })
-    expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
-      telemetryConsentAsked: true,
-      telemetryEnabled: false,
-    })
+    expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith(
+      {
+        telemetryConsentAsked: true,
+        telemetryEnabled: false,
+      },
+      expect.any(Number)
+    )
     expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(false)
   })
 
@@ -244,17 +287,20 @@ describe('TelemetryBridge', () => {
     render(<TelemetryBridge />)
     fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
     await act(async () => {
-      await saveTelemetryConsent(false)
+      await saveTelemetryConsent(false, mocks.preferences.preferences.telemetryConsentRevision)
     })
     expect(mocks.updateAppPreferences).toHaveBeenCalledTimes(2)
     await act(async () => {
-      finishFirst?.(undefined)
+      finishFirst?.({ ...mocks.preferences.preferences, telemetryConsentRevision: 2 })
     })
     await waitFor(() => expect(mocks.updateAppPreferences).toHaveBeenCalledTimes(3))
-    expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
-      telemetryConsentAsked: true,
-      telemetryEnabled: false,
-    })
+    expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith(
+      {
+        telemetryConsentAsked: true,
+        telemetryEnabled: false,
+      },
+      expect.any(Number)
+    )
     expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(false)
   })
 
@@ -269,10 +315,13 @@ describe('TelemetryBridge', () => {
     expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
     await waitFor(() => {
       expect(mocks.installTelemetry).toHaveBeenCalledWith(true)
-      expect(mocks.updateAppPreferences).toHaveBeenCalledWith({
-        telemetryConsentAsked: true,
-        telemetryEnabled: true,
-      })
+      expect(mocks.updateAppPreferences).toHaveBeenCalledWith(
+        {
+          telemetryConsentAsked: true,
+          telemetryEnabled: true,
+        },
+        expect.any(Number)
+      )
     })
   })
 
