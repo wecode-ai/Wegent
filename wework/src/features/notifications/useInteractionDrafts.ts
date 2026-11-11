@@ -126,19 +126,26 @@ export function createInteractionDraftStore(accountKey: string) {
     flush: () => writes,
     async retainDraft(interaction: InteractionHistory, nativeReply?: { id: string; text: string }) {
       if (!active) throw new Error('Interaction account changed')
+      let appliedUnsaved: string | undefined
       await enqueue(latest => {
         const previous = latest[interaction.id]
         const retained = typeof previous === 'object' ? previous : undefined
         // An acknowledgement retry must not replace newer edits.
         const alreadyRetained = nativeReply && retained?.nativeReplyIds.includes(nativeReply.id)
         const unsaved = pendingText.get(interaction.id)
-        const text =
-          unsaved !== undefined
-            ? unsaved
+        const text = unsaved
+          ? unsaved
+          : nativeReply
+            ? nativeReply.text
             : alreadyRetained && retained
               ? retained.text
-              : (nativeReply?.text ?? draftText(previous))
-        if (!text) return null
+              : draftText(previous)
+        if (!text) {
+          // A native reply must never be acknowledged without a recoverable copy.
+          if (nativeReply) throw new Error('Native interaction reply has no recoverable text')
+          return null
+        }
+        appliedUnsaved = unsaved
         const entry: InteractionReplyDraft = {
           text,
           interaction,
@@ -156,6 +163,8 @@ export function createInteractionDraftStore(accountKey: string) {
           return { state: latest, save: false, flush: false, publish: 'before' }
         return { state: next, save: !unchanged, flush: true, publish: 'before' }
       })
+      if (appliedUnsaved !== undefined && pendingText.get(interaction.id) === appliedUnsaved)
+        pendingText.delete(interaction.id)
     },
     async discardDraft(id: string): Promise<boolean> {
       if (!active) return false

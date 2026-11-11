@@ -82,3 +82,42 @@ it.each(['disk', 'localStorage'])(
     expect(context!.replyDrafts).toEqual([])
   }
 )
+
+it('retains a late native reply when an earlier draft clear failed', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  const queue = hostQueue()
+  view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const item = context!.pending[0]
+  act(() => context!.setDraft(item.id, 'Old draft'))
+  await waitFor(() =>
+    expect(JSON.parse(localStorage.getItem(prefix + 'drafts')!)[item.id]).toBe('Old draft')
+  )
+
+  const original = Storage.prototype.setItem
+  const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    if (key === prefix + 'drafts') throw new Error('Quota exceeded')
+    return original.call(this, key, value)
+  })
+  act(() => context!.setDraft(item.id, ''))
+  await waitFor(() =>
+    expect(write.mock.calls.some(([key]) => key === prefix + 'drafts')).toBe(true)
+  )
+  await act(async () => context!.dismiss(item))
+  expect(context!.pending).toHaveLength(0)
+
+  queue.send(item.id)
+  await waitFor(() => expect(queue.get()).toHaveLength(1))
+  expect(localStorage.getItem(prefix + 'drafts') ?? '').not.toContain('Recover from the host queue')
+
+  write.mockRestore()
+  queue.send(item.id)
+  await waitFor(() => expect(queue.get()).toEqual([]))
+  expect(JSON.parse(localStorage.getItem(prefix + 'drafts')!)[item.id]).toMatchObject({
+    text: 'Recover from the host queue',
+    nativeReplyIds: ['disk-receipt'],
+  })
+  expect(context!.replyDrafts).toEqual([
+    expect.objectContaining({ text: 'Recover from the host queue' }),
+  ])
+})
