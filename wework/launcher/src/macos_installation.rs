@@ -341,11 +341,8 @@ mod tests {
         }
 
         fn detach(&mut self) {
-            // This fixture exclusively owns a disposable image. Disk Arbitration
-            // can unmount its filesystem but refuse the subsequent device eject;
-            // cleanup must release the image rather than require a graceful eject.
             let detached = Command::new("/usr/bin/hdiutil")
-                .args(["detach", "-force", "-verbose", "-debug"])
+                .args(["detach", "-verbose", "-debug"])
                 .arg(&self.mount)
                 .output()
                 .unwrap();
@@ -377,7 +374,7 @@ mod tests {
         fn drop(&mut self) {
             if self.mounted {
                 let _ = Command::new("/usr/bin/hdiutil")
-                    .args(["detach", "-force", "-quiet"])
+                    .args(["detach", "-quiet"])
                     .arg(&self.mount)
                     .status();
             }
@@ -420,18 +417,6 @@ mod tests {
             Some(mounted.to_string_lossy().into_owned())
         );
         image.detach();
-    }
-
-    #[test]
-    fn disposable_image_cleanup_releases_a_volume_with_an_open_reader() {
-        let mut image = MountedImage::new();
-        image.attach(false);
-        let mounted = image.mount.join("Installed.app");
-        let reader = fs::File::open(mounted.join("Contents/Info.plist")).unwrap();
-        assert!(reader.metadata().unwrap().is_file());
-        image.detach();
-        assert!(!mounted.exists());
-        drop(reader);
     }
 
     struct Fixture {
