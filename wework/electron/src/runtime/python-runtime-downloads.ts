@@ -14,6 +14,13 @@ export class PythonRuntimeLoginRequiredError extends Error {
 
 export const PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS = 200
 
+export class PythonRuntimeDownloadTimeoutError extends Error {
+  readonly code = 'python_runtime_download_timeout'
+  constructor() {
+    super(`Python download configuration timed out after ${PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS}ms`)
+  }
+}
+
 interface DownloadConfigOptions {
   connection: () => Promise<unknown>
   accessToken: (apiBaseUrl: string, connection: Record<string, unknown>) => Promise<string>
@@ -75,10 +82,7 @@ async function metadataRequest(
 ): Promise<PythonRuntimeDownloads> {
   const controller = new AbortController()
   const deadline = performance.now() + PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS
-  const error = () =>
-    new Error(
-      `Python download configuration timed out after ${PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS}ms`
-    )
+  const error = () => new PythonRuntimeDownloadTimeoutError()
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
