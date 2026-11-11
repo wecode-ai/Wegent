@@ -6,12 +6,16 @@
   "paths": [
     "backend-rs/src/chat_groups/*",
     "backend-rs/src/loop_tasks/handler.rs",
+    "backend/app/services/loop_items/service.py",
+    "backend/app/services/project_board_snapshot.py",
+    "backend/app/services/project_thread_aggregation.py",
     "backend/app/services/thread_*",
     "backend/scripts/migrate_threads.py",
     "backend/app/services/delivery/storage.py",
     "backend/app/services/delivery/conditional_copy.py",
     "wework/e2e/desktop/fixtures/thread-migration-assets.py",
     "wework/e2e/desktop/modules/group-thread-manual-execution.mjs",
+    "wework/e2e/desktop/modules/group-thread-board-privacy.mjs",
     "wework/src/features/collaboration/*"
   ]
 }

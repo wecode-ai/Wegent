@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
-from sqlalchemy import String, bindparam, cast, false, func, or_, select
+from sqlalchemy import String, bindparam, cast, false, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
@@ -119,7 +119,7 @@ from app.services.project_automation_domain import (
     runnable_wegent_team,
     status_automation_target,
 )
-from app.services.project_chat.service import ProjectChatService, bot_config
+from app.services.project_chat.service import bot_config
 from app.services.project_milestones import require_milestone
 from app.services.runtime_cancellation import emit_runtime_cancellations
 from app.stores.tasks import task_store
@@ -1848,12 +1848,13 @@ class LoopItemService:
             from app.services.workspaces import workspace_service
 
             if values.assignee_group_id:
+                project_groups = workspace_service.list_project_collaboration_groups(
+                    db, int(str(item.cloud_project_id)), user_id
+                )
                 collaboration_group = next(
                     (
                         entry
-                        for entry in workspace_service.list_project_collaboration_groups(
-                            db, int(str(item.cloud_project_id)), user_id
-                        )
+                        for entry in project_groups
                         if str(entry["id"]) == values.assignee_group_id
                     ),
                     None,
@@ -2107,7 +2108,8 @@ class LoopItemService:
             updates["metadata_json"] = update_change_request_source(
                 updates.get("metadata_json", item.metadata_json),
                 "issue",
-                f"{updates.get('title', item.title)}\n{updates.get('description', item.description)}",
+                f"{updates.get('title', item.title)}\n"
+                f"{updates.get('description', item.description)}",
             )
         updates = adapt_loop_node_values_for_dialect(
             updates,
@@ -3015,7 +3017,8 @@ class LoopItemService:
             )
         self._validate_backend_task(db, values.backend_task_id, user_id)
         logger.info(
-            "[LoopItem] Bind runtime session: item=%s runtime_task=%s team=%s model_selected=%s",
+            "[LoopItem] Bind runtime session: item=%s runtime_task=%s "
+            "team=%s model_selected=%s",
             item_id,
             values.task_id,
             values.wegent_team_id,
@@ -3253,10 +3256,22 @@ class LoopItemService:
     ) -> list[LoopItemTaskBinding]:
         if not item_ids:
             return []
+        container_scope = LoopItemTaskBinding.cloud_project_id == access.project.id
+        if not isinstance(access.project, CollaborationChatGroup):
+            from app.services.project_thread_aggregation import linked_thread_ids
+
+            container_scope = or_(
+                container_scope,
+                LoopItemTaskBinding.loop_item_id.in_(
+                    linked_thread_ids(
+                        str(access.project.id), user_id, include_archived=True
+                    )
+                ),
+            )
         return (
             db.query(LoopItemTaskBinding)
             .filter(
-                LoopItemTaskBinding.cloud_project_id == access.project.id,
+                container_scope,
                 LoopItemTaskBinding.task_user_id == user_id,
                 LoopItemTaskBinding.loop_item_id.in_(item_ids),
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),

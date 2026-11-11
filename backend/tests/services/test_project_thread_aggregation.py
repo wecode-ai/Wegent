@@ -5,7 +5,12 @@ from datetime import datetime
 import pytest
 from fastapi import HTTPException
 
-from app.models.delivery import CloudProject, LoopItem, ThreadProjectLink
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    LoopItemTaskBinding,
+    ThreadProjectLink,
+)
 from app.models.resource_member import ResourceMember
 from app.schemas.delivery import LoopItemCreate
 from app.services.loop_items.external_provider import external_loop_item_provider
@@ -13,6 +18,88 @@ from app.services.loop_items.service import loop_item_service
 from app.services.project_board_snapshot import project_board_snapshot_service
 from tests.services.test_project_board_snapshot_queries import _project
 from tests.services.test_thread_participation import make_group, make_thread, person
+
+
+def test_linked_thread_previews_remain_private_to_current_readable_group_members(
+    test_db, test_user
+):
+    project_id, _ = _project(test_db, test_user.id, 0)
+    other = person(test_db, "private-preview-other")
+    group = make_group(test_db, other, [(test_user, "Developer")])
+    thread = make_thread(test_db, group, other)
+    thread.sequence_number = 1
+    thread.priority = "none"
+    test_db.add_all(
+        [
+            ResourceMember(
+                resource_type="CloudProject",
+                resource_id=int(project_id),
+                entity_type="user",
+                entity_id=str(other.id),
+                user_id=other.id,
+                role="Developer",
+                status="approved",
+            ),
+            ThreadProjectLink(
+                parent_id=project_id, loop_item_id=thread.id, status="active"
+            ),
+        ]
+    )
+    for user in [test_user, other]:
+        test_db.add(
+            LoopItemTaskBinding(
+                id=f"private-preview-binding-{user.id}",
+                cloud_project_id=group.id,
+                loop_item_id=thread.id,
+                task_user_id=user.id,
+                linked_by_user_id=user.id,
+                device_id=f"private-device-{user.id}",
+                task_id=f"private-task-{user.id}",
+            )
+        )
+    test_db.commit()
+
+    for user in [test_user, other]:
+        for container_id in [project_id, group.id]:
+            snapshot = project_board_snapshot_service.get(
+                test_db, container_id, user.id
+            )
+            assert [row.id for row in snapshot.items] == [thread.id]
+            assert [row.task_user_id for row in snapshot.task_bindings] == [user.id]
+            assert [row.task_id for row in snapshot.task_bindings] == [
+                f"private-task-{user.id}"
+            ]
+
+    thread.deleted_at = datetime(2026, 11, 1)
+    test_db.commit()
+    for user in [test_user, other]:
+        bindings = loop_item_service.list_project_task_bindings(
+            test_db, project_id, user.id, item_ids=[thread.id]
+        )
+        assert [row.task_user_id for row in bindings] == [user.id]
+    thread.deleted_at = None
+    test_db.commit()
+
+    grant = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="CollaborationChatGroup",
+            resource_id=int(group.id),
+            entity_id=str(test_user.id),
+        )
+        .one()
+    )
+    test_db.delete(grant)
+    test_db.commit()
+    snapshot = project_board_snapshot_service.get(test_db, project_id, test_user.id)
+    assert snapshot.items == []
+    assert snapshot.task_bindings == []
+    assert (
+        loop_item_service.list_project_task_bindings(
+            test_db, project_id, test_user.id, item_ids=[thread.id]
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(

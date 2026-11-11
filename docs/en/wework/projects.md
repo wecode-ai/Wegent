@@ -41,6 +41,8 @@ Open **Top + → Collaboration**, then switch between **Collaboration / Projects
 
 The sidebar tree includes only your joined, unfinished Threads. After leaving or completing one, use the group list, board or an authorized message link to find it; sidebar absence does not mean deletion.
 
+Personal execution previews on group and project aggregation boards show only your own runtime summaries and results. Project classification never exposes another person's private executions. Replies a stand-in explicitly publishes to a Thread are shared according to current group permission, separately from private previews. Switching accounts reloads the items and bindings visible to the current account.
+
 ## Collaboration spaces and global resource catalogs
 
 <a id="workspace-resource-controls"></a>

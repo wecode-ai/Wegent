@@ -46,7 +46,6 @@ import {
 import {
   CollaborationApp,
   CollaborationPlatformApp,
-  collaborationTestIds,
   createCollaborationTranslator,
   IssueConversationDrawers,
   toSharedIssueDetailTaskBinding,
@@ -125,7 +124,6 @@ import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/li
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import {
-  findRuntimeTask,
   hydrateRuntimeTaskAddress,
 } from '@/features/workbench/workbenchRuntimeHelpers'
 import {
@@ -133,7 +131,7 @@ import {
   runtimeTaskTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { AiChatModal } from './AiChatModal'
-import { CloudTodoBoardCard, type CloudTodoBoardTaskBinding } from './CloudTodoBoardCard'
+import { WeworkBoardIssueCard } from './WeworkBoardIssueCard'
 import {
   runtimeTaskConversationStatusesByAddress,
   type RuntimeTaskConversationStatus,
@@ -1332,86 +1330,38 @@ export function WeworkSharedProject({
               )}
             </IssueConversationDrawers>
           )}
-          renderBoardIssueCard={({
-            metadata,
-            childrenAction,
-            display,
-            focused,
-            issue,
-            onOpen,
-            onDelete,
-            onMarkRead,
-            taskBindings,
-          }) => {
-            const boardTaskBindings = taskBindings.map(
-              binding =>
-                ({
-                  id: binding.id,
-                  device_id: binding.deviceId,
-                  task_id: binding.taskId,
-                  task_title: binding.taskTitle,
-                  running:
-                    runtimeRunningByAddress.get(
-                      runtimeConversationKey({
-                        deviceId: binding.deviceId,
-                        taskId: binding.taskId,
-                      })
-                    ) ?? false,
-                  modelSelection: binding.modelSelection,
-                  executionContext: binding.executionContext,
-                  runtimeAddress: workspaceExecutionAddress(
-                    binding,
-                    runtimeWork,
-                    issue.id,
-                    project.project_store
-                  ),
-                  runtimeTask: findRuntimeTask(runtimeWork, {
-                    deviceId: binding.deviceId,
-                    taskId: binding.taskId,
-                  }),
-                }) as CloudTodoBoardTaskBinding
-            )
-            return (
-              <div className="w-full" data-testid={collaborationTestIds.issue(issue.id)}>
-                <CloudTodoBoardCard
-                  metadata={metadata}
-                  childrenAction={childrenAction}
-                  item={
-                    {
-                      ...issue,
-                      project_store: project.project_store,
-                    } as unknown as CloudLoopItem
-                  }
-                  taskBindings={boardTaskBindings}
-                  getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
-                  unread={false}
-                  onClick={onOpen}
-                  onArchive={onDelete ?? (() => undefined)}
-                  archiveLabel={t('todo.archive_issue', '归档任务')}
-                  onMarkRead={onMarkRead}
-                  issueDetailOnly
-                  onOpenRuntimeTask={
-                    runtimePort
-                      ? address => {
-                          void openBoundTaskConversation(issue, address)
-                        }
-                      : onOpenRuntimeTask
-                  }
-                  display={display}
-                  archiveDisabled={!onDelete}
-                  progressDisplay={focused ? 'focused' : 'compact'}
-                  renderBadges={badges => (
-                    <IssueChangeRequestBadges
-                      badges={badges}
-                      monitor={issueChangeRequestMonitor}
-                      compact
-                      testId={`cloud-todo-card-badges-${issue.id}`}
-                    />
-                  )}
+          renderBoardIssueCard={context => (
+            <WeworkBoardIssueCard
+              context={context}
+              projectStore={project.project_store}
+              runtimeWork={runtimeWork}
+              runningByAddress={runtimeRunningByAddress}
+              resolveAddress={binding =>
+                workspaceExecutionAddress(
+                  binding,
+                  runtimeWork,
+                  context.issue.id,
+                  project.project_store
+                )
+              }
+              getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
+              onOpenRuntimeTask={
+                runtimePort
+                  ? address => {
+                      void openBoundTaskConversation(context.issue, address)
+                    }
+                  : onOpenRuntimeTask
+              }
+              renderBadges={badges => (
+                <IssueChangeRequestBadges
+                  badges={badges}
+                  monitor={issueChangeRequestMonitor}
+                  compact
+                  testId={`cloud-todo-card-badges-${context.issue.id}`}
                 />
-              </div>
-            )
-          }}
+              )}
+            />
+          )}
         />
       </div>
       {projectChatOpen && (
@@ -1617,6 +1567,23 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
           sources={sources}
           search={search}
           locale={locale}
+          renderBoardIssueCard={(project, context) => (
+            <WeworkBoardIssueCard
+              context={context}
+              projectStore={project.project_store}
+              runtimeWork={props.runtimeWork}
+              resolveAddress={binding =>
+                workspaceExecutionAddress(
+                  binding,
+                  props.runtimeWork,
+                  context.issue.id,
+                  project.project_store
+                )
+              }
+              getRuntimeTranscript={props.services.runtimeWorkApi?.getRuntimeTranscript}
+              onOpenRuntimeTask={props.onOpenRuntimeTask}
+            />
+          )}
           onNavigate={onNavigate}
           onBackToBoard={
             boardReturn?.scope === draftAccountScope &&

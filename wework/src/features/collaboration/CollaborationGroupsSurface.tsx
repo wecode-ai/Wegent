@@ -1,4 +1,13 @@
-import { Activity, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  Activity,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react'
 import { ChevronDown, Hash, MessageCircle, Plus } from 'lucide-react'
 import { TemplateDialog } from '@wegent/collaboration/templates'
 import {
@@ -7,6 +16,7 @@ import {
   IssueCreate,
   CollaborationFilesAdapter,
   type CollaborationIssue,
+  type CollaborationProject,
   type CollaborationView,
   type SharedWorkspaceApi,
 } from '@wegent/collaboration'
@@ -47,6 +57,7 @@ export function CollaborationGroupsSurface({
   onConnectCloud,
   accountScope,
   onBackToBoard,
+  renderBoardIssueCard,
 }: {
   sources: GroupSource[]
   search: string
@@ -57,6 +68,12 @@ export function CollaborationGroupsSurface({
   onConnectCloud?: () => void
   accountScope: string
   onBackToBoard?(): void
+  renderBoardIssueCard?(
+    project: CollaborationProject,
+    context: Parameters<
+      NonNullable<ComponentProps<typeof CollaborationApp>['renderBoardIssueCard']>
+    >[0]
+  ): ReactNode
 }) {
   const { t } = useTranslation('collaboration')
   const translate = useMemo(() => createCollaborationTranslator(locale), [locale])
@@ -572,6 +589,11 @@ export function CollaborationGroupsSurface({
                         notify: message => setNotice({ owner, message }),
                       }}
                       renderIssueDetail={() => null}
+                      renderBoardIssueCard={
+                        renderBoardIssueCard
+                          ? context => renderBoardIssueCard(boardContext, context)
+                          : undefined
+                      }
                       renderIssueCreate={form => (
                         <IssueCreate
                           {...form}

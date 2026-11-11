@@ -892,6 +892,8 @@ export async function createDesktopScenario({
         captureScreenshot,
         member,
         memberToken,
+        cloud,
+        classificationProject: migration.project,
       })
     },
   }

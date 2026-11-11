@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { waitForCompletedRuntimeTaskThread } from './runtime-task-evidence.mjs'
+import { verifyGroupThreadBoardPrivacy } from './group-thread-board-privacy.mjs'
 
 export const GROUP_MANUAL_MARKER = `GROUP_MANUAL_RUNTIME_${process.pid}`
 export const GROUP_MANUAL_RESULT = '群内事项的手动执行已完成。'
@@ -16,6 +17,8 @@ export async function verifyGroupManualExecution({
   modelResponseTimeoutMs,
   modelRequests,
   captureScreenshot,
+  cloud,
+  classificationProject,
 }) {
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const { group } = await request('/api/v1/chat-groups', {
@@ -114,9 +117,28 @@ export async function verifyGroupManualExecution({
     await request(`/api/v1/loop-items/${issue.id}/tasks`, { token: memberToken }),
     []
   )
+  await captureScreenshot(control, 'cloud-group-manual-execution.png', content)
+  const previewIssue = await request(`/api/v1/loop-items/${issue.id}`, {
+    method: 'PATCH',
+    body: { version: current.version, status: 'in_review' },
+  })
+  await verifyGroupThreadBoardPrivacy({
+    control,
+    cloud,
+    request,
+    owner,
+    member,
+    memberToken,
+    group,
+    issue: previewIssue,
+    binding: bindings[0],
+    project: classificationProject,
+    publicReply: GROUP_MANUAL_RESULT,
+    uiTimeoutMs,
+    captureScreenshot,
+  })
   await request(`/api/v1/chat-groups/${group.id}/members/${member.id}`, {
     method: 'DELETE',
   })
   await request(`/api/v1/loop-items/${issue.id}/tasks`, { token: memberToken, status: 404 })
-  await captureScreenshot(control, 'cloud-group-manual-execution.png', content)
 }
