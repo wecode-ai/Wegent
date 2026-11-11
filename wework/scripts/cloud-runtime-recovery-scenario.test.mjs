@@ -45,7 +45,7 @@ beforeEach(() => {
   state.disconnected = false
 })
 
-async function fixture(summary) {
+async function fixture(summary, userMessageCount = 1) {
   const root = await mkdtemp(join(tmpdir(), 'cloud-recovery-scenario-'))
   onTestFinished(() => rm(root, { recursive: true, force: true }))
   const scenario = createDesktopScenario({ modelResponseTimeoutMs: 1000, uiTimeoutMs: 1000 })
@@ -94,6 +94,13 @@ async function fixture(summary) {
       if (command === 'getText') {
         return state.disconnected ? 'CLOUD_STREAM_PARTIAL' : completed
       }
+      if (command === 'getElementCount') {
+        assert.equal(
+          selector,
+          '[data-testid="desktop-workbench-main"] [data-testid="message-user"]'
+        )
+        return String(userMessageCount)
+      }
       if (command === 'getWorkbenchDebugSnapshot') {
         return JSON.stringify({
           pane: {
@@ -129,5 +136,11 @@ test.each([
 ])('rejects a cloud task that did not complete successfully: %j', async summary => {
   const { scenario, control } = await fixture(summary)
   await assert.rejects(scenario.verify(control), assert.AssertionError)
+  assert.equal(state.disconnected, false, 'Failure cleanup must restore the proxy')
+})
+
+test.each([0, 2])('rejects recovery with %i original user messages', async count => {
+  const { scenario, control } = await fixture({ status: 'done', running: false }, count)
+  await assert.rejects(scenario.verify(control), /Recovery duplicated the original user message/)
   assert.equal(state.disconnected, false, 'Failure cleanup must restore the proxy')
 })
