@@ -243,7 +243,7 @@ pub(super) fn normalized_selection(payload: &Value) -> Result<Option<Value>, App
     Ok(selection)
 }
 
-fn normalized_model_options(value: &Value) -> serde_json::Map<String, Value> {
+pub(super) fn normalized_model_options(value: &Value) -> serde_json::Map<String, Value> {
     let mut options = value.as_object().cloned().unwrap_or_default();
     for (alias, canonical) in [
         ("reasoningEffort", "reasoning"),
@@ -259,7 +259,7 @@ fn normalized_model_options(value: &Value) -> serde_json::Map<String, Value> {
     options
 }
 
-fn apply_creation_options(
+pub(super) fn apply_creation_options(
     request: &mut ExecutionRequest,
     payload: &Value,
 ) -> Result<(), AppIpcError> {

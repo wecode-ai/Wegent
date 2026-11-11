@@ -9,6 +9,9 @@ import { TemporaryChatPanel } from '@/components/layout/workspace-panels/Tempora
 import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { localRuntimeAttachments } from '@/lib/runtime-attachments'
+import type { WorkspaceStandInSettings } from '@wegent/collaboration'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useStandInConversationModel } from './useStandInConversationModel'
 
 export function StandInConversation({
   api,
@@ -21,6 +24,8 @@ export function StandInConversation({
   draftRequest,
   onDraftRequestConsumed,
   contentFooter,
+  settings,
+  services,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -32,6 +37,8 @@ export function StandInConversation({
   draftRequest?: { id: number; text: string }
   onDraftRequestConsumed?(id: number): void
   contentFooter?: ReactNode
+  settings?: Pick<WorkspaceStandInSettings, 'model' | 'modelOptions'>
+  services?: WorkbenchServices
 }) {
   useStandInOpened('conversation', roleId ? 'role' : 'primary', active)
   const { t } = useTranslation('common')
@@ -45,6 +52,13 @@ export function StandInConversation({
   const [attempt, setAttempt] = useState(0)
   const taskId = standInConversationTaskId(userId, roleId)
   const workbench = useContext(WorkbenchContext)
+  const modelControls = useStandInConversationModel(services ?? workbench?.services, {
+    ...settings,
+    executionDeviceId: deviceId,
+    enabled: true,
+    prompt: '',
+    version: 0,
+  })
   const aliases = getUnambiguousWorkbenchDeviceAliases(workbench?.state.devices ?? [])
   const persistedTaskExists = Boolean(
     workbench?.runtimeTaskReminders.items.some(
@@ -131,6 +145,7 @@ export function StandInConversation({
         assistantMessageStyle="bubble"
         markReadWhenActive
         nativeConversation
+        modelControls={modelControls}
         expanded
         active={active}
         placeholder={t(

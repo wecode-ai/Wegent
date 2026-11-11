@@ -44,6 +44,17 @@ describe('stand-in execution model fixture', () => {
     expect(JSON.stringify(result.events)).not.toContain('create_task')
   })
 
+  test('routes the cloud conversation independently of its previous official session', () => {
+    const input = [user(`${marker}_OFFICIAL`), user(`${marker}_CHAT_cloud`)]
+    const body = { model: 'kimi-k3', input, tools: [{ type: 'tool_search' }] }
+    const result = executionModelEvents(body, state())
+    expect(result.name).toBe('cloud')
+    expect(JSON.stringify(result.events)).toContain('create_task')
+    expect(() => executionModelEvents({ ...body, model: 'gpt-6.1-sol' }, state())).toThrow(
+      'The selected upstream model must receive the call'
+    )
+  })
+
   test('reports the actual child answer after reading its transcript', () => {
     const context = state()
     const body = {
@@ -91,5 +102,41 @@ describe('stand-in execution model fixture', () => {
         state()
       )
     ).toThrow('The selected upstream model must receive the call')
+  })
+
+  test('checks a chat option override without changing the delegated work model options', () => {
+    const context = state()
+    context.cases = new Map([
+      [
+        'cloud',
+        {
+          upstream: 'kimi-k3',
+          reasoning: 'low',
+          conversationReasoning: 'high',
+          conversationLimits: { maxOutputTokens: 16_384 },
+        },
+      ],
+    ])
+    for (const [kind, reasoning] of [
+      ['CHAT', 'high'],
+      ['WORK', 'low'],
+    ]) {
+      const body = {
+        model: 'kimi-k3',
+        reasoning: { effort: reasoning },
+        ...(kind === 'CHAT' ? { max_output_tokens: 16_384 } : {}),
+        input: [user(`${marker}_${kind}_cloud`)],
+        tools: [{ type: 'tool_search' }],
+      }
+      expect(executionModelEvents(body, context).name).toBe('cloud')
+      expect(() =>
+        executionModelEvents({ ...body, reasoning: { effort: 'wrong-effort' } }, context)
+      ).toThrow('The selected conversation or work reasoning effort must reach the model')
+      if (kind === 'CHAT') {
+        expect(() => executionModelEvents({ ...body, max_output_tokens: 4096 }, context)).toThrow(
+          'The refreshed output limit must reach the actual primary model request'
+        )
+      }
+    }
   })
 })

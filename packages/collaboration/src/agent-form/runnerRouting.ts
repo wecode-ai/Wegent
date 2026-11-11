@@ -27,6 +27,8 @@ export interface RunnerModel extends RunnerModelIdentity {
   local_model_id: string
   account_label: string
   is_default: boolean
+  default_reasoning_effort?: string
+  supported_reasoning_efforts?: string[]
 }
 
 export interface RunnerEnvironment {

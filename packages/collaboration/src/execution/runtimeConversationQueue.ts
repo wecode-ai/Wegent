@@ -226,6 +226,12 @@ export function runtimeQueuedMessageRequest(
       ? { modelId: message.modelId, modelType: message.modelType }
       : {}),
     ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
+    ...(message.startNewSession !== undefined
+      ? { startNewSession: message.startNewSession }
+      : {}),
+    ...(message.expectedThreadId !== undefined
+      ? { expectedThreadId: message.expectedThreadId }
+      : {}),
     ...(modelId
       ? {
           modelSelection: {

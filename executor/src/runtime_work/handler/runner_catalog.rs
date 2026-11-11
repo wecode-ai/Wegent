@@ -72,13 +72,32 @@ impl RuntimeWorkRpcHandler {
                     if model.get("hidden").and_then(Value::as_bool) == Some(true) {
                         continue;
                     }
-                    models.push(json!({
+                    let mut entry = json!({
                         "runtime": "codex", "provider": provider, "model_id": id,
                         "local_model_id": id,
                         "label": model.get("displayName").and_then(Value::as_str).unwrap_or(id),
                         "account_label": model.get("providerName").and_then(Value::as_str).unwrap_or(provider),
                         "is_default": model.get("isDefault").and_then(Value::as_bool).unwrap_or(false),
-                    }));
+                    });
+                    if let Some(effort) =
+                        model.get("defaultReasoningEffort").and_then(Value::as_str)
+                    {
+                        entry["default_reasoning_effort"] = json!(effort);
+                    }
+                    if let Some(efforts) = model
+                        .get("supportedReasoningEfforts")
+                        .and_then(Value::as_array)
+                    {
+                        entry["supported_reasoning_efforts"] = json!(efforts
+                            .iter()
+                            .filter_map(|effort| {
+                                effort
+                                    .as_str()
+                                    .or_else(|| effort["reasoningEffort"].as_str())
+                            })
+                            .collect::<Vec<_>>());
+                    }
+                    models.push(entry);
                 }
             }
             Err(_) => errors.push("codex_catalog_unavailable"),

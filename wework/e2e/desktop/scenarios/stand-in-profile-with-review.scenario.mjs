@@ -125,6 +125,10 @@ export function createDesktopScenario(options) {
   return {
     ...original,
     verifiesStandInOnboarding: true,
+    async prepareApp(context) {
+      await original.prepareApp?.(context)
+      context.appEnvironment.TZ = 'America/New_York'
+    },
     async handleHttp(req, response, url) {
       if (await weeklyStory.handleHttp(req, response, url)) return true
       if (req.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname)) {
@@ -371,6 +375,16 @@ export function createDesktopScenario(options) {
       )
       await options.captureScreenshot(control, 'review-04-review-example-draft.png')
       await openCalendarReviewTemplate(control)
+      await control.command('clickWhenEnabled', '[data-testid="automation-frequency-settings"]')
+      await control.command('waitFor', '[data-testid="automation-timezone-input"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="automation-timezone-input"]'),
+        'America/New_York',
+        'The weekly template must inherit the client timezone'
+      )
+      await control.command('fill', '[data-testid="automation-timezone-input"]', {
+        value: 'Asia/Shanghai',
+      })
       await control.command('click', '[data-testid="automation-cron-time"]')
       await control.command('scrollIntoView', '[data-testid="automation-cron-time-option-10:30"]')
       await control.command('clickWhenEnabled', '[data-testid="automation-cron-time-option-10:30"]')
@@ -425,6 +439,22 @@ export function createDesktopScenario(options) {
         item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
       )
       assert.ok(recreated)
+      assert.equal(recreated.timezone, 'America/New_York')
+      assert.ok(
+        recreated.nextRunAt,
+        'The scheduler must compute the next run for the saved timezone'
+      )
+      const next = new Intl.DateTimeFormat('en-US', {
+        timeZone: recreated.timezone,
+        weekday: 'long',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(new Date(recreated.nextRunAt))
+      const nextPart = type => next.find(part => part.type === type)?.value
+      assert.equal(nextPart('weekday'), 'Monday')
+      assert.equal(nextPart('hour'), '09')
+      assert.equal(nextPart('minute'), '00')
       await control.command('click', `[data-testid="automation-open-${recreated.id}"]`)
       await control.command('click', `[data-testid="automation-detail-actions-${recreated.id}"]`)
       await control.command('click', '[data-testid="automation-run-now-button"]')

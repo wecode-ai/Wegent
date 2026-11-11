@@ -142,7 +142,13 @@ Open **left sidebar → My Stand-in → Stand-in details → Manage stand-in →
 
 ## Model selection
 
-Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. The primary conversation and the concrete work it creates both use the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
+Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. Concrete work created by a stand-in uses the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
+
+Stand-in chats inherit the profile's saved model and reasoning effort by default, with temporary choices available inside each chat. When a later save actually changes the model or effort, existing chats inherit the new settings from the next message; the current turn is not restarted. Profile changes do not alter existing work tasks' working directories or sessions.
+
+To switch models temporarily, use the model selector in the primary or role chat composer. Before the first message, the selection applies directly. Switching providers in an existing chat requires confirmation; the next message starts a new session in that stand-in chat, while earlier messages and the draft remain available. Finish active work before sending across providers. Temporary selections do not change the saved profile or ordinary chats.
+
+Stand-in chats currently require the Codex runtime for operation approvals; the Claude Code runtime is not yet supported. Saved Claude Code models are retained without automatic replacement. To continue chatting, manually select an available Codex model using the chat composer's model selector. Claude Code behavior in ordinary work tasks remains unchanged.
 
 <a id="stand-in-source-session-policy"></a>
 
@@ -261,6 +267,8 @@ Enable **Settings → General → Experimental features**, then use **Talk to le
 Publication shares only the content you enter, not private chat or memories. If no commentable Issue is available, create/select an accessible Issue in the project. Pending permission checks/submission may disable controls; changing devices cannot bypass permissions.
 
 Record a matter and its trigger time in **My Stand-in → role profile → Connections → Calendar / scheduled delegation**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
+
+New recurring arrangements use the current device's time zone; existing arrangements retain their saved zone. To specify another zone, open **the gear beside Frequency (Frequency settings) → Time zone** in the editor, enter an IANA name such as `America/New_York`, and save. The task sidebar's **Scheduled → the task** uses the same control. **One time** execution times continue to use the current device's local time.
 
 For future execution requested in chat, the stand-in should inspect existing work evidence or immediately delegate a read-only investigation to verify the actual workflow, workspace, and required inputs. It should read available instructions and configuration instead of repeatedly asking you for those facts. Missing business choices require a question card; automatic execution must not be scheduled while they remain unresolved. Asking to use an existing automatic workflow does not prove that the workflow has been inspected, and postponing that investigation until the trigger time does not make the work ready.
 

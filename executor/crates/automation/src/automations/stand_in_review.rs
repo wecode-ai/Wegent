@@ -21,6 +21,7 @@ pub fn weekly_review(
     user: i64,
     device: &str,
     time: &str,
+    timezone: &str,
     language: &str,
 ) -> Result<Automation, String> {
     let parts: Vec<_> = time.split(':').collect();
@@ -34,6 +35,9 @@ pub fn weekly_review(
     if hour > 23 || minute > 59 {
         return Err("Invalid review time".into());
     }
+    timezone
+        .parse::<Tz>()
+        .map_err(|_| "invalid IANA timezone".to_owned())?;
     let title = if language.starts_with("en") {
         "Weekly work review"
     } else {
@@ -48,7 +52,7 @@ pub fn weekly_review(
         "id":format!("stand-in-weekly-review-{user}"), "version":0,
         "name":title,"prompt":prompt,
         "schedule":{"type":"cron","expression":format!("{minute} {hour} * * 1")},
-        "timezone":"Asia/Shanghai","enabled":true,"conversationMode":"independent",
+        "timezone":timezone,"enabled":true,"conversationMode":"independent",
         "notificationPolicy":"all_runs",
         "taskRequest":{"schemaVersion":2,"runtime":"codex","deviceId":device,
             "title":title,"message":prompt,
@@ -121,12 +125,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn weekly_review_uses_iana_timezone_across_daylight_saving_changes() {
+        let review = weekly_review(7, "mac", "09:00", "America/New_York", "en").unwrap();
+        assert_eq!(review.timezone, "America/New_York");
+        for (after, expected) in [
+            ("2026-03-06T12:00:00Z", "2026-03-09T13:00:00Z"),
+            ("2026-10-30T12:00:00Z", "2026-11-02T14:00:00Z"),
+        ] {
+            assert_eq!(
+                next_run_after(&review.schedule, &review.timezone, after.parse().unwrap()),
+                Some(expected.parse::<DateTime<Utc>>().unwrap())
+            );
+        }
+        for timezone in ["", "Not/A_Zone"] {
+            assert_eq!(
+                weekly_review(7, "mac", "09:00", timezone, "en").unwrap_err(),
+                "invalid IANA timezone"
+            );
+        }
+    }
+
+    #[test]
     fn onboarding_is_idempotent_and_preserves_edits_pause_and_deletion() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("automations.json");
         let store = AutomationStore::new(path.clone());
         assert_eq!(store.stand_in_onboarding(7).unwrap()["completed"], false);
-        let review = weekly_review(7, "mac", "09:00", "zh-CN").unwrap();
+        let review = weekly_review(7, "mac", "09:00", "Asia/Shanghai", "zh-CN").unwrap();
         let saved = store
             .complete_stand_in_onboarding(7, Some(review.clone()))
             .unwrap();
@@ -163,18 +188,25 @@ mod tests {
         let store = AutomationStore::new(root.path().join("automations.json"));
         store.complete_stand_in_onboarding(7, None).unwrap();
         store
-            .complete_stand_in_onboarding(7, Some(weekly_review(7, "mac", "09:00", "en").unwrap()))
+            .complete_stand_in_onboarding(
+                7,
+                Some(weekly_review(7, "mac", "09:00", "UTC", "en").unwrap()),
+            )
             .unwrap();
         assert!(store.list().is_empty());
-        let mut existing = weekly_review(8, "mac", "11:30", "en").unwrap();
+        let mut existing = weekly_review(8, "mac", "11:30", "America/New_York", "en").unwrap();
         existing.id = "custom-id".into();
         existing.enabled = false;
         store.create(existing).unwrap();
         store
-            .complete_stand_in_onboarding(8, Some(weekly_review(8, "mac", "09:00", "en").unwrap()))
+            .complete_stand_in_onboarding(
+                8,
+                Some(weekly_review(8, "mac", "09:00", "UTC", "en").unwrap()),
+            )
             .unwrap();
         assert_eq!(store.list().len(), 1);
         assert!(!store.get("custom-id").unwrap().enabled);
+        assert_eq!(store.get("custom-id").unwrap().timezone, "America/New_York");
     }
 
     #[test]
@@ -184,7 +216,10 @@ mod tests {
         fs::write(&parent, "file").unwrap();
         let store = AutomationStore::new(parent.join("automations.json"));
         assert!(store
-            .complete_stand_in_onboarding(7, Some(weekly_review(7, "mac", "09:00", "en").unwrap()))
+            .complete_stand_in_onboarding(
+                7,
+                Some(weekly_review(7, "mac", "09:00", "UTC", "en").unwrap())
+            )
             .is_err());
         assert!(store.list().is_empty());
         assert_eq!(store.stand_in_onboarding(7).unwrap()["completed"], false);
@@ -201,15 +236,15 @@ mod tests {
                     store
                         .complete_stand_in_onboarding(
                             7,
-                            Some(weekly_review(7, "mac", "09:00", "en").unwrap()),
+                            Some(weekly_review(7, "mac", "09:00", "Asia/Shanghai", "en").unwrap()),
                         )
                         .unwrap();
                 });
             }
         });
         assert_eq!(store.list().len(), 1);
-        assert!(weekly_review(7, "mac", "24:00", "en").is_err());
-        assert!(weekly_review(7, "mac", "09:60", "en").is_err());
+        assert!(weekly_review(7, "mac", "24:00", "UTC", "en").is_err());
+        assert!(weekly_review(7, "mac", "09:60", "UTC", "en").is_err());
         let next = store.list()[0]
             .next_run_at
             .unwrap()
@@ -224,16 +259,16 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = AutomationStore::new(root.path().join("automations.json"));
         let original = store
-            .create(weekly_review(7, "mac", "09:00", "en").unwrap())
+            .create(weekly_review(7, "mac", "09:00", "UTC", "en").unwrap())
             .unwrap();
-        let mut duplicate = weekly_review(7, "mac", "10:00", "en").unwrap();
+        let mut duplicate = weekly_review(7, "mac", "10:00", "UTC", "en").unwrap();
         duplicate.id = "another-id".into();
         assert!(store.create(duplicate).is_err());
         assert!(store
             .complete_stand_in_onboarding(8, Some(original))
             .is_err());
         assert_eq!(store.stand_in_onboarding(8).unwrap()["completed"], false);
-        let mut role = weekly_review(8, "mac", "09:00", "en").unwrap();
+        let mut role = weekly_review(8, "mac", "09:00", "UTC", "en").unwrap();
         role.task_request["standInOwner"]["roleId"] = serde_json::json!("other-role");
         assert!(store.create(role).is_err());
     }

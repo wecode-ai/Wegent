@@ -118,22 +118,30 @@ it.each(['permission_denied', 'task_archived', 'cloud_unavailable'])(
   }
 )
 
-it('routes onboarding reads and explicit feature choices to the selected Executor', async () => {
-  const request = vi.fn().mockResolvedValue({ state: { version: 1, completed: true } })
-  const api = createStandInExecutorApi(request)
-  await api.onboarding(7, 'selected-device', 'zh-CN')
-  expect(request).toHaveBeenLastCalledWith(
-    'runtime.stand_in.onboarding.get',
-    { userId: 7, language: 'zh-CN' },
-    'selected-device'
-  )
-  await api.completeOnboarding(7, 'selected-device', false, '10:30', 'zh-CN')
-  expect(request).toHaveBeenLastCalledWith(
-    'runtime.stand_in.onboarding.complete',
-    { userId: 7, weeklyReview: false, time: '10:30', language: 'zh-CN' },
-    'selected-device'
-  )
-})
+it.each(['America/New_York', 'Europe/London'])(
+  'routes onboarding with the client timezone %s to the selected Executor',
+  async timezone => {
+    const options = Intl.DateTimeFormat().resolvedOptions()
+    vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
+      ...options,
+      timeZone: timezone,
+    })
+    const request = vi.fn().mockResolvedValue({ state: { version: 1, completed: true } })
+    const api = createStandInExecutorApi(request)
+    await api.onboarding(7, 'selected-device', 'zh-CN')
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.stand_in.onboarding.get',
+      { userId: 7, language: 'zh-CN', timezone },
+      'selected-device'
+    )
+    await api.completeOnboarding(7, 'selected-device', false, '10:30', 'zh-CN')
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.stand_in.onboarding.complete',
+      { userId: 7, weeklyReview: false, time: '10:30', language: 'zh-CN', timezone },
+      'selected-device'
+    )
+  }
+)
 
 it('addresses project binding reads and explicit generation updates to the selected Executor', async () => {
   const state = { binding: null, canEnable: true, canStop: false }

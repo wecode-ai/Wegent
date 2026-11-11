@@ -1,10 +1,92 @@
 // @vitest-environment node
 
-import type { UnifiedModel } from '@/types/api'
+import type { ModelSelectionConfig, UnifiedModel } from '@/types/api'
 import { describe, expect, test } from 'vitest'
-import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
+import {
+  defaultNewChatModelSelection,
+  requiresNewConversationForModelSwitch,
+  selectedModelExecutionFields,
+} from './runtimeModelSelection'
 
 describe('runtimeModelSelection', () => {
+  test.each<{
+    name: string
+    source: ModelSelectionConfig
+    target: 'official' | 'cloud'
+    newSession: boolean
+  }>([
+    {
+      name: 'retired official model',
+      source: {
+        modelName: 'gpt-5.5',
+        modelType: 'runtime',
+        options: { codexProviderId: 'openai' },
+      },
+      target: 'cloud',
+      newSession: true,
+    },
+    {
+      name: 'native runner provider metadata',
+      source: {
+        modelName: 'removed-model',
+        modelType: 'runtime',
+        options: { runnerModelProvider: 'openai', codexProviderId: 'company' },
+      },
+      target: 'cloud',
+      newSession: true,
+    },
+    {
+      name: 'removed custom provider continuing on the router',
+      source: {
+        modelName: 'removed-model',
+        modelType: 'runtime',
+        options: { runnerModelProvider: 'company' },
+      },
+      target: 'cloud',
+      newSession: false,
+    },
+    {
+      name: 'removed cloud model switching to the official provider',
+      source: { modelName: 'removed-model', modelType: 'public' },
+      target: 'official',
+      newSession: true,
+    },
+    {
+      name: 'retired official model continuing on the official provider',
+      source: {
+        modelName: 'gpt-5.5',
+        modelType: 'runtime',
+        options: { codexProviderId: 'openai' },
+      },
+      target: 'official',
+      newSession: false,
+    },
+  ])('uses the saved provider for $name', ({ source, target, newSession }) => {
+    const targetModel: UnifiedModel =
+      target === 'official'
+        ? {
+            name: 'gpt-6.1-sol',
+            type: 'runtime',
+            provider: 'local',
+            config: { weworkModelKind: 'codex-official' },
+          }
+        : { name: 'available-cloud', type: 'public', provider: 'openai' }
+    expect(requiresNewConversationForModelSwitch(null, targetModel, source)).toBe(newSession)
+    // A replacement with the same name cannot change the persisted session's provider.
+    expect(
+      requiresNewConversationForModelSwitch(
+        {
+          name: source.modelName,
+          type: 'runtime',
+          provider: 'local',
+          config: { weworkModelKind: 'codex-provider', codexProviderId: 'replacement' },
+        },
+        targetModel,
+        source
+      )
+    ).toBe(newSession)
+  })
+
   test.each(['standard', 'passthrough'] as const)(
     'propagates cloud reasoning defaults and %s request mode with selected overrides',
     mode => {

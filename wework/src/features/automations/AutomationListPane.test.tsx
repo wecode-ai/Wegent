@@ -82,6 +82,59 @@ it('does not show a stale next run for paused work', () => {
   expect(row.queryByText(/下次运行/)).not.toBeInTheDocument()
 })
 
+it.each([
+  ['Asia/Shanghai', 'UTC', '2026-11-09T09:00:00Z', '11月9日'],
+  ['America/Los_Angeles', 'Asia/Shanghai', '2026-11-09T01:00:00Z', '11月9日'],
+  ['Asia/Shanghai', 'America/New_York', '2026-11-09T14:00:00Z', '11月9日'],
+  ['Asia/Shanghai', 'America/New_York', '2026-07-06T13:00:00Z', '7月6日'],
+])(
+  'keeps recurring timing and next run in the schedule timezone on %s',
+  (deviceTimezone, timezone, nextRunAt, date) => {
+    const DateTimeFormat = Intl.DateTimeFormat
+    const formatter = vi
+      .spyOn(Intl, 'DateTimeFormat')
+      .mockImplementation(function (locale, options) {
+        return new DateTimeFormat(locale, { timeZone: deviceTimezone, ...options })
+      })
+    try {
+      const row = renderSchedule({ ...scheduledReview, timezone, nextRunAt })
+      expect(row.getByText('每周一 09:00')).toBeVisible()
+      expect(row.getByText(/下次运行/)).toHaveTextContent(date)
+      expect(row.getByText(/下次运行/)).toHaveTextContent('09:00')
+    } finally {
+      formatter.mockRestore()
+    }
+  }
+)
+
+it.each([
+  ['Asia/Shanghai', '2026/11/11 12:41', '11月11日', '12:41'],
+  ['America/Los_Angeles', '2026/11/10 20:41', '11月10日', '20:41'],
+])(
+  'shows one-time timing and next run in the device timezone %s',
+  (timezone, summary, date, time) => {
+    const DateTimeFormat = Intl.DateTimeFormat
+    const formatter = vi
+      .spyOn(Intl, 'DateTimeFormat')
+      .mockImplementation(function (locale, options) {
+        return new DateTimeFormat(locale, { timeZone: timezone, ...options })
+      })
+    try {
+      const row = renderSchedule({
+        ...scheduledReview,
+        timezone: 'UTC',
+        schedule: { type: 'one_time', executeAt: '2026-11-11T04:41:00Z' },
+        nextRunAt: '2026-11-11T04:41:00Z',
+      })
+      expect(row.getByText(summary)).toBeVisible()
+      expect(row.getByText(/下次运行/)).toHaveTextContent(date)
+      expect(row.getByText(/下次运行/)).toHaveTextContent(time)
+    } finally {
+      formatter.mockRestore()
+    }
+  }
+)
+
 it('does not mislabel a monthly cron schedule as daily', () => {
   const row = renderSchedule({
     ...scheduledReview,

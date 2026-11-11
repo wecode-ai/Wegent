@@ -5,8 +5,10 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from './executor-rpc.mjs'
 import { rejectModelWebSocketUpgrade } from './reject-model-upgrade.mjs'
+import { MODEL_PROVIDER_ID } from './shared.mjs'
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 
-const MODEL = 'gpt-5.5'
+const MODEL = 'gpt-6.1-sol'
 const ACCOUNT = 'stand-in-config-e2e'
 const MARKER = 'SUBSCRIPTION_CONFIG_RELOAD'
 
@@ -89,6 +91,17 @@ export function createSubscriptionConfigRegression() {
     },
     async verify(control, projectId, workspacePath, uiTimeoutMs, modelResponseTimeoutMs, userId) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+      const native = (method, params) => rpc('runtime.codex.app_server.request', { method, params })
+      const setCatalogConfig = (provider, model) =>
+        native('config/batchWrite', {
+          edits: [
+            { keyPath: 'model_provider', value: provider, mergeStrategy: 'replace' },
+            { keyPath: 'model', value: model, mergeStrategy: 'replace' },
+          ],
+          filePath: null,
+          expectedVersion: null,
+          reloadUserConfig: true,
+        })
       for (const initiatedBy of ['user', 'stand_in', null]) {
         const label = initiatedBy ?? 'direct'
         const issue = await rpc('todos.create', {
@@ -143,6 +156,90 @@ export function createSubscriptionConfigRegression() {
         }
         assert.equal(task?.status, 'done', JSON.stringify(task))
         assert.ok(modelRequests > before, 'The subscription task must reach the model service')
+      }
+      const previousConfig = await native('config/read', { includeLayers: false, cwd: null })
+      const previousModel = previousConfig.config.model
+      assert.equal(typeof previousModel, 'string', 'The isolated fixture must have a default model')
+      let expectedDefault
+      try {
+        // The real subscription turns above establish ChatGPT authentication.
+        // Discover the official catalog, then restore the custom fixture provider.
+        await setCatalogConfig('openai', 'gpt-5.5')
+        const account = await native('account/read', { refreshToken: false })
+        assert.equal(
+          account.account,
+          null,
+          'The shared router must not be mistaken for the saved subscription account'
+        )
+        for (const includeHidden of [true, false]) {
+          const nativeCatalog = await native('model/list', { includeHidden })
+          const nativeDefault = nativeCatalog.data.find(model => model.isDefault && !model.hidden)
+          const nativeDefaultId = nativeDefault?.model ?? nativeDefault?.id
+          const catalog = await rpc('runtime.codex.models.list', { includeHidden })
+          assert.ok(Array.isArray(catalog.data))
+          const official = catalog.data.filter(
+            model => model.providerId === 'openai' && model.providerType === 'official'
+          )
+          assert.equal(
+            official.some(model => (model.model ?? model.id) === 'gpt-5.5'),
+            false,
+            `ChatGPT catalog must exclude GPT-5.5 (includeHidden=${includeHidden})`
+          )
+          assert.ok(
+            official.some(model => (model.model ?? model.id) === MODEL),
+            `ChatGPT catalog must retain ${MODEL} (includeHidden=${includeHidden})`
+          )
+          expectedDefault =
+            official.find(
+              model => (model.model ?? model.id) === nativeDefaultId && !model.hidden
+            ) ?? official.find(model => !model.hidden)
+          assert.deepEqual(
+            official.filter(model => model.isDefault).map(model => model.model ?? model.id),
+            [expectedDefault.model ?? expectedDefault.id],
+            'Retiring the configured default must publish one available native default'
+          )
+        }
+        const catalog = await rpc('runtime.runner.catalog', {})
+        assert.ok(Array.isArray(catalog.models))
+        const official = catalog.models.filter(
+          model => model.runtime === 'codex' && model.provider === 'openai'
+        )
+        assert.equal(
+          official.some(model => model.model_id === 'gpt-5.5'),
+          false,
+          'The ChatGPT runner catalog must exclude GPT-5.5'
+        )
+        assert.ok(
+          official.some(model => model.model_id === MODEL),
+          `The ChatGPT runner catalog must retain ${MODEL}`
+        )
+        assert.deepEqual(
+          official.filter(model => model.is_default).map(model => model.model_id),
+          [expectedDefault.model ?? expectedDefault.id],
+          'Background work and the picker must receive the same effective default'
+        )
+        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await control.command('waitFor', '[data-testid="stand-in-overview"]')
+        await openStandInSettings(control)
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-profile"] [data-testid="model-selector-button"]'
+        )
+        const option = id =>
+          `[data-testid=${JSON.stringify(`model-option-${JSON.stringify(['codex', 'openai', id])}`)}]`
+        await control.command('waitFor', option(MODEL))
+        assert.equal(
+          await control.command('getElementCount', option('gpt-5.5')),
+          '0',
+          'The loaded stand-in model picker must exclude GPT-5.5'
+        )
+        await control.command('press', 'body', { key: 'Escape' })
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-profile-close"]')
+        await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', {
+          visible: false,
+        })
+      } finally {
+        await setCatalogConfig(MODEL_PROVIDER_ID, previousModel)
       }
       assert.ok(accountChecks > 0, 'The real Codex subscription routing resolver must run')
     },

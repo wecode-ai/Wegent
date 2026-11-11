@@ -112,7 +112,7 @@ impl RuntimeWorkRpcHandler {
             .await
             .map_err(|error| AppIpcError::new("codex_models_unavailable", error))?;
         let provider = current_codex_model_provider_from_config(&config);
-        let (available, error, models) = match self
+        let (available, error, mut models, native_default) = match self
             .request_model_discovery(&query_id, "model/list", model_list_params)
             .await
         {
@@ -120,9 +120,48 @@ impl RuntimeWorkRpcHandler {
                 true,
                 Value::Null,
                 codex_models_with_configured_default(&response, &provider, &config),
+                response["data"].as_array().and_then(|models| {
+                    models
+                        .iter()
+                        .find(|model| model["isDefault"] == true && model["hidden"] != true)
+                        .and_then(codex_model_id)
+                        .map(str::to_owned)
+                }),
             ),
-            Err(error) => (false, Value::String(error), Vec::new()),
+            Err(error) => (false, Value::String(error), Vec::new(), None),
         };
+        let configured_default_is_retired = provider.kind == "official"
+            && config
+                .pointer("/config/model")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                == Some(RETIRED_CHATGPT_MODEL_ID);
+        if available
+            && (configured_default_is_retired || models.iter().any(is_retired_chatgpt_model))
+        {
+            // The shared app-server uses Wework's router provider, where account/read
+            // can return null even while the user's subscription auth is configured.
+            let account_type = super::codex_accounts::current_codex_account_type()
+                .map_err(|error| AppIpcError::new("codex_models_unavailable", error))?;
+            let before = models.len();
+            remove_retired_chatgpt_models(
+                &mut models,
+                account_type.as_deref(),
+                native_default.as_deref(),
+                configured_default_is_retired,
+            );
+            log_executor_event(
+                "runtime retired model filter applied",
+                &[
+                    ("query_id", query_id.clone()),
+                    (
+                        "account_type",
+                        account_type.unwrap_or_else(|| "none".to_owned()),
+                    ),
+                    ("removed_count", (before - models.len()).to_string()),
+                ],
+            );
+        }
         let provider_results = vec![json!({
             "id": provider.id,
             "displayName": provider.display_name,
@@ -406,6 +445,49 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+const RETIRED_CHATGPT_MODEL_ID: &str = "gpt-5.5";
+
+fn is_retired_chatgpt_model(model: &Value) -> bool {
+    model["providerType"] == "official"
+        && codex_model_id(model).map(str::trim) == Some(RETIRED_CHATGPT_MODEL_ID)
+}
+
+fn codex_model_id(model: &Value) -> Option<&str> {
+    model
+        .get("model")
+        .or_else(|| model.get("id"))
+        .and_then(Value::as_str)
+}
+
+fn remove_retired_chatgpt_models(
+    models: &mut Vec<Value>,
+    account_type: Option<&str>,
+    native_default: Option<&str>,
+    configured_default_is_retired: bool,
+) {
+    // GPT-5.5 retired from ChatGPT-authenticated Codex on 2026-10-14, not the API.
+    if account_type != Some("chatgpt") {
+        return;
+    }
+    let default_retired = configured_default_is_retired
+        || models
+            .iter()
+            .any(|model| is_retired_chatgpt_model(model) && model["isDefault"] == true);
+    models.retain(|model| !is_retired_chatgpt_model(model));
+    if default_retired {
+        let selected = native_default
+            .and_then(|default| {
+                models.iter().position(|model| {
+                    codex_model_id(model) == Some(default) && model["hidden"] != true
+                })
+            })
+            .or_else(|| models.iter().position(|model| model["hidden"] != true));
+        for (index, model) in models.iter_mut().enumerate() {
+            model["isDefault"] = Value::Bool(selected == Some(index));
+        }
+    }
+}
+
 fn codex_models_with_configured_default(
     response: &Value,
     provider: &CodexModelProviderInfo,
@@ -414,11 +496,7 @@ fn codex_models_with_configured_default(
     let mut models = codex_models_with_provider(response, provider);
     if let Some(default) = config.pointer("/config/model").and_then(Value::as_str) {
         for model in &mut models {
-            let id = model
-                .get("model")
-                .or_else(|| model.get("id"))
-                .and_then(Value::as_str);
-            model["isDefault"] = Value::Bool(id == Some(default));
+            model["isDefault"] = Value::Bool(codex_model_id(model) == Some(default));
         }
     }
     models
@@ -455,6 +533,96 @@ pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppI
 #[cfg(test)]
 mod configured_default_tests {
     use super::*;
+
+    #[test]
+    fn retired_configured_default_uses_the_surviving_native_recommendation() {
+        let config = json!({"config": {"model": "gpt-5.5"}});
+        let provider = current_codex_model_provider(&config, "openai");
+        for retired_model_is_published in [true, false] {
+            let mut response = json!({"data": [
+                {"model": "future-model", "hidden": true},
+                {"id": "gpt-5.5"},
+                {"model": "gpt-6.1-sol", "isDefault": true}
+            ]});
+            if !retired_model_is_published {
+                response["data"].as_array_mut().unwrap().remove(1);
+            }
+            let mut models = codex_models_with_configured_default(&response, &provider, &config);
+            let mut expected = vec![models[0].clone(), models.last().unwrap().clone()];
+            expected[1]["isDefault"] = json!(true);
+
+            remove_retired_chatgpt_models(&mut models, Some("chatgpt"), Some("gpt-6.1-sol"), true);
+            assert_eq!(models, expected);
+            remove_retired_chatgpt_models(&mut models, Some("chatgpt"), Some("gpt-6.1-sol"), true);
+            assert_eq!(models, expected);
+        }
+    }
+
+    #[test]
+    fn retired_native_default_uses_the_first_remaining_visible_model() {
+        let config = json!({"config": {"model": "gpt-5.5"}});
+        let provider = current_codex_model_provider_from_config(&config);
+        for retired_model_is_published in [true, false] {
+            let mut response = json!({"data": [
+                {"id": "gpt-5.5", "isDefault": true},
+                {"model": "hidden-native-default", "hidden": true},
+                {"model": "first-available"},
+                {"model": "second-available"}
+            ]});
+            if !retired_model_is_published {
+                response["data"].as_array_mut().unwrap().remove(0);
+            }
+            let models = codex_models_with_configured_default(&response, &provider, &config);
+            for native_default in [Some("gpt-5.5"), Some("hidden-native-default"), None] {
+                let mut models = models.clone();
+                remove_retired_chatgpt_models(&mut models, Some("chatgpt"), native_default, true);
+                assert_eq!(models[0]["isDefault"], false);
+                assert_eq!(models[1]["model"], "first-available");
+                assert_eq!(models[1]["isDefault"], true);
+                assert_eq!(models[2]["isDefault"], false);
+            }
+        }
+
+        let mut models =
+            vec![json!({"model":"gpt-5.5", "providerType":"official", "isDefault":true})];
+        remove_retired_chatgpt_models(&mut models, Some("chatgpt"), Some("gpt-5.5"), true);
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn filtering_a_non_default_model_does_not_replace_an_unavailable_configured_model() {
+        let config = json!({"config": {"model": "unavailable-explicit-default"}});
+        let provider = current_codex_model_provider_from_config(&config);
+        let mut models = codex_models_with_configured_default(
+            &json!({"data": [
+                {"model": "gpt-5.5", "isDefault": true},
+                {"model": "available"}
+            ]}),
+            &provider,
+            &config,
+        );
+        remove_retired_chatgpt_models(&mut models, Some("chatgpt"), Some("gpt-5.5"), false);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["isDefault"], false);
+    }
+
+    #[test]
+    fn retirement_preserves_api_key_custom_and_unknown_account_models() {
+        let original = vec![
+            json!({"model": "gpt-5.5", "providerType": "official", "isDefault": true}),
+            json!({"model": "gpt-5.5", "providerType": "provider", "isDefault": true}),
+            json!({"model": "gpt-5.5-custom", "providerType": "official"}),
+        ];
+        for account_type in [Some("apiKey"), Some("apikey"), None, Some("future-auth")] {
+            let mut models = original.clone();
+            remove_retired_chatgpt_models(&mut models, account_type, Some("gpt-5.5"), true);
+            assert_eq!(models, original);
+        }
+        let mut models = original.clone();
+        models[0]["isDefault"] = json!(false);
+        remove_retired_chatgpt_models(&mut models, Some("chatgpt"), Some("gpt-5.5"), false);
+        assert_eq!(models, original[1..]);
+    }
 
     #[test]
     fn configured_model_overrides_the_catalog_recommendation() {

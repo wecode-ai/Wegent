@@ -3,6 +3,7 @@ import { conversationOutcomePresentation } from './conversationOutcomePresentati
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { deliverNativeConversationMessage } from './nativeConversationDelivery'
+import type { ConversationModelControls } from './conversationModelControls'
 import { StandInNotificationPrompt } from '@/features/todo/StandInNotificationPrompt'
 import {
   createPluginTrialGuide,
@@ -48,7 +49,11 @@ import { retryRuntimeConversation } from '@wegent/collaboration/execution/retryR
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
-import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import {
+  requiresNewConversationForModelSwitch,
+  selectedModelExecutionFields,
+} from '@/features/workbench/runtimeModelSelection'
+import { findModelForSelection } from '@/features/workbench/runtimeContextUsage'
 import {
   deriveRuntimePaneStatus,
   isRuntimeTaskBusyError,
@@ -119,6 +124,7 @@ interface TemporaryChatPanelProps {
   assistantMessageStyle?: 'plain' | 'bubble'
   markReadWhenActive?: boolean
   nativeConversation?: boolean
+  modelControls?: ConversationModelControls
   allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
@@ -165,6 +171,7 @@ export function TemporaryChatPanel({
   assistantMessageStyle,
   markReadWhenActive = false,
   nativeConversation = false,
+  modelControls,
   allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
@@ -231,15 +238,27 @@ export function TemporaryChatPanel({
     contextUsageStore.getSnapshot,
     contextUsageStore.getSnapshot
   )
+  const taskLifecycle = useRuntimeTaskLifecycle(address)
+  const activeThreadId = taskLifecycle?.task?.threadId ?? address?.threadId
   const taskModelSelection = address ? projectChat.resolveRuntimeTaskModelSelection(address) : null
+  const activeModelSelection =
+    taskLifecycle?.task?.modelSelection ?? taskModelSelection?.taskSelection
+  const activeModel = modelControls
+    ? findModelForSelection(modelControls.models, activeModelSelection)
+    : taskModelSelection?.activeModel
   const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
   const globalSelectedModelOptions =
     projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
-  const taskModelIdentityPending = Boolean(
-    address &&
-    !taskModelSelection?.taskSelection &&
-    (state.isBootstrapping || state.runtimeWork === null)
-  )
+  const taskModelIdentityPending = modelControls
+    ? modelControls.loading || Boolean(modelControls.unavailable)
+    : Boolean(
+        address &&
+        !taskModelSelection?.taskSelection &&
+        (state.isBootstrapping || state.runtimeWork === null)
+      )
+  const modelError = modelControls?.unavailableReason
+    ? t(`standIn.errors.${modelControls.unavailableReason}`)
+    : null
   const [trialGuide, setTrialGuide] = useState<PluginTrialGuide | null>(null)
   const sideChatProjectChat = useMemo(
     () => ({
@@ -280,6 +299,18 @@ export function TemporaryChatPanel({
               projectChat.resolveRuntimeTaskModelSelection(address).selectedModelOptions,
           }
         : {}),
+      ...(modelControls
+        ? {
+            ...modelControls,
+            activeModel: activeThreadId ? activeModel : null,
+            activeModelSelection: activeThreadId ? activeModelSelection : null,
+            modelSwitchMode: 'session' as const,
+            continueInNewConversation: undefined,
+            isModelSelectionReady: !taskModelIdentityPending,
+            getSelectedModel: () => modelControls.selectedModel,
+            getSelectedModelOptions: () => modelControls.selectedModelOptions,
+          }
+        : {}),
       hasConversationContext: Boolean(address),
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -298,6 +329,11 @@ export function TemporaryChatPanel({
       taskModelSelection,
       instanceId,
       trialGuide,
+      modelControls,
+      taskModelIdentityPending,
+      activeThreadId,
+      activeModel,
+      activeModelSelection,
     ]
   )
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
@@ -358,7 +394,6 @@ export function TemporaryChatPanel({
   const [hiddenRequestUserInputIds, setHiddenRequestUserInputIds] = useState<ReadonlySet<string>>(
     () => new Set()
   )
-  const taskLifecycle = useRuntimeTaskLifecycle(address)
   useEffect(() => {
     if (!markReadWhenActive || !active || !address) return
     const key = taskLifecycle?.key ?? `${address.deviceId}\0${address.taskId}`
@@ -557,6 +592,12 @@ export function TemporaryChatPanel({
   }, [address, contextUsageStore, subscribeRuntimeTaskStream, conversationQueue])
 
   const selectedModelFields = useMemo(() => {
+    if (modelControls) {
+      return selectedModelExecutionFields(
+        modelControls.selectedModel,
+        modelControls.selectedModelOptions
+      )
+    }
     if (address && taskModelSelection) {
       if (taskModelSelection.selectedModel) {
         return selectedModelExecutionFields(
@@ -573,7 +614,7 @@ export function TemporaryChatPanel({
       }
     }
     return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
-  }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection])
+  }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection, modelControls])
 
   useEffect(() => {
     if (!address) return
@@ -675,7 +716,12 @@ export function TemporaryChatPanel({
         return false
       }
       if (taskModelIdentityPending) {
-        setError('正在同步任务模型配置，请稍后重试')
+        if (modelControls?.unavailableReason) return false
+        setError(
+          modelControls?.unavailable
+            ? t('standIn.errors.model_unavailable')
+            : '正在同步任务模型配置，请稍后重试'
+        )
         return false
       }
       setError(null)
@@ -697,13 +743,22 @@ export function TemporaryChatPanel({
         createdAt: new Date().toISOString(),
         attachments: persistAttachmentReferences(currentAttachments),
         ...selectedModelFields,
+        ...(modelControls &&
+        activeThreadId &&
+        requiresNewConversationForModelSwitch(
+          activeModel,
+          modelControls.selectedModel,
+          activeModelSelection
+        )
+          ? { startNewSession: true, expectedThreadId: activeThreadId }
+          : {}),
       }
       if (nativeConversation && address) {
         nativeSubmission.current = true
         setSending(true)
         try {
           const result = await deliverNativeConversationMessage({
-            busy: paneStatus.isBusy,
+            busy: !queuedMessage.startNewSession && paneStatus.isBusy,
             send: () => queuePort.send(queuedMessage),
             guide: () =>
               sendRuntimePaneGuidance({
@@ -713,7 +768,7 @@ export function TemporaryChatPanel({
                 attachments: localRuntimeAttachments(currentAttachments),
                 attachmentIds: remoteAttachmentIds(currentAttachments),
               }),
-            isBusyError: isRuntimeTaskBusyError,
+            isBusyError: error => !queuedMessage.startNewSession && isRuntimeTaskBusyError(error),
           })
           if (!result.sent) {
             setError(result.error || t('workbench.project_chat_send_failed'))
@@ -915,6 +970,10 @@ export function TemporaryChatPanel({
       source,
       sendEphemeral,
       taskModelIdentityPending,
+      modelControls,
+      activeModel,
+      activeModelSelection,
+      activeThreadId,
       updateAddress,
       setInput,
     ]
@@ -1233,12 +1292,15 @@ export function TemporaryChatPanel({
                     setError(null)
                   }}
                   onSubmit={send}
-                  disabled={taskModelIdentityPending || (nativeConversation && sending)}
+                  disabled={
+                    (!modelControls && taskModelIdentityPending) || (nativeConversation && sending)
+                  }
+                  submitDisabled={taskModelIdentityPending}
                   showExecutionTools={showExecutionTools}
                   showModelSelector
                   pluginPickerIconOnly
                   requireText
-                  error={error}
+                  error={modelError ?? error}
                   placeholder={placeholder}
                   variant="desktop"
                   collapseWhenIdle={collapseComposerWhenIdle}

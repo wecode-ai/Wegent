@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import { MODEL_PROVIDER_ID, selectE2EModel } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createMemoryConsolidation,
@@ -278,7 +278,29 @@ export function createDesktopScenario({
         )
         await captureScreenshot(control, 'memory-legacy-fingerprint-management.png')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-memory-close"]')
-        await consolidation.verify(control)
+        const catalog = await rpc('runtime.runner.catalog', {})
+        const model = catalog.models.find(
+          item =>
+            item.runtime === 'codex' &&
+            item.provider === MODEL_PROVIDER_ID &&
+            item.is_default === false
+        )
+        assert.ok(model, 'Explicit memory review selection must differ from the native default')
+        const settings = await rpc('runtime.stand_in.personal.get', { userId: USER })
+        const savedSettings = await rpc('runtime.stand_in.personal.save', {
+          userId: USER,
+          settings: {
+            ...settings,
+            primary: {
+              ...settings.primary,
+              model,
+              modelOptions: { ...settings.primary.modelOptions, reasoning: 'high' },
+            },
+          },
+        })
+        assert.equal(savedSettings.primary.model.model_id, model.model_id)
+        assert.equal(savedSettings.primary.modelOptions.reasoning, 'high')
+        await consolidation.verify(control, model, { reasoning: 'high' })
       } finally {
         phase = undefined
         const memories = (await rpc('runtime.stand_in.memory.list', { userId: USER })).items

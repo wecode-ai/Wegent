@@ -304,12 +304,7 @@ export function StandInDetailsPopover({
                       <span className="block truncate">{entry.item.name}</span>
                       <span className="mt-0.5 block truncate text-xs text-text-secondary">
                         {entry.item.enabled
-                          ? formatScheduleSummary(
-                              entry.item.schedule,
-                              i18n.language,
-                              t,
-                              entry.item.timezone
-                            )
+                          ? formatScheduleSummary(entry.item.schedule, i18n.language, t)
                           : t('todo.automation_status_paused')}
                       </span>
                     </span>

@@ -4858,6 +4858,21 @@ async fn codex_model_discovery_waits_for_app_server_restart() {
 }
 
 #[tokio::test]
+async fn codex_account_switch_waits_for_model_discovery() {
+    let (handler, root) = isolated_runtime_work_handler("catalog-account-serialization");
+    let discovery_guard = codex_app_server_restart_gate().lock().await;
+    {
+        let switching = handler.switch_codex_account(json!({"accountId": "next-account"}));
+        tokio::pin!(switching);
+        let waiting = tokio::time::timeout(Duration::from_millis(100), &mut switching).await;
+        assert!(waiting.is_err(), "account switch bypassed model discovery");
+    }
+
+    drop(discovery_guard);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn codex_instructions_write_rejects_non_string_payload() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 

@@ -126,13 +126,11 @@ describe('Stand-in configuration composer', () => {
         modelApi: { listModels: vi.fn(async () => ({ data: catalog })) },
       } as unknown as WorkbenchServices
       render(<Fixture save={save} services={services} />)
-      await waitFor(() =>
-        expect(screen.getByTestId('model-selector-button')).toHaveTextContent('内网:Kimi-K3')
-      )
       await userEvent.click(screen.getByTestId('model-selector-button'))
-      const cloudGroup = screen.getByTestId('model-source-cloud')
+      const cloudGroup = await screen.findByTestId('model-source-cloud')
       expect(within(cloudGroup).getByText('内网:Kimi-K3')).toBeInTheDocument()
       expect(within(cloudGroup).getByText('公网:Kimi-K3')).toBeInTheDocument()
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('选择模型')
       const selected = cloudRunnerModels(catalog).find(
         model => model.runtime === 'codex' && model.label === `${region}:Kimi-K3`
       )!
@@ -165,18 +163,20 @@ describe('Stand-in configuration composer', () => {
           { ...selected, is_default: false },
         ],
       }))
+      const refresh = vi.fn()
       const services = {
         standInApi: { catalog },
-        modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+        modelApi: { listModels: vi.fn(async () => ({ data: [] })), refresh },
       } as unknown as WorkbenchServices
-      const { rerender } = render(
-        <Fixture save={save} services={services} initialModel={selected} />
-      )
+      render(<Fixture save={save} services={services} initialModel={selected} />)
       await waitFor(() =>
         expect(screen.getByTestId('model-selector-button')).toHaveTextContent('saved-model')
       )
-      rerender(<Fixture save={save} services={{ ...services }} initialModel={selected} />)
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+      expect(refresh).toHaveBeenCalledOnce()
       await waitFor(() => expect(catalog).toHaveBeenCalledTimes(2))
+      await userEvent.keyboard('{Escape}')
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('saved-model')
       await userEvent.click(screen.getByTestId('stand-in-save'))
       expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: selected }))
     }
@@ -221,6 +221,8 @@ describe('Stand-in configuration composer', () => {
       model_id: 'default-model',
       label: 'Default model',
       is_default: true,
+      default_reasoning_effort: 'low',
+      supported_reasoning_efforts: ['low', 'high'],
     }
     const services = {
       standInApi: {
@@ -232,7 +234,7 @@ describe('Stand-in configuration composer', () => {
     } as unknown as WorkbenchServices
     render(<Fixture save={save} services={services} />)
     await waitFor(() =>
-      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Default model')
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Default model 轻度')
     )
     await userEvent.click(screen.getByTestId('stand-in-save'))
     expect(save).toHaveBeenCalledWith(

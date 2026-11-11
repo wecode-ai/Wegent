@@ -877,17 +877,27 @@ impl RuntimeWorkRpcHandler {
                 .insert("origin".into(), payload["origin"].clone());
             payload["executionRequest"] = json!(request);
         }
-        if let Some(options) = config["modelOptions"].as_object() {
+        if let Some(options) = config
+            .get("modelOptions")
+            .filter(|options| options.is_object())
+        {
             let target = payload
                 .as_object_mut()
                 .unwrap()
                 .entry("modelOptions")
                 .or_insert_with(|| json!({}));
-            target.as_object_mut().unwrap().extend(options.clone());
+            target
+                .as_object_mut()
+                .unwrap()
+                .extend(super::creation::normalized_model_options(options));
         }
         if payload["modelId"].is_string() {
             payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});
         }
+        let mut request = execution_request(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "Invalid stand-in execution request"))?;
+        super::creation::apply_creation_options(&mut request, &payload)?;
+        payload["executionRequest"] = json!(request);
         // Stand-ins and direct Wework profiles do not execute as Backend Teams.
         payload["executionRequest"]["team_id"] = json!(0);
         payload["executionRequest"]["user_id"] = config["userId"].clone();

@@ -296,6 +296,10 @@ pub fn resolve_pending(
         payload["modelId"] = selected["local_model_id"].clone();
         payload["modelType"] = json!("runtime");
         payload["modelOptions"] = json!({"runnerModelProvider":selected["provider"]});
+        if let Some(effort) = selected["default_reasoning_effort"].as_str() {
+            model_config["reasoning"]["effort"] = json!(effort);
+            payload["modelOptions"]["reasoning"] = json!(effort);
+        }
         payload["runnerRouting"]["account_label"] = selected["account_label"].clone();
         model_config
     };
@@ -398,5 +402,28 @@ mod tests {
             "runner-a"
         )
         .is_err());
+    }
+
+    #[test]
+    fn native_default_reasoning_reaches_the_request_and_persisted_selection() {
+        let model = json!({"runtime":"codex","provider":"openai","model_id":"selected"});
+        let catalog = json!({"models":[{
+            "runtime":"codex","provider":"openai","model_id":"selected",
+            "local_model_id":"upstream","account_label":"Account",
+            "default_reasoning_effort":"low"
+        }]});
+        let mut payload = json!({
+            "message":"Review", "runnerRouting":{"environment_id":"runner-a","model":model}
+        });
+        resolve_pending(&mut payload, Some(&catalog), "runner-a").unwrap();
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["reasoning"]["effort"],
+            "low"
+        );
+        assert_eq!(payload["modelSelection"]["options"]["reasoning"], "low");
+        assert_eq!(payload["runnerRouting"]["model"], model);
+        let before = payload.clone();
+        resolve_pending(&mut payload, Some(&catalog), "runner-a").unwrap();
+        assert_eq!(payload, before);
     }
 }

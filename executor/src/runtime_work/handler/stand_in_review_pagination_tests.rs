@@ -49,7 +49,8 @@ async fn stand_in_review_reads_more_than_fifty_messages_through_native_paginatio
     let automation = handler
         .automation_store
         .create(
-            crate::runtime_work::automations::weekly_review(7, "device-1", "09:00", "en").unwrap(),
+            crate::runtime_work::automations::weekly_review(7, "device-1", "09:00", "UTC", "en")
+                .unwrap(),
         )
         .unwrap();
     let (_, run) = handler

@@ -159,6 +159,41 @@ it('mixes owned schedules and work by recency and opens the original schedule de
   expect(props.onOpenTask).not.toHaveBeenCalled()
 })
 
+it.each([
+  ['Asia/Shanghai', '2026/11/11 12:41'],
+  ['America/Los_Angeles', '2026/11/10 20:41'],
+])('shows a one-time memory review in the device timezone %s', async (timezone, summary) => {
+  const DateTimeFormat = Intl.DateTimeFormat
+  const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
+    return new DateTimeFormat(locale, { timeZone: timezone, ...options })
+  })
+  try {
+    const schedule = {
+      id: 'memory-review',
+      name: '分身记忆整理',
+      enabled: true,
+      updatedAt: '2026-11-11T04:40:00Z',
+      timezone: 'UTC',
+      schedule: { type: 'one_time', executeAt: '2026-11-11T04:41:00Z' },
+      taskRequest: {
+        deviceId: 'local',
+        standInOwner: { userId: 7, roleId: '@primary' },
+        standInCalendar: { template: 'memory_review' },
+      },
+    } as Automation
+    fixture({
+      automationApi: {
+        listAutomations: vi.fn().mockResolvedValue({ items: [schedule] }),
+      } as unknown as AutomationApi,
+    })
+    expect(await screen.findByTestId('stand-in-details-schedule-memory-review')).toHaveTextContent(
+      summary
+    )
+  } finally {
+    formatter.mockRestore()
+  }
+})
+
 it('retains the expanded identity height while the scrolled header becomes compact', async () => {
   fixture()
   const identity = await screen.findByTestId('stand-in-details-identity')

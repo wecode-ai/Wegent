@@ -21,6 +21,7 @@ import type {
   LocalDeviceApp,
   LocalDeviceSkill,
   ModelOptions,
+  ModelSelectionConfig,
   PluginPathComponent,
   ProjectExecutionMode,
   ProjectWithTasks,
@@ -58,7 +59,7 @@ import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
-import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
+import { requiresNewConversationForModelSwitch } from '@/features/workbench/runtimeModelSelection'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -70,6 +71,8 @@ export interface ProjectChatControls {
   skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
+  activeModelSelection?: ModelSelectionConfig | null
+  modelSwitchMode?: 'session'
   selectedModelOptions: ModelOptions
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
@@ -257,30 +260,6 @@ interface PendingModelSelection {
 
 function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel | null): boolean {
   return left?.name === right?.name && left?.type === right?.type
-}
-
-function codexConversationProvider(
-  model: UnifiedModel | null | undefined
-): 'openai' | 'router' | null {
-  if (!model || model.name === CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME) return null
-  const configuredKind =
-    typeof model.config?.weworkModelKind === 'string'
-      ? model.config.weworkModelKind
-      : typeof (model.config?.ui as Record<string, unknown> | undefined)?.family === 'string'
-        ? ((model.config?.ui as Record<string, unknown>).family as string)
-        : ''
-  if (configuredKind === 'codex-official') return 'openai'
-  if (configuredKind === 'codex-provider' || configuredKind === 'model-interface') return 'router'
-  return model.provider && model.provider !== 'local' ? 'router' : null
-}
-
-function requiresNewConversationForModelSwitch(
-  activeModel: UnifiedModel | null | undefined,
-  targetModel: UnifiedModel | null
-): boolean {
-  const activeProvider = codexConversationProvider(activeModel)
-  const targetProvider = codexConversationProvider(targetModel)
-  return Boolean(activeProvider && targetProvider && activeProvider !== targetProvider)
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
@@ -516,18 +495,20 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
 
   const requestModelSelection = (model: UnifiedModel | null, options?: ModelOptions) => {
     const selectionChangesModel = !isSameModel(controls.selectedModel, model)
+    const continueInNewConversation = requiresNewConversationForModelSwitch(
+      controls.activeModel,
+      model,
+      controls.activeModelSelection
+    )
     if (
       selectionChangesModel &&
-      controls.activeModel &&
-      !isSameModel(controls.activeModel, model)
+      ((controls.activeModel && !isSameModel(controls.activeModel, model)) ||
+        continueInNewConversation)
     ) {
       setPendingModelSelection({
         model,
         options,
-        continueInNewConversation: requiresNewConversationForModelSwitch(
-          controls.activeModel,
-          model
-        ),
+        continueInNewConversation,
       })
       return false
     }
@@ -539,7 +520,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     if (!pendingModelSelection) return
     const { model, options, continueInNewConversation } = pendingModelSelection
     setPendingModelSelection(null)
-    if (continueInNewConversation && model) {
+    if (continueInNewConversation && controls.modelSwitchMode !== 'session' && model) {
       if (controls.continueInNewConversation) {
         controls.continueInNewConversation(model, options, { draft: value })
       } else {
@@ -656,7 +637,12 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
         pendingModelSelection.model?.name ||
         t('workbench.model_auto_select', 'Auto select')
       }
-      continueInNewConversation={pendingModelSelection.continueInNewConversation}
+      continueInNewConversation={
+        pendingModelSelection.continueInNewConversation && controls.modelSwitchMode !== 'session'
+      }
+      startNewSession={
+        pendingModelSelection.continueInNewConversation && controls.modelSwitchMode === 'session'
+      }
       onCancel={cancelModelSelection}
       onConfirm={confirmModelSelection}
     />
@@ -983,12 +969,14 @@ function ModelSwitchWarningDialog({
   t,
   targetModelLabel,
   continueInNewConversation,
+  startNewSession,
   onCancel,
   onConfirm,
 }: {
   t: ReturnType<typeof useTranslation>['t']
   targetModelLabel: string
   continueInNewConversation: boolean
+  startNewSession: boolean
   onCancel: () => void
   onConfirm: () => void
 }) {
@@ -1014,7 +1002,7 @@ function ModelSwitchWarningDialog({
           id="model-switch-warning-dialog-description"
           className="mt-2 text-sm leading-5 text-text-secondary"
         >
-          {continueInNewConversation
+          {continueInNewConversation || startNewSession
             ? t(
                 'workbench.model_switch_new_conversation_description',
                 '{{model}} uses a different model provider, so it cannot continue this Codex thread directly.',
@@ -1027,15 +1015,20 @@ function ModelSwitchWarningDialog({
               )}
         </p>
         <p className="mt-2 text-sm leading-5 text-text-secondary">
-          {continueInNewConversation
+          {startNewSession
             ? t(
-                'workbench.model_switch_new_conversation_effect',
-                'Wework will open a new conversation, reference this conversation, and preserve the current draft.'
+                'workbench.model_switch_new_session_effect',
+                'Your next message will start a new session here. Earlier messages and the current draft will remain available.'
               )
-            : t(
-                'workbench.model_switch_warning_effect',
-                'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
-              )}
+            : continueInNewConversation
+              ? t(
+                  'workbench.model_switch_new_conversation_effect',
+                  'Wework will open a new conversation, reference this conversation, and preserve the current draft.'
+                )
+              : t(
+                  'workbench.model_switch_warning_effect',
+                  'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
+                )}
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button

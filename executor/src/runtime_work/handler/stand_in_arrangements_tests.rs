@@ -1,4 +1,5 @@
 use super::super::command_journal::{CommandState, RuntimeCommand};
+use super::super::tests::{install_native_history, ScalarEnv};
 use super::*;
 
 fn handler(root: &Path) -> RuntimeWorkRpcHandler {
@@ -15,6 +16,27 @@ fn handler(root: &Path) -> RuntimeWorkRpcHandler {
     handler.automation_store =
         crate::runtime_work::automations::AutomationStore::new(root.join("automations.json"));
     handler
+}
+
+fn memory_review_handler(root: &Path) -> (RuntimeWorkRpcHandler, ScalarEnv) {
+    let claude_home = ScalarEnv::set("WEGENT_CLAUDE_HOME", root.join("claude").to_str().unwrap());
+    let mut handler = handler(root);
+    install_native_history(&mut handler, root, Vec::new(), None);
+    for (name, response) in [
+        (
+            "config_read",
+            json!({"config":{"model":"review-default","model_provider":"openai"}}),
+        ),
+        (
+            "model_list",
+            json!({"data":[{"id":"review-default","model":"review-default","isDefault":true,
+                "defaultReasoningEffort":"low",
+                "supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Low"},{"reasoningEffort":"high","description":"High"}]}]}),
+        ),
+    ] {
+        fs::write(root.join(format!("{name}.json")), response.to_string()).unwrap();
+    }
+    (handler, claude_home)
 }
 
 fn automation() -> Automation {
@@ -323,9 +345,11 @@ async fn manual_calendar_run_routes_immediately_and_reuses_its_original_receipt(
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // Isolate process-wide model discovery settings.
 async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
+    let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();
-    let handler = handler(root.path());
+    let (handler, _claude_home) = memory_review_handler(root.path());
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     store.materialize_implicit_primary(7, "device").unwrap();
     handler.ensure_memory_review_arrangements().unwrap();
@@ -338,22 +362,75 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
         .await
         .unwrap();
     assert_eq!(prepared["origin"]["memoryReview"], true);
+    assert_eq!(prepared["modelSelection"]["modelName"], "review-default");
+    let catalog = handler.runner_catalog().await.unwrap();
+    let model = &catalog["models"][0];
+    assert_eq!(model["default_reasoning_effort"], "low");
+    assert_eq!(model["supported_reasoning_efforts"], json!(["low", "high"]));
+    assert_eq!(prepared["modelSelection"]["options"]["reasoning"], "low");
+    assert_eq!(
+        prepared["executionRequest"]["model_config"]["reasoning"]["effort"],
+        "low"
+    );
+    assert_eq!(
+        prepared["executionRequest"]["model_config"]["model_provider"],
+        "openai"
+    );
     let request: ExecutionRequest =
         serde_json::from_value(prepared["executionRequest"].clone()).unwrap();
     handler
         .validate_stand_in_schedule_start(&request, "unused")
         .unwrap();
+    for effort_key in ["reasoning", "reasoningEffort"] {
+        let mut settings = store.personal_stand_in(7, "device").unwrap();
+        settings["primary"]["modelOptions"] = json!({
+            "speed":"fast", "permissionMode":"full-access"
+        });
+        settings["primary"]["modelOptions"][effort_key] = json!("high");
+        store.save_personal_stand_in(7, "device", settings).unwrap();
+        let explicit = handler
+            .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap();
+        assert_eq!(explicit["modelSelection"]["options"]["reasoning"], "high");
+        assert!(explicit["modelSelection"]["options"]
+            .get("reasoningEffort")
+            .is_none());
+        assert_eq!(
+            explicit["executionRequest"]["model_config"]["reasoning"]["effort"],
+            "high"
+        );
+        assert_eq!(
+            explicit["executionRequest"]["reasoning_config"]["effort"],
+            "high"
+        );
+        assert_eq!(
+            explicit["executionRequest"]["model_config"]["service_tier"],
+            "fast"
+        );
+        assert_eq!(
+            explicit["executionRequest"]["runtime_permission_profile"],
+            ":read-only"
+        );
+    }
     assert!(handler
         .prepare_stand_in_schedule(&automation(), json!({"message":"External work"}))
         .await
         .is_err());
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // Isolate process-wide model discovery settings.
 async fn memory_review_due_skips_empty_history_and_routes_changed_history_independently() {
+    let _lock = crate::test_env::lock();
     for changed_history in [false, true] {
         let root = tempfile::tempdir().unwrap();
-        let handler = handler(root.path());
+        let (handler, _claude_home) = memory_review_handler(root.path());
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
         store.materialize_implicit_primary(7, "device").unwrap();
         handler.ensure_memory_review_arrangements().unwrap();
@@ -430,6 +507,11 @@ async fn memory_review_due_skips_empty_history_and_routes_changed_history_indepe
         );
         handler.arrangement_contexts(&store).unwrap();
         assert!(store.stand_in_events(7).unwrap().is_empty());
+        handler
+            .codex_app_server
+            .request("test/stop", json!({}))
+            .await
+            .unwrap();
     }
 }
 
