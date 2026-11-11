@@ -160,31 +160,28 @@ impl RuntimeWorkRpcHandler {
         let operation_gate =
             self.task_send_gate(&format!("automation-operation:{}", automation.id));
         let _operation_guard = operation_gate.lock().await;
-        let mut payload = if automation.task_request["type"] == "wework_control" {
-            match self.control_automation_payload(&automation).await {
-                Ok(payload) => payload,
-                Err(error) => {
-                    let _ = self.automation_store.mark_failed(&run.id, error.message);
-                    self.emit_automation_runs_changed(&automation.id, &run.id);
-                    return;
-                }
-            }
+        let payload = if automation.task_request["type"] == "wework_control" {
+            self.control_automation_payload(&automation).await
         } else {
-            match automation.conversation_mode {
+            let mut payload = match automation.conversation_mode {
                 ConversationMode::Independent => automation.task_payload.clone(),
                 ConversationMode::ContinueThread => automation
                     .continuation_payload
                     .clone()
                     .unwrap_or_else(|| automation.task_payload.clone()),
-            }
+            };
+            self.refresh_automation_model(&mut payload)
+                .await
+                .map(|()| payload)
         };
-        if automation.task_request["type"] != "wework_control" {
-            if let Err(error) = self.refresh_automation_model(&mut payload).await {
+        let mut payload = match payload {
+            Ok(payload) => payload,
+            Err(error) => {
                 let _ = self.automation_store.mark_failed(&run.id, error.message);
                 self.emit_automation_runs_changed(&automation.id, &run.id);
                 return;
             }
-        }
+        };
         let task_id = match automation.conversation_mode {
             ConversationMode::Independent => {
                 let task_id = format!(
@@ -269,7 +266,7 @@ impl RuntimeWorkRpcHandler {
             .creation_model_config(runtime, &selection, &Value::Null)
             .await?;
         for key in ["modelConfig", "executionRequest", "execution_request"] {
-            if key != "modelConfig" && !payload[key].is_object() {
+            if !payload[key].is_object() {
                 continue;
             }
             let config = if key == "modelConfig" {
@@ -344,99 +341,6 @@ fn automation_from_payload(payload: &Value) -> Result<Automation, AppIpcError> {
         .map_err(|error| AppIpcError::new("bad_request", format!("invalid automation: {error}")))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn scheduled_cloud_models_refresh_rotated_credentials_and_reject_revoked_access() {
-        use axum::{http::HeaderMap, routing::get, Json, Router};
-
-        let router = Router::new().route(
-            "/api/models/unified",
-            get(|headers: HeaderMap| async move {
-                let authorized = headers["authorization"] == "Bearer current-token";
-                Json(json!({"data": if authorized { vec![json!({
-                    "name":"shared-model","type":"public","namespace":"default",
-                    "resourceUserId":0,"config":{"protocol":"openai-responses"}
-                })] } else { vec![] }}))
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let backend_url = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let connection = Arc::new(Mutex::new(Some(ConnectionConfig {
-            backend_url: backend_url.clone(),
-            auth_token: "current-token".into(),
-            ..Default::default()
-        })));
-        let mut handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
-        handler.backend_connection = connection.clone();
-        for request_key in ["executionRequest", "execution_request"] {
-            let mut payload = json!({
-                "runtime":"codex","modelId":"shared-model","modelType":"public",
-                "modelOptions":{"weworkCloudModelNamespace":"default","weworkCloudModelResourceUserId":"0"},
-                "modelConfig":{"api_key":"expired-token"}
-            });
-            payload[request_key] = json!({"model_config":{
-                "api_key":"expired-token","reasoning":{"effort":"high"},
-                "native_tool_search":true,"codex_request_mode":"passthrough"
-            }});
-            handler
-                .refresh_automation_model(&mut payload)
-                .await
-                .unwrap();
-            assert_eq!(
-                payload[request_key]["model_config"]["api_key"],
-                "current-token"
-            );
-            assert_eq!(payload["modelConfig"]["api_key"], "current-token");
-            assert_eq!(
-                payload[request_key]["model_config"]["native_tool_search"],
-                true
-            );
-            assert_eq!(
-                payload[request_key]["model_config"]["codex_request_mode"],
-                "passthrough"
-            );
-            assert_eq!(
-                payload[request_key]["model_config"]["reasoning"]["effort"],
-                "high"
-            );
-            assert_eq!(
-                payload[request_key]["model_config"]["base_url"],
-                format!("{backend_url}/api/runtime-work/llm-responses-proxy")
-            );
-        }
-        connection.lock().unwrap().as_mut().unwrap().auth_token = "revoked-token".into();
-        let mut payload = json!({"modelSelection":{"modelName":"shared-model","modelType":"public",
-            "options":{"weworkCloudModelNamespace":"default","weworkCloudModelResourceUserId":"0"}},
-            "executionRequest":{"model_config":{"api_key":"expired-token"}}});
-        assert!(handler
-            .refresh_automation_model(&mut payload)
-            .await
-            .is_err());
-        assert_eq!(
-            payload["executionRequest"]["model_config"]["api_key"],
-            "expired-token"
-        );
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn scheduled_native_models_keep_their_provider_credentials() {
-        let handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
-        let mut payload = json!({"modelId":"native-model","modelType":"runtime",
-            "executionRequest":{"model_config":{"api_key":"provider-key"}}});
-        let original = payload.clone();
-        handler
-            .refresh_automation_model(&mut payload)
-            .await
-            .unwrap();
-        assert_eq!(payload, original);
-    }
-}
-
 fn automation_id(payload: &Value) -> Result<String, AppIpcError> {
     string_field(payload, "automationId")
         .or_else(|| string_field(payload, "automation_id"))
@@ -486,4 +390,133 @@ pub(super) fn add_automation_context(
             "scheduledFor": scheduled_for.to_rfc3339(),
         }),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn scheduled_cloud_models_refresh_rotated_credentials_and_reject_revoked_access() {
+        use axum::{http::HeaderMap, routing::get, Json, Router};
+
+        let router = Router::new().route(
+            "/api/models/unified",
+            get(|headers: HeaderMap| async move {
+                let authorized = headers["authorization"] == "Bearer current-token";
+                Json(json!({"data": if authorized { vec![json!({
+                    "name":"shared-model","type":"public","namespace":"default",
+                    "resourceUserId":0,"config":{"protocol":"openai-responses"}
+                })] } else { vec![] }}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: backend_url.clone(),
+            auth_token: "current-token".into(),
+            ..Default::default()
+        })));
+        let mut handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
+        handler.backend_connection = connection.clone();
+        for request_key in ["executionRequest", "execution_request"] {
+            let mut payload = json!({
+                "schemaVersion":2,"runtime":"codex","message":"Run the scheduled work",
+                "modelId":"shared-model","modelType":"public",
+                "modelOptions":{"weworkCloudModelNamespace":"default","weworkCloudModelResourceUserId":"0"}
+            });
+            payload[request_key] = json!({"model_config":{
+                "api_key":"expired-token","reasoning":{"effort":"high"},
+                "native_tool_search":true,"codex_request_mode":"passthrough"
+            }});
+            crate::runtime_work::task_create_contract::validate_runtime_task_create_v2(&payload)
+                .unwrap();
+            handler
+                .refresh_automation_model(&mut payload)
+                .await
+                .unwrap();
+            assert_eq!(
+                payload[request_key]["model_config"]["api_key"],
+                "current-token"
+            );
+            assert!(payload.get("modelConfig").is_none());
+            crate::runtime_work::task_create_contract::validate_runtime_task_create_v2(&payload)
+                .unwrap();
+            assert_eq!(
+                payload[request_key]["model_config"]["native_tool_search"],
+                true
+            );
+            assert_eq!(
+                payload[request_key]["model_config"]["codex_request_mode"],
+                "passthrough"
+            );
+            assert_eq!(
+                payload[request_key]["model_config"]["reasoning"]["effort"],
+                "high"
+            );
+            assert_eq!(
+                payload[request_key]["model_config"]["base_url"],
+                format!("{backend_url}/api/runtime-work/llm-responses-proxy")
+            );
+            payload["schemaVersion"] = json!(1);
+            payload["modelConfig"] = json!({"api_key":"expired-token"});
+            handler
+                .refresh_automation_model(&mut payload)
+                .await
+                .unwrap();
+            assert_eq!(payload["modelConfig"]["api_key"], "current-token");
+        }
+        connection.lock().unwrap().as_mut().unwrap().auth_token = "revoked-token".into();
+        let mut payload = json!({"modelSelection":{"modelName":"shared-model","modelType":"public",
+            "options":{"weworkCloudModelNamespace":"default","weworkCloudModelResourceUserId":"0"}},
+            "executionRequest":{"model_config":{"api_key":"expired-token"}}});
+        assert!(handler
+            .refresh_automation_model(&mut payload)
+            .await
+            .is_err());
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["api_key"],
+            "expired-token"
+        );
+        let directory = tempfile::tempdir().unwrap();
+        handler.automation_store = AutomationStore::new(directory.path().join("automations.json"));
+        for mode in ["independent", "continue_thread"] {
+            let automation = serde_json::from_value(json!({
+                "id":mode,"version":0,"name":"Revoked model","prompt":"Run the scheduled work",
+                "schedule":{"type":"interval","value":1,"unit":"hours"},
+                "conversationMode":mode,"taskPayload":payload,"continuationPayload":payload
+            }))
+            .unwrap();
+            let automation = handler.automation_store.create(automation).unwrap();
+            let (automation, run) = handler
+                .automation_store
+                .start_manual_run(&automation.id)
+                .unwrap();
+            handler.handoff_automation(automation, run).await;
+            let runs = handler.automation_store.list_runs(Some(mode));
+            assert_eq!(runs.len(), 1);
+            assert_eq!(runs[0].status, AutomationRunStatus::Failed);
+            assert!(runs[0].task_id.is_none());
+            assert!(runs[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("no longer authorized"));
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn scheduled_native_models_keep_their_provider_credentials() {
+        let handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
+        let mut payload = json!({"modelId":"native-model","modelType":"runtime",
+            "executionRequest":{"model_config":{"api_key":"provider-key"}}});
+        let original = payload.clone();
+        handler
+            .refresh_automation_model(&mut payload)
+            .await
+            .unwrap();
+        assert_eq!(payload, original);
+    }
 }
