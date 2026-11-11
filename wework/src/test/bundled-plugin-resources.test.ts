@@ -270,10 +270,18 @@ describe('bundled plugin resources', () => {
     expect(skill).toMatch(/at most 100\s+reminders with unique IDs/)
     expect(skill).toContain('`mailto:`')
     expect(skill).toContain('reminders.schedule')
-    expect(readFileSync(resolve(plugin, 'skills/coding/workflow.md'), 'utf8')).toContain(
-      '../workbenches/SKILL.md'
+    expect(existsSync(resolve(plugin, 'skills/coding'))).toBe(false)
+    const hostInstructions = readFileSync(
+      resolve(process.cwd(), '../executor/src/agents/codex/host_skills.rs'),
+      'utf8'
     )
+    expect(hostInstructions).toContain('read workbenches and use the task-bound WEWORK_CLI_PATH')
+    expect(hostInstructions).toContain('Both lightweight and extended workbenches use DSH')
     const manifest = JSON.parse(readFileSync(resolve(plugin, '.codex-plugin/plugin.json'), 'utf8'))
+    const claudeManifest = JSON.parse(
+      readFileSync(resolve(plugin, '.claude-plugin/plugin.json'), 'utf8')
+    )
+    expect(claudeManifest.version).toBe(manifest.version)
     const marketplace = JSON.parse(
       readFileSync(resolve(root, '.claude-plugin/marketplace.json'), 'utf8')
     )

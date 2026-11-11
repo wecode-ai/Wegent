@@ -1044,7 +1044,7 @@ describe('SmartAppsMarketplacePage', () => {
     const viewMarketplaceButton = screen.getByTestId('smart-app-access-view-marketplace')
     expect(viewMarketplaceButton).toHaveClass('border-success/30', 'bg-background', 'shadow-sm')
     fireEvent.click(viewMarketplaceButton)
-    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
+    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app&view=marketplace')
     expect(screen.queryByTestId('smart-app-access-success')).not.toBeInTheDocument()
   })
 

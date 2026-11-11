@@ -6569,6 +6569,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(screen.getByTestId('smart-app-development-preview-starting')).toBeInTheDocument()
     )
+    const developmentPreview = screen.getByTestId('smart-app-development-preview')
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
 
@@ -6583,7 +6584,15 @@ describe('DesktopWorkbenchLayout', () => {
       start.resolve(running)
       await start.promise
     })
-    await waitFor(() => expect(harnessAppTabMocks.register).toHaveBeenCalledWith(running))
+    await waitFor(
+      () =>
+        expect(within(developmentPreview).getByTestId('workspace-browser-frame')).toHaveAttribute(
+          'src',
+          running.webUrl
+        ),
+      { container: developmentPreview }
+    )
+    expect(harnessAppTabMocks.register).not.toHaveBeenCalled()
     expect(embeddedBrowserMocks.setEmbeddedBrowserActiveTab).not.toHaveBeenCalled()
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)

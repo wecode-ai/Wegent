@@ -1487,7 +1487,7 @@ export function SmartAppsMarketplacePage({
               variant="outline"
               className="shrink-0 border-success/30 bg-background text-text-primary shadow-sm hover:bg-success/10"
               data-testid="smart-app-access-view-marketplace"
-              onClick={() => navigateFromSmartApps('/sites?app_type=smart_app')}
+              onClick={() => navigateFromSmartApps('/sites?app_type=smart_app&view=marketplace')}
             >
               {t('workbench.smart_apps_view_marketplace', '去市场查看')}
             </Button>
