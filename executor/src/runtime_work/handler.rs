@@ -774,13 +774,21 @@ impl RuntimeThreadEventRoute {
 
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
-        Self::with_optional_event_sender(device_id, codex_binary, None)
+        Self::with_optional_event_sender(
+            device_id,
+            codex_binary,
+            None,
+            Arc::new(Mutex::new(None)),
+            None,
+        )
     }
 
     fn with_optional_event_sender(
         device_id: impl Into<String>,
         codex_binary: impl Into<String>,
         event_tx: Option<broadcast::Sender<Value>>,
+        backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+        backend_device_route: Option<Arc<Mutex<Option<String>>>>,
     ) -> Self {
         let codex_binary = codex_binary.into();
         let device_id = normalize_device_id(device_id.into());
@@ -959,8 +967,8 @@ impl RuntimeWorkRpcHandler {
                 crate::hooks::registry::HookRegistryStore::from_env(),
                 crate::agents::wework_codex_home(),
             ),
-            backend_connection: Arc::new(Mutex::new(None)),
-            backend_device_route: None,
+            backend_connection,
+            backend_device_route,
         };
         for (local_task_id, turn) in handler
             .active_goal_turns
@@ -994,8 +1002,29 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
-        let handler =
-            Self::with_event_sender_deferred_startup_recovery(device_id, codex_binary, event_tx);
+        Self::with_event_sender_and_backend_connection(
+            device_id,
+            codex_binary,
+            event_tx,
+            None,
+            None,
+        )
+    }
+
+    pub fn with_event_sender_and_backend_connection(
+        device_id: impl Into<String>,
+        codex_binary: impl Into<String>,
+        event_tx: broadcast::Sender<Value>,
+        backend_connection: Option<Arc<Mutex<Option<ConnectionConfig>>>>,
+        backend_device_route: Option<Arc<Mutex<Option<String>>>>,
+    ) -> Self {
+        let handler = Self::with_event_sender_deferred_startup_recovery(
+            device_id,
+            codex_binary,
+            event_tx,
+            backend_connection,
+            backend_device_route,
+        );
         handler
             .startup_recovery_deferred
             .store(false, Ordering::Release);
@@ -1007,8 +1036,17 @@ impl RuntimeWorkRpcHandler {
         device_id: impl Into<String>,
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
+        backend_connection: Option<Arc<Mutex<Option<ConnectionConfig>>>>,
+        backend_device_route: Option<Arc<Mutex<Option<String>>>>,
     ) -> Self {
-        let handler = Self::with_optional_event_sender(device_id, codex_binary, Some(event_tx));
+        let has_backend = backend_connection.is_some();
+        let handler = Self::with_optional_event_sender(
+            device_id,
+            codex_binary,
+            Some(event_tx),
+            backend_connection.unwrap_or_else(|| Arc::new(Mutex::new(None))),
+            backend_device_route,
+        );
         if let Some(sender) = handler.event_tx.clone() {
             crate::task_runtime::mcp_http::register_runtime_event_sender(sender.clone());
             handler.hook_service.set_event_sender(sender);
@@ -1018,19 +1056,29 @@ impl RuntimeWorkRpcHandler {
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
         handler.start_local_issue_scheduler();
+        if has_backend {
+            handler.start_backend_services();
+        }
         handler
     }
 
+    #[cfg(test)]
     pub fn with_backend_device_route(mut self, route: Arc<Mutex<Option<String>>>) -> Self {
         self.backend_device_route = Some(route);
         self
     }
 
+    #[cfg(test)]
     pub fn with_backend_connection(
         mut self,
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        self.start_backend_services();
+        self
+    }
+
+    fn start_backend_services(&self) {
         crate::workbench_control::register(&self.device_id, Arc::new(self.clone()));
         self.start_local_stand_in_scheduler();
         self.start_connection_stand_in_scheduler();
@@ -1042,7 +1090,6 @@ impl RuntimeWorkRpcHandler {
             self.sync_stand_in_issue_replies(&link.local_task_id);
         }
         self.start_supervisor_scheduler();
-        self
     }
 
     /// Fill the request's backend connection fields from the executor's

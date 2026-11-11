@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { mcpElicitationConfigToml } from '../modules/desktop-build-flows.mjs'
 import {
+  assertElicitationToolResult,
   currentTurnHasToolOutput,
   currentTurnHasToolSearchResult,
   lastUserMessageBody,
@@ -305,12 +306,9 @@ function createPersistenceScenario({ resultDir, uiTimeoutMs, modelResponseTimeou
     modelRequestCount += 1
     const responseId = `wework-input-answer-${modelRequestCount}-${Date.now()}`
     if (currentTurnHasToolOutput(body, TOOL_CALL_ID)) {
-      assert.ok(
-        JSON.stringify(body).includes('E2E_MCP_ELICITATION_ACCEPTED:owner'),
-        'The real MCP server did not return the accepted audience to the model'
-      )
       const gate = activeContinuationGate
       assert.ok(gate, 'The terminal continuation arrived without a release gate')
+      assertElicitationToolResult(body, TOOL_CALL_ID, gate.cancelled === true)
       await gate.promise
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(
@@ -478,6 +476,8 @@ function createPersistenceScenario({ resultDir, uiTimeoutMs, modelResponseTimeou
 
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       const rejectionGate = deferred()
+      // Cancellation can return the real MCP result before turn interruption settles.
+      rejectionGate.cancelled = true
       activeContinuationGate = rejectionGate
       await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs, resultDir)
       const rejectionTask = await waitForWorkbenchDebugState(

@@ -1,3 +1,18 @@
+import assert from 'node:assert/strict'
+import { readMcpToolOutput } from './mcp-tool-results.mjs'
+
+export function assertElicitationToolResult(body, callId, cancelled) {
+  const text = readMcpToolOutput(body, callId)
+  if (cancelled) {
+    assert.deepEqual(JSON.parse(text), { action: 'cancel' })
+  } else {
+    assert.ok(
+      text.includes('E2E_MCP_ELICITATION_ACCEPTED:owner'),
+      'The real MCP server did not return the accepted audience to the model'
+    )
+  }
+}
+
 function isUserPrompt(item) {
   if (item?.role !== 'user') return false
   const content = typeof item.content === 'string' ? [{ text: item.content }] : item.content

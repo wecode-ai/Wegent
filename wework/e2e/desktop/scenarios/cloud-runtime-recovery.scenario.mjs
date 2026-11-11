@@ -160,6 +160,11 @@ export function createDesktopScenario(options) {
           '1',
           'Recovery duplicated the original user message'
         )
+        assert.equal(
+          Number(await control.command('getElementCount', ASSISTANT)),
+          1,
+          'Recovery duplicated the assistant message'
+        )
         assert.equal(control.readyCount, readyCount, 'Cloud recovery required a renderer reload')
       } finally {
         finishModel?.()
