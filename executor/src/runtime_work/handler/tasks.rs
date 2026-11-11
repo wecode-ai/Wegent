@@ -1349,14 +1349,7 @@ impl RuntimeWorkRpcHandler {
         }
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         // Only the saved creation request identifies recoverable native threads.
-        request.extra.remove("persist_runtime_thread");
-        if let Some(link) = link_for_send {
-            request.ephemeral |= link.ephemeral;
-            if link.ephemeral && !runtime_task_uses_ephemeral_codex_thread(link) {
-                request.persist_runtime_thread();
-            }
-        }
-        let ephemeral = request.uses_ephemeral_codex_thread();
+        let ephemeral = retain_codex_thread_persistence(&mut request, link_for_send);
 
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -1652,20 +1645,33 @@ impl RuntimeWorkRpcHandler {
         }
         log_executor_event("runtime work message edit prepared", &fields);
 
-        let ephemeral = existing_link.ephemeral || request.ephemeral;
-        let paginated_history = if ephemeral {
+        let uses_ephemeral_codex_thread =
+            retain_codex_thread_persistence(&mut request, Some(&existing_link));
+        let thread_client = self
+            .codex_app_server
+            .for_request(&runtime_event_request_from_link(&existing_link))
+            .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let paginated_history = if uses_ephemeral_codex_thread {
             false
         } else {
-            self.codex_thread_uses_paginated_history(&thread_id).await?
+            self.codex_thread_uses_paginated_history(&thread_client, &thread_id)
+                .await?
         };
 
         let reverted = if paginated_history {
+            self.resume_codex_thread_with_client(&thread_client, &existing_link, &thread_id)
+                .await
+                .map_err(|error| AppIpcError::new("thread_resume_failed", error))?;
             Some(
-                self.revert_codex_thread_for_prompt_edit(&thread_id, &source_turn_id)
-                    .await?,
+                self.revert_codex_thread_for_prompt_edit(
+                    &thread_client,
+                    &thread_id,
+                    &source_turn_id,
+                )
+                .await?,
             )
         } else {
-            let reason = if ephemeral {
+            let reason = if uses_ephemeral_codex_thread {
                 "ephemeral"
             } else {
                 "legacy_history"
@@ -1699,11 +1705,12 @@ impl RuntimeWorkRpcHandler {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &source_turn_id);
         }
 
-        let (direct_thread_id, resume_thread_id) = if paginated_history {
-            (Some(thread_id), None)
-        } else {
-            (None, Some(thread_id))
-        };
+        let (direct_thread_id, resume_thread_id) =
+            if paginated_history || uses_ephemeral_codex_thread {
+                (Some(thread_id), None)
+            } else {
+                (None, Some(thread_id))
+            };
         self.spawn_turn(SpawnTurnRequest {
             task_kind: None,
             local_task_id: local_task_id.clone(),
@@ -1729,10 +1736,10 @@ impl RuntimeWorkRpcHandler {
 
     async fn codex_thread_uses_paginated_history(
         &self,
+        client: &CodexAppServerClient,
         thread_id: &str,
     ) -> Result<bool, AppIpcError> {
-        let response = self
-            .codex_app_server
+        let response = client
             .request(
                 "thread/read",
                 json!({"threadId": thread_id, "includeTurns": false}),
@@ -1745,11 +1752,11 @@ impl RuntimeWorkRpcHandler {
 
     async fn revert_codex_thread_for_prompt_edit(
         &self,
+        client: &CodexAppServerClient,
         thread_id: &str,
         before_turn_id: &str,
     ) -> Result<CodexThreadRevertResult, AppIpcError> {
-        let response = self
-            .codex_app_server
+        let response = client
             .request(
                 "thread/revert",
                 json!({"threadId": thread_id, "beforeTurnId": before_turn_id}),
@@ -1762,6 +1769,7 @@ impl RuntimeWorkRpcHandler {
             .map(str::to_owned);
         let previous_turn_id = self
             .latest_retained_turn_id(
+                client,
                 thread_id,
                 response.get("turnsBackwardsCursor").and_then(Value::as_str),
             )
@@ -1836,12 +1844,12 @@ impl RuntimeWorkRpcHandler {
 
     async fn latest_retained_turn_id(
         &self,
+        client: &CodexAppServerClient,
         thread_id: &str,
         cursor: Option<&str>,
     ) -> Option<String> {
         let cursor = cursor?;
-        match self
-            .codex_app_server
+        match client
             .request(
                 "thread/turns/list",
                 json!({
@@ -2897,6 +2905,20 @@ fn superseded_turn_identities(link: &RuntimeTaskLink, turn_id: &str) -> Vec<Stri
 struct CodexThreadRevertResult {
     thread_path: Option<String>,
     previous_turn_id: Option<String>,
+}
+
+fn retain_codex_thread_persistence(
+    request: &mut ExecutionRequest,
+    link: Option<&RuntimeTaskLink>,
+) -> bool {
+    request.extra.remove("persist_runtime_thread");
+    if let Some(link) = link {
+        request.ephemeral |= link.ephemeral;
+        if link.ephemeral && !runtime_task_uses_ephemeral_codex_thread(link) {
+            request.persist_runtime_thread();
+        }
+    }
+    request.uses_ephemeral_codex_thread()
 }
 
 fn prune_reverted_turn_handle(

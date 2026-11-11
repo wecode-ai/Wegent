@@ -152,6 +152,24 @@ fn seed_persisted_runtime_task_at_workspace(
     thread_id: &str,
     workspace_path: &str,
 ) {
+    seed_runtime_task(
+        executor_home,
+        local_task_id,
+        thread_id,
+        workspace_path,
+        json!({"threadId": thread_id}),
+        false,
+    );
+}
+
+fn seed_runtime_task(
+    executor_home: &Path,
+    local_task_id: &str,
+    thread_id: &str,
+    workspace_path: &str,
+    runtime_handle: Value,
+    ephemeral: bool,
+) {
     let index_path = executor_home.join("runtime-work").join("index.json");
     fs::create_dir_all(index_path.parent().unwrap()).unwrap();
     fs::write(
@@ -168,9 +186,10 @@ fn seed_persisted_runtime_task_at_workspace(
                     "status": "active",
                     "running": false,
                     "continuable": true,
+                    "ephemeral": ephemeral,
                     "created_at": 1780000000000_i64,
                     "updated_at": 1780000060000_i64,
-                    "runtime_handle": {"threadId": thread_id},
+                    "runtime_handle": runtime_handle,
                     "parent": null
                 }
             },
@@ -4636,9 +4655,17 @@ async fn runtime_tasks_rollback_reverts_the_source_turn_before_the_replacement_t
         .expect("editing should revert the provider thread before the source turn");
     assert_eq!(revert["params"]["threadId"], "thread-1");
     assert_eq!(revert["params"]["beforeTurnId"], "turn-1");
+    let resume_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/resume")
+        .expect("editing must load the thread before reverting its history");
+    let revert_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/revert")
+        .expect("editing should revert the loaded thread");
     assert!(
-        calls.iter().all(|call| call["method"] != "thread/resume"),
-        "revert keeps the thread loaded; editing must not append to a stale resumed history"
+        resume_index < revert_index,
+        "revert must run only after thread/resume has loaded the thread"
     );
     let turn_start = calls
         .iter()
@@ -4706,6 +4733,215 @@ async fn runtime_tasks_rollback_keeps_replacement_turn_for_legacy_threads() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_rollback_reverts_persisted_temporary_threads() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-rollback-temporary-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-rollback-temporary-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_runtime_task(
+        &executor_home,
+        "temporary-task",
+        "thread-1",
+        "/tmp/project",
+        json!({
+            "threadId": "thread-1",
+            "executionRequest": {
+                "ephemeral": true,
+                "persist_runtime_thread": true
+            }
+        }),
+        true,
+    );
+    let log_path = temp_path("runtime-rollback-temporary-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    std::fs::write(format!("{}.paginated-thread", log_path.display()), "").unwrap();
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let rollback = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.rollback",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "taskId": "temporary-task",
+                    "runtimeHandle": {"threadId": "thread-1"}
+                },
+                "message": "edited temporary chat",
+                "messageId": "user-last",
+                "retrySourceTurnId": "turn-1",
+                "executionRequest": codex_execution_request(
+                    "edited temporary chat",
+                    "/tmp/project",
+                    "gpt-4.1"
+                )
+            }
+        }))
+        .await
+        .expect("editing a persisted temporary chat should be accepted");
+    assert_eq!(rollback["accepted"], true);
+
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+    let calls = read_json_lines(&log_path);
+    let resume_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/resume")
+        .expect("editing a persisted temporary chat must load its native thread");
+    let revert_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/revert")
+        .expect("persisted temporary history must be reverted instead of appended");
+    assert!(resume_index < revert_index);
+}
+
+#[tokio::test]
+async fn runtime_tasks_rollback_keeps_ephemeral_threads_direct() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-rollback-ephemeral-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-rollback-ephemeral-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_runtime_task(
+        &executor_home,
+        "ephemeral-task",
+        "thread-1",
+        "/tmp/project",
+        json!({
+            "threadId": "thread-1",
+            "executionRequest": {
+                "ephemeral": true
+            }
+        }),
+        true,
+    );
+    let log_path = temp_path("runtime-rollback-ephemeral-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let rollback = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.rollback",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "taskId": "ephemeral-task",
+                    "runtimeHandle": {"threadId": "thread-1"}
+                },
+                "message": "edited ephemeral chat",
+                "messageId": "user-last",
+                "retrySourceTurnId": "turn-1",
+                "executionRequest": codex_execution_request(
+                    "edited ephemeral chat",
+                    "/tmp/project",
+                    "gpt-4.1"
+                )
+            }
+        }))
+        .await
+        .expect("editing an ephemeral chat should be accepted");
+    assert_eq!(rollback["accepted"], true);
+
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+    let calls = read_json_lines(&log_path);
+    assert!(
+        calls.iter().all(|call| call["method"] != "thread/revert"),
+        "ephemeral threads do not support thread/revert"
+    );
+    assert!(
+        calls.iter().all(|call| call["method"] != "thread/resume"),
+        "ephemeral edits must keep the loaded thread direct"
+    );
+    let turn_start = calls
+        .iter()
+        .find(|call| call["method"] == "turn/start")
+        .expect("ephemeral editing should start the replacement turn");
+    assert_eq!(turn_start["params"]["threadId"], "thread-1");
+}
+
+#[tokio::test]
+async fn runtime_tasks_rollback_uses_the_task_agent_home() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-rollback-agent-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let workbench_home = temp_path("runtime-rollback-workbench-home", "dir");
+    let _workbench_home = EnvGuard::set(
+        "WEGENT_WORKBENCH_HOME",
+        &workbench_home.display().to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-rollback-agent-default-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_runtime_task(
+        &executor_home,
+        "agent-home-task",
+        "thread-1",
+        "/tmp/project",
+        json!({
+            "threadId": "thread-1",
+            "executionRequest": {
+                "bot": [{"id": 42, "shell_type": "codex"}],
+                "team_id": 7,
+                "team_namespace": "default",
+                "team_name": "assistant",
+                "user_name": "alice"
+            }
+        }),
+        false,
+    );
+    let log_path = temp_path("runtime-rollback-agent-home-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    std::fs::write(format!("{}.paginated-thread", log_path.display()), "").unwrap();
+    let expected_home = workbench_home.join("agents/alice/default/assistant");
+    std::fs::write(
+        format!("{}.expected-home", log_path.display()),
+        expected_home.display().to_string(),
+    )
+    .unwrap();
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let rollback = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.rollback",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "taskId": "agent-home-task",
+                    "runtimeHandle": {"threadId": "thread-1"}
+                },
+                "message": "edited in the named agent home",
+                "messageId": "user-last",
+                "retrySourceTurnId": "turn-1",
+                "executionRequest": codex_execution_request(
+                    "edited in the named agent home",
+                    "/tmp/project",
+                    "gpt-4.1"
+                )
+            }
+        }))
+        .await
+        .expect("editing should use the task's named agent home");
+    assert_eq!(rollback["accepted"], true);
+
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+    let calls = read_json_lines(&log_path);
+    assert!(calls.iter().any(|call| call["method"] == "thread/revert"));
+}
+
+#[tokio::test]
 async fn runtime_tasks_rollback_does_not_send_after_a_failed_revert() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -4768,6 +5004,7 @@ LOG_PATH='{}'
 turn_count=0
 active_thread_id=thread-1
 reverted=0
+thread_loaded=0
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -4781,6 +5018,10 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/read"'*)
+      if [ -f "$LOG_PATH.expected-home" ] && [ "${{CODEX_HOME:-}}" != "$(cat "$LOG_PATH.expected-home")" ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32603,"message":"thread/read used the wrong Codex home"}}}}'
+        continue
+      fi
       case "$line" in
         *'"threadId":"thread-fork-1"'*)
           if [ -f "$LOG_PATH.fail-fork-read" ]; then
@@ -4806,6 +5047,7 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"first turn"}}]}}}},{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/start"'*)
+      thread_loaded=1
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"thread/unsubscribe"'*)
@@ -4814,6 +5056,10 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/resume"'*)
+      if [ -f "$LOG_PATH.expected-home" ] && [ "${{CODEX_HOME:-}}" != "$(cat "$LOG_PATH.expected-home")" ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32603,"message":"thread/resume used the wrong Codex home"}}}}'
+        continue
+      fi
       case "$line" in
         *'"threadId":"thread-fork-1"'*)
           active_thread_id=thread-fork-1
@@ -4822,9 +5068,11 @@ while IFS= read -r line; do
           active_thread_id=thread-1
           ;;
       esac
+      thread_loaded=1
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"'"$active_thread_id"'"}}}}}}'
       ;;
     *'"method":"thread/fork"'*)
+      thread_loaded=1
       case "$line" in
         *'"lastTurnId":"missing-turn"'*)
           printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32602,"message":"fork turn was not found"}}}}'
@@ -4855,6 +5103,14 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"thread/revert"'*)
+      if [ -f "$LOG_PATH.expected-home" ] && [ "${{CODEX_HOME:-}}" != "$(cat "$LOG_PATH.expected-home")" ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32603,"message":"thread/revert used the wrong Codex home"}}}}'
+        continue
+      fi
+      if [ "$thread_loaded" -eq 0 ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32603,"message":"thread not loaded: thread-1"}}}}'
+        continue
+      fi
       if [ -f "$LOG_PATH.fail-revert" ]; then
         printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32603,"message":"revert failed"}}}}'
         continue

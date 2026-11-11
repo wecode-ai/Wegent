@@ -1573,7 +1573,7 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
   await captureVerificationScreenshot(control, 'queue-management-03-dialog-paths.png')
 }
 
-async function verifyLastUserMessageEdit({ composerSelector, control }) {
+async function verifyLastUserMessageEdit({ composerSelector, control, restartDesktopApp }) {
   control.setScenario('message_edit')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -1604,6 +1604,24 @@ async function verifyLastUserMessageEdit({ composerSelector, control }) {
     MESSAGE_EDIT_ORIGINAL_PROMPT,
     'Clicking the user-message copy button did not copy the visible message text'
   )
+
+  const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const taskId = debugSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(taskId, 'The message-edit fixture did not expose its runtime task ID')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await restartDesktopApp()
+  await control.command('focusMainWindow', 'body')
+  await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
+  await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 
   await control.command(
     'hover',
