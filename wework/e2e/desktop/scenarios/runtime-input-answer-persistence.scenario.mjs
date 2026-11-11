@@ -8,6 +8,7 @@ import { mcpElicitationConfigToml } from '../modules/desktop-build-flows.mjs'
 import {
   currentTurnHasToolOutput,
   currentTurnHasToolSearchResult,
+  lastUserMessageBody,
 } from '../modules/runtime-input-answer-model.mjs'
 import {
   assistantMessage,
@@ -48,15 +49,6 @@ function deferred() {
     resolve = resolvePromise
   })
   return { promise, resolve }
-}
-
-function lastUserMessageBody(body) {
-  const input = Array.isArray(body.input) ? body.input : []
-  for (let index = input.length - 1; index >= 0; index -= 1) {
-    if (input[index]?.role === 'user') return JSON.stringify(input[index])
-  }
-  const messages = Array.isArray(body.messages) ? body.messages : []
-  return messages.length > 0 ? JSON.stringify(messages.at(-1)) : ''
 }
 
 function hasAcceptedQuestionAnswer(messages) {

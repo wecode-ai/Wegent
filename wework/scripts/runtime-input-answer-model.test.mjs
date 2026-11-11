@@ -4,11 +4,42 @@ import test from 'node:test'
 import {
   currentTurnHasToolOutput,
   currentTurnHasToolSearchResult,
+  lastUserMessageBody,
 } from '../e2e/desktop/modules/runtime-input-answer-model.mjs'
 
 const callId = 'input-answer-call'
 const userMessage = { type: 'message', role: 'user', content: 'new prompt' }
 const toolOutput = { type: 'function_call_output', call_id: callId, output: '{}' }
+
+test('a native date-context update does not begin a new user turn', () => {
+  const environment = {
+    type: 'message',
+    role: 'user',
+    content: [
+      {
+        type: 'input_text',
+        text: '<environment_context>\n  <current_date>2026-11-11</current_date>\n</environment_context>',
+      },
+    ],
+  }
+  const input = [
+    userMessage,
+    toolOutput,
+    { type: 'tool_search_output', tools: [{ name: 'sites' }] },
+    environment,
+  ]
+  assert.equal(currentTurnHasToolOutput({ input }, callId), true)
+  assert.equal(currentTurnHasToolSearchResult({ input }, 'sites'), true)
+  assert.equal(lastUserMessageBody({ input }), JSON.stringify(userMessage))
+  assert.equal(lastUserMessageBody({ messages: input }), JSON.stringify(userMessage))
+  assert.equal(
+    currentTurnHasToolOutput(
+      { input: [...input, { ...userMessage, content: 'actual next prompt' }] },
+      callId
+    ),
+    false
+  )
+})
 
 test('ignores a tool output inherited from an earlier thread turn', () => {
   assert.equal(
