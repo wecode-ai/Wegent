@@ -1650,37 +1650,31 @@ export function createWorkbenchCapabilityRouter(
     return services.invoke(stringParam(params, 'method'), params.params ?? {})
   })
   router.register('dshCapture.capabilities', () => ({
-    available: Boolean(
-      services?.visible() ||
-      (browser && ownerLabel && browser.has(ownerLabel) && browser.state(ownerLabel).visible)
-    ),
+    available: services
+      ? services.visible()
+      : Boolean(
+          browser && ownerLabel && browser.has(ownerLabel) && browser.state(ownerLabel).visible
+        ),
   }))
   router.register('dshCapture.ownerRect', async params => {
-    const window = services?.window()
-    const contents = services?.contents()
-    if (
-      services?.visible() &&
-      window &&
-      !window.isDestroyed() &&
-      window.isVisible() &&
-      contents &&
-      !contents.isDestroyed()
-    )
+    if (services) {
+      if (!services.visible()) throw hiddenOwnerCapture()
+      const window = services.window()
+      const contents = services.contents()
+      if (!window || window.isDestroyed() || !contents || contents.isDestroyed())
+        throw unavailableOwnerCapture()
+      if (!window.isVisible()) throw hiddenOwnerCapture()
       return {
         dataUrl: await captureWebContentsDataUrl(contents, {
           rect: ownerCaptureRectParam(params),
           preferDebugger: true,
         }),
       }
+    }
     if (!browser || !ownerLabel || !browser.has(ownerLabel)) {
       throw unavailableOwnerCapture()
     }
-    if (!browser.state(ownerLabel).visible) {
-      throw new HostCapabilityError(
-        'owner_view_hidden',
-        'The Smart App view is not visible for capture'
-      )
-    }
+    if (!browser.state(ownerLabel).visible) throw hiddenOwnerCapture()
     const rect = ownerCaptureRectParam(params)
     return {
       dataUrl: await browser.capture(ownerLabel, rect, {
@@ -1699,6 +1693,13 @@ export function createWorkbenchCapabilityRouter(
     'deviceDiagnostics.microphone',
   ])
   return router
+}
+
+function hiddenOwnerCapture(): HostCapabilityError {
+  return new HostCapabilityError(
+    'owner_view_hidden',
+    'The Smart App view is not visible for capture'
+  )
 }
 
 function unavailableOwnerCapture(): HostCapabilityError {

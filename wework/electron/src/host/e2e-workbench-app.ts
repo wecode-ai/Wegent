@@ -9,6 +9,7 @@ const STEP_TIMEOUT_MS = 10_000
 interface WorkbenchControlHost extends WorkbenchService {
   windowForId(id: string): BrowserWindow | null
   contentsForId(id: string): WebContents | null
+  isViewVisible(id: string): boolean
 }
 
 export async function controlWorkbenchApp(
@@ -50,7 +51,7 @@ export async function controlWorkbenchApp(
   if (params.action === 'snapshot') {
     return {
       running: installation?.state === 'running',
-      visible: installation?.visible ?? false,
+      visible: host.isViewVisible(params.id),
       url: available ? contents.getURL() : null,
       contentsId: available ? contents.id : null,
       presentation: installation?.presentation ?? null,

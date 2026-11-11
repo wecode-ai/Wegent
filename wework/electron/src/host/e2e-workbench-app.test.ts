@@ -259,6 +259,7 @@ describe('isolated workbench E2E controls', () => {
     const host = {
       windowForId: vi.fn(() => null),
       contentsForId: vi.fn(() => null),
+      isViewVisible: vi.fn(() => false),
       list: vi.fn(async () => []),
     }
     await expect(
@@ -271,6 +272,33 @@ describe('isolated workbench E2E controls', () => {
       presentation: null,
       sdkAvailable: false,
     })
+  })
+
+  it('reports actual Host surface visibility while the installation still has an open tab', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    vi.stubEnv('WEWORK_E2E_CONTROL_URL', 'http://127.0.0.1:1234')
+    vi.mocked(evaluateWorkbenchPage).mockResolvedValue(true)
+    const contents = { id: 12, isDestroyed: () => false, getURL: () => 'http://127.0.0.1:9001/' }
+    const host = {
+      windowForId: () => null,
+      contentsForId: () => contents,
+      isViewVisible: vi.fn(() => false),
+      list: async () => [{ id: 'todo', state: 'running', visible: true, presentation: 'tab' }],
+    }
+    for (const visible of [false, true, false]) {
+      host.isViewVisible.mockReturnValue(visible)
+      await expect(
+        controlWorkbenchApp(host as never, { action: 'snapshot', id: 'todo' }, vi.fn())
+      ).resolves.toEqual({
+        running: true,
+        visible,
+        url: 'http://127.0.0.1:9001/',
+        contentsId: 12,
+        presentation: 'tab',
+        sdkAvailable: true,
+      })
+      expect(host.isViewVisible).toHaveBeenLastCalledWith('todo')
+    }
   })
 
   it('captures the Host contents and scopes saved page state to the E2E namespace', async () => {

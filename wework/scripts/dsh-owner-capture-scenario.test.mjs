@@ -8,17 +8,26 @@ import { onTestFinished, test } from 'vitest'
 import { createDesktopScenario } from '../e2e/desktop/scenarios/dsh-owner-capture.scenario.mjs'
 
 // Protocol coverage only; the registered desktop checkpoint retains real Electron and DSH.
-async function fixture({ cancelledInstallation = false, rejectConfiguration = false } = {}) {
+async function fixture({
+  cancelledInstallation = false,
+  rejectConfiguration = false,
+  rejectSnapshot = false,
+  replaceContentsOnRestore = false,
+} = {}) {
   const resultDir = await mkdtemp(join(tmpdir(), 'dsh-owner-capture-protocol-'))
   onTestFinished(() => rm(resultDir, { recursive: true, force: true }))
   const creation = Promise.withResolvers()
   const events = []
+  const snapshots = []
   const id = 'capture-owner'
   let creating = false
   let approved = false
   let presentation = 'window'
   let started = false
-  let visible = true
+  let visible = false
+  let requestedVisible = true
+  let visibilityPending = false
+  let ready = false
   const response = (result, error) =>
     JSON.stringify({
       status: error ? 400 : 200,
@@ -30,6 +39,32 @@ async function fixture({ cancelledInstallation = false, rejectConfiguration = fa
       if (action === 'getLocationOrigin') return 'http://127.0.0.1:9000'
       if (action === 'workbenchApp') {
         const request = JSON.parse(options.value)
+        if (request.action === 'snapshot') {
+          assert.equal(request.id, id)
+          assert.equal(started, true)
+          if (rejectSnapshot) throw new Error('Host snapshot unavailable')
+          if (snapshots.length === 3)
+            assert.ok(
+              events.includes('capture:invalid'),
+              'Loaded extended DSH must not wait for a lightweight SDK'
+            )
+          const starting = snapshots.length < 3
+          // The owner tab remains open; its native surface follows selection asynchronously.
+          if (starting) visible = snapshots.length !== 1
+          else if (visibilityPending) visibilityPending = false
+          else visible = requestedVisible
+          const state = {
+            running: true,
+            visible,
+            url: snapshots.length === 0 ? 'about:blank' : 'http://127.0.0.1:9001/',
+            contentsId: replaceContentsOnRestore && visible && !starting ? 8 : 7,
+            presentation,
+            sdkAvailable: false,
+          }
+          ready ||= state.url.startsWith('http:') && state.visible
+          snapshots.push(state)
+          return JSON.stringify(state)
+        }
         assert.equal(request.action, 'installation')
         assert.equal(creating, true, 'Creation must remain pending while confirmation is handled')
         if (request.choice === undefined) {
@@ -56,6 +91,7 @@ async function fixture({ cancelledInstallation = false, rejectConfiguration = fa
         if (capability === 'smartApps.createDirectory') {
           assert.equal(params.parentPath, resultDir)
           assert.equal(params.template, 'web')
+          assert.equal(Object.hasOwn(params, 'flavor'), false, 'Keep extended DSH coverage')
           creating = true
           events.push('creation:pending')
           return creation.promise
@@ -75,6 +111,9 @@ async function fixture({ cancelledInstallation = false, rejectConfiguration = fa
           return response(null)
         }
         assert.equal(started, true, 'Capture requires the launched workbench')
+        assert.equal(ready, true, 'Host HTTP page must be loaded and visible before diagnostics')
+        if (capability.startsWith('dshCapture.'))
+          assert.equal(new URL(request.url).origin, 'http://127.0.0.1:9001')
         if (capability === 'deviceDiagnostics.microphone') {
           if (params.inputDeviceKind === 'default')
             return response(null, { code: 'invalid_params' })
@@ -111,8 +150,6 @@ async function fixture({ cancelledInstallation = false, rejectConfiguration = fa
       if (action === 'getAttribute') {
         if (options.value === 'aria-checked') return 'true'
         if (options.value === 'data-testid') return 'workspace-tab-select-initial'
-        if (options.value === 'data-src') return 'http://127.0.0.1:9001/'
-        if (options.value === 'data-embedded-browser-label') return `smart-app:${id}`
         assert.equal(options.value, 'data-workspace-tab-id')
         return `harness-${id}`
       }
@@ -125,25 +162,27 @@ async function fixture({ cancelledInstallation = false, rejectConfiguration = fa
       }
       if (action === 'click') {
         assert.ok(selector.includes('workspace-tab-select-'))
-        visible = selector.includes(`harness-${id}`)
+        requestedVisible = selector.includes(`harness-${id}`)
+        visibilityPending = true
         return ''
       }
-      if (action === 'getEmbeddedBrowserPageState')
-        return JSON.stringify({ visible, url: 'http://127.0.0.1:9001/', isLoading: false })
-      if (action === 'waitFor' && selector.includes('app-iframe')) assert.equal(started, true)
-      else assert.ok(['navigate', 'waitFor', 'select'].includes(action), action)
+      if (action === 'waitFor' && selector.includes('app-iframe')) {
+        assert.equal(ready, true, 'Wait for the Host page before reading its layout placeholder')
+        assert.equal(Object.hasOwn(options, 'timeoutMs'), false)
+      } else assert.ok(['navigate', 'waitFor', 'select'].includes(action), action)
       return ''
     },
   }
   return {
     events,
+    snapshots,
     resultDir,
     run: () => createDesktopScenario({ resultDir, uiTimeoutMs: 1000 }).verify(control),
   }
 }
 
-test('accepts the pending native installation, selects tab presentation, and preserves capture rejection and recovery', async () => {
-  const { run, events, resultDir } = await fixture()
+test('captures extended DSH without a lightweight SDK after native installation and tab readiness', async () => {
+  const { run, events, snapshots, resultDir } = await fixture()
   await run()
   assert.deepEqual(events, [
     'creation:pending',
@@ -159,6 +198,18 @@ test('accepts the pending native installation, selects tab presentation, and pre
     'stop',
     'delete',
   ])
+  assert.deepEqual(
+    snapshots.map(state => [state.url, state.sdkAvailable, state.visible]),
+    [
+      ['about:blank', false, true],
+      ['http://127.0.0.1:9001/', false, false],
+      ['http://127.0.0.1:9001/', false, true],
+      ['http://127.0.0.1:9001/', false, true],
+      ['http://127.0.0.1:9001/', false, false],
+      ['http://127.0.0.1:9001/', false, false],
+      ['http://127.0.0.1:9001/', false, true],
+    ]
+  )
   const result = JSON.parse(await readFile(join(resultDir, 'dsh-owner-capture.json'), 'utf8'))
   assert.equal(result.captured, true)
   assert.equal(result.invalidRejected, true)
@@ -188,4 +239,17 @@ test('fails tab configuration without launching a window and still removes the f
     events.some(event => event.startsWith('capture:')),
     false
   )
+})
+
+test('cleans up when the Host page cannot be inspected', async () => {
+  const { run, events } = await fixture({ rejectSnapshot: true })
+  await assert.rejects(run(), /Host snapshot unavailable/)
+  assert.deepEqual(events.slice(-3), ['start:tab', 'stop', 'delete'])
+})
+
+test('rejects capture recovery from a replacement page and still cleans up', async () => {
+  const { run, events } = await fixture({ replaceContentsOnRestore: true })
+  await assert.rejects(run(), /Host-owned workbench contents changed/)
+  assert.deepEqual(events.slice(-2), ['stop', 'delete'])
+  assert.equal(events.filter(event => event === 'capture:visible').length, 1)
 })
