@@ -22,9 +22,11 @@ export interface RuntimeInteractionsValue {
   history: InteractionHistory[]
   errors: Record<string, string>
   drafts: Record<string, string>
+  replyDrafts: InteractionReplyDraft[]
   busy: ReadonlySet<string>
   loading: boolean
   setDraft: (id: string, text: string) => void
+  discardDraft: (id: string) => Promise<boolean>
   respond: (
     item: RuntimeInteraction,
     answer: string,
@@ -36,6 +38,12 @@ export interface RuntimeInteractionsValue {
   notice: RuntimeInteraction | null
   dismissNotice: () => void
   registerView: (owner: string, id: string | null) => void
+}
+
+export interface InteractionReplyDraft {
+  text: string
+  interaction: InteractionHistory
+  nativeReplyIds: string[]
 }
 
 export const RuntimeInteractionsContext = createContext<RuntimeInteractionsValue | null>(null)

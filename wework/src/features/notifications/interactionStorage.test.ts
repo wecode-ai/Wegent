@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import {
   archiveInteraction,
-  readInteractionDrafts,
+  readInteractionDraftState,
   readInteractionHistory,
   saveInteractionState,
 } from './interactionStorage'
@@ -112,7 +112,7 @@ it('rejects malformed persisted history and drafts without breaking the inbox', 
   localStorage.setItem('history', JSON.stringify([entry(1), null, { id: 'invalid' }]))
   localStorage.setItem('drafts', JSON.stringify({ valid: 'keep this', invalid: {}, null: null }))
   expect(readInteractionHistory('history')).toEqual([entry(1)])
-  expect(readInteractionDrafts('drafts')).toEqual({ valid: 'keep this' })
+  expect(readInteractionDraftState('drafts', 'history')).toEqual({ valid: 'keep this' })
   localStorage.setItem('history', '{}')
   expect(readInteractionHistory('history')).toEqual([])
 })
@@ -125,6 +125,35 @@ it('keeps the newest 100 responses stable when old transcripts are repeatedly re
   expect(next).toHaveLength(100)
   expect(next[0].id).toBe('102')
   expect(next.at(-1)?.id).toBe('3')
+})
+
+it('restores recovery metadata independently of bounded history and upgrades existing string drafts', () => {
+  const interaction = entry(1)
+  const recovery = { text: 'Unsent text', interaction, nativeReplyIds: ['native-1'] }
+  saveInteractionState('drafts', { [interaction.id]: recovery, pending: 'Still editable' })
+  saveInteractionState(
+    'history',
+    Array.from({ length: 101 }, (_, i) => entry(i + 2))
+  )
+  expect(readInteractionHistory('history')).toHaveLength(100)
+  expect(readInteractionDraftState('drafts', 'history')).toEqual({
+    [interaction.id]: recovery,
+    pending: 'Still editable',
+  })
+  saveInteractionState('drafts', { [interaction.id]: 'Older draft' })
+  saveInteractionState('history', [interaction])
+  expect(readInteractionDraftState('drafts', 'history')).toEqual({
+    [interaction.id]: { text: 'Older draft', interaction, nativeReplyIds: [] },
+  })
+})
+
+it('rejects malformed recovery records and metadata for a different interaction', () => {
+  saveInteractionState('drafts', {
+    mismatched: { text: 'Wrong owner', interaction: entry(1), nativeReplyIds: [] },
+    invalid: { text: 'Missing metadata', nativeReplyIds: [] },
+    receipts: { text: 'Invalid receipts', interaction: entry(1), nativeReplyIds: [42] },
+  })
+  expect(readInteractionDraftState('drafts', 'history')).toEqual({})
 })
 
 it('keeps a storage quota failure from changing the accepted response outcome', () => {
