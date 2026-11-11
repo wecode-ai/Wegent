@@ -329,7 +329,9 @@ jobs:
           if-no-files-found: warn
 
       - name: Install Wework Electron dependencies
-        run: pnpm --dir wework/electron install --frozen-lockfile
+        run: |
+          pnpm --dir wework/electron install --frozen-lockfile
+          node -e 'require(require.resolve("electron", { paths: ["./wework/electron"] }))'
 
       - name: Synchronize desktop build version
         run: node wework/scripts/sync-desktop-release-version.mjs "${{ needs.prepare-release.outputs.version }}"
@@ -338,20 +340,24 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gnome-keyring libsecret-tools libglib2.0-bin
+          sudo apt-get install -y --no-install-recommends gnome-keyring libsecret-tools libglib2.0-bin x11-utils xvfb
           node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs
 
       - name: Verify native contracts before packaging
         shell: bash
         run: |
-          # Keep desktop probes exclusive while preserving their functional deadlines.
+          # Compile and validate the launcher before timed runtime probes; Node sorts test files.
           tests=(wework/scripts/build-launcher.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs wework/e2e/desktop/modules/release-startup-owner.test.mjs)
           if [[ "$RUNNER_OS" == Linux ]]; then
             sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
             sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
-            dbus-run-session -- xvfb-run -a node --test --test-concurrency=1 "${tests[@]}"
+            for test in "${tests[@]}"; do
+              dbus-run-session -- xvfb-run -a node --test "$test"
+            done
           else
-            node --test --test-concurrency=1 "${tests[@]}"
+            for test in "${tests[@]}"; do
+              node --test "$test"
+            done
           fi
           rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
           "$RUNNER_TEMP/wework-launcher-tests.exe"
