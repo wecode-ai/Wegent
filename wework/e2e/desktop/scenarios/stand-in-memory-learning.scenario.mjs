@@ -37,6 +37,18 @@ const PROMPTS = {
   absent: '现在还保存着我的周报顺序偏好吗？',
 }
 
+export function selectMemoryReviewModel(models) {
+  const model = models.find(
+    item =>
+      item.runtime === 'codex' &&
+      item.provider === MODEL_PROVIDER_ID &&
+      item.is_default === false &&
+      item.supported_reasoning_efforts?.includes('high')
+  )
+  assert.ok(model, 'Explicit memory review requires a non-default Codex model supporting high')
+  return model
+}
+
 function injectedMemories(body) {
   const context = (body.input ?? [])
     .map(item =>
@@ -279,13 +291,7 @@ export function createDesktopScenario({
         await captureScreenshot(control, 'memory-legacy-fingerprint-management.png')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-memory-close"]')
         const catalog = await rpc('runtime.runner.catalog', {})
-        const model = catalog.models.find(
-          item =>
-            item.runtime === 'codex' &&
-            item.provider === MODEL_PROVIDER_ID &&
-            item.is_default === false
-        )
-        assert.ok(model, 'Explicit memory review selection must differ from the native default')
+        const model = selectMemoryReviewModel(catalog.models)
         const settings = await rpc('runtime.stand_in.personal.get', { userId: USER })
         const savedSettings = await rpc('runtime.stand_in.personal.save', {
           userId: USER,

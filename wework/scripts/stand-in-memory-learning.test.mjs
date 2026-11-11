@@ -1,8 +1,41 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { loadDesktopCheckpointCatalog } from '../e2e/desktop/checkpoint-catalog.mjs'
-import { createDesktopScenario } from '../e2e/desktop/scenarios/stand-in-memory-learning.scenario.mjs'
+import {
+  createDesktopScenario,
+  selectMemoryReviewModel,
+} from '../e2e/desktop/scenarios/stand-in-memory-learning.scenario.mjs'
 import { assertMemoryReviewToolBoundary } from '../e2e/desktop/modules/stand-in-memory-consolidation.mjs'
+
+test('explicit memory review selects a non-default native model that supports high', () => {
+  const model = {
+    runtime: 'codex',
+    provider: 'wework-e2e',
+    model_id: 'gpt-6.1-sol',
+    is_default: false,
+    supported_reasoning_efforts: ['low', 'high', 'max'],
+  }
+  const unsupported = {
+    ...model,
+    model_id: 'gpt-5.6-sol',
+    default_reasoning_effort: 'none',
+    supported_reasoning_efforts: [],
+  }
+  assert.equal(selectMemoryReviewModel([unsupported, model]), model)
+  for (const candidate of [
+    unsupported,
+    { ...model, is_default: true },
+    { ...model, runtime: 'claude_code' },
+    { ...model, provider: 'openai' },
+    { ...model, supported_reasoning_efforts: undefined },
+  ]) {
+    assert.throws(
+      () => selectMemoryReviewModel([candidate]),
+      /non-default Codex model supporting high/
+    )
+  }
+  assert.throws(() => selectMemoryReviewModel([]), /non-default Codex model supporting high/)
+})
 
 test('memory review checks top-level and incremental tool definitions', () => {
   assertMemoryReviewToolBoundary({ tools: [{ name: 'mcp__wework_stand_in__next_memory_page' }] })

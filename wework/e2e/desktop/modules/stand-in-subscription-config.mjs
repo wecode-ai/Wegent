@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { requestExecutor } from './executor-rpc.mjs'
+import { requestExecutor, writeCodexModelConfig } from './executor-rpc.mjs'
 import { rejectModelWebSocketUpgrade } from './reject-model-upgrade.mjs'
 import { MODEL_PROVIDER_ID } from './shared.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
@@ -42,6 +42,7 @@ export function assertSubscriptionModelRequest(request, body, expectedModel = MO
 
 export function createSubscriptionConfigRegression() {
   let server
+  let configPath
   let accountChecks = 0
   let modelRequests = 0
   let implicitRequest
@@ -96,10 +97,10 @@ export function createSubscriptionConfigRegression() {
           last_refresh: new Date().toISOString(),
         })
       )
-      const path = join(codexHome, 'config.toml')
-      const config = await readFile(path, 'utf8')
+      configPath = join(codexHome, 'config.toml')
+      const config = await readFile(configPath, 'utf8')
       await writeFile(
-        path,
+        configPath,
         `openai_base_url = "${control.url}/backend-api/codex"\nchatgpt_base_url = "${bootstrap}"\n${config}`
       )
     },
@@ -125,15 +126,20 @@ export function createSubscriptionConfigRegression() {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       const native = (method, params) => rpc('runtime.codex.app_server.request', { method, params })
       const setCatalogConfig = (provider, model) =>
-        native('config/batchWrite', {
-          edits: [
-            { keyPath: 'model_provider', value: provider, mergeStrategy: 'replace' },
-            { keyPath: 'model', value: model, mergeStrategy: 'replace' },
-          ],
-          filePath: null,
-          expectedVersion: null,
-          reloadUserConfig: true,
-        })
+        writeCodexModelConfig(control, { provider, model }, uiTimeoutMs)
+      const readSavedModelConfig = async () => {
+        const result = await native('config/read', { includeLayers: true, cwd: null })
+        // Effective config includes the shared router's CLI provider override.
+        const users = result.layers.filter(
+          layer => layer.name.type === 'user' && layer.name.profile == null
+        )
+        assert.equal(users.length, 1, 'The isolated fixture must have one base user config layer')
+        assert.equal(users[0].name.file, configPath)
+        return {
+          model: users[0].config.model,
+          model_provider: users[0].config.model_provider,
+        }
+      }
       for (const initiatedBy of ['user', 'stand_in', null]) {
         const label = initiatedBy ?? 'direct'
         const issue = await rpc('todos.create', {
@@ -195,18 +201,34 @@ export function createSubscriptionConfigRegression() {
       let expectedDefault
       try {
         // The real subscription turns above establish ChatGPT authentication.
-        // Discover the official catalog, then restore the custom fixture provider.
-        await setCatalogConfig('openai', 'gpt-5.5')
-        const account = await native('account/read', { refreshToken: false })
+        // Measure the normal native default before configuring the retired model.
+        await setCatalogConfig('openai', null)
+        const account = await rpc('runtime.codex.auth.read', {})
         assert.equal(
           account.account,
           null,
           'The shared router must not be mistaken for the saved subscription account'
         )
+        const nativeDefaults = new Map()
         for (const includeHidden of [true, false]) {
-          const nativeCatalog = await native('model/list', { includeHidden })
-          const nativeDefault = nativeCatalog.data.find(model => model.isDefault && !model.hidden)
-          const nativeDefaultId = nativeDefault?.model ?? nativeDefault?.id
+          const nativeCatalog = await rpc('runtime.codex.models.list', { includeHidden })
+          const defaults = nativeCatalog.data.filter(
+            model =>
+              model.providerId === 'openai' &&
+              model.providerType === 'official' &&
+              model.isDefault &&
+              !model.hidden
+          )
+          assert.equal(
+            defaults.length,
+            1,
+            'The normal native catalog must have one visible default'
+          )
+          nativeDefaults.set(includeHidden, defaults[0].model ?? defaults[0].id)
+        }
+        await setCatalogConfig('openai', 'gpt-5.5')
+        for (const includeHidden of [true, false]) {
+          const nativeDefaultId = nativeDefaults.get(includeHidden)
           const catalog = await rpc('runtime.codex.models.list', { includeHidden })
           assert.ok(Array.isArray(catalog.data))
           const official = catalog.data.filter(
@@ -221,10 +243,10 @@ export function createSubscriptionConfigRegression() {
             official.some(model => (model.model ?? model.id) === MODEL),
             `ChatGPT catalog must retain ${MODEL} (includeHidden=${includeHidden})`
           )
-          expectedDefault =
-            official.find(
-              model => (model.model ?? model.id) === nativeDefaultId && !model.hidden
-            ) ?? official.find(model => !model.hidden)
+          expectedDefault = official.find(
+            model => (model.model ?? model.id) === nativeDefaultId && !model.hidden
+          )
+          assert.ok(expectedDefault, 'The normal native default must remain available')
           assert.deepEqual(
             official.filter(model => model.isDefault).map(model => model.model ?? model.id),
             [expectedDefault.model ?? expectedDefault.id],
@@ -252,9 +274,8 @@ export function createSubscriptionConfigRegression() {
         )
         const defaultModel = expectedDefault.model ?? expectedDefault.id
         assert.notEqual(defaultModel, 'gpt-5.5', 'The implicit native default must be available')
-        const savedConfig = await native('config/read', { includeLayers: false, cwd: null })
-        assert.equal(savedConfig.config.model, 'gpt-5.5')
-        assert.equal(savedConfig.config.model_provider, 'openai')
+        const savedConfig = await readSavedModelConfig()
+        assert.deepEqual(savedConfig, { model: 'gpt-5.5', model_provider: 'openai' })
         implicitRequest = { model: defaultModel, calls: 0 }
         const intent = implicitSubscriptionTask(userId, workspacePath)
         for (const key of ['modelSelection', 'modelId', 'modelOptions']) {
@@ -293,13 +314,11 @@ export function createSubscriptionConfigRegression() {
             ),
           'The real implicit task transcript must contain its request and the model service answer'
         )
-        const unchanged = await native('config/read', { includeLayers: false, cwd: null })
-        assert.equal(
-          unchanged.config.model,
-          'gpt-5.5',
-          'Execution must not rewrite the saved default'
+        assert.deepEqual(
+          await readSavedModelConfig(),
+          savedConfig,
+          'Execution must not rewrite the saved model or provider'
         )
-        assert.equal(unchanged.config.model_provider, 'openai')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
         await openStandInSettings(control)

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createCatalogScenario } from './stand-in-model-catalog.scenario.mjs'
-import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { requestExecutor, writeCodexModelConfig } from '../modules/executor-rpc.mjs'
 import { completedApiResourceTimings, until } from '../modules/plugin-regression-fixture.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
@@ -324,27 +324,19 @@ export function createDesktopScenario(options) {
       let primaryThreadId
       const nativeModels = (await rpc('runtime.runner.catalog', {})).models
       const native = nativeModels.find(
-        model => model.runtime === 'codex' && model.provider === 'wework-e2e'
+        model =>
+          model.runtime === 'codex' &&
+          model.provider === 'wework-e2e' &&
+          model.supported_reasoning_efforts?.includes('high')
       )
-      assert.ok(native, 'The isolated custom provider must be selectable')
+      assert.ok(native, 'The isolated custom provider must have a selectable model supporting high')
       const previousConfig = await rpc('runtime.codex.app_server.request', {
         method: 'config/read',
         params: { includeLayers: false, cwd: null },
       })
       assert.equal(typeof previousConfig.config.model, 'string')
       const setCatalogProvider = (provider, model = previousConfig.config.model) =>
-        rpc('runtime.codex.app_server.request', {
-          method: 'config/batchWrite',
-          params: {
-            edits: [
-              { keyPath: 'model_provider', value: provider, mergeStrategy: 'replace' },
-              { keyPath: 'model', value: model, mergeStrategy: 'replace' },
-            ],
-            filePath: null,
-            expectedVersion: null,
-            reloadUserConfig: true,
-          },
-        })
+        writeCodexModelConfig(control, { provider, model }, options.uiTimeoutMs)
       const cases = [
         {
           name: 'cloud',
