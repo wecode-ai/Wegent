@@ -118,7 +118,12 @@ async function waitForSettled(control, timeoutMs) {
   throw new Error('The recovered executor stream remained in a running state')
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  workspacePath,
+  resultDir,
+}) {
   let active = false
   let requestStartedResolve
   let releaseCompletionResolve
@@ -130,6 +135,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   })
 
   return {
+    appEnvironment: {
+      WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
+      WEWORK_E2E_RENDERER_CPU_PROFILE_INTERVAL_MS: '5000',
+    },
     async handleHttp(request, response, url) {
       if (!active || request.method !== 'POST') return false
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
