@@ -106,8 +106,8 @@ it('retains a late native reply when an earlier draft clear failed', async () =>
   await act(async () => context!.dismiss(item))
   expect(context!.pending).toHaveLength(0)
 
-  queue.send(item.id)
-  await waitFor(() => expect(queue.get()).toHaveLength(1))
+  await act(async () => queue.send(item.id))
+  expect(queue.get()).toHaveLength(1)
   expect(localStorage.getItem(prefix + 'drafts') ?? '').not.toContain('Recover from the host queue')
 
   write.mockRestore()
