@@ -1320,10 +1320,7 @@ function AppShell() {
             )}
           >
             {showChromeTitlebar && (
-              <ChromeTitlebar
-                showWorkspacePortals={activeAppKey !== 'wework'}
-                showFeedback={activeAppKey !== 'wework'}
-              />
+              <ChromeTitlebar showWorkspacePortals={activeAppKey !== 'wework'} />
             )}
             {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
             {isMainWindow && isElectron ? (
