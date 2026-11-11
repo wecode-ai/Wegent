@@ -5,6 +5,27 @@ import {
   readInteractionHistory,
   saveInteractionState,
 } from './interactionStorage'
+import {
+  interactionSource,
+  interactionOriginalScheme,
+  type RuntimeInteraction,
+} from './runtimeInteractions'
+
+export function interactionHistoryEntry(
+  item: RuntimeInteraction,
+  answeredAt: number
+): InteractionHistory {
+  return {
+    id: item.id,
+    source: interactionSource(item),
+    title: item.task.task.title,
+    question: item.question,
+    address: item.task.address,
+    originalUrl: interactionOriginalScheme(item),
+    sourceMessageIds: item.sourceMessageIds,
+    answeredAt,
+  }
+}
 
 /** Hold the account-scoped lock through queued storage and its durable acknowledgement. */
 export async function persistInteractionArchive(

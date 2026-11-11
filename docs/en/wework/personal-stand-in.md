@@ -4,6 +4,8 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
+In the Chinese interface, the **My stand-in** entry is labeled **我的助理**.
+
 ## Ongoing Issue collaboration
 
 Assigning an Issue or mentioning a member wakes their enabled, project-connected stand-ins that match its tags and allow automatic handling.

@@ -573,15 +573,11 @@ pub(super) async fn validate_model_access(
 
 /// `get_user_groups` for the group-model access check.
 async fn user_groups(state: &AppState, user: &UserRow) -> Result<Vec<String>, FastApiError> {
-    let erp = crate::teams::group_membership::ErpContext {
-        erp: state.erp.as_ref(),
-        redis: state.redis.as_ref(),
-    };
-    crate::skills::skills_unified::get_user_groups(
+    crate::permissions::user_groups(
         &state.mysql,
-        &erp,
-        &state.entity_resolvers,
-        user.id,
+        &state.entity_resolvers.for_execution(),
+        state.redis.as_ref(),
+        i64::from(user.id),
     )
     .await
     .map_err(|error| {

@@ -93,6 +93,7 @@ export const HOST_CAPABILITIES = [
   'e2e.closeMainWindow',
   'e2e.closeStartupSplash',
   'e2e.activateNotification',
+  'e2e.enqueueNotificationReply',
   'e2e.focusMainWindow',
   'e2e.focusWindow',
   'e2e.insertText',
