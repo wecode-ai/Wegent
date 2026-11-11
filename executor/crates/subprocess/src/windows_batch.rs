@@ -70,49 +70,58 @@ pub struct BatchTarget {
     pub prefix_args: Vec<String>,
 }
 
-/// Resolves an npm/node-style `.cmd`/`.bat` shim to its native executable.
+/// Resolves a provably equivalent npm/node-style `.cmd`/`.bat` shim to its
+/// native executable. Unknown or imperative wrappers return `None` so cmd.exe
+/// keeps ownership of their initialization and argument handling.
 ///
 /// Recognized shapes (all forward their original arguments via `%*`):
 ///
 /// - npm native shim: `"<dp0>\...\tool.exe" %*`
 /// - npm node shim: `"%_prog%" "<dp0>\...\tool.js" %*`
-/// - plain node shim: `node "C:\...\tool.js" %*`
+/// - plain node shim: `node [options] "C:\...\tool.js" %*`
 ///
-/// Returns `None` for imperative batch files that must run under cmd.exe.
+/// Node options and script arguments before `%*` are preserved verbatim.
 pub fn resolve_batch_target(program: &Path) -> Option<BatchTarget> {
     let content = fs::read_to_string(program).ok()?;
     let shim_dir = program.parent()?;
     let prog = resolve_prog_var(&content, shim_dir);
     content
         .lines()
-        .filter_map(|line| parse_shim_line(line.trim(), shim_dir, prog.as_deref()))
+        .filter_map(|line| launcher_expression(line.trim()))
+        .filter_map(|line| parse_shim_line(line, shim_dir, prog.as_deref()))
         .find(target_is_runnable)
-        .or_else(|| node_script_fallback(&content, shim_dir, prog.as_deref()))
 }
 
-/// Last-resort launcher for shims whose command shape the parser does not
-/// recognize but which still forward `%*` to an existing JavaScript entry.
-fn node_script_fallback(content: &str, shim_dir: &Path, prog: Option<&str>) -> Option<BatchTarget> {
-    for line in content.lines() {
-        let line = line.trim();
-        if !line.contains("%*") {
-            continue;
-        }
-        for token in split_quoted_tokens(line) {
-            let expanded = expand_dp0(&token, shim_dir, prog);
-            if is_script_path(&expanded) && Path::new(&expanded).is_file() {
-                let program = prog
-                    .map(PathBuf::from)
-                    .filter(|candidate| is_node_launcher(&candidate.to_string_lossy()))
-                    .unwrap_or_else(|| PathBuf::from("node"));
-                return Some(BatchTarget {
-                    program,
-                    prefix_args: vec![expanded],
-                });
-            }
+// npm's cmd-shim emits this exact guard before the real launcher. It gates the
+// `endLocal`/`title` bookkeeping, so the command after it is equivalent to the
+// shim itself. Any other compound command must stay under cmd.exe.
+const NPM_NODE_LAUNCHER_PREFIX: &str = "endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% &";
+
+fn launcher_expression(line: &str) -> Option<&str> {
+    if line.is_empty() {
+        return None;
+    }
+    if let Some(rest) = line.get(..NPM_NODE_LAUNCHER_PREFIX.len()) {
+        if rest.eq_ignore_ascii_case(NPM_NODE_LAUNCHER_PREFIX) {
+            return Some(line[NPM_NODE_LAUNCHER_PREFIX.len()..].trim());
         }
     }
-    None
+    if has_unquoted_operator(line) {
+        return None;
+    }
+    Some(line)
+}
+
+fn has_unquoted_operator(line: &str) -> bool {
+    let mut in_quotes = false;
+    for character in line.chars() {
+        match character {
+            '"' => in_quotes = !in_quotes,
+            '&' | '|' | '<' | '>' | '(' | ')' if !in_quotes => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn target_is_runnable(target: &BatchTarget) -> bool {
@@ -132,44 +141,33 @@ fn target_is_runnable(target: &BatchTarget) -> bool {
 fn parse_shim_line(line: &str, shim_dir: &Path, prog: Option<&str>) -> Option<BatchTarget> {
     // Only the launcher line forwards the original arguments through `%*`;
     // variable assignment lines (`SET "_prog=..."`) must be ignored.
-    if !line.contains("%*") {
-        return None;
-    }
     let tokens = split_quoted_tokens(line);
-    if tokens.is_empty() {
+    if tokens.len() < 2 || tokens.last().map(String::as_str) != Some("%*") {
         return None;
     }
-
-    // Launcher line: a quoted `<tool>.exe` (or bare `node`) optionally
-    // followed by a quoted `<script>.js`.
-    for (index, token) in tokens.iter().enumerate() {
-        let expanded = expand_dp0(token, shim_dir, prog);
-        if !is_executable_path(&expanded) && !is_node_launcher(&expanded) {
-            continue;
-        }
-        let mut prefix_args = Vec::new();
-        if is_node_launcher(&expanded) {
-            // npm shims may place node options between the launcher and script.
-            if let Some(script) = tokens
-                .iter()
-                .skip(index + 1)
-                .map(|token| expand_dp0(token, shim_dir, prog))
-                .find(|candidate| is_script_path(candidate) && Path::new(candidate).is_file())
-            {
-                prefix_args.push(script);
-            }
-        } else if let Some(next) = tokens.get(index + 1) {
-            let next_expanded = expand_dp0(next, shim_dir, prog);
-            if is_script_path(&next_expanded) {
-                prefix_args.push(next_expanded);
-            }
-        }
-        return Some(BatchTarget {
-            program: PathBuf::from(expanded),
-            prefix_args,
-        });
+    let launcher = expand_dp0(&tokens[0], shim_dir, prog);
+    if is_shell_launcher(&launcher) {
+        return None;
     }
-    None
+    let node_launcher = is_node_launcher(&launcher);
+    if !node_launcher && !is_executable_path(&launcher) {
+        return None;
+    }
+    let prefix_args = tokens[1..tokens.len() - 1]
+        .iter()
+        .map(|token| expand_dp0(token, shim_dir, prog))
+        .collect::<Vec<_>>();
+    if node_launcher
+        && !prefix_args
+            .iter()
+            .any(|argument| is_script_path(argument) && Path::new(argument).is_file())
+    {
+        return None;
+    }
+    Some(BatchTarget {
+        program: PathBuf::from(launcher),
+        prefix_args,
+    })
 }
 
 fn split_quoted_tokens(line: &str) -> Vec<String> {
@@ -275,6 +273,23 @@ fn is_node_launcher(token: &str) -> bool {
     token.eq_ignore_ascii_case("node") || token.eq_ignore_ascii_case("node.exe")
 }
 
+fn is_shell_launcher(token: &str) -> bool {
+    let name = Path::new(token)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(token);
+    [
+        "cmd",
+        "cmd.exe",
+        "powershell",
+        "powershell.exe",
+        "pwsh",
+        "pwsh.exe",
+    ]
+    .iter()
+    .any(|shell| name.eq_ignore_ascii_case(shell))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -354,12 +369,15 @@ mod tests {
         assert_eq!(target.program, node);
         assert_eq!(
             target.prefix_args,
-            vec![script.to_string_lossy().to_string()]
+            vec![
+                "--no-warnings".to_owned(),
+                script.to_string_lossy().to_string()
+            ]
         );
     }
 
     #[test]
-    fn falls_back_to_node_script_for_unrecognized_shim() {
+    fn keeps_unknown_wrapper_under_cmd() {
         let directory = tempdir().unwrap();
         let root = directory.path();
         let script = root.join("tool").join("cli.js");
@@ -371,12 +389,71 @@ mod tests {
             "@ECHO off\r\n\"%dp0%\\bootstrap.cmd\" \"%dp0%\\tool\\cli.js\" %*\r\n",
         );
 
+        assert!(script.is_file());
+        assert_eq!(resolve_batch_target(&shim), None);
+    }
+
+    #[test]
+    fn preserves_node_loader_options_and_the_real_entry() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        let register = root.join("register.js");
+        let entry = root.join("cli.js");
+        fs::write(&register, b"// register").unwrap();
+        fs::write(&entry, b"// entry").unwrap();
+        let node = binary(root, "node.exe");
+        let shim = write_shim(
+            root,
+            "tool.cmd",
+            "@ECHO off\r\n\"%dp0%\\node.exe\" --require \"%dp0%\\register.js\" \"%dp0%\\cli.js\" %*\r\n",
+        );
+
         let target = resolve_batch_target(&shim).unwrap();
-        assert_eq!(target.program, PathBuf::from("node"));
+        assert_eq!(target.program, node);
         assert_eq!(
             target.prefix_args,
-            vec![script.to_string_lossy().to_string()]
+            vec![
+                "--require".to_owned(),
+                register.to_string_lossy().to_string(),
+                entry.to_string_lossy().to_string(),
+            ]
         );
+    }
+
+    #[test]
+    fn preserves_native_launcher_arguments() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        let exe = binary(root, "tool.exe");
+        let shim = write_shim(
+            root,
+            "tool.cmd",
+            "@ECHO off\r\n\"%dp0%\\tool.exe\" --mode fast %*\r\n",
+        );
+
+        let target = resolve_batch_target(&shim).unwrap();
+        assert_eq!(target.program, exe);
+        assert_eq!(
+            target.prefix_args,
+            vec!["--mode".to_owned(), "fast".to_owned()]
+        );
+    }
+
+    #[test]
+    fn keeps_call_wrapper_under_cmd() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        let script = root.join("tool").join("cli.js");
+        fs::create_dir_all(script.parent().unwrap()).unwrap();
+        fs::write(&script, b"// script").unwrap();
+        let shim = write_shim(
+            root,
+            "tool.cmd",
+            "@ECHO off\r\ncall \"%dp0%\\bootstrap.cmd\" \"%dp0%\\tool\\cli.js\" %*\r\n",
+        );
+
+        assert!(script.is_file());
+        assert_eq!(resolve_batch_target(&shim), None);
     }
 
     #[test]
