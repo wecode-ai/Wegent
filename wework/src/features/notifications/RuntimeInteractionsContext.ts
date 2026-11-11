@@ -11,6 +11,7 @@ export interface InteractionHistory {
   originalUrl?: string
   sourceMessageIds?: string[]
   answeredAt: number
+  dismissed?: true
   resolvedIssueQuestion?: ValidatedIssueResolution
 }
 

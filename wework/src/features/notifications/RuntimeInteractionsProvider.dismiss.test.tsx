@@ -35,9 +35,9 @@ it('does not persist dismissal before its history lock is acquired', async () =>
     release()
     await completion
   })
-  expect(persist).toHaveBeenCalledWith(acceptanceKey, 'true')
+  expect(persist).toHaveBeenCalledWith(acceptanceKey, JSON.stringify('dismissed'))
   expect(historyAtAcceptance).toEqual([expect.objectContaining({ id: item.id })])
-  expect(localStorage.getItem(acceptanceKey)).toBe('true')
+  expect(localStorage.getItem(acceptanceKey)).toBe(JSON.stringify('dismissed'))
   expect(context!.history[0].id).toBe(item.id)
   expect(context!.pending).toHaveLength(0)
   expect(context!.busy.size).toBe(0)
@@ -59,11 +59,11 @@ it('archives project work without inventing a runtime task and retains it after 
   await act(async () => {
     await context!.dismiss(entry)
   })
-  expect(context!.history).toContainEqual(entry)
+  expect(context!.history).toContainEqual({ ...entry, dismissed: true })
   expect(context!.isDismissed?.(entry.id)).toBe(true)
   rendered.unmount()
   view()
-  await waitFor(() => expect(context!.history).toContainEqual(entry))
+  await waitFor(() => expect(context!.history).toContainEqual({ ...entry, dismissed: true }))
   expect(context!.isDismissed?.(entry.id)).toBe(true)
   expect(harness.send).not.toHaveBeenCalled()
 })
@@ -135,4 +135,58 @@ it('keeps dismissal pending when durable storage fails and allows recovery', asy
   expect(context!.pending).toHaveLength(0)
   expect(context!.history[0].id).toBe(item.id)
   expect(harness.send).not.toHaveBeenCalled()
+})
+
+it('keeps an authoritative pending Issue visible when native handled history exists', async () => {
+  const rendered = view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const native = context!.pending[0]
+  localStorage.setItem(
+    'wework.interactions:test:1:history',
+    JSON.stringify([
+      {
+        id: native.id,
+        title: native.task.task.title,
+        question: native.question,
+        address: native.task.address,
+        answeredAt: Date.now(),
+      },
+    ])
+  )
+  rendered.unmount()
+  const restarted = view()
+  const question = {
+    id: 'authoritative-pending',
+    project_id: 'project',
+    issue_id: 'ISSUE-1',
+    root_comment_id: 'root',
+    runtime_device_id: native.task.address.deviceId,
+    runtime_task_id: native.task.address.taskId,
+    item_id: native.payload.itemId!,
+    question: native.question,
+    recipient_user_id: 7,
+    status: 'pending',
+    version: 1,
+    blocks_progress: true,
+    created_at: new Date(native.createdAt).toISOString(),
+  }
+  const inbox = vi.fn().mockResolvedValue({ items: [question] })
+  restarted.rerenderSource({
+    ...restarted.taskSource,
+    userId: 7,
+    services: {
+      ...restarted.taskSource.services!,
+      issueHumanRequestsApi: {
+        inbox,
+        list: vi.fn().mockResolvedValue({ items: [question] }),
+        assign: vi.fn(),
+      },
+    },
+  })
+  await act(async () => {
+    await context!.refresh()
+  })
+  await waitFor(() =>
+    expect(context!.pending.some(item => item.sharedRequest?.id === question.id)).toBe(true)
+  )
 })

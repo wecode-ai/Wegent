@@ -449,7 +449,11 @@ function RuntimeInteractionsState({
                   stage = `archive:${answered.requestKey}`
                   await retainDraft(interactionHistoryEntry(answered, answered.createdAt))
                   await archive(answered)
-                  localStorage.removeItem(acceptancePrefix + answered.id)
+                  if (
+                    localStorage.getItem(acceptancePrefix + answered.id) !==
+                    JSON.stringify('dismissed')
+                  )
+                    localStorage.removeItem(acceptancePrefix + answered.id)
                 }
               } catch (error) {
                 successfulReads.current.delete(item.key)
@@ -509,6 +513,12 @@ function RuntimeInteractionsState({
     return () => window.clearInterval(timer)
   }, [refresh, signature, source?.services?.runtimeWorkApi])
 
+  const isDismissed = useCallback(
+    (id: string) =>
+      history.some(entry => entry.id === id && entry.dismissed) ||
+      localStorage.getItem(acceptancePrefix + id) === JSON.stringify('dismissed'),
+    [history, acceptancePrefix]
+  )
   const pending = useMemo(() => {
     const visible = new Map([...(source?.items ?? []), ...inventory].map(item => [item.key, item]))
     const runtime = Object.values(loaded)
@@ -552,9 +562,7 @@ function RuntimeInteractionsState({
       ...runtime.filter(
         item => !shared.has(item.id) && !sharedQuestions.has(issueQuestionIdentity(item))
       ),
-      ...sharedItems.filter(
-        item => !submitted.has(item.id) && localStorage.getItem(acceptancePrefix + item.id) === null
-      ),
+      ...sharedItems.filter(item => !isDismissed(item.id)),
     ].sort((a, b) => b.createdAt - a.createdAt)
   }, [
     acceptancePrefix,
@@ -566,6 +574,7 @@ function RuntimeInteractionsState({
     issueInteractions.items,
     issueInteractions.resolved,
     history,
+    isDismissed,
   ])
 
   useEffect(() => {
@@ -607,8 +616,15 @@ function RuntimeInteractionsState({
       setBusy(new Set(inFlight.current))
       try {
         await navigator.locks.request(historyKey + ':' + item.id, async () => {
-          await archive(item, Date.now())
-          saveInteractionState(acceptancePrefix + item.id, true)
+          const handledAt = Date.now()
+          await archive(
+            {
+              ...('task' in item ? interactionHistoryEntry(item, handledAt) : item),
+              dismissed: true,
+            },
+            handledAt
+          )
+          saveInteractionState(acceptancePrefix + item.id, 'dismissed')
           if (!mounted.current) return
           markHandled(item.id)
           clearReplyDraft(item.id)
@@ -899,8 +915,7 @@ function RuntimeInteractionsState({
       loading,
       respond,
       dismiss,
-      isDismissed: (id: string) =>
-        submitted.has(id) || localStorage.getItem(acceptancePrefix + id) !== null,
+      isDismissed,
       refresh,
       open,
       notice,
@@ -920,8 +935,7 @@ function RuntimeInteractionsState({
       loading,
       respond,
       dismiss,
-      submitted,
-      acceptancePrefix,
+      isDismissed,
       refresh,
       open,
       notice,

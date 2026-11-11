@@ -175,3 +175,16 @@ it('acknowledges a successful synchronous storage update', () => {
   expect(saveInteractionState('history', [entry(1)])).toBe(true)
   expect(readInteractionHistory('history')).toEqual([entry(1)])
 })
+
+it('adds local dismissal without losing authoritative resolution or changing history order', () => {
+  const resolved = {
+    ...entry(1),
+    id: resolution.nativeInteractionId,
+    resolvedIssueQuestion: resolution,
+  }
+  const dismissed = archiveInteraction([resolved], { ...resolved, dismissed: true, answeredAt: 9 })
+  expect(dismissed).toEqual([{ ...resolved, dismissed: true }])
+  expect(archiveInteraction(dismissed, resolved)).toBe(dismissed)
+  saveInteractionState('history', dismissed)
+  expect(readInteractionHistory('history')).toEqual(dismissed)
+})

@@ -166,6 +166,7 @@ function interactionHistoryRows(value: unknown): InteractionHistory[] {
       (row): row is InteractionHistory =>
         record(row) &&
         typeof row.id === 'string' &&
+        (row.dismissed === undefined || row.dismissed === true) &&
         (row.resolvedIssueQuestion === undefined ||
           validIssueResolution(row.resolvedIssueQuestion, row.id)) &&
         (row.source === undefined || isInteractionSource(row.source)) &&
@@ -238,12 +239,22 @@ export function archiveInteraction(
   const previous = current.find(row => row.id === entry.id)
   if (previous) {
     if (
-      !entry.resolvedIssueQuestion ||
-      JSON.stringify(previous.resolvedIssueQuestion) === JSON.stringify(entry.resolvedIssueQuestion)
+      (!entry.dismissed || previous.dismissed) &&
+      (!entry.resolvedIssueQuestion ||
+        JSON.stringify(previous.resolvedIssueQuestion) ===
+          JSON.stringify(entry.resolvedIssueQuestion))
     )
       return current
     return current.map(row =>
-      row === previous ? { ...row, resolvedIssueQuestion: entry.resolvedIssueQuestion } : row
+      row === previous
+        ? {
+            ...row,
+            ...(entry.dismissed ? { dismissed: true as const } : {}),
+            ...(entry.resolvedIssueQuestion
+              ? { resolvedIssueQuestion: entry.resolvedIssueQuestion }
+              : {}),
+          }
+        : row
     )
   }
   const next = [...current, entry].sort((a, b) => b.answeredAt - a.answeredAt).slice(0, 100)
