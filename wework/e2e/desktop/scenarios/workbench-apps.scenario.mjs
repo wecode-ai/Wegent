@@ -135,21 +135,25 @@ export async function createDesktopScenario({
       )
       await control.command('clickWhenEnabled', '[data-testid="workbench-create-todo"]')
       await reviewInstallation('accept')
-      const article = '[data-testid^="smart-app-created-item-todo-"]'
-      await control.command('waitFor', article)
-      installationId = (
-        await control.command('getAttribute', article, { value: 'data-testid' })
-      ).slice('smart-app-created-item-'.length)
       await until(
-        state,
+        async () => {
+          const installations = (await readRegistry()).filter(app => app.id.startsWith('todo-'))
+          assert.ok(installations.length <= 1, 'Created more than one TODO installation')
+          if (!installations.length) return null
+          assert.equal(installations[0].manifest.flavor, 'lightweight')
+          installationId = installations[0].id
+          return state()
+        },
         value =>
-          value.running && value.visible && value.sdkAvailable && value.presentation === 'window',
+          value?.running && value.visible && value.sdkAvailable && value.presentation === 'window',
         'TODO did not launch an independent DSH window',
         workbenchReadyTimeoutMs
       )
+      const article = `[data-testid="smart-app-created-item-${installationId}"]`
+      await control.command('waitFor', article)
       assert.equal(
-        (await readRegistry()).find(app => app.id === installationId).manifest.flavor,
-        'lightweight'
+        await control.command('getAttribute', article, { value: 'data-testid' }),
+        `smart-app-created-item-${installationId}`
       )
       const input = '[data-testid="todo-input"]'
       await ready()
