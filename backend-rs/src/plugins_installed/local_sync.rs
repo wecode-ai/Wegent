@@ -100,23 +100,22 @@ async fn local_sync(
     let mysql = state.mysql.clone();
     let redis = state.redis.clone();
     super::auto_update::complete_auto_update(async move {
-        super::plugin_sync_protocol::ensure_sync_state(
-            &mysql, redis.as_ref(), i64::from(user.id),
-        ).await?;
-        for attempt in 0..2 {
-            let result = tokio::time::timeout(std::time::Duration::from_secs(20),
+        super::plugin_sync_protocol::ensure_sync_state(&mysql, redis.as_ref(), i64::from(user.id))
+            .await?;
+        super::plugin_sync_protocol::retry_sync_write(
+            super::plugin_sync_protocol::SNAPSHOT_WRITE_ATTEMPTS,
+            || {
                 mysql.with_transaction_options(
-                    MysqlTransactionOptions::default().with_isolation_level(MysqlIsolationLevel::ReadCommitted),
+                    MysqlTransactionOptions::default()
+                        .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
                     async |tx| local_plan(tx, i64::from(user.id), &body).await,
-                ),
-            ).await.unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")));
-            if attempt == 0 && matches!(&result, Err(MysqlError::InvalidQuery { reason }) if reason == "plugin_write_conflict") {
-                continue;
-            }
-            return result;
-        }
-        Err(coordination_error("plugin_write_conflict"))
-    }).await.map_err(map_error)
+                )
+            },
+        )
+        .await
+    })
+    .await
+    .map_err(map_error)
 }
 
 async fn local_plan(

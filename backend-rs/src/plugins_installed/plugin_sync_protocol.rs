@@ -28,12 +28,39 @@ use super::write_coordination::{PluginWriteLease, coordination_error};
 
 /// `PLUGIN_SYNC_VERSION`.
 pub(crate) const PLUGIN_SYNC_VERSION: i64 = 2;
+pub(super) const SNAPSHOT_WRITE_ATTEMPTS: usize = 8;
 /// `PLUGIN_SYNC_STATE_KIND`.
 const PLUGIN_SYNC_STATE_KIND: &str = "PluginSyncState";
 /// `PLUGIN_SYNC_STATE_NAMESPACE`.
 const PLUGIN_SYNC_STATE_NAMESPACE: &str = "plugin-sync";
 /// `PLUGIN_SYNC_STATE_NAME`.
 const PLUGIN_SYNC_STATE_NAME: &str = "account";
+
+/// Replay only optimistic database work, within one shared time budget.
+pub(super) async fn retry_sync_write<F, Fut, T>(attempts: usize, mut write: F) -> MysqlResult<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = MysqlResult<T>>,
+{
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        for attempt in 0..attempts {
+            let outcome = write().await;
+            if attempt + 1 < attempts
+                && matches!(&outcome, Err(error) if super::write_coordination::plugin_write_error_code(error) == Some("plugin_write_conflict"))
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    50 * (attempt as u64 + 1),
+                ))
+                .await;
+                continue;
+            }
+            return outcome;
+        }
+        Err(coordination_error("plugin_write_conflict"))
+    })
+    .await
+    .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))
+}
 
 /// `_sync_state`'s optimistic read over one active account state row.
 fn sync_state_statement() -> String {
@@ -389,7 +416,7 @@ pub(crate) async fn load_versioned_registration_payload(
     ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id)
         .await
         .map_err(BuildError::Mysql)?;
-    for attempt in 0..8 {
+    for attempt in 0..SNAPSHOT_WRITE_ATTEMPTS {
         let mut build_error = None;
         let mut generation = 0;
         let outcome = state
@@ -419,7 +446,7 @@ pub(crate) async fn load_versioned_registration_payload(
                 },
             )
             .await;
-        if attempt < 7
+        if attempt + 1 < SNAPSHOT_WRITE_ATTEMPTS
             && matches!(&outcome, Err(error) if super::write_coordination::plugin_write_error_code(error) == Some("plugin_write_conflict"))
         {
             continue;
@@ -473,7 +500,7 @@ pub(crate) async fn register_plugin_snapshot_intent(
     let complete = metadata.get("complete") == Some(&Value::Bool(true));
     let installed_plugin_ids = payload_plugin_ids(payload);
     ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id).await?;
-    for attempt in 0..8 {
+    for attempt in 0..SNAPSHOT_WRITE_ATTEMPTS {
         let outcome = state
             .mysql
             .with_transaction_options(
@@ -496,7 +523,7 @@ pub(crate) async fn register_plugin_snapshot_intent(
                 },
             )
             .await;
-        if attempt < 7
+        if attempt + 1 < SNAPSHOT_WRITE_ATTEMPTS
             && matches!(&outcome, Err(error) if super::write_coordination::plugin_write_error_code(error) == Some("plugin_write_conflict"))
         {
             continue;
@@ -632,6 +659,23 @@ fn is_integer(value: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn local_snapshot_survives_more_than_two_concurrent_metadata_writers() {
+        let mut attempts = 0;
+        let result = super::retry_sync_write(super::SNAPSHOT_WRITE_ATTEMPTS, || {
+            attempts += 1;
+            std::future::ready(if attempts <= 3 {
+                Err(super::coordination_error("plugin_write_conflict"))
+            } else {
+                Ok(17)
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(attempts, 4);
+        assert_eq!(result, 17);
+    }
+
     use std::sync::{Arc, Mutex};
 
     use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction};
