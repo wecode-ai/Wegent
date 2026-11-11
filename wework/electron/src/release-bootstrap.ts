@@ -1,17 +1,27 @@
 import { app, dialog } from 'electron'
 import { existsSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { resolveWorkbenchPaths } from './runtime/workbench-environment.js'
-import { optionalText, ReleaseStore } from './runtime/release-store.js'
+import { dirname, join, resolve } from 'node:path'
+import {
+  resolveWorkbenchCodexHome,
+  resolveWorkbenchPaths,
+} from './runtime/workbench-environment.js'
+import { optionalText, ReleaseStore, sameReleasePath } from './runtime/release-store.js'
 import { restoreReleaseData } from './runtime/release-snapshot.js'
 import { currentCoreProfile, selectReleaseProfile } from './runtime/release-profile.js'
 import { releaseBridgeUserData } from './runtime/release-handoff.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { enterInstalledMacosRelease } from './runtime/macos-release-installation.js'
+import {
+  assertReleaseAfterStopReady,
+  prepareReleaseAfterStop,
+  type AfterStopMetadata,
+} from './runtime/release-after-stop.js'
+
+type ReleaseMetadata = AfterStopMetadata & { version?: string; weworkExecutorNamespace?: string }
 
 export async function routeRelease(
-  metadata: { version?: string; weworkExecutorNamespace?: string },
+  metadata: ReleaseMetadata,
   forwardedArguments: () => string[],
   failStartup: (error: unknown) => void
 ): Promise<boolean> {
@@ -34,9 +44,7 @@ export async function routeRelease(
   delete process.env.WEWORK_RELEASE_RECOVERY
   const physicalRollback =
     process.platform === 'darwin' ? await optionalText(join(root, 'macos-rollback')) : null
-  const slotPath = relative(join(root, 'slots'), process.execPath)
-  const versionedPayload =
-    slotPath !== '..' && !slotPath.startsWith(`..${sep}`) && !isAbsolute(slotPath)
+  const versionedPayload = await store.isSlotExecutable(process.execPath)
   if (
     process.platform === 'darwin' &&
     !supervisedId &&
@@ -67,6 +75,9 @@ export async function routeRelease(
     throw new Error('Release root does not match the application data directory')
   }
   const active = await store.active()
+  const runningSelectedHost = active
+    ? await sameReleasePath(active.executable, process.execPath)
+    : false
   // An external installer can replace an installed Windows host in place.
   // Its old descriptor no longer identifies the bytes at that path. Let the
   // replacement start normally; the updater registers its current composition.
@@ -78,7 +89,7 @@ export async function routeRelease(
     !versionedPayload &&
     active?.id.startsWith('installed-') &&
     active.version !== metadata.version &&
-    resolve(active.executable) === resolve(process.execPath) &&
+    runningSelectedHost &&
     !(await store.activation())
   )
     return true
@@ -86,12 +97,11 @@ export async function routeRelease(
   // The installed entry owns restoring physical Contents even when activation
   // failed or rollback selected an older payload. A delivered recovery bridge
   // may not contain a native installer capable of restoring that application.
-  const installedMacosEntry =
-    active?.macosInstallation && resolve(active.executable) === resolve(process.execPath)
+  const installedMacosEntry = active?.macosInstallation && runningSelectedHost
   if (
     !supervisedId &&
     bridge &&
-    resolve(bridge) !== resolve(process.execPath) &&
+    !(await sameReleasePath(bridge, process.execPath)) &&
     !installedMacosEntry
   ) {
     if (process.platform === 'darwin') app.setActivationPolicy('prohibited')
@@ -122,18 +132,15 @@ export async function routeRelease(
   if (supervised) {
     if (metadata.version !== active.version)
       throw new Error('The installed host does not match the selected release version')
+    await assertReleaseAfterStopReady(store, active, metadata)
     await store.repairMacosActivationSource(active)
-    if (
-      process.platform === 'darwin' &&
-      active.macosInstallation &&
-      resolve(process.execPath) !== resolve(active.executable)
-    ) {
+    if (process.platform === 'darwin' && active.macosInstallation && !runningSelectedHost) {
       app.setActivationPolicy('prohibited')
     }
     await enterInstalledMacosRelease(store, active, process.resourcesPath)
   }
   // Only the independent launcher grants a child this one-use handoff.
-  if (supervised && resolve(active.executable) === resolve(process.execPath)) {
+  if (supervised && runningSelectedHost) {
     process.env.WEWORK_HARNESS_RUNTIME_ROOT = active.runtimeRoot
     process.env.WEWORK_ACTIVE_RELEASE_ID = active.id
     process.env.WEWORK_RELEASE_ROOT = root
@@ -175,7 +182,7 @@ export async function routeRelease(
   if (process.platform === 'darwin') app.setActivationPolicy('prohibited')
   void app
     .whenReady()
-    .then(() => launchSelectedRelease(store, dataDirectory, root, forwardedArguments))
+    .then(() => launchSelectedRelease(store, dataDirectory, root, metadata, forwardedArguments))
     .catch(failStartup)
   return false
 }
@@ -204,6 +211,7 @@ async function launchSelectedRelease(
   store: ReleaseStore,
   dataDirectory: string,
   root: string,
+  metadata: ReleaseMetadata,
   forwardedArguments: () => string[]
 ): Promise<void> {
   const activation = await store.activation()
@@ -266,6 +274,28 @@ async function launchSelectedRelease(
   }
   const active = await store.active()
   if (!active) throw new Error('Active release is missing')
+  try {
+    const homeOptions = {
+      environment: process.env,
+      metadata,
+      homeDirectory: app.getPath('home'),
+    }
+    const paths = resolveWorkbenchPaths(homeOptions)
+    await prepareReleaseAfterStop(store, active, dataDirectory, {
+      workbenchRoot: paths.root,
+      codexHome: resolveWorkbenchCodexHome(homeOptions),
+    })
+  } catch (error) {
+    const pending = await store.activation()
+    if (!pending || pending.to !== active.id) throw error
+    recordReleaseDiagnostic('after-stop-preparation-failed', { releaseId: active.id }, true)
+    const { atomicReleaseWrite } = await import('./runtime/release-store.js')
+    await atomicReleaseWrite(join(root, 'attempted'), pending.token)
+    await atomicReleaseWrite(join(root, 'failed'), pending.token)
+    // Reuse the existing compatible rollback / explicit restore-consent flow.
+    await launchSelectedRelease(store, dataDirectory, root, metadata, forwardedArguments)
+    return
+  }
   // Legacy Windows entries resolve the release root above user-data and compare
   // its lexical path with the launcher's handoff. Pass the selected store owner
   // explicitly on every platform, including interrupted rollback recovery.

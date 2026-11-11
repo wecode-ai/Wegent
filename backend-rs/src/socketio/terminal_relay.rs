@@ -44,6 +44,7 @@ pub(crate) struct TerminalSession {
     user_id: i64,
     token_exp: Option<i64>,
     state: Mutex<TerminalState>,
+    attachment: tokio::sync::Mutex<()>,
 }
 
 /// The mutable half of one browser terminal connection.
@@ -55,48 +56,6 @@ struct TerminalState {
     authorization: Option<TerminalRecord>,
 }
 
-/// Receive output before activating its producer; roll back failed or cancelled attaches.
-pub(crate) struct TerminalRoomMembership {
-    socket: brz_socket_io::extract::SocketRef,
-    room: String,
-    previous_room: Option<String>,
-    rollback: bool,
-}
-
-impl TerminalRoomMembership {
-    pub(crate) fn join(
-        socket: brz_socket_io::extract::SocketRef,
-        session_id: &str,
-        previous_session_id: Option<&str>,
-    ) -> Self {
-        let room = format!("terminal:{session_id}");
-        socket.join(room.clone());
-        Self {
-            socket,
-            room,
-            previous_room: previous_session_id
-                .filter(|previous| *previous != session_id)
-                .map(|previous| format!("terminal:{previous}")),
-            rollback: previous_session_id != Some(session_id),
-        }
-    }
-
-    pub(crate) fn commit(&mut self) {
-        if let Some(previous) = self.previous_room.take() {
-            self.socket.leave(previous);
-        }
-        self.rollback = false;
-    }
-}
-
-impl Drop for TerminalRoomMembership {
-    fn drop(&mut self) {
-        if self.rollback {
-            self.socket.leave(self.room.clone());
-        }
-    }
-}
-
 impl TerminalSession {
     /// `on_connect`: bind the verified user and the token expiry.
     pub(crate) fn new(identity: &Identity, token: Option<&str>) -> Self {
@@ -104,6 +63,7 @@ impl TerminalSession {
             user_id: identity.user_id,
             token_exp: token.and_then(super::auth::token_expiry),
             state: Mutex::new(TerminalState::default()),
+            attachment: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -133,6 +93,7 @@ pub(crate) async fn attach(
     socket_id: &str,
     data: Value,
 ) -> Result<Reply<Value>, ClientError> {
+    let _attachment = session.attachment.lock().await;
     if session.token_expired(chrono::Utc::now().timestamp()) {
         return Ok(Reply::payload(
             token_expired(state, runtime, socket_id).await,
@@ -192,12 +153,16 @@ pub(crate) async fn attach(
             json!({"error": "Terminal executor is offline"}),
         ));
     }
-    let socket = runtime
-        .emitters()
-        .terminal_socket(socket_id)
-        .ok_or_else(|| ClientError::new("SESSION_CLOSED", "Terminal connection is closed"))?;
-    let mut membership =
-        TerminalRoomMembership::join(socket, &session_id, previous_session_id.as_deref());
+    let Some(room) = runtime.emitters().bind_terminal_room(
+        socket_id,
+        &session_id,
+        previous_session_id.as_deref(),
+    ) else {
+        return Err(ClientError::new(
+            "SESSION_CLOSED",
+            "Terminal connection is closed",
+        ));
+    };
     let attach_payload = request.payload(&record.session_id, offered, socket_id);
     let attach_result = call_terminal_executor(
         state,
@@ -242,7 +207,7 @@ pub(crate) async fn attach(
         current.authorization = Some(record.clone());
     }
     tracing::info!(user_id, session_id, "terminal attached");
-    membership.commit();
+    room.commit();
     Ok(Reply::payload(json!({
         "success": true,
         "protocol_version": selected,

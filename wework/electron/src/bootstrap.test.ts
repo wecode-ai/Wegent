@@ -21,6 +21,16 @@ const startup = vi.hoisted(() => ({
   enterInstalled: vi.fn(),
   rollback: vi.fn(),
   restoreData: vi.fn(),
+  afterStopReady: vi.fn(),
+  afterStopPrepare: vi.fn(),
+  markers: {} as Record<string, string>,
+  restoreConsent: vi.fn(),
+  exit: vi.fn(),
+}))
+
+vi.mock('./runtime/release-after-stop.js', () => ({
+  assertReleaseAfterStopReady: startup.afterStopReady,
+  prepareReleaseAfterStop: startup.afterStopPrepare,
 }))
 
 vi.mock('./host/startup-recovery-window.js', () => ({
@@ -37,14 +47,15 @@ vi.mock('electron', () => ({
   app: {
     isPackaged: true,
     getPath: () => startup.home,
+    getLocale: () => 'en',
     on: vi.fn(),
     removeListener: vi.fn(),
     whenReady: startup.ready,
     relaunch: startup.relaunch,
-    exit: vi.fn(),
+    exit: startup.exit,
     setActivationPolicy: vi.fn(),
   },
-  dialog: { showRecovery: startup.showRecovery },
+  dialog: { showMessageBox: startup.restoreConsent },
 }))
 
 vi.mock('node:fs', () => ({ existsSync: () => true }))
@@ -59,30 +70,42 @@ vi.mock('node:fs/promises', () => ({
     path.replace(join('legacy', 'releases'), join('user-data', 'releases')),
 }))
 
-vi.mock('./runtime/release-store.js', () => ({
-  optionalText: async (path: string) =>
-    basename(path) === 'bridge'
-      ? startup.bridge
-      : basename(path) === 'macos-rollback'
-        ? startup.macosRollback
-        : null,
-  ReleaseStore: class {
-    constructor(root: string) {
-      startup.roots.push(root)
-    }
+vi.mock('./runtime/release-store.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('./runtime/release-store.js')>()
+  return {
+    ...actual,
+    atomicReleaseWrite: async (path: string, value: string) => {
+      startup.markers[basename(path)] = value
+    },
+    optionalText: async (path: string) =>
+      startup.markers[basename(path)] ??
+      (basename(path) === 'bridge'
+        ? startup.bridge
+        : basename(path) === 'macos-rollback'
+          ? startup.macosRollback
+          : null),
+    ReleaseStore: class {
+      constructor(readonly root: string) {
+        startup.roots.push(root)
+      }
 
-    async active() {
-      if (startup.historyError) throw startup.historyError
-      return startup.activeRelease
-    }
-    async activation() {
-      return startup.activation
-    }
-    async rollback() {
-      return startup.rollback()
-    }
-  },
-}))
+      async isSlotExecutable(executable: string) {
+        return actual.ReleaseStore.prototype.isSlotExecutable.call(this as never, executable)
+      }
+
+      async active() {
+        if (startup.historyError) throw startup.historyError
+        return startup.activeRelease
+      }
+      async activation() {
+        return startup.activation
+      }
+      async rollback() {
+        return startup.rollback()
+      }
+    },
+  }
+})
 
 beforeEach(() => {
   vi.resetModules()
@@ -99,6 +122,11 @@ beforeEach(() => {
   startup.enterInstalled.mockReset()
   startup.rollback.mockReset()
   startup.restoreData.mockReset()
+  startup.afterStopReady.mockReset().mockResolvedValue(undefined)
+  startup.afterStopPrepare.mockReset().mockResolvedValue(undefined)
+  startup.markers = {}
+  startup.restoreConsent.mockReset().mockResolvedValue({ response: 0 })
+  startup.exit.mockReset()
   startup.bridgeHandoff.mockReset().mockImplementation(async () => startup.legacyUserData)
   startup.showRecovery.mockReset().mockResolvedValue(undefined)
   startup.bridge = null
@@ -297,6 +325,124 @@ test.each([
     Object.defineProperty(process, 'platform', platform)
     diagnostic.mockRestore()
   }
+})
+
+test('the bridge waits for stopped preparation before granting a launcher any health budget', async () => {
+  startup.bridge = process.execPath
+  startup.activeRelease = { id: 'target', executable: join(startup.home, 'target/WeWork') }
+  startup.legacyUserData = join(startup.home, '.wegent/workbench/wework/default/user-data')
+  startup.ready.mockResolvedValue(undefined)
+  let finish!: () => void
+  startup.afterStopPrepare.mockImplementationOnce(
+    () =>
+      new Promise<void>(resolve => {
+        finish = resolve
+      })
+  )
+  await import('./bootstrap.js')
+  await vi.waitFor(() => expect(startup.afterStopPrepare).toHaveBeenCalledOnce())
+  expect(startup.relaunch).not.toHaveBeenCalled()
+  expect(startup.main).not.toHaveBeenCalled()
+  finish()
+  await vi.waitFor(() => expect(startup.relaunch).toHaveBeenCalledOnce())
+})
+
+test.each([false, true])(
+  'stopped preparation uses the runtime Home with explicit Codex override=%s',
+  async explicitCodex => {
+    startup.bridge = process.execPath
+    startup.activeRelease = { id: 'target', executable: join(startup.home, 'target/WeWork') }
+    startup.legacyUserData = join(startup.home, '.wegent/workbench/wework/default/user-data')
+    startup.ready.mockResolvedValue(undefined)
+    const executorHome = join(startup.home, 'custom-executor')
+    const codexHome = explicitCodex
+      ? join(startup.home, 'explicit-codex')
+      : join(executorHome, 'codex')
+    vi.stubEnv('WEGENT_EXECUTOR_HOME', executorHome)
+    vi.stubEnv('WEGENT_CODEX_HOME', explicitCodex ? codexHome : '')
+    await import('./bootstrap.js')
+    await vi.waitFor(() => expect(startup.afterStopPrepare).toHaveBeenCalledOnce())
+    expect(startup.afterStopPrepare).toHaveBeenCalledWith(
+      expect.anything(),
+      startup.activeRelease,
+      startup.legacyUserData,
+      expect.objectContaining({ codexHome })
+    )
+  }
+)
+
+test('a supervised target cannot open data or recover Goals without its stopped-preparation receipt', async () => {
+  startup.activeRelease = { id: 'target', version: '1.1.0', executable: process.execPath }
+  startup.metadata.version = '1.1.0'
+  vi.stubEnv('WEWORK_RELEASE_SUPERVISED', 'target')
+  startup.afterStopReady.mockRejectedValue(new Error('bridge receipt missing'))
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await import('./bootstrap.js')
+    expect(startup.showRecovery).toHaveBeenCalledWith(new Error('bridge receipt missing'))
+    expect(startup.main).not.toHaveBeenCalled()
+    expect(startup.enterInstalled).not.toHaveBeenCalled()
+  } finally {
+    diagnostic.mockRestore()
+  }
+})
+
+test.each([false, true])(
+  'stopped-preparation failure reuses rollback, requiring restore consent only for incompatible data (%s)',
+  async incompatible => {
+    startup.bridge = process.execPath
+    startup.activeRelease = { id: 'target', executable: join(startup.home, 'target/WeWork') }
+    startup.activation = {
+      token: 'trial',
+      to: 'target',
+      from: 'source',
+      restoreRequired: incompatible,
+      snapshot: 'original-snapshot',
+    }
+    startup.legacyUserData = join(startup.home, '.wegent/workbench/wework/default/user-data')
+    startup.ready.mockResolvedValue(undefined)
+    startup.restoreConsent.mockResolvedValue({ response: 1 })
+    startup.afterStopPrepare.mockImplementationOnce(async () => {
+      startup.markers['data-opened'] = 'trial'
+      throw new Error('stopped preparation interrupted')
+    })
+    startup.rollback.mockImplementation(async () => {
+      startup.activeRelease = { id: 'source', executable: process.execPath }
+      startup.activation = null
+    })
+    await import('./bootstrap.js')
+    await vi.waitFor(() => expect(startup.relaunch).toHaveBeenCalledOnce())
+    expect(startup.rollback).toHaveBeenCalledOnce()
+    expect(startup.restoreConsent).toHaveBeenCalledTimes(incompatible ? 1 : 0)
+    expect(startup.restoreData).toHaveBeenCalledTimes(incompatible ? 1 : 0)
+    expect(startup.main).not.toHaveBeenCalled()
+    expect(startup.showRecovery).not.toHaveBeenCalled()
+  }
+)
+
+test('declining incompatible stopped-preparation recovery never restores or starts either runtime', async () => {
+  startup.bridge = process.execPath
+  startup.activeRelease = { id: 'target', executable: join(startup.home, 'target/WeWork') }
+  startup.activation = {
+    token: 'trial',
+    to: 'target',
+    from: 'source',
+    restoreRequired: true,
+    snapshot: 'original-snapshot',
+  }
+  startup.ready.mockResolvedValue(undefined)
+  startup.afterStopPrepare.mockImplementationOnce(async () => {
+    startup.markers['data-opened'] = 'trial'
+    throw new Error('stopped preparation interrupted')
+  })
+  await import('./bootstrap.js')
+  await vi.waitFor(() => expect(startup.showRecovery).toHaveBeenCalledOnce())
+  expect(startup.exit).not.toHaveBeenCalled()
+  expect(startup.restoreConsent).toHaveBeenCalledOnce()
+  expect(startup.restoreData).not.toHaveBeenCalled()
+  expect(startup.rollback).not.toHaveBeenCalled()
+  expect(startup.relaunch).not.toHaveBeenCalled()
+  expect(startup.main).not.toHaveBeenCalled()
 })
 
 if (process.platform === 'darwin') {

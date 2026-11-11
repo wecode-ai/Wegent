@@ -16,6 +16,8 @@ Manually starting a stand-in does not require assigning the Issue to yourself an
 Acknowledgment and result appear as separate comments. You can keep writing and sending while subagents work; follow-up wakeups are handled in order.
 Reply directly to a stand-in comment without another mention to continue with that role. Private chats, reasoning and tool activity are not published.
 
+Stand-in replies on an Issue show the owning user followed by the role in parentheses, for example “Alex (Assistant)”, so participants can distinguish different users' stand-ins. A user ID appears while the member name is unavailable and updates to the name when member information loads.
+
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
 

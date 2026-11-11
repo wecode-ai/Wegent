@@ -43,6 +43,85 @@ struct WireServer {
     handle: tokio::task::JoinHandle<()>,
 }
 
+async fn emit_terminal_sequence(
+    server: &WireServer,
+    session: &str,
+    sequence: i64,
+) -> (usize, usize) {
+    server
+        .emitters
+        .emit_room(
+            super::runtime::TERMINAL_NAMESPACE,
+            "terminal:output",
+            &format!("terminal:{session}"),
+            None,
+            &ArgsTuple(&[json!({"session_id":session,"sequence":sequence})]),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn terminal_replay_is_bound_before_ack_and_failed_attachment_restores_prior_room() {
+    let server = WireServer::start().await;
+    let client = PollClient::connect(&server.addr, super::runtime::TERMINAL_NAMESPACE, "{}")
+        .await
+        .expect("terminal browser");
+    let browser = Arc::new(client.into_poller());
+    let polling = tokio::spawn(Arc::clone(&browser).run());
+    let binding = server
+        .emitters
+        .bind_terminal_room(browser.socket_id(), "first", None)
+        .expect("live authorized browser");
+    // An executor may replay before its attach ACK: the first bytes cannot be lost.
+    for sequence in 1..=3 {
+        assert_eq!(
+            emit_terminal_sequence(&server, "first", sequence).await,
+            (1, 0)
+        );
+        let event = browser
+            .next_event((sequence - 1) as usize, WINDOW)
+            .await
+            .expect("pre-ACK replay reaches browser");
+        assert_eq!(event.args[0]["sequence"], sequence);
+    }
+    binding.commit();
+    // A rejected or cancelled switch leaves the current terminal available.
+    drop(
+        server
+            .emitters
+            .bind_terminal_room(browser.socket_id(), "rejected", Some("first")),
+    );
+    assert_eq!(emit_terminal_sequence(&server, "rejected", 1).await, (0, 0));
+    drop(
+        server
+            .emitters
+            .bind_terminal_room(browser.socket_id(), "first", Some("first")),
+    );
+    assert_eq!(emit_terminal_sequence(&server, "first", 4).await, (1, 0));
+    browser
+        .next_event(3, WINDOW)
+        .await
+        .expect("failed reattach preserves existing room");
+    server
+        .emitters
+        .bind_terminal_room(browser.socket_id(), "second", Some("first"))
+        .expect("switch room")
+        .commit();
+    assert_eq!(emit_terminal_sequence(&server, "first", 5).await, (0, 0));
+    assert_eq!(emit_terminal_sequence(&server, "second", 1).await, (1, 0));
+    let event = browser.next_event(4, WINDOW).await.expect("new room");
+    assert_eq!(event.args[0]["session_id"], "second");
+    assert!(
+        server
+            .emitters
+            .bind_terminal_room("invalid-socket", "first", None)
+            .is_none()
+    );
+    polling.abort();
+    let _ = server.stop.send(());
+    server.handle.await.expect("server stops");
+}
+
 impl WireServer {
     /// Build the local server with the four namespaces `SocketEmitters` needs.
     async fn start() -> Self {
@@ -870,102 +949,4 @@ async fn a_missing_executor_socket_has_no_local_recipient() {
     );
     let _ = server.stop.send(());
     let _ = server.handle.await;
-}
-
-/// An executor can emit before its attach ACK. The browser must already receive
-/// that output, while a failed attach must leave its previous room intact.
-#[tokio::test]
-async fn terminal_membership_receives_early_output_and_rolls_back_failed_attach() {
-    use super::runtime::TERMINAL_NAMESPACE;
-    use super::terminal_relay::TerminalRoomMembership;
-
-    let server = WireServer::start().await;
-    let client = PollClient::connect(&server.addr, TERMINAL_NAMESPACE, "{}")
-        .await
-        .unwrap();
-    let socket = server.emitters.terminal_socket(client.socket_id()).unwrap();
-    let poller = Arc::new(client.into_poller());
-    let polling = tokio::spawn(Arc::clone(&poller).run());
-    let mut previous = TerminalRoomMembership::join(socket.clone(), "previous", None);
-    previous.commit();
-    let attempt = TerminalRoomMembership::join(socket.clone(), "next", Some("previous"));
-    let data = json!({"sequence": 1, "data": "early output"});
-    assert_eq!(
-        server
-            .emitters
-            .emit_room(
-                TERMINAL_NAMESPACE,
-                "terminal:output",
-                "terminal:next",
-                None,
-                &ArgsTuple(std::slice::from_ref(&data))
-            )
-            .await,
-        (1, 0),
-    );
-    let event = poller
-        .next_event(0, WINDOW)
-        .await
-        .expect("output before attach ACK");
-    assert_eq!(event.args, vec![data]);
-    drop(attempt);
-    assert_eq!(
-        server
-            .emitters
-            .emit_room(
-                TERMINAL_NAMESPACE,
-                "terminal:output",
-                "terminal:next",
-                None,
-                &ArgsTuple(&[])
-            )
-            .await,
-        (0, 0),
-    );
-    assert_eq!(
-        server
-            .emitters
-            .emit_room(
-                TERMINAL_NAMESPACE,
-                "terminal:output",
-                "terminal:previous",
-                None,
-                &ArgsTuple(&[])
-            )
-            .await,
-        (1, 0),
-    );
-    let mut accepted = TerminalRoomMembership::join(socket.clone(), "next", Some("previous"));
-    accepted.commit();
-    assert_eq!(
-        server
-            .emitters
-            .emit_room(
-                TERMINAL_NAMESPACE,
-                "terminal:output",
-                "terminal:previous",
-                None,
-                &ArgsTuple(&[])
-            )
-            .await,
-        (0, 0),
-    );
-    drop(TerminalRoomMembership::join(socket, "next", Some("next")));
-    assert_eq!(
-        server
-            .emitters
-            .emit_room(
-                TERMINAL_NAMESPACE,
-                "terminal:output",
-                "terminal:next",
-                None,
-                &ArgsTuple(&[])
-            )
-            .await,
-        (1, 0),
-    );
-    poller.stop();
-    polling.await.unwrap();
-    let _ = server.stop.send(());
-    server.handle.await.unwrap();
 }

@@ -27,6 +27,19 @@ try {
 
 function failStartup(error: unknown): void {
   console.error('[release-bootstrap]', error instanceof Error ? error.message : 'Startup failed')
+  void import('./runtime/release-diagnostics.js')
+    .then(({ recordReleaseDiagnostic }) =>
+      recordReleaseDiagnostic(
+        'bootstrap-failed',
+        { message: error instanceof Error ? error.message : 'Startup failed' },
+        true
+      )
+    )
+    .catch(diagnosticError => {
+      console.warn('[startup-recovery] Cannot record startup diagnostics', {
+        errorType: diagnosticError instanceof Error ? diagnosticError.name : typeof diagnosticError,
+      })
+    })
   // Electron ready is emitted only after this ESM entry finishes evaluating.
   void showStartupRecovery(error).catch(recoveryError => {
     console.error('[startup-recovery] Cannot open recovery window', recoveryError)

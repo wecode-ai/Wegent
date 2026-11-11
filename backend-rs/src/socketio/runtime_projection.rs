@@ -18,12 +18,11 @@ use crate::device_identity::{
     DeviceKindRow, KINDS_DEVICE_QUERY, device_identity_ids, is_app_device, record_id_from_route,
     unambiguous_device_identity_ids,
 };
-use crate::loop_tasks::loop_repository::EXECUTION_COLUMNS;
 use crate::sql_support::StatementArg;
 use crate::state::AppState;
 
 use super::execution_aggregate::{
-    CAPACITY_STATUSES, ERROR_LIMIT, ExecutionRow, TERMINAL_RUN_STATUSES, accept_observation,
+    ERROR_LIMIT, ExecutionRow, TERMINAL_RUN_STATUSES, accept_observation,
     bind_activity_runtime_turn, set_automation_run_status, transition_terminal,
 };
 
@@ -80,6 +79,13 @@ const CANCELLED_STATUSES: [&str; 2] = ["cancelled", "canceled"];
 
 /// `json.dumps(envelope)` for the live channel and `json.dumps([view])` for the
 /// adapter message both keep Python's separators and key order.
+fn projected_delta_view(message: &Message, delta: &str) -> Value {
+    let mut view = projected_view(message);
+    view["content"] = json!(delta);
+    view["metadata"]["contentMode"] = json!("delta");
+    view
+}
+
 fn projected_view(message: &Message) -> Value {
     message.view()
 }
@@ -202,50 +208,6 @@ impl<'a> RuntimeIdentity<'a> {
     }
 }
 
-/// `loop_item_execution_service.execution_for_runtime` statement. Device ids
-/// and the task ids are bound parameters; only the placeholder counts are
-/// structural.
-///
-/// Source always binds `runtime_task_id.in_(task_ids)` — a set, even for a
-/// single id — and drops the `LIMIT 1` only for the
-/// `include_initial_manager` variant, which reads every candidate with
-/// `query.all()` and picks the matching conversation identity in Rust
-/// (`app/services/loop_item_executions/service.py:1983-2003`).
-fn execution_statement(device_count: usize, task_count: usize, owner: bool, limit: bool) -> String {
-    let device_placeholders = vec!["?"; device_count].join(", ");
-    let task_placeholders = vec!["?"; task_count].join(", ");
-    let owner = if owner {
-        " AND loop_item_executions.executor_owner_user_id = ?"
-    } else {
-        ""
-    };
-    let limit = if limit { " \n LIMIT 1" } else { "" };
-    format!(
-        "SELECT {EXECUTION_COLUMNS} \nFROM loop_item_executions \n\
-         WHERE loop_item_executions.runtime_device_id IN ({device_placeholders}) \
-         AND loop_item_executions.runtime_task_id IN ({task_placeholders}) \
-         AND loop_item_executions.status IN ({CAPACITY_STATUSES}){owner} \
-         ORDER BY loop_item_executions.id DESC{limit}"
-    )
-}
-
-fn execution_args(
-    device_ids: &[String],
-    task_ids: &[String],
-    owner: Option<i64>,
-) -> Vec<StatementArg> {
-    let mut args = device_ids
-        .iter()
-        .cloned()
-        .map(StatementArg::Str)
-        .collect::<Vec<_>>();
-    args.extend(task_ids.iter().cloned().map(StatementArg::Str));
-    if let Some(owner) = owner {
-        args.push(StatementArg::Int(owner));
-    }
-    args
-}
-
 /// `LoopItemExecution.execution_intent`: the decoded intent envelope
 /// (`runtime_work_transcript_access` mirrors the same property).
 fn execution_intent(row: &ExecutionRow) -> Value {
@@ -317,23 +279,6 @@ fn execution_conversation_task_id(row: &ExecutionRow) -> String {
         return format!("{base}-manager-initial");
     }
     base
-}
-
-/// `task_ids = {runtime_task_id}` plus the manager base id when the
-/// `include_initial_manager` variant sees a `-manager-initial` identity
-/// (`service.py:1980-1982`).
-fn runtime_task_ids(task_id: &str, include_initial_manager: bool) -> Vec<String> {
-    let mut task_ids = vec![task_id.to_owned()];
-    if include_initial_manager && let Some(base) = task_id.strip_suffix("-manager-initial") {
-        task_ids.push(base.to_owned());
-    }
-    task_ids
-}
-
-/// `request.local_task_id in {runtime_task_id, execution_conversation_task_id}`.
-fn execution_matches_runtime_task(row: &ExecutionRow, runtime_task_id: &str) -> bool {
-    row.runtime_task_id.as_deref() == Some(runtime_task_id)
-        || execution_conversation_task_id(row) == runtime_task_id
 }
 
 /// `ProjectChatService._streaming_activity_for_runtime`'s candidate lookup.
@@ -427,33 +372,6 @@ fn record_route_aliases(device: &DeviceKindRow, submitted: &str) -> Vec<String> 
         }
     }
     aliases
-}
-
-pub(super) async fn execution_for_runtime<T: MysqlTransaction>(
-    transaction: &mut T,
-    device_ids: &[String],
-    task_id: &str,
-    owner: Option<i64>,
-    include_initial_manager: bool,
-) -> MysqlResult<Option<ExecutionRow>> {
-    let task_ids = runtime_task_ids(task_id, include_initial_manager);
-    let statement = execution_statement(
-        device_ids.len(),
-        task_ids.len(),
-        owner.is_some(),
-        !include_initial_manager,
-    );
-    let args = execution_args(device_ids, &task_ids, owner);
-    if !include_initial_manager {
-        return transaction.fetch_optional(statement, args).await;
-    }
-    // `include_initial_manager`: `query.all()` keeps every candidate and the
-    // Source picks the first row whose runtime or conversation identity is the
-    // requested task (`service.py:1995-2003`).
-    let rows: Vec<ExecutionRow> = transaction.fetch_all(statement, args).await?;
-    Ok(rows
-        .into_iter()
-        .find(|row| execution_matches_runtime_task(row, task_id)))
 }
 
 /// Thread metadata, Goal and lifecycle notifications never bind the execution
@@ -815,9 +733,7 @@ async fn project_runtime_event<T: MysqlTransaction>(
                 .await?;
             // The delta emission carries only this chunk, like the source's
             // `model_copy(update={"content": delta, ...})`.
-            let mut view = projected_view(&message);
-            view["content"] = json!(delta);
-            view["metadata"] = json!({"contentMode": "delta"});
+            let view = projected_delta_view(&message, delta);
             return Ok(Some(Projected {
                 message: view,
                 delta: true,
@@ -978,6 +894,20 @@ async fn project_in_transaction<T: MysqlTransaction>(
         Some(row) => handle_runtime_event(transaction, row, identity, &mut messages).await?,
         None => None,
     };
+    if matched.is_none()
+        && let Some(settled) = human_reply::settle(transaction, user_id, &ids, identity).await?
+    {
+        return Ok((
+            None,
+            lifecycle::Effects {
+                matched: None,
+                changed: false,
+                detail: String::new(),
+                messages: Vec::new(),
+                settled_reply: Some(settled),
+            },
+        ));
+    }
     let projected =
         if !non_binding && let (Some(execution), None) = (execution.as_ref(), matched.as_ref()) {
             if event_name == "response.completed" {
@@ -1040,10 +970,20 @@ async fn lifecycle_effects(
         changed,
         detail,
         messages,
+        settled_reply: None,
     })
 }
 
 mod activity;
+mod execution_lookup;
+pub(super) use execution_lookup::execution_for_runtime;
+#[cfg(test)]
+use execution_lookup::{
+    execution_args, execution_matches_runtime_task, execution_statement, runtime_task_ids,
+};
+mod human_reply;
+#[cfg(test)]
+pub(crate) use human_reply::verify_late_human_reply_projection;
 pub(super) mod lifecycle;
 pub(super) use activity::{finish_runtime_activity, linked_activity, open_runtime_activity};
 mod subagent;
