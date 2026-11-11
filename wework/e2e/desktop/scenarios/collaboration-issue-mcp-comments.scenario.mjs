@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { captureVerificationScreenshot, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { createPersonalIssueAccessRegression } from '../modules/personal-issue-access.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 
@@ -162,6 +162,9 @@ export async function createDesktopScenario({
       await control.command('waitFor', reportSelector, { text: REPORT })
       assert.equal(Number(await control.command('getElementCount', reportSelector)), 1)
       await assertMentionNotification(written)
+
+      await control.command('waitFor', reportSelector, { text: REPORT, visible: true })
+      await captureVerificationScreenshot(control, 'mcp-report-persisted-after-reload.png')
 
       // The native Executor uses this REST write path for the same MCP tool.
       const native = await request(

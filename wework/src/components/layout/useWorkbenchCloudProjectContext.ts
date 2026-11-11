@@ -242,6 +242,10 @@ export function useWorkbenchCloudProjectContext({
       ) {
         return
       }
+      logRuntimeTaskCreateStage('project-space-context-bound-update', {
+        itemVersion: Number.isFinite(update.item?.version) ? update.item!.version : null,
+        hasGroupOwner: Boolean(update.item?.group_id),
+      })
       contextLookupGenerationRef.current += 1
       setBoundCloudProject(update.project)
       setBoundCloudItem(update.item)
@@ -313,6 +317,10 @@ export function useWorkbenchCloudProjectContext({
             deviceId: contextRuntimeTask.deviceId,
             projectId: context.project.id,
             itemId: context.loop_item?.id ?? null,
+            itemVersion: Number.isFinite(context.loop_item?.version)
+              ? context.loop_item!.version
+              : null,
+            hasGroupOwner: Boolean(context.loop_item?.group_id),
             elapsedMs: Math.round(performance.now() - lookupStartedAt),
             applied: active && contextLookupGenerationRef.current === lookupGeneration,
           })

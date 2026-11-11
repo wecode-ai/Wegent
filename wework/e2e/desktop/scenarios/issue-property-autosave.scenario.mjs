@@ -3,6 +3,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import { waitForProjectIdentity } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = id => `${CONTENT} [data-testid="${id}"]`
@@ -37,12 +38,30 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('openWeworkScheme', 'body', {
           value: `wework://boards/local/${project.id}`,
         })
-        await control.command('waitFor', scoped('collaboration-board'), { timeoutMs: uiTimeoutMs })
+        await waitForProjectIdentity(control, CONTENT, name, uiTimeoutMs)
+        await control.command('waitFor', scoped('collaboration-board'), {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
       }
-      const openSettings = async () => {
-        await control.command('waitFor', scoped('thread-room'), { timeoutMs: uiTimeoutMs })
-        await control.command('click', scoped('thread-settings'))
+      const openSettings = async id => {
+        const issue = await readIssue(id)
+        await control.command('waitFor', scoped('thread-room'), {
+          text: issue.title,
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        const route = new URL(JSON.parse(await control.command('snapshot', CONTENT)).location)
+        assert.equal(route.searchParams.get('groupId'), owners.get(id))
+        assert.equal(route.searchParams.get('threadId'), id)
+        assert.equal(route.searchParams.get('groupStore'), 'local')
+        await control.command('waitFor', scoped('thread-settings'), {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('click', scoped('thread-settings'), { visible: true })
         await control.command('waitFor', scoped('thread-settings-panel'), {
+          visible: true,
           timeoutMs: uiTimeoutMs,
         })
       }
@@ -76,6 +95,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         })
         await control.command('waitFor', scoped('thread-room'), {
           text: title,
+          visible: true,
           timeoutMs: uiTimeoutMs,
         })
         const created = await waitForValue(
@@ -96,8 +116,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const second = await createIssue('Second tagged Issue', 'pending')
       const untagged = await createIssue('Untagged Issue', 'pending')
       const editTag = async (id, tag) => {
-        await control.command('click', scoped(`cloud-todo-card-${id}`))
-        await openSettings()
+        await control.command('click', scoped(`cloud-todo-card-${id}`), { visible: true })
+        await openSettings(id)
         await control.command('fill', scoped('thread-settings-tags-input'), { value: tag })
         await control.command('press', scoped('thread-settings-tags-input'), { key: 'Enter' })
         await waitForValue(
@@ -131,8 +151,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('press', portal('cloud-board-tag-filter-search'), { key: 'Escape' })
       await control.command('click', scoped('cloud-board-tag-filter-clear'))
       await control.command('waitFor', scoped(`cloud-todo-card-${untagged}`))
-      await control.command('click', scoped(`cloud-todo-card-${first}`))
-      await openSettings()
+      await control.command('click', scoped(`cloud-todo-card-${first}`), { visible: true })
+      await openSettings(first)
       await control.command('fill', scoped('thread-settings-title'), {
         value: 'Immediately renamed Issue',
       })
@@ -179,9 +199,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await reloadMainWindow(control, 'Persisted Issue properties must survive reloading')
       await control.command('waitFor', scoped(`cloud-todo-card-${first}`), {
         text: 'Immediately renamed Issue',
+        visible: true,
       })
-      await control.command('click', scoped(`cloud-todo-card-${first}`))
-      await openSettings()
+      await control.command('click', scoped(`cloud-todo-card-${first}`), { visible: true })
+      await openSettings(first)
       await control.command('waitFor', scoped('thread-settings-title'))
       await waitForValue(
         () => control.command('getValue', scoped('thread-settings-title')),
@@ -200,9 +221,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('navigate', 'body', { value: '/settings/appearance' })
       await control.command('clickWhenEnabled', '[data-testid="appearance-mode-dark"]')
       await control.command('waitFor', 'html[data-theme="dark"]')
-      await control.command('openWeworkScheme', 'body', {
-        value: `wework://boards/local/${project.id}`,
-      })
+      await openBoard()
       await control.command('clickWhenEnabled', scoped('cloud-board-tag-filter'))
       await control.command('waitFor', portal('cloud-board-tag-filter-search'))
       await captureScreenshot(control, 'issue-tag-filter-dark.png', 'body')

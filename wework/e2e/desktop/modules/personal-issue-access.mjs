@@ -12,6 +12,7 @@ import {
 } from './response-protocol.mjs'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
 import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from './shared.mjs'
+import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const MARKER = 'PERSONAL_ISSUE_ACCESS_E2E'
 const COMPLETE = `${MARKER}_COMPLETE`
@@ -367,6 +368,12 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
       )
       assert.equal(toolRunVerified, true, 'The model completed without exercising real MCP tools')
       await assertPersistedResults()
+      await control.command(
+        'waitFor',
+        `${CONTENT} [data-testid="ai-chat-modal"] [data-testid="message-assistant"]`,
+        { text: COMPLETE, visible: true }
+      )
+      await captureVerificationScreenshot(control, 'personal-task-mcp-result-verified.png')
       await control.command('click', `${CONTENT} [data-testid="ai-chat-modal-close"]`)
       console.log('[e2e] Personal task same/cross project permissions and source bindings verified')
       active = false

@@ -30,7 +30,7 @@ export function IssueArchiveDrawer({
 }) {
   return (
     <div
-      className="fixed inset-0 z-modal flex justify-end bg-black/25"
+      className="issue-archive-overlay fixed inset-0 z-modal flex justify-end bg-black/25"
       data-testid={collaborationTestIds.issueArchiveDrawer}
       onMouseDown={(event) => {
         if (event.currentTarget === event.target) onClose();

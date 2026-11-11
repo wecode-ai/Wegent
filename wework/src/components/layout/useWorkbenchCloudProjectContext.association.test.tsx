@@ -18,11 +18,13 @@ describe.each(['local', 'backend'] as const)('new task association in %s project
     const { result, unmount } = renderCloudContext()
     act(() => result.current.clearPendingProjectContext())
     unmount()
+    vi.restoreAllMocks()
   })
 
   test.each(['existing', 'new'] as const)(
     'defers the %s Issue association until the first message creates a session',
     async choice => {
+      const diagnostics = vi.spyOn(console, 'info').mockImplementation(() => {})
       const target = project(`draft-${store}`, store)
       const { owner: group, groups } = threadOwner(`group-${store}`, store)
       const issue =
@@ -104,6 +106,15 @@ describe.each(['local', 'backend'] as const)('new task association in %s project
       await waitFor(() => expect(result.current.boundCloudItem).toEqual(issue))
       expect(api.bindTask).toHaveBeenCalledExactlyOnceWith(issue.id, task, 'First message')
       expect(api.trackProjectTask).not.toHaveBeenCalled()
+      const boundUpdate = diagnostics.mock.calls
+        .map(([, serialized]) => JSON.parse(serialized))
+        .find(entry => entry.stage === 'project-space-context-bound-update')
+      expect(boundUpdate).toEqual({
+        timestamp: expect.any(String),
+        stage: 'project-space-context-bound-update',
+        itemVersion: issue.version,
+        hasGroupOwner: Boolean(issue.group_id),
+      })
     }
   )
 

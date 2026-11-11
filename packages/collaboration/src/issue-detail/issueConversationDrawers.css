@@ -6,6 +6,11 @@
   container-name: issue-workspace;
 }
 
+/* Keep the archive header inside an embedded workbench, below its host chrome. */
+.issue-drawer-workspace .issue-archive-overlay {
+  position: absolute;
+}
+
 .issue-conversation-drawers-backdrop {
   position: absolute;
   inset: 0;
