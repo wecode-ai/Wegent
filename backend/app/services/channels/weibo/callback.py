@@ -12,6 +12,7 @@ from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
     ChannelType,
+    TaskCallbackKey,
     get_callback_registry,
 )
 
@@ -82,7 +83,7 @@ class WeiboCallbackService(BaseChannelCallbackService[WeiboCallbackInfo]):
 
     async def _create_emitter(
         self,
-        task_id: int,
+        task_id: TaskCallbackKey,
         subtask_id: int,
         callback_info: WeiboCallbackInfo,
     ) -> Optional["ResultEmitter"]:

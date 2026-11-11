@@ -17,6 +17,7 @@ from app.services.channels.dingtalk.card_transport import (
     DingTalkCardTransport,
     card_delivery_data,
 )
+from app.services.channels.dingtalk.conversation import DingTalkConversationType
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 
 
@@ -86,6 +87,9 @@ class TemplateChatCardAdapter:
         self.card_instance_id = card_id
         self._out_track_id = card_id or f"wegent-chat-{uuid4().hex}"
         self._created = bool(card_id)
+        # Keep the delivery response so a failed quote address write can be
+        # retried without delivering a second card message.
+        self._delivery_response: dict[str, Any] | None = None
         self._transport = DingTalkCardTransport(client, channel_id)
 
     @property
@@ -131,15 +135,21 @@ class TemplateChatCardAdapter:
                 },
             )
             self._created = True
-        response = await self._request("POST", "instances/deliver", delivery)
+        if self._delivery_response is None:
+            self._delivery_response = await self._request(
+                "POST", "instances/deliver", delivery
+            )
+            self._log_delivery(self._delivery_response)
+        # The instance id is the "card is usable" signal, so persist the
+        # address it will be quoted by first. A failed write stays retryable:
+        # the next start() repeats only the bookkeeping, never the delivery.
+        await self._save_quote_addresses(self._delivery_response)
         self.card_instance_id = self._out_track_id
-        self._log_delivery(response)
-        await self._save_quote_addresses(response)
 
     async def _save_quote_addresses(self, response: dict) -> None:
         from app.services.channels.dingtalk.card_quotes import save_quote_address
 
-        if not self.config.follow_up_enabled or self._message.conversation_type != "2":
+        if not self.config.follow_up_enabled:
             return
         results = response.get("result")
         if not isinstance(results, list):
@@ -148,19 +158,21 @@ class TemplateChatCardAdapter:
             if not isinstance(row, dict):
                 continue
             carrier_id = row.get("carrierId")
-            if (
-                row.get("success") is True
-                and row.get("spaceType") == "IM_GROUP"
-                and row.get("spaceId") == self._message.conversation_id
-                and isinstance(carrier_id, str)
-                and carrier_id
+            if row.get("success") is not True or not isinstance(carrier_id, str):
+                continue
+            if not carrier_id:
+                continue
+            if self._message.conversation_type == DingTalkConversationType.GROUP and (
+                row.get("spaceType") != "IM_GROUP"
+                or row.get("spaceId") != self._message.conversation_id
             ):
-                await save_quote_address(
-                    self.channel_id,
-                    self._message.conversation_id,
-                    carrier_id,
-                    self._out_track_id,
-                )
+                continue
+            await save_quote_address(
+                self.channel_id,
+                self._message.conversation_id,
+                carrier_id,
+                self._out_track_id,
+            )
 
     def _log_delivery(self, response: dict) -> None:
         """Capture only addressing fields to correlate future quoted replies."""

@@ -11,6 +11,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.services.channels.dingtalk.card_binding import CardBinding
+from app.services.channels.dingtalk.conversation import DingTalkConversationType
 from app.services.chat.storage.task_manager import get_task_with_access_check
 from app.services.task_member_service import task_member_service
 from app.stores.tasks import task_store
@@ -29,7 +30,11 @@ def join_card_task(
         raise ValueError("原卡片对应的任务已不可用或原发言人已无访问权限")
     if user_id == task.user_id or task_member_service.is_member(db, task.id, user_id):
         return task, False
-    if binding.runtime_task or binding.incoming_data.get("conversationType") != "2":
+    if (
+        binding.runtime_task
+        or binding.incoming_data.get("conversationType")
+        != DingTalkConversationType.GROUP
+    ):
         raise ValueError("仅原钉钉群内的任务卡片支持自动加入协作")
 
     # Serialize joins across channels and API workers; both service mutations

@@ -96,6 +96,9 @@ class FakeCache:
         self.structured[key] = value
         return True
 
+    async def set_or_raise(self, key, value, expire=None):
+        return await self.set(key, value, expire)
+
     async def delete(self, key):
         self.raw.pop(key, None)
         return self.structured.pop(key, None) is not None
