@@ -24,6 +24,11 @@ const COMPLETED = `${PARTIAL}_COMPLETED_WHILE_DISCONNECTED`
 const ASSISTANT = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
 const PAUSE = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]`
 
+export async function assertSingleRecoveredCloudAnswer(control) {
+  const text = await control.command('getText', ASSISTANT)
+  assert.equal(text.split(COMPLETED).length - 1, 1, 'Recovery duplicated the completed answer')
+}
+
 // Extend the existing CI checkpoint without another Backend/Executor bootstrap.
 // Only the model is scripted; the relay, history, task state and Electron stay real.
 export function createDesktopScenario(options) {
@@ -146,11 +151,14 @@ export function createDesktopScenario(options) {
           'Cloud recovery did not settle the mounted conversation',
           options.uiTimeoutMs
         )
-        const text = await control.command('getText', ACTIVE_WORKBENCH_SELECTOR)
+        await assertSingleRecoveredCloudAnswer(control)
         assert.equal(
-          text.split(COMPLETED).length - 1,
-          1,
-          'Recovery duplicated the completed answer'
+          await control.command(
+            'getElementCount',
+            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+          ),
+          '1',
+          'Recovery duplicated the original user message'
         )
         assert.equal(control.readyCount, readyCount, 'Cloud recovery required a renderer reload')
       } finally {

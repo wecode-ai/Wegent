@@ -428,7 +428,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn create_task_after_local_checks(
         &self,
-        payload: Value,
+        mut payload: Value,
         activity: bool,
     ) -> Result<Value, AppIpcError> {
         let schema_version = payload
@@ -727,6 +727,9 @@ impl RuntimeWorkRpcHandler {
         }
         self.apply_project_workspace_roots(&mut request);
 
+        let initial_user_message =
+            prepare_initial_user_message(&local_task_id, &mut request, &mut payload);
+
         let mut link = RuntimeTaskLink::new_pending_with_runtime(
             local_task_id.clone(),
             workspace_path.clone(),
@@ -792,7 +795,7 @@ impl RuntimeWorkRpcHandler {
         ) {
             runtime_handle.insert("origin".to_owned(), origin.clone());
         }
-        if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
+        if let Some(message) = initial_user_message {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
         if let Some(presentation) = user_message_presentation(&payload) {

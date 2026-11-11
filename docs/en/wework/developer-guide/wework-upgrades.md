@@ -72,6 +72,11 @@ then verifies that retirement waits for the full thread group and the actual loc
 Catalog edits use the existing idle restart and active-work confirmation flow. Explicit native
 catalog configuration in the Home remains authoritative. Local discovery adds no resident process
 and does not serialize model requests from separate threads.
+Server-created tasks must also retain one stable identity for the initial visible user message
+across provisional history, the execution request and native turn presentation bindings. Reconcile
+recovered history by identity, never by text: identical prompts can belong to distinct turns.
+Recovery acceptance counts answers within assistant messages; a turn-navigation preview is not
+another message.
 Paused Goals must remain paused across ordinary restarts. Reactivation uses the original task's
 persisted execution configuration and existing admission flow. Repeated activation cannot enqueue
 duplicate recovery or change queued recovery to running. Native `goal/set` on an unloaded thread

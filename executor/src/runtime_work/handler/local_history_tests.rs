@@ -1,5 +1,50 @@
 use super::*;
 
+#[tokio::test]
+async fn server_created_user_identity_survives_native_transcript_recovery() {
+    let (handler, root) = isolated_runtime_work_handler("server-user-identity");
+    for (task_id, client_id) in [
+        ("server-created", None),
+        ("composer-created", Some("composer-user")),
+    ] {
+        let mut payload = json!({
+            "taskId": task_id,
+            "workspacePath": root.join(task_id),
+            "message": "The same prompt may be sent more than once",
+            "executionRequest": ExecutionRequest {
+                subtask_id: "request-subtask".into(),
+                ..ExecutionRequest::default()
+            },
+        });
+        if let Some(client_id) = client_id {
+            payload["clientUserMessageId"] = json!(client_id);
+        }
+        handler.create_task(payload).await.unwrap();
+        let link = handler.local_task_link(task_id).unwrap();
+        let cached = cached_messages(&link);
+        let expected = client_id
+            .map(str::to_owned)
+            .unwrap_or_else(|| cached[0]["id"].as_str().unwrap().to_owned());
+        assert_eq!(cached[0]["clientUserMessageId"], expected);
+        assert_eq!(
+            link.runtime_handle["executionRequest"]["client_user_message_id"],
+            expected
+        );
+        handler.record_runtime_turn_id(task_id, "request-subtask", "native-turn", Some(&expected));
+        let link = handler.local_task_link(task_id).unwrap();
+        let presentations = user_message_presentations(&link);
+        let mut native = vec![json!({
+            "id": "native-user-item", "role": "user", "turnId": "native-turn",
+            "content": "The same prompt may be sent more than once",
+        })];
+        bind_native_user_presentations(&mut native, &presentations);
+        attach_user_message_presentations(&mut native, presentations);
+        assert_eq!(native.len(), 1);
+        assert_eq!(native[0]["clientUserMessageId"], expected);
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn history_resume_restores_task_shell_identity_before_the_next_turn() {
