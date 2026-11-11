@@ -7,13 +7,16 @@ use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, PathBuf};
 
+/// Bound one startup transaction without allowing an unbounded lock manifest.
+pub const MAX_MIGRATION_LOCK_RESOURCES: usize = 32;
+
 /// Hold OS file locks until the desktop closes its pipe or this process exits.
 /// Persistent lock files must never be unlinked: all owners must lock the same inode.
 pub fn run(resources: &str, wait: bool) -> Result<(), String> {
     let mut paths: Vec<PathBuf> = serde_json::from_str(resources)
         .map_err(|_| "Invalid Workbench migration lock resources")?;
     if paths.is_empty()
-        || paths.len() > 3
+        || paths.len() > MAX_MIGRATION_LOCK_RESOURCES
         || paths.iter().any(|path| {
             !path.is_absolute()
                 || path.parent().is_none()

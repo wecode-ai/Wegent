@@ -47,6 +47,8 @@ export interface DesktopRuntimeOptions {
   onExecutorEvent?: (event: string, payload: Record<string, unknown>) => void
   createCoreDsh?: (options: DshRuntimeOptions) => CoreDshHandle
   createExecutor?: (options: ManagedExecutorRuntimeOptions) => ManagedExecutorHandle
+  assertExecutorCompatibility?: (environment: NodeJS.ProcessEnv) => Promise<void>
+  resolveDeviceId?: () => Promise<string>
   onStartupStep?: (
     step: string,
     status: 'started' | 'completed' | 'failed',
@@ -287,13 +289,19 @@ export class DesktopRuntime {
     const executorPath = this.options.environment.WEWORK_EXECUTOR_PATH?.trim()
     if (!executorPath) return null
     const generation = this.lifecycleGeneration
-    await assertExecutorWorkbenchCompatibility(this.options.environment)
+    await this.runStartupStep('executor-compatibility', () =>
+      (this.options.assertExecutorCompatibility ?? assertExecutorWorkbenchCompatibility)(
+        this.options.environment
+      )
+    )
     if (this.lifecycleGeneration !== generation) return null
-    const deviceId = await this.resolveDesktopDeviceId()
+    const deviceId = await this.runStartupStep('device-id', () => this.resolveDesktopDeviceId())
     if (this.lifecycleGeneration !== generation) return null
-    const deviceName = await resolveDesktopDeviceName({
-      environment: this.options.environment,
-    })
+    const deviceName = await this.runStartupStep('device-name', () =>
+      resolveDesktopDeviceName({
+        environment: this.options.environment,
+      })
+    )
     if (this.lifecycleGeneration !== generation) return null
     const executorOptions: ManagedExecutorRuntimeOptions = {
       command: executorPath,
@@ -436,11 +444,13 @@ export class DesktopRuntime {
   }
 
   private resolveDesktopDeviceId(): Promise<string> {
-    this.desktopDeviceId ??= resolveDesktopDeviceId({
-      applicationId: this.options.applicationId,
-      environment: this.options.environment,
-      dataDirectory: this.options.dataDirectory,
-    })
+    this.desktopDeviceId ??=
+      this.options.resolveDeviceId?.() ??
+      resolveDesktopDeviceId({
+        applicationId: this.options.applicationId,
+        environment: this.options.environment,
+        dataDirectory: this.options.dataDirectory,
+      })
     return this.desktopDeviceId
   }
 
@@ -489,6 +499,18 @@ export class DesktopRuntime {
     details: Record<string, unknown> = {}
   ): void {
     this.options.onStartupStep?.(step, status, details)
+  }
+
+  private async runStartupStep<Result>(step: string, task: () => Promise<Result>): Promise<Result> {
+    this.startupStep(step, 'started')
+    try {
+      const result = await task()
+      this.startupStep(step, 'completed')
+      return result
+    } catch (error) {
+      this.startupStep(step, 'failed')
+      throw error
+    }
   }
 
   private createCoreDsh(options: DshRuntimeOptions): CoreDshHandle {
