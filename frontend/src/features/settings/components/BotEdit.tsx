@@ -126,6 +126,8 @@ interface BotEditProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  /** Team groups that authorize shared Skills when saving a member Bot */
+  targetGroupNames?: string[]
   /** Model category allowed by the owning team's bind mode */
   modelCategoryType?: ModelCategoryType
   /** Allow a Chat Bot to bind a generation model as its primary model */
@@ -147,6 +149,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     hideActions = false,
     scope,
     groupName,
+    targetGroupNames = [],
     modelCategoryType = 'llm',
     allowGenerationPrimaryModel = false,
   },
@@ -960,6 +963,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           preload_skills: botData.preload_skills,
           preload_skill_refs: botData.preload_skill_refs,
           namespace: scope === 'group' && groupName ? groupName : undefined,
+          target_group_names: targetGroupNames,
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -981,7 +985,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } finally {
       setBotSaving(false)
     }
-  }, [validateBot, getBotData, editingBotId, setBots, toast, t, scope, groupName])
+  }, [validateBot, getBotData, editingBotId, setBots, toast, t, scope, groupName, targetGroupNames])
 
   // Expose methods via ref
   // Use a stable object reference to avoid infinite loops with React 19 and Radix UI
@@ -1142,6 +1146,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             groupName
           ),
           namespace: scope === 'group' && groupName ? groupName : undefined,
+          target_group_names: targetGroupNames,
         }
 
         if (editingBotId && editingBotId > 0) {
