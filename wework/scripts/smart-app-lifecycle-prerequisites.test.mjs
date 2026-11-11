@@ -13,6 +13,9 @@ import { verifySmartAppMarketplaceIdentity } from '../e2e/desktop/modules/smart-
 
 // Protocol coverage only; harness-app-lifecycle retains real Electron, storage, and DSH in CI.
 async function archiveFixture({ rejectConfirmation = false, corruptVersion = null } = {}) {
+  const translations = JSON.parse(
+    await readFile(new URL('../src/i18n/locales/zh-CN/common.json', import.meta.url), 'utf8')
+  )
   const root = await mkdtemp(join(tmpdir(), 'smart-app-archive-protocol-'))
   onTestFinished(() => rm(root, { recursive: true, force: true }))
   const appRoot = join(root, 'harness-apps')
@@ -31,6 +34,7 @@ async function archiveFixture({ rejectConfirmation = false, corruptVersion = nul
   let pending = null
   let preview = false
   let removing = null
+  let importError = null
   const persist = () =>
     writeFile(join(appRoot, 'installations.json'), JSON.stringify([...installations.values()]))
   const control = {
@@ -62,8 +66,11 @@ async function archiveFixture({ rejectConfirmation = false, corruptVersion = nul
         return JSON.stringify({ clicked: true })
       } else if (action === 'dropPaths') {
         const [entry] = JSON.parse(options.value)
-        if (entry.uri.endsWith('/invalid.zip')) events.push('invalid:rejected')
-        else {
+        importError = null
+        if (entry.uri.endsWith('/invalid.zip')) {
+          importError = translations.workbench.smart_apps_import_failed
+          events.push('invalid:rejected')
+        } else {
           pending = { id: importedId, version: '1.0.0' }
           events.push('import:pending')
         }
@@ -90,6 +97,14 @@ async function archiveFixture({ rejectConfirmation = false, corruptVersion = nul
         return 0
       } else {
         assert.equal(action, 'waitFor')
+        if (selector.includes('[role="alert"]')) {
+          assert.ok(importError, 'An invalid archive must expose its import error')
+          assert.equal(
+            options.text,
+            importError,
+            'Archive import alert must match the current translated failure'
+          )
+        }
         if (selector.includes('smart-app-marketplace-install-'))
           assert.equal(
             view,
@@ -111,6 +126,7 @@ async function archiveFixture({ rejectConfirmation = false, corruptVersion = nul
     },
   }
   return {
+    control,
     events,
     root,
     run: () =>
@@ -305,6 +321,22 @@ test('archive lifecycle fails native confirmation rejection before claiming inst
 test('archive lifecycle retains the exact delivered-byte assertion for an updated package', async () => {
   const app = await archiveFixture({ corruptVersion: '2.0.0' })
   await assert.rejects(app.run(), /Installed ZIP entry was truncated or corrupted/)
+})
+
+test('archive lifecycle rejects the obsolete Smart Workbench import failure copy', async () => {
+  const app = await archiveFixture()
+  const command = app.control.command
+  app.control.command = (action, selector, options = {}) =>
+    command(
+      action,
+      selector,
+      action === 'waitFor' && selector.includes('[role="alert"]')
+        ? { ...options, text: '智能工作台导入失败' }
+        : options
+    )
+  await assert.rejects(app.run(), /Archive import alert must match the current translated failure/)
+  assert.equal(app.events.includes('invalid:rejected'), true)
+  assert.equal(app.events.includes('import:pending'), false)
 })
 
 test('marketplace identity accepts native installation and configures its own tab before checking deep-link reuse', async () => {

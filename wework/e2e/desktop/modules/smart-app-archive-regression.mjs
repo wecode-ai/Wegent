@@ -88,7 +88,7 @@ export async function verifySmartAppArchiveRegression(
   await control.command('navigate', 'body', { value: '/sites?app_type=smart_app&view=owned' })
   await control.command('waitFor', `${ACTIVE} [data-testid="smart-apps-owned-page"]`)
   await dropArchive(control, fixture.invalid)
-  await control.command('waitFor', `${ACTIVE} [role="alert"]`, { text: '智能工作台导入失败' })
+  await control.command('waitFor', `${ACTIVE} [role="alert"]`, { text: '工作台导入失败' })
   await control.command('waitFor', `${ACTIVE} [data-testid="smart-apps-import-button"]`, {
     enabled: true,
   })
