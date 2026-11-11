@@ -13,10 +13,19 @@ pub(super) fn mcp_thread_configuration(params: &Value) -> Map<String, Value> {
         .collect()
 }
 
-/// Admission identity covers both tool authority and compaction's live policy baseline.
+/// Admission identity covers tool authority, native agents and compaction's policy baseline.
 pub(super) fn thread_context_configuration(params: &Value) -> Map<String, Value> {
     use sha2::{Digest, Sha256};
     let mut configuration = mcp_thread_configuration(params);
+    for key in [
+        "agents.enabled",
+        "features.multi_agent",
+        "features.multi_agent_v2",
+    ] {
+        if let Some(value) = params["config"].get(key) {
+            configuration.insert(key.into(), value.clone());
+        }
+    }
     if let Some(instructions) = params["developerInstructions"].as_str() {
         configuration.insert(
             "developerInstructions.sha256".into(),
@@ -177,6 +186,40 @@ mod tests {
             .insert("thread-1".into(), Map::new());
         stop_codex_app_server_process(&mut state, None).await;
         assert!(state.thread_context_configurations.is_empty());
+    }
+
+    #[test]
+    fn collaboration_changes_reload_the_native_agent_family_before_resume() {
+        let mut loaded = json!({"threadId":"thread-1", "config":{
+            "agents.enabled":false, "features.multi_agent":false, "features.multi_agent_v2":false
+        }});
+        let previous = thread_context_configuration(&loaded);
+        let request = ExecutionRequest::default();
+        for key in [
+            "agents.enabled",
+            "features.multi_agent",
+            "features.multi_agent_v2",
+        ] {
+            loaded["config"][key] = json!(true);
+            let plan = CodexThreadPlan {
+                start: CodexThreadStart::Request {
+                    operation: "thread/resume",
+                    params: loaded.clone(),
+                },
+                resume_requested: true,
+                fork_requested: false,
+            };
+            assert_eq!(
+                config_reload_resume_thread_id(&plan, &request, Some(&previous)),
+                Some("thread-1")
+            );
+            let current = thread_context_configuration(&loaded);
+            assert_eq!(
+                config_reload_resume_thread_id(&plan, &request, Some(&current)),
+                None
+            );
+            loaded["config"][key] = json!(false);
+        }
     }
 
     #[test]

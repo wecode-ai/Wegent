@@ -278,6 +278,14 @@ subscription's `thread/closed`. Recovery preserves the original thread, Goal
 creation time and accumulated usage instead of clearing or recreating the Goal
 to unblock admission.
 
+Persist the native execution mode as `collaborationMode`. Conversation-control
+continuations also read the selected mode from `modelSelection.options`, so a
+legacy snapshot's `collaboration_model: single` cannot replace a selected default
+or plan mode. Both modes explicitly enable native V2 collaboration on resume,
+including threads previously persisted as disabled. Explicit single-agent
+executions still disable collaboration tools. Desktop requests no longer send
+the conflicting legacy single field alongside their native mode.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from
