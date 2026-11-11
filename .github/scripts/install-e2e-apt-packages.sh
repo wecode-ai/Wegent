@@ -15,5 +15,5 @@ for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.{list,sources}; do
     printf '%s\n' "$rewritten_source" | "${privileged[@]}" tee "$source" >/dev/null
   fi
 done
-"${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update
-"${privileged[@]}" apt-get install --yes --no-install-recommends "$@"
+run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update
+run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "$@"

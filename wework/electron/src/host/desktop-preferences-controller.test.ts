@@ -8,6 +8,7 @@ function fixture(initial: Record<string, unknown> = {}) {
   let preferences = initial
   const store = {
     read: vi.fn(async () => preferences),
+    readSnapshot: vi.fn(async () => ({ preferences, readable: true })),
     update: vi.fn(async (patch: Record<string, unknown>) => {
       preferences = { ...preferences, ...patch }
       return preferences
@@ -34,6 +35,16 @@ function deferred<T>() {
 }
 
 describe('DesktopPreferencesController', () => {
+  test('leaves active desktop effects unchanged when preferences cannot be read', async () => {
+    const { controller, store, effects } = fixture({ popoutWindowShortcut: 'Ctrl+Alt+P' })
+    store.readSnapshot.mockResolvedValueOnce({ preferences: {}, readable: false })
+    await expect(controller.update({ popoutWindowShortcut: 'Ctrl+Alt+Q' })).rejects.toThrow(
+      'unreadable'
+    )
+    expect(effects.configurePopoutShortcut).not.toHaveBeenCalled()
+    expect(effects.setPerformanceRecordingEnabled).not.toHaveBeenCalled()
+    expect(store.update).not.toHaveBeenCalled()
+  })
   test('does not read or restore recording after shutdown starts', async () => {
     const { controller, store, effects } = fixture({ performanceRecordingEnabled: true })
     effects.isShuttingDown.mockReturnValue(true)

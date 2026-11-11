@@ -1,4 +1,5 @@
 import { TelemetryCollectionNotice } from '@/telemetry/TelemetryCollectionNotice'
+import { saveTelemetryConsent, useSessionTelemetryConsent } from '@/telemetry/sessionConsent'
 import { DefaultRunnerSetting } from './DefaultRunnerSetting'
 import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 import { useContext, useEffect, useState } from 'react'
@@ -94,6 +95,7 @@ interface TrayDisplayOption {
 }
 
 export function GeneralSettingsPage() {
+  const sessionTelemetryConsent = useSessionTelemetryConsent()
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const appPreferences = useAppPreferencesState()
@@ -195,17 +197,16 @@ export function GeneralSettingsPage() {
     setSaving(true)
     setError(null)
     try {
-      const patch: AppPreferencesPatch =
+      const nextPreferences =
         key === 'telemetryEnabled'
-          ? { telemetryConsentAsked: true, telemetryEnabled: value }
-          : { [key]: value }
-      const nextPreferences = await updateAppPreferences(patch)
+          ? await saveTelemetryConsent(value, preferences.telemetryConsentRevision)
+          : await updateAppPreferences({ [key]: value })
       setPreferences(nextPreferences)
     } catch (saveError) {
       console.error('[Wework] Failed to update app preferences', saveError)
       setPreferences(current => ({
         ...current,
-        [key]: !value,
+        [key]: key === 'telemetryEnabled' && !value ? false : !value,
       }))
       setError(t('workbench.general_settings_save_failed'))
     } finally {
@@ -260,7 +261,11 @@ export function GeneralSettingsPage() {
       control={
         <SettingsSwitch
           data-testid={testId}
-          checked={Boolean(preferences[preferenceKey])}
+          checked={
+            preferenceKey === 'telemetryEnabled' && sessionTelemetryConsent === false
+              ? false
+              : Boolean(preferences[preferenceKey])
+          }
           disabled={loading || saving}
           onCheckedChange={checked => {
             void handlePreferenceChange(preferenceKey, checked)

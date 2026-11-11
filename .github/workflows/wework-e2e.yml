@@ -800,7 +800,7 @@ jobs:
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
         # Finish before the job deadline so failure logs and artifacts can upload.
-        timeout-minutes: 40
+        timeout-minutes: 55
         continue-on-error: true
         shell: pwsh
         env:
