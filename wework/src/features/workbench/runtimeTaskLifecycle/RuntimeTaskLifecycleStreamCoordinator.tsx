@@ -38,9 +38,11 @@ function pendingRequestUserInputBlockPayload(payload: {
     : null
 }
 
-type ReconciliationReason = 'event_lagged' | 'runtime_replaced' | 'system_resume'
+type ReconciliationReason = 'event_lagged' | 'runtime_replaced' | 'system_resume' | 'retry'
 const RECOVERY_PAGE_SIZE = 5
 const RECOVERY_CONCURRENCY = 2
+const RECOVERY_RETRY_DELAY_MS = 1_000
+const RECOVERY_MAX_RETRY_DELAY_MS = 30_000
 
 interface LifecycleEventPayload {
   task?: import('@/types/api').RuntimeTaskSummary
@@ -89,11 +91,17 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     store: RuntimeTaskLifecycleStore
     reason: ReconciliationReason | null
     addresses: RuntimeTaskAddress[]
-  }>({ store, reason: null, addresses: [] })
+    refreshWorkList: boolean
+  }>({ store, reason: null, addresses: [], refreshWorkList: false })
 
   useEffect(() => {
     if (interruptedRecoveryRef.current.store !== store) {
-      interruptedRecoveryRef.current = { store, reason: null, addresses: [] }
+      interruptedRecoveryRef.current = {
+        store,
+        reason: null,
+        addresses: [],
+        refreshWorkList: false,
+      }
     }
     const interruptedRecovery = interruptedRecoveryRef.current
     let disposed = false
@@ -102,6 +110,11 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     let pendingReason: ReconciliationReason | null = null
     let activeReason: ReconciliationReason | null = null
     let recoveringAddresses: RuntimeTaskAddress[] = []
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let retryAttempt = 0
+    let retryWorkList = interruptedRecovery.refreshWorkList
+    let refreshingWorkList = false
+    interruptedRecovery.refreshWorkList = false
     const replacedAddresses = interruptedRecovery.addresses.splice(0)
     const diagnose = (stage: string, details: Record<string, unknown> = {}) => {
       if (import.meta.env.VITE_WEWORK_E2E === 'true') {
@@ -115,7 +128,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       reason: ReconciliationReason
     ) => {
       const getRuntimeGoal = executorClient.runtime.getRuntimeGoal
-      if (typeof getRuntimeGoal !== 'function') return
+      if (typeof getRuntimeGoal !== 'function') return true
       const snapshotVersion = beginRuntimeGoalSnapshot(address)
       try {
         const response = await getRuntimeGoal({ address })
@@ -124,10 +137,11 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           !response.accepted ||
           !isRuntimeGoalSnapshotCurrent(address, snapshotVersion)
         ) {
-          return
+          return true
         }
         const goal = response.goal ?? null
         syncRuntimeGoal(store, address, goal)
+        return true
       } catch (error) {
         console.warn('[Wework] Runtime Goal reconciliation failed', {
           reason,
@@ -135,6 +149,91 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           taskId: address.taskId,
           error,
         })
+        return !isRetryableRecoveryError(error)
+      }
+    }
+
+    const reconcileRuntimeTask = async (
+      address: RuntimeTaskAddress,
+      reason: ReconciliationReason
+    ): Promise<boolean> => {
+      const getTask = executorClient.runtime.getRuntimeTask
+      if (!getTask) return true
+      const expectedSnapshot = store.getTask(address)
+      try {
+        const task = await getTask(address, { signal: reads.signal })
+        if (!disposed && task) store.syncRuntimeTask(address, task, expectedSnapshot)
+        return true
+      } catch (error) {
+        if (disposed) return true
+        console.warn('[Wework] Runtime task reconciliation failed', {
+          reason,
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          error,
+        })
+        return !isRetryableRecoveryError(error)
+      }
+    }
+
+    const reconcileRuntimeTranscript = async (
+      address: RuntimeTaskAddress,
+      reason: ReconciliationReason
+    ): Promise<boolean> => {
+      try {
+        const queriedClientUserMessageIds = getRuntimeConversationQueuedMessages(address)
+          .filter(message => message.status === 'sending')
+          .map(message => message.id)
+        diagnose('transcript-start', {
+          reason,
+          taskId: address.taskId,
+          receiptCount: queriedClientUserMessageIds.length,
+        })
+        const transcript = await synchronizeRuntimeConversation(
+          (request, options) => executorClient.runtime.getRuntimeTranscript(request, options),
+          address,
+          {
+            limit: RECOVERY_PAGE_SIZE,
+            signal: reads.signal,
+            ...(queriedClientUserMessageIds.length
+              ? { reconcileClientUserMessageIds: queriedClientUserMessageIds }
+              : {}),
+          }
+        )
+        if (disposed) return true
+        store.syncTranscript(address, transcript)
+        if (queriedClientUserMessageIds.length) {
+          const acceptedClientUserMessageIds = transcript.acceptedClientUserMessageIds
+          const queried = new Set(queriedClientUserMessageIds)
+          const receiptsValid =
+            Array.isArray(acceptedClientUserMessageIds) &&
+            acceptedClientUserMessageIds.every(id => queried.has(id))
+          if (receiptsValid) {
+            reconcileRuntimeConversationQueueAfterTransportReplacement(address, transcript.turns, {
+              acceptedClientUserMessageIds,
+            })
+          }
+          const unconfirmed = getRuntimeConversationQueuedMessages(address).filter(
+            message => message.status === 'sending' && queried.has(message.id)
+          )
+          if (!receiptsValid || unconfirmed.length) {
+            console.warn('[Wework] Runtime message receipt confirmation unavailable', {
+              taskId: address.taskId,
+              reason: 'Incomplete acceptance evidence; pending sends remain unconfirmed',
+              pendingCount: unconfirmed.length,
+            })
+          }
+        }
+        return reconcileRuntimeGoal(address, reason)
+      } catch (error) {
+        if (disposed) return true
+        console.warn('[Wework] Runtime transcript reconciliation failed', {
+          reason,
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          error,
+        })
+        return !isRetryableRecoveryError(error)
       }
     }
 
@@ -144,90 +243,74 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         const reconciliationReason = reason
         activeReason = reason
         pendingReason = null
-        try {
-          const recoveryAddresses = runtimeRecoveryAddresses(store, replacedAddresses.splice(0))
-          recoveringAddresses = recoveryAddresses
-          diagnose('list-start', {
-            reason,
-            taskIds: recoveryAddresses.map(address => address.taskId),
-          })
-          const runtimeWork = await executorClient.runtime.listRuntimeWork()
-          diagnose('list-resolved', { reason, disposed })
-          if (!disposed) {
-            store.syncRuntimeWork(runtimeWork)
-            const addresses = runtimeRecoveryAddresses(store, recoveryAddresses)
-            recoveringAddresses = addresses
-            let nextAddress = 0
-            const recoverNext = async () => {
-              while (!disposed && nextAddress < addresses.length) {
-                const address = addresses[nextAddress++]
-                try {
-                  const queriedClientUserMessageIds = getRuntimeConversationQueuedMessages(address)
-                    .filter(message => message.status === 'sending')
-                    .map(message => message.id)
-                  diagnose('transcript-start', {
-                    reason,
-                    taskId: address.taskId,
-                    receiptCount: queriedClientUserMessageIds.length,
-                  })
-                  const transcript = await synchronizeRuntimeConversation(
-                    (request, options) =>
-                      executorClient.runtime.getRuntimeTranscript(request, options),
-                    address,
-                    {
-                      limit: RECOVERY_PAGE_SIZE,
-                      signal: reads.signal,
-                      ...(queriedClientUserMessageIds.length
-                        ? { reconcileClientUserMessageIds: queriedClientUserMessageIds }
-                        : {}),
-                    }
-                  )
-                  if (disposed) return
-                  const turns = transcript.turns
-                  store.syncTranscript(address, transcript)
-                  if (queriedClientUserMessageIds.length) {
-                    const acceptedClientUserMessageIds = transcript.acceptedClientUserMessageIds
-                    const queried = new Set(queriedClientUserMessageIds)
-                    const receiptsValid =
-                      Array.isArray(acceptedClientUserMessageIds) &&
-                      acceptedClientUserMessageIds.every(id => queried.has(id))
-                    if (receiptsValid) {
-                      reconcileRuntimeConversationQueueAfterTransportReplacement(address, turns, {
-                        acceptedClientUserMessageIds,
-                      })
-                    }
-                    const unconfirmed = getRuntimeConversationQueuedMessages(address).filter(
-                      message => message.status === 'sending' && queried.has(message.id)
-                    )
-                    if (!receiptsValid || unconfirmed.length) {
-                      console.warn('[Wework] Runtime message receipt confirmation unavailable', {
-                        taskId: address.taskId,
-                        reason: 'Incomplete acceptance evidence; pending sends remain unconfirmed',
-                        pendingCount: unconfirmed.length,
-                      })
-                    }
-                  }
-                  await reconcileRuntimeGoal(address, reconciliationReason)
-                } catch (error) {
-                  if (disposed) return
-                  console.warn('[Wework] Runtime transcript reconciliation failed', {
-                    reason,
-                    deviceId: address.deviceId,
-                    taskId: address.taskId,
+        const retained = replacedAddresses.splice(0)
+        const recoveryAddresses =
+          reason === 'retry' ? retained : runtimeRecoveryAddresses(store, retained)
+        recoveringAddresses = []
+        const visited = new Set(recoveryAddresses.map(runtimeConversationKey))
+        const failed: RuntimeTaskAddress[] = []
+        const refreshWorkList = reason !== 'retry' || retryWorkList
+        retryWorkList = false
+        refreshingWorkList = refreshWorkList
+        // Catalog reads must not block recovery on another execution device.
+        const workList = refreshWorkList
+          ? executorClient.runtime
+              .listRuntimeWork()
+              .then(runtimeWork => {
+                if (disposed) return []
+                store.syncRuntimeWork(runtimeWork)
+                return runtimeRecoveryAddresses(store).filter(
+                  address => !visited.has(runtimeConversationKey(address))
+                )
+              })
+              .catch(error => {
+                if (!disposed) {
+                  retryWorkList = isRetryableRecoveryError(error)
+                  console.warn('[Wework] Runtime task lifecycle reconciliation failed', {
+                    reason: reconciliationReason,
                     error,
                   })
                 }
-              }
+                return []
+              })
+              .finally(() => {
+                refreshingWorkList = false
+              })
+          : Promise.resolve([])
+        const recoverAddresses = async (addresses: RuntimeTaskAddress[]) => {
+          recoveringAddresses.push(...addresses)
+          let nextAddress = 0
+          const recoverNext = async () => {
+            while (!disposed && nextAddress < addresses.length) {
+              const address = addresses[nextAddress++]
+              const results = await Promise.all([
+                reconcileRuntimeTask(address, reconciliationReason),
+                reconcileRuntimeTranscript(address, reconciliationReason),
+              ])
+              if (results.includes(false)) failed.push(address)
             }
-            await Promise.all(
-              Array.from({ length: Math.min(RECOVERY_CONCURRENCY, addresses.length) }, recoverNext)
-            )
           }
-        } catch (error) {
-          console.warn('[Wework] Runtime task lifecycle reconciliation failed', {
-            reason,
-            error,
-          })
+          await Promise.all(
+            Array.from({ length: Math.min(RECOVERY_CONCURRENCY, addresses.length) }, recoverNext)
+          )
+        }
+        await recoverAddresses(recoveryAddresses)
+        await recoverAddresses(await workList)
+        recoveringAddresses = []
+        if (!disposed && (failed.length || retryWorkList)) {
+          replacedAddresses.push(...failed)
+          if (!pendingReason) {
+            const delay = Math.min(
+              RECOVERY_RETRY_DELAY_MS * 2 ** Math.min(retryAttempt++, 5),
+              RECOVERY_MAX_RETRY_DELAY_MS
+            )
+            retryTimer = setTimeout(() => {
+              retryTimer = null
+              reconcile('retry')
+            }, delay)
+          }
+        } else {
+          retryAttempt = 0
         }
         reason = pendingReason
       }
@@ -237,12 +320,17 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     const reconcile = (reason: ReconciliationReason) => {
       diagnose('requested', { reason, disposed, alreadyRunning: Boolean(reconciliation) })
       if (disposed) return
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer)
+        retryTimer = null
+      }
       if (reconciliation) {
         pendingReason = reason
         return
       }
       reconciliation = runReconciliation(reason).finally(() => {
         reconciliation = null
+        if (!disposed && pendingReason) reconcile(pendingReason)
       })
     }
 
@@ -300,12 +388,15 @@ export function RuntimeTaskLifecycleStreamCoordinator({
               })
           })
       }
-      // Complete live content and an authoritative task snapshot need no history repair.
+      // A cached terminal snapshot can predate the native completion. Only skip
+      // history repair when its outcome agrees with the authoritative event.
       const terminal = getRuntimeConversationTurns(address).find(turn => turn.id === terminalTurnId)
       if (
         hasAuthoritativeTask &&
         terminal &&
-        ['done', 'completed', 'failed', 'cancelled'].includes(terminal.status)
+        (outcome === 'succeeded'
+          ? ['done', 'completed'].includes(terminal.status)
+          : terminal.status === outcome)
       )
         return
       try {
@@ -405,11 +496,13 @@ export function RuntimeTaskLifecycleStreamCoordinator({
 
     return () => {
       diagnose('disposed', { reconciliationPending: Boolean(reconciliation), pendingReason })
-      if (activeReason || pendingReason) {
-        interruptedRecovery.reason = pendingReason ?? activeReason
+      if (activeReason || pendingReason || retryTimer !== null) {
+        interruptedRecovery.reason = pendingReason ?? activeReason ?? 'retry'
         interruptedRecovery.addresses = [...recoveringAddresses, ...replacedAddresses]
+        interruptedRecovery.refreshWorkList = retryWorkList || refreshingWorkList
       }
       disposed = true
+      if (retryTimer !== null) clearTimeout(retryTimer)
       reads.abort()
       unsubscribeSystemResume()
       unsubscribe()
@@ -428,6 +521,10 @@ function didStartNewerTurn(
   if (!current || !current.turn.active) return false
   if (terminalTurnId && current.turn.id === terminalTurnId) return false
   return expected?.turn.phase !== current.turn.phase || expected.turn.id !== current.turn.id
+}
+
+function isRetryableRecoveryError(error: unknown): boolean {
+  return !(error && typeof error === 'object' && 'retryable' in error && error.retryable === false)
 }
 
 function runtimeRecoveryAddresses(

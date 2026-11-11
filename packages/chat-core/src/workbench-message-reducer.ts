@@ -1593,6 +1593,9 @@ export function settleWorkbenchProcessingBlock<TFileChanges>(
 ): WorkbenchProcessingBlock<TFileChanges> {
   if (block.status === 'done' || block.status === 'error') return block
 
+  // Native child threads complete independently of their initiating turn.
+  if (block.type === 'subagent' && block.agentThreadId) return block
+
   // A turn completing does not prove that its terminal process has exited.
   if (commandExecutionPayload(block)?.status === 'inProgress') return block
 

@@ -60,6 +60,18 @@ pub(crate) struct ConsumerContext<'a, M: Mysql, R: Redis> {
     pub executor_manager: &'a ExecutorManager,
     /// `Completion.app`: the subscription notification handler reads it.
     pub app: Option<&'a AppState>,
+    /// `/chat` dispatch: forward every parsed event to the Socket.IO emitter
+    /// and emit the dispatcher's START frame before the stream opens, exactly
+    /// like `WebSocketResultEmitter`.
+    pub forward: bool,
+    /// `_build_start_event_data(request)`: the START frame's `shell_type` and
+    /// optional `bot_name`.
+    pub start_data: Value,
+    /// The START frame's `task:created` identity.
+    pub created_task: Option<crate::internal_callback::emitter::CreatedTask>,
+    /// `request.user.id`: the owner room the terminal `task:status` frame
+    /// addresses when forwarding to Socket.IO.
+    pub owner_user_id: Option<i64>,
 }
 
 impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
@@ -73,6 +85,10 @@ impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
             tables: crate::internal_callback::tables(state),
             executor_manager: &state.executor_manager,
             app: Some(state),
+            forward: false,
+            start_data: Value::Null,
+            created_task: None,
+            owner_user_id: None,
         }
     }
 }
@@ -153,6 +169,9 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
 
     let mut emitter =
         StatusUpdatingEmitter::new(redis.clone(), request.task_id, request.subtask_id);
+    if let Some(created) = ctx.created_task.clone() {
+        emitter = emitter.with_created_task(created);
+    }
     let cancel_key = format!("{CANCEL_KEY_PREFIX}{}", request.subtask_id);
     // A package job starts after the public request has returned or subscribed.
     // Clearing its flag here could erase a cancellation admitted while queued.
@@ -270,6 +289,19 @@ async fn read_stream<M: Mysql, R: Redis>(
     // the terminal drain) and join only a still-pending poll.
     let mut cancel_done = already_cancelled;
 
+    // `_dispatch_chat_shell_sse`'s `await emitter.emit_start(...)` runs after
+    // the cancellation watcher is created and before the stream opens. The
+    // wrapped emitter publishes the START frames without persisting, so the
+    // `chat:task_streaming` marker is established only by the parsed
+    // `response.created` START inside the consume loop.
+    if ctx.forward
+        && let Err(error) = emitter
+            .emit_start_forward_only(message_id, &ctx.start_data)
+            .await
+    {
+        tracing::warn!(%error, "chat-shell START emit failed");
+    }
+
     // Scoped so the stream future releases its borrows of `emitter` and
     // `content` before the remaining phases use them.
     let end = {
@@ -370,6 +402,11 @@ async fn open_and_consume<M: Mysql, R: Redis>(
         )));
     }
 
+    tracing::info!(
+        task_id = request.task_id,
+        subtask_id = request.subtask_id,
+        "Chat Shell SSE stream opened"
+    );
     let mut frames = SseFrames::default();
     let mut event_count = 0_u64;
 
@@ -438,6 +475,12 @@ async fn open_and_consume<M: Mysql, R: Redis>(
                     }
                 } else if ctx.package_mode {
                     emit_package_event(ctx, &parsed).await?;
+                } else if ctx.forward {
+                    // `/chat` dispatch: `WebSocketResultEmitter.emit`, i.e.
+                    // persist and publish the corresponding Socket.IO frame.
+                    if let Err(error) = emitter.emit(&mut parsed).await {
+                        tracing::warn!(%error, "chat-shell stream forward failed");
+                    }
                 } else if let Err(error) = emitter.emit_persist_only(&mut parsed).await {
                     tracing::warn!(%error, "chat-shell stream persistence failed");
                 }
@@ -577,7 +620,7 @@ async fn complete<M: Mysql, R: Redis>(
     // `StatusUpdatingEmitter`'s terminal branch. The create flow wraps an
     // `SSEResultEmitter`, so the callback's `task:status` owner pre-read does
     // not run here.
-    completion::complete_terminal_event(
+    let final_result = completion::complete_terminal_event(
         &completion,
         event.task_id,
         event.subtask_id,
@@ -589,6 +632,40 @@ async fn complete<M: Mysql, R: Redis>(
         None,
     )
     .await;
+    // `WebSocketResultEmitter.emit`'s terminal branch for the `/chat` dispatch:
+    // the event's frame (`chat:done` / `chat:error` / `chat:cancelled`) then
+    // `task:status`. The OpenAPI path wraps an `SSEResultEmitter` and stops at
+    // the persisted terminal state.
+    if ctx.forward {
+        let result = final_result
+            .or_else(|| event.result.clone())
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        let mut frame = event.clone();
+        frame.result = Some(result.clone());
+        // `websocket.py:_load_context_briefs`: the DONE frame carries the
+        // completed subtask's committed context briefs.
+        let contexts =
+            match crate::responses::create::contexts::context_briefs(ctx.mysql, frame.subtask_id)
+                .await
+            {
+                Ok(briefs) => Some(briefs),
+                Err(error) => {
+                    tracing::warn!(%error, "chat:done context briefs load failed");
+                    None
+                }
+            };
+        if let Err(error) = crate::internal_callback::emitter::emit_terminal_frames(
+            redis,
+            &frame,
+            ctx.owner_user_id,
+            &result,
+            contexts.as_ref(),
+        )
+        .await
+        {
+            tracing::warn!(%error, "chat-shell terminal frames failed");
+        }
+    }
     Ok(())
 }
 
@@ -637,6 +714,26 @@ async fn complete_failure<M: Mysql, R: Redis>(
         None,
     )
     .await;
+    if ctx.forward {
+        // `_trigger_ai`'s failure branch emits `chat:error` with the classified
+        // error type and message id, then `task:status FAILED`.
+        let mut event = ExecutionEvent::new(EventType::Error, request.task_id, request.subtask_id);
+        event.message_id = request.message_id;
+        event.error = Some(failure.message.clone());
+        event.error_code = failure.error_code.map(str::to_owned);
+        event.result = result.clone();
+        if let Err(error) = crate::internal_callback::emitter::emit_terminal_frames(
+            redis,
+            &event,
+            ctx.owner_user_id,
+            event.result.as_ref().unwrap_or(&serde_json::Value::Null),
+            None,
+        )
+        .await
+        {
+            tracing::warn!(%error, "chat-shell failure frames failed");
+        }
+    }
 }
 
 /// The `result` payload `collect_completed_result` builds for a persisted

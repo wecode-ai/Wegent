@@ -16,6 +16,7 @@ import {
   selectMcpToolRequest,
   selectProgrammaticExec,
   selectTool,
+  toolOutputText,
 } from '../e2e/desktop/modules/response-protocol.mjs'
 
 describe('native function selection', () => {
@@ -185,6 +186,21 @@ describe('cors', () => {
 })
 
 describe('programmatic exec', () => {
+  test.each(['function_call_output', 'custom_tool_call_output'])(
+    'reads bound-Issue results from %s envelopes',
+    type => {
+      const request = {
+        input: [
+          { type, call_id: 'unrelated', output: 'unrelated result' },
+          { type, call_id: 'manual-read', output: 'BOARD_READ_OK' },
+        ],
+      }
+      expect(toolOutputText(request, 'manual-read')).toBe('BOARD_READ_OK')
+      expect(toolOutputText({ input: [{ content: request.input }] }, 'manual-read')).toBe(
+        'BOARD_READ_OK'
+      )
+    }
+  )
   test('recognizes the native exec declaration before additional tools are injected', () => {
     const request = { tools: [{ type: 'custom', name: 'exec' }], input: [] }
     expect(requestAdvertisesProgrammaticExec(request)).toBe(true)

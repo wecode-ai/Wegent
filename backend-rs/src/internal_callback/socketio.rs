@@ -14,7 +14,9 @@ use brz_redis::{Redis, RedisResult};
 use serde_json::{Value, json};
 
 use super::py_json::python_dumps;
-use crate::socketio_emit::{SOCKETIO_CHANNEL, emit_message};
+use crate::socketio_emit::{SOCKETIO_CHANNEL, emit_message_skipping};
+
+use super::emitter::CreatedTask;
 
 /// Publish one Socket.IO emit for the `/chat` namespace into `task:{task_id}`.
 pub(crate) async fn publish_emit<R: Redis>(
@@ -48,6 +50,41 @@ pub(crate) async fn publish_chat_start<R: Redis>(
     publish_emit(redis, "chat:start", task_id, payload).await
 }
 
+/// `WebPageSocketEmitter.emit_task_created`
+/// (`webpage_ws_chat_emitter.py:551-587`): the `task:created` frame for the
+/// owner's user room, published right after `chat:start`.
+pub(crate) async fn publish_task_created<R: Redis>(
+    redis: &R,
+    task_id: i64,
+    created: &CreatedTask,
+) -> RedisResult<i64> {
+    let payload = task_created_payload(task_id, created);
+    publish_emit_in_room(
+        redis,
+        "task:created",
+        &format!("user:{}", created.user_id),
+        payload,
+    )
+    .await
+}
+
+/// The `task:created` payload: the task identity, the creator's team/title/
+/// project, and the emit's local timestamp.
+pub(crate) fn task_created_payload(task_id: i64, created: &CreatedTask) -> Value {
+    json!({
+        "task_id": task_id,
+        "title": created.title,
+        "team_id": created.team_id,
+        "team_name": created.team_name,
+        "created_at": chrono::Local::now()
+            .naive_local()
+            .format("%Y-%m-%dT%H:%M:%S%.6f")
+            .to_string(),
+        "is_group_chat": created.is_group_chat,
+        "project_id": created.project_id,
+    })
+}
+
 /// Publish one Socket.IO emit for the `/chat` namespace into an explicit room.
 ///
 /// The wrapped emitters address different rooms: result frames use
@@ -58,7 +95,26 @@ pub(crate) async fn publish_emit_in_room<R: Redis>(
     room: &str,
     payload: Value,
 ) -> RedisResult<i64> {
+    publish_emit_in_room_skipping(redis, event, room, payload, None).await
+}
+
+/// `publish_emit_in_room` with `skip_sid` (the sender's own socket).
+///
+/// `ChatNamespace._broadcast_user_message` emits `chat:message` with
+/// `skip_sid=sid` so the sender does not receive its own broadcast.
+pub(crate) async fn publish_emit_in_room_skipping<R: Redis>(
+    redis: &R,
+    event: &str,
+    room: &str,
+    payload: Value,
+    skip_sid: Option<&str>,
+) -> RedisResult<i64> {
+    // `AsyncPubSubManager.emit` delivers to the local subscribers first
+    // (`_handle_emit`) and only then publishes the adapter message; the
+    // process's own Redis echo is ignored by `adapter_emit_job`, so a local
+    // subscriber receives the frame exactly once.
+    crate::socketio::runtime::deliver_local_emit("/chat", event, room, skip_sid, &payload).await;
     let data = python_dumps(&Value::Array(vec![payload]));
-    let message = emit_message(event, &data, "/chat", room);
+    let message = emit_message_skipping(event, &data, "/chat", room, skip_sid);
     redis.publish(SOCKETIO_CHANNEL, message).await
 }

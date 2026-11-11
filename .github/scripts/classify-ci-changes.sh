@@ -188,6 +188,10 @@ classify_path() {
       changed[wework_e2e]=true
       ;;
     shared/*)
+      if [[ "$path" == shared/assets/codex-models/* ]]; then
+        changed[backend_rs]=true
+        changed[wework_e2e]=true
+      fi
       changed[backend]=true
       changed[executor_manager]=true
       changed[shared]=true

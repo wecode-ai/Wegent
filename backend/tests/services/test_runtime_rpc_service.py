@@ -1221,3 +1221,49 @@ async def test_task_model_binding_rejects_non_object_execution_config(
     assert raised.value.code == "bad_request"
     assert field in str(raised.value)
     sio_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "payload_user", "allowed"),
+    [
+        ("runtime.stand_in.conversation", 7, True),
+        ("runtime.stand_in.conversation", 8, False),
+        ("runtime.tasks.create", 7, False),
+        ("runtime.stand_in.personal.save", 7, False),
+    ],
+)
+async def test_im_stand_in_capability_cannot_control_other_users_or_methods(
+    monkeypatch, method, payload_user, allowed
+):
+    from app.schemas.device import DeviceType
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route(device_type=DeviceType.APP)),
+    )
+    call = AsyncMock(return_value={"taskId": "stand-in-chat-7-primary"})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(call))
+    if allowed:
+        result = await module.RuntimeRpcService().call(
+            user_id=7,
+            device_id="device-1",
+            method=method,
+            payload={"userId": payload_user, "message": "hello"},
+            allow_app_device_stand_in=True,
+        )
+        assert result["taskId"] == "stand-in-chat-7-primary"
+        call.assert_awaited_once()
+    else:
+        with pytest.raises(module.RuntimeRpcError) as error:
+            await module.RuntimeRpcService().call(
+                user_id=7,
+                device_id="device-1",
+                method=method,
+                payload={"userId": payload_user},
+                allow_app_device_stand_in=True,
+            )
+        assert error.value.code == "remote_control_disabled"
+        call.assert_not_awaited()

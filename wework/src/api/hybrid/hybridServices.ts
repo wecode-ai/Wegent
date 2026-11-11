@@ -1255,9 +1255,6 @@ export function createHybridWorkbenchServices(
     restoreWorktree(data) {
       return runtimeApiForDevice(data.deviceId).then(api => api.restoreWorktree(data))
     },
-    bindRuntimeTaskImSessions(data) {
-      return cloudServices.runtimeWorkApi!.bindRuntimeTaskImSessions(data)
-    },
     getImNotificationSettings() {
       return cloudServices.runtimeWorkApi!.getImNotificationSettings()
     },
@@ -1917,6 +1914,9 @@ export function createHybridWorkbenchServices(
           userId,
           deviceId
         )
+      },
+      async deviceIdentity(deviceId) {
+        return (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
       },
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)

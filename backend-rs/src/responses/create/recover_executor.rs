@@ -16,8 +16,9 @@
 //!
 //! Documented gap: `recovery_service.recover` itself is not reproduced. Every
 //! recorded create case inserts a fresh subtask (`executor_deleted_at = 0`)
-//! without a fork workspace archive, so the source takes the early return; the
-//! recovery branch is reported but not executed.
+//! without a fork workspace archive, so the source soft-probes the executor
+//! (`GET /executor-manager/executor/address`), confirms it alive, and returns
+//! before recovery; the recovery branch is reported but not executed.
 use brz_mysql::{Mysql, MysqlResult, MysqlRow};
 use serde_json::Value;
 
@@ -51,6 +52,8 @@ pub(crate) fn has_fork_workspace_archive(fork_runtime: Option<&Value>) -> bool {
 pub(crate) struct RecoverySubtask {
     pub(crate) executor_deleted: bool,
     pub(crate) task_id: i64,
+    pub(crate) executor_name: String,
+    pub(crate) executor_namespace: String,
 }
 
 /// `subtask_store.get_by_id` with the ORM's eager `Subtask.contexts` load
@@ -77,10 +80,49 @@ pub(crate) async fn read_subtask_with_contexts<M: Mysql>(
     let column = |name: &str| {
         subtask_column_index(name).and_then(|index| row.get_at::<Option<i64>>(index).ok().flatten())
     };
+    let text = |name: &str| {
+        subtask_column_index(name)
+            .and_then(|index| row.get_at::<Option<String>>(index).ok().flatten())
+    };
     Ok(Some(RecoverySubtask {
         executor_deleted: column("executor_deleted_at").is_some_and(|value| value != 0),
         task_id: column("task_id").unwrap_or(0),
+        executor_name: text("executor_name").unwrap_or_default(),
+        executor_namespace: text("executor_namespace").unwrap_or_default(),
     }))
+}
+
+/// `_mark_missing_executor_deleted`'s probe gate
+/// (`dispatcher.py:341-343`): a blank or `device-*` binding is never probed.
+pub(crate) fn probes_executor_binding(executor_name: &str) -> bool {
+    let name = executor_name.trim();
+    !name.is_empty() && !name.starts_with("device-")
+}
+
+/// `remote_workspace_service.executor_alive`'s payload interpretation
+/// (`remote_workspace_service.py:604-625`): only a terminal phase
+/// (`Succeeded`/`Failed`) or the executor-manager "No pod found for executor"
+/// error reports the pod as missing. A `status: success` payload, any other
+/// phase/error, and a `None` payload (transport failure, non-200, empty or
+/// non-object body) are all treated as alive.
+pub(crate) fn payload_reports_missing(payload: &Value) -> bool {
+    let status = payload
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if status.eq_ignore_ascii_case("success") {
+        return false;
+    }
+    if matches!(
+        payload.get("phase").and_then(Value::as_str),
+        Some("Succeeded" | "Failed")
+    ) {
+        return true;
+    }
+    payload
+        .get("error_msg")
+        .and_then(Value::as_str)
+        .is_some_and(|message| message.contains("No pod found for executor"))
 }
 
 /// `_recover_executor_if_needed`: the observable read and the early returns.
@@ -109,13 +151,26 @@ pub(crate) async fn recover_executor_if_needed(state: &AppState, request: &Execu
         }
     };
     // `if not subtask: return`, then `if not subtask.executor_deleted_at and not
-    // restore_fork_workspace: return` — the recorded create path always takes
-    // this branch, after issuing the read and contexts load.
+    // restore_fork_workspace:` soft-probe the bound executor
+    // (`_mark_missing_executor_deleted`, `dispatcher.py:326-361`) and return
+    // when it is alive.
     let Some(subtask) = subtask else {
         return;
     };
     if !subtask.executor_deleted && !restore_fork_workspace {
-        return;
+        if !probes_executor_binding(&subtask.executor_name) {
+            return;
+        }
+        // `executor_health.executor_pod_missing` -> `executor_alive`: the
+        // recorded create path receives `200 status=success phase=Running`
+        // and returns here without recovery.
+        let payload = state
+            .executor_manager
+            .executor_address(subtask.executor_name.trim(), &subtask.executor_namespace)
+            .await;
+        if !payload.as_ref().is_some_and(payload_reports_missing) {
+            return;
+        }
     }
     tracing::warn!(
         task_id = subtask.task_id,

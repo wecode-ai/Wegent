@@ -6,6 +6,7 @@ import {
   enqueueNotificationReply,
   pendingNotificationReplies,
 } from './notification-replies.js'
+import { registerNotificationReplyE2E } from './notification-reply-e2e.js'
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
@@ -1133,6 +1134,9 @@ export function createElectronCapabilityRouter(
       desktopServices
     )
   })
+  registerNotificationReplyE2E(router, () =>
+    desktopServices.events.publish('notification-reply', {})
+  )
   router.register('notification.pendingReplies', params =>
     pendingNotificationReplies(stringParam(params, 'accountKey'))
   )

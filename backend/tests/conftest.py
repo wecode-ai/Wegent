@@ -2,11 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import copy
 import hashlib
 import os
 import tempfile
 import uuid
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Generator, Tuple
 
@@ -62,8 +64,31 @@ def use_fast_test_password_hashing() -> Generator[None, None, None]:
 
 
 class FakeIMSessionRedisClient:
+    class _Lock:
+        def __init__(self) -> None:
+            self._lock = asyncio.Lock()
+
+        async def __aenter__(self) -> "FakeIMSessionRedisClient._Lock":
+            await self._lock.acquire()
+            return self
+
+        async def __aexit__(self, *_args) -> None:
+            self._lock.release()
+
+        async def acquire(self) -> bool:
+            return await self._lock.acquire()
+
+        async def owned(self) -> bool:
+            return self._lock.locked()
+
+        async def release(self) -> None:
+            self._lock.release()
+
     def __init__(self, cache: "FakeIMSessionCache") -> None:
         self._cache = cache
+
+    def lock(self, _name: str, **_options) -> "FakeIMSessionRedisClient._Lock":
+        return self._cache.locks.setdefault(_name, self._Lock())
 
     async def zadd(self, key: str, mapping: dict[str, float]) -> int:
         zset = self._cache.zsets.setdefault(key, {})
@@ -114,14 +139,29 @@ class FakeIMSessionCache:
         self.values: dict[str, Any] = {}
         self.expires: dict[str, int | None] = {}
         self.zsets: dict[str, dict[str, float]] = {}
+        self.locks: dict[str, FakeIMSessionRedisClient._Lock] = {}
 
     async def get(self, key: str) -> Any:
-        return self.values.get(key)
+        # Redis serializes values, so callers never share mutable snapshots.
+        return copy.deepcopy(self.values.get(key))
 
     async def set(self, key: str, value: Any, expire: int | None = None) -> bool:
-        self.values[key] = value
+        self.values[key] = copy.deepcopy(value)
         self.expires[key] = expire
         return True
+
+    async def get_or_raise(self, key: str) -> Any:
+        return await self.get(key)
+
+    async def set_or_raise(
+        self, key: str, value: Any, expire: int | None = None
+    ) -> bool:
+        return await self.set(key, value, expire)
+
+    async def setnx(self, key: str, value: Any, expire: int | None = None) -> bool:
+        if key in self.values:
+            return False
+        return await self.set(key, value, expire)
 
     async def delete(self, key: str) -> bool:
         existed = key in self.values
@@ -136,6 +176,10 @@ class FakeIMSessionCache:
 
     async def _get_client(self) -> FakeIMSessionRedisClient:
         return FakeIMSessionRedisClient(self)
+
+    @asynccontextmanager
+    async def _client_context(self):
+        yield await self._get_client()
 
 
 @pytest.fixture

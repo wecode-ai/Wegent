@@ -87,6 +87,10 @@ pub struct SocketIoRpc {
     /// `base_manager._generate_ack_id`: one `itertools.count(1)` per socket
     /// id, dropped when the socket goes away.
     next_ids: Mutex<HashMap<String, u64>>,
+    /// The callbacks this process issued and still awaits, keyed by sender
+    /// identity plus session. The callback sequencer reads it to decide which
+    /// completions are worth holding back for a locally registered earlier id.
+    in_flight: Arc<crate::callback_sequencer::InFlightRegistry>,
     /// Dropping the last sender stops the subscription worker.
     _shutdown: watch::Sender<bool>,
 }
@@ -114,6 +118,7 @@ impl SocketIoRpc {
             waiters,
             emit_sink,
             next_ids: Mutex::new(HashMap::new()),
+            in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
             _shutdown: shutdown,
         })
     }
@@ -123,6 +128,12 @@ impl SocketIoRpc {
         if let Ok(mut slot) = self.emit_sink.lock() {
             *slot = Some(sink);
         }
+    }
+
+    /// The in-flight callback registry shared with the callback sequencer.
+    #[must_use]
+    pub fn in_flight(&self) -> Arc<crate::callback_sequencer::InFlightRegistry> {
+        Arc::clone(&self.in_flight)
     }
 
     /// Register one callback waiter before its `emit` is published.
@@ -535,6 +546,7 @@ mod tests {
             waiters: Arc::new(Mutex::new(HashMap::new())),
             emit_sink: Arc::new(Mutex::new(None)),
             next_ids: Mutex::new(HashMap::new()),
+            in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
             _shutdown: watch::channel(false).0,
         };
         let call = rpc.begin("sid", "/local-executor").unwrap();
@@ -550,6 +562,7 @@ mod tests {
             waiters: Arc::new(Mutex::new(HashMap::new())),
             emit_sink: Arc::new(Mutex::new(None)),
             next_ids: Mutex::new(HashMap::new()),
+            in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
             _shutdown: watch::channel(false).0,
         };
         let call = rpc.begin("sid-1", "/local-executor").unwrap();
@@ -567,6 +580,7 @@ mod tests {
             waiters: Arc::new(Mutex::new(HashMap::new())),
             emit_sink: Arc::new(Mutex::new(None)),
             next_ids: Mutex::new(HashMap::new()),
+            in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
             _shutdown: watch::channel(false).0,
         };
         assert!(!rpc.deliver_local("sid-1", "/local-executor", 1, &serde_json::json!([])));
@@ -578,6 +592,7 @@ mod tests {
             waiters: Arc::new(Mutex::new(HashMap::new())),
             emit_sink: Arc::new(Mutex::new(None)),
             next_ids: Mutex::new(HashMap::new()),
+            in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
             _shutdown: watch::channel(false).0,
         };
         // Every fresh socket starts at 1, independent of the calls other

@@ -10,19 +10,10 @@ from typing import Any
 
 
 class IMSessionMode:
-    """Private IM session modes."""
+    """Private IM routing modes, independent from execution targets."""
 
     CHAT = "chat"
-    TASK = "task"
-
-
-class IMSessionState:
-    """Private IM session transient states."""
-
-    IDLE = "idle"
-    PENDING_NEW_FLOW = "pending_new_flow"
-    PENDING_TASK_SWITCH = "pending_task_switch"
-    PENDING_TASK_CREATION = "pending_task_creation"
+    STAND_IN = "stand_in"
 
 
 @dataclass
@@ -37,12 +28,10 @@ class IMPrivateSession:
     sender_id: str
     proactive_recipient_id: str = ""
     display_name: str = ""
-    mode: str = IMSessionMode.CHAT
-    state: str = IMSessionState.IDLE
-    active_task_id: int | None = None
-    active_runtime_task: dict[str, Any] | None = None
-    pending_payload: dict[str, Any] = field(default_factory=dict)
-    state_expires_at: datetime | None = None
+    # Last chat task this conversation continued. The conversation -> task
+    # cache entry expires, while the session has no TTL, so this mirror lets
+    # the mapping be rebuilt instead of silently starting a new task.
+    chat_task_id: int | None = None
     last_seen_at: datetime = field(default_factory=datetime.now)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
@@ -51,7 +40,7 @@ class IMPrivateSession:
         """Convert the session to a Redis-serializable dictionary."""
 
         data = asdict(self)
-        for key in ("state_expires_at", "last_seen_at", "created_at", "updated_at"):
+        for key in ("last_seen_at", "created_at", "updated_at"):
             value = data.get(key)
             data[key] = value.isoformat() if isinstance(value, datetime) else None
         return data
@@ -61,14 +50,18 @@ class IMPrivateSession:
         """Create a session from Redis data."""
 
         values = dict(data)
-        for key in ("state_expires_at", "last_seen_at", "created_at", "updated_at"):
+        for key in ("last_seen_at", "created_at", "updated_at"):
             values[key] = _parse_datetime(values.get(key))
-        payload = values.get("pending_payload")
-        values["pending_payload"] = payload if isinstance(payload, dict) else {}
-        runtime_task = values.get("active_runtime_task")
-        values["active_runtime_task"] = (
-            runtime_task if isinstance(runtime_task, dict) else None
-        )
+        # Drop the retired task/chat state when reading an existing IM address.
+        for key in (
+            "mode",
+            "state",
+            "active_task_id",
+            "active_runtime_task",
+            "pending_payload",
+            "state_expires_at",
+        ):
+            values.pop(key, None)
         return cls(**values)
 
 

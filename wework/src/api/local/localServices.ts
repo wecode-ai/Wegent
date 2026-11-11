@@ -493,6 +493,9 @@ async function reconcilePendingLocalModelCatalog(
   tracker.inFlight = reconciliation
   try {
     await reconciliation
+    // Busy native work defers activation; only failures need the retry backoff.
+    // Recheck on the next owner request, including catalogs loaded by another restart.
+    tracker.key = ''
   } catch (error) {
     // A transport interruption must not suppress synchronization after recovery.
     if (error instanceof DshExecutorTransportError && error.retryable) tracker.key = ''
@@ -1574,7 +1577,6 @@ async function buildLocalRuntimeExecutionRequest(
     ...(input.clientUserMessageId ? { client_user_message_id: input.clientUserMessageId } : {}),
     ephemeral: Boolean(input.ephemeral),
     is_group_chat: false,
-    collaboration_model: 'single',
     ...(collaborationMode ? { collaborationMode } : {}),
     mode: 'code',
     task_mode: 'code',
@@ -3254,9 +3256,6 @@ export function createRuntimeWorkApiFromIpc(
     },
     restoreWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
       return requestWithLocalDevice('runtime.worktrees.restore', data)
-    },
-    bindRuntimeTaskImSessions() {
-      return cloudConnectionRequired('bindRuntimeTaskImSessions')
     },
     async getImNotificationSettings() {
       return {

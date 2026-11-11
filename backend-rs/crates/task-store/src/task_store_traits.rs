@@ -434,6 +434,16 @@ pub trait TaskStore:
             .await
     }
 
+    /// Read subtasks for a Socket.IO join. Deployments may override the owner check.
+    async fn list_subtasks_by_task_ordered_in_sql(
+        &self,
+        task_id: i64,
+        owner_user_id: i64,
+    ) -> MysqlResult<SubtaskListing> {
+        self.list_subtasks_by_task_ordered(task_id, owner_user_id)
+            .await
+    }
+
     /// `TaskForkHistoryResolver.resolve_for_task` -> `resolve_lineage` ->
     /// `_lineage_task`'s depth-0 read for the current task: the owner-guarded
     /// primary-key projection the source issues before it breaks on

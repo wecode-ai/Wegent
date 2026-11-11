@@ -146,6 +146,9 @@ async fn emit_timeout(state: &AppState, candidate: &Candidate) -> Result<()> {
         owner,
         &result.unwrap_or_else(|| json!({})),
         None,
+        // Error-carrying terminal frame: the Source's `emit_chat_error` has no
+        // `contexts` field.
+        None,
     )
     .await?;
     Ok(())

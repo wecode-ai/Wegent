@@ -456,6 +456,7 @@
     "show_prompt": "显示提示词",
     "collapse": "收起",
     "expand": "展开",
+    "load_summary_failed": "加载完整摘要失败",
     "load_more": "加载更多",
     "refresh": "刷新",
     "copy_ids": "复制 ID",
