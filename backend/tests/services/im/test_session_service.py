@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 import pytest
@@ -181,3 +183,145 @@ async def test_legacy_task_read_cannot_reactivate_stand_in_after_chat_choice(
     await im_session_service.set_mode(session, IMSessionMode.CHAT)
     await im_session_service.get_session("legacy-mode")
     assert await im_session_service.get_mode(session) == IMSessionMode.CHAT
+
+
+@pytest.mark.asyncio
+async def test_chat_task_mirror_is_stored_and_cleared(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    session = await im_session_service.get_or_create_private_session(
+        db=None,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+
+    await im_session_service.remember_chat_task(
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        task_id=42,
+    )
+
+    assert (
+        await im_session_service.get_chat_task(
+            user_id=test_user.id,
+            channel_type="dingtalk",
+            channel_id=77,
+            conversation_id="conv-private",
+        )
+        == 42
+    )
+    # The mirror lives on the session, which is stored without a TTL.
+    assert (
+        fake_im_session_cache.expires[f"channel:private_session:{session.session_key}"]
+        is None
+    )
+
+    await im_session_service.forget_chat_task(
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+    )
+    assert (
+        await im_session_service.get_chat_task(
+            user_id=test_user.id,
+            channel_type="dingtalk",
+            channel_id=77,
+            conversation_id="conv-private",
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_task_mirror_ignores_missing_session(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    await im_session_service.remember_chat_task(
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="never-seen",
+        task_id=42,
+    )
+
+    assert (
+        await im_session_service.get_chat_task(
+            user_id=test_user.id,
+            channel_type="dingtalk",
+            channel_id=77,
+            conversation_id="never-seen",
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_address_refresh_preserves_a_concurrent_task_mapping(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    session = await im_session_service.get_or_create_private_session(
+        db=None,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-race",
+        sender_id="staff-a",
+    )
+    original_get_session = im_session_service.get_session
+    address_lock_acquired = asyncio.Event()
+    release_address_lock = asyncio.Event()
+    original_lock = im_session_service._session_write_lock
+
+    @asynccontextmanager
+    async def pause_address_write(session_key: str):
+        async with original_lock(session_key):
+            address_lock_acquired.set()
+            await release_address_lock.wait()
+            yield
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(im_session_service, "_session_write_lock", pause_address_write)
+    try:
+        refresh = asyncio.create_task(
+            im_session_service.get_or_create_private_session(
+                db=None,
+                user_id=test_user.id,
+                channel_type="dingtalk",
+                channel_id=77,
+                conversation_id="conv-race",
+                sender_id="staff-a",
+                display_name="Updated",
+            )
+        )
+        await address_lock_acquired.wait()
+        remember = asyncio.create_task(
+            im_session_service.remember_chat_task(
+                user_id=test_user.id,
+                channel_type="dingtalk",
+                channel_id=77,
+                conversation_id="conv-race",
+                task_id=42,
+            )
+        )
+        await asyncio.sleep(0)
+        assert not remember.done()
+        monkeypatch.undo()
+        release_address_lock.set()
+        await refresh
+        await remember
+    finally:
+        monkeypatch.undo()
+
+    current = await original_get_session(session.session_key)
+    assert current.chat_task_id == 42
+    assert current.display_name == "Updated"

@@ -30,21 +30,20 @@ pub(crate) async fn enqueue_mention_on(
         .await?
         .ok_or(brz_mysql::MysqlError::RowNotFound)?;
     let inbox_id = format!("stand-in-inbox:{user}");
-    // Missing-row FOR UPDATE reads take gap locks shared by unrelated recipients.
-    // Materialize each key atomically before taking its existing-row lock.
-    store::insert_if_absent(
+    // Insert before taking a current read to avoid locking an empty index gap
+    // shared by first-time recipients.
+    store::insert_once(
         tx,
         "stand_in_issue_inbox",
-        json!({
-            "id":inbox_id,"user_id":user,"next_item_number":1
-        }),
+        json!({"id":inbox_id,"user_id":user,"next_item_number":1}),
     )
     .await?;
     let sequence = store::locked(tx, "stand_in_issue_inbox", &inbox_id)
         .await?
+        .filter(|inbox| inbox.user_id == user)
         .ok_or(brz_mysql::MysqlError::RowNotFound)?
         .next_item_number;
-    store::insert_if_absent(
+    store::insert_once(
         tx,
         "stand_in_issue_event",
         json!({
@@ -52,13 +51,16 @@ pub(crate) async fn enqueue_mention_on(
         }),
     )
     .await?;
-    // Existing events precede the next inbox sequence. Read the persisted
-    // sequence rather than relying on driver-specific affected-row counts.
-    let saved: (i64,) = tx.fetch_optional(
-        "SELECT CAST(sort_order AS SIGNED) FROM loop_items WHERE id=? AND resource_type='stand_in_issue_event' AND user_id=? FOR UPDATE",
-        (id.as_str(), user),
-    ).await?.ok_or(brz_mysql::MysqlError::RowNotFound)?;
-    if saved.0 != sequence {
+    // The no-op upsert keeps the sequence of an existing event. Read the
+    // current row because MySQL can report a no-op update as an affected row.
+    let (event_sequence,): (i64,) = tx
+        .fetch_optional(
+            "SELECT CAST(sort_order AS SIGNED) FROM loop_items WHERE id=? AND parent_id=? AND resource_type='stand_in_issue_event' AND user_id=? FOR UPDATE",
+            (id.as_str(), inbox_id.as_str(), user),
+        )
+        .await?
+        .ok_or(brz_mysql::MysqlError::RowNotFound)?;
+    if event_sequence != sequence {
         return Ok(());
     }
     tx.execute(

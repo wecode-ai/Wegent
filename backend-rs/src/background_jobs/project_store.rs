@@ -146,23 +146,23 @@ pub(crate) async fn insert(
     kind: &str,
     values: Value,
 ) -> MysqlResult<String> {
-    insert_row(tx, kind, values, false).await
+    insert_with_conflict_clause(tx, kind, values, "").await
 }
 
-/// Create a keyed row without locking a missing key or overwriting existing data.
-pub(crate) async fn insert_if_absent(
+pub(crate) async fn insert_once(
     tx: &mut impl MysqlTransaction,
     kind: &str,
     values: Value,
 ) -> MysqlResult<()> {
-    insert_row(tx, kind, values, true).await.map(|_| ())
+    insert_with_conflict_clause(tx, kind, values, " ON DUPLICATE KEY UPDATE id=id").await?;
+    Ok(())
 }
 
-async fn insert_row(
+async fn insert_with_conflict_clause(
     tx: &mut impl MysqlTransaction,
     kind: &str,
     values: Value,
-    if_absent: bool,
+    conflict_clause: &str,
 ) -> MysqlResult<String> {
     let columns: Vec<Column> = tx.fetch_all(
         "SELECT CAST(COLUMN_NAME AS CHAR) AS column_name, CAST(IS_NULLABLE AS CHAR) AS is_nullable, CAST(DATA_TYPE AS CHAR) AS data_type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='loop_items' ORDER BY ORDINAL_POSITION", ()
@@ -212,14 +212,9 @@ async fn insert_row(
         });
     }
     let placeholders = vec!["?"; columns.len()].join(",");
-    let duplicate = if if_absent {
-        " ON DUPLICATE KEY UPDATE id=id"
-    } else {
-        ""
-    };
     tx.execute(
         format!(
-            "INSERT INTO loop_items ({}) VALUES ({placeholders}){duplicate}",
+            "INSERT INTO loop_items ({}) VALUES ({placeholders}){conflict_clause}",
             names.join(",")
         ),
         args,
