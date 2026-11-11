@@ -103,6 +103,28 @@ describe('native startup splash observations', () => {
     window.emit('closed')
   })
 
+  test('records a toast while it is visible even if it hides before inspection', async () => {
+    vi.useFakeTimers()
+    const window = new EventEmitter()
+    let snapshot: StartupSplashInspection = {
+      progress: null,
+      toastHidden: true,
+      toastText: '',
+    }
+    const observer = observeStartupSplash(window as BrowserWindow, async () => snapshot)
+    await vi.advanceTimersByTimeAsync(50)
+    snapshot = { toastHidden: false, toastText: 'Diagnostics copied', progress: null }
+    await vi.advanceTimersByTimeAsync(50)
+    snapshot = { ...snapshot, toastHidden: true }
+    await vi.advanceTimersByTimeAsync(50)
+    const result = await observer.inspect()
+    expect(result.toastHidden).toBe(true)
+    expect(result.observations).toContainEqual(
+      expect.objectContaining({ toastHidden: false, toastText: 'Diagnostics copied' })
+    )
+    window.emit('closed')
+  })
+
   test('bounds history, ignores frame updates, and stops reading when the window closes', async () => {
     vi.useFakeTimers()
     const window = new EventEmitter()

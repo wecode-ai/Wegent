@@ -33,6 +33,8 @@ export function observeStartupSplash(
         snapshot.timeoutHidden,
         snapshot.failureHidden,
         snapshot.recoveryHidden,
+        snapshot.toastText,
+        snapshot.toastHidden,
       ])
       if (state !== previousState) {
         observations.push({ ...snapshot, capturedAt: Date.now() })
