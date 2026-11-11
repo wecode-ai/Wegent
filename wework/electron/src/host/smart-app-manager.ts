@@ -1,8 +1,18 @@
-import { ZipArchive } from 'archiver'
+import {
+  rejectOversizedPublishArchive,
+  optionalDirectory,
+  isDirectoryPermissionError,
+  writeJson,
+  isSecureTransferUrl,
+  fileSha256,
+  archiveDirectory,
+  exists,
+  uniquePath,
+  localPluginDescriptor,
+} from './smart-app-package-io.js'
 import { createHash } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
-import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
+import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import type {
   WorkbenchRuntimeLaunch,
   WorkbenchRuntimeSnapshot,
@@ -18,7 +28,6 @@ import {
   copySmartAppDirectorySafe,
   extractSmartAppArchive,
   findSmartAppManifestRoot,
-  isSafeSmartAppRelativePath,
   MAX_SMART_APP_ARCHIVE_BYTES,
   readSmartAppManifest,
   requiredSmartAppDirectory,
@@ -41,6 +50,9 @@ export interface SmartAppInstallation {
   sha256: string
   modelKey: string | null
   resident: boolean
+  background?: boolean
+  presentation?: 'window' | 'tab'
+  shortcut?: string | null
   runtimeVersion: string | null
   state: 'installed' | 'running' | 'failed'
   webUrl: string | null
@@ -48,6 +60,8 @@ export interface SmartAppInstallation {
   smartAppId?: number | null
   releaseId?: number | null
   source: 'managed' | 'linked' | 'market'
+  /** False until a newly linked project passes native installation confirmation. */
+  authorized?: boolean
   /**
    * Capabilities Wework has authorized for this installation. Declaring the
    * capability in the manifest is the whole contract: install provenance
@@ -55,6 +69,7 @@ export interface SmartAppInstallation {
    */
   grantedCapabilities: {
     decisionModel: boolean
+    native?: string[]
   }
 }
 
@@ -100,82 +115,10 @@ export interface SmartAppVerificationService {
   pack(projectRoot: string, archivePath: string): Promise<SmartAppPackResult>
 }
 
-const DECISION_ROUTER_PROTOCOL_VERSION = 1
-const DECISION_ROUTER_LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
-const DECISION_ROUTE_TOKEN = /^[A-Za-z0-9._~-]{8,200}$/
-const MODEL_ROUTE_PATH = /^\/v1\/harness-router\/([A-Za-z0-9._~-]{8,200})$/
-
-function validateAdditionalModelRoute(route: {
-  modelKey: string
-  displayName: string
-  baseUrl: string
-}): { modelKey: string; displayName: string; baseUrl: string } {
-  let url: URL
-  try {
-    url = new URL(route.baseUrl)
-  } catch {
-    throw new Error('Wework model router base URL is not a valid URL')
-  }
-  if (
-    url.protocol !== 'http:' ||
-    !DECISION_ROUTER_LOOPBACK_HOSTS.has(url.hostname) ||
-    Boolean(url.username || url.password || url.search || url.hash) ||
-    !MODEL_ROUTE_PATH.test(url.pathname)
-  ) {
-    throw new Error('Wework model router base URL must be a local harness route')
-  }
-  if (!route.modelKey.trim() || !route.displayName.trim()) {
-    throw new Error('Wework model router requires a model key and display name')
-  }
-  return {
-    modelKey: route.modelKey.trim(),
-    displayName: route.displayName.trim(),
-    baseUrl: url.href,
-  }
-}
-
-/**
- * Accepts only the loopback route Wework itself hands to a Smart app: an
- * `http:` base URL whose path is exactly `/v1/decision-router/<token>`.
- *
- * Credentials, a query, a fragment, another host, or a deeper path are all
- * rejected so a malformed value cannot aim the app at another service.
- */
-function validateDecisionRouteUrl(raw: string): string {
-  let url: URL
-  try {
-    url = new URL(raw)
-  } catch {
-    throw new Error('Wework decision router base URL is not a valid URL')
-  }
-  if (
-    url.protocol !== 'http:' ||
-    !DECISION_ROUTER_LOOPBACK_HOSTS.has(url.hostname) ||
-    Boolean(url.username) ||
-    Boolean(url.password) ||
-    Boolean(url.search) ||
-    Boolean(url.hash)
-  ) {
-    throw new Error('Wework decision router base URL must be a loopback address')
-  }
-  const segments = url.pathname.split('/')
-  const token = segments[3] ?? ''
-  if (
-    segments.length !== 4 ||
-    segments[1] !== 'v1' ||
-    segments[2] !== 'decision-router' ||
-    !DECISION_ROUTE_TOKEN.test(token)
-  ) {
-    throw new Error('Wework decision router base URL has an invalid route path')
-  }
-  return raw
-}
+import { authorizeDecisionRoute, validateAdditionalModelRoute } from './smart-app-runtime-routes.js'
 
 export class SmartAppManager {
-  private readonly proxyTokens = new Map<string, string>()
-  private readonly additionalProxyTokens = new Map<string, string[]>()
-  private readonly contextTokens = new Map<string, string>()
-  private readonly decisionTokens = new Map<string, string>()
+  private readonly startingVersions = new Map<string, number>()
   private readonly verificationService: SmartAppVerificationService
   private operation = Promise.resolve()
 
@@ -255,6 +198,7 @@ export class SmartAppManager {
     displayName: string
     description: string
     template: string
+    flavor?: 'lightweight' | 'extended'
   }): Promise<SmartAppInstallation> {
     return this.serial(async () => {
       const name = validEditableName(input.name)
@@ -281,6 +225,7 @@ export class SmartAppManager {
           description: input.description.trim(),
           dshVersion: WORKBENCH_DSH_VERSION,
           template,
+          flavor: input.flavor,
         })
         return await this.registerLinkedDirectory(target)
       } catch (error) {
@@ -302,6 +247,99 @@ export class SmartAppManager {
 
   async linkDirectory(directoryPath: string): Promise<SmartAppInstallation> {
     return this.serial(() => this.registerLinkedDirectory(directoryPath))
+  }
+
+  async get(installationId: string): Promise<SmartAppInstallation> {
+    return requiredInstallation(await this.list(), installationId)
+  }
+
+  async scaffold(input: {
+    projectPath: string
+    name: string
+    displayName: string
+    flavor: 'lightweight' | 'extended'
+  }): Promise<{ projectPath: string }> {
+    const target = resolve(input.projectPath)
+    await mkdir(target)
+    try {
+      await scaffoldSmartApp({
+        path: target,
+        name: validEditableName(input.name),
+        displayName: requiredText(input.displayName),
+        description: '',
+        dshVersion: WORKBENCH_DSH_VERSION,
+        template: 'web',
+        flavor: input.flavor,
+      })
+      return { projectPath: target }
+    } catch (error) {
+      await rm(target, { recursive: true, force: true })
+      throw error
+    }
+  }
+
+  async grantNativeCapabilities(installationId: string, native: string[]): Promise<void> {
+    await this.serial(async () => {
+      const installations = await this.readRegistry()
+      const installation = requiredInstallation(installations, installationId)
+      installation.grantedCapabilities = {
+        ...installation.grantedCapabilities,
+        native: [...native],
+      }
+      installation.authorized = true
+      await this.writeRegistry(installations)
+    })
+  }
+
+  async installDirectory(
+    projectPath: string,
+    native: string[],
+    previousSha256: string | null,
+    shortcut?: string | null
+  ): Promise<SmartAppInstallation> {
+    const validated = await validateSmartAppPackageDirectory(projectPath)
+    return this.serial(async () => {
+      const installations = await this.readRegistry()
+      const previous = installations.find(item => item.id === validated.manifest.name)
+      if ((previous?.sha256 ?? null) !== previousSha256)
+        throw new Error('Workbench changed while installation was being confirmed; install again')
+      if (this.options.runtimeHost()?.runningTabIds().has(tabId(validated.manifest.name)))
+        throw new Error('Stop the workbench before installing a new version')
+      const target = join(
+        this.root(),
+        'packages',
+        safeName(validated.manifest.name),
+        validated.sha256
+      )
+      await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+      if (!(await exists(target))) await rename(validated.path, target)
+      const installation: SmartAppInstallation = {
+        id: validated.manifest.name,
+        manifest: validated.manifest,
+        packagePath: target,
+        sha256: validated.sha256,
+        modelKey: previous?.modelKey ?? null,
+        resident: previous?.resident ?? false,
+        background: previous?.background ?? true,
+        presentation: previous?.presentation ?? 'window',
+        shortcut: shortcut === undefined ? (previous?.shortcut ?? null) : shortcut,
+        runtimeVersion: null,
+        state: 'installed',
+        webUrl: null,
+        error: null,
+        source: 'managed',
+        authorized: true,
+        grantedCapabilities: {
+          decisionModel: decideDecisionModelGrant(validated.manifest),
+          native: [...native],
+        },
+      }
+      await this.writeRegistry([
+        ...installations.filter(item => item.id !== installation.id),
+        installation,
+      ])
+      return installation
+    })
   }
 
   async copyToDirectory(
@@ -437,6 +475,8 @@ export class SmartAppManager {
     modelKey?: string | null
     smartAppId?: number | null
     releaseId?: number | null
+    authorizedNative?: string[]
+    expectedPreviousSha256?: string | null
   }): Promise<SmartAppInstallation> {
     return this.serial(async () => {
       const preview = await this.preview(input.archivePath)
@@ -453,11 +493,13 @@ export class SmartAppManager {
       if (this.options.runtimeHost()?.runningTabIds().has(tabId(id))) {
         throw new Error('Stop the Smart app before installing a new version')
       }
-      const target = join(this.root(), 'packages', safeName(id), preview.manifest.version)
+      const target = join(this.root(), 'packages', safeName(id), preview.sha256)
       const staging = join(this.root(), `.install-${process.pid}-${Date.now()}`)
       try {
         await extractSmartAppArchive(preview.archivePath, staging)
         const packageRoot = await findSmartAppManifestRoot(staging)
+        await materializeManifestPackages(preview.manifest, packageRoot)
+        await validateSmartAppPackageDirectory(packageRoot)
         await mkdir(dirname(target), { recursive: true, mode: 0o700 })
         if (!(await exists(target))) await rename(packageRoot, target)
       } finally {
@@ -465,6 +507,11 @@ export class SmartAppManager {
       }
       const installations = await this.readRegistry()
       const previous = installations.find(item => item.id === id)
+      if (
+        input.expectedPreviousSha256 !== undefined &&
+        (previous?.sha256 ?? null) !== input.expectedPreviousSha256
+      )
+        throw new Error('Workbench changed while installation was being confirmed; install again')
       const installation: SmartAppInstallation = {
         id,
         manifest: preview.manifest,
@@ -472,6 +519,9 @@ export class SmartAppManager {
         sha256: preview.sha256,
         modelKey: normalizedOptional(input.modelKey) ?? previous?.modelKey ?? null,
         resident: previous?.resident ?? false,
+        background: previous?.background ?? true,
+        presentation: previous?.presentation ?? 'window',
+        shortcut: previous?.shortcut ?? null,
         runtimeVersion: null,
         state: 'installed',
         webUrl: null,
@@ -479,7 +529,8 @@ export class SmartAppManager {
         smartAppId: input.smartAppId ?? null,
         releaseId: input.releaseId ?? null,
         source: input.smartAppId == null ? 'managed' : 'market',
-        grantedCapabilities: { decisionModel: false },
+        authorized: true,
+        grantedCapabilities: { decisionModel: false, native: input.authorizedNative ?? [] },
       }
       this.syncGrantedCapabilities(installation)
       await this.writeRegistry([...installations.filter(item => item.id !== id), installation])
@@ -496,74 +547,103 @@ export class SmartAppManager {
     decisionBaseUrl?: string | null
     decisionProtocolVersion?: number | null
   }): Promise<SmartAppInstallation> {
-    return this.serial(async () => {
-      const runtimeHost = this.requiredRuntimeHost()
-      const installations = await this.readRegistry()
-      const installation = requiredInstallation(installations, input.installationId)
-      const additionalModels = (input.additionalModels ?? []).map(validateAdditionalModelRoute)
-      const modelKeys = additionalModels.map(model => model.modelKey)
-      if (new Set(modelKeys).size !== modelKeys.length) {
-        throw new Error('Wework model router contains duplicate models')
-      }
-      if (additionalModels.length && !input.modelBaseUrl?.trim()) {
-        throw new Error('Wework model router requires a default model route')
-      }
-      // Defense in depth: the renderer only registers a decision route for an
-      // authorized installation, but the host re-validates the address and the
-      // grant, so a compromised renderer cannot smuggle in another service.
-      const decisionRoute = this.authorizeDecisionRoute(
-        installation,
-        input.decisionBaseUrl,
-        input.decisionProtocolVersion
+    const version = (this.startingVersions.get(input.installationId) ?? 0) + 1
+    this.startingVersions.set(input.installationId, version)
+    const runtimeHost = this.requiredRuntimeHost()
+    const installation = await this.get(input.installationId)
+    if (installation.authorized === false)
+      throw new Error('Complete native installation confirmation before running this workbench')
+    const additionalModels = (input.additionalModels ?? []).map(validateAdditionalModelRoute)
+    const modelKeys = additionalModels.map(model => model.modelKey)
+    if (new Set(modelKeys).size !== modelKeys.length) {
+      throw new Error('Wework model router contains duplicate models')
+    }
+    if (additionalModels.length && !input.modelBaseUrl?.trim()) {
+      throw new Error('Wework model router requires a default model route')
+    }
+    // The Host owns the lease; validate its URL and manifest grant before launch.
+    const decisionRoute = authorizeDecisionRoute(
+      installation.manifest,
+      input.decisionBaseUrl,
+      input.decisionProtocolVersion
+    )
+    const id = tabId(installation.id)
+    if (runtimeHost.runningTabIds().has(id)) {
+      return installation
+    }
+    try {
+      const validated = await validateSmartAppPackageDirectory(installation.packagePath, {
+        developmentSource: installation.source === 'linked',
+      })
+      if (
+        installation.source === 'linked' &&
+        ((validated.manifest.flavor ?? 'extended') !==
+          (installation.manifest.flavor ?? 'extended') ||
+          validated.manifest.name !== installation.id)
       )
-      const id = tabId(installation.id)
-      if (runtimeHost.runningTabIds().has(id)) {
-        return installation
+        throw new Error(
+          'Workbench identity or type changed; remove and link the folder again to confirm its execution permissions'
+        )
+      if (validated.sha256 !== installation.sha256 && installation.source === 'linked') {
+        installation.manifest = validated.manifest
       }
-      try {
-        const prepared = await prepareWorkbenchDshLaunch({
-          runtimeRoot: this.options.runtimeRoot,
-          dataDirectory: this.options.dataDirectory,
-          installationId: installation.id,
-          packagePath: installation.packagePath,
-          manifest: installation.manifest,
-          environment: this.options.environment,
-          port: 0,
-          modelBaseUrl: input.modelBaseUrl,
-          additionalModels,
-          contextBaseUrl: input.contextBaseUrl,
-          contextToken: input.contextToken,
-          decisionBaseUrl: decisionRoute?.baseUrl ?? null,
-          decisionProtocolVersion: decisionRoute?.protocolVersion ?? null,
-        })
-        const runtime = await runtimeHost.open({
-          tabId: id,
-          url: prepared.url,
-          command: prepared.command,
-          args: prepared.args,
-          cwd: prepared.cwd,
-          environment: prepared.environment,
-          logDirectory: this.options.logDirectory,
-        })
-        installation.state = 'running'
-        installation.webUrl = runtime.url
-        installation.runtimeVersion = prepared.version
-        installation.error = null
+      const prepared = await prepareWorkbenchDshLaunch({
+        runtimeRoot: this.options.runtimeRoot,
+        dataDirectory: this.options.dataDirectory,
+        installationId: installation.id,
+        packagePath: installation.packagePath,
+        manifest: installation.manifest,
+        environment: this.options.environment,
+        port: 0,
+        modelBaseUrl: input.modelBaseUrl,
+        additionalModels,
+        contextBaseUrl: input.contextBaseUrl,
+        contextToken: input.contextToken,
+        decisionBaseUrl: decisionRoute?.baseUrl ?? null,
+        decisionProtocolVersion: decisionRoute?.protocolVersion ?? null,
+      })
+      if (this.startingVersions.get(input.installationId) !== version)
+        throw new Error('Workbench startup was canceled')
+      const runtime = await runtimeHost.open({
+        tabId: id,
+        url: prepared.url,
+        command: prepared.command,
+        args: prepared.args,
+        cwd: prepared.cwd,
+        environment: prepared.environment,
+        logDirectory: this.options.logDirectory,
+      })
+      return await this.serial(async () => {
+        if (this.startingVersions.get(input.installationId) !== version)
+          throw new Error('Workbench startup was canceled')
+        const installations = await this.readRegistry()
+        const current = requiredInstallation(installations, input.installationId)
+        current.state = 'running'
+        current.webUrl = runtime.url
+        current.runtimeVersion = prepared.version
+        current.error = null
         await this.writeRegistry(installations)
-        return installation
-      } catch (error) {
-        installation.state = 'failed'
-        installation.webUrl = null
-        installation.error = error instanceof Error ? error.message : String(error)
+        return current
+      })
+    } catch (error) {
+      await this.serial(async () => {
+        if (this.startingVersions.get(input.installationId) !== version) return
+        const installations = await this.readRegistry()
+        const current = installations.find(item => item.id === input.installationId)
+        if (!current) return
+        current.state = 'failed'
+        current.webUrl = null
+        current.error = error instanceof Error ? error.message : String(error)
         await this.writeRegistry(installations)
-        throw error
-      }
-    })
+      })
+      throw error
+    }
   }
 
   async stop(installationId: string): Promise<void> {
+    this.startingVersions.set(installationId, (this.startingVersions.get(installationId) ?? 0) + 1)
+    await this.options.runtimeHost()?.close(tabId(installationId))
     return this.serial(async () => {
-      await this.options.runtimeHost()?.close(tabId(installationId))
       const installations = await this.readRegistry()
       const installation = installations.find(item => item.id === installationId)
       if (!installation) return
@@ -576,7 +656,13 @@ export class SmartAppManager {
 
   async update(
     installationId: string,
-    updates: { modelKey?: string; resident?: boolean }
+    updates: {
+      modelKey?: string
+      resident?: boolean
+      background?: boolean
+      presentation?: 'window' | 'tab'
+      shortcut?: string | null
+    }
   ): Promise<SmartAppInstallation> {
     return this.serial(async () => {
       const installations = await this.readRegistry()
@@ -593,6 +679,9 @@ export class SmartAppManager {
         installation.modelKey = modelKey
       }
       if (updates.resident !== undefined) installation.resident = updates.resident
+      if (updates.background !== undefined) installation.background = updates.background
+      if (updates.presentation !== undefined) installation.presentation = updates.presentation
+      if (updates.shortcut !== undefined) installation.shortcut = updates.shortcut
       await this.writeRegistry(installations)
       return installation
     })
@@ -613,10 +702,6 @@ export class SmartAppManager {
           force: true,
         })
       }
-      this.proxyTokens.delete(installationId)
-      this.additionalProxyTokens.delete(installationId)
-      this.contextTokens.delete(installationId)
-      this.decisionTokens.delete(installationId)
     })
   }
 
@@ -670,18 +755,15 @@ export class SmartAppManager {
   }
 
   async verifyProject(projectRoot: string): Promise<SmartAppVerificationReport> {
-    const installation = await this.linkedInstallationByProject(projectRoot)
-    return this.verificationService.verify(installation.packagePath)
+    return this.verificationService.verify(projectRoot)
   }
 
   async inspectProject(projectRoot: string): Promise<SmartAppVerificationReport | null> {
-    const installation = await this.linkedInstallationByProject(projectRoot)
-    return this.verificationService.inspect(installation.packagePath)
+    return this.verificationService.inspect(projectRoot)
   }
 
   async packProject(projectRoot: string, outputPath: string): Promise<SmartAppPackResult> {
-    const installation = await this.linkedInstallationByProject(projectRoot)
-    return this.verificationService.pack(installation.packagePath, outputPath)
+    return this.verificationService.pack(projectRoot, outputPath)
   }
 
   async upload(archivePath: string, uploadUrl: string): Promise<void> {
@@ -697,43 +779,6 @@ export class SmartAppManager {
       redirect: 'error',
     })
     if (!response.ok) throw new Error(`Smart app upload failed with HTTP ${response.status}`)
-  }
-
-  storeProxyToken(installationId: string, token: string): void {
-    this.proxyTokens.set(requiredText(installationId), requiredText(token))
-  }
-
-  takeProxyToken(installationId: string): string | null {
-    return takeToken(this.proxyTokens, installationId)
-  }
-
-  storeAdditionalProxyTokens(installationId: string, tokens: string[]): void {
-    this.additionalProxyTokens.set(requiredText(installationId), tokens.map(requiredText))
-  }
-
-  takeAdditionalProxyTokens(installationId: string): string[] {
-    const key = requiredText(installationId)
-    const tokens = this.additionalProxyTokens.get(key) ?? []
-    this.additionalProxyTokens.delete(key)
-    return tokens
-  }
-
-  storeContextToken(installationId: string, token: string): void {
-    this.contextTokens.set(requiredText(installationId), requiredText(token))
-  }
-
-  takeContextToken(installationId: string): string | null {
-    return takeToken(this.contextTokens, installationId)
-  }
-
-  // The decision route is a distinct registration from the generic model proxy,
-  // so it must be stored separately or stop cannot unregister both.
-  storeDecisionToken(installationId: string, token: string): void {
-    this.decisionTokens.set(requiredText(installationId), requiredText(token))
-  }
-
-  takeDecisionToken(installationId: string): string | null {
-    return takeToken(this.decisionTokens, installationId)
   }
 
   private root(): string {
@@ -769,15 +814,6 @@ export class SmartAppManager {
     return host
   }
 
-  private async linkedInstallationByProject(projectRoot: string): Promise<SmartAppInstallation> {
-    const root = await requiredSmartAppDirectory(projectRoot, 'Smart app project')
-    const installation = (await this.readRegistry()).find(
-      item => item.source === 'linked' && item.packagePath === root
-    )
-    if (!installation) throw new Error('Smart app project is not a linked project root')
-    return installation
-  }
-
   private async registerLinkedDirectory(directoryPath: string): Promise<SmartAppInstallation> {
     const validated = await validateLinkedSmartAppDirectory(directoryPath)
     const installations = await this.readRegistry()
@@ -791,6 +827,7 @@ export class SmartAppManager {
       sha256: validated.sha256,
       modelKey: null,
       resident: false,
+      background: true,
       runtimeVersion: null,
       state: 'installed',
       webUrl: null,
@@ -798,6 +835,7 @@ export class SmartAppManager {
       smartAppId: null,
       releaseId: null,
       source: 'linked',
+      authorized: false,
       grantedCapabilities: { decisionModel: false },
     }
     this.syncGrantedCapabilities(installation)
@@ -812,34 +850,8 @@ export class SmartAppManager {
   private syncGrantedCapabilities(installation: SmartAppInstallation): boolean {
     const decisionModel = decideDecisionModelGrant(installation.manifest)
     if (installation.grantedCapabilities?.decisionModel === decisionModel) return false
-    installation.grantedCapabilities = { decisionModel }
+    installation.grantedCapabilities = { ...installation.grantedCapabilities, decisionModel }
     return true
-  }
-
-  /**
-   * Validates the renderer-supplied decision route.
-   *
-   * Every installation is authorized, so the only precondition is the manifest
-   * declaration the Smart App made; the route description still has to match
-   * the local router's path, token, and protocol shape.
-   */
-  private authorizeDecisionRoute(
-    installation: SmartAppInstallation,
-    decisionBaseUrl: string | null | undefined,
-    decisionProtocolVersion: number | null | undefined
-  ): { baseUrl: string; protocolVersion: 1 } | null {
-    const requested = typeof decisionBaseUrl === 'string' ? decisionBaseUrl.trim() : ''
-    if (!requested) return null
-    if (!decideDecisionModelGrant(installation.manifest)) {
-      throw new Error('Smart app is not authorized to use the Wework decision router')
-    }
-    if (decisionProtocolVersion !== DECISION_ROUTER_PROTOCOL_VERSION) {
-      throw new Error('Wework decision router protocol version is not supported')
-    }
-    return {
-      baseUrl: validateDecisionRouteUrl(requested),
-      protocolVersion: DECISION_ROUTER_PROTOCOL_VERSION,
-    }
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {
@@ -852,12 +864,6 @@ export class SmartAppManager {
   }
 }
 
-async function rejectOversizedPublishArchive(path: string, sizeBytes: number): Promise<void> {
-  if (sizeBytes <= MAX_SMART_APP_ARCHIVE_BYTES) return
-  await rm(path, { force: true })
-  throw new Error('发布包超过 50 MB，请使用项目打包命令生成发布产物，不要直接上传源码压缩包。')
-}
-
 async function refreshLinkedInstallation(installation: SmartAppInstallation): Promise<boolean> {
   try {
     const validated = await validateLinkedSmartAppDirectory(installation.packagePath)
@@ -865,6 +871,14 @@ async function refreshLinkedInstallation(installation: SmartAppInstallation): Pr
       return setInstallationFailure(
         installation,
         'Linked Smart app name changed; remove and link the folder again'
+      )
+    }
+    if (
+      (installation.manifest.flavor ?? 'extended') !== (validated.manifest.flavor ?? 'extended')
+    ) {
+      return setInstallationFailure(
+        installation,
+        'Workbench type changed; remove and link the folder again to confirm its execution permissions'
       )
     }
     const changed =
@@ -897,45 +911,6 @@ function setInstallationFailure(installation: SmartAppInstallation, error: strin
   return changed
 }
 
-async function localPluginDescriptor(
-  source: string,
-  packageRoot: string
-): Promise<{ spec: string; path: string }> {
-  const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8')) as {
-    name?: unknown
-    dsh?: { bundle?: { patch?: unknown } }
-  }
-  const name = typeof manifest.name === 'string' ? manifest.name.trim() : ''
-  if (!name) throw new Error('DSH plugin package has no name')
-  const patch =
-    typeof manifest.dsh?.bundle?.patch === 'string' ? manifest.dsh.bundle.patch.trim() : ''
-  if (!isSafeSmartAppRelativePath(patch) || !(await exists(join(source, patch)))) {
-    throw new Error('Selected package does not declare a valid dsh.bundle.patch')
-  }
-  const directoryName = name.replace(/[^0-9A-Za-z_-]/g, '-').replace(/^-+|-+$/g, '')
-  if (!directoryName) throw new Error('DSH plugin package name cannot be used as a directory')
-  const relativePath = join('plugins', directoryName)
-  if (await exists(join(packageRoot, relativePath))) {
-    throw new Error('This local DSH plugin is already included')
-  }
-  const path = relativePath.split(sep).join('/')
-  return { spec: `file:${path}`, path }
-}
-
-async function optionalDirectory(path: string): Promise<string | null> {
-  try {
-    const resolved = await realpath(path)
-    return (await stat(resolved)).isDirectory() ? resolved : null
-  } catch {
-    return null
-  }
-}
-
-function isDirectoryPermissionError(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException)?.code
-  return code === 'EACCES' || code === 'EPERM'
-}
-
 function validEditableName(value: string): string {
   const name = value.trim()
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
@@ -947,35 +922,6 @@ function validEditableName(value: string): string {
 function validSmartAppTemplate(value: string): SmartAppTemplate {
   if (SMART_APP_TEMPLATES.includes(value as SmartAppTemplate)) return value as SmartAppTemplate
   throw new Error('Smart app template is invalid')
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
-}
-
-function isSecureTransferUrl(url: URL): boolean {
-  if (url.protocol === 'https:') return true
-  if (url.protocol !== 'http:') return false
-  return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
-}
-
-async function fileSha256(path: string): Promise<string> {
-  return createHash('sha256')
-    .update(await readFile(path))
-    .digest('hex')
-}
-
-async function archiveDirectory(source: string, destination: string): Promise<void> {
-  await new Promise<void>((resolvePromise, reject) => {
-    const output = createWriteStream(destination, { mode: 0o600 })
-    const archive = new ZipArchive({ zlib: { level: 9 } })
-    output.once('close', resolvePromise)
-    output.once('error', reject)
-    archive.once('error', reject)
-    archive.pipe(output)
-    archive.directory(source, false)
-    void archive.finalize()
-  })
 }
 
 function requiredInstallation(
@@ -1019,32 +965,4 @@ function requiredText(value: string): string {
 function normalizedOptional(value: string | null | undefined): string | null {
   const text = value?.trim()
   return text || null
-}
-
-function takeToken(tokens: Map<string, string>, installationId: string): string | null {
-  const id = requiredText(installationId)
-  const token = tokens.get(id) ?? null
-  tokens.delete(id)
-  return token
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path)
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function uniquePath(directory: string, filename: string): Promise<string> {
-  const path = join(directory, filename)
-  if (!(await exists(path))) return path
-  const extension = '.zip'
-  const stem = filename.endsWith(extension) ? filename.slice(0, -extension.length) : filename
-  for (let index = 1; index < 1000; index += 1) {
-    const candidate = join(directory, `${stem} (${index})${extension}`)
-    if (!(await exists(candidate))) return candidate
-  }
-  throw new Error('Downloads directory has too many Smart app exports with the same name')
 }

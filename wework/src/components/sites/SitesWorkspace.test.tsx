@@ -199,6 +199,27 @@ describe('SitesWorkspace', () => {
     window.history.replaceState({}, '', '/sites')
   })
 
+  test('shows one local workbench type without requesting a cloud collection', async () => {
+    window.history.replaceState({}, '', '/sites?app_type=smart_app')
+    const api = createApi()
+    render(
+      <SitesWorkspace
+        api={api}
+        onCreate={vi.fn()}
+        smartAppsEnabled
+        smartAppsContent={<div>Local workbenches</div>}
+      />
+    )
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByText('Local workbenches')).toBeInTheDocument()
+    expect(screen.queryByTestId('applications-tab-light-app')).not.toBeInTheDocument()
+    await waitFor(() => expect(api.listApplicationTypes).toHaveBeenCalled())
+    expect(api.listSites).not.toHaveBeenCalled()
+  })
+
   test('shows an unavailable product state when Backend reports Sites is not configured', async () => {
     const api = createApi()
     vi.mocked(api.listSites).mockRejectedValueOnce(

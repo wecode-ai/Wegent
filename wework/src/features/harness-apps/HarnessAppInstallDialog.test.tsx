@@ -48,6 +48,24 @@ const modelOptions = [
 ]
 
 describe('HarnessAppInstallDialog', () => {
+  test('allows a model-free workbench to be installed with an empty model catalog', () => {
+    const onInstall = vi.fn()
+    render(
+      <HarnessAppInstallDialog
+        busy={false}
+        error={null}
+        modelKey=""
+        modelOptions={[]}
+        preview={{ ...preview, manifest: { ...preview.manifest!, flavor: 'lightweight' } }}
+        onCancel={vi.fn()}
+        onInstall={onInstall}
+        onModelChange={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('harness-app-install-confirm')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('harness-app-install-confirm'))
+    expect(onInstall).toHaveBeenCalledOnce()
+  })
   test('shows package requirements and installs with the selected model', () => {
     const onInstall = vi.fn()
     const onModelChange = vi.fn()

@@ -14,6 +14,9 @@ import {
   SMART_APP_SCREENSHOT_DATA_URL,
   waitForElementCount,
   setExperimentalFeatures,
+  confirmHarnessInstallation,
+  invokeHarnessHost,
+  waitForHarnessAppView,
 } from './harness-app-fixture.mjs'
 import assert from 'node:assert/strict'
 import { basename, join } from 'node:path'
@@ -54,9 +57,15 @@ export async function verifyHarnessLifecycle(
       },
     ]),
   })
+  await confirmHarnessInstallation(control, uiTimeoutMs)
   await control.command('waitFor', `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]`, {
     text: 'DSH E2E Smoke 0.2.0-rc.2',
     timeoutMs: uiTimeoutMs,
+  })
+  await invokeHarnessHost(control, 'smartApps.configure', {
+    installationId: INSTALLATION_ID,
+    presentation: 'tab',
+    background: false,
   })
   await captureScreenshot(control, 'harness-apps-04-created.png', 'body')
   await control.command(
@@ -97,6 +106,7 @@ export async function verifyHarnessLifecycle(
       },
     ]),
   })
+  await confirmHarnessInstallation(control, uiTimeoutMs)
   await control.command(
     'waitFor',
     `[data-testid="smart-app-created-item-${IMPORTED_INSTALLATION_ID}"]`,
@@ -105,6 +115,11 @@ export async function verifyHarnessLifecycle(
       timeoutMs: uiTimeoutMs,
     }
   )
+  await invokeHarnessHost(control, 'smartApps.configure', {
+    installationId: IMPORTED_INSTALLATION_ID,
+    presentation: 'tab',
+    background: false,
+  })
   await control.command('waitFor', '[data-testid="smart-apps-import-button"]', {
     enabled: true,
     stableMs: 300,
@@ -255,13 +270,7 @@ export async function verifyHarnessLifecycle(
       timeoutMs: 30_000,
     }
   )
-  await control.command(
-    'waitFor',
-    `[data-testid="harness-app-launch-${IMPORTED_INSTALLATION_ID}"]`,
-    {
-      timeoutMs: 30_000,
-    }
-  )
+  await waitForHarnessAppView(control, IMPORTED_INSTALLATION_ID, 600_000)
   await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
   await control.command(
     'waitFor',
@@ -350,9 +359,7 @@ export async function verifyHarnessLifecycle(
   await control.command('press', 'body', { key: 'Escape' })
 
   await control.command('click', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`)
-  await control.command('waitFor', `[data-testid="harness-app-launch-${INSTALLATION_ID}"]`, {
-    timeoutMs: 30_000,
-  })
+  await waitForHarnessAppView(control, INSTALLATION_ID, 600_000)
   await captureScreenshot(control, 'harness-apps-07-tab-starting.png', 'body')
   const appSurface = `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`
   await control.command('waitFor', appSurface, {
@@ -361,11 +368,7 @@ export async function verifyHarnessLifecycle(
   const appTabId = await control.command('getAttribute', appSurface, {
     value: 'data-workspace-tab-id',
   })
-  const appWebviewLabel = await control.command('getAttribute', appSurface, {
-    value: 'data-embedded-browser-label',
-  })
   assert.ok(appTabId, 'Harness app did not expose its workspace tab ID')
-  assert.ok(appWebviewLabel, 'Harness app did not expose its native WebView label')
   await control.command(
     'waitFor',
     `[data-testid="workspace-tab-select-${appTabId}"][aria-selected="true"]`,
@@ -397,17 +400,19 @@ export async function verifyHarnessLifecycle(
   )
   const harnessStateKey = '__weworkHarnessTabState'
   const harnessStateValue = `preserved-${Date.now()}`
-  await control.command('setEmbeddedBrowserWindowValue', 'body', {
+  await control.command('workbenchApp', 'body', {
     value: JSON.stringify({
+      action: 'setWindowValue',
+      id: INSTALLATION_ID,
       key: harnessStateKey,
-      label: appWebviewLabel,
       value: harnessStateValue,
     }),
-    timeoutMs: uiTimeoutMs,
   })
-  const nativeSnapshot = await control.command('captureEmbeddedBrowser', appSurface, {
-    timeoutMs: 30_000,
-  })
+  const nativeSnapshot = JSON.parse(
+    await control.command('workbenchApp', 'body', {
+      value: JSON.stringify({ action: 'capture', id: INSTALLATION_ID }),
+    })
+  )
   assert.ok(
     nativeSnapshot.startsWith('data:image/png;base64,'),
     'Harness native WebView did not produce a screenshot'
@@ -433,13 +438,15 @@ export async function verifyHarnessLifecycle(
     }
   )
   assert.equal(
-    await control.command('getEmbeddedBrowserWindowValue', 'body', {
-      value: JSON.stringify({
-        key: harnessStateKey,
-        label: appWebviewLabel,
-      }),
-      timeoutMs: uiTimeoutMs,
-    }),
+    JSON.parse(
+      await control.command('workbenchApp', 'body', {
+        value: JSON.stringify({
+          action: 'getWindowValue',
+          id: INSTALLATION_ID,
+          key: harnessStateKey,
+        }),
+      })
+    ),
     harnessStateValue,
     'Switching away from and back to a Harness app reset its in-memory page state'
   )
@@ -575,9 +582,7 @@ export async function verifyHarnessLifecycle(
     }
   )
   await control.command('click', `[data-testid="workspace-tab-add-smart-app-${INSTALLATION_ID}"]`)
-  await control.command('waitFor', `[data-testid="harness-app-launch-${INSTALLATION_ID}"]`, {
-    timeoutMs: uiTimeoutMs,
-  })
+  await waitForHarnessAppView(control, INSTALLATION_ID, 600_000)
   await control.command('waitFor', `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`, {
     timeoutMs: 600_000,
   })
@@ -741,8 +746,8 @@ export async function verifyHarnessLifecycle(
   })
   assert.equal(
     Number(await control.command('getElementCount', '[data-testid="applications-tab-smart-app"]')),
-    0,
-    'Smart apps remained visible in Applications after experimental features were disabled'
+    1,
+    'Workbenches disappeared from Applications after experimental features were disabled'
   )
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
@@ -751,8 +756,8 @@ export async function verifyHarnessLifecycle(
   await control.command('click', '[data-testid="workspace-tab-add"]')
   assert.equal(
     Number(await control.command('getElementCount', '[data-testid="workspace-tab-add-smart-app"]')),
-    0,
-    'Smart apps remained visible after experimental features were disabled'
+    1,
+    'Workbenches disappeared after experimental features were disabled'
   )
   await captureScreenshot(control, 'harness-apps-16-experimental-disabled.png', 'body')
 }

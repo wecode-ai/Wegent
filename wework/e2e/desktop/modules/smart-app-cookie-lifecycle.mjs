@@ -31,11 +31,24 @@ export function createUnownedDshCookieFixtures(protectedNames) {
 export async function prepareSmartAppCookieRegression(control, resultDir, installationId) {
   const mainOrigin = await control.command('getLocationOrigin', 'body')
   const client = await createDevtoolsClient(resultDir)
-  const targetFor = async (origin, type) => {
+  const targetFor = async (origin, contentsId) => {
     const targets = await client({ action: 'targets' })
-    const target = targets.find(item => item.type === type && item.url.startsWith(origin + '/'))
-    assert.ok(target, `Missing ${type} target for Smart app cookie verification`)
+    const target = targets.find(
+      item =>
+        item.url.startsWith(origin + '/') && (contentsId === undefined || item.id === contentsId)
+    )
+    assert.ok(target, `Missing Host-owned DSH target for Smart app cookie verification: ${origin}`)
     return target.id
+  }
+  const appTarget = async url => {
+    const snapshot = JSON.parse(
+      await control.command('workbenchApp', 'body', {
+        value: JSON.stringify({ action: 'snapshot', id: installationId }),
+      })
+    )
+    assert.equal(snapshot.running, true)
+    assert.ok(snapshot.contentsId)
+    return targetFor(new URL(url).origin, snapshot.contentsId)
   }
   const command = (target, method, params) => client({ action: 'command', target, method, params })
   const names = async target => {
@@ -73,8 +86,8 @@ export async function prepareSmartAppCookieRegression(control, resultDir, instal
     return result.result.value
   }
   const oldName = cookieName(await appUrl())
-  const main = await targetFor(mainOrigin, 'window')
-  const browser = await targetFor(new URL(await appUrl()).origin, 'webview')
+  const main = await targetFor(mainOrigin)
+  const browser = await appTarget(await appUrl())
   const mainBefore = await names(main)
   const browserBefore = await names(browser)
   assert.ok(mainBefore.includes(oldName))
@@ -118,7 +131,7 @@ export async function prepareSmartAppCookieRegression(control, resultDir, instal
     },
     async assertReopened() {
       const url = await appUrl()
-      const reopened = await targetFor(new URL(url).origin, 'webview')
+      const reopened = await appTarget(url)
       try {
         assert.deepEqual(
           await names(main),

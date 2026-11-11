@@ -1,86 +1,35 @@
-import type { HarnessAppInstallation } from '@/api/local/harnessApps'
-import type { UnifiedModel } from '@/types/api'
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { clearHarnessAppLaunch, useHarnessAppLaunchState } from './harnessAppLaunchState'
-import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
+import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import { useHarnessAppManagement } from './useHarnessAppManagement'
-
 const mocks = vi.hoisted(() => ({
-  api: {
-    stop: vi.fn(),
-    update: vi.fn(),
-  },
-  closeTab: vi.fn(),
-  openTab: vi.fn(),
+  open: vi.fn(),
+  stop: vi.fn(),
+  update: vi.fn(),
   register: vi.fn(),
-  takeContextToken: vi.fn(),
-  takeDecisionToken: vi.fn(),
-  takeProxyToken: vi.fn(),
-  takeAdditionalProxyTokens: vi.fn(),
-  unregisterDecision: vi.fn(),
   unregister: vi.fn(),
-  unregisterContext: vi.fn(),
-  unregisterProxy: vi.fn(),
+  openTab: vi.fn(),
+  closeTab: vi.fn(),
 }))
-
-vi.mock('@/api/local/harnessApps', () => ({
-  harnessAppsApi: mocks.api,
+vi.mock('@/api/local/harnessApps', () => ({ harnessAppsApi: mocks }))
+vi.mock('./harnessAppTabs', () => ({
+  harnessAppRoute: (id: string) => `/app/harness-${id}`,
+  registerHarnessAppTab: mocks.register,
+  unregisterHarnessAppTab: mocks.unregister,
+  openHarnessAppTab: mocks.openTab,
 }))
-
-vi.mock('./harnessAppTabs', async importOriginal => {
-  const original = await importOriginal<typeof import('./harnessAppTabs')>()
-  return {
-    ...original,
-    openHarnessAppTab: mocks.openTab,
-    registerHarnessAppTab: mocks.register,
-    takeHarnessAppContextToken: mocks.takeContextToken,
-    takeHarnessAppDecisionToken: mocks.takeDecisionToken,
-    takeHarnessAppProxyToken: mocks.takeProxyToken,
-    takeHarnessAppAdditionalProxyTokens: mocks.takeAdditionalProxyTokens,
-    unregisterHarnessAppTab: mocks.unregister,
-  }
-})
-
-const model: UnifiedModel = {
-  name: 'local-model:model-1',
-  type: 'runtime',
-  provider: 'local',
-  displayName: 'Local Model',
-  modelId: 'local-upstream',
-  config: { weworkModelKind: 'model-interface' },
-}
-
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => ({
-    projectChat: { models: [model] },
-    services: {
-      localDecisionRouterApi: {
-        unregister: mocks.unregisterDecision,
-      },
-      localHarnessModelApi: {
-        unregisterProxy: mocks.unregisterProxy,
-        unregisterContext: mocks.unregisterContext,
-      },
-    },
-  }),
-}))
-
-const workspaceTabs = {
-  tabs: [] as Array<{ id: string; contentRoute: string }>,
+const tabs = {
+  tabs: [{ id: 'tab-1', contentRoute: '/app/harness-smart-app-1' }],
   closeTab: mocks.closeTab,
 }
-
 vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
-  useWorkspaceTabs: () => workspaceTabs,
+  useWorkspaceTabs: () => tabs,
 }))
-
-vi.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({
-    t: (_key: string, fallback?: string) => fallback ?? _key,
-  }),
+vi.mock('@/features/workbench/useWorkbench', () => ({
+  useWorkbench: () => ({ projectChat: { models: [] } }),
 }))
-
+const t = (_key: string, fallback: string) => fallback
+vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t }) }))
 const installed: HarnessAppInstallation = {
   id: 'smart-app-1',
   manifest: {
@@ -101,6 +50,7 @@ const installed: HarnessAppInstallation = {
   webUrl: null,
   error: null,
   source: 'managed',
+  grantedCapabilities: { decisionModel: false },
 }
 
 const running: HarnessAppInstallation = {
@@ -110,170 +60,48 @@ const running: HarnessAppInstallation = {
 }
 
 describe('useHarnessAppManagement', () => {
-  const onBusyChange = vi.fn()
-  const onError = vi.fn()
-  const onRefresh = vi.fn()
-
+  const onError = vi.fn(),
+    onBusyChange = vi.fn(),
+    onRefresh = vi.fn()
+  const renderManagement = () =>
+    renderHook(() =>
+      useHarnessAppManagement({ installations: [], onError, onBusyChange, onRefresh })
+    )
   beforeEach(() => {
-    Object.values(mocks.api).forEach(mock => mock.mockReset())
-    mocks.closeTab.mockReset()
-    mocks.openTab.mockReset()
-    mocks.register.mockReset()
-    mocks.takeContextToken.mockReset().mockResolvedValue(null)
-    mocks.takeDecisionToken.mockReset().mockResolvedValue(null)
-    mocks.takeProxyToken.mockReset().mockResolvedValue(null)
-    mocks.takeAdditionalProxyTokens.mockReset().mockResolvedValue([])
-    mocks.unregisterDecision.mockReset().mockResolvedValue(undefined)
-    mocks.unregister.mockReset()
-    mocks.unregisterContext.mockReset()
-    mocks.unregisterProxy.mockReset()
-    onBusyChange.mockReset()
-    onError.mockReset()
-    onRefresh.mockReset().mockResolvedValue(undefined)
-    workspaceTabs.tabs = []
-    mocks.api.stop.mockResolvedValue(undefined)
-    mocks.api.update.mockResolvedValue(installed)
+    vi.clearAllMocks()
+    onRefresh.mockResolvedValue(undefined)
   })
-
-  function renderManagement(installations: HarnessAppInstallation[] = [installed]) {
-    return renderHook(() =>
-      useHarnessAppManagement({ installations, onBusyChange, onError, onRefresh })
-    )
-  }
-
-  test('does not publish a running host snapshot during token handoff or queued close', async () => {
-    let release: () => void = () => {}
-    const handoff = runHarnessAppRuntimeOperation(
-      running.id,
-      () =>
-        new Promise<void>(resolve => {
-          release = resolve
-        })
-    )
-    const close = runHarnessAppRuntimeOperation(running.id, async () => undefined)
-    await Promise.resolve()
-    const view = renderManagement([running])
-    try {
-      expect(mocks.register).not.toHaveBeenCalled()
-      act(() => view.result.current.open(running))
-      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, running)
-      expect(mocks.register).not.toHaveBeenCalled()
-      const launch = renderHook(() => useHarnessAppLaunchState(running.id))
-      expect(launch.result.current?.status).toBe('starting')
-      act(() => launch.result.current!.retry())
-      expect(mocks.register).not.toHaveBeenCalled()
-      expect(mocks.openTab).toHaveBeenCalledTimes(2)
-      launch.unmount()
-    } finally {
-      view.unmount()
-      await act(async () => {
-        release()
-        await handoff
-        await close
-        clearHarnessAppLaunch(running.id)
-      })
-    }
-    renderManagement([running])
-    expect(mocks.register).toHaveBeenCalledWith(running)
-  })
-
-  test('opens an installed app through the shared workspace-tab launcher', () => {
+  test('opens the Host default window without creating a tab or requiring renderer models', async () => {
+    mocks.open.mockResolvedValue({ ...running, presentation: 'window' })
     const { result } = renderManagement()
-
-    act(() => result.current.start(installed))
-
-    expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, installed)
-    expect(onError).toHaveBeenCalledWith(null)
+    await act(async () => result.current.start(installed))
+    expect(mocks.open).toHaveBeenCalledWith(installed.id, undefined)
+    expect(mocks.openTab).not.toHaveBeenCalled()
+    expect(mocks.closeTab).toHaveBeenCalledWith('tab-1')
   })
-
-  test('discards a stale running registration before starting a stopped app again', async () => {
-    const tabs = await vi.importActual<typeof import('./harnessAppTabs')>('./harnessAppTabs')
-    // A retained management surface can publish its old running snapshot when
-    // reconnected, before its refresh reports that the previous runtime stopped.
-    mocks.register.mockImplementation(tabs.registerHarnessAppTab)
-    mocks.unregister.mockImplementation(tabs.unregisterHarnessAppTab)
-    const view = renderHook(
-      ({ installations }) =>
-        useHarnessAppManagement({ installations, onBusyChange, onError, onRefresh }),
-      { initialProps: { installations: [running] } }
-    )
-    try {
-      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)?.url).toBe(running.webUrl)
-      view.rerender({ installations: [installed] })
-
-      act(() => view.result.current.start(installed))
-
-      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, installed)
-      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)).toBeNull()
-      expect(mocks.unregister.mock.invocationCallOrder[0]!).toBeLessThan(
-        mocks.openTab.mock.invocationCallOrder[0]!
-      )
-    } finally {
-      view.unmount()
-      tabs.unregisterHarnessAppTab(installed.id)
-    }
+  test('switches the existing runtime to a tab using one Host open', async () => {
+    const tab = { ...running, presentation: 'tab' }
+    mocks.open.mockResolvedValue(tab)
+    const { result } = renderManagement()
+    await act(async () => result.current.open(running, 'tab'))
+    expect(mocks.open).toHaveBeenCalledWith(installed.id, 'tab')
+    expect(mocks.register).toHaveBeenCalledWith(tab)
+    expect(mocks.openTab).toHaveBeenCalledWith(tabs, tab)
+    expect(mocks.stop).not.toHaveBeenCalled()
   })
-
-  test('does not revoke an active launch from a stale installed management snapshot', async () => {
-    const tabs = await vi.importActual<typeof import('./harnessAppTabs')>('./harnessAppTabs')
-    tabs.registerHarnessAppTab(running)
-    mocks.unregister.mockImplementation(tabs.unregisterHarnessAppTab)
-    let release: () => void = () => {}
-    const handoff = runHarnessAppRuntimeOperation(
-      installed.id,
-      () =>
-        new Promise<void>(resolve => {
-          release = resolve
-        })
-    )
-    await Promise.resolve()
-    const { result, unmount } = renderManagement()
-    try {
-      act(() => result.current.start(installed))
-
-      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)?.url).toBe(running.webUrl)
-      expect(mocks.unregister).not.toHaveBeenCalled()
-      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, installed)
-    } finally {
-      unmount()
-      release()
-      await handoff
-      tabs.unregisterHarnessAppTab(installed.id)
-    }
+  test('keeps Host errors visible and refreshes only after successful actions', async () => {
+    mocks.open.mockRejectedValue(new Error('model unavailable'))
+    const { result } = renderManagement()
+    await act(async () => result.current.open(installed))
+    expect(onError).toHaveBeenLastCalledWith('工作台启动失败')
+    expect(onRefresh).not.toHaveBeenCalled()
   })
-
-  test('stops the runtime, clears registrations, and closes its workspace tab', async () => {
-    workspaceTabs.tabs = [{ id: 'app-tab', contentRoute: '/app/harness-smart-app-1' }]
-    mocks.takeProxyToken.mockResolvedValue('proxy-token')
-    mocks.takeAdditionalProxyTokens.mockResolvedValue(['second-token'])
-    const { result } = renderManagement([running])
-
-    await act(async () => {
-      expect(await result.current.stop(running)).toBe(true)
-    })
-
-    expect(mocks.api.stop).toHaveBeenCalledWith(running.id)
-    expect(mocks.unregister).toHaveBeenCalledWith(running.id)
-    expect(mocks.closeTab).toHaveBeenCalledWith('app-tab')
-    expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
-    expect(mocks.unregisterProxy).toHaveBeenCalledWith('second-token')
-    expect(onRefresh).toHaveBeenCalled()
-  })
-
-  test('still releases the other routes when one unregister fails', async () => {
-    mocks.takeProxyToken.mockResolvedValue('proxy-token')
-    mocks.takeContextToken.mockResolvedValue('context-token')
-    mocks.takeDecisionToken.mockResolvedValue('decision-token')
-    mocks.unregisterProxy.mockRejectedValue(new Error('proxy route already gone'))
-    const { result } = renderManagement([running])
-
-    await act(async () => {
-      expect(await result.current.stop(running)).toBe(true)
-    })
-
-    expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
-    expect(mocks.unregisterContext).toHaveBeenCalledWith('context-token')
-    expect(mocks.unregisterDecision).toHaveBeenCalledWith('decision-token')
-    expect(onRefresh).toHaveBeenCalled()
+  test('stops the Host runtime and closes its presentation', async () => {
+    mocks.stop.mockResolvedValue(undefined)
+    const { result } = renderManagement()
+    await act(async () => result.current.stop(running))
+    expect(mocks.stop).toHaveBeenCalledWith(installed.id)
+    expect(mocks.closeTab).toHaveBeenCalledWith('tab-1')
+    expect(onRefresh).toHaveBeenCalledOnce()
   })
 })

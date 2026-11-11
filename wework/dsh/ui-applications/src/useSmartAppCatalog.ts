@@ -90,7 +90,7 @@ function useCatalogResource<T>(owner: CatalogOwner, load: () => Promise<T>) {
       if (!isCurrent()) return
       const error = getSmartAppErrorMessage(
         loadError,
-        t('workbench.smart_apps_load_failed', '智能工作台加载失败。'),
+        t('workbench.smart_apps_load_failed', '工作台加载失败。'),
         t
       )
       setState(current => ({ ...current, loading: false, error }))
@@ -156,7 +156,7 @@ export function useSmartAppCatalog({ api, mode, query, source, tag }: CatalogOwn
       tags: tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort),
     }
   }, [api, mode, query, source, tag])
-  const local = useCatalogResource(owner, loadLocal)
+  const local = useCatalogResource<HarnessAppInstallation[]>(owner, loadLocal)
   const cloud = useCatalogResource(owner, loadCloud)
   const refreshLocal = local.refresh
   const refreshCloud = cloud.refresh

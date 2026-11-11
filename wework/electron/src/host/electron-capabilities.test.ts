@@ -136,6 +136,28 @@ describe('E2E system pressure fixture', () => {
 })
 
 describe('Smart App verification capabilities', () => {
+  test('scopes native application services to the installation Host pipe principal', async () => {
+    const invoke = vi.fn(async () => ({ count: 1 }))
+    const router = createWorkbenchCapabilityRouter(null, 'smart-app:notes', {
+      invoke,
+      window: () => null,
+      contents: () => null,
+      visible: () => false,
+    })
+    await expect(
+      router.invoke('smart-app:notes', 'workbench.invoke', {
+        method: 'storage.get',
+        params: { installationId: 'other' },
+      })
+    ).resolves.toEqual({ count: 1 })
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('storage.get', { installationId: 'other' })
+    await expect(
+      router.invoke('smart-app:other', 'workbench.invoke', { method: 'storage.get' })
+    ).rejects.toMatchObject({ code: 'capability_denied' })
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'workbench.invoke', { method: 'storage.get' })
+    ).rejects.toMatchObject({ code: 'capability_denied' })
+  })
   test('grants only the named inspect and verify operations', () => {
     expect(HOST_CAPABILITIES).toContain('smartApps.inspectVerification')
     expect(HOST_CAPABILITIES).toContain('smartApps.verify')
@@ -143,7 +165,13 @@ describe('Smart App verification capabilities', () => {
 
   test('allows an empty parent and purpose when creating a workbench', async () => {
     const createDirectory = vi.fn(async () => ({ id: 'created-app' }))
-    const { router } = createIsolatedClipboardRouter(true, undefined, { createDirectory })
+    const authorizeInstallation = vi.fn(async installation => installation)
+    const { router } = createIsolatedClipboardRouter(
+      true,
+      undefined,
+      { createDirectory },
+      { workbenches: () => ({ authorizeInstallation }) as never }
+    )
     const input = {
       parentPath: '',
       name: 'created-app',
@@ -156,11 +184,18 @@ describe('Smart App verification capabilities', () => {
       router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.createDirectory', input)
     ).resolves.toEqual({ id: 'created-app' })
     expect(createDirectory).toHaveBeenCalledWith(input)
+    expect(authorizeInstallation).toHaveBeenCalledWith({ id: 'created-app' })
   })
 
-  test('passes separate model routes to Smart App startup', async () => {
-    const start = vi.fn(async () => ({ state: 'running' }))
-    const { router } = createIsolatedClipboardRouter(true, undefined, { start })
+  test('delegates startup to the installation owner without trusting renderer model routes', async () => {
+    const start = vi.fn()
+    const open = vi.fn(async () => ({ state: 'running' }))
+    const { router } = createIsolatedClipboardRouter(
+      true,
+      undefined,
+      { start },
+      { workbenches: () => ({ open }) as never }
+    )
     const additionalModels = [
       {
         modelKey: 'second-model',
@@ -175,14 +210,33 @@ describe('Smart App verification capabilities', () => {
       additionalModels,
     })
 
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ additionalModels }))
+    expect(open).toHaveBeenCalledExactlyOnceWith('app-1')
+    expect(start).not.toHaveBeenCalled()
+  })
+  test('requires native installation approval for a copied marketplace workbench', async () => {
+    const pending = { id: 'copied', authorized: false }
+    const copyToDirectory = vi.fn(async () => pending)
+    const authorizeInstallation = vi.fn(async () => null)
+    const { router } = createIsolatedClipboardRouter(
+      true,
+      undefined,
+      { copyToDirectory },
+      { workbenches: () => ({ authorizeInstallation }) as never }
+    )
     await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.start', {
-        installationId: 'app-1',
-        additionalModels: [{ modelKey: 'second-model', displayName: 'Second model' }],
+      router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.copyToDirectory', {
+        installationId: 'market-1',
+        parentPath: '/projects',
+        name: 'copied',
+        displayName: 'Copied',
       })
-    ).rejects.toThrow()
-    expect(start).toHaveBeenCalledTimes(1)
+    ).resolves.toBeNull()
+    expect(copyToDirectory).toHaveBeenCalledWith('market-1', {
+      parentPath: '/projects',
+      name: 'copied',
+      displayName: 'Copied',
+    })
+    expect(authorizeInstallation).toHaveBeenCalledExactlyOnceWith(pending)
   })
 })
 

@@ -15,6 +15,7 @@ import {
   type WebContents,
 } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { protectLightweightWorkbenchFrames } from './lightweight-workbench-navigation.js'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -212,7 +213,7 @@ export class EmbeddedBrowserManager {
 
   private interceptWeworkNavigation(contents: WebContents): void {
     const handleNavigation = (event: Electron.Event, url: string) => {
-      if (!url.startsWith('wework://')) return
+      if (event.defaultPrevented || !url.startsWith('wework://')) return
       event.preventDefault()
       this.openWeworkScheme(url)
     }
@@ -390,6 +391,7 @@ export class EmbeddedBrowserManager {
     const previous = this.attachedContents.get(normalizedLabel)
     if (previous && previous.id !== contents.id && !previous.isDestroyed()) previous.close()
     this.attachedContents.set(normalizedLabel, contents)
+    protectLightweightWorkbenchFrames(contents)
     contents.on('before-mouse-event', (_event, mouse) => {
       if (mouse.type !== 'mouseDown') return
       const entry = [...this.entries.values()].find(

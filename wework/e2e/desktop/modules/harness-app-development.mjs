@@ -5,6 +5,7 @@ import {
   exportedPackages,
   assertExportedPackage,
   waitForNewExport,
+  confirmHarnessInstallation,
 } from './harness-app-fixture.mjs'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
@@ -28,6 +29,9 @@ export async function verifyHarnessDevelopment(
   await control.command('waitFor', '[data-testid="smart-app-development-dialog"]', {
     text: '创建空白工作台',
     timeoutMs: uiTimeoutMs,
+  })
+  await control.command('select', '[data-testid="smart-app-development-flavor"]', {
+    value: 'extended',
   })
   await control.command('fill', '[data-testid="smart-app-development-display-name"]', {
     value: '空白 E2E 工作台',
@@ -53,8 +57,9 @@ export async function verifyHarnessDevelopment(
   await control.command('clickWhenEnabled', '[data-testid="smart-app-development-confirm"]', {
     timeoutMs: uiTimeoutMs,
   })
+  await confirmHarnessInstallation(control, uiTimeoutMs)
   await control.command('waitFor', '[data-testid="chat-message-input"]', {
-    text: '智能工作台开发助手',
+    text: '工作台开发助手',
     timeoutMs: uiTimeoutMs,
   })
   await control.command('waitFor', '[data-testid="smart-app-development-preview"]', {

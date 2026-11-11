@@ -53,6 +53,7 @@ import {
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { GlobalIconButtonTooltip } from '@/components/ui/GlobalIconButtonTooltip'
 import { AppIframe } from '@/components/topnav/AppIframe'
+import { WorkbenchTabSurface } from '@/features/harness-apps/WorkbenchTabSurface'
 import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
 import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
 import { ElectronWorkbenchTabBridge } from '@/features/harness-apps/ElectronWorkbenchTabBridge'
@@ -318,7 +319,6 @@ interface WorkspaceTabSurfaceProps {
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
   nativeWorkbenchKind?: 'task' | 'board'
-  smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   services: WorkbenchServices
@@ -331,7 +331,6 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   cloudWebUrl,
   lifecycleStore,
   nativeWorkbenchKind,
-  smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
   services,
@@ -376,7 +375,6 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
     )
   }, [])
   const harnessAppStartupPending =
-    smartAppsEnabled &&
     harnessAppStartupOwner.installationId === harnessAppInstallationId &&
     harnessAppStartupOwner.pending
   const nativeWorkbenchActive =
@@ -450,7 +448,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
 
   const workbenchContent = (
     <>
-      {harnessAppInstallationId && smartAppsEnabled ? (
+      {harnessAppInstallationId ? (
         <HarnessAppAutoLauncher
           installationId={harnessAppInstallationId}
           onStartupSettled={settleHarnessAppStartup}
@@ -531,21 +529,30 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
               )}
               aria-hidden={!iframe || harnessAppLaunchActive}
             >
-              <AppIframe
-                active={active && Boolean(iframe)}
-                appKey={renderedIframe.appKey}
-                edgeToEdge={Boolean(harnessAppInstallationId)}
-                embeddedBrowserLabel={renderedIframe.embeddedBrowserLabel}
-                onReady={
-                  harnessAppInstallationId
-                    ? () => clearHarnessAppLaunch(harnessAppInstallationId)
-                    : undefined
-                }
-                src={renderedIframe.src}
-                title={renderedIframe.title}
-                waitForContent={Boolean(harnessAppInstallationId)}
-                workspaceTabId={tab.id}
-              />
+              {harnessAppInstallationId && isElectronRuntime() ? (
+                <WorkbenchTabSurface
+                  active={active && Boolean(iframe) && !harnessAppLaunchActive}
+                  installationId={harnessAppInstallationId}
+                  title={renderedIframe.title}
+                  workspaceTabId={tab.id}
+                />
+              ) : (
+                <AppIframe
+                  active={active && Boolean(iframe)}
+                  appKey={renderedIframe.appKey}
+                  edgeToEdge={Boolean(harnessAppInstallationId)}
+                  embeddedBrowserLabel={renderedIframe.embeddedBrowserLabel}
+                  onReady={
+                    harnessAppInstallationId
+                      ? () => clearHarnessAppLaunch(harnessAppInstallationId)
+                      : undefined
+                  }
+                  src={renderedIframe.src}
+                  title={renderedIframe.title}
+                  waitForContent={Boolean(harnessAppInstallationId)}
+                  workspaceTabId={tab.id}
+                />
+              )}
             </div>
           ) : null}
         </div>
@@ -809,7 +816,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
             active={tab.id === workspaceTabs.activeTabId}
             lifecycleStore={lifecycleStore}
             nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
-            smartAppsEnabled={experimentalFeatures.enabled}
             services={services}
             cloudWebUrl={cloudWebUrl}
             onOpenWeworkForAppshot={onOpenWeworkForAppshot}
@@ -990,16 +996,13 @@ function AppShell() {
               : preference.windowLabel === currentWindowLabel
             if (!belongsToCurrentWindow) return []
             if (preference.kind === 'smart_app') {
-              if (
-                !appPreferences.preferences.experimentalFeaturesEnabled ||
-                !preference.installationId
-              ) {
+              if (!preference.installationId) {
                 return []
               }
               return [
                 createWorkspaceTab('auxiliary', workspaceTabLabels, {
                   id: preference.id,
-                  title: preference.title ?? t('workbench.smart_apps_title', '智能工作台'),
+                  title: preference.title ?? t('workbench.smart_apps_title', '工作台'),
                   contentRoute: harnessAppRoute(preference.installationId),
                   fixed: true,
                 }),

@@ -1,17 +1,76 @@
-import { useEffect, useRef } from 'react'
-import { harnessAppsApi } from '@/api/local/harnessApps'
-import { createLocalAppServices } from '@/api/local/localServices'
+import { useEffect, useLayoutEffect, useRef } from 'react'
+import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
+import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { notifyHarnessAppInstallationsChanged } from './harnessAppInstallationsChanged'
 import { harnessAppInstallationIdFromPath } from './harnessAppLaunchState'
-import { unregisterHarnessAppTab } from './harnessAppTabs'
-import { releaseHarnessAppRoutes } from './harnessAppRoutes'
-import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
+import {
+  harnessAppRoute,
+  openHarnessAppTab,
+  registerHarnessAppTab,
+  unregisterHarnessAppTab,
+} from './harnessAppTabs'
 
 export function ElectronWorkbenchTabBridge() {
   const workspaceTabs = useWorkspaceTabs()
   const previousInstallationIds = useRef<Set<string>>(new Set())
+  const hostClosedIds = useRef(new Set<string>())
+  const tabsRef = useRef(workspaceTabs)
+  useLayoutEffect(() => {
+    tabsRef.current = workspaceTabs
+  }, [workspaceTabs])
+
+  useEffect(() => {
+    if (!isElectronRuntime()) return
+    const pending = new Map<string, HarnessAppInstallation | null>()
+    let scheduled = false
+    let disposed = false
+    const flush = () => {
+      scheduled = false
+      if (disposed) return
+      for (const [installationId, installation] of pending) {
+        if (installation) {
+          hostClosedIds.current.delete(installationId)
+          registerHarnessAppTab(installation)
+          notifyHarnessAppInstallationsChanged({ type: 'updated', installationId, installation })
+          openHarnessAppTab(tabsRef.current, installation)
+        } else {
+          unregisterHarnessAppTab(installationId)
+          const route = harnessAppRoute(installationId)
+          const tabs = tabsRef.current.tabs.filter(tab => tab.contentRoute === route)
+          if (tabs.length > 0) hostClosedIds.current.add(installationId)
+          tabs.forEach(tab => tabsRef.current.closeTab(tab.id))
+        }
+      }
+      pending.clear()
+    }
+    const unsubscribe = subscribeDesktopHostEvents(
+      event => {
+        if (event.type === 'workbench.open-tab') {
+          const installation = event.payload.installation as HarnessAppInstallation | undefined
+          if (!installation?.id || !installation.webUrl) return
+          pending.set(installation.id, installation)
+        } else if (event.type === 'workbench.close-tab') {
+          const installationId = event.payload.installationId
+          if (typeof installationId !== 'string') return
+          pending.set(installationId, null)
+        } else return
+        if (!scheduled) {
+          scheduled = true
+          queueMicrotask(flush)
+        }
+      },
+      {
+        replay: event =>
+          event.type === 'workbench.open-tab' || event.type === 'workbench.close-tab',
+      }
+    )
+    return () => {
+      disposed = true
+      unsubscribe()
+    }
+  }, [])
 
   useEffect(() => {
     if (!isElectronRuntime()) return
@@ -26,24 +85,26 @@ export function ElectronWorkbenchTabBridge() {
     for (const installationId of previousInstallationIds.current) {
       if (current.has(installationId)) continue
       unregisterHarnessAppTab(installationId)
-      const services = createLocalAppServices()
-      void runHarnessAppRuntimeOperation(installationId, async () => {
-        let stopped = false
+      if (hostClosedIds.current.delete(installationId)) continue
+      void (async () => {
         try {
-          await harnessAppsApi.stop(installationId)
-          stopped = true
+          const installation = (await harnessAppsApi.list()).find(
+            item => item.id === installationId
+          )
+          // A switch to an independent window also removes the old tab.
+          if (installation?.presentation !== 'tab') return
+          await harnessAppsApi.closeView(installationId)
+          const closed = (await harnessAppsApi.list()).find(item => item.id === installationId)
+          if (closed)
+            notifyHarnessAppInstallationsChanged({
+              type: 'updated',
+              installationId,
+              installation: closed,
+            })
         } catch (error) {
-          console.warn(`[Wework] failed to stop closed Smart app ${installationId}`, error)
+          console.warn(`[Wework] failed to hide closed workbench ${installationId}`, error)
         }
-        await releaseHarnessAppRoutes(
-          installationId,
-          services.localHarnessModelApi,
-          services.localDecisionRouterApi
-        )
-        if (stopped) {
-          notifyHarnessAppInstallationsChanged({ type: 'stopped', installationId })
-        }
-      })
+      })()
     }
     previousInstallationIds.current = current
   }, [workspaceTabs.tabs])

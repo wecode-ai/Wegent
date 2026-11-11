@@ -7,6 +7,7 @@ import type { WebContents } from 'electron'
 import { PythonRuntimeDownloadTimeoutError } from '../runtime/python-runtime-downloads.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { VerificationDevtools } from './verification-devtools.js'
+import type { WorkbenchService } from './workbench-application-contract.js'
 
 const MAX_BODY_BYTES = 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 10_000
@@ -46,6 +47,7 @@ export interface WeworkDesktopControlBridgeOptions {
   registryDirectory: string
   window: () => DesktopWindow | null
   smartApps?: () => SmartAppControlService | null
+  workbenches?: () => WorkbenchService | null
   ensurePython?: () => Promise<unknown>
   pythonStatus?: () => Promise<unknown>
   pythonDownloads?: () => Promise<unknown>
@@ -254,6 +256,11 @@ export class WeworkDesktopControlBridge {
         writeResponse(response, 200, { ok: true, data: await this.dispatchSmartApp(input) })
         return
       }
+      if (request.method === 'POST' && request.url === '/workbench') {
+        const input = await readJsonBody(request)
+        writeResponse(response, 200, { ok: true, data: await this.dispatchWorkbench(input) })
+        return
+      }
       if (request.method === 'POST' && request.url === '/devtools' && this.options.devtools) {
         const input = await readJsonBody(request)
         writeResponse(response, 200, {
@@ -291,6 +298,96 @@ export class WeworkDesktopControlBridge {
       return smartApps.packProject(projectRoot, outputPath)
     }
     throw new Error('Unknown Smart App request action')
+  }
+
+  private async dispatchWorkbench(input: Record<string, unknown>): Promise<unknown> {
+    const action = input.action
+    const operations = [
+      'list',
+      'create',
+      'install',
+      'create-todo',
+      'launch',
+      'hide',
+      'stop',
+      'remove',
+      'shortcut',
+      'set-shortcut',
+      'configure',
+    ]
+    if (typeof action !== 'string' || !operations.includes(action))
+      throw new Error('Unknown Workbench request action')
+    const needsId = !['list', 'create', 'install', 'create-todo'].includes(action)
+    const allowed = new Set([
+      'action',
+      ...(['install', 'create'].includes(action) ? ['projectPath'] : []),
+      ...(action === 'create' ? ['name', 'displayName', 'flavor'] : []),
+      ...(needsId ? ['id'] : []),
+      ...(action === 'set-shortcut' ? ['accelerator'] : []),
+      ...(['launch', 'configure'].includes(action) ? ['presentation'] : []),
+      ...(action === 'configure' ? ['resident', 'background'] : []),
+    ])
+    const unknown = Object.keys(input).find(field => !allowed.has(field))
+    if (unknown) throw new Error(`Unknown Workbench request field: ${unknown}`)
+    const workbenches = this.options.workbenches?.()
+    if (!workbenches) throw new Error('Workbenches are unavailable')
+    if (action === 'list') return workbenches.list()
+    if (action === 'create') {
+      if (typeof input.name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(input.name))
+        throw new Error('A valid workbench package name is required')
+      if (typeof input.displayName !== 'string' || !input.displayName.trim())
+        throw new Error('Workbench displayName is required')
+      if (input.flavor !== 'lightweight' && input.flavor !== 'extended')
+        throw new Error('flavor must be lightweight or extended')
+      return workbenches.scaffold({
+        projectPath: requiredAbsolutePath(input.projectPath, 'projectPath'),
+        name: input.name,
+        displayName: input.displayName.trim(),
+        flavor: input.flavor,
+      })
+    }
+    if (action === 'install')
+      return workbenches.install(requiredAbsolutePath(input.projectPath, 'projectPath'))
+    if (action === 'create-todo') return workbenches.createTodo()
+    const id = input.id
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id))
+      throw new Error('A valid Workbench installation id is required')
+    if (action === 'launch' || action === 'configure') {
+      const presentation = input.presentation
+      if (presentation !== undefined && presentation !== 'window' && presentation !== 'tab') {
+        throw new Error('presentation must be window or tab')
+      }
+      if (action === 'launch') return workbenches.open(id, presentation)
+      if (input.resident !== undefined && typeof input.resident !== 'boolean') {
+        throw new Error('resident must be a boolean')
+      }
+      if (input.background !== undefined && typeof input.background !== 'boolean') {
+        throw new Error('background must be a boolean')
+      }
+      if (
+        presentation === undefined &&
+        input.resident === undefined &&
+        input.background === undefined
+      ) {
+        throw new Error('Provide presentation, resident or background')
+      }
+      return workbenches.configure(id, {
+        ...(presentation !== undefined ? { presentation } : {}),
+        ...(input.resident !== undefined ? { resident: input.resident } : {}),
+        ...(input.background !== undefined ? { background: input.background } : {}),
+      })
+    }
+    if (action === 'shortcut') return workbenches.createShortcut(id)
+    if (action === 'set-shortcut') {
+      const accelerator = input.accelerator
+      if (accelerator !== null && (typeof accelerator !== 'string' || !accelerator.trim())) {
+        throw new Error('accelerator must be a nonempty string or null')
+      }
+      await workbenches.setShortcut(id, typeof accelerator === 'string' ? accelerator.trim() : null)
+    } else if (action === 'hide') await workbenches.hide(id)
+    else if (action === 'stop') await workbenches.stop(id)
+    else await workbenches.remove(id)
+    return { id }
   }
 
   private status(): Record<string, unknown> {

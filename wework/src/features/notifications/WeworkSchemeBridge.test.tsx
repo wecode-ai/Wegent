@@ -14,6 +14,8 @@ const {
   openTab,
   openHarnessAppTab,
   listHarnessApps,
+  openWorkbench,
+  registerHarnessAppTab,
   invokeDesktopHost,
   isElectronRuntime,
   getDesktopWindowLabel,
@@ -22,6 +24,8 @@ const {
   openTab: vi.fn(),
   openHarnessAppTab: vi.fn(),
   listHarnessApps: vi.fn(),
+  openWorkbench: vi.fn(),
+  registerHarnessAppTab: vi.fn(),
   invokeDesktopHost: vi.fn(),
   isElectronRuntime: vi.fn(() => false),
   getDesktopWindowLabel: vi.fn(() => 'main'),
@@ -44,10 +48,11 @@ vi.mock('@/api/dsh/desktopHost', () => ({
   subscribeDesktopHostEvents,
 }))
 vi.mock('@/api/local/harnessApps', () => ({
-  harnessAppsApi: { list: listHarnessApps },
+  harnessAppsApi: { list: listHarnessApps, open: openWorkbench },
 }))
 vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
   openHarnessAppTab,
+  registerHarnessAppTab,
 }))
 
 beforeEach(() => {
@@ -311,26 +316,35 @@ describe('Wework scheme bridge', () => {
     }
   })
 
-  it('opens an installed Smart app returned by its marketplace identity', async () => {
-    const installation = {
-      id: 'research-local',
-      smartAppId: 42,
-      manifest: { displayName: 'Research desk' },
-      webUrl: 'http://127.0.0.1:3000',
-      state: 'running',
+  it.each(['window', 'tab'] as const)(
+    'opens an installed workbench by marketplace identity using its saved %s presentation',
+    async presentation => {
+      const installation = {
+        id: 'research-local',
+        smartAppId: 42,
+        manifest: { displayName: 'Research desk' },
+        webUrl: 'http://127.0.0.1:3000',
+        state: 'running',
+        presentation,
+      }
+      listHarnessApps.mockResolvedValue([installation])
+      openWorkbench.mockResolvedValue(installation)
+      render(<WeworkSchemeBridge />)
+
+      act(() => {
+        openWeworkScheme('wework://smart-apps/42')
+      })
+
+      await waitFor(() => expect(openWorkbench).toHaveBeenCalledWith(installation.id))
+      if (presentation === 'tab') {
+        await waitFor(() =>
+          expect(openHarnessAppTab).toHaveBeenCalledWith(expect.anything(), installation)
+        )
+        expect(registerHarnessAppTab).toHaveBeenCalledWith(installation)
+      } else expect(openHarnessAppTab).not.toHaveBeenCalled()
+      expect(openTab).not.toHaveBeenCalled()
     }
-    listHarnessApps.mockResolvedValue([installation])
-    render(<WeworkSchemeBridge />)
-
-    act(() => {
-      openWeworkScheme('wework://smart-apps/42')
-    })
-
-    await waitFor(() =>
-      expect(openHarnessAppTab).toHaveBeenCalledWith(expect.anything(), installation)
-    )
-    expect(openTab).not.toHaveBeenCalled()
-  })
+  )
 
   it('routes a missing Smart app to the targeted installation prompt', async () => {
     render(<WeworkSchemeBridge />)
@@ -341,7 +355,7 @@ describe('Wework scheme bridge', () => {
 
     await waitFor(() =>
       expect(openTab).toHaveBeenCalledWith('auxiliary', {
-        title: '智能工作台',
+        title: '工作台',
         contentRoute: '/sites?app_type=smart_app&smartAppId=42',
       })
     )
@@ -365,7 +379,7 @@ describe('Wework scheme bridge', () => {
 
     await waitFor(() =>
       expect(openTab).toHaveBeenCalledWith('auxiliary', {
-        title: '智能工作台',
+        title: '工作台',
         contentRoute: '/sites?app_type=smart_app&smartAppId=42',
       })
     )

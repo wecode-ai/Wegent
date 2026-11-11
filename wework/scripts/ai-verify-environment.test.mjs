@@ -67,6 +67,7 @@ describe('buildAiVerifyEnvironment', () => {
         WEWORK_NODE_RUNTIME_KIND: 'electron',
         WEWORK_PARENT_TITLE: 'Parent task',
         WEWORK_RUNTIME_BIN: '/tmp/foreign-runtime/bin',
+        WEWORK_CLI_PATH: '/tmp/foreign-runtime/wework-cli-bin/wework',
         WEWORK_SHARED_EXECUTOR_HOME: '/tmp/shared-home',
       },
       {
@@ -128,6 +129,7 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.WEWORK_NODE_RUNTIME_KIND).toBeUndefined()
     expect(environment.WEWORK_PARENT_TITLE).toBeUndefined()
     expect(environment.WEWORK_RUNTIME_BIN).toBeUndefined()
+    expect(environment.WEWORK_CLI_PATH).toBeUndefined()
     expect(environment.WEWORK_SHARED_EXECUTOR_HOME).toBeUndefined()
     expect(environment.WEWORK_APP_CONFIG_DIR).toBe(path.join('/tmp/session', 'app-config'))
     expect(environment.WEWORK_DESKTOP_CONTROL_REGISTRY_DIR).toBe(

@@ -6,11 +6,18 @@ interface LoginRecovery {
   isShuttingDown: () => boolean
   python: () => Promise<{ resumeAfterLogin(): Promise<unknown> }> | null
   development: () => { resumePythonAfterLogin(): Promise<void> } | null
+  cloudConnectionChanged?: (value: string | null) => void | Promise<void>
 }
 
 /** Observe committed login state without blocking storage writes or creating Python demand. */
 export function createDesktopRendererStorage(directory: string, recovery: LoginRecovery) {
   return new RendererStorageStore(directory, update => {
+    if (recovery.isShuttingDown()) return
+    if (update.clear || Object.hasOwn(update.changes, 'wework.cloudConnection')) {
+      const observe = async () =>
+        recovery.cloudConnectionChanged?.(update.changes['wework.cloudConnection'] ?? null)
+      void observe().catch(() => console.warn('[workbenches] Cloud connection observer failed'))
+    }
     if (!recovery.enabled || recovery.isShuttingDown()) return
     const value = update.changes['wework.cloudConnection']
     if (!value) return

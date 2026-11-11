@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process'
-import { basename, dirname, resolve } from 'node:path'
+import { accessSync, constants } from 'node:fs'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 function fail(message) {
   process.stderr.write(`${message}\n`)
@@ -49,13 +50,27 @@ async function search(query) {
 }
 
 function runWeworkSmartApp(command, rootArgument, outputArgument) {
+  const launcher = process.env.WEWORK_CLI_PATH?.trim()
+  if (!launcher || !isAbsolute(launcher))
+    return fail('Task-bound Wework CLI unavailable (WEWORK_CLI_PATH).')
+  try {
+    accessSync(launcher, constants.X_OK)
+  } catch {
+    return fail('Task-bound Wework CLI unavailable (WEWORK_CLI_PATH).')
+  }
   const root = resolve(rootArgument)
   const args = ['smart-app', command, '--project', root, '--format', 'json']
   if (command === 'pack') {
     const output = resolve(outputArgument || `${dirname(root)}/${basename(root)}.zip`)
     args.push('--output', output)
   }
-  const result = spawnSync('wework', args, { encoding: 'utf8', shell: false })
+  const result =
+    process.platform === 'win32'
+      ? spawnSync(process.execPath, [join(dirname(launcher), 'wework-cli.mjs'), ...args], {
+          encoding: 'utf8',
+          shell: false,
+        })
+      : spawnSync(launcher, args, { encoding: 'utf8', shell: false })
   if (result.stdout) process.stdout.write(result.stdout)
   if (result.stderr) process.stderr.write(result.stderr)
   if (result.error) return fail(`Wework Smart App ${command} failed: ${result.error.message}`)

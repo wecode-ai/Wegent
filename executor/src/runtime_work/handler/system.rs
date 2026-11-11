@@ -784,20 +784,7 @@ impl RuntimeWorkRpcHandler {
         let scope = string_field(&payload, "scope")
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| AppIpcError::new("invalid_request", "scope is required"))?;
-        let upstream = payload
-            .get("upstream")
-            .cloned()
-            .ok_or_else(|| AppIpcError::new("invalid_request", "upstream is required"))
-            .and_then(|value| {
-                serde_json::from_value::<local_model_proxy::LocalModelProxyUpstream>(value).map_err(
-                    |error| {
-                        AppIpcError::new(
-                            "invalid_request",
-                            format!("Invalid harness proxy upstream: {error}"),
-                        )
-                    },
-                )
-            })?;
+        let upstream = self.resolve_harness_proxy_upstream(&payload).await?;
         let loopback = executor_loopback_base_url().ok_or_else(|| {
             AppIpcError::new(
                 "runtime_unavailable",

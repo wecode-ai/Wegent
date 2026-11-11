@@ -3,13 +3,63 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { WebContents } from 'electron'
+import type { WebContents, WebFrameMain } from 'electron'
 import { electronMocks, FakeWebContents } from '../../test-fixtures/embedded-browser.js'
 import { EmbeddedBrowserManager, type BrowserHostEvent } from './embedded-browser-manager.js'
 
 describe('EmbeddedBrowserManager navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  test('protects linked lightweight previews attached under an ordinary browser label', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-preview-'))
+    try {
+      const routeScheme = vi.fn()
+      const manager = new EmbeddedBrowserManager(directory, vi.fn(), routeScheme)
+      const contents = new FakeWebContents()
+      manager.attach('workspace-browser', contents as unknown as WebContents)
+      await manager.open({
+        label: 'workspace-browser',
+        url: 'http://127.0.0.1:1234/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      const frame = {
+        name: 'wework-workbench-lightweight',
+        url: 'about:blank',
+        parent: null,
+      } as WebFrameMain
+      contents.emit('frame-created', {}, { frame })
+      const initial = { frame, url: 'about:srcdoc', preventDefault: vi.fn() }
+      contents.emit('will-frame-navigate', initial)
+      expect(initial.preventDefault).not.toHaveBeenCalled()
+      frame.url = 'about:srcdoc'
+      frame.name = ''
+      const replacement = {
+        frame,
+        initiator: frame,
+        url: 'https://remote.test/',
+        preventDefault: vi.fn(),
+      }
+      contents.emit('will-frame-navigate', replacement)
+      contents.emit('will-redirect', replacement, replacement.url)
+      expect(replacement.preventDefault).toHaveBeenCalledTimes(2)
+      const redirect = {
+        ...replacement,
+        url: 'wework://workbenches/another-application',
+        defaultPrevented: false,
+        preventDefault: vi.fn(() => {
+          redirect.defaultPrevented = true
+        }),
+      }
+      contents.emit('will-redirect', redirect, redirect.url)
+      expect(redirect.preventDefault).toHaveBeenCalledOnce()
+      expect(routeScheme).not.toHaveBeenCalled()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test.each(['did-navigate', 'did-navigate-in-page'])(

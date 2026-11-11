@@ -1,10 +1,15 @@
 import { execFile } from 'node:child_process'
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, test } from 'vitest'
-import { installWeworkCli, shouldInstallUserWeworkCli } from './wework-cli-installer.js'
+import {
+  installWeworkCli,
+  shouldInstallUserWeworkCli,
+  withWeworkCliEnvironment,
+} from './wework-cli-installer.js'
 import { resolveSpawnCommand } from './spawn-command.js'
 
 const directories: string[] = []
@@ -85,25 +90,26 @@ describe('installWeworkCli', () => {
     const cliSourcePath = join(root, 'wework-cli-source.mjs')
     await writeFile(cliSourcePath, '#!/usr/bin/env node\n')
 
-    await installWeworkCli(runtimeBin, cliSourcePath, 'darwin', {
+    const cliPath = await installWeworkCli(runtimeBin, cliSourcePath, 'darwin', {
       appCommand: ['/Applications/Wework.app/Contents/MacOS/Wework'],
       nodeCommand: ['/Applications/Wework.app/Contents/MacOS/Wework'],
     })
 
+    expect(cliPath).toBe(join(runtimeBin, 'wework'))
+    await expect(access(cliPath)).resolves.toBeUndefined()
     await expect(access(join(runtimeBin, 'wework-cli.mjs'))).resolves.toBeUndefined()
     const launcher = await readFile(join(runtimeBin, 'wework'), 'utf8')
     expect(launcher).toContain('# Wework CLI launcher')
-    expect(launcher).toContain('if [ "${1:-}" = "desktop" ]')
     expect(launcher).toMatch(/wework-cli\.mjs' "\$@"/)
     expect(launcher).toContain('unset ELECTRON_RUN_AS_NODE')
     expect(launcher).toContain('--open-workspace "$ABSOLUTE_PATH"')
   })
 
-  test('dispatches workspace paths and desktop commands through one launcher', async () => {
+  test('dispatches workspace paths and every CLI namespace without losing argument boundaries', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cli-dispatch-'))
     directories.push(root)
     const runtimeBin = join(root, 'runtime', 'bin')
-    const workspace = join(root, 'project')
+    const workspace = join(root, 'project with spaces & quotes')
     const appLog = join(root, 'app.log')
     const nodeLog = join(root, 'node.log')
     const cliSourcePath = join(root, 'wework-cli-source.mjs')
@@ -129,13 +135,15 @@ describe('installWeworkCli', () => {
     }
 
     const launcher = join(runtimeBin, process.platform === 'win32' ? 'wework.cmd' : 'wework')
-    const desktop = resolveSpawnCommand(launcher, ['desktop', 'instances'])
-    await execFileAsync(desktop.command, desktop.args, { env })
-    expect(await readCommandLog(nodeLog)).toEqual([
-      join(runtimeBin, 'wework-cli.mjs'),
-      'desktop',
-      'instances',
-    ])
+    for (const args of [
+      ['desktop', 'instances'],
+      ['smart-app', 'inspect', '--project', workspace],
+      ['workbench', 'install', '--project', workspace],
+    ]) {
+      const command = resolveSpawnCommand(launcher, args)
+      await execFileAsync(command.command, command.args, { env })
+      expect(await readCommandLog(nodeLog)).toEqual([join(runtimeBin, 'wework-cli.mjs'), ...args])
+    }
 
     const open = resolveSpawnCommand(launcher, [workspace])
     await execFileAsync(open.command, open.args, { env })
@@ -144,7 +152,160 @@ describe('installWeworkCli', () => {
       '--open-workspace',
       await realpath(workspace),
     ])
+
+    const current = resolveSpawnCommand(launcher, [])
+    await execFileAsync(current.command, current.args, { cwd: workspace, env })
+    expect(await readCommandLog(appLog)).toEqual([
+      'unset',
+      '--open-workspace',
+      await realpath(workspace),
+    ])
   }, 15_000)
+
+  test('binds the private CLI even after a shell profile puts an unrelated launcher first', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cli-identity-'))
+    directories.push(root)
+    const privateBin = join(root, 'current instance')
+    const globalBin = join(root, 'old global')
+    const executable = process.platform === 'win32' ? 'wework.cmd' : 'wework'
+    await mkdir(globalBin)
+    await writeFile(
+      join(globalBin, executable),
+      process.platform === 'win32' ? '@exit /b 97\r\n' : '#!/bin/sh\nexit 97\n'
+    )
+    await chmod(join(globalBin, executable), 0o700)
+    const cliPath = await installWeworkCli(
+      privateBin,
+      fileURLToPath(new URL('../cli/wework-cli.mjs', import.meta.url)),
+      process.platform,
+      { appCommand: [process.execPath], nodeCommand: [process.execPath] }
+    )
+    const environment = withWeworkCliEnvironment(
+      { ...process.env, WEWORK_CLI_PATH: join(globalBin, executable) },
+      cliPath,
+      process.platform
+    )
+    const windows = process.platform === 'win32'
+    const runner = join(root, 'profile.cmd')
+    if (windows) {
+      await writeFile(
+        runner,
+        `@echo off\r\nset "PATH=${globalBin};%PATH%"\r\nwhere wework.cmd\r\ncall "%WEWORK_CLI_PATH%" workbench --help\r\nexit /b %errorlevel%\r\n`
+      )
+    }
+    const command = windows
+      ? resolveSpawnCommand(runner, [])
+      : {
+          command: '/bin/sh',
+          args: [
+            '-c',
+            'PATH="$1:$PATH"; export PATH; command -v wework; "$WEWORK_CLI_PATH" workbench --help',
+            'sh',
+            globalBin,
+          ],
+        }
+    const { stdout, stderr } = await execFileAsync(command.command, command.args, {
+      env: environment,
+    })
+    expect(stdout.trim().split(/\r?\n/)[0]).toBe(join(globalBin, executable))
+    expect(stderr).toContain('wework workbench install --project ABSOLUTE_PATH')
+  })
+
+  test('rejects a failed private installation instead of returning a usable CLI identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cli-failure-'))
+    directories.push(root)
+    await expect(
+      installWeworkCli(root, join(root, 'missing.mjs'), process.platform, {
+        appCommand: [process.execPath],
+        nodeCommand: [process.execPath],
+      })
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(join(root, process.platform === 'win32' ? 'wework.cmd' : 'wework'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  test.each([
+    ['--help'],
+    ['-h'],
+    ['desktop', '--help'],
+    ['smart-app', '--help'],
+    ['workbench', '--help'],
+  ])('uses the actual CLI help for %j', async (...args) => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cli-help-'))
+    directories.push(root)
+    const cliSourcePath = fileURLToPath(new URL('../cli/wework-cli.mjs', import.meta.url))
+    await installWeworkCli(root, cliSourcePath, process.platform, {
+      appCommand: [process.execPath, '--invalid-workspace-launch'],
+      nodeCommand: [process.execPath],
+    })
+    const launcher = join(root, process.platform === 'win32' ? 'wework.cmd' : 'wework')
+    const command = resolveSpawnCommand(launcher, args)
+    const { stderr } = await execFileAsync(command.command, command.args)
+    for (const namespace of ['desktop', 'smart-app', 'workbench']) {
+      expect(stderr).toContain(`wework ${namespace}`)
+    }
+    expect(stderr).toContain('wework [path]')
+  })
+
+  test.each([
+    { namespace: 'desktop', code: 1, error: 'No running Wework desktop instance was found' },
+    { namespace: 'smart-app', code: 1, error: 'Unknown smart-app command: unsupported' },
+    { namespace: 'workbench', code: 1, error: 'Unknown workbench command: unsupported' },
+  ])('preserves the actual $namespace CLI failure status', async ({ namespace, code, error }) => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cli-status-'))
+    directories.push(root)
+    const cliSourcePath = fileURLToPath(new URL('../cli/wework-cli.mjs', import.meta.url))
+    await installWeworkCli(root, cliSourcePath, process.platform, {
+      appCommand: [process.execPath, '--invalid-workspace-launch'],
+      nodeCommand: [process.execPath],
+    })
+    const launcher = join(root, process.platform === 'win32' ? 'wework.cmd' : 'wework')
+    const command = resolveSpawnCommand(launcher, [namespace, 'unsupported'])
+    await expect(
+      execFileAsync(command.command, command.args, {
+        env: { ...process.env, WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(root, 'instances') },
+      })
+    ).rejects.toMatchObject({
+      code,
+      stderr: expect.stringContaining(error),
+    })
+  })
+})
+
+describe('withWeworkCliEnvironment', () => {
+  test.each(['darwin', 'win32'] as const)(
+    'replaces inherited CLI identity while retaining Node and Python settings on %s',
+    platform => {
+      const windows = platform === 'win32'
+      const cliPath = windows
+        ? win32.resolve('C:\\current instance', 'wework.cmd')
+        : '/current instance/wework'
+      const runtimeBin = windows ? 'C:\\node' : '/node'
+      const inherited = {
+        WEWORK_CLI_PATH: windows ? 'C:\\old\\wework.cmd' : '/old/wework',
+        PATH: runtimeBin,
+        WEWORK_NODE_PATH: join(runtimeBin, 'node'),
+        WEGENT_PYTHON_PATH: '/managed/python3',
+      }
+      const environment = withWeworkCliEnvironment(inherited, cliPath, platform)
+      expect(environment.WEWORK_CLI_PATH).toBe(cliPath)
+      expect(environment.WEWORK_NODE_PATH).toBe(inherited.WEWORK_NODE_PATH)
+      expect(environment.WEGENT_PYTHON_PATH).toBe(inherited.WEGENT_PYTHON_PATH)
+      expect(environment.PATH?.split(windows ? ';' : ':')).toEqual([
+        (windows ? win32 : posix).dirname(cliPath),
+        runtimeBin,
+      ])
+      expect(withWeworkCliEnvironment(environment, cliPath, platform)).toEqual(environment)
+      expect(inherited.WEWORK_CLI_PATH).not.toBe(cliPath)
+    }
+  )
+
+  test('rejects a relative instance identity', () => {
+    expect(() => withWeworkCliEnvironment({}, 'wework', process.platform)).toThrow(
+      'must be absolute'
+    )
+  })
 })
 
 describe('shouldInstallUserWeworkCli', () => {

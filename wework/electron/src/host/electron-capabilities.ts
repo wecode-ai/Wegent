@@ -1,4 +1,5 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import type { WorkbenchApplicationHost } from './workbench-application-host.js'
 import { openInExternalBrowser } from './external-browser.js'
 import type { ModelConfigurationStore } from './model-configuration-store.js'
 import {
@@ -119,7 +120,11 @@ const MAX_CAPTURE_PIXELS = MAX_CAPTURE_WIDTH * MAX_CAPTURE_HEIGHT
  * granted to the core app principal — otherwise the core router advertises
  * capabilities that only the owner-scoped router implements.
  */
-const WORKBENCH_ONLY_CAPABILITIES = ['dshCapture.capabilities', 'dshCapture.ownerRect'] as const
+const WORKBENCH_ONLY_CAPABILITIES = [
+  'dshCapture.capabilities',
+  'dshCapture.ownerRect',
+  'workbench.invoke',
+] as const
 
 /**
  * The capability set granted to the core app principal. Equivalent to the
@@ -143,6 +148,8 @@ function assertE2EEnabled(control: string): void {
 export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
+  workbenches?: () => WorkbenchApplicationHost | null
+  workbenchControl?: (params: Record<string, unknown>) => Promise<unknown>
   modelConfiguration?: ModelConfigurationStore
   syncLocalModels?: () => Promise<void>
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
@@ -1154,10 +1161,26 @@ export function createElectronCapabilityRouter(
     desktopServices.events.publish('preferences.changed', updated)
     return updated
   }
-  router.register('preferences.update', params => {
+  router.register('preferences.update', (params, context) => {
     const patch = params.patch
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       invalidParam('patch')
+    }
+    const fields = patch as Record<string, unknown>
+    if (
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      (typeof fields.telemetryConsentAsked === 'boolean' ||
+        typeof fields.telemetryEnabled === 'boolean')
+    ) {
+      console.info('[telemetry-consent-host]', {
+        principal: context.principal,
+        telemetryConsentAsked:
+          typeof fields.telemetryConsentAsked === 'boolean'
+            ? fields.telemetryConsentAsked
+            : undefined,
+        telemetryEnabled:
+          typeof fields.telemetryEnabled === 'boolean' ? fields.telemetryEnabled : undefined,
+      })
     }
     return updatePreferences(patch as Record<string, unknown>)
   })
@@ -1272,18 +1295,84 @@ export function createElectronCapabilityRouter(
     await saveCustomWorkspaceOpener(app.getPath('userData'), executablePath)
     return executablePath
   })
-  router.register('smartApps.list', () => requiredSmartApps(smartApps).list())
-  router.register('smartApps.createDirectory', params =>
-    requiredSmartApps(smartApps).createDirectory({
-      parentPath: rawStringParam(params, 'parentPath'),
-      name: stringParam(params, 'name'),
-      displayName: stringParam(params, 'displayName'),
-      description: rawStringParam(params, 'description'),
-      template: stringParam(params, 'template'),
+  const workbenches = () => {
+    const host = desktopServices.workbenches?.()
+    if (!host) throw new Error('Workbench host is unavailable')
+    return host
+  }
+  router.register('e2e.workbenchApp', params => {
+    assertE2EEnabled('Workbench controls')
+    if (!desktopServices.workbenchControl) throw new Error('Workbench controls are unavailable')
+    return desktopServices.workbenchControl(params)
+  })
+  router.register('smartApps.list', () => workbenches().list())
+  router.register('smartApps.createTodo', () => workbenches().createTodo())
+  router.register('smartApps.open', params =>
+    workbenches().open(
+      stringParam(params, 'installationId'),
+      optionalStringParam(params, 'presentation') as 'window' | 'tab' | undefined
+    )
+  )
+  router.register('smartApps.hide', params =>
+    workbenches().hide(stringParam(params, 'installationId'))
+  )
+  router.register('smartApps.closeView', params =>
+    workbenches().closeView(stringParam(params, 'installationId'), 'tab')
+  )
+  router.register('smartApps.preparePreview', params =>
+    workbenches().preparePreview(stringParam(params, 'installationId'))
+  )
+  router.register('smartApps.layout', params => {
+    const bounds = params.bounds
+    if (
+      !bounds ||
+      typeof bounds !== 'object' ||
+      Array.isArray(bounds) ||
+      !['x', 'y', 'width', 'height'].every(
+        key => typeof (bounds as Record<string, unknown>)[key] === 'number'
+      )
+    )
+      throw new Error('Invalid workbench bounds')
+    const visible = booleanParam(params, 'visible')
+    if (visible === undefined) throw new Error('Workbench visibility is required')
+    return workbenches().layout(
+      stringParam(params, 'installationId'),
+      bounds as { x: number; y: number; width: number; height: number },
+      visible
+    )
+  })
+  router.register('smartApps.configure', params =>
+    workbenches().configure(stringParam(params, 'installationId'), {
+      presentation: optionalStringParam(params, 'presentation') as 'window' | 'tab' | undefined,
+      resident: booleanParam(params, 'resident'),
+      background: booleanParam(params, 'background'),
     })
   )
-  router.register('smartApps.linkDirectory', params =>
-    requiredSmartApps(smartApps).linkDirectory(stringParam(params, 'directoryPath'))
+  router.register('smartApps.createShortcut', params =>
+    workbenches().createShortcut(stringParam(params, 'installationId'))
+  )
+  router.register('smartApps.setShortcut', params =>
+    workbenches().setShortcut(
+      stringParam(params, 'installationId'),
+      nullableStringParam(params, 'accelerator') ?? null
+    )
+  )
+  router.register('smartApps.createDirectory', async params =>
+    workbenches().authorizeInstallation(
+      await requiredSmartApps(smartApps).createDirectory({
+        parentPath: rawStringParam(params, 'parentPath'),
+        name: stringParam(params, 'name'),
+        displayName: stringParam(params, 'displayName'),
+        description: rawStringParam(params, 'description'),
+        template: stringParam(params, 'template'),
+        flavor: optionalStringParam(params, 'flavor') as 'lightweight' | 'extended' | undefined,
+      })
+    )
+  )
+  router.register('smartApps.linkDirectory', async params =>
+    workbenches().authorizeInstallation(
+      await requiredSmartApps(smartApps).linkDirectory(stringParam(params, 'directoryPath'))
+    )
   )
   router.register('smartApps.addPlugin', params =>
     requiredSmartApps(smartApps).addPlugin(
@@ -1291,12 +1380,14 @@ export function createElectronCapabilityRouter(
       stringParam(params, 'pluginSpec')
     )
   )
-  router.register('smartApps.copyToDirectory', params =>
-    requiredSmartApps(smartApps).copyToDirectory(stringParam(params, 'installationId'), {
-      parentPath: stringParam(params, 'parentPath'),
-      name: stringParam(params, 'name'),
-      displayName: stringParam(params, 'displayName'),
-    })
+  router.register('smartApps.copyToDirectory', async params =>
+    workbenches().authorizeInstallation(
+      await requiredSmartApps(smartApps).copyToDirectory(stringParam(params, 'installationId'), {
+        parentPath: stringParam(params, 'parentPath'),
+        name: stringParam(params, 'name'),
+        displayName: stringParam(params, 'displayName'),
+      })
+    )
   )
   router.register('smartApps.preview', params =>
     requiredSmartApps(smartApps).preview(stringParam(params, 'archivePath'))
@@ -1311,7 +1402,7 @@ export function createElectronCapabilityRouter(
     })
   )
   router.register('smartApps.install', params =>
-    requiredSmartApps(smartApps).install({
+    workbenches().installArchive({
       archivePath: stringParam(params, 'archivePath'),
       expectedSha256: stringParam(params, 'expectedSha256'),
       modelKey: nullableStringParam(params, 'modelKey'),
@@ -1320,18 +1411,10 @@ export function createElectronCapabilityRouter(
     })
   )
   router.register('smartApps.start', params =>
-    requiredSmartApps(smartApps).start({
-      installationId: stringParam(params, 'installationId'),
-      modelBaseUrl: nullableStringParam(params, 'modelBaseUrl'),
-      additionalModels: additionalModelRoutesParam(params, 'additionalModels'),
-      contextBaseUrl: nullableStringParam(params, 'contextBaseUrl'),
-      contextToken: nullableStringParam(params, 'contextToken'),
-      decisionBaseUrl: nullableStringParam(params, 'decisionBaseUrl'),
-      decisionProtocolVersion: nullableNumberParam(params, 'decisionProtocolVersion'),
-    })
+    workbenches().open(stringParam(params, 'installationId'))
   )
   router.register('smartApps.stop', params =>
-    requiredSmartApps(smartApps).stop(stringParam(params, 'installationId'))
+    workbenches().stop(stringParam(params, 'installationId'))
   )
   router.register('smartApps.update', params =>
     requiredSmartApps(smartApps).update(stringParam(params, 'installationId'), {
@@ -1340,7 +1423,7 @@ export function createElectronCapabilityRouter(
     })
   )
   router.register('smartApps.delete', params =>
-    requiredSmartApps(smartApps).delete(
+    workbenches().remove(
       stringParam(params, 'installationId'),
       booleanParam(params, 'deleteData') ?? false
     )
@@ -1384,42 +1467,6 @@ export function createElectronCapabilityRouter(
       booleanParam(params, 'active') ?? false
     )
   })
-  router.register('smartApps.storeProxyToken', params =>
-    requiredSmartApps(smartApps).storeProxyToken(
-      stringParam(params, 'installationId'),
-      stringParam(params, 'token')
-    )
-  )
-  router.register('smartApps.takeProxyToken', params =>
-    requiredSmartApps(smartApps).takeProxyToken(stringParam(params, 'installationId'))
-  )
-  router.register('smartApps.storeAdditionalProxyTokens', params =>
-    requiredSmartApps(smartApps).storeAdditionalProxyTokens(
-      stringParam(params, 'installationId'),
-      stringArrayParam(params, 'tokens') ?? []
-    )
-  )
-  router.register('smartApps.takeAdditionalProxyTokens', params =>
-    requiredSmartApps(smartApps).takeAdditionalProxyTokens(stringParam(params, 'installationId'))
-  )
-  router.register('smartApps.storeContextToken', params =>
-    requiredSmartApps(smartApps).storeContextToken(
-      stringParam(params, 'installationId'),
-      stringParam(params, 'token')
-    )
-  )
-  router.register('smartApps.takeContextToken', params =>
-    requiredSmartApps(smartApps).takeContextToken(stringParam(params, 'installationId'))
-  )
-  router.register('smartApps.storeDecisionToken', params =>
-    requiredSmartApps(smartApps).storeDecisionToken(
-      stringParam(params, 'installationId'),
-      stringParam(params, 'token')
-    )
-  )
-  router.register('smartApps.takeDecisionToken', params =>
-    requiredSmartApps(smartApps).takeDecisionToken(stringParam(params, 'installationId'))
-  )
   return router
 }
 
@@ -1588,15 +1635,43 @@ export function registerBrowserAnnotationCapabilities(
 
 export function createWorkbenchCapabilityRouter(
   browser: Pick<EmbeddedBrowserManager, 'capture' | 'has' | 'state'> | null,
-  ownerLabel: string | null
+  ownerLabel: string | null,
+  services?: {
+    invoke(method: string, params: unknown): Promise<unknown>
+    window(): BrowserWindow | null
+    contents(): WebContents | null
+    visible(): boolean
+  }
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
+  router.register('workbench.invoke', params => {
+    if (!ownerLabel?.startsWith('smart-app:') || !services)
+      throw new Error('Workbench owner is unavailable')
+    return services.invoke(stringParam(params, 'method'), params.params ?? {})
+  })
   router.register('dshCapture.capabilities', () => ({
     available: Boolean(
-      browser && ownerLabel && browser.has(ownerLabel) && browser.state(ownerLabel).visible
+      services?.visible() ||
+      (browser && ownerLabel && browser.has(ownerLabel) && browser.state(ownerLabel).visible)
     ),
   }))
   router.register('dshCapture.ownerRect', async params => {
+    const window = services?.window()
+    const contents = services?.contents()
+    if (
+      services?.visible() &&
+      window &&
+      !window.isDestroyed() &&
+      window.isVisible() &&
+      contents &&
+      !contents.isDestroyed()
+    )
+      return {
+        dataUrl: await captureWebContentsDataUrl(contents, {
+          rect: ownerCaptureRectParam(params),
+          preferDebugger: true,
+        }),
+      }
     if (!browser || !ownerLabel || !browser.has(ownerLabel)) {
       throw unavailableOwnerCapture()
     }
@@ -1615,8 +1690,12 @@ export function createWorkbenchCapabilityRouter(
     }
   })
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
-  router.grant(WEWORK_WORKBENCH_PRINCIPAL, [
-    ...WORKBENCH_ONLY_CAPABILITIES,
+  router.grant(services && ownerLabel ? ownerLabel : WEWORK_WORKBENCH_PRINCIPAL, [
+    ...WORKBENCH_ONLY_CAPABILITIES.filter(
+      capability =>
+        capability !== 'workbench.invoke' ||
+        Boolean(services && ownerLabel?.startsWith('smart-app:'))
+    ),
     'deviceDiagnostics.microphone',
   ])
   return router
@@ -1959,24 +2038,6 @@ function stringArrayParam(params: Record<string, unknown>, key: string): string[
     invalidParam(key)
   }
   return [...value] as string[]
-}
-
-function additionalModelRoutesParam(
-  params: Record<string, unknown>,
-  key: string
-): Array<{ modelKey: string; displayName: string; baseUrl: string }> | undefined {
-  const value = params[key]
-  if (value === undefined) return undefined
-  if (!Array.isArray(value)) invalidParam(key)
-  return value.map(item => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) invalidParam(key)
-    const route = item as Record<string, unknown>
-    return {
-      modelKey: stringParam(route, 'modelKey'),
-      displayName: stringParam(route, 'displayName'),
-      baseUrl: stringParam(route, 'baseUrl'),
-    }
-  })
 }
 
 function nullableStringArrayParam(

@@ -12,7 +12,7 @@ const ERROR_TRANSLATIONS: ErrorTranslation[] = [
   {
     pattern: /^Stop the Smart app before installing a new version$/,
     key: 'workbench.smart_apps_install_stop_first',
-    fallback: '请先停止智能工作台，再安装新版本。',
+    fallback: '请先停止工作台，再安装新版本。',
   },
   {
     pattern: /^Smart app ZIP extraction timed out$/,
@@ -121,7 +121,7 @@ const ERROR_TRANSLATIONS: ErrorTranslation[] = [
   {
     pattern: /^(?:Unsupported Smart app package type|Smart app package is invalid)$/i,
     key: 'workbench.smart_apps_invalid_package',
-    fallback: '不是有效的智能工作台发布包。',
+    fallback: '不是有效的工作台发布包。',
   },
   {
     pattern: /^Smart app package contains a sensitive file:/i,

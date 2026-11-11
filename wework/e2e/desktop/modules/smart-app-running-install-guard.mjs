@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { rm } from 'node:fs/promises'
-import { createHarnessPackage } from './harness-app-fixture.mjs'
+import { createHarnessPackage, confirmHarnessInstallation } from './harness-app-fixture.mjs'
 import { fetchLocalRuntime } from './runtime-request.mjs'
 
 const NEXT_VERSION = '0.1.1'
@@ -54,7 +54,9 @@ export async function verifyStoppedSmartAppInstallAllowed(control, fixture) {
   )
   assert.equal(stopped?.state, 'installed', 'The existing stop flow left the fixture running')
   assert.equal(stopped.webUrl, null)
-  const installed = await invoke(control, origin, 'smartApps.install', params)
+  const installing = invoke(control, origin, 'smartApps.install', params)
+  await confirmHarnessInstallation(control, 10_000)
+  const installed = await installing
   assert.equal(installed.id, installationId)
   assert.equal(installed.state, 'installed')
   assert.equal(installed.webUrl, null)

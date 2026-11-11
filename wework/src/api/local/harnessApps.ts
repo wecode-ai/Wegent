@@ -12,7 +12,18 @@ export interface HarnessAppLaunchProgress {
   phase: HarnessAppLaunchPhase
 }
 
+export type WorkbenchFlavor = 'lightweight' | 'extended'
+export type WorkbenchPresentation = 'window' | 'tab'
+
+export interface WorkbenchViewBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface HarnessAppManifest {
+  flavor?: WorkbenchFlavor
   name: string
   displayName: string
   version: string
@@ -44,6 +55,12 @@ export interface HarnessAppInstallation {
   sha256: string
   modelKey: string | null
   resident: boolean
+  background?: boolean
+  flavor?: WorkbenchFlavor
+  presentation?: WorkbenchPresentation
+  visible?: boolean
+  shortcut?: string | null
+  shortcutError?: string | null
   runtimeVersion: string | null
   state: 'installed' | 'running' | 'failed'
   webUrl: string | null
@@ -55,6 +72,15 @@ export interface HarnessAppInstallation {
   grantedCapabilities: {
     decisionModel: boolean
   }
+}
+
+/** Renderer-safe DTO matching the Host workbench application contract. */
+export interface WorkbenchInstallation extends HarnessAppInstallation {
+  flavor: WorkbenchFlavor
+  presentation: WorkbenchPresentation
+  visible: boolean
+  shortcut: string | null
+  shortcutError: string | null
 }
 
 export interface HarnessAppPreview {
@@ -76,23 +102,8 @@ export interface HarnessAppSavedExport extends HarnessAppExport {
   destinationPath: string
 }
 
-/**
- * Options for `harnessAppsApi.start`.
- *
- * Positional arguments were replaced with an object so that each additional
- * launch capability is named at the call site and cannot be slipped in by
- * position. `decisionBaseUrl` and `decisionProtocolVersion` carry the Wework
- * decision router route; the Electron host re-validates them and refuses to
- * inject them for an installation that was not granted the capability.
- */
 export interface SmartAppStartOptions {
   installationId: string
-  modelBaseUrl?: string | null
-  additionalModels?: Array<{ modelKey: string; displayName: string; baseUrl: string }>
-  contextBaseUrl?: string | null
-  contextToken?: string | null
-  decisionBaseUrl?: string | null
-  decisionProtocolVersion?: number | null
 }
 
 export type HarnessAppVerificationStage =
@@ -143,18 +154,22 @@ export const harnessAppsApi = {
     displayName: string
     description: string
     template: SmartAppTemplate
+    flavor: WorkbenchFlavor
   }) {
     return observeOperation(
       'smart_app.create',
-      () => invokeDesktopHost<HarnessAppInstallation>('smartApps.createDirectory', input),
-      result => result.state === 'installed' || result.state === 'running'
+      () => invokeDesktopHost<HarnessAppInstallation | null>('smartApps.createDirectory', input),
+      result => result?.state === 'installed' || result?.state === 'running'
     )
   },
   linkDirectory(directoryPath: string) {
     return observeOperation(
       'smart_app.link',
-      () => invokeDesktopHost<HarnessAppInstallation>('smartApps.linkDirectory', { directoryPath }),
-      result => result.state === 'installed' || result.state === 'running'
+      () =>
+        invokeDesktopHost<HarnessAppInstallation | null>('smartApps.linkDirectory', {
+          directoryPath,
+        }),
+      result => result?.state === 'installed' || result?.state === 'running'
     )
   },
   addPlugin(installationId: string, pluginSpec: string) {
@@ -175,11 +190,11 @@ export const harnessAppsApi = {
     return observeOperation(
       'smart_app.copy',
       () =>
-        invokeDesktopHost<HarnessAppInstallation>('smartApps.copyToDirectory', {
+        invokeDesktopHost<HarnessAppInstallation | null>('smartApps.copyToDirectory', {
           installationId,
           ...input,
         }),
-      result => result.state === 'installed' || result.state === 'running'
+      result => result?.state === 'installed' || result?.state === 'running'
     )
   },
   preview(archivePath: string) {
@@ -213,14 +228,14 @@ export const harnessAppsApi = {
     return invokeDesktopHost<void>('smartApps.upload', { archivePath, uploadUrl })
   },
   list() {
-    return invokeDesktopHost<HarnessAppInstallation[]>('smartApps.list')
+    return invokeDesktopHost<WorkbenchInstallation[]>('smartApps.list')
   },
   install(
     preview: HarnessAppPreview,
     modelKey: string | null,
     source: { smartAppId: number; releaseId: number } | null = null
   ) {
-    return invokeDesktopHost<HarnessAppInstallation>('smartApps.install', {
+    return invokeDesktopHost<HarnessAppInstallation | null>('smartApps.install', {
       archivePath: preview.archivePath,
       expectedSha256: preview.sha256,
       modelKey,
@@ -236,18 +251,46 @@ export const harnessAppsApi = {
       () =>
         invokeDesktopHost<HarnessAppInstallation>('smartApps.start', {
           installationId: options.installationId,
-          modelBaseUrl: options.modelBaseUrl ?? null,
-          ...(options.additionalModels?.length
-            ? { additionalModels: options.additionalModels }
-            : {}),
-          contextBaseUrl: options.contextBaseUrl ?? null,
-          contextToken: options.contextToken ?? null,
-          decisionBaseUrl: options.decisionBaseUrl ?? null,
-          decisionProtocolVersion: options.decisionProtocolVersion ?? null,
         }),
       result => result.state === 'running',
       { properties: { startup_id: startupId } }
     )
+  },
+  open(installationId: string, presentation?: WorkbenchPresentation) {
+    return invokeDesktopHost<WorkbenchInstallation>('smartApps.open', {
+      installationId,
+      ...(presentation ? { presentation } : {}),
+    })
+  },
+  preparePreview(installationId: string) {
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.preparePreview', { installationId })
+  },
+  createTodo() {
+    return invokeDesktopHost<WorkbenchInstallation | null>('smartApps.createTodo')
+  },
+  hide(installationId: string) {
+    return invokeDesktopHost<void>('smartApps.hide', { installationId })
+  },
+  closeView(installationId: string) {
+    return invokeDesktopHost<void>('smartApps.closeView', { installationId })
+  },
+  layout(installationId: string, bounds: WorkbenchViewBounds, visible: boolean) {
+    return invokeDesktopHost<void>('smartApps.layout', { installationId, bounds, visible })
+  },
+  configure(
+    installationId: string,
+    updates: { presentation?: WorkbenchPresentation; resident?: boolean; background?: boolean }
+  ) {
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.configure', {
+      installationId,
+      ...updates,
+    })
+  },
+  createShortcut(installationId: string) {
+    return invokeDesktopHost<string>('smartApps.createShortcut', { installationId })
+  },
+  setShortcut(installationId: string, accelerator: string | null) {
+    return invokeDesktopHost<void>('smartApps.setShortcut', { installationId, accelerator })
   },
   stop(installationId: string) {
     return observeOperation('smart_app.stop', () =>

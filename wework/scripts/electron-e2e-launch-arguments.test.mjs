@@ -67,6 +67,30 @@ test('keeps scenario arguments for every platform', () => {
   )
 })
 
+test('passes cold-start scheme URLs after Chromium flags without mutating the input', () => {
+  const startupUrls = ['wework://workbenches/todo']
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    const args = resolveElectronLaunchArguments({
+      platform,
+      getuid: () => 1000,
+      extraArguments: ['--enable-logging=stderr'],
+      startupUrls,
+      verboseLoggingArguments: [],
+    })
+    assert.equal(args.at(-1), startupUrls[0])
+    assert.ok(args.includes('--enable-logging=stderr'))
+  }
+  assert.deepEqual(startupUrls, ['wework://workbenches/todo'])
+  assert.throws(
+    () => resolveElectronLaunchArguments({ startupUrls: ['--no-sandbox'] }),
+    /Invalid URL/
+  )
+  assert.throws(
+    () => resolveElectronLaunchArguments({ startupUrls: ['https://example.com'] }),
+    /wework:/
+  )
+})
+
 test('rejects disabling the sandbox outside isolated Xvfb', () => {
   assert.throws(
     () =>

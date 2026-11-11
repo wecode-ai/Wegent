@@ -733,6 +733,37 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn login_environment_cannot_replace_the_host_owned_cli_identity() {
+        let cli = "/isolated/development/runtime/wework-cli-bin/wework";
+        let process_environment = HashMap::from([
+            (
+                "PATH".to_owned(),
+                "/isolated/development/runtime/wework-cli-bin:/usr/bin".to_owned(),
+            ),
+            ("WEWORK_CLI_PATH".to_owned(), cli.to_owned()),
+        ]);
+        let shell_environment = LoadedShellEnvironment {
+            shell: "/bin/zsh".to_owned(),
+            values: HashMap::from([
+                (
+                    "PATH".to_owned(),
+                    "/Users/test/.local/bin:/usr/bin".to_owned(),
+                ),
+                (
+                    "WEWORK_CLI_PATH".to_owned(),
+                    "/Users/test/.local/bin/wework".to_owned(),
+                ),
+            ]),
+        };
+
+        let merged = merged_shell_environment(process_environment, &shell_environment);
+
+        assert!(merged["PATH"].starts_with("/Users/test/.local/bin:/usr/bin"));
+        assert_eq!(merged["WEWORK_CLI_PATH"], cli);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn child_wait_times_out() {
         let mut child = Command::new("/bin/sleep")
             .arg("10")

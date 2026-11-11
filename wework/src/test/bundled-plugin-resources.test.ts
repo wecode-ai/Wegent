@@ -1,8 +1,17 @@
 // @vitest-environment node
 
-import { existsSync, readFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { delimiter, join, resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 
 const bundledMarketplaceManifests = [
@@ -19,7 +28,79 @@ const bundledWeworkSpaceDirectory = 'bundled-plugins/wework-personal/plugins/wew
 const bundledSmartAppBuilderDirectory = 'bundled-plugins/wework-personal/plugins/smart-app-builder'
 const weworkPluginDeveloperDirectory = 'dsh/plugin-developer'
 
+function skillCliFixture(root: string) {
+  const bin = join(root, 'old-bin')
+  const instance = join(root, 'instance tools')
+  mkdirSync(bin)
+  mkdirSync(instance)
+  const launcher = join(instance, 'wework')
+  const log = join(root, 'bound-calls.jsonl')
+  const bareLog = join(root, 'bare-called')
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+  const source = `const fs = require('node:fs');
+const args = process.argv.slice(1);
+fs.appendFileSync(process.env.WEWORK_TEST_LOG, JSON.stringify(args) + '\\n');
+if (args[1] === 'install' && process.env.WEWORK_TEST_CANCEL === '1') {
+  console.log('null');
+  process.exit(1);
+}
+console.log(JSON.stringify({ id: 'bound-app' }));`
+  writeFileSync(launcher, `#!/bin/sh\nexec ${quote(process.execPath)} -e ${quote(source)} "$@"\n`)
+  chmodSync(launcher, 0o700)
+  writeFileSync(join(bin, 'wework'), '#!/bin/sh\n: > "$WEWORK_TEST_BARE_LOG"\nexit 97\n')
+  chmodSync(join(bin, 'wework'), 0o700)
+  const environment: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: [bin, process.env.PATH].filter(Boolean).join(delimiter),
+    WEWORK_TEST_LOG: log,
+    WEWORK_TEST_BARE_LOG: bareLog,
+  }
+  delete environment.WEWORK_CLI_PATH
+  return { environment, launcher, log, bareLog }
+}
+
 describe('bundled plugin resources', () => {
+  test.runIf(process.platform !== 'win32').each(['available', 'missing'])(
+    'builder tools preserve task identity and argument boundaries when the binding is %s',
+    mode => {
+      const root = mkdtempSync(join(tmpdir(), 'workbench-builder-cli-'))
+      try {
+        const { environment, launcher, log, bareLog } = skillCliFixture(root)
+        const helper = resolve(
+          process.cwd(),
+          'resources',
+          bundledSmartAppBuilderDirectory,
+          'scripts/smart-app-tool.mjs'
+        )
+        const project = join(root, "project with 'quotes' and $(untrusted)")
+        if (mode === 'available') environment.WEWORK_CLI_PATH = launcher
+        const result = spawnSync(process.execPath, [helper, 'verify', project], {
+          env: environment,
+          encoding: 'utf8',
+        })
+        if (mode === 'available') {
+          expect(result.status, result.stderr).toBe(0)
+          expect(JSON.parse(readFileSync(log, 'utf8'))).toEqual([
+            'smart-app',
+            'verify',
+            '--project',
+            project,
+            '--format',
+            'json',
+          ])
+          expect(readFileSync(log, 'utf8').trim().split('\n')).toHaveLength(1)
+        } else {
+          expect(result.status).toBe(1)
+          expect(result.stderr).toContain('Task-bound Wework CLI unavailable')
+          expect(existsSync(log)).toBe(false)
+        }
+        expect(existsSync(bareLog)).toBe(false)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   test('rejects release hosts that differ from the target even when Node matches', () => {
     const workflow = readFileSync(
       resolve(process.cwd(), '../.github/workflows/wework-app.yml'),
@@ -156,6 +237,7 @@ describe('bundled plugin resources', () => {
       'conversations',
       'visualize',
       'artifacts',
+      'workbenches',
     ]) {
       const skill = readFileSync(resolve(plugin, 'skills', name, 'SKILL.md'), 'utf8')
       expect(skill).toMatch(/^---\nname: /)
@@ -168,6 +250,98 @@ describe('bundled plugin resources', () => {
       'connectorSlug=wework-github-cli'
     )
   })
+
+  test('creates both DSH flavors through one lifecycle and preserves native installation grants', () => {
+    const root = resolve(process.cwd(), 'resources/bundled-plugins/wework-personal')
+    const plugin = resolve(root, 'plugins/wework-runtime')
+    const skill = readFileSync(resolve(plugin, 'skills/workbenches/SKILL.md'), 'utf8')
+    expect(skill).toContain('request_user_input_async')
+    expect(skill).toContain('do not add a')
+    expect(skill).toContain('mandatory format questionnaire')
+    expect(skill).toContain('All workbenches use Wework')
+    expect(skill).not.toMatch(/^wework (?:workbench|desktop) /m)
+    expect(skill).toContain('do not authorize system')
+    expect(skill).toContain('Do not bypass the confirmation')
+    expect(skill).toContain('window.weworkWorkbench')
+    expect(skill).toContain('storage.get()')
+    expect(skill).toContain('storage.set(value)')
+    expect(skill).toContain('storage.commit({ value, reminders? })')
+    expect(skill).toContain('even `[]` requires the')
+    expect(skill).toMatch(/at most 100\s+reminders with unique IDs/)
+    expect(skill).toContain('`mailto:`')
+    expect(skill).toContain('reminders.schedule')
+    expect(readFileSync(resolve(plugin, 'skills/coding/workflow.md'), 'utf8')).toContain(
+      '../workbenches/SKILL.md'
+    )
+    const manifest = JSON.parse(readFileSync(resolve(plugin, '.codex-plugin/plugin.json'), 'utf8'))
+    const marketplace = JSON.parse(
+      readFileSync(resolve(root, '.claude-plugin/marketplace.json'), 'utf8')
+    )
+    expect(
+      marketplace.plugins.find((entry: { name: string }) => entry.name === 'wework-runtime').version
+    ).toBe(manifest.version)
+  })
+
+  test.runIf(process.platform !== 'win32').each(['available', 'missing', 'cancelled'])(
+    'executes workbench skill examples through the task binding when %s',
+    mode => {
+      const skill = readFileSync(
+        resolve(
+          process.cwd(),
+          'resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/workbenches/SKILL.md'
+        ),
+        'utf8'
+      )
+      const install = skill.match(/```sh\n([\s\S]*?)```/)?.[1]
+      const launch = skill.match(/`("\$WEWORK_CLI_PATH" workbench launch [^`]+)`/)?.[1]
+      expect(install).toBeDefined()
+      expect(launch).toBeDefined()
+      const root = mkdtempSync(join(tmpdir(), 'wework-skill-cli-'))
+      try {
+        const { environment, launcher, log, bareLog } = skillCliFixture(root)
+        const project = join(root, "project with spaces and 'quotes'")
+        if (mode !== 'missing') environment.WEWORK_CLI_PATH = launcher
+        environment.WEWORK_TEST_CANCEL = mode === 'cancelled' ? '1' : '0'
+        const installed = spawnSync(
+          '/bin/sh',
+          ['-c', install!.replace('/absolute/app-directory', project)],
+          { env: environment, encoding: 'utf8' }
+        )
+        if (mode === 'available') {
+          expect(installed.status, installed.stderr).toBe(0)
+          const id = JSON.parse(installed.stdout).id
+          const launched = spawnSync('/bin/sh', ['-c', launch!.replace('INSTALLATION_ID', id)], {
+            env: environment,
+            encoding: 'utf8',
+          })
+          expect(launched.status, launched.stderr).toBe(0)
+          expect(JSON.parse(launched.stdout).id).toBe(id)
+        } else {
+          expect(installed.status).toBe(1)
+          if (mode === 'missing')
+            expect(installed.stderr).toContain('Task-bound Wework CLI unavailable')
+          else expect(installed.stdout.trim()).toBe('null')
+        }
+        const calls = existsSync(log)
+          ? readFileSync(log, 'utf8')
+              .trim()
+              .split('\n')
+              .map(line => JSON.parse(line))
+          : []
+        const installArgs = ['workbench', 'install', '--project', project, '--format', 'json']
+        expect(calls).toEqual(
+          mode === 'missing'
+            ? []
+            : mode === 'cancelled'
+              ? [installArgs]
+              : [installArgs, ['workbench', 'launch', '--id', 'bound-app', '--format', 'json']]
+        )
+        expect(existsSync(bareLog)).toBe(false)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   test('installs the Smart app builder workflow by default', () => {
     const resourcesDirectory = resolve(process.cwd(), 'resources')
@@ -312,7 +486,9 @@ describe('bundled plugin resources', () => {
       'utf8'
     )
 
-    expect(script).toContain("spawnSync('wework'")
+    expect(script).toContain('process.env.WEWORK_CLI_PATH')
+    expect(script).toContain('spawnSync(launcher, args')
+    expect(script).not.toContain("spawnSync('wework'")
     expect(script).toContain("['smart-app', command, '--project', root, '--format', 'json']")
     expect(script).toContain("case 'inspect'")
     expect(script).toContain("case 'verify'")

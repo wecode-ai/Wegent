@@ -6,7 +6,6 @@ import { ApiError } from '@/api/http'
 import { isSitesUnavailableError } from '@/api/sites'
 import type { Site, SiteAppType, SiteListItem, SitesApi } from '@/api/sites'
 import { ActionMenu } from '@/components/common/ActionMenu'
-import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { replaceTo } from '@/lib/navigation'
 import { track } from '@/telemetry/client'
@@ -256,9 +255,12 @@ export function SitesWorkspace({
   }, [query])
 
   const smartAppsActive = smartAppsEnabled && activeAppType === 'smart_app'
+  const localAppsActive = smartAppsActive
   const pageTitle = t('title', '应用')
   const pageDescription = t('subtitle', '创建、管理并发布你的应用')
-  const activeSiteAppType = activeAppType === 'smart_app' ? DEFAULT_APPLICATION_TYPE : activeAppType
+  const activeSiteAppType = localAppsActive
+    ? DEFAULT_APPLICATION_TYPE
+    : (activeAppType as SiteAppType)
   const activeApplicationType =
     applicationTypes.find(item => item.definition.appType === activeSiteAppType) ??
     applicationTypes[0]
@@ -268,7 +270,7 @@ export function SitesWorkspace({
   const collection = useApplicationCollection({
     api,
     appType: activeSiteAppType,
-    enabled: !smartAppsActive,
+    enabled: !localAppsActive,
     query: debouncedQuery,
     pageSize,
     loadFailedMessage,
@@ -302,10 +304,10 @@ export function SitesWorkspace({
   }, [])
 
   useEffect(() => {
-    if (activeAppType !== 'smart_app' && activeDefinition.appType !== activeAppType) {
+    if (!localAppsActive && activeDefinition.appType !== activeAppType) {
       selectAppType(activeDefinition.appType)
     }
-  }, [activeAppType, activeDefinition.appType, selectAppType])
+  }, [activeAppType, activeDefinition.appType, localAppsActive, selectAppType])
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const appTypes: ApplicationWorkspaceType[] = [
@@ -460,7 +462,7 @@ export function SitesWorkspace({
             <h1 className="text-xl font-normal leading-9 text-text-primary">{pageTitle}</h1>
             <p className="text-base leading-6 text-text-secondary md:text-lg">{pageDescription}</p>
           </div>
-          {!smartAppsActive ? (
+          {!localAppsActive ? (
             <div
               data-testid="applications-page-header-actions"
               className="flex shrink-0 items-center gap-2 md:pt-1"
@@ -520,8 +522,7 @@ export function SitesWorkspace({
               ].join(' ')}
             >
               <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('smart_apps_tab', '智能工作台')}
-              <ExperimentalBadge testId="applications-smart-app-experimental-badge" />
+              {t('smart_apps_tab', '工作台')}
               {smartAppsActive ? (
                 <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
               ) : null}
@@ -558,7 +559,7 @@ export function SitesWorkspace({
           })}
         </div>
 
-        {smartAppsActive ? (
+        {localAppsActive ? (
           <div
             id="applications-tab-panel"
             role="tabpanel"

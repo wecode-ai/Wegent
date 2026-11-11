@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Menu } from 'lucide-react'
 import { ApiError, createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
@@ -19,7 +19,6 @@ import type { ApplicationCreateStrategy } from '@/components/sites/applicationTy
 import { getRuntimeConfig } from '@/config/runtime'
 import { useAuth } from '@/features/auth/useAuth'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -76,7 +75,6 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
   const { t: commonT } = useTranslation('common')
   const { logout } = useAuth()
   const cloudConnection = useCloudConnection()
-  const experimentalFeatures = useExperimentalFeaturesState()
   const isMobile = useIsMobile()
   const isDesktop = isElectronRuntime()
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -88,18 +86,12 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
   const [continuingSiteId, setContinuingSiteId] = useState<string | null>(null)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const searchParams = new URLSearchParams(search)
-  const smartAppsRequested = searchParams.get('app_type') === 'smart_app'
   const smartAppsView = searchParams.get('view')
   const requestedSmartAppId = searchParams.get('smartAppId') ?? ''
   const targetSmartAppId = /^[1-9]\d{0,15}$/.test(requestedSmartAppId)
     ? Number(requestedSmartAppId)
     : null
 
-  useEffect(() => {
-    if (smartAppsRequested && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
-      navigateTo('/sites')
-    }
-  }, [experimentalFeatures.enabled, experimentalFeatures.loaded, smartAppsRequested])
   const {
     state,
     cloudWorkStatus,
@@ -507,9 +499,9 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
           continuingSiteId={continuingSiteId}
           createError={createError}
           createNotice={createNotice}
-          smartAppsEnabled={experimentalFeatures.enabled}
+          smartAppsEnabled={isDesktop}
           smartAppsContent={
-            smartAppsView === 'owned' ? (
+            smartAppsView !== 'marketplace' ? (
               <SmartAppsMarketplacePage
                 api={smartAppsApi}
                 mode="owned"

@@ -94,6 +94,7 @@ Model selection during template import: [Collaboration templates and configurati
 
 | Search terms                                                                      | Detailed steps                                                             |
 | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Light apps, TODO notes, independent windows, background operation, desktop shortcuts | [Workbench applications](./workbench-apps.md); desktop: Sidebar → Applications → Workbenches → Mine |
 | Space members, global agents/teams/devices, Runner, templates, milestones         | [Space and resource operations](./projects.md#workspace-resource-controls) |
 | Delete imported personal templates | [Collaboration templates and configuration sharing](./projects.md#template-controls) |
 | Collaboration → Devices → Delete offline device | [Offline device cleanup](./projects.md#offline-device-cleanup) |
@@ -145,3 +146,5 @@ Open **bottom-left account menu → Settings**, then select the group and page b
 This page indexes locations; linked topic guides own detailed procedures to avoid duplicate instructions. Automated checks compare settings pages and registered sidebar entries against real DSH declarations in both languages, including names, groups and visibility flags. Additions, removals and renames must update this page in the same change.
 
 Composer controls, project menus and account menus still require manual code-review checks. Automated tests cannot prove that every button is documented or that the running layout matches. See repository `wework/AGENTS.md` for maintenance rules. Builds copy both documentation trees into bundled wework-docs; repository edits do not instantly update older installed versions.
+
+On desktop, use **Sidebar → Applications → Workbenches → Mine** for independent windows, background operation and shortcuts. See [Workbench applications](./workbench-apps.md).

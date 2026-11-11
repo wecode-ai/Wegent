@@ -93,6 +93,24 @@ describe('smart app operations', () => {
     vi.clearAllMocks()
   })
 
+  test('cancels a declined native installation without publishing a success or failure', async () => {
+    mocks.install.mockResolvedValue(null)
+    const events = collectOperationResults()
+    try {
+      const prepared = await prepareMarketplaceSmartApp(
+        marketplaceApi(),
+        marketplaceItem,
+        'install'
+      )
+      await expect(installMarketplaceSmartApp(prepared, null)).resolves.toBeNull()
+      await expect(importSmartAppPackage('/private/workbench.zip')).resolves.toBeNull()
+      expect(mocks.notify).not.toHaveBeenCalled()
+      expect(events.results).toEqual([])
+    } finally {
+      events.stop()
+    }
+  })
+
   test('rejects an installation that does not reach an installed state', async () => {
     mocks.install.mockResolvedValue({
       ...installation,

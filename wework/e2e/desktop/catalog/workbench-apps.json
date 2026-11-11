@@ -1,0 +1,31 @@
+{
+  "order": 200500,
+  "scenario": "./scenarios/workbench-apps.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/electron/src/host/workbench*",
+    "wework/electron/src/host/lightweight*",
+    "wework/electron/src/host/legacy-light-app-import.ts",
+    "wework/electron/src/host/smart-app*",
+    "wework/electron/src/host/e2e-workbench*",
+    "wework/electron/src/main.ts",
+    "wework/electron/src/runtime/workbench*",
+    "wework/src/features/harness-apps/**",
+    "wework/src/api/local/harnessApps*",
+    "wework/src/components/sites/SitesWorkspace*",
+    "wework/dsh/ui-applications/src/SmartAppsMarketplacePage*",
+    "wework/dsh/ui-applications/src/SitesPage.tsx",
+    "wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/workbenches/**",
+    "wework/e2e/desktop/modules/workbench-app-cold-launch.mjs",
+    "wework/e2e/desktop/modules/workbench-app-task-fixture.mjs",
+    "wework/electron/src/runtime/wework-cli-installer.ts",
+    "wework/electron/src/cli/wework-cli.mjs"
+  ],
+  "ci": {
+    "core": {
+      "order": 149500,
+      "shard": 4,
+      "position": 1500
+    }
+  }
+}

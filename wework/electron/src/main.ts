@@ -50,7 +50,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
-import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import {
@@ -67,6 +67,15 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { RendererStartupLoader } from './host/renderer-startup-loader.js'
 import { installStartupNetworkFault } from './host/e2e-startup-network-fault.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
+import { WorkbenchApplicationHost } from './host/workbench-application-host.js'
+import { workbenchShortcutLaunch } from './host/workbench-shortcut-launch.js'
+import { WorkbenchModelCatalog } from './host/workbench-model-catalog.js'
+import { WorkbenchRoutes } from './host/workbench-routes.js'
+import { createTodoProject } from './host/workbench-todo-project.js'
+import { WorkbenchLaunchQueue, openNativeScheme } from './host/workbench-launch-queue.js'
+import { workbenchStartupMode, startWorkbenchSession } from './host/workbench-startup-mode.js'
+import { controlWorkbenchApp } from './host/e2e-workbench-app.js'
+import { DesktopHostReadiness } from './host/desktop-host-readiness.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
@@ -146,7 +155,7 @@ import {
   type ApplicationMenuCapabilityState,
 } from './host/application-menu.js'
 import { AppUpdateService } from './host/app-update-service.js'
-import { ReleaseStore } from './runtime/release-store.js'
+import { optionalText, ReleaseStore } from './runtime/release-store.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import { PluginNativeAuthorization } from './host/plugin-native-authorization.js'
@@ -208,6 +217,7 @@ import {
   canReplaceWeworkCli,
   installWeworkCli,
   shouldInstallUserWeworkCli,
+  withWeworkCliEnvironment,
 } from './runtime/wework-cli-installer.js'
 import {
   parseLocalWorkspaceOpenRequest,
@@ -381,6 +391,12 @@ let primaryDshLoaded = false
 let primaryDshSecurityInstalled = false
 let desktopRuntime: DesktopRuntime | null = null
 let smartApps: SmartAppManager | null = null
+let workbenchApplications: WorkbenchApplicationHost | null = null
+let standaloneApplicationSession = false
+let backgroundWorkbenchStartup = false
+let workbenchForegroundRequested = false
+let deferredWorkspaceWindowRestore = false
+const desktopHostReadiness = new DesktopHostReadiness()
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let desktopControlBridge: WeworkDesktopControlBridge | null = null
@@ -486,26 +502,31 @@ const startupTelemetry = new StartupTelemetryLifecycle({
 const startupTelemetrySuccess = new StartupTelemetrySuccessGate(startupTelemetry)
 startupTelemetry.start()
 const pendingSchemes = new SchemeQueue()
-process.argv.forEach(value => pendingSchemes.enqueue(value))
+const applicationLaunches = new WorkbenchLaunchQueue(error => {
+  console.error('[workbenches] failed to open application', error)
+  dialog.showErrorBox('Wework', error instanceof Error ? error.message : String(error))
+})
+process.argv.forEach(queueScheme)
 
-function queueScheme(url: string): void {
-  if (!pendingSchemes.enqueue(url)) return
+function queueScheme(url: string): boolean {
+  if (applicationLaunches.enqueue(url)) {
+    if (!mainWindow) standaloneApplicationSession = true
+    return true
+  }
+  if (!pendingSchemes.enqueue(url)) return false
   desktopHostEvents.publish('wework-scheme-requested', {})
+  return false
 }
 
 function openSchemeInMainWindow(url: string): void {
-  queueScheme(url)
-  void reactivateMainWindow().catch(error => {
+  void openNativeScheme(url, queueScheme, reactivateMainWindow).catch(error => {
     console.error('[navigation] failed to activate main window for scheme navigation', error)
   })
 }
 
 app.on('open-url', (event, url) => {
   event.preventDefault()
-  queueScheme(url)
-  if (mainWindow?.isMinimized()) mainWindow.restore()
-  mainWindow?.show()
-  mainWindow?.focus()
+  openSchemeInMainWindow(url)
 })
 
 if (packagedApplication && !pluginDevelopmentInstance && !process.env.WEWORK_E2E_CONTROL_URL) {
@@ -597,6 +618,11 @@ app.on('web-contents-created', (_event, contents) => {
     }
     if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[interaction-focus-state]'))
       console.info(redactLog(message).slice(0, 4096))
+    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[telemetry-consent-update]'))
+      console.info('[telemetry-consent-renderer]', {
+        webContentsId: contents.id,
+        message: redactLog(message).slice(0, 4096),
+      })
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       recordReleaseDiagnostic('renderer-error', {
         message: redactLog(message).slice(0, 4096),
@@ -714,6 +740,8 @@ if (keepE2EWindowInBackground) {
 if (!hasSingleInstanceLock) app.quit()
 
 function focusStartupSplashIfActive(): boolean {
+  workbenchForegroundRequested = true
+  backgroundWorkbenchStartup = false
   const snapshot = startupSplash?.snapshot()
   if (!startupSplashBlocksMainWindowActivation(snapshot ?? null)) return false
 
@@ -722,7 +750,9 @@ function focusStartupSplashIfActive(): boolean {
 }
 
 app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
-  argv.filter(value => value.startsWith('wework://')).forEach(queueScheme)
+  const schemes = argv.filter(value => value.startsWith('wework://'))
+  const lightAppRequests = schemes.map(queueScheme)
+  if (lightAppRequests.some(Boolean) && lightAppRequests.every(Boolean)) return
   const instanceData =
     additionalData && typeof additionalData === 'object'
       ? (additionalData as Record<string, unknown>)
@@ -738,11 +768,7 @@ app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
   }
   if (workspaceOpenRequest) queueWorkspaceOpenRequest(workspaceOpenRequest)
   if (keepE2EWindowInBackground) return
-  if (focusStartupSplashIfActive()) return
-  if (!mainWindow) return
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  mainWindow.show()
-  mainWindow.focus()
+  void reactivateMainWindow().catch(error => console.error('[window] activation failed', error))
 })
 
 function normalizedWorkspaceOpenRequest(value: unknown): LocalWorkspaceOpenRequest | null {
@@ -1212,6 +1238,11 @@ async function openWorkspaceWindow(input: {
 }
 
 async function restoreFixedWorkspaceWindows(): Promise<void> {
+  if (backgroundWorkbenchStartup) {
+    deferredWorkspaceWindowRestore = true
+    return
+  }
+  deferredWorkspaceWindowRestore = false
   const descriptors = fixedWorkspaceWindowDescriptors(await requiredPreferences().read())
   await Promise.all(
     descriptors.map(descriptor =>
@@ -1540,7 +1571,7 @@ async function createWindow(
       on: (_event, listener) => startupSplashWindow?.on('close', listener),
       once: (_event, listener) => startupSplashWindow?.once('closed', listener),
       show: async () => {
-        if (keepE2EWindowInBackground) return
+        if (keepE2EWindowInBackground || backgroundWorkbenchStartup) return
         const target = startupSplashWindow
         if (!target) throw new Error('Startup splash window is unavailable')
         target.show()
@@ -1685,6 +1716,7 @@ async function hideMainWindowToBackground(): Promise<void> {
   if (!target || target.isDestroyed()) return
   console.log('windowWillClose: electron close-to-tray')
   target.hide()
+  if (workbenchApplications?.hasVisibleWindows()) return
   if (process.platform === 'darwin') {
     if (keepE2EWindowInBackground) {
       e2eForegroundActivationAllowed = false
@@ -1725,6 +1757,18 @@ const presentStartupWindow = createStartupReadyHandler(async (source: string) =>
   let handoffActive = true
   const canPresent = () => !quitting && !lastStartupFailure && !target.isDestroyed()
   const shouldContinue = () => handoffActive && canPresent()
+  if (backgroundWorkbenchStartup) {
+    target.setOpacity(1)
+    await splash?.close()
+    logStartupStep('startup-splash-close', 'completed')
+    logStartupStep('startup-window-presentation', 'completed', { source, background: true })
+    // An explicit activation may arrive while the hidden splash closes.
+    if (!backgroundWorkbenchStartup && canPresent() && !keepE2EWindowInBackground) {
+      presentWindow(target)
+      if (deferredWorkspaceWindowRestore) await restoreFixedWorkspaceWindows()
+    }
+    return
+  }
   try {
     if (!splash || !splashWindow) throw new Error('Startup splash is unavailable for handoff')
     await splash.handoff({
@@ -1794,8 +1838,11 @@ const rendererStartupReady = createStartupReadyHandler(async (source: string) =>
 })
 
 async function reactivateMainWindow(): Promise<void> {
-  if (focusStartupSplashIfActive()) return
   if (quitting) return
+  workbenchForegroundRequested = true
+  backgroundWorkbenchStartup = false
+  if (!mainWindow || mainWindow.isDestroyed()) await ensureWorkbenchWindow()
+  if (focusStartupSplashIfActive()) return
   const target = mainWindow
   if (!target || target.isDestroyed()) return
   if (keepE2EWindowInBackground) {
@@ -1808,7 +1855,19 @@ async function reactivateMainWindow(): Promise<void> {
   }
   presentWindow(target)
   await loadPrimaryDshView()
+  if (deferredWorkspaceWindowRestore) await restoreFixedWorkspaceWindows()
 }
+
+const ensureWorkbenchWindow = createSingleFlight(async () => {
+  await desktopHostReadiness.wait()
+  if (quitting || (mainWindow && !mainWindow.isDestroyed())) return
+  const current = await requiredPreferences().read()
+  await createWindow(
+    resolveStartupSplashTheme(current.appearanceMode, nativeTheme.shouldUseDarkColors),
+    current.mainWindowState
+  )
+  void startDesktopRuntime()
+})
 
 function dispatchTrayAction(action: TrayAction): void {
   if (action.type === 'quit-app') {
@@ -2219,6 +2278,10 @@ async function shutdown(): Promise<void> {
     performanceRecorder = null
   })
   await traceShutdownStep('log-retention', () => logRetention.stop())
+  await traceShutdownStep('workbench-applications', async () => {
+    await workbenchApplications?.dispose()
+    workbenchApplications = null
+  })
   await traceShutdownStep('mcp-apps', async () => {
     try {
       const results = await settleMcpAppCleanup(mcpAppCleanups)
@@ -2294,6 +2357,7 @@ function requestApplicationShutdown(exit: () => void): void {
 function prepareApplicationShutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise
   quitting = true
+  desktopHostReadiness.fail(new Error('The application is shutting down'))
   rendererStartupReady.cancel()
   presentStartupWindow.cancel()
   shutdownPromise = traceShutdownStep('application', shutdown)
@@ -2321,6 +2385,56 @@ function downloadsDirectory(): string {
     }
   )
 }
+
+const ensureDesktopControlBridge = createSingleFlight(
+  async (): Promise<WeworkDesktopControlBridge> => {
+    if (quitting) throw new Error('The application is shutting down')
+    if (desktopControlBridge) return desktopControlBridge
+    const bridge = new WeworkDesktopControlBridge({
+      instanceId: desktopControlInstanceId(),
+      instanceKind: pluginDevelopmentInstance ? 'core-dsh-plugin-development' : 'main',
+      displayName:
+        process.env.WEWORK_PLUGIN_DEVELOPMENT_TITLE?.trim() ||
+        developmentDockIdentity?.displayName ||
+        'Wework',
+      projectRoot: process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim() || null,
+      registryDirectory: desktopControlRegistryDirectory(),
+      window: () => mainWindow,
+      smartApps: () => smartApps,
+      workbenches: () => workbenchApplications,
+      ensurePython: pythonRuntimeEnabled
+        ? async () => (await managedPythonRuntime()).ensure()
+        : undefined,
+      pythonDownloads: pythonRuntimeEnabled ? pythonRuntimeDownloads : undefined,
+      pythonStatus: pythonRuntimeEnabled
+        ? async () => (await managedPythonRuntime()).status()
+        : undefined,
+      resolvePython: pythonRuntimeEnabled
+        ? async (pluginRoot, allowSystemFallback, prepare) =>
+            (await managedPythonRuntime()).resolvePluginPython(
+              pluginRoot,
+              allowSystemFallback,
+              prepare
+            )
+        : undefined,
+      prewarmPython: pythonRuntimeEnabled
+        ? async () => (await managedPythonRuntime()).prewarm()
+        : undefined,
+      ...(process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL
+        ? { devtools: new VerificationDevtools(() => webContents.getAllWebContents()) }
+        : {}),
+    })
+    logStartupStep('desktop-control-bridge', 'started')
+    await bridge.start()
+    if (quitting) {
+      await bridge.stop()
+      throw new Error('The application is shutting down')
+    }
+    desktopControlBridge = bridge
+    logStartupStep('desktop-control-bridge', 'completed')
+    return bridge
+  }
+)
 
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
@@ -2407,51 +2521,8 @@ async function configureDesktopRuntime(): Promise<void> {
   environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
   logStartupStep('embedded-browser-bridge', 'completed')
   Object.assign(environment, embeddedBrowserBridge.environment())
-  desktopControlBridge = new WeworkDesktopControlBridge({
-    instanceId: desktopControlInstanceId(),
-    instanceKind: pluginDevelopmentInstance ? 'core-dsh-plugin-development' : 'main',
-    displayName:
-      process.env.WEWORK_PLUGIN_DEVELOPMENT_TITLE?.trim() ||
-      developmentDockIdentity?.displayName ||
-      'Wework',
-    projectRoot: process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim() || null,
-    registryDirectory: desktopControlRegistryDirectory(),
-    window: () => mainWindow,
-    smartApps: () => smartApps,
-    ensurePython: pythonRuntimeEnabled
-      ? async () => (await managedPythonRuntime()).ensure()
-      : undefined,
-    pythonDownloads: pythonRuntimeEnabled ? pythonRuntimeDownloads : undefined,
-    pythonStatus: pythonRuntimeEnabled
-      ? async () => (await managedPythonRuntime()).status()
-      : undefined,
-    resolvePython: pythonRuntimeEnabled
-      ? async (pluginRoot, allowSystemFallback, prepare) =>
-          (await managedPythonRuntime()).resolvePluginPython(
-            pluginRoot,
-            allowSystemFallback,
-            prepare
-          )
-      : undefined,
-    prewarmPython: pythonRuntimeEnabled
-      ? async () => (await managedPythonRuntime()).prewarm()
-      : undefined,
-    ...(process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL
-      ? { devtools: new VerificationDevtools(() => webContents.getAllWebContents()) }
-      : {}),
-  })
-  logStartupStep('desktop-control-bridge', 'started')
-  if (pythonRuntimeEnabled) {
-    // Executors inherit the Python capability only after its listener is ready.
-    await desktopControlBridge.start()
-    Object.assign(environment, desktopControlBridge.environment())
-    logStartupStep('desktop-control-bridge', 'completed')
-  } else {
-    startStartupMaintenance('desktop control bridge', async () => {
-      await desktopControlBridge!.start()
-      logStartupStep('desktop-control-bridge', 'completed')
-    })
-  }
+  const controlBridge = await ensureDesktopControlBridge()
+  Object.assign(environment, controlBridge.environment())
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
@@ -2505,12 +2576,42 @@ async function configureDesktopRuntime(): Promise<void> {
     readWorkbenchMode: async () =>
       normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
     createWorkbenchHostPipe: tabId => {
-      const pipe = new HostPipeServer(createWorkbenchCapabilityRouter(embeddedBrowser, tabId))
-      return { hostPipe: pipe, principal: WEWORK_WORKBENCH_PRINCIPAL }
+      const installationId = tabId.startsWith('smart-app:')
+        ? tabId.slice('smart-app:'.length)
+        : null
+      const pipe = new HostPipeServer(
+        createWorkbenchCapabilityRouter(
+          embeddedBrowser,
+          tabId,
+          installationId
+            ? {
+                invoke: (method, params) => {
+                  if (!workbenchApplications) throw new Error('Workbench Host is unavailable')
+                  return workbenchApplications.native.invoke(installationId, method, params)
+                },
+                window: () => workbenchApplications?.ownerWindowForId(installationId) ?? null,
+                contents: () => workbenchApplications?.contentsForId(installationId) ?? null,
+                visible: () => workbenchApplications?.isViewVisible(installationId) ?? false,
+              }
+            : undefined
+        )
+      )
+      return { hostPipe: pipe, principal: installationId ? tabId : WEWORK_WORKBENCH_PRINCIPAL }
     },
     onExecutorEvent: (event, payload) => {
       systemSleep.handleExecutorEvent(event, payload)
       trayNativeStatus?.handleExecutorEvent(event)
+      if (event === 'executor.lifecycle' && workbenchApplications && !quitting) {
+        const operation =
+          payload.state === 'stopped'
+            ? workbenchApplications.invalidateRuntime()
+            : payload.state === 'ready'
+              ? workbenchApplications.resumeResident()
+              : null
+        void operation?.catch(error =>
+          console.error('[workbenches] Executor lifecycle recovery failed', error)
+        )
+      }
     },
     hostPipe: new HostPipeServer(
       createElectronCapabilityRouter(
@@ -2522,6 +2623,9 @@ async function configureDesktopRuntime(): Promise<void> {
         embeddedBrowser,
         computerUse,
         {
+          workbenches: () => workbenchApplications,
+          workbenchControl: params =>
+            controlWorkbenchApp(workbenchApplications, params, queueScheme),
           executorHome:
             environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
           processExplorer: processExplorerService,
@@ -2784,6 +2888,64 @@ async function configureDesktopRuntime(): Promise<void> {
       )
     ),
   })
+  if (smartApps) {
+    const request = <T>(method: string, params: Record<string, unknown>): Promise<T> => {
+      if (!desktopRuntime) return Promise.reject(new Error('Desktop runtime is unavailable'))
+      return desktopRuntime.requestExecutor<T>(method, params)
+    }
+    const catalog = new WorkbenchModelCatalog({
+      configuration: modelConfiguration,
+      connection: () => readCloudConnection(rendererStorage!),
+      accessToken: async (api, owner) =>
+        (await requiredCloudCredentials().refreshAccessToken(api, owner)).accessToken,
+      request,
+      fetch: cloudFetch,
+      proxy: target => resolveSystemProxy(session.defaultSession, target),
+    })
+    workbenchApplications = new WorkbenchApplicationHost({
+      manager: smartApps,
+      routes: new WorkbenchRoutes({
+        request,
+        models: key => catalog.models(key),
+        prepareCloud: () => catalog.prepareCloud(),
+        user: () => catalog.user(),
+        report: error => console.warn('[workbenches] model route is unavailable', error),
+      }),
+      dataDirectory: app.getPath('userData'),
+      cloudConnection: await readCloudConnection(rendererStorage!),
+      desktopDirectory:
+        process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL
+          ? join(app.getPath('userData'), 'e2e-desktop')
+          : app.getPath('desktop'),
+      desktopShortcutLaunch: workbenchShortcutLaunch({
+        ...currentElectronLaunch(),
+        userDataDirectory: app.getPath('userData'),
+        development: !packagedApplication,
+        environment: {
+          ...process.env,
+          ...startupRuntimeEnvironment,
+          WEWORK_APP_IDENTIFIER: applicationId,
+        },
+      }),
+      installationPreloadPath: resolve(packageRoot, 'dist/workbench-install-preload.cjs'),
+      parent: () => mainWindow,
+      ensureServices: async () => {
+        await startDesktopRuntime()
+        if (!desktopRuntime?.state().ready)
+          throw new Error(runtimeError ?? 'Desktop runtime is unavailable')
+      },
+      showTab: async (installation, signal) => {
+        await reactivateMainWindow()
+        signal?.throwIfAborted()
+        desktopHostEvents.publish('workbench.open-tab', { installation })
+      },
+      hideTab: async installationId => {
+        desktopHostEvents.publish('workbench.close-tab', { installationId })
+      },
+      createTodoProject: locale => createTodoProject(app.getPath('userData'), locale),
+      report: error => console.error('[workbenches]', error),
+    })
+  }
   trayNativeStatus = new TrayNativeStatusController({
     preferences,
     codexSubscriptionActiveAtStartup: codexSubscriptionEnabled,
@@ -2888,7 +3050,7 @@ function startDesktopRuntime(): Promise<void> {
       console.error('[runtime] startup failed', error)
       void startupSplash?.showError().catch(async splashError => {
         console.error('[startup-splash] failed to show runtime failure', splashError)
-        if (!keepE2EWindowInBackground) mainWindow?.show()
+        if (!keepE2EWindowInBackground && !backgroundWorkbenchStartup) mainWindow?.show()
         await startupSplash?.close()
       })
     })
@@ -2933,7 +3095,9 @@ if (hasSingleInstanceLock) {
         isShuttingDown: () => quitting,
         python: () => pythonRuntimeManagerPromise,
         development: () => pluginDevelopment,
+        cloudConnectionChanged: value => workbenchApplications?.cloudConnectionChanged(value),
       })
+      if (quitting) return
       logStartupStep('desktop-stores-create', 'completed')
       if (!pluginDevelopmentInstance) {
         popoutShortcut = new GlobalShortcutController(globalShortcut, togglePopoutWindow, error =>
@@ -3032,16 +3196,39 @@ if (hasSingleInstanceLock) {
       } catch (error) {
         console.warn('[menu] failed to install application menu', error)
       }
-      await createWindow(
-        resolveStartupSplashTheme(
-          startupPreferences.appearanceMode,
-          nativeTheme.shouldUseDarkColors
-        ),
-        startupPreferences.mainWindowState
-      )
-      void startDesktopRuntime()
+      const activeReleaseId = process.env.WEWORK_ACTIVE_RELEASE_ID
+      const releases = new ReleaseStore(join(app.getPath('userData'), 'releases'))
+      const activation = activeReleaseId ? await releases.activation() : null
+      const healthyActivationToken = activation
+        ? await optionalText(join(releases.root, 'healthy'))
+        : null
+      await configureDesktopRuntime()
+      await workbenchApplications?.start()
+      const startupMode = workbenchStartupMode({
+        hasApplicationRequest: applicationLaunches.hasPending(),
+        hasWorkbenchRequest:
+          workbenchForegroundRequested ||
+          pendingSchemes.read().length > 0 ||
+          Boolean(startupWorkspaceOpenRequest),
+        activeReleaseId,
+        activation,
+        healthyActivationToken,
+      })
+      backgroundWorkbenchStartup = startupMode === 'background-workbench'
+      desktopHostReadiness.complete()
+      await startWorkbenchSession(startupMode, {
+        startWorkbench: ensureWorkbenchWindow,
+        openApplications: () =>
+          applicationLaunches.start(async id => {
+            if (!workbenchApplications) throw new Error('Workbench Host is unavailable')
+            await workbenchApplications.open(id)
+          }),
+        startControlBridge: ensureDesktopControlBridge,
+      })
     })
     .catch(error => {
+      desktopHostReadiness.fail(error)
+      if (quitting) return
       console.error('[startup] failed to initialize desktop host', error)
       dialog.showErrorBox('Wework', error instanceof Error ? error.message : String(error))
     })
@@ -3148,51 +3335,36 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       : [nodeRuntime.status.path]
   startupProgress.report('cli')
   logStartupStep('wework-cli-install', 'started')
-  startStartupMaintenance('Wework CLI installation', async () => {
-    await installWeworkCli(
-      cliBin,
-      resolve(packageRoot, 'dist', 'cli', 'wework-cli.mjs'),
-      process.platform,
-      {
-        appCommand: weworkCliAppCommand(),
-        nodeCommand,
-      }
-    )
-    if (
-      shouldInstallUserWeworkCli(process.platform, {
-        environment: process.env,
-        packagedApplication,
-        pluginDevelopmentInstance,
-      })
-    ) {
+  const cliSource = resolve(packageRoot, 'dist', 'cli', 'wework-cli.mjs')
+  const cliOptions = { appCommand: weworkCliAppCommand(), nodeCommand }
+  const cliPath = await installWeworkCli(cliBin, cliSource, process.platform, cliOptions)
+  Object.assign(
+    nodeRuntime.environment,
+    withWeworkCliEnvironment(nodeRuntime.environment, cliPath, process.platform)
+  )
+  logStartupStep('wework-cli-install', 'completed')
+  if (
+    shouldInstallUserWeworkCli(process.platform, {
+      environment: process.env,
+      packagedApplication,
+      pluginDevelopmentInstance,
+    })
+  ) {
+    startStartupMaintenance('User Wework CLI installation', async () => {
       const userCliBin = join(app.getPath('home'), '.local', 'bin')
       const userCliPath = join(userCliBin, 'wework')
       if (await canReplaceWeworkCli(userCliPath)) {
-        await installWeworkCli(
-          userCliBin,
-          resolve(packageRoot, 'dist', 'cli', 'wework-cli.mjs'),
-          process.platform,
-          {
-            appCommand: weworkCliAppCommand(),
-            nodeCommand,
-          }
-        )
+        await installWeworkCli(userCliBin, cliSource, process.platform, cliOptions)
       } else {
         console.warn(`Wework CLI install path is not managed by Wework: ${userCliPath}`)
       }
-    }
-    logStartupStep('wework-cli-install', 'completed')
-  })
-  nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
-    .filter(Boolean)
-    .join(delimiter)
-  const runtimeEnvironment = pythonRuntimeEnabled
-    ? pythonRuntime.environment()
-    : { ...nodeRuntime.environment }
-  if (pythonRuntimeEnabled)
-    runtimeEnvironment.PATH = [cliBin, runtimeEnvironment.PATH?.trim()]
-      .filter(Boolean)
-      .join(delimiter)
+    })
+  }
+  const runtimeEnvironment = withWeworkCliEnvironment(
+    pythonRuntimeEnabled ? pythonRuntime.environment() : nodeRuntime.environment,
+    cliPath,
+    process.platform
+  )
   startupProgress.report('workspace')
   logStartupStep('workbench-environment', 'started')
   const environment = await prepareWorkbenchEnvironment({
@@ -3415,12 +3587,15 @@ function packagedHarnessRuntimePaths(): { cache: string } {
 }
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  if (process.platform !== 'darwin' && !standaloneApplicationSession) app.quit()
 })
 
 registerApplicationActivation(app, {
   keepInBackground: () => keepE2EWindowInBackground && !e2eForegroundActivationAllowed,
-  openMainWindow: reactivateMainWindow,
+  openMainWindow: () =>
+    backgroundWorkbenchStartup || (standaloneApplicationSession && !mainWindow)
+      ? Promise.resolve()
+      : reactivateMainWindow(),
   reportError: error => {
     console.error('[window] failed to reactivate main window', error)
   },

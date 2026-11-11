@@ -9,6 +9,8 @@ export {
   type QuickPhraseMode,
 } from '@wegent/chat-core/composer-quick-phrases'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import {
   INTERACTIONS_PATH,
   INTERACTIONS_TAB_ID,
@@ -573,6 +575,30 @@ export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<
   if (typeof window === 'undefined') {
     const preferences = mergeAppPreferences({ ...defaultAppPreferences, ...patch })
     return preferences
+  }
+  if (Object.hasOwn(patch, 'telemetryConsentAsked') || Object.hasOwn(patch, 'telemetryEnabled')) {
+    const e2e = getDesktopE2ERuntimeConfig()
+    if (
+      e2e.disabled !== true &&
+      (import.meta.env.VITE_WEWORK_E2E === 'true' || Boolean(e2e.controlUrl))
+    ) {
+      console.info(
+        '[telemetry-consent-update] ' +
+          JSON.stringify({
+            windowLabel: getDesktopWindowLabel(),
+            ...(typeof patch.telemetryConsentAsked === 'boolean'
+              ? { telemetryConsentAsked: patch.telemetryConsentAsked }
+              : {}),
+            ...(typeof patch.telemetryEnabled === 'boolean'
+              ? { telemetryEnabled: patch.telemetryEnabled }
+              : {}),
+            stack: new Error().stack?.replace(
+              /((?:https?|file):\/\/[^\s()?#]+)[?#][^\s()]*/g,
+              '$1'
+            ),
+          })
+      )
+    }
   }
   const preferences = mergeAppPreferences(
     await invokeDesktopHost<Record<string, unknown>>('preferences.update', { patch })
