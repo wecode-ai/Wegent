@@ -209,6 +209,12 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             payload
                 .get("modelOptions")
                 .or_else(|| payload.get("model_options"))
+                .or_else(|| {
+                    payload
+                        .get("modelSelection")
+                        .or_else(|| payload.get("model_selection"))
+                        .and_then(|selection| selection.get("options"))
+                })
                 .and_then(|options| {
                     options
                         .get("collaborationMode")
@@ -1119,6 +1125,19 @@ mod tests {
             request.extra.get("collaborationMode"),
             Some(&json!("single"))
         );
+    }
+
+    #[test]
+    fn explicit_backend_single_mode_precedes_saved_native_model_selection() {
+        let mut request = ExecutionRequest::default();
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "collaboration_model":"single",
+                "modelSelection":{"options":{"collaborationMode":"default"}}
+            }),
+        );
+        assert_eq!(request.extra["collaborationMode"], "single");
     }
 
     #[test]
