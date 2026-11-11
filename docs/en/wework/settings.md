@@ -63,7 +63,7 @@ Open **bottom-left account menu → Settings → Personal → General**. The pag
 | Popout Window shortcut                     | Record a new key combination or clear the binding                                                            | Opens the Wework popout, not the message-send action                                                            |
 | System drag panel                          | Toggle in the popout group                                                                                   | Availability depends on device and system capabilities                                                          |
 
-Data collection choices made on first use or in privacy settings apply immediately to the current session. A failed save does not block the workbench; the next launch uses the saved preference or asks again. A later explicit choice takes precedence, so an older request completing late cannot re-enable collection after refusal.
+Refusing data collection on first use or in privacy settings takes effect immediately. Enabling collection requires a successfully saved global preference, and a refusal saved by another window also applies. A failed save does not block the workbench; the next launch uses the saved preference or asks again. A later explicit choice takes precedence, so an older request completing late cannot re-enable collection after refusal.
 
 Saving a UI preference, changing scheduler limits and replacing an executable have different activation rules. Follow restart prompts for Node.js and coding tools; saved preferences do not imply that existing processes have already changed.
 

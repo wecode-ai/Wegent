@@ -136,7 +136,56 @@ describe('TelemetryBridge', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
     )
-    expect(mocks.installTelemetry).toHaveBeenCalledWith(true)
+    expect(mocks.installTelemetry).toHaveBeenCalledWith(false)
+    expect(mocks.installTelemetry).not.toHaveBeenCalledWith(true)
+  })
+
+  it('honors a refusal from another window after a local opt-in succeeds', async () => {
+    mocks.preferences.preferences.telemetryConsentAsked = false
+    mocks.preferences.preferences.telemetryEnabled = false
+    mocks.updateAppPreferences.mockImplementation(async patch => {
+      Object.assign(mocks.preferences.preferences, patch)
+      return mocks.preferences.preferences
+    })
+    const view = render(<TelemetryBridge />)
+    fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
+    await waitFor(() => expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(true))
+
+    mocks.preferences.preferences.telemetryEnabled = false
+    view.rerender(<TelemetryBridge />)
+    await waitFor(() => expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(false))
+  })
+
+  it('honors a saved refusal when a local opt-in could not be persisted', async () => {
+    mocks.preferences.preferences.telemetryConsentAsked = false
+    mocks.preferences.preferences.telemetryEnabled = false
+    mocks.updateAppPreferences.mockRejectedValue(new Error('EACCES'))
+    const view = render(<TelemetryBridge />)
+    fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
+    )
+
+    mocks.preferences.preferences.telemetryConsentAsked = true
+    view.rerender(<TelemetryBridge />)
+    await waitFor(() => expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(false))
+    expect(mocks.installTelemetry).not.toHaveBeenCalledWith(true)
+  })
+
+  it('accepts another window enabling collection after a saved local refusal', async () => {
+    mocks.updateAppPreferences.mockImplementation(async patch => {
+      Object.assign(mocks.preferences.preferences, patch)
+      return mocks.preferences.preferences
+    })
+    const view = render(<TelemetryBridge />)
+    await act(async () => {
+      await saveTelemetryConsent(false)
+    })
+    await waitFor(() => expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(false))
+
+    mocks.preferences.preferences.telemetryEnabled = true
+    view.rerender(<TelemetryBridge />)
+    await waitFor(() => expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(true))
   })
 
   it('allows a later settings choice while an earlier save is still pending', async () => {

@@ -4,7 +4,11 @@ import { installTelemetry, isTelemetryEnabled, setTelemetryEnabled, track } from
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { TelemetryConsentDialog } from './TelemetryConsentDialog'
 import { isOfficialReleaseBuild } from './config'
-import { saveTelemetryConsent, useSessionTelemetryConsent } from './sessionConsent'
+import {
+  saveTelemetryConsent,
+  useSessionTelemetryConsent,
+  useSessionTelemetryConsentAsked,
+} from './sessionConsent'
 
 function appSurface(): 'main' | 'popout' | 'workspace' {
   const label = isElectronRuntime() ? getDesktopWindowLabel() : 'main'
@@ -18,9 +22,13 @@ export function TelemetryBridge() {
   const initializedRef = useRef(false)
   const startedRef = useRef(false)
   const sessionConsent = useSessionTelemetryConsent()
-  const consentAsked =
-    sessionConsent !== undefined || appPreferences?.preferences.telemetryConsentAsked
-  const telemetryEnabled = sessionConsent ?? appPreferences?.preferences.telemetryEnabled
+  const sessionAsked = useSessionTelemetryConsentAsked()
+  const consentAsked = sessionAsked || appPreferences?.preferences.telemetryConsentAsked
+  // A session opt-in must not override a refusal saved by another window.
+  const telemetryEnabled =
+    sessionConsent !== false &&
+    appPreferences?.preferences.telemetryConsentAsked === true &&
+    appPreferences.preferences.telemetryEnabled === true
   const officialRelease = isOfficialReleaseBuild()
   const effectiveTelemetryEnabled =
     !officialRelease && consentAsked !== true ? true : telemetryEnabled === true
@@ -76,7 +84,7 @@ export function TelemetryBridge() {
     <TelemetryConsentDialog
       onChoose={enabled => {
         void saveTelemetryConsent(enabled).catch(error => {
-          console.warn('[telemetry] Consent applies to this session; persistence failed', {
+          console.warn('[telemetry] Consent persistence failed; workbench remains available', {
             errorType: error instanceof Error ? error.name : typeof error,
           })
         })

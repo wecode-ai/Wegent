@@ -147,11 +147,10 @@ export function TelemetryAgent() {
   const feature = routes.find(route => route.path === pathname)?.telemetryFeature
   const telemetryEnabled = useTelemetryEnabled()
   const telemetryExplicitlyDisabled =
-    sessionConsent !== undefined
-      ? !sessionConsent
-      : appPreferences?.loaded === true &&
-        appPreferences.preferences.telemetryConsentAsked === true &&
-        appPreferences.preferences.telemetryEnabled !== true
+    sessionConsent === false ||
+    (appPreferences?.loaded === true &&
+      appPreferences.preferences.telemetryConsentAsked === true &&
+      appPreferences.preferences.telemetryEnabled !== true)
   const electronRuntime = isElectronRuntime()
   const lastRouteKeyRef = useRef<string | null>(null)
   const pendingDesktopStartupEventsRef = useRef<DesktopStartupAnalyticsEvent[]>([])

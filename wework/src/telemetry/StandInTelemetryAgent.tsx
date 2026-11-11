@@ -22,15 +22,14 @@ export function StandInTelemetryAgent() {
   const sessionConsent = useSessionTelemetryConsent()
   const enabled = useTelemetryEnabled()
   const policy =
-    sessionConsent !== undefined
-      ? sessionConsent
+    sessionConsent === false ||
+    (preferences?.loaded &&
+      preferences.preferences.telemetryConsentAsked === true &&
+      preferences.preferences.telemetryEnabled !== true)
+      ? false
       : enabled
         ? true
-        : preferences?.loaded &&
-            preferences.preferences.telemetryConsentAsked === true &&
-            preferences.preferences.telemetryEnabled !== true
-          ? false
-          : null
+        : null
   const userId = cloud?.user?.id ?? source?.userId
   const accountKey = JSON.stringify([cloud?.apiBaseUrl ?? 'local', userId])
   const api = source?.services?.standInApi

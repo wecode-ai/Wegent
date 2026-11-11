@@ -206,7 +206,7 @@ export function GeneralSettingsPage() {
       console.error('[Wework] Failed to update app preferences', saveError)
       setPreferences(current => ({
         ...current,
-        [key]: key === 'telemetryEnabled' ? value : !value,
+        [key]: key === 'telemetryEnabled' && !value ? false : !value,
       }))
       setError(t('workbench.general_settings_save_failed'))
     } finally {
@@ -262,8 +262,8 @@ export function GeneralSettingsPage() {
         <SettingsSwitch
           data-testid={testId}
           checked={
-            preferenceKey === 'telemetryEnabled' && sessionTelemetryConsent !== undefined
-              ? sessionTelemetryConsent
+            preferenceKey === 'telemetryEnabled' && sessionTelemetryConsent === false
+              ? false
               : Boolean(preferences[preferenceKey])
           }
           disabled={loading || saving}
