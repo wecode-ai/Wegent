@@ -420,6 +420,7 @@ def _candidates(
     user_id: int,
     agent_id: str | None = None,
 ) -> list[Kind]:
+    """Filter authorized devices by policy and retain evidence when none match."""
     try:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
     except HTTPException as error:

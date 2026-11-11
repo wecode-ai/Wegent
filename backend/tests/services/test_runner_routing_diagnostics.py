@@ -18,6 +18,7 @@ from tests.utils.collaboration import authorize_project_agent
 
 
 def diagnostic_events(caplog):
+    """Decode only the structured routing events captured by this suite."""
     return [
         json.loads(record.args[0])
         for record in caplog.records
@@ -28,6 +29,7 @@ def diagnostic_events(caplog):
 @pytest.mark.parametrize("scope", ["workspace", "project"])
 @pytest.mark.parametrize("state", ["missing", "rejected", "viewer"])
 def test_denial_records_raw_grant_failure(test_db, routing_setup, caplog, scope, state):
+    """Retain the failing grant scope, role, and approval state without secrets."""
     user, devices, issue = routing_setup
     target = devices[0]
     grant = (
@@ -81,6 +83,7 @@ def test_denial_records_raw_grant_failure(test_db, routing_setup, caplog, scope,
 def test_denial_distinguishes_device_record_failure(
     test_db, routing_setup, caplog, state
 ):
+    """Distinguish absent devices from inactive or incorrectly typed records."""
     user, devices, issue = routing_setup
     target = devices[0]
     target_id = target.id
@@ -119,6 +122,7 @@ def test_denial_distinguishes_device_record_failure(
 def test_group_denial_identifies_member_or_disjoint_devices(
     test_db, routing_setup, caplog, missing_grant
 ):
+    """Identify the failed group member or the incompatible candidate sets."""
     user, devices, issue = routing_setup
     agents = []
     for index, device in enumerate(devices):
@@ -184,6 +188,7 @@ def test_group_denial_identifies_member_or_disjoint_devices(
 
 
 def test_successful_routing_does_not_log_diagnostics(test_db, routing_setup, caplog):
+    """Keep successful candidate resolution free of denial diagnostics."""
     user, devices, issue = routing_setup
     result = _candidates(
         test_db,
@@ -196,6 +201,7 @@ def test_successful_routing_does_not_log_diagnostics(test_db, routing_setup, cap
 
 
 def test_creation_validation_records_denied_environment(test_db, routing_setup, caplog):
+    """Identify configuration validation separately from execution rejection."""
     user, devices, issue = routing_setup
     with pytest.raises(HTTPException) as error:
         validate_agent_policies(
@@ -215,3 +221,32 @@ def test_creation_validation_records_denied_environment(test_db, routing_setup, 
         device.id for device in devices
     )
     assert event["agent_id"] is None
+
+
+@pytest.mark.parametrize("payload", [{"spec": None}, {"spec": "invalid"}, ["invalid"]])
+def test_malformed_device_evidence_preserves_routing_denial(
+    test_db, routing_setup, caplog, payload
+):
+    """Malformed device payloads must not replace the original routing error."""
+    user, devices, issue = routing_setup
+    target = devices[0]
+    target.is_active = False
+    target.json = payload
+    test_db.flush()
+
+    with pytest.raises(HTTPException) as error:
+        _candidates(
+            test_db,
+            ExecutionPolicy(mode="fixed", environment_id=str(target.id)),
+            issue.cloud_project_id,
+            user.id,
+        )
+
+    assert error.value.status_code == 422
+    assert error.value.detail["error_code"] == "RUNNER_ENVIRONMENT_UNAVAILABLE"
+    device = next(
+        row for row in diagnostic_events(caplog)[0]["devices"] if row["id"] == target.id
+    )
+    assert device["name"] == target.name
+    assert device["is_active"] is False
+    assert device["device_key"] is None

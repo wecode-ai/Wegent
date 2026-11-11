@@ -81,7 +81,12 @@ def log_environment_denial(
             {
                 "id": device.id,
                 "name": device.name,
-                "device_key": runtime_device_route_id(device),
+                "device_key": (
+                    runtime_device_route_id(device)
+                    if isinstance(device.json, dict)
+                    and isinstance(device.json.get("spec", {}), dict)
+                    else None
+                ),
                 "kind": device.kind,
                 "namespace": device.namespace,
                 "is_active": device.is_active,
