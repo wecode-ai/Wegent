@@ -29,7 +29,7 @@ use crate::auth::SessionUser;
 use crate::device_commands::{
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_BYTES, DeviceCommandRequest,
     DeviceCommandResponse, MAX_COMMAND_TIMEOUT_SECONDS, MAX_OUTPUT_BYTES, SOCKET_ACK_GRACE_SECONDS,
-    apply_command_post_processor, build_local_device_command_argv, executor_payload_carries_key,
+    add_executor_command_key, apply_command_post_processor, build_local_device_command_argv,
     is_internal_command_key, python_str, python_truthy, registered_scope, remote_command_allowed,
     resolve_local_device_command, response_from_result, unhandled,
 };
@@ -228,6 +228,7 @@ async fn execute_owned_command(
         &argv,
         timeout_seconds,
         max_output_bytes,
+        definition.native_git,
     );
 
     let ack = call_device(
@@ -453,6 +454,7 @@ fn command_payload(
     argv: &[String],
     timeout_seconds: i64,
     max_output_bytes: i64,
+    native_git: bool,
 ) -> Value {
     let mut payload = Map::new();
     payload.insert("command".to_string(), Value::String(command.to_string()));
@@ -486,12 +488,7 @@ fn command_payload(
         "max_output_bytes".to_string(),
         Value::Number(max_output_bytes.into()),
     );
-    if executor_payload_carries_key(&request.command_key) {
-        payload.insert(
-            "command_key".to_string(),
-            Value::String(request.command_key.clone()),
-        );
-    }
+    add_executor_command_key(&mut payload, &request.command_key, native_git);
     Value::Object(payload)
 }
 
@@ -565,6 +562,7 @@ mod tests {
             &["python3".to_string(), "-c".to_string(), "tree".to_string()],
             15,
             524288,
+            false,
         );
         assert_eq!(
             crate::internal_callback::py_json::python_dumps(&payload),
@@ -579,12 +577,12 @@ mod tests {
         let mut request = request();
         request.path = Some(String::new());
         request.cwd = Some("/cwd".to_string());
-        let payload = command_payload(&request, "pwd", &["pwd".to_string()], 60, 1024);
+        let payload = command_payload(&request, "pwd", &["pwd".to_string()], 60, 1024, false);
         assert_eq!(payload["cwd"], json!("/cwd"));
 
         request.path = None;
         request.cwd = None;
-        let payload = command_payload(&request, "pwd", &["pwd".to_string()], 60, 1024);
+        let payload = command_payload(&request, "pwd", &["pwd".to_string()], 60, 1024, false);
         assert_eq!(payload["cwd"], Value::Null);
     }
 
@@ -592,7 +590,7 @@ mod tests {
     fn command_key_is_only_sent_for_the_source_payload_keys() {
         let mut request = request();
         request.command_key = "pwd".to_string();
-        let payload = command_payload(&request, "pwd", &["pwd".to_string()], 60, 1024);
+        let payload = command_payload(&request, "pwd", &["pwd".to_string()], 60, 1024, false);
         assert!(payload.get("command_key").is_none());
     }
 

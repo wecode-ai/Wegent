@@ -222,8 +222,8 @@ async function readPersistedExecutions(
 
 async function verifyExecutionDetail(control, scope, run, expectedText, timeoutMs) {
   const badge = scope(`[data-testid="cloud-task-activity-execution-badge-${run.messageId}"]`)
-  await control.command('waitFor', badge, { timeoutMs })
-  await control.command('click', badge)
+  // Activity visibility precedes delivery of its runtime address to the renderer.
+  await control.command('clickWhenEnabled', badge, { timeoutMs })
   const conversation = scope('[data-testid="ai-chat-modal"]')
   await control.command('waitFor', conversation, {
     text: expectedText,

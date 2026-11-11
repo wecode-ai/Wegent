@@ -7,6 +7,7 @@ import {
   prepareReleaseProcess,
   RELEASE_PREPARATION_PROGRESS_PREFIX,
   waitForReleasePreparation,
+  spawnReleaseProcess,
 } from '../electron/src/runtime/release-preparation-progress.mjs'
 
 const event = (
@@ -181,4 +182,26 @@ test('preserves the original source process failure', async () => {
     }),
     error => error === original
   )
+})
+
+test('a buffer failure still stops its live preparation owner', async () => {
+  const preparation = spawnReleaseProcess(
+    process.execPath,
+    ['-e', "process.stdout.write('oversized');setInterval(() => {}, 1000)"],
+    { env: { ...process.env }, maxBuffer: 2 }
+  )
+  let stopped = false
+  await assert.rejects(
+    waitForReleasePreparation(preparation, async () => ({ phase: 'preparing' }), {
+      stop: async child => {
+        assert.equal(child, preparation.child)
+        stopped = true
+        const exited = new Promise(resolve => child.once('exit', resolve))
+        child.kill('SIGKILL')
+        await exited
+      },
+    }),
+    /buffer limit/
+  )
+  assert.equal(stopped, true)
 })

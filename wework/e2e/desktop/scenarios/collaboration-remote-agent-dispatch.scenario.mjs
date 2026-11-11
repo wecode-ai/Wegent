@@ -637,7 +637,7 @@ export function createDesktopScenario({
         const output = toolOutputText(body, MANUAL_READ_CALL)
         assert.ok(
           JSON.stringify(output)?.includes(MANUAL_READ_OK),
-          `The real bound Issue read did not succeed: ${JSON.stringify(output)}`
+          `The real bound Issue read did not succeed: ${JSON.stringify(output)}; input identities: ${JSON.stringify(body.input.map(item => ({ type: item.type, callId: item.call_id })))}`
         )
         await dispatchBoundary.verify()
         await completeModelTurn(response, responseId, serialized)

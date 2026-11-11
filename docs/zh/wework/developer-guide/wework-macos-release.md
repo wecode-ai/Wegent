@@ -27,6 +27,18 @@ E2E 断言隐藏失败。
 完成；连续中断则进入原有启动错误处理。`startup-network-change` 检查点通过
 Chromium 协议错误接口中断一次真实脚本请求，验证恢复后工作台能够打开新任务输入界面。
 
+## macOS 公证
+
+公证钩子先验证现有 stapled ticket。需要上传时，每个归档只提交一次，取得 Apple
+提交 ID 后通过 `notarytool wait` 查询同一提交；上传后的查询断网不能触发重复上传。
+若提交命令的传输错误已包含官方提交 URL 或结构化提交 ID，继续观察该 ID；没有
+有效 ID 的未知提交结果保持失败，不推断公证成功。
+
+查询共用原有 30 分钟等待预算，每次传输恢复只使用剩余时间。
+`WEWORK_NOTARY_UPLOAD_ATTEMPTS` 保留为幂等查询、staple 和 validate 的传输尝试上限
+（默认 3，范围 1–5），不用于重复上传。只有 Apple 返回 `Accepted` 后才执行 staple
+及最终验证；拒绝或预算耗尽仍阻止构建完成。日志只记录提交 ID，不记录认证参数。
+
 ## macOS 应用图标
 
 macOS 包同时包含现有 `wework/resources/icons/icon.icns` 和
