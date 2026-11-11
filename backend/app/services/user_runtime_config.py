@@ -12,12 +12,17 @@ from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
 
+from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.user import User
+from app.services.device.background_db import run_device_background_db
 from app.services.device.command_service import (
     DEFAULT_COMMAND_TIMEOUT_SECONDS,
     DeviceCommandError,
+    PreparedDeviceCommand,
     execute_configured_device_command,
+    execute_prepared_device_command,
+    prepare_configured_device_command,
 )
 from app.services.device_service import device_service
 from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
@@ -404,14 +409,7 @@ class UserRuntimeConfigService:
         if not is_runtime_user_config_enabled(preferences, normalized_runtime):
             raise UserRuntimeConfigSyncError("user runtime config is disabled")
 
-        auth = dict(spec.get("auth") or {})
-        encrypted_value = auth.get("encryptedValue")
-        if not encrypted_value:
-            raise UserRuntimeConfigSyncError("auth_json is not configured")
-
-        auth_json = decrypt_sensitive_data(encrypted_value)
-        if not auth_json or auth_json == encrypted_value:
-            raise UserRuntimeConfigSyncError("auth_json could not be decrypted")
+        auth_json = self._decrypt_saved_auth(spec)
 
         target_path = RUNTIME_AUTH_FILES[normalized_runtime]["target_path"]
         selected_device_ids = {device_id for device_id in device_ids or [] if device_id}
@@ -444,6 +442,60 @@ class UserRuntimeConfigService:
             "items": results,
         }
 
+    @staticmethod
+    def _decrypt_saved_auth(spec: dict[str, Any]) -> str:
+        encrypted_value = (spec.get("auth") or {}).get("encryptedValue")
+        if not encrypted_value:
+            raise UserRuntimeConfigSyncError("auth_json is not configured")
+        auth_json = decrypt_sensitive_data(encrypted_value)
+        if not auth_json or auth_json == encrypted_value:
+            raise UserRuntimeConfigSyncError("auth_json could not be decrypted")
+        return auth_json
+
+    @staticmethod
+    def _auth_sync_env(runtime: str, auth_json: str) -> dict[str, str]:
+        return {
+            "WEGENT_RUNTIME_CONFIG_RUNTIME": runtime,
+            "WEGENT_RUNTIME_CONFIG_CONTENT": auth_json,
+        }
+
+    def _prepare_heartbeat_auth(
+        self, user_id: int, device_id: str, runtime: str
+    ) -> tuple[PreparedDeviceCommand, str] | None:
+        """Load the enabled auth and prepare an owned target in one short session."""
+        with get_db_session() as db:
+            user = db.get(User, user_id)
+            if user is None or not is_runtime_user_config_enabled(
+                user.preferences, runtime
+            ):
+                return None
+            spec = self._get_spec(self._get_kind(db, user_id=user_id, runtime=runtime))
+            if not (spec.get("auth") or {}).get("encryptedValue"):
+                return None
+            prepared = prepare_configured_device_command(
+                db=db,
+                user_id=user_id,
+                device_id=device_id,
+                command_key="sync_runtime_auth_file",
+            )
+            return prepared, self._decrypt_saved_auth(spec)
+
+    async def sync_heartbeat_auth(
+        self, *, user_id: int, device_id: str, runtime: str
+    ) -> bool | None:
+        """Send a missing auth file after releasing the database session."""
+        runtime = _normalize_runtime(runtime)
+        result = await run_device_background_db(
+            self._prepare_heartbeat_auth, user_id, device_id, runtime
+        )
+        if result is None:
+            return None
+        prepared, auth_json = result
+        response = await execute_prepared_device_command(
+            prepared, env=self._auth_sync_env(runtime, auth_json)
+        )
+        return bool(response.get("success"))
+
     async def _sync_auth_to_device(
         self,
         *,
@@ -459,10 +511,7 @@ class UserRuntimeConfigService:
                 user_id=user_id,
                 device_id=device_id,
                 command_key="sync_runtime_auth_file",
-                env={
-                    "WEGENT_RUNTIME_CONFIG_RUNTIME": runtime,
-                    "WEGENT_RUNTIME_CONFIG_CONTENT": auth_json,
-                },
+                env=self._auth_sync_env(runtime, auth_json),
                 timeout_seconds=DEFAULT_COMMAND_TIMEOUT_SECONDS,
             )
         except DeviceCommandError as exc:

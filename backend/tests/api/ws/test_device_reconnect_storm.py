@@ -400,6 +400,8 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
     reconcile.assert_awaited_once_with(
         user_id=7,
         device_id="app-record-70",
+        needs_confirmation_only=False,
+        expected_sid="sid-app",
     )
     assert saved_session["device_id"] == "app-record-70"
     assert saved_session["reported_device_id"] == "local-app-device"
@@ -646,3 +648,53 @@ async def test_transient_disconnect_rechecks_device_before_failing_tasks(monkeyp
     set_offline.assert_not_awaited()
     device_namespace.run_sync_in_executor.assert_not_awaited()
     namespace._broadcast_device_offline.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_device_reconciliation_coalesces_and_keeps_latest_full_request(
+    monkeypatch,
+):
+    namespace = DeviceNamespace()
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def reconcile(**kwargs):
+        if kwargs["expected_sid"] == "old-sid":
+            started.set()
+            await finish.wait()
+        return 0
+
+    mock_reconcile = AsyncMock(side_effect=reconcile)
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.reconcile_device_executions", mock_reconcile
+    )
+
+    namespace._schedule_device_reconciliation(
+        7, "device", "old-sid", needs_confirmation_only=True
+    )
+    await asyncio.wait_for(started.wait(), 1)
+    try:
+        for _ in range(10):
+            namespace._schedule_device_reconciliation(
+                7, "device", "old-sid", needs_confirmation_only=True
+            )
+        namespace._schedule_device_reconciliation(7, "device", "new-sid")
+        namespace._schedule_device_reconciliation(
+            7, "device", "new-sid", needs_confirmation_only=True
+        )
+        namespace._schedule_device_reconciliation(
+            7, "device", "old-sid", needs_confirmation_only=True
+        )
+        assert mock_reconcile.await_count == 1
+    finally:
+        finish.set()
+        await asyncio.gather(*tuple(namespace._background_tasks))
+
+    assert mock_reconcile.await_count == 2
+    mock_reconcile.assert_awaited_with(
+        user_id=7,
+        device_id="device",
+        expected_sid="new-sid",
+        needs_confirmation_only=False,
+    )
+    assert not namespace._device_reconciliations

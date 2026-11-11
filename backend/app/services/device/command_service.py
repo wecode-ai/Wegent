@@ -5,6 +5,7 @@
 """Backend RPC service for executing commands on local devices."""
 
 import logging
+from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Mapping, Optional
 
@@ -189,20 +190,14 @@ def _resolve_cloud_runtime_device_id(device_kind: Any) -> str:
     )
 
 
-async def _resolve_dispatch_device_id(
+def _resolve_dispatch_device_id(
     *,
-    user_id: int,
     submitted_device_id: str,
     command_key: str,
     device_kind: Any,
-    device_type: Optional[DeviceType],
+    device_type: DeviceType,
     allow_app_device: bool,
 ) -> str:
-    if device_type is None:
-        raise DeviceCommandError(
-            "Device command RPC is not supported for unknown device type"
-        )
-
     if not allow_app_device and not remote_control_is_enabled(device_type):
         raise DeviceCommandError(REMOTE_CONTROL_DISABLED_MESSAGE)
 
@@ -242,17 +237,6 @@ async def _resolve_dispatch_device_id(
     if not dispatch_device_id:
         raise DeviceCommandError(
             f"{device_type.value.title()} device '{submitted_device_id}' is unavailable"
-        )
-
-    online_info = await device_service.get_device_online_info_by_type(
-        user_id,
-        dispatch_device_id,
-        device_type,
-    )
-    if not online_info:
-        raise DeviceCommandError(
-            f"{device_type.value.title()} device '{submitted_device_id}' is offline "
-            "or unavailable"
         )
 
     return dispatch_device_id
@@ -418,22 +402,30 @@ def is_builtin_native_git_command(
     )
 
 
-async def execute_configured_device_command(
+@dataclass(frozen=True)
+class PreparedDeviceCommand:
+    """Owned device and command metadata detached from the database session."""
+
+    user_id: int
+    submitted_device_id: str
+    dispatch_device_id: str
+    device_type: DeviceType
+    command_key: str
+    definition: LocalDeviceCommandDefinition
+    uses_native_git_command: bool
+
+
+def prepare_configured_device_command(
     *,
     db: Any,
     user_id: int,
     device_id: str,
     command_key: str,
-    path: Optional[str] = None,
-    args: Optional[list[str]] = None,
-    env: Optional[dict[str, Any]] = None,
-    timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
-    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
     command_config: Optional[Mapping[str, Any]] = None,
     allow_internal: bool = False,
     allow_app_device: bool = True,
-) -> dict[str, Any]:
-    """Execute a configured local device command for internal Backend callers."""
+) -> PreparedDeviceCommand:
+    """Resolve command policy and ownership while the session is open."""
     device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
     if not device_kind:
         raise DeviceCommandNotFoundError("Device not found or access denied")
@@ -462,8 +454,12 @@ async def execute_configured_device_command(
     uses_native_git_command = is_builtin_native_git_command(
         command_key, configured_commands
     )
-    dispatch_device_id = await _resolve_dispatch_device_id(
-        user_id=user_id,
+    if device_type is None:
+        raise DeviceCommandError(
+            "Device command RPC is not supported for unknown device type"
+        )
+
+    dispatch_device_id = _resolve_dispatch_device_id(
         submitted_device_id=device_id,
         command_key=command_key,
         device_kind=device_kind,
@@ -471,17 +467,49 @@ async def execute_configured_device_command(
         allow_app_device=allow_app_device,
     )
 
+    return PreparedDeviceCommand(
+        user_id,
+        device_id,
+        dispatch_device_id,
+        device_type,
+        command_key,
+        command_definition,
+        uses_native_git_command,
+    )
+
+
+async def execute_prepared_device_command(
+    prepared: PreparedDeviceCommand,
+    *,
+    path: Optional[str] = None,
+    args: Optional[list[str]] = None,
+    env: Optional[dict[str, Any]] = None,
+    timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+) -> dict[str, Any]:
+    """Check live presence and dispatch the command without a database session."""
+    if prepared.device_type in {DeviceType.CLOUD, DeviceType.REMOTE}:
+        online_info = await device_service.get_device_online_info_by_type(
+            prepared.user_id, prepared.dispatch_device_id, prepared.device_type
+        )
+        if not online_info:
+            raise DeviceCommandError(
+                f"{prepared.device_type.value.title()} device "
+                f"'{prepared.submitted_device_id}' is offline or unavailable"
+            )
+
+    command_key = prepared.command_key
     execute_kwargs = {
-        "user_id": user_id,
-        "device_id": dispatch_device_id,
-        "command": command_definition.command,
+        "user_id": prepared.user_id,
+        "device_id": prepared.dispatch_device_id,
+        "command": prepared.definition.command,
         "path": path,
         "args": args or [],
         "env": env or {},
         "timeout_seconds": timeout_seconds,
         "max_output_bytes": max_output_bytes,
     }
-    if uses_native_git_command or command_key in {
+    if prepared.uses_native_git_command or command_key in {
         "environment_prepare",
         "git_apply_patch",
         "workspace_tree",
@@ -494,7 +522,42 @@ async def execute_configured_device_command(
     try:
         return apply_command_post_processor(
             result,
-            command_definition.post_processor,
+            prepared.definition.post_processor,
         )
     except CommandPostProcessorError as exc:
         raise DeviceCommandConfigurationError(str(exc)) from exc
+
+
+async def execute_configured_device_command(
+    *,
+    db: Any,
+    user_id: int,
+    device_id: str,
+    command_key: str,
+    path: Optional[str] = None,
+    args: Optional[list[str]] = None,
+    env: Optional[dict[str, Any]] = None,
+    timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+    command_config: Optional[Mapping[str, Any]] = None,
+    allow_internal: bool = False,
+    allow_app_device: bool = True,
+) -> dict[str, Any]:
+    """Execute a configured local device command for internal Backend callers."""
+    prepared = prepare_configured_device_command(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        command_key=command_key,
+        command_config=command_config,
+        allow_internal=allow_internal,
+        allow_app_device=allow_app_device,
+    )
+    return await execute_prepared_device_command(
+        prepared,
+        path=path,
+        args=args,
+        env=env,
+        timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
+    )
