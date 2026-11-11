@@ -45,6 +45,7 @@ it('does not persist dismissal before its history lock is acquired', async () =>
 })
 
 it('archives project work without inventing a runtime task and retains it after remount', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(1_794_396_000_000)
   const rendered = view()
   await waitFor(() => expect(context!.pending).toHaveLength(1))
   const entry = {
