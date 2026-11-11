@@ -531,6 +531,7 @@ async fn activate_transfer<T: MysqlTransaction>(
         "deviceGrants": grants,
         "localAuthSources": observations
     });
+    connections::preserve_native_fields(previous, &mut connection);
     let context = connections::credential_context(user_id, &connection);
     connection["credential"] = cipher.encrypt(credential, &context)?;
     let document = python_json_value(&json!({"spec": connection}));

@@ -495,7 +495,7 @@ type LocalAgentRecord = Record<string, unknown> & {
   updated_at?: string
 }
 
-function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
+export function projectChatAgentFromRecord(record: LocalAgentRecord): LocalProjectChatAgent {
   const maxConcurrentExecutions =
     typeof record.max_concurrent_executions === 'number' &&
     Number.isInteger(record.max_concurrent_executions) &&
@@ -632,7 +632,7 @@ export function createLocalProjectChatAgentApi(
           const records = await request<LocalAgentRecord[]>('chat_agents.list', {
             project_id: projectId,
           })
-          return records.map(localAgent)
+          return records.map(projectChatAgentFromRecord)
         },
         options?.forceRefresh ? 0 : 60_000
       )
@@ -646,7 +646,7 @@ export function createLocalProjectChatAgentApi(
         agent: createPayload(input),
       })
       cache.invalidate('agents:')
-      return localAgent(record)
+      return projectChatAgentFromRecord(record)
     },
     async ensureDefault(
       projectId: string,
@@ -657,7 +657,7 @@ export function createLocalProjectChatAgentApi(
         agent: createPayload(input),
       })
       cache.invalidate('agents:')
-      return record ? localAgent(record) : null
+      return record ? projectChatAgentFromRecord(record) : null
     },
     async update(
       projectId: string,
@@ -722,7 +722,7 @@ export function createLocalProjectChatAgentApi(
         },
       })
       cache.invalidate('agents:')
-      return localAgent(record)
+      return projectChatAgentFromRecord(record)
     },
     async archive(projectId: string, agentId: string, version: number) {
       await request('chat_agents.archive', {

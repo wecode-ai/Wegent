@@ -4,6 +4,7 @@ import {
 } from '@/desktop/localExecutor'
 import { createHttpClient } from '@/api/http'
 import { isCloudConnectionUiAvailable } from './cloudConnectionAvailability'
+import { configurePluginNativeAuthorization } from '@/features/plugins/pluginNativeAuthorization'
 
 interface WegentRuntimeAuthTokenResponse {
   auth_token: string
@@ -22,6 +23,7 @@ export interface LocalExecutorCloudConnection {
 export interface LocalExecutorCloudConnectionResult {
   connected: boolean
   runtimeAuthTokenExpiresIn?: number
+  pluginAuthorization?: Promise<{ ready: boolean; expiresIn: number | null }>
 }
 
 interface LocalExecutorCloudConnectionOptions {
@@ -79,9 +81,11 @@ export async function applyLocalExecutorCloudConnection(
       runtimeAuthToken: runtimeToken.authToken,
       deviceType: 'app',
     })
+    if (!isCurrent()) return { connected: false }
     return {
       connected: true,
       runtimeAuthTokenExpiresIn: runtimeToken.expiresIn,
+      pluginAuthorization: configurePluginNativeAuthorization(apiBaseUrl, token),
     }
   }
 

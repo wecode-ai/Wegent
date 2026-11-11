@@ -97,6 +97,15 @@ class PluginAccountConnectionService:
                 else {}
             ),
         }
+        if "nativeAuthSources" in previous:
+            spec["nativeAuthSources"] = previous["nativeAuthSources"]
+        if "localGrants" in previous:
+            spec["localGrants"] = (
+                previous["localGrants"]
+                if previous.get("authDefinition")
+                == definition.model_dump(exclude_none=True)
+                else {}
+            )
         spec["credential"] = self._cipher_instance().encrypt(
             request.credential.get_secret_value(), context=self._context(user_id, spec)
         )
@@ -212,9 +221,13 @@ class PluginAccountConnectionService:
                         else 0
                     ),
                 }
+                if spec.get("localGrants"):
+                    spec["oauthRevocation"]["localPrincipals"] = spec["localGrants"]
             else:
                 spec["oauthRevocation"] = {"state": "unsupported"}
         spec.update(status="disconnected", credential=None, deviceGrants={})
+        if "localGrants" in spec:
+            spec["localGrants"] = {}
         self._advance(db, row, spec, expected_revision)
         return self._response(row)
 

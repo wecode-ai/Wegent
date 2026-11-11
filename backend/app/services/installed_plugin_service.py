@@ -103,6 +103,7 @@ class InstalledPluginService:
         user_id: int,
         installed_id: int,
         request: InstalledPluginUpdateRequest,
+        commit: bool = True,
     ) -> InstalledPlugin:
         acquire_plugin_write_lock(db, user_id)
         row = self._get_active_installed_plugin(
@@ -134,7 +135,10 @@ class InstalledPluginService:
                 )
             spec["updatePolicy"] = request.updatePolicy
         replace_installed_kind(db, row, payload)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(row)
         return self._kind_to_installed_plugin(row)
 
@@ -144,6 +148,7 @@ class InstalledPluginService:
         db: Session,
         user_id: int,
         installed_id: int,
+        commit: bool = True,
     ) -> None:
         acquire_plugin_write_lock(db, user_id)
         row = self._get_active_installed_plugin(
@@ -154,7 +159,10 @@ class InstalledPluginService:
         spec["enabled"] = False
         spec["installState"] = "uninstalled"
         replace_installed_kind(db, row, payload, is_active=False)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
 
     def package_data_for_download(
         self, *, db: Session, user_id: int, installed_id: int
@@ -307,6 +315,7 @@ class InstalledPluginService:
         user_id: int,
         marketplace_id: int,
         enabled: bool = True,
+        commit: bool = True,
     ) -> InstalledPlugin:
         acquire_plugin_write_lock(db, user_id)
         row = (
@@ -351,6 +360,7 @@ class InstalledPluginService:
             return self._reactivate_existing(
                 db,
                 row=existing,
+                commit=commit,
                 parsed=parsed,
                 package_bytes=package_bytes,
                 file_hash=file_hash,
@@ -367,6 +377,7 @@ class InstalledPluginService:
         return self._create_installed_plugin(
             db=db,
             user_id=user_id,
+            commit=commit,
             parsed=parsed,
             package_bytes=package_bytes,
             file_hash=file_hash,
@@ -384,6 +395,7 @@ class InstalledPluginService:
         db: Session,
         user_id: int,
         plugin_key: str,
+        commit: bool = True,
     ) -> InstalledPlugin:
         acquire_plugin_write_lock(db, user_id)
         row = self._find_marketplace_item(
@@ -414,6 +426,7 @@ class InstalledPluginService:
             db=db,
             user_id=user_id,
             marketplace_id=row.id,
+            commit=commit,
         )
 
     def _reactivate_existing(
@@ -430,6 +443,7 @@ class InstalledPluginService:
         provider_key: str = "codex-local",
         marketplace_id: int | None = None,
         marketplace_name: str | None = None,
+        commit: bool = True,
     ) -> InstalledPlugin:
         package_ref = self._package_ref(row.id, file_hash, len(package_bytes))
         payload = self._build_payload(
@@ -451,7 +465,10 @@ class InstalledPluginService:
             file_hash=file_hash,
             filename=filename,
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(row)
         return self._kind_to_installed_plugin(row)
 
@@ -469,6 +486,7 @@ class InstalledPluginService:
         provider_key: str,
         marketplace_id: int | None,
         marketplace_name: str | None = None,
+        commit: bool = True,
     ) -> InstalledPlugin:
         row = Kind(
             user_id=user_id,
@@ -499,7 +517,10 @@ class InstalledPluginService:
             file_hash=file_hash,
             filename=filename,
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(row)
         return self._kind_to_installed_plugin(row)
 
