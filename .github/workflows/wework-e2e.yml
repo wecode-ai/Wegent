@@ -542,12 +542,14 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Windows installer packaging dependencies
-        if: needs.changes.outputs.windows_installer_e2e == 'true'
+        # Core E2E runs host installer verification in the underloaded core-10
+        # shard; this build-job path remains the installer-only fallback.
+        if: needs.changes.outputs.windows_installer_e2e == 'true' && needs.changes.outputs.windows_desktop_core_e2e != 'true'
         shell: pwsh
         run: pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Build Windows NSIS installer for alternate-drive E2E
-        if: needs.changes.outputs.windows_installer_e2e == 'true'
+        if: needs.changes.outputs.windows_installer_e2e == 'true' && needs.changes.outputs.windows_desktop_core_e2e != 'true'
         shell: pwsh
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -570,7 +572,7 @@ jobs:
           }
 
       - name: Verify alternate-drive installation as a standard user
-        if: needs.changes.outputs.windows_installer_e2e == 'true'
+        if: needs.changes.outputs.windows_installer_e2e == 'true' && needs.changes.outputs.windows_desktop_core_e2e != 'true'
         shell: pwsh
         env:
           WEWORK_E2E_WINDOWS_INSTALLER: ${{ github.workspace }}/wework/electron/release-installer
@@ -632,7 +634,7 @@ jobs:
           compression-level: 0
 
       - name: Upload Windows installer verification evidence
-        if: always() && needs.changes.outputs.windows_installer_e2e == 'true'
+        if: always() && needs.changes.outputs.windows_installer_e2e == 'true' && needs.changes.outputs.windows_desktop_core_e2e != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: wework-windows-installer-evidence
@@ -920,6 +922,57 @@ jobs:
           path: .ci-artifacts/windows-standard-user/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Install Windows installer packaging dependencies
+        # Packaging and the real alternate-drive installation run beside the
+        # other core shards instead of delaying every shard from the build job.
+        if: always() && matrix.id == 'core-10' && needs.changes.outputs.windows_installer_e2e == 'true'
+        shell: pwsh
+        run: pnpm --dir wework/electron install --frozen-lockfile
+
+      - name: Build Windows NSIS installer for alternate-drive E2E
+        if: always() && matrix.id == 'core-10' && needs.changes.outputs.windows_installer_e2e == 'true'
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          # This installer only feeds the E2E run, so trade package size for
+          # packaging time instead of using the release compression mode.
+          for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+            pnpm --dir wework/electron exec electron-builder --config electron-builder.config.cjs --win --x64 --prepackaged release/WeWork-win32-x64 --publish never --config.compression=store
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) {
+              throw "Failed to build the Windows installer"
+            }
+            Start-Sleep -Seconds (10 * $attempt)
+          }
+          $installers = @(Get-ChildItem "wework/electron/release-installer" -Filter "*-setup.exe" -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one Windows installer, found $($installers.Count)"
+          }
+
+      - name: Verify alternate-drive installation as a standard user
+        if: always() && matrix.id == 'core-10' && needs.changes.outputs.windows_installer_e2e == 'true'
+        shell: pwsh
+        env:
+          WEWORK_E2E_WINDOWS_INSTALLER: ${{ github.workspace }}/wework/electron/release-installer
+        run: |
+          & ./.github/scripts/run-windows-standard-user-process.ps1 `
+            -FilePath (Get-Command node).Source `
+            -ArgumentList "wework/e2e/desktop/windows-installer.e2e.mjs"
+
+      - name: Upload Windows installer verification evidence
+        if: always() && matrix.id == 'core-10' && needs.changes.outputs.windows_installer_e2e == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-windows-installer-evidence
+          path: |
+            wework/test-results/desktop-e2e/windows-installer/evidence.json
+            wework/test-results/desktop-e2e/windows-installer/app.log
+            wework/test-results/desktop-e2e/windows-installer/ui-helper.log
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
 
       - name: Fail Windows Wework desktop Core shard E2E
         if: always() && steps.windows-core-e2e.outcome == 'failure'

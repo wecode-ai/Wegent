@@ -196,6 +196,7 @@ for (const [path, expected] of [
 const gate = "needs.changes.outputs.windows_desktop_core_e2e == 'true'";
 const installerGate = "needs.changes.outputs.windows_installer_e2e == 'true'";
 const buildGate = `${gate} || ${installerGate}`;
+const installerFallbackGate = `${installerGate} && needs.changes.outputs.windows_desktop_core_e2e != 'true'`;
 const cloudBlock = workflow
   .split("  wework-desktop-cloud-e2e:\n")[1]
   .split(/\n  [\w-]+:\n/)[0];
@@ -257,7 +258,7 @@ assert.match(
 assert.match(
   buildBlock,
   /name: Verify alternate-drive installation as a standard user\n        if: [^\n]+\n        shell: pwsh\n        env:\n          WEWORK_E2E_WINDOWS_INSTALLER: [^\n]+\n        run: \|\n          & \.\/\.github\/scripts\/run-windows-standard-user-process\.ps1 `\n            -FilePath \(Get-Command node\)\.Source `\n            -ArgumentList "wework\/e2e\/desktop\/windows-installer\.e2e\.mjs"/,
-  "Installer verification must run in the existing build job as a standard user",
+  "Installer verification must run as a standard user in the shard or installer-only build fallback",
 );
 assert.ok(
   buildBlock.indexOf("Verify alternate-drive installation") >
@@ -267,9 +268,15 @@ for (const [name, expectedGate] of [
   ["Prepare Windows Redis E2E tools", gate],
   ["Upload Windows Wework desktop Core E2E build", gate],
   ["Upload Windows Redis E2E tools", gate],
-  ["Install Windows installer packaging dependencies", installerGate],
-  ["Build Windows NSIS installer for alternate-drive E2E", installerGate],
-  ["Verify alternate-drive installation as a standard user", installerGate],
+  ["Install Windows installer packaging dependencies", installerFallbackGate],
+  [
+    "Build Windows NSIS installer for alternate-drive E2E",
+    installerFallbackGate,
+  ],
+  [
+    "Verify alternate-drive installation as a standard user",
+    installerFallbackGate,
+  ],
 ]) {
   const step = buildBlock
     .split(`      - name: ${name}\n`)[1]
@@ -285,12 +292,24 @@ const evidenceStep = buildBlock
   .split("      - name:")[0];
 assert.equal(
   evidenceStep.match(/^        if: (.+)$/m)?.[1],
-  "always() && needs.changes.outputs.windows_installer_e2e == 'true'",
+  `always() && ${installerFallbackGate}`,
 );
 assert.match(evidenceStep, /windows-installer\/evidence\.json/);
 assert.match(evidenceStep, /windows-installer\/app\.log/);
 assert.match(evidenceStep, /windows-installer\/ui-helper\.log/);
 assert.doesNotMatch(evidenceStep, /release-installer|\.exe/);
+const shardBlock = workflow
+  .split("  wework-desktop-windows-core-e2e:\n")[1]
+  .split(/\n  [\w-]+:\n/)[0];
+assert.match(
+  shardBlock,
+  /name: Verify alternate-drive installation as a standard user\n        if: always\(\) && matrix\.id == 'core-10' && needs\.changes\.outputs\.windows_installer_e2e == 'true'/,
+  "Core E2E runs must host installer verification in the balanced core-10 shard",
+);
+assert.ok(
+  shardBlock.indexOf("Verify alternate-drive installation") >
+    shardBlock.indexOf("Build Windows NSIS installer"),
+);
 assert.match(
   buildBlock,
   /!wework\/test-results\/desktop-e2e\/windows-installer\/\*\*/,
