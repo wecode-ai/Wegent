@@ -65,35 +65,17 @@ export class PreferencesStore {
     }
     try {
       const value = JSON.parse(content) as unknown
-      return value && typeof value === 'object' && !Array.isArray(value)
-        ? (value as Record<string, unknown>)
-        : {}
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('Invalid application preferences')
+      return value as Record<string, unknown>
     } catch (error) {
-      await this.quarantineDamagedFile(error)
+      this.readFailure = new Error(
+        'Application preferences are damaged; the original file is preserved'
+      )
+      console.warn('[Preferences] Damaged settings are read-only', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
       return {}
-    }
-  }
-
-  /**
-   * Content that cannot be parsed must not break every consumer: keep the
-   * original bytes for diagnosis, then continue with defaults so the store
-   * heals itself on the next write instead of failing permanently.
-   */
-  private async quarantineDamagedFile(reason: unknown): Promise<void> {
-    const path = this.path()
-    const quarantined = `${path}.corrupt-${Date.now()}`
-    try {
-      await rename(path, quarantined)
-      console.warn('[Preferences] Moved an unreadable preferences file aside', {
-        path,
-        quarantined,
-        reason: describeError(reason),
-      })
-    } catch (error) {
-      console.warn('[Preferences] Could not move an unreadable preferences file aside', {
-        path,
-        reason: describeError(error),
-      })
     }
   }
 

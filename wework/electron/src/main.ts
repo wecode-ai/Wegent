@@ -1032,15 +1032,22 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     })
   })
   try {
-    await rendererStorage?.prepareOrigin(new URL(dshUrl).origin, {
-      clearAll: () => contents.session.clearData({ dataTypes: ['localStorage'] }),
-      clearOrigin: origin =>
-        contents.session.clearData({
-          dataTypes: ['localStorage'],
-          origins: [origin],
-          originMatchingMode: 'origin-in-all-contexts',
-        }),
-    })
+    await rendererStorage
+      ?.prepareOrigin(new URL(dshUrl).origin, {
+        clearAll: () => contents.session.clearData({ dataTypes: ['localStorage'] }),
+        clearOrigin: origin =>
+          contents.session.clearData({
+            dataTypes: ['localStorage'],
+            origins: [origin],
+            originMatchingMode: 'origin-in-all-contexts',
+          }),
+      })
+      .catch(error => {
+        console.warn(
+          '[renderer-storage] Origin cleanup failed; opening with browser state preserved',
+          error
+        )
+      })
     const targetUrl = new URL(dshUrl)
     if (pluginDevelopmentInstance) {
       targetUrl.searchParams.set(

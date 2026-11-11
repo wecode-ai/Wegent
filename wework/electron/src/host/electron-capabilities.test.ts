@@ -599,6 +599,14 @@ describe('renderer heap debugger ownership', () => {
 })
 
 describe('startup renderer capabilities', () => {
+  test('preserves the failed task-list source in the startup handoff', async () => {
+    const rendererStartupReady = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, { rendererStartupReady })
+    for (const source of ['task-list', 'task-list-error', 'unrecognized']) {
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'renderer.startupReady', { source })
+    }
+    expect(rendererStartupReady.mock.calls).toEqual([['task-list'], ['task-list-error'], ['other']])
+  })
   test('forwards the real renderer failure and supplies a message for legacy callers', async () => {
     const rendererStartupFailed = vi.fn()
     const { router } = createIsolatedClipboardRouter(true, { rendererStartupFailed })

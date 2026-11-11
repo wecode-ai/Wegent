@@ -43,6 +43,8 @@ cannot be enabled or disabled separately from the plugin management page.
 
 Open **bottom-left account menu → Settings → Personal → General**. The page groups basic preferences, runtime, AI assistance, privacy and the popout window. Most switches save immediately; check the page for save errors.
 
+The workbench remains open when the settings file is damaged or unreadable, and the original file is preserved. This does not authorize importing or removing native Codex credentials or replacing the active shortcut with a default. Affected setting changes report a failure and can be retried after repairing the file.
+
 | Feature                                    | Steps and result                                                                                             | Conditions or limitations                                                                                       |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | Mode                                       | Select Focus or Developer mode and confirm                                                                   | Restarts the managed plugin runtime; Focus mode hides Git entries                                               |

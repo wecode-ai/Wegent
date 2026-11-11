@@ -732,7 +732,7 @@ impl WorktreeManager {
             .lock()
             .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let key = normalized_path_key(path);
-        let mut record = {
+        let (mut record, known_roots) = {
             let _guard = self
                 .mutation_lock
                 .lock()
@@ -740,15 +740,17 @@ impl WorktreeManager {
             let mut state = self.load();
             discover_worktrees(&mut state, &self.device_id);
             ensure_managed_path(path, &state.known_roots)?;
-            state
+            let record = state
                 .records
                 .get(&key)
                 .cloned()
-                .ok_or_else(|| "Managed worktree was not found".to_owned())?
+                .ok_or_else(|| "Managed worktree was not found".to_owned())?;
+            (record, state.known_roots)
         };
         // Wait without holding the registry lock, then validate the actual
         // directory immediately before mutation under its lifetime lock.
         let _directory = wegent_workspace::workspace_lifetime::remove_directory(path)?;
+        ensure_managed_path(path, &known_roots)?;
         if path.exists() {
             if preserve_snapshot {
                 validate_record_worktree_identity(&record, path)?;

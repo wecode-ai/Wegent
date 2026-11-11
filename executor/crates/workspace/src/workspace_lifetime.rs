@@ -44,8 +44,22 @@ fn access(path: &Path) -> Result<Arc<RwLock<()>>, String> {
     Ok(lock)
 }
 
-pub async fn use_directory(path: &Path) -> Result<OwnedRwLockReadGuard<()>, String> {
-    Ok(access(path)?.read_owned().await)
+pub async fn use_directory(path: &Path) -> Result<Vec<OwnedRwLockReadGuard<()>>, String> {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(path)
+    };
+    let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+    let mut guards = Vec::new();
+    // Removing a directory must wait for Git using any descendant, including
+    // nested repositories and directories whose .git entry is already absent.
+    for ancestor in canonical.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        guards.push(access(ancestor)?.read_owned().await);
+    }
+    Ok(guards)
 }
 
 /// Like the synchronous filesystem mutation it protects, call outside async workers.

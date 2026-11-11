@@ -19,6 +19,15 @@ fn shell_path(path: &Path) -> String {
 
 #[tokio::test]
 async fn cleanup_waits_for_owned_git_on_exit_timeout_and_cancellation() {
+    assert_git_cleanup_waits(false).await;
+}
+
+#[tokio::test]
+async fn cleanup_waits_for_owned_git_in_nested_directories() {
+    assert_git_cleanup_waits(true).await;
+}
+
+async fn assert_git_cleanup_waits(nested: bool) {
     for completion in ["exit", "timeout", "cancel"] {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("source");
@@ -40,7 +49,12 @@ async fn cleanup_waits_for_owned_git_on_exit_timeout_and_cancellation() {
             shell_path(&ready),
             shell_path(&release)
         );
-        let query_path = path.clone();
+        let query_path = if nested {
+            path.join("nested/directory")
+        } else {
+            path.clone()
+        };
+        fs::create_dir_all(&query_path).unwrap();
         let query = tokio::spawn(async move {
             wegent_workspace::native_git::run_git_capture(
                 &["-c".to_owned(), alias, "hold".to_owned()],
@@ -99,4 +113,49 @@ async fn cleanup_waits_for_owned_git_on_exit_timeout_and_cancellation() {
             .unwrap();
         assert!(!path.exists());
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cleanup_revalidates_parent_after_waiting_for_git() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    super::tests::initialize_repository(&source);
+    let manager = WorktreeManager::new(root.path().join("runtime-work/worktrees.json"));
+    manager
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(root.path().join("managed").display().to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+    let record = manager.prepare(&source, "task-1", None, false).unwrap();
+    let path = PathBuf::from(record.path);
+    fs::remove_file(path.join(".git")).unwrap();
+    let access = wegent_workspace::workspace_lifetime::use_directory(&path)
+        .await
+        .unwrap();
+    let target = root.path().join("unrelated");
+    fs::create_dir_all(target.join(path.file_name().unwrap())).unwrap();
+    let sentinel = target.join(path.file_name().unwrap()).join("preserve.txt");
+    fs::write(&sentinel, "unrelated data").unwrap();
+    let delete_path = path.clone();
+    let (finished, mut finishing) = tokio::sync::oneshot::channel();
+    tokio::task::spawn_blocking(move || {
+        let _ = finished.send(manager.delete(&delete_path, false));
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut finishing)
+            .await
+            .is_err()
+    );
+    let parent = path.parent().unwrap();
+    fs::rename(parent, parent.with_extension("original")).unwrap();
+    std::os::unix::fs::symlink(&target, parent).unwrap();
+    drop(access);
+    let result = tokio::time::timeout(Duration::from_secs(10), finishing)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(result.unwrap_err().contains("outside managed roots"));
+    assert_eq!(fs::read_to_string(sentinel).unwrap(), "unrelated data");
 }

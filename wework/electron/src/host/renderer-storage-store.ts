@@ -92,6 +92,7 @@ export class RendererStorageStore {
     return this.serial(async () => {
       const state = await this.readFile()
       if (this.readFailure) throw this.readFailure
+      const seed = state ? null : this.pendingSeed
       const entries = Object.create(null) as Record<string, string>
       if (!update.clear) {
         for (const [key, value] of Object.entries(state?.entries ?? this.pendingSeed ?? {})) {
@@ -106,7 +107,10 @@ export class RendererStorageStore {
         }
       }
       await this.writeFile({ version: 1, entries })
-      this.notifyUpdate(update)
+      this.notifyUpdate({
+        clear: update.clear,
+        changes: { ...(!update.clear ? seed : null), ...update.changes },
+      })
     })
   }
 
@@ -159,21 +163,28 @@ export class RendererStorageStore {
   private async readOriginFile(): Promise<RendererStorageOriginState | null> {
     try {
       const value = JSON.parse(await readFile(this.originPath(), 'utf8')) as unknown
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('Invalid renderer origin history')
       const record = value as Partial<RendererStorageOriginState>
       if (
         record.version !== 1 ||
         !Array.isArray(record.origins) ||
-        record.origins.length === 0 ||
         record.origins.some(origin => typeof origin !== 'string')
       ) {
-        return null
+        throw new Error('Invalid renderer origin history entries')
       }
+      if (record.origins.length === 0) return null
       return { version: 1, origins: record.origins }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      console.warn('[renderer-storage] Origin history is unavailable', error)
-      return null
+      if (error instanceof SyntaxError) {
+        // Syntax errors can expose the JSON source, including a stored URL.
+        error.message = 'Invalid origin history JSON'
+        error.stack = undefined
+      }
+      throw new Error('Renderer storage origin history is unreadable; browser state is preserved', {
+        cause: error,
+      })
     }
   }
 

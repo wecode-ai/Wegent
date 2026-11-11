@@ -150,7 +150,7 @@ async fn capture_git(
 
 async fn supervise_git(
     mut child: tokio::process::Child,
-    _access: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
+    _access: Option<Vec<tokio::sync::OwnedRwLockReadGuard<()>>>,
     cwd: Option<std::path::PathBuf>,
     input: Option<Vec<u8>>,
     deadline: time::Instant,

@@ -516,11 +516,16 @@ pub async fn worktree_add(
                 );
             }
         }
-        let probe_args = owned_args(&["-C", target, "rev-parse", "--show-toplevel"]);
-        let (probe_stdout, _, probe_success) =
-            run_git(&probe_args, None, &process_env, call_timeout, 4096)
-                .await
-                .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
+        let probe_args = owned_args(&["rev-parse", "--show-toplevel"]);
+        let (probe_stdout, _, probe_success) = run_git(
+            &probe_args,
+            Some(target_path),
+            &process_env,
+            call_timeout,
+            4096,
+        )
+        .await
+        .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
         // `--is-inside-work-tree` is true for any directory inside a repository,
         // so compare the resolved repository top level with the target itself;
         // only a real worktree root may be reused or force-checked-out.
@@ -531,11 +536,10 @@ pub async fn worktree_add(
                 == target_path.canonicalize().ok();
         if already_worktree {
             if let Some(branch) = branch {
-                let checkout_args =
-                    owned_args(&["-C", target, "checkout", "--force", "--detach", branch]);
+                let checkout_args = owned_args(&["checkout", "--force", "--detach", branch]);
                 let (stdout, stderr, success) = run_git(
                     &checkout_args,
-                    None,
+                    Some(target_path),
                     &process_env,
                     call_timeout,
                     max_output_bytes,
@@ -560,8 +564,6 @@ pub async fn worktree_add(
             };
         }
         let mut add_args = vec![
-            "-C".to_owned(),
-            source.clone(),
             "worktree".to_owned(),
             "add".to_owned(),
             "--detach".to_owned(),
@@ -572,7 +574,7 @@ pub async fn worktree_add(
         }
         let (stdout, stderr, success) = run_git(
             &add_args,
-            None,
+            Some(Path::new(source)),
             &process_env,
             call_timeout,
             max_output_bytes,
@@ -604,11 +606,16 @@ pub async fn worktree_remove(
     let process_env = build_env(env);
     let call_timeout = GIT_CALL_TIMEOUT.min(Duration::from_secs_f64(timeout_seconds.max(1.0)));
     let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
-    let args = owned_args(&["-C", &target, "worktree", "remove", "--force", &target]);
-    let (stdout, stderr, success) =
-        run_git(&args, None, &process_env, call_timeout, max_output_bytes)
-            .await
-            .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
+    let args = owned_args(&["worktree", "remove", "--force", &target]);
+    let (stdout, stderr, success) = run_git(
+        &args,
+        Some(Path::new(&target)),
+        &process_env,
+        call_timeout,
+        max_output_bytes,
+    )
+    .await
+    .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
     build_result(started_at, success, stdout, stderr, None)
 }
 

@@ -32,7 +32,8 @@ interface LocalRuntimeInitializerProps {
 }
 
 type LocalRuntimeState =
-  | { phase: 'starting' | 'ready'; error: null }
+  | { phase: 'starting'; error: string | null }
+  | { phase: 'ready'; error: null }
   | { phase: 'failed'; error: string; cause: unknown }
 
 interface LocalRuntimeErrorText {
@@ -250,7 +251,7 @@ export function LocalRuntimeInitializer({
     setStartupAttempt(attempt => attempt + 1)
     setSlowStartupTimedOut(false)
     setCopyDebugState('idle')
-    setState({ phase: 'starting', error: null })
+    setState(previous => ({ phase: 'starting', error: previous.error }))
     setState(await resolveLocalRuntimeState(fallbackError, runtimeErrorText))
   }, [enabled, fallbackError, runtimeErrorText])
 
@@ -299,13 +300,20 @@ export function LocalRuntimeInitializer({
   }, [startupReady, state.error, state.phase, t])
 
   const canMountChildren = state.phase !== 'starting' || startupAttempt > 0
-  const failed = state.phase === 'failed'
 
   return (
     <>
       {canMountChildren && (
         <LocalRuntimeNoticeContext.Provider
-          value={failed ? { error: state.error, retry: () => void retryInitialize() } : null}
+          value={
+            state.error !== null
+              ? {
+                  error: state.error,
+                  retrying: state.phase === 'starting',
+                  retry: () => void retryInitialize(),
+                }
+              : null
+          }
         >
           <div>{children}</div>
         </LocalRuntimeNoticeContext.Provider>

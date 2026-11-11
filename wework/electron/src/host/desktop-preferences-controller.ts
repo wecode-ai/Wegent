@@ -19,7 +19,7 @@ export class DesktopPreferencesController {
   private operation = Promise.resolve()
 
   constructor(
-    private readonly store: Pick<PreferencesStore, 'read' | 'update'>,
+    private readonly store: Pick<PreferencesStore, 'read' | 'readSnapshot' | 'update'>,
     private readonly effects: DesktopPreferenceEffects
   ) {}
 
@@ -53,7 +53,10 @@ export class DesktopPreferencesController {
     }
     if (!changesShortcut && !changesRecording) return this.store.update(patch)
 
-    const previous = await this.store.read()
+    const snapshot = await this.store.readSnapshot()
+    if (!snapshot.readable)
+      throw new Error('Cannot change desktop effects while settings are unreadable')
+    const previous = snapshot.preferences
     try {
       if (changesShortcut) {
         this.effects.configurePopoutShortcut(resolvePopoutShortcut(patch))

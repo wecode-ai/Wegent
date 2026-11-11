@@ -166,7 +166,7 @@ export function TelemetryAgent() {
     [telemetryEnabled, telemetryExplicitlyDisabled]
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     telemetryEnabledRef.current = telemetryEnabled
     telemetryExplicitlyDisabledRef.current = telemetryExplicitlyDisabled
     if (telemetryExplicitlyDisabled) {
@@ -257,7 +257,12 @@ export function TelemetryAgent() {
       .list()
       .then(installations => {
         const installation = installations.find(item => item.id === installationId)
-        if (!telemetryEnabledRef.current || telemetryUserRef.current !== observedUser) return
+        if (
+          telemetryExplicitlyDisabledRef.current ||
+          !telemetryEnabledRef.current ||
+          telemetryUserRef.current !== observedUser
+        )
+          return
         dispatcher.publish({
           ...routeFact,
           ...(installation
@@ -276,7 +281,11 @@ export function TelemetryAgent() {
       })
       .catch(() => {
         console.warn('[Wework telemetry] App metadata unavailable')
-        if (telemetryEnabledRef.current && telemetryUserRef.current === observedUser)
+        if (
+          !telemetryExplicitlyDisabledRef.current &&
+          telemetryEnabledRef.current &&
+          telemetryUserRef.current === observedUser
+        )
           dispatcher.publish(routeFact)
       })
   }, [dispatcher, feature, isLoading, pathname, telemetryEnabled, search])

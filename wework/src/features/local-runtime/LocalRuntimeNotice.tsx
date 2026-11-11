@@ -29,11 +29,13 @@ export function LocalRuntimeNotice() {
       <Button
         type="button"
         variant="outline"
+        className="h-11 md:h-10"
+        disabled={failure.retrying}
         onClick={failure.retry}
         data-testid="local-runtime-retry-button"
       >
         <RefreshCw className="h-4 w-4" />
-        {t('retry')}
+        {t(failure.retrying ? 'starting_title' : 'retry')}
       </Button>
     </aside>
   )

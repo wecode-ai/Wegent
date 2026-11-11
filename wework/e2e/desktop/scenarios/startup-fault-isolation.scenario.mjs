@@ -163,6 +163,31 @@ export async function createDesktopScenario({
         resultDir,
         version: metadata.version,
       })
+      const origins = join(electronUserDataDirectory, 'renderer-local-storage-origins.json')
+      const originsBackup = `${origins}.startup-original`
+      let originsPreserved
+      try {
+        await restartDesktopApp(async () => {
+          originsPreserved = await readFile(origins)
+          await rename(origins, originsBackup)
+          await mkdir(origins)
+        })
+        await control.command('waitFor', '[data-testid="app-shell"]', {
+          timeoutMs: workbenchReadyTimeoutMs,
+        })
+        assert.deepEqual(await readFile(originsBackup), originsPreserved)
+        await writeFile(
+          join(resultDir, 'startup-origin-history-result.json'),
+          JSON.stringify({ workbenchAvailable: true, originalHistoryPreserved: true })
+        )
+      } finally {
+        if (originsPreserved) {
+          await restartDesktopApp(async () => {
+            await rm(origins, { recursive: true })
+            await rename(originsBackup, origins)
+          })
+        }
+      }
       const durableState = join(electronUserDataDirectory, 'renderer-local-storage.json')
       let original
       const damaged = '{damaged-durable-state'

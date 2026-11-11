@@ -307,9 +307,15 @@ describe('LocalRuntimeInitializer', () => {
 
   test('keeps the workbench open during a local service failure and retry', async () => {
     const startupError = new Error('stdio unavailable')
-    ensureMock
-      .mockRejectedValueOnce(startupError)
-      .mockResolvedValueOnce({ running: true, ready: true, deviceId: 'local-device' })
+    let finishRetry:
+      | ((value: { running: boolean; ready: boolean; deviceId: string }) => void)
+      | undefined
+    ensureMock.mockRejectedValueOnce(startupError).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishRetry = resolve
+        })
+    )
 
     Object.defineProperty(navigator, 'userAgent', {
       configurable: true,
@@ -331,6 +337,11 @@ describe('LocalRuntimeInitializer', () => {
     )
 
     await userEvent.click(screen.getByTestId('local-runtime-retry-button'))
+    expect(screen.getByTestId('local-runtime-error')).toHaveTextContent('stdio unavailable')
+    expect(screen.getByTestId('local-runtime-retry-button')).toBeDisabled()
+    expect(screen.getByTestId('main-app')).toBeVisible()
+    await act(async () => finishRetry?.({ running: true, ready: true, deviceId: 'local-device' }))
+    await waitFor(() => expect(screen.queryByTestId('local-runtime-error')).not.toBeInTheDocument())
 
     await waitFor(() => expect(screen.getByTestId('main-app')).toBeInTheDocument())
   })

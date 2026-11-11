@@ -17,6 +17,35 @@ async function createStore(): Promise<{ root: string; store: RendererStorageStor
 }
 
 describe('RendererStorageStore', () => {
+  it('notifies login observers when a pending seed becomes durable through an unrelated update', async () => {
+    const { root } = await createStore()
+    const notify = vi.fn()
+    const store = new RendererStorageStore(root, notify)
+    const blocked = join(root, `renderer-local-storage.json.${process.pid}.tmp`)
+    await mkdir(blocked)
+    await store.initialize({ 'wework.cloudConnection': 'synthetic-session' })
+    expect(notify).not.toHaveBeenCalled()
+    await rm(blocked, { recursive: true })
+    await store.update({ clear: false, changes: { appearance: 'dark' } })
+    expect(notify).toHaveBeenCalledExactlyOnceWith({
+      clear: false,
+      changes: { 'wework.cloudConnection': 'synthetic-session', appearance: 'dark' },
+    })
+  })
+
+  it('preserves browser state when origin history cannot be read', async () => {
+    const { root, store } = await createStore()
+    await store.initialize({ credential: 'preserved' })
+    const history = join(root, 'renderer-local-storage-origins.json')
+    await mkdir(history)
+    const cleanup = { clearAll: vi.fn(), clearOrigin: vi.fn() }
+    await expect(store.prepareOrigin('http://127.0.0.1:4101', cleanup)).rejects.toThrow(
+      'unreadable'
+    )
+    expect(cleanup.clearAll).not.toHaveBeenCalled()
+    expect(cleanup.clearOrigin).not.toHaveBeenCalled()
+    await expect(store.read()).resolves.toEqual({ credential: 'preserved' })
+  })
   it('refuses a snapshot boundary until temporary initial state can be persisted', async () => {
     const { root, store } = await createStore()
     const path = join(root, 'renderer-local-storage.json')

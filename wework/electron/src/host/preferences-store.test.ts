@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import { PreferencesStore } from './preferences-store.js'
 
 const roots: string[] = []
@@ -75,29 +75,28 @@ describe('PreferencesStore', () => {
     await expect(new PreferencesStore(root).read()).resolves.toEqual({})
   })
 
-  test('quarantines an unreadable preferences file instead of failing forever', async () => {
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const root = await mkdtemp(join(tmpdir(), 'wework-preferences-'))
-    roots.push(root)
-    const path = join(root, 'app-preferences.json')
-    const damaged = `{"locale": "zh-CN"\u0000\u0000`
-    await writeFile(path, damaged, 'utf8')
-    const store = new PreferencesStore(root)
-
-    await expect(store.read()).resolves.toEqual({})
-
-    const quarantined = (await readdir(root)).filter(name =>
-      name.startsWith('app-preferences.json.corrupt-')
-    )
-    expect(quarantined).toHaveLength(1)
-    await expect(readFile(join(root, quarantined[0] as string), 'utf8')).resolves.toBe(damaged)
-    await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
-
-    // The next write publishes a valid file again, so the store heals itself.
-    await expect(store.update({ locale: 'zh-CN' })).resolves.toEqual({ locale: 'zh-CN' })
-    await expect(new PreferencesStore(root).read()).resolves.toEqual({ locale: 'zh-CN' })
-    warning.mockRestore()
-  })
+  test.each(['{"locale": "zh-CN"', 'null', '[]'])(
+    'preserves damaged preferences and treats consent as unknown: %s',
+    async damaged => {
+      const root = await mkdtemp(join(tmpdir(), 'wework-preferences-'))
+      roots.push(root)
+      const path = join(root, 'app-preferences.json')
+      await writeFile(path, damaged)
+      const store = new PreferencesStore(root)
+      await expect(store.readSnapshot()).resolves.toEqual({ preferences: {}, readable: false })
+      await expect(store.update({ localCodexSubscriptionEnabled: true })).rejects.toThrow('damaged')
+      expect(await readFile(path, 'utf8')).toBe(damaged)
+      await expect(new PreferencesStore(root).readSnapshot()).resolves.toEqual({
+        preferences: {},
+        readable: false,
+      })
+      await writeFile(path, '{"localCodexSubscriptionEnabled":false}')
+      await expect(store.readSnapshot()).resolves.toEqual({
+        preferences: { localCodexSubscriptionEnabled: false },
+        readable: true,
+      })
+    }
+  )
 
   test('opens with defaults but refuses to overwrite an unreadable file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-preferences-'))

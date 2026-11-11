@@ -288,7 +288,7 @@ export interface ElectronE2EHost {
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
-  rendererStartupReady: (source: 'task-list' | 'other') => void | Promise<void>
+  rendererStartupReady: (source: 'task-list' | 'task-list-error' | 'other') => void | Promise<void>
   rendererStartupFailed: (failure: {
     message: string
     stack?: string
@@ -457,11 +457,12 @@ export function createElectronCapabilityRouter(
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
-  router.register('renderer.startupReady', params =>
-    e2eHost.rendererStartupReady(
-      optionalStringParam(params, 'source') === 'task-list' ? 'task-list' : 'other'
+  router.register('renderer.startupReady', params => {
+    const source = optionalStringParam(params, 'source')
+    return e2eHost.rendererStartupReady(
+      source === 'task-list' || source === 'task-list-error' ? source : 'other'
     )
-  )
+  })
   router.register('renderer.startupFailed', params =>
     e2eHost.rendererStartupFailed({
       message: optionalStringParam(params, 'message') ?? 'Desktop frontend failed to initialize',
