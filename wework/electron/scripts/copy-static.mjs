@@ -21,6 +21,10 @@ await cp(
   resolve(root, 'src/runtime/release-preparation-progress.mjs'),
   resolve(root, 'dist/runtime/release-preparation-progress.mjs')
 )
+await cp(
+  resolve(root, 'src/runtime/installed-preparation-contract.mjs'),
+  resolve(root, 'dist/runtime/installed-preparation-contract.mjs')
+)
 await mkdir(resolve(root, 'dist/shell'), { recursive: true })
 await cp(resolve(root, 'src/shell'), resolve(root, 'dist/shell'), {
   recursive: true,

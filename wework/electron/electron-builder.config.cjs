@@ -106,6 +106,7 @@ module.exports = {
     target: ['nsis'],
   },
   nsis: {
+    include: path.resolve(__dirname, 'scripts/installer.nsh'),
     oneClick: false,
     allowElevation: false,
     allowToChangeInstallationDirectory: false,
