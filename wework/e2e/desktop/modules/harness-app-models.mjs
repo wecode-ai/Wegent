@@ -365,16 +365,10 @@ async function verifyStopDuringHeldLaunchResponse(
       timeoutMs: uiTimeoutMs,
     })
     const afterLateResponse = await workbenchState(control, INSTALLED_APP_ID)
-    assert.equal(
-      afterLateResponse.contentsId,
-      newSurface.contentsId,
-      'A late response replaced the current Host surface'
-    )
-    assert.equal(
-      afterLateResponse.url,
-      reopened.webUrl,
-      'A late response restored an obsolete runtime URL'
-    )
+    assertCurrentHarnessAppSurface(afterLateResponse, {
+      contentsId: newSurface.contentsId,
+      webUrl: reopened.webUrl,
+    })
     const persisted = await waitForRunningInstallation(
       electronUserDataDirectory,
       INSTALLED_APP_ID,
@@ -394,6 +388,20 @@ async function verifyStopDuringHeldLaunchResponse(
     await gates.reset()
   }
 }
+
+export function assertCurrentHarnessAppSurface(actual, expected) {
+  assert.equal(
+    actual.contentsId,
+    expected.contentsId,
+    'A late response replaced the current Host surface'
+  )
+  assert.equal(
+    new URL(actual.url).href,
+    new URL(expected.webUrl).href,
+    'A late response restored an obsolete runtime URL'
+  )
+}
+
 async function workbenchState(control, installationId) {
   return JSON.parse(
     await control.command('workbenchApp', 'body', {
