@@ -3211,7 +3211,7 @@ fn fork_launch_config_owns_its_route_with_or_without_a_running_source() {
 
 #[test]
 fn binds_an_idle_thread_to_the_task_model_route() {
-    let _lock = crate::test_env::lock();
+    let _environment = environment::LaunchEnvironment::new();
     let root = unique_test_path("idle-thread-route");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
     let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
@@ -3260,7 +3260,7 @@ fn binds_an_idle_thread_to_the_task_model_route() {
 
 #[test]
 fn skips_the_local_route_for_providers_that_are_reached_directly() {
-    let _lock = crate::test_env::lock();
+    let _environment = environment::LaunchEnvironment::new();
     let root = unique_test_path("direct-provider-route");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
     let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
