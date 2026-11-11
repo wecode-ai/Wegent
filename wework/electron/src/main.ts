@@ -424,6 +424,7 @@ let pendingSystemDrops: Array<{
 let runtimeError: string | null = null
 let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
+let runtimeConfigurationPromise: Promise<void> | null = null
 let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let pythonRuntimeManagerPromise: Promise<PythonRuntimeManager> | null = null
@@ -1614,7 +1615,8 @@ async function createWindow(
   startupSplashWindow.on('closed', () => {
     startupSplashWindow = null
   })
-  startupProgress.report('launch')
+  const progress = startupProgress.currentUpdate()
+  if (progress) startupSplash.updateProgress(progress)
   mainWindow.on('focus', () => {
     mainWindow?.webContents.send('window:focus-changed', true)
   })
@@ -1879,15 +1881,20 @@ async function reactivateMainWindow(): Promise<void> {
   if (deferredWorkspaceWindowRestore) await restoreFixedWorkspaceWindows()
 }
 
-const ensureWorkbenchWindow = createSingleFlight(async () => {
-  await desktopHostReadiness.wait()
+const createWorkbenchWindow = createSingleFlight(async () => {
   if (quitting || (mainWindow && !mainWindow.isDestroyed())) return
   const current = await requiredPreferences().read()
+  if (quitting) return
   await createWindow(
     resolveStartupSplashTheme(current.appearanceMode, nativeTheme.shouldUseDarkColors),
     current.mainWindowState
   )
-  void startDesktopRuntime()
+})
+
+const ensureWorkbenchWindow = createSingleFlight(async () => {
+  await desktopHostReadiness.wait()
+  await createWorkbenchWindow()
+  if (!quitting) void startDesktopRuntime()
 })
 
 function dispatchTrayAction(action: TrayAction): void {
@@ -2285,6 +2292,10 @@ function installIpc(): void {
 }
 
 async function shutdown(): Promise<void> {
+  await traceShutdownStep('runtime-configuration', async () => {
+    // Configuration owns newly created services until it settles; reclaim them afterwards.
+    await Promise.allSettled([runtimeConfigurationPromise])
+  })
   await traceShutdownStep('main-window-state', () => mainWindowState?.stop()).catch(error => {
     console.error('[window-state] Failed to save main window geometry during shutdown', error)
   })
@@ -2457,8 +2468,16 @@ const ensureDesktopControlBridge = createSingleFlight(
   }
 )
 
-async function configureDesktopRuntime(): Promise<void> {
-  if (desktopRuntime) return
+function configureDesktopRuntime(): Promise<void> {
+  if (runtimeConfigurationPromise) return runtimeConfigurationPromise
+  if (desktopRuntime) return Promise.resolve()
+  runtimeConfigurationPromise = initializeDesktopRuntime().finally(() => {
+    runtimeConfigurationPromise = null
+  })
+  return runtimeConfigurationPromise
+}
+
+async function initializeDesktopRuntime(): Promise<void> {
   logStartupStep('runtime-configure', 'started')
   logStartupStep('workbench-mode-initialize', 'started')
   await initializeWorkbenchModePreference(requiredPreferences(), {
@@ -3085,6 +3104,53 @@ function startDesktopRuntime(): Promise<void> {
   return runtimeStartPromise
 }
 
+async function initializeDesktopSession(): Promise<void> {
+  startupProgress.report('launch')
+  const activeReleaseId = process.env.WEWORK_ACTIVE_RELEASE_ID
+  const releases = new ReleaseStore(join(app.getPath('userData'), 'releases'))
+  const activation = activeReleaseId ? await releases.activation() : null
+  const healthyActivationToken = activation
+    ? await optionalText(join(releases.root, 'healthy'))
+    : null
+  const startupMode = workbenchStartupMode({
+    hasApplicationRequest: applicationLaunches.hasPending(),
+    hasWorkbenchRequest:
+      workbenchForegroundRequested ||
+      pendingSchemes.read().length > 0 ||
+      Boolean(startupWorkspaceOpenRequest),
+    activeReleaseId,
+    activation,
+    healthyActivationToken,
+  })
+  backgroundWorkbenchStartup = startupMode === 'background-workbench'
+  // Static shells use the already installed stores, IPC, menu and close policy.
+  // Runtime pages remain behind desktopHostReadiness until Host setup completes.
+  if (startupMode !== 'application-only') await createWorkbenchWindow()
+  if (quitting) return
+  await configureDesktopRuntime()
+  if (quitting) return
+  await workbenchApplications?.start()
+  if (quitting) return
+  desktopHostReadiness.complete()
+  await startWorkbenchSession(startupMode, {
+    startWorkbench: ensureWorkbenchWindow,
+    openApplications: () =>
+      applicationLaunches.start(async id => {
+        if (!workbenchApplications) throw new Error('Workbench Host is unavailable')
+        await workbenchApplications.open(id)
+      }),
+    startControlBridge: ensureDesktopControlBridge,
+  })
+}
+
+function failDesktopHostStartup(error: unknown): void {
+  desktopHostReadiness.fail(error)
+  if (quitting) return
+  recordStartupFailure(error, 'desktop_host')
+  console.error('[startup] failed to initialize desktop host', error)
+  dialog.showErrorBox('Wework', error instanceof Error ? error.message : String(error))
+}
+
 if (hasSingleInstanceLock) {
   app
     .whenReady()
@@ -3220,42 +3286,9 @@ if (hasSingleInstanceLock) {
       } catch (error) {
         console.warn('[menu] failed to install application menu', error)
       }
-      const activeReleaseId = process.env.WEWORK_ACTIVE_RELEASE_ID
-      const releases = new ReleaseStore(join(app.getPath('userData'), 'releases'))
-      const activation = activeReleaseId ? await releases.activation() : null
-      const healthyActivationToken = activation
-        ? await optionalText(join(releases.root, 'healthy'))
-        : null
-      await configureDesktopRuntime()
-      await workbenchApplications?.start()
-      const startupMode = workbenchStartupMode({
-        hasApplicationRequest: applicationLaunches.hasPending(),
-        hasWorkbenchRequest:
-          workbenchForegroundRequested ||
-          pendingSchemes.read().length > 0 ||
-          Boolean(startupWorkspaceOpenRequest),
-        activeReleaseId,
-        activation,
-        healthyActivationToken,
-      })
-      backgroundWorkbenchStartup = startupMode === 'background-workbench'
-      desktopHostReadiness.complete()
-      await startWorkbenchSession(startupMode, {
-        startWorkbench: ensureWorkbenchWindow,
-        openApplications: () =>
-          applicationLaunches.start(async id => {
-            if (!workbenchApplications) throw new Error('Workbench Host is unavailable')
-            await workbenchApplications.open(id)
-          }),
-        startControlBridge: ensureDesktopControlBridge,
-      })
+      await initializeDesktopSession()
     })
-    .catch(error => {
-      desktopHostReadiness.fail(error)
-      if (quitting) return
-      console.error('[startup] failed to initialize desktop host', error)
-      dialog.showErrorBox('Wework', error instanceof Error ? error.message : String(error))
-    })
+    .catch(failDesktopHostStartup)
 }
 
 function reportLogCleanup(result: LogCleanupResult): void {

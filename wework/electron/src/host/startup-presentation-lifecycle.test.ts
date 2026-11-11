@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import {
   createSourceFile,
@@ -11,7 +12,11 @@ import {
 } from 'typescript'
 import { afterEach, expect, test, vi } from 'vitest'
 import { MainWindowStateController } from './main-window-state.js'
-import { presentWindow } from './window-presentation.js'
+import { createSingleFlight, presentWindow } from './window-presentation.js'
+import { DesktopHostReadiness } from './desktop-host-readiness.js'
+import { StartupProgressReporter } from './startup-progress.js'
+import { resolveStartupSplashTheme, StartupSplash } from './startup-splash.js'
+import { startWorkbenchSession, workbenchStartupMode } from './workbench-startup-mode.js'
 
 function productionFunction<T>(name: string, context: Record<string, unknown>): T {
   // Execute production functions without launching the Electron main process.
@@ -238,4 +243,424 @@ test('restores a saved maximized state on the first foreground show without reve
   expect(update).toHaveBeenCalledExactlyOnceWith({
     mainWindowState: { bounds: window.bounds, maximized: true },
   })
+})
+
+class StartupShellWindow extends EventEmitter {
+  shown = false
+  destroyed = false
+  contentsDestroyed = false
+  isDestroyed = () => this.destroyed
+  isVisible = () => this.shown
+  loadFile = vi.fn(async () => {})
+  show = vi.fn(() => {
+    this.shown = true
+  })
+  maximize = vi.fn()
+  setOpacity = vi.fn()
+  close = vi.fn(() => {
+    this.destroyed = true
+    this.shown = false
+    this.emit('closed')
+  })
+  webContents = {
+    isDestroyed: () => this.destroyed || this.contentsDestroyed,
+    send: vi.fn(),
+    executeJavaScript: vi.fn(async () => true),
+    capturePage: vi.fn(async () => ({ toPNG: () => Buffer.from('splash') })),
+  }
+}
+
+/** Execute the production bootstrap, shell creation and activation with native boundaries stubbed. */
+function startupFixture(applicationOnly = false, trial = false, loadFailure?: 'shell' | 'splash') {
+  const windows: StartupShellWindow[] = []
+  const stages: string[] = []
+  const events: string[] = []
+  const readiness = new DesktopHostReadiness()
+  let release!: () => void
+  let configured!: () => void
+  const configurationStarted = new Promise<void>(resolve => {
+    configured = resolve
+  })
+  const configuration = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const progress = new StartupProgressReporter(update => {
+    stages.push(update.stage.id)
+    context.startupSplash?.updateProgress(update)
+  })
+  const context = {
+    mainWindow: null as StartupShellWindow | null,
+    startupSplashWindow: null as StartupShellWindow | null,
+    startupSplash: null as StartupSplash | null,
+    startupProgress: progress,
+    desktopHostReadiness: readiness,
+    recordStartupFailure: vi.fn(),
+    dialog: { showErrorBox: vi.fn() },
+    console: { error: vi.fn(), warn: vi.fn() },
+    Error,
+    startupWorkspaceOpenRequest: null,
+    backgroundWorkbenchStartup: false,
+    workbenchForegroundRequested: false,
+    quitting: false,
+    startupTiming: null,
+    pluginDevelopmentInstance: false,
+    developmentDockIdentity: null,
+    process: { env: trial ? { WEWORK_ACTIVE_RELEASE_ID: 'target' } : {} },
+    app: { getPath: () => '/test-profile' },
+    ReleaseStore: class {
+      root = '/test-profile/releases'
+      async activation() {
+        return { to: 'target', token: 'trial-token' }
+      }
+    },
+    optionalText: async () => null,
+    applicationLaunches: {
+      hasPending: () => applicationOnly,
+      start: vi.fn(async () => {
+        events.push('applications-opened')
+      }),
+    },
+    pendingSchemes: { read: () => [] },
+    workbenchStartupMode,
+    startWorkbenchSession,
+    workbenchApplications: {
+      start: vi.fn(async () => {
+        events.push('host-started')
+      }),
+      open: vi.fn(async () => {}),
+    },
+    configureDesktopRuntime: vi.fn(async () => {
+      events.push('configuration-started')
+      progress.report('components')
+      configured()
+      await configuration
+      for (const stage of ['cli', 'workspace', 'services']) progress.report(stage)
+      events.push('configuration-completed')
+    }),
+    startDesktopRuntime: vi.fn(async () => {
+      events.push('runtime-started')
+      progress.report('core-dsh')
+      progress.report('renderer')
+      progress.complete()
+    }),
+    ensureDesktopControlBridge: vi.fn(async () => {
+      events.push('control-started')
+    }),
+    requiredPreferences: () => ({ read: async () => ({ appearanceMode: 'light' }) }),
+    resolveStartupSplashTheme,
+    nativeTheme: { shouldUseDarkColors: false },
+    BrowserWindow: class extends StartupShellWindow {
+      constructor() {
+        super()
+        const shell = windows.length === 0
+        if ((shell && loadFailure === 'shell') || (!shell && loadFailure === 'splash')) {
+          this.loadFile.mockRejectedValue(new Error(`${loadFailure} load failed`))
+        }
+        windows.push(this)
+      }
+    },
+    screen: {
+      getDisplayNearestPoint: () => ({ workArea: {} }),
+      getCursorScreenPoint: () => ({}),
+      getAllDisplays: () => [],
+    },
+    startupWindowLayout: () => ({ bounds: {}, maximized: false }),
+    desktopWindowFrameOptions: () => ({}),
+    workbenchBackgroundThrottling: () => false,
+    dshPreloadPath: '/preload',
+    startupSplashPreloadPath: '/splash-preload',
+    installE2ERendererCpuProfiling: vi.fn(),
+    restoreMainWindowOnFirstShow: vi.fn(),
+    StartupSplash,
+    keepE2EWindowInBackground: false,
+    logStartupStep: vi.fn(),
+    layoutPrimaryView: vi.fn(),
+    packageRoot: '/package',
+    resolve,
+    join,
+    createWindow: async () => {},
+    createWorkbenchWindow: async () => {},
+    ensureWorkbenchWindow: async () => {},
+    focusStartupSplashIfActive: () => context.startupSplash?.snapshot().state !== 'closed',
+    setDockVisible: async () => {},
+    presentMainWindow: vi.fn(),
+    loadPrimaryDshView: async () => {},
+    deferredWorkspaceWindowRestore: false,
+    restoreFixedWorkspaceWindows: async () => {},
+  }
+  context.createWindow = productionFunction('createWindow', context)
+  context.createWorkbenchWindow = createSingleFlight(
+    productionFunction('createWorkbenchWindow', context)
+  )
+  context.ensureWorkbenchWindow = createSingleFlight(
+    productionFunction('ensureWorkbenchWindow', context)
+  )
+  return {
+    context,
+    events,
+    stages,
+    windows,
+    release,
+    configurationStarted,
+    progress,
+    initialize: productionFunction<() => Promise<void>>('initializeDesktopSession', context),
+    activate: productionFunction<() => Promise<void>>('reactivateMainWindow', context),
+    fail: productionFunction<(error: Error) => Promise<void>>('failDesktopHostStartup', context),
+  }
+}
+
+test('foreground startup shows real shells before Host configuration and preserves durable stages', async () => {
+  const fixture = startupFixture()
+  const pending = fixture.initialize()
+  await fixture.configurationStarted
+  expect(fixture.windows).toHaveLength(2)
+  expect(fixture.windows[0].shown).toBe(false)
+  expect(fixture.windows[1].shown).toBe(true)
+  expect(fixture.stages).toEqual(['launch', 'shell', 'components'])
+  expect(fixture.context.startDesktopRuntime).not.toHaveBeenCalled()
+  fixture.release()
+  await pending
+  expect(fixture.progress.history().map(update => update.stage.id)).toEqual([
+    'launch',
+    'shell',
+    'components',
+    'cli',
+    'workspace',
+    'services',
+    'core-dsh',
+    'renderer',
+  ])
+  expect(fixture.events).toEqual([
+    'configuration-started',
+    'configuration-completed',
+    'host-started',
+    'runtime-started',
+    'applications-opened',
+  ])
+  expect(fixture.windows).toHaveLength(2)
+})
+
+test('application-only startup creates no shells and later activation retains process progress', async () => {
+  const fixture = startupFixture(true)
+  const pending = fixture.initialize()
+  await fixture.configurationStarted
+  expect(fixture.windows).toHaveLength(0)
+  fixture.release()
+  await pending
+  expect(fixture.windows).toHaveLength(0)
+  expect(fixture.context.startDesktopRuntime).not.toHaveBeenCalled()
+  expect(fixture.context.ensureDesktopControlBridge).toHaveBeenCalledOnce()
+  await Promise.all([fixture.activate(), fixture.activate()])
+  expect(fixture.windows).toHaveLength(2)
+  expect(fixture.context.startDesktopRuntime).toHaveBeenCalledOnce()
+  expect(fixture.context.configureDesktopRuntime).toHaveBeenCalledOnce()
+  expect(fixture.progress.history().map(update => update.stage.id)).toEqual([
+    'launch',
+    'components',
+    'cli',
+    'workspace',
+    'services',
+    'core-dsh',
+    'renderer',
+  ])
+  expect(fixture.stages.filter(stage => stage === 'launch')).toHaveLength(1)
+  expect(fixture.windows[1].webContents.send).toHaveBeenCalledWith(
+    'startup-progress:update',
+    expect.objectContaining({ stage: expect.objectContaining({ id: 'services' }) })
+  )
+})
+
+test('an early application-only activation waits for configured Host without duplicating windows or stages', async () => {
+  const fixture = startupFixture(true)
+  const pending = fixture.initialize()
+  await fixture.configurationStarted
+  const activation = fixture.activate()
+  expect(fixture.windows).toHaveLength(0)
+  fixture.release()
+  await Promise.all([pending, activation])
+  expect(fixture.windows).toHaveLength(2)
+  expect(fixture.context.startDesktopRuntime).toHaveBeenCalledOnce()
+  expect(fixture.stages.filter(stage => stage === 'launch')).toHaveLength(1)
+})
+
+test('an application trial prepares hidden shells before Host configuration', async () => {
+  const fixture = startupFixture(true, true)
+  const pending = fixture.initialize()
+  await fixture.configurationStarted
+  expect(fixture.context.backgroundWorkbenchStartup).toBe(true)
+  expect(fixture.windows).toHaveLength(2)
+  expect(fixture.windows.every(window => !window.shown)).toBe(true)
+  expect(fixture.stages).toEqual(['launch', 'shell', 'components'])
+  fixture.release()
+  await pending
+  expect(fixture.context.startDesktopRuntime).toHaveBeenCalledOnce()
+})
+
+test('closing an early splash during Host configuration does not start runtime or applications', async () => {
+  const fixture = startupFixture()
+  const pending = fixture.initialize()
+  await fixture.configurationStarted
+  fixture.context.quitting = true
+  fixture.release()
+  await pending
+  expect(fixture.context.workbenchApplications.start).not.toHaveBeenCalled()
+  expect(fixture.context.startDesktopRuntime).not.toHaveBeenCalled()
+  expect(fixture.context.applicationLaunches.start).not.toHaveBeenCalled()
+})
+
+test('Host configuration is single-flight even before its runtime has been assigned', async () => {
+  let release!: () => void
+  const pending = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const context = {
+    runtimeConfigurationPromise: null as Promise<void> | null,
+    desktopRuntime: null as object | null,
+    initializeDesktopRuntime: vi.fn(async () => {
+      await pending
+      context.desktopRuntime = {}
+    }),
+  }
+  const configure = productionFunction<() => Promise<void>>('configureDesktopRuntime', context)
+  const first = configure()
+  expect(configure()).toBe(first)
+  expect(context.initializeDesktopRuntime).toHaveBeenCalledOnce()
+  release()
+  await first
+  await configure()
+  expect(context.initializeDesktopRuntime).toHaveBeenCalledOnce()
+})
+
+test('shutdown waits for admitted configuration before disposing the services it creates', async () => {
+  let release!: () => void
+  const pending = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const dispose = vi.fn(async () => {})
+  const context = {
+    runtimeConfigurationPromise: pending,
+    traceShutdownStep: async (_step: string, task: () => unknown) => task(),
+    mainWindowState: null,
+    pluginDevelopmentChildRuntime: null,
+    performanceRecorder: null,
+    logRetention: { stop: vi.fn() },
+    workbenchApplications: null as { dispose: typeof dispose } | null,
+    mcpAppCleanups: new Set(),
+    settleMcpAppCleanup: async () => [],
+    mcpAppRuntime: null,
+    systemResume: { stop: vi.fn() },
+    systemSleep: { stop: vi.fn() },
+    trayNativeStatus: null,
+    workspaceWindows: new Map(),
+    disposeSystemDragWindow: vi.fn(),
+    startupSplash: null,
+    popoutWindow: null,
+    popoutWindowCreationPromise: null,
+    popoutWindowReadyPromise: null,
+    popoutWindowMode: 'composer',
+    popoutShortcut: null,
+    embeddedBrowser: null,
+    browserAnnotations: null,
+    embeddedBrowserBridge: null,
+    desktopControlBridge: null,
+    computerUse: null,
+    pluginDevelopment: null,
+    desktopRuntime: null,
+    localWorkspaceCatalogLog: { flush: async () => {} },
+  }
+  const closing = productionFunction<() => Promise<void>>('shutdown', context)()
+  await Promise.resolve()
+  expect(context.logRetention.stop).not.toHaveBeenCalled()
+  context.workbenchApplications = { dispose }
+  release()
+  await closing
+  expect(dispose).toHaveBeenCalledOnce()
+})
+
+test('Host configuration failure preserves the native error box with a visible splash', async () => {
+  const fixture = startupFixture()
+  const pending = fixture.initialize()
+  await fixture.configurationStarted
+  const error = new Error('Component preparation failed')
+  expect(fixture.context.startupSplash?.snapshot()).toMatchObject({
+    state: 'visible',
+    window: { visible: true },
+  })
+  await fixture.fail(error)
+  await expect(fixture.context.desktopHostReadiness.wait()).rejects.toBe(error)
+  expect(fixture.context.recordStartupFailure).toHaveBeenCalledWith(error, 'desktop_host')
+  expect(fixture.windows[1].webContents.executeJavaScript).not.toHaveBeenCalledWith(
+    expect.stringContaining('wework-startup-error')
+  )
+  expect(fixture.context.dialog.showErrorBox).toHaveBeenCalledWith('Wework', error.message)
+  fixture.context.quitting = true
+  fixture.release()
+  await pending
+})
+
+test.each(['shell', 'splash'] as const)(
+  'a failed %s load retains the native error box independently of splash readiness',
+  async failingPage => {
+    const fixture = startupFixture(false, false, failingPage)
+    await expect(fixture.initialize()).rejects.toThrow(`${failingPage} load failed`)
+    const error = new Error(`${failingPage} load failed`)
+    expect(fixture.context.startupSplash?.snapshot()).toMatchObject({
+      state: failingPage === 'splash' ? 'idle' : 'visible',
+      window: { visible: failingPage !== 'splash' },
+    })
+    await fixture.fail(error)
+    if (failingPage === 'splash') expect(fixture.windows.every(window => !window.shown)).toBe(true)
+    expect(fixture.context.dialog.showErrorBox).toHaveBeenCalledWith('Wework', error.message)
+    expect(fixture.windows[1].webContents.executeJavaScript).not.toHaveBeenCalledWith(
+      expect.stringContaining('wework-startup-error')
+    )
+  }
+)
+
+test.each(['closed', 'contents-destroyed', 'hidden-trial', 'script-failed'] as const)(
+  'Host failure retains the native error box when recovery is %s',
+  async unavailable => {
+    const fixture = startupFixture(unavailable === 'hidden-trial', unavailable === 'hidden-trial')
+    const pending = fixture.initialize()
+    await fixture.configurationStarted
+    const splashWindow = fixture.windows[1]
+    if (unavailable === 'closed') splashWindow.close()
+    if (unavailable === 'contents-destroyed') splashWindow.contentsDestroyed = true
+    if (unavailable === 'script-failed') {
+      splashWindow.webContents.executeJavaScript.mockRejectedValueOnce(new Error('Renderer failed'))
+    }
+    const error = new Error('Host initialization failed')
+    await fixture.fail(error)
+    expect(fixture.context.dialog.showErrorBox).toHaveBeenCalledWith('Wework', error.message)
+    expect(splashWindow.webContents.executeJavaScript).not.toHaveBeenCalledWith(
+      expect.stringContaining('wework-startup-error')
+    )
+    fixture.context.quitting = true
+    fixture.release()
+    await pending
+  }
+)
+
+test('Host failure during shutdown does not display another error box', async () => {
+  const fixture = startupFixture()
+  const pending = fixture.initialize()
+  await fixture.configurationStarted
+  fixture.context.quitting = true
+  await fixture.fail(new Error('Host initialization failed'))
+  expect(fixture.context.dialog.showErrorBox).not.toHaveBeenCalled()
+  fixture.release()
+  await pending
+})
+
+test('application-only Host failure uses the native error box without creating windows', async () => {
+  const fixture = startupFixture(true)
+  const pending = fixture.initialize()
+  await fixture.configurationStarted
+  const error = new Error('Host initialization failed')
+  await fixture.fail(error)
+  expect(fixture.windows).toHaveLength(0)
+  expect(fixture.context.dialog.showErrorBox).toHaveBeenCalledWith('Wework', error.message)
+  fixture.context.quitting = true
+  fixture.release()
+  await pending
 })
