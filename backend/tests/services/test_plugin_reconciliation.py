@@ -45,6 +45,8 @@ def reconciliation(monkeypatch):
         yield Mock()
 
     monkeypatch.setattr(module, "get_db_session", session)
+    monkeypatch.setattr(module, "lock_plugin_sync_state", Mock())
+    monkeypatch.setattr(module, "require_snapshot_revision", Mock())
     record = Mock()
     monkeypatch.setattr(
         module.plugin_device_installation_service, "_record_device_sync_result", record
@@ -251,6 +253,8 @@ async def test_reconciliation_waits_leave_loop_responsive_and_sessions_in_worker
 
     monkeypatch.setattr(module, "get_db_session", session)
     monkeypatch.setattr(module, "configure_plugin_session", lambda db: db.touch())
+    monkeypatch.setattr(module, "lock_plugin_sync_state", Mock())
+    monkeypatch.setattr(module, "require_snapshot_revision", Mock())
     monkeypatch.setattr(
         plugin_write_operations, "configure_plugin_session", lambda db: db.touch()
     )
@@ -568,3 +572,134 @@ def test_reconciliation_revalidates_the_snapshot_after_an_ack_write_conflict(
     assert latest["plugins"] == []
     assert len(opened) == 2
     record.assert_called_once()
+
+
+@pytest.fixture
+def committed_reconciliation(tmp_path, monkeypatch, plugin_write_backend):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models.plugin_marketplace import Plugin, PluginRelease
+    from app.models.user import User
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'reconciliation.db'}")
+    for model in (User, Kind, Plugin, PluginRelease, PluginDeviceInstallation):
+        model.__table__.create(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    with sessions() as db:
+        db.add(User(id=1, user_name="snapshot-owner", password_hash="synthetic"))
+        db.commit()
+        installed, release = _device_install(db, 1)
+        db.add(
+            Kind(
+                user_id=1,
+                kind="Device",
+                namespace="default",
+                name="desktop",
+                is_active=True,
+                json={"spec": {"deviceType": "remote", "deviceId": "desktop"}},
+            )
+        )
+        db.commit()
+        module.lock_plugin_sync_state(db, 1)
+        db.commit()
+        identity = (1, installed.id, release.id, sessions)
+    monkeypatch.setattr(module, "get_db_session", sessions)
+    monkeypatch.setattr(
+        plugin_package_storage,
+        "presign_download",
+        lambda key: (f"https://objects.example/{key}", datetime.now()),
+    )
+    try:
+        yield identity
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("versioned", [False, True])
+def test_new_installation_during_recording_prevents_a_false_reconciled_result(
+    committed_reconciliation, monkeypatch, versioned
+):
+    from app.models.plugin_marketplace import Plugin, PluginRelease
+    from app.services.plugin_write_coordination import acquire_plugin_write_lock
+
+    user_id, installed_id, _, sessions = committed_reconciliation
+    payload = module.desired_plugins(user_id, "desktop")
+    if versioned:
+        payload = module.load_versioned_plugin_payload(
+            sessions,
+            user_id=user_id,
+            complete=True,
+            load_payload=lambda db: module.device_capability_sync_service.build_desired_plugins(
+                db, user_id=user_id, device_id="desktop"
+            ),
+        )
+    original = module.plugin_device_installation_service._record_device_sync_result
+    created = []
+
+    def record(db, owner, result, **kwargs):
+        if not created:
+            with sessions() as writer:
+                plugin = Plugin(
+                    slug="late-install",
+                    name="late-install",
+                    display_name="Late Install",
+                    keywords_json=[],
+                    interface_json={},
+                    status="published",
+                )
+                writer.add(plugin)
+                writer.flush()
+                release = PluginRelease(
+                    plugin_id=plugin.id,
+                    version="1.0.0",
+                    manifest_json={},
+                    interface_json={},
+                    storage_key="plugins/late-install.zip",
+                    sha256="a" * 64,
+                    size_bytes=10,
+                    status="ready",
+                    scan_status="passed",
+                    scan_report_json={},
+                )
+                writer.add(release)
+                writer.flush()
+                plugin.latest_release_id = release.id
+                acquire_plugin_write_lock(writer, owner, name="late-install")
+                installed = Kind(
+                    user_id=owner,
+                    kind="InstalledPlugin",
+                    namespace="default",
+                    name="late-install",
+                    is_active=True,
+                    json={
+                        "spec": {
+                            "pluginId": plugin.id,
+                            "releaseId": release.id,
+                            "version": "1.0.0",
+                            "enabled": True,
+                            "installState": "installed",
+                        }
+                    },
+                )
+                writer.add(installed)
+                writer.commit()
+                created.append(installed.id)
+        return original(db, owner, result, **kwargs)
+
+    monkeypatch.setattr(
+        module.plugin_device_installation_service, "_record_device_sync_result", record
+    )
+    result = DeviceCapabilitySyncResult(
+        device_id="desktop",
+        success=True,
+        scope="plugins",
+        plugins=[{"id": installed_id, "status": "synced"}],
+        desired_plugin_snapshot=payload if versioned else None,
+    )
+    latest = module.record_reconciliation_result(user_id, "desktop", payload, result)
+    assert latest is not None
+    assert {item["installed_plugin_id"] for item in latest["plugins"]} == {
+        installed_id,
+        created[0],
+    }

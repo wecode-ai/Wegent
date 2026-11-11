@@ -744,3 +744,68 @@ def test_compactor_skips_unresolved_parents_before_its_mysql_batch_limit(context
             ids[0],
             ids[2],
         }
+
+
+def test_real_mysql_rejects_ack_device_writes_after_a_newer_dispatch(context):
+    from app.models.plugin_marketplace import PluginDeviceInstallation
+    from app.services.device.plugin_sync_protocol import (
+        advance_plugin_snapshot_watermark,
+        lock_plugin_sync_state,
+        register_plugin_snapshot_intent,
+    )
+    from app.services.plugin_sync_revision import remember_ack_watermark
+
+    PluginDeviceInstallation.__table__.create(
+        context.sessions.kw["bind"], checkfirst=True
+    )
+    with context.sessions() as db:
+        lock_plugin_sync_state(db, context.user_id)
+        db.add(
+            PluginDeviceInstallation(
+                user_id=context.user_id,
+                installed_kind_id=context.plugin_id,
+                device_id="ack-fence",
+                state="failed",
+                attempt_count=2,
+            )
+        )
+        db.commit()
+    with context.sessions() as acknowledgement:
+        state = lock_plugin_sync_state(acknowledgement, context.user_id, merge=True)
+        remember_ack_watermark(
+            acknowledgement, state, "ack-fence", context.plugin_id, 7
+        )
+        row = (
+            acknowledgement.query(PluginDeviceInstallation)
+            .filter_by(user_id=context.user_id, device_id="ack-fence")
+            .one()
+        )
+        row.attempt_count = 3
+        register_plugin_snapshot_intent(
+            context.sessions,
+            user_id=context.user_id,
+            device_id="ack-fence",
+            payload={
+                "plugins": [{"installed_plugin_id": context.plugin_id}],
+                "plugin_sync": {"generation": 8, "complete": False},
+            },
+        )
+        advance_plugin_snapshot_watermark(
+            state,
+            "ack-fence",
+            generation=7,
+            complete=False,
+            installed_plugin_ids=[context.plugin_id],
+        )
+        with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
+            acknowledgement.commit()
+        acknowledgement.rollback()
+    with context.sessions() as db:
+        row = (
+            db.query(PluginDeviceInstallation)
+            .filter_by(user_id=context.user_id, device_id="ack-fence")
+            .one()
+        )
+        assert row.attempt_count == 2
+        db.delete(row)
+        db.commit()

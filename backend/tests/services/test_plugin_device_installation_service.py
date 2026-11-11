@@ -594,3 +594,62 @@ def test_deferred_complete_uninstall_ack_records_other_acknowledged_plugins(
     assert rows[0].installed_kind_id == retained_id
     assert rows[0].actual_release_id == release_id
     assert rows[0].state == "installed"
+
+
+def test_pending_active_plugins_do_not_wait_for_an_inactive_plugin_lease(
+    test_db, test_user, monkeypatch
+):
+    from copy import deepcopy
+
+    from app.services import plugin_device_identity
+
+    installed, release = _device_install(test_db, test_user.id)
+    inactive = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="inactive-busy",
+        json=deepcopy(installed.json),
+        is_active=False,
+    )
+    test_db.add(inactive)
+    test_db.flush()
+    test_db.add(
+        PluginDeviceInstallation(
+            user_id=test_user.id,
+            installed_kind_id=inactive.id,
+            device_id="desktop",
+            state="uninstalling",
+        )
+    )
+    test_db.commit()
+    inactive_id = inactive.id
+    original = module.acquire_plugin_write_locks
+
+    def busy(db, targets):
+        targets = list(targets)
+        if any(id == inactive_id for _, id in targets):
+            raise PluginWriteError("plugin_write_busy")
+        original(db, targets)
+
+    monkeypatch.setattr(module, "acquire_plugin_write_locks", busy)
+    monkeypatch.setattr(plugin_device_identity, "acquire_plugin_write_locks", busy)
+    assert (
+        PluginDeviceInstallationService().ensure_pending_for_device(
+            test_db, user_id=test_user.id, device_id="desktop"
+        )
+        == 1
+    )
+    active = (
+        test_db.query(PluginDeviceInstallation)
+        .filter_by(installed_kind_id=installed.id)
+        .one()
+    )
+    assert active.desired_release_id == release.id
+    assert (
+        test_db.query(PluginDeviceInstallation)
+        .filter_by(installed_kind_id=inactive_id)
+        .one()
+        .state
+        == "uninstalling"
+    )

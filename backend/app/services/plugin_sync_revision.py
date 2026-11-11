@@ -14,6 +14,7 @@ from sqlalchemy import BigInteger, cast, func, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.distributed_lock import DistributedLockUnavailableError
 from app.models.kind import Kind
@@ -22,6 +23,8 @@ from app.services.plugin_write_errors import PluginWriteError
 _EXPECTED = "plugin_sync_expected_revisions"
 _DOCUMENTS = "plugin_sync_original_documents"
 _MERGE = "plugin_sync_merge_rows"
+_STRICT = "plugin_sync_strict_rows"
+_ACK_FENCES = "plugin_sync_ack_fences"
 logger = logging.getLogger(__name__)
 
 
@@ -31,13 +34,32 @@ def remember_sync_revision(db: Session, row: Kind, *, merge: bool = False) -> No
         raise PluginWriteError("plugin_write_conflict")
     expected = db.info.setdefault(_EXPECTED, {})
     documents = db.info.setdefault(_DOCUMENTS, {})
-    if merge:
+    if merge and row.id not in db.info.get(_STRICT, set()):
         expected[row.id] = revision
         documents[row.id] = deepcopy(row.json)
         db.info.setdefault(_MERGE, set()).add(row.id)
     else:
         expected.setdefault(row.id, revision)
         documents.setdefault(row.id, deepcopy(row.json))
+
+
+def require_snapshot_revision(db: Session, row: Kind) -> None:
+    """Keep a complete reconciliation's read fence through its final commit."""
+    db.info.setdefault(_STRICT, set()).add(row.id)
+    db.info.get(_MERGE, set()).discard(row.id)
+
+
+def remember_ack_watermark(
+    db: Session, row: Kind, device_id: str, installed_id: int, generation: int
+) -> None:
+    """Reject a superseded acknowledgement before any device writes commit."""
+    path = f"$.spec.devices.{json.dumps(device_id)}"
+    fences = db.info.setdefault(_ACK_FENCES, {}).setdefault(row.id, {})
+    for key in (
+        f"{path}.complete_generation",
+        f"{path}.plugins.{json.dumps(str(installed_id))}",
+    ):
+        fences[key] = min(fences.get(key, generation), generation)
 
 
 def _merge_patch(before: dict, after: dict) -> dict:
@@ -78,6 +100,7 @@ def flush_sync_revision(db: Session, row: Kind) -> None:
         raise PluginWriteError("plugin_write_conflict")
     db.info[_EXPECTED][row.id] = expected + 1
     db.info[_DOCUMENTS][row.id] = deepcopy(document)
+    db.info.get(_ACK_FENCES, {}).pop(row.id, None)
     set_committed_value(row, "json", document)
 
 
@@ -96,7 +119,7 @@ def _flush_merge(db: Session, row: Kind) -> None:
     maximum = func.greatest if db.get_bind().dialect.name == "mysql" else func.max
     assignments = ["$.spec.revision", revision + 1]
     for path, value in watermarks.items():
-        current = func.coalesce(cast(func.json_extract(Kind.json, path), BigInteger), 0)
+        current = _counter_value(path)
         assignments.extend((path, maximum(current, value)))
     identity = (
         Kind.id == row.id,
@@ -108,7 +131,15 @@ def _flush_merge(db: Session, row: Kind) -> None:
     )
     updated = (
         db.query(Kind)
-        .filter(*identity)
+        .filter(
+            *identity,
+            *(
+                _counter_value(path) <= generation
+                for path, generation in db.info.get(_ACK_FENCES, {})
+                .get(row.id, {})
+                .items()
+            ),
+        )
         .update(
             {Kind.json: func.json_set(merge(Kind.json, patch), *assignments)},
             synchronize_session=False,
@@ -119,7 +150,12 @@ def _flush_merge(db: Session, row: Kind) -> None:
     document = db.execute(select(Kind.json).where(*identity)).scalar_one()
     db.info[_EXPECTED][row.id] = document["spec"]["revision"]
     db.info[_DOCUMENTS][row.id] = deepcopy(document)
+    db.info.get(_ACK_FENCES, {}).pop(row.id, None)
     set_committed_value(row, "json", document)
+
+
+def _counter_value(path: str) -> ColumnElement[int]:
+    return func.coalesce(cast(func.json_extract(Kind.json, path), BigInteger), 0)
 
 
 def _pop_watermarks(changes: dict) -> dict[str, int]:
@@ -149,6 +185,8 @@ def clear_sync_revisions(db: Session) -> None:
     db.info.pop(_EXPECTED, None)
     db.info.pop(_DOCUMENTS, None)
     db.info.pop(_MERGE, None)
+    db.info.pop(_STRICT, None)
+    db.info.pop(_ACK_FENCES, None)
 
 
 def materialize_sync_state(db: Session, user_id: int, document: dict) -> None:

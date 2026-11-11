@@ -362,3 +362,93 @@ def test_independent_first_creators_compare_only_their_own_slot(scoped_db):
     with Session(bind) as fresh:
         state = lock_plugin_sync_state(fresh, 913)
         assert state.json["spec"]["creationRevisions"] == {"new-a": 1, "new-b": 1}
+
+
+@pytest.mark.parametrize("complete", [False, True])
+def test_new_dispatch_before_commit_rejects_an_obsolete_failed_ack(
+    scoped_db, plugin_write_backend, monkeypatch, complete
+):
+    from app.services.device.capability_sync_service import (
+        device_capability_sync_service,
+    )
+
+    bind = scoped_db.get_bind()
+    PluginDeviceInstallation.__table__.create(bind)
+    installed_id = installation(scoped_db, "ack-fence")
+    parent = scoped_db.get(Kind, installed_id)
+    parent.json = {"spec": {**parent.json["spec"], "releaseId": 2}}
+    scoped_db.add(
+        PluginDeviceInstallation(
+            user_id=913,
+            installed_kind_id=installed_id,
+            device_id="device",
+            desired_release_id=2,
+            actual_release_id=1,
+            state="failed",
+            attempt_count=2,
+        )
+    )
+    scoped_db.commit()
+    state = lock_plugin_sync_state(scoped_db, 913)
+    scoped_db.commit()
+    state_id = state.id
+    desired = {"installed_plugin_id": installed_id, "version": "2.0.0"}
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "_load_installed_plugins",
+        lambda *args, **kwargs: [desired],
+    )
+    advance = plugin_sync_recording.advance_plugin_snapshot_watermark
+    attempts = []
+
+    def dispatch_before_commit(state, device_id, **kwargs):
+        attempts.append(device_id)
+        if len(attempts) == 1:
+            with Session(bind) as dispatch:
+                row = dispatch.get(Kind, state_id)
+                document = deepcopy(row.json)
+                device = (
+                    {"complete_generation": 8}
+                    if complete
+                    else {"plugins": {str(installed_id): 8}}
+                )
+                document["spec"].update(
+                    revision=document["spec"].get("revision", 0) + 1,
+                    generation=8,
+                    devices={"device": device},
+                )
+                row.json = document
+                dispatch.commit()
+        advance(state, device_id, **kwargs)
+
+    monkeypatch.setattr(
+        plugin_sync_recording,
+        "advance_plugin_snapshot_watermark",
+        dispatch_before_commit,
+    )
+    result = DeviceCapabilitySyncResult(
+        device_id="device",
+        success=False,
+        error="obsolete failure",
+        plugins=[{"id": installed_id, "status": "failed"}],
+        desired_plugin_snapshot={
+            "plugins": [desired],
+            "plugin_sync": {"version": 2, "generation": 7, "complete": False},
+        },
+    )
+    service = PluginDeviceInstallationService()
+    service.record_device_sync_result(scoped_db, user_id=913, result=result)
+    row = scoped_db.query(PluginDeviceInstallation).one()
+    assert attempts == ["device", "device"]
+    assert row.attempt_count == 2
+    assert row.actual_release_id == 1
+    current = result.model_copy(deep=True)
+    current.success = True
+    current.error = None
+    current.plugins[0].status = "synced"
+    current.desired_plugin_snapshot["plugin_sync"]["generation"] = 8
+    service.record_device_sync_result(scoped_db, user_id=913, result=current)
+    row = scoped_db.query(PluginDeviceInstallation).one()
+    assert row.state == "installed"
+    assert row.actual_release_id == 2
+    assert not plugin_write_backend.values

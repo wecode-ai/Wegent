@@ -16,6 +16,7 @@ from app.services.device.plugin_sync_protocol import (
     lock_plugin_sync_state,
     plugin_snapshot_watermark,
 )
+from app.services.plugin_sync_revision import remember_ack_watermark
 
 
 def stable_plugin(plugin: dict[str, Any]) -> dict[str, Any]:
@@ -127,6 +128,9 @@ def record_versioned_result(
         if previous is not None and desired is not None:
             if stable_plugin(desired) != stable_plugin(previous):
                 continue
+            remember_ack_watermark(
+                db, sync_state, result.device_id, installed.id, generation
+            )
             recorder._record_desired_install(
                 db,
                 user_id=user_id,
@@ -140,6 +144,9 @@ def record_versioned_result(
             )
             if row is None:
                 continue
+            remember_ack_watermark(
+                db, sync_state, result.device_id, installed.id, generation
+            )
             if result.success and (item is None or item.status == "removed"):
                 db.delete(row)
             elif not result.success or (item and item.status == "failed"):

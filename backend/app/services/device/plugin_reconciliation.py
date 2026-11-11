@@ -1,6 +1,7 @@
 """Reconcile account-managed plugins without changing independent capabilities."""
 
 import asyncio
+from copy import deepcopy
 from typing import Any
 
 from fastapi import HTTPException
@@ -12,12 +13,16 @@ from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyn
 from app.schemas.installed_plugin import PluginDeviceSyncResponse
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.device.plugin_change_sync import dispatch_snapshot
-from app.services.device.plugin_sync_protocol import load_versioned_plugin_payload
+from app.services.device.plugin_sync_protocol import (
+    load_versioned_plugin_payload,
+    lock_plugin_sync_state,
+)
 from app.services.plugin_device_installation_service import (
     _is_mysql_deadlock,
     plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
+from app.services.plugin_sync_revision import require_snapshot_revision
 from app.services.plugin_write_coordination import (
     acquire_plugin_write_locks,
     configure_plugin_session,
@@ -62,6 +67,8 @@ def record_reconciliation_result(
         acquire_plugin_write_locks(
             db, ((user_id, installed_id) for installed_id in scopes)
         )
+        state = lock_plugin_sync_state(db, user_id)
+        require_snapshot_revision(db, state)
         latest = device_capability_sync_service.build_desired_plugins(
             db, user_id=user_id, device_id=device_id
         )
@@ -73,6 +80,7 @@ def record_reconciliation_result(
             plugin_device_installation_service._record_device_sync_result(
                 db, user_id, result, installed_ids=scopes
             )
+            state.json = deepcopy(state.json)
             db.commit()
         except OperationalError as error:
             if _is_mysql_deadlock(error):

@@ -580,7 +580,7 @@ class PluginDeviceInstallationService:
         """
         scopes = [item.id for item in self._desired_installs(db, user_id)]
         acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
-        reconcile_plugin_device_rows(db, user_id)
+        reconcile_plugin_device_rows(db, user_id, installed_ids=scopes)
         normalized_device_id = plugin_device_id(db, user_id, device_id)
         if not normalized_device_id:
             db.commit()

@@ -352,6 +352,8 @@ def _remember_savepoint(db: Session, transaction: SessionTransaction) -> None:
         "plugin_sync_expected_revisions",
         "plugin_sync_original_documents",
         "plugin_sync_merge_rows",
+        "plugin_sync_strict_rows",
+        "plugin_sync_ack_fences",
     )
     frame = {key: deepcopy(db.info.get(key)) for key in keys}
     frame[_NEW_INSTALLS] = list(db.info.get(_NEW_INSTALLS, []))
