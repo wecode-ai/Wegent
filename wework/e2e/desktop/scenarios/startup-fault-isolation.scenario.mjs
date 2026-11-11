@@ -7,7 +7,7 @@ import {
 } from '../modules/startup-fault-isolation.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
-import { waitForSnapshot } from '../modules/shared.mjs'
+import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 
 async function reloadWorkbench(control, timeoutMs) {
   const before = control.readyCount
