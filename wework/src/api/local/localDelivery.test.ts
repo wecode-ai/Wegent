@@ -1442,3 +1442,34 @@ describe('local delivery API', () => {
     })
   })
 })
+
+test('forwards explicit Project presentation scope while retaining the actual Group owner', async () => {
+  const record = { ...taskRecord, cloud_project_id: 'group-owner', version: 2 }
+  const request = vi.fn(async (method: string) => {
+    if (method === 'todos.list') return [record]
+    if (method === 'todos.update') return { ...record, version: 3 }
+    throw new Error(`Unexpected method: ${method}`)
+  })
+  const api = createLocalDeliveryApi(request)
+  await api.listLoopItems('project-classification')
+  await api.updateLoopItem(record.id, {
+    version: 2,
+    status: 'pending',
+    position: {
+      beforeItemId: 'foreign-group-anchor',
+      classificationProjectId: 'project-classification',
+    },
+  })
+  expect(request).toHaveBeenCalledWith('todos.update', {
+    project_id: 'group-owner',
+    task_id: record.id,
+    todo: {
+      version: 2,
+      status: 'pending',
+      position: {
+        before_item_id: 'foreign-group-anchor',
+        classification_project_id: 'project-classification',
+      },
+    },
+  })
+})

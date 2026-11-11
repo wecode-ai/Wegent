@@ -104,7 +104,11 @@ export interface CollaborationWorkspaceControllerCommands {
   ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
-    options?: { invalidate?: boolean; throwOnError?: boolean },
+    options?: {
+      invalidate?: boolean;
+      throwOnError?: boolean;
+      refreshProjectMetadata?: boolean;
+    },
   ): Promise<WorkspaceBoardSnapshot | null>;
   loadMoreExternalColumn(status: string): Promise<void>;
   getIssue(issueId: string): Promise<CollaborationIssue | null>;
@@ -1194,9 +1198,9 @@ export function createCollaborationWorkspaceControllerCommands({
       if (options?.invalidate) markProjectMutated(projectId);
       const mutationGeneration = projectMutationGeneration(projectId);
       try {
-        const project = catalogProjects.find(
-          (candidate) => candidate.id === projectId,
-        );
+        const project = options?.refreshProjectMetadata
+          ? await api.projects.get(projectId)
+          : catalogProjects.find((candidate) => candidate.id === projectId);
         const snapshot =
           project && isExternalGitProject(project)
             ? (
@@ -1214,6 +1218,12 @@ export function createCollaborationWorkspaceControllerCommands({
             : await loadStandardSnapshot(projectId);
         if (mutationGeneration !== projectMutationGeneration(projectId))
           return null;
+        if (options?.refreshProjectMetadata && project) {
+          catalogProjects = catalogProjects.map((candidate) =>
+            candidate.id === project.id ? project : candidate,
+          );
+          dispatch({ type: "replace-project", project });
+        }
         dispatch({ type: "project-snapshot-loaded", projectId, snapshot });
         return snapshot;
       } catch {

@@ -26,6 +26,7 @@ const fixture = () => [
   row('runtime.worktrees.capabilities'),
   row('runtime.stand_in.telemetry.configure', 500, { consentEnabled: false }),
   row('executor.events'),
+  row('chat_groups.list'),
   ...windows.flatMap(window => [
     row('executor.describe', window.start + 100),
     row('runtime.tasks.list', window.start + 200, { pendingOnly: true, preferCached: true }),
@@ -110,6 +111,7 @@ for (const method of [
   'runtime.worktrees.capabilities',
   'runtime.stand_in.telemetry.configure',
   'executor.events',
+  'chat_groups.list',
 ]) {
   test(`idle contract rejects duplicate ${method}`, () => {
     assert.throws(() => assertIdleExecutorTraffic([...fixture(), row(method, 1200)], windows))
@@ -136,6 +138,18 @@ test('idle contract rejects full catalogs, unknown task work, failures and missi
     () => assertIdleExecutorTraffic(fixture(), [{ ...windows[0], end: 2000 }]),
     /did not cross a poll interval/
   )
+})
+
+test('the group directory is loaded once before either idle observation window', () => {
+  for (const window of windows) {
+    const rows = fixture().map(item =>
+      item.method === 'chat_groups.list' ? { ...item, at: window.start + 300 } : item
+    )
+    assert.throws(
+      () => assertIdleExecutorTraffic(rows, windows),
+      /repeated startup configuration or discovery/
+    )
+  }
 })
 
 test('idle checkpoint is standalone and selected by the existing CI shard and source routing', () => {

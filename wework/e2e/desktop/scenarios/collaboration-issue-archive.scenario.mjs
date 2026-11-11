@@ -61,22 +61,36 @@ async function openArchiveDrawer(control, timeoutMs) {
   })
 }
 
-async function restoreIssue(control, issueId, title, timeoutMs) {
+async function waitForArchivedIssue(control, issueId, title, timeoutMs) {
   const archivedIssue = scoped(`[data-testid="collaboration-archived-issue-${issueId}"]`)
   await control.command('waitFor', archivedIssue, {
     text: title,
     visible: true,
     timeoutMs,
   })
+  for (const selector of [
+    scoped(`[data-testid="collaboration-archived-issue-restore-${issueId}"]`),
+    scoped('[data-testid="collaboration-issue-archive-drawer-close"]'),
+  ]) {
+    await control.command('waitFor', selector, { visible: true, timeoutMs })
+  }
+}
+
+async function restoreIssue(control, issueId, title, timeoutMs) {
+  await waitForArchivedIssue(control, issueId, title, timeoutMs)
   await control.command(
     'clickWhenEnabled',
     scoped(`[data-testid="collaboration-archived-issue-restore-${issueId}"]`),
     { timeoutMs }
   )
-  await control.command('waitFor', archivedIssue, {
-    visible: false,
-    timeoutMs,
-  })
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="collaboration-archived-issue-${issueId}"]`),
+    {
+      visible: false,
+      timeoutMs,
+    }
+  )
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
@@ -113,6 +127,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
       await archiveIssue(control, firstIssueId, FIRST_ISSUE, uiTimeoutMs)
       await openArchiveDrawer(control, uiTimeoutMs)
+      await waitForArchivedIssue(control, firstIssueId, FIRST_ISSUE, uiTimeoutMs)
       await captureVerificationScreenshot(
         control,
         'collaboration-issue-archive-01-single-archived.png',
@@ -155,6 +170,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       }
 
       await openArchiveDrawer(control, uiTimeoutMs)
+      for (const [issueId, title] of [
+        [firstIssueId, FIRST_ISSUE],
+        [secondIssueId, SECOND_ISSUE],
+      ]) {
+        await waitForArchivedIssue(control, issueId, title, uiTimeoutMs)
+      }
       await captureVerificationScreenshot(
         control,
         'collaboration-issue-archive-02-batch-archived.png',

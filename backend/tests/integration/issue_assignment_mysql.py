@@ -344,6 +344,11 @@ def main() -> None:
         )
 
         verify_thread_classification(engine)
+        from tests.integration.project_board_order_mysql import (
+            verify_project_board_order,
+        )
+
+        verify_project_board_order(engine)
         from tests.integration.thread_binding_mysql import (
             verify_group_conversation_binding,
             verify_group_repeatable_read_revocation,

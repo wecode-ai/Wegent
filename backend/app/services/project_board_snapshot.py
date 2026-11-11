@@ -69,16 +69,19 @@ class ProjectBoardSnapshotService:
                 assignee_type=assignee_type,
                 assignee_id=assignee_id,
             )
-            return [LoopItemResponse.model_validate(item) for item in items] + [
+            values = items + external_project_thread_values(
+                db,
+                str(project.id),
+                user_id,
+                assignee_type=assignee_type,
+                assignee_id=assignee_id,
+                execution_state=execution_state,
+            )
+            from app.services.project_board_order import project_order_values
+
+            return [
                 LoopItemResponse.model_validate(value)
-                for value in external_project_thread_values(
-                    db,
-                    str(project.id),
-                    user_id,
-                    assignee_type=assignee_type,
-                    assignee_id=assignee_id,
-                    execution_state=execution_state,
-                )
+                for value in project_order_values(project, values)
             ]
 
         items = loop_item_service.list_for_access(
@@ -104,6 +107,10 @@ class ProjectBoardSnapshotService:
                     user_id,
                 )
             )
+        if not isinstance(project, CollaborationChatGroup):
+            from app.services.project_board_order import project_order_values
+
+            values = project_order_values(project, values)
         by_id = {value["id"]: value for value in values}
         return [
             LoopItemResponse.model_validate(by_id[item.id])

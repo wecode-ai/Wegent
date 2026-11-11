@@ -7,6 +7,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from time import monotonic
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -39,8 +40,24 @@ def save_receipts(path: Path, value: dict[str, object]) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def report_stage(stage: str, started_at: float) -> None:
+    """Keep operator progress observable without changing the JSON result stream."""
+    print(
+        json.dumps(
+            {
+                "migration_stage": stage,
+                "elapsed_seconds": round(monotonic() - started_at, 3),
+            }
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def main() -> None:
+    started_at = monotonic()
     options = parse_arguments()
+    report_stage("initializing", started_at)
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from app.db.session import get_db_session
     from app.services.thread_migration import apply_thread_migration
@@ -67,12 +84,18 @@ def main() -> None:
                 ThreadMigrationObjectCopy(**row) for row in recorded["objects"]
             ),
         )
+        report_stage("receipts-loaded", started_at)
     else:
+        report_stage("assets-started", started_at)
         assets = prepare_thread_migration_assets(**arguments)
+        report_stage("assets-prepared", started_at)
         save_receipts(options.receipts_file, asdict(assets))
+        report_stage("receipts-saved", started_at)
+    report_stage("ownership-started", started_at)
     result = apply_thread_migration(
         **arguments, assets=assets, retain_source_project=options.retain
     )
+    report_stage("ownership-committed", started_at)
     print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
 
 

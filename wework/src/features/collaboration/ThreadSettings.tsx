@@ -552,6 +552,11 @@ export function ThreadSettings({
                     </option>
                   )}
                   <option value="">{t('noProject')}</option>
+                  {link.project &&
+                    !link.restricted &&
+                    !editableProjects.some(candidate => candidate.id === projectId) && (
+                      <option value={link.project.id}>{link.project.name}</option>
+                    )}
                   {editableProjects.map(project => (
                     <option key={project.id} value={project.id}>
                       {project.name}

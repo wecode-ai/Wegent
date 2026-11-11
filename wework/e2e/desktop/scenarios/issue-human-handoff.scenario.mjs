@@ -351,13 +351,17 @@ export function createDesktopScenario({
         await control.command('clickWhenEnabled', filter)
         await control.command('waitFor', scoped(`cloud-todo-card-${foreign.id}`))
         await openPending(control)
-        const ordinaryKey = `project-issue:local:${project.id}:${ordinaryId}`
-        const pendingIssue = `${scoped('interaction-list-item')}[data-project-issue="true"][data-interaction-id=${JSON.stringify(ordinaryKey)}]`
-        await control.command('waitFor', pendingIssue, { text: ordinaryTitle })
+        const ordinaryOwner = await rpc(control, 'todos.owner', { task_id: ordinaryId })
+        assert.ok(ordinaryOwner, 'The pending Thread must have a real owning group')
         const ordinary = await rpc(control, 'todos.get', {
-          project_id: project.id,
+          project_id: ordinaryOwner,
           task_id: ordinaryId,
         })
+        assert.equal(ordinary.group_id, ordinaryOwner)
+        assert.equal(ordinary.cloud_project_id, ordinaryOwner)
+        const ordinaryKey = `project-issue:local:${ordinaryOwner}:${ordinaryId}`
+        const pendingIssue = `${scoped('interaction-list-item')}[data-project-issue="true"][data-interaction-id=${JSON.stringify(ordinaryKey)}]`
+        await control.command('waitFor', pendingIssue, { text: ordinaryTitle })
         const waitingTime = `${pendingIssue} ${testId('issue-waiting-time')}`
         await control.command('waitFor', waitingTime)
         assert.equal(

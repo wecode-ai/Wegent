@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { runChecked } from './shared.mjs'
 import {
   createLocalCollaborationProject,
+  enterProjectCollaborationView,
   inCollaborationSidebar,
   reloadMainWindow,
 } from './workspace-flows.mjs'
@@ -82,6 +83,7 @@ export async function verifyCollaborationLocalProjectImport(
       timeoutMs: workbenchReadyTimeoutMs,
     })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+    await enterProjectCollaborationView(control, scoped('').trim(), workbenchReadyTimeoutMs)
     const toggle = inCollaborationSidebar(
       '[data-testid="collaboration-workspace-toggle-wework-local-workspace"]'
     )

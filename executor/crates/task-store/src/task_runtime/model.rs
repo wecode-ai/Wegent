@@ -131,6 +131,12 @@ pub struct TaskPosition {
         deserialize_with = "deserialize_position_anchor"
     )]
     pub before_item_id: Option<String>,
+    #[serde(
+        default,
+        alias = "classificationProjectId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub classification_project_id: Option<String>,
 }
 
 fn deserialize_position_anchor<'de, D: serde::Deserializer<'de>>(

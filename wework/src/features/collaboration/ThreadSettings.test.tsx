@@ -55,6 +55,7 @@ function setup(
     linkError?: Error
     localPrincipal?: boolean
     role?: ChatGroup['role']
+    projectCatalog?: Promise<import('@wegent/collaboration').CollaborationProject[]>
     renderHierarchy?: (context: ThreadSettingsHierarchyContext) => import('react').ReactNode
   } = {}
 ) {
@@ -89,7 +90,7 @@ function setup(
     .fn()
     .mockResolvedValue([{ id: 'milestone', title: 'Release', project_id: 'project' }])
   const catalog = {
-    projects: { list: vi.fn().mockResolvedValue([project]) },
+    projects: { list: vi.fn().mockResolvedValue(options.projectCatalog ?? [project]) },
     milestones: { list: milestoneList },
   } as unknown as SharedWorkspaceApi
   const projectLink = vi.fn().mockResolvedValue({
@@ -159,6 +160,24 @@ function setup(
 }
 
 describe('Thread settings domain boundaries', () => {
+  it('keeps the authorized current project visible while the editable catalog is loading', async () => {
+    let resolveCatalog!: (projects: import('@wegent/collaboration').CollaborationProject[]) => void
+    const projectCatalog = new Promise<import('@wegent/collaboration').CollaborationProject[]>(
+      resolve => {
+        resolveCatalog = resolve
+      }
+    )
+    setup({ linked: true, projectCatalog })
+    const select = await screen.findByTestId('thread-project-select')
+    expect(select).toHaveValue('project')
+    expect(select).toHaveTextContent('Plan')
+    expect(select).toBeDisabled()
+    resolveCatalog([{ ...groupBoardContext(group, 'cloud'), id: 'project', name: 'Plan' }])
+    await waitFor(() => expect(select).toBeEnabled())
+    expect(select).toHaveValue('project')
+    expect(screen.getAllByRole('option', { name: 'Plan' })).toHaveLength(1)
+  })
+
   it('shows real participants without loading milestones or legacy collaborators for an unlinked group Thread', async () => {
     const { milestoneList } = setup()
     await screen.findByTestId('thread-project-select')

@@ -6267,7 +6267,7 @@
   "interactions": {
     "sources": {
       "task": "Tasks",
-      "project": "Projects",
+      "project": "Threads",
       "stand_in": "Stand-in"
     },
     "title": "Needs your input",

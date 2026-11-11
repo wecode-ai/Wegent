@@ -38,7 +38,15 @@ def position_siblings(
     item: LoopItem,
     parent_id: str | None,
     position: LoopItemPosition,
+    *,
+    user_id: int | None = None,
 ) -> list[LoopItem]:
+    if position.classification_project_id is not None:
+        from app.services.project_board_order import position_project_items
+
+        if user_id is None:
+            raise HTTPException(403, "Project ordering requires an authenticated actor")
+        return position_project_items(db, item, parent_id, position, user_id)
     siblings = [
         sibling
         for sibling in sibling_items(db, item.cloud_project_id, parent_id)
@@ -58,6 +66,11 @@ def position_siblings(
 def persist_sibling_order(
     siblings: list[LoopItem], *, updated_item_id: str | None = None
 ) -> None:
+    from app.services.project_board_order import ProjectBoardOrder
+
+    if isinstance(siblings, ProjectBoardOrder):
+        siblings.persist()
+        return
     for position, item in enumerate(siblings):
         if item.sort_order != position:
             item.sort_order = position

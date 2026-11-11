@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act, useState, type ReactNode } from "react";
+import { act, useEffect, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -5686,6 +5686,114 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(api.workspaces!.listMembers).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "preserves a pending private editor through same-project navigation refresh (failure: %s)",
+    async (navigationFailure) => {
+      const restrictedProject = {
+        ...project,
+        access_role: "RestrictedAnalyst" as const,
+      };
+      const { api, projects } = createApi({
+        initialWorkspaces: [],
+        initialProjects: [restrictedProject],
+      });
+      const parent = {
+        id: workspace.id,
+        public_id: "workspace-public",
+        location: "cloud" as const,
+        name: workspace.name,
+      };
+      api.workspaces!.getNavigationContext = vi.fn(async () => parent);
+      const pendingEditor = deferred<void>();
+      const unmounted = vi.fn();
+      function PrivateEditor() {
+        const [opened, setOpened] = useState(false);
+        useEffect(() => unmounted, []);
+        return (
+          <div data-testid="retained-private-editor">
+            <button
+              data-testid="start-pending-private-editor"
+              onClick={() =>
+                void pendingEditor.promise.then(() => setOpened(true))
+              }
+            >
+              Open private editor
+            </button>
+            {opened ? <textarea data-testid="private-editor-draft" /> : null}
+          </div>
+        );
+      }
+      const page = (refreshKey: string, accountScope = "backend:account-7") => (
+        <PlatformHarness
+          api={api}
+          accountScope={accountScope}
+          refreshKey={refreshKey}
+          renderProject={() => <PrivateEditor />}
+          start={{
+            ...initialLocation,
+            workspaceId: workspace.id,
+            workspaceView: "projects",
+            projectId: restrictedProject.id,
+          }}
+        />
+      );
+      await render(page("initial"));
+      const editor = byTestId("retained-private-editor");
+      await click(byTestId("start-pending-private-editor"));
+      const pendingParent = deferred<typeof parent>();
+      vi.mocked(api.workspaces!.getNavigationContext!).mockReturnValue(
+        pendingParent.promise,
+      );
+      await render(page("refresh"));
+      expect(unmounted).not.toHaveBeenCalled();
+      expect(byTestId("retained-private-editor")).toBe(editor);
+      expect(editor.closest('[style="display: none;"]')).toBeNull();
+      expect(
+        container.querySelector(".collaboration-loading-skeleton"),
+      ).toBeNull();
+      await act(async () => pendingEditor.resolve());
+      if (navigationFailure) {
+        pendingParent.reject(new Error("Workspace navigation access denied"));
+        await flush();
+        expect(
+          container.querySelector('[data-testid="retained-private-editor"]'),
+        ).toBeNull();
+        expect(container.querySelector('[role="alert"]')).not.toBeNull();
+        expect(unmounted).toHaveBeenCalledOnce();
+        return;
+      }
+      pendingParent.resolve(parent);
+      await flush();
+      expect(byTestId("retained-private-editor")).toBe(editor);
+      expect(byTestId("private-editor-draft")).toBeTruthy();
+      expect(unmounted).not.toHaveBeenCalled();
+      const otherProject = {
+        ...restrictedProject,
+        id: "another-project",
+        name: "Another project",
+      };
+      projects.push(otherProject);
+      await render(page("refresh", "backend:account-8"));
+      expect(byTestId("retained-private-editor")).not.toBe(editor);
+      expect(
+        container.querySelector('[data-testid="private-editor-draft"]'),
+      ).toBeNull();
+      expect(unmounted).toHaveBeenCalledOnce();
+      const accountEditor = byTestId("retained-private-editor");
+      await click(byTestId("start-pending-private-editor"));
+      expect(byTestId("private-editor-draft")).toBeTruthy();
+      await click(
+        byTestId(`collaboration-workspace-project-${otherProject.id}`),
+      );
+      expect(byTestId("test-location").textContent).toContain(otherProject.id);
+      expect(byTestId("retained-private-editor")).not.toBe(accountEditor);
+      expect(
+        container.querySelector('[data-testid="private-editor-draft"]'),
+      ).toBeNull();
+      expect(unmounted).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("keeps the default restricted project renderer and management tabs hidden", async () => {
     const restrictedProject = {

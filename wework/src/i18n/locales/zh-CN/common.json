@@ -6262,7 +6262,7 @@
   "interactions": {
     "sources": {
       "task": "任务",
-      "project": "项目",
+      "project": "事项",
       "stand_in": "分身"
     },
     "title": "待你处理",

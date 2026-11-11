@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn updating_a_thread_returns_its_canonical_group_and_participation_context() {
+    let (_directory, store) = store();
+    let response = store
+        .chat_group_request("create", json!({"name":"Update response group"}))
+        .unwrap();
+    let owner = response["group"]["id"].as_str().unwrap();
+    let thread = store
+        .create_task(
+            owner,
+            serde_json::from_value(json!({"title":"Original title"})).unwrap(),
+        )
+        .unwrap();
+    store
+        .chat_group_request(
+            "participation.update",
+            json!({"thread_id":thread.id,"joined":false}),
+        )
+        .unwrap();
+    let before = store.get_task(owner, &thread.id).unwrap();
+    let updated = store
+        .update_task(
+            owner,
+            &thread.id,
+            TaskUpdate {
+                version: before.version,
+                title: Some("Edited title".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(updated.id, thread.id);
+    assert_eq!(updated.cloud_project_id.as_deref(), Some(owner));
+    assert_eq!(updated.title.as_deref(), Some("Edited title"));
+    let context = updated
+        .thread_context
+        .expect("a mutation response must preserve the real group owner");
+    assert_eq!(context.group_id, owner);
+    assert_eq!(context.group_name, "Update response group");
+    assert_eq!(context.group_status, "active");
+    assert!(!context.joined, "editing metadata must not implicitly join");
+    assert!(context.can_join);
+    let participation = store
+        .chat_group_request("participation.get", json!({"thread_id":thread.id}))
+        .unwrap();
+    assert_eq!(participation["joined"], false);
+}
+
+#[test]
 fn project_scope_cannot_publish_or_start_a_group_thread_comment() {
     for state in ["active", "left", "completed", "archived"] {
         let (_directory, store) = store();

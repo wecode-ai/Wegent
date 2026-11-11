@@ -343,6 +343,18 @@ def verify_operator_disconnect(report, actor_id, command, receipt_path) -> None:
         finally:
             held.rollback()
             stdout, stderr = process.communicate(timeout=30)
+        print(
+            json.dumps(
+                {
+                    "disconnect_writer_stages": [
+                        line
+                        for line in stderr.splitlines()
+                        if line.startswith('{"migration_stage":')
+                    ]
+                }
+            ),
+            flush=True,
+        )
         if waiter is None:
             print(
                 json.dumps(

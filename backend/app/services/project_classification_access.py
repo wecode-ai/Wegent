@@ -15,6 +15,7 @@ from app.services.cloud_project_visibility import (
     collaboration_role,
     effective_project_role,
 )
+from app.services.cloud_projects.access import CloudProjectAccess
 
 
 def _grants(
@@ -59,6 +60,19 @@ def require_classification_project(
     *,
     required_role: BaseRole = BaseRole.Developer,
 ) -> CloudProject:
+    """Return the project using the existing locked classification authority."""
+    return require_classification_project_access(
+        db, project_id, user_id, required_role=required_role
+    ).project
+
+
+def require_classification_project_access(
+    db: Session,
+    project_id: str,
+    user_id: int,
+    *,
+    required_role: BaseRole = BaseRole.Developer,
+) -> CloudProjectAccess:
     """Evaluate CP role precedence only from locking reads, including on RR."""
     actor = (
         db.query(User)
@@ -145,4 +159,4 @@ def require_classification_project(
         )
         raise HTTPException(403, message)
     set_committed_value(project, "workspace_id", workspace.id)
-    return project
+    return CloudProjectAccess(project=project, role=BaseRole(role))

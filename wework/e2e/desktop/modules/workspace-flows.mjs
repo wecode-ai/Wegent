@@ -1195,11 +1195,10 @@ async function verifyWorkspaceIssueCreation(control) {
     issueDescription,
     'The created Thread did not retain its shared description'
   )
-  assert.equal(
-    await control.command('getAttribute', issueDetailDescription, { value: 'disabled' }),
-    null,
-    'The newly created Thread did not open with editable metadata'
-  )
+  await control.command('waitFor', `${issueDetailDescription}:not([disabled])`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
   await control.command('fill', issueDetailDescription, { value: twoLineIssueDescription })
   await waitForControlValue(
     control,
@@ -1799,7 +1798,7 @@ async function verifyExistingTaskBoardAssociation(
     projectLink: targetProjectLink,
   } = await confirmTaskOriginPublicThread(control, {
     title: existingTargetTitle,
-    groupName: `${targetProjectName} group`,
+    groupName: `Existing Task Collaboration ${randomUUID().slice(0, 8)}`,
   })
   assert.ok(
     targetProjectLink.project,

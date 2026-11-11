@@ -356,6 +356,11 @@ export function ProjectBoardAdapter({
     translate,
   });
   const controller = useStandardCloudBoardController({
+    classificationProjectId:
+      project.resource_type !== "chat_group" &&
+      allIssues.some((issue) => issue.group_id)
+        ? String(project.id)
+        : undefined,
     currentUserId: handlingUserId,
     tagFilter: tagFilter.tags,
     tagLimitError: translate(

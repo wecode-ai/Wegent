@@ -1081,10 +1081,16 @@ export function CollaborationApp({
                                 },
                                 refreshOrder: async (target) => {
                                   await commands.loadProjectSnapshot(
-                                    target.cloud_project_id,
+                                    mutation.position
+                                      ?.classificationProjectId ??
+                                      target.cloud_project_id,
                                     {
                                       invalidate: true,
                                       throwOnError: true,
+                                      refreshProjectMetadata: Boolean(
+                                        mutation.position
+                                          ?.classificationProjectId,
+                                      ),
                                     },
                                   );
                                 },

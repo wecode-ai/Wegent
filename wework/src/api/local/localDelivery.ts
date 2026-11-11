@@ -52,8 +52,22 @@ import { desktopFileUrl } from '@/components/chat/assistantMarkdownLinks'
 function localTaskUpdate(
   data: Record<string, unknown> & { version: number }
 ): Record<string, unknown> & { version: number } {
-  const position = data.position as { beforeItemId: string | null } | undefined
-  return { ...data, ...(position ? { position: { before_item_id: position.beforeItemId } } : {}) }
+  const position = data.position as
+    | { beforeItemId: string | null; classificationProjectId?: string }
+    | undefined
+  return {
+    ...data,
+    ...(position
+      ? {
+          position: {
+            before_item_id: position.beforeItemId,
+            ...(position.classificationProjectId
+              ? { classification_project_id: position.classificationProjectId }
+              : {}),
+          },
+        }
+      : {}),
+  }
 }
 
 type LocalRequest = <T>(
@@ -1431,7 +1445,7 @@ export function createLocalDeliveryApi(
         assigneeId: string
         runnerSelection?: RunnerSelection
         notifyAssignee?: boolean
-        position?: { beforeItemId: string | null }
+        position?: { beforeItemId: string | null; classificationProjectId?: string }
       }
     ) {
       const assignment =
@@ -1458,7 +1472,16 @@ export function createLocalDeliveryApi(
         todo: {
           version: data.version,
           ...assignment,
-          ...(data.position ? { position: { before_item_id: data.position.beforeItemId } } : {}),
+          ...(data.position
+            ? {
+                position: {
+                  before_item_id: data.position.beforeItemId,
+                  ...(data.position.classificationProjectId
+                    ? { classification_project_id: data.position.classificationProjectId }
+                    : {}),
+                },
+              }
+            : {}),
           ...(executionPayload ? { execution_payload: executionPayload } : {}),
         },
       })

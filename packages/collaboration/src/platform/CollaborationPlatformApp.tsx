@@ -12,7 +12,14 @@ import {
   validateTemplateAgentRouting,
 } from "../templates/agents";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Activity,
   AlertTriangle,
@@ -2542,8 +2549,19 @@ function CollaborationPlatformAppContent({
       teamId: agent.team_id,
     });
   };
+  const workspaceContext = state.workspace ?? state.workspaceNavigationContext;
+  const selectedProject =
+    state.projects.find(
+      (project) => String(project.id) === host.location.projectId,
+    ) ?? null;
+  const hasCustomProject = Boolean(
+    host.location.projectId &&
+    workspaceContext &&
+    selectedProject &&
+    renderProject,
+  );
   let content: React.ReactNode;
-  if (state.loading && !ownsPageRequests) {
+  if (state.loading && !ownsPageRequests && !hasCustomProject) {
     content = (
       <ProjectLoadingSkeleton
         label={translate("common.loading", "正在加载…")}
@@ -2560,19 +2578,17 @@ function CollaborationPlatformAppContent({
         {state.error}
       </div>
     );
-  } else if (
-    host.location.projectId &&
-    (state.workspace || state.workspaceNavigationContext)
-  ) {
-    const workspaceContext =
-      state.workspace ?? state.workspaceNavigationContext;
-    const selectedProject =
-      state.projects.find(
-        (project) => String(project.id) === host.location.projectId,
-      ) ?? null;
+  } else if (host.location.projectId && workspaceContext) {
     content =
       selectedProject && renderProject && workspaceContext ? (
-        renderProject({ project: selectedProject, workspace: workspaceContext })
+        <Fragment
+          key={`${selectedProject.project_store}:${selectedProject.id}`}
+        >
+          {renderProject({
+            project: selectedProject,
+            workspace: workspaceContext,
+          })}
+        </Fragment>
       ) : (
         <CollaborationApp
           parentGroupingEnabled

@@ -24,6 +24,7 @@ pub use human_requests::IssueHumanRequestScope;
 mod issue_badges;
 pub mod milestones;
 mod ordering;
+mod project_board_order;
 #[path = "project_coordination.rs"]
 mod project_coordination;
 #[path = "project_coordination_commands.rs"]

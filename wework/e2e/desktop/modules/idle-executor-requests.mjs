@@ -19,6 +19,7 @@ const BOOTSTRAP_REQUESTS = new Set([
   'codex.app_server_request',
   'device.execute_command',
   'projects.list',
+  'chat_groups.list',
   'files.list',
   'todos.list',
 ])
@@ -89,6 +90,7 @@ export function assertIdleExecutorTraffic(rows, windows) {
     'Consent was written more than once'
   )
   assert.equal(count('executor.events'), 1, 'Renderer subscribers opened duplicate SSE streams')
+  assert.equal(count('chat_groups.list'), 1, 'Startup reloaded the group directory')
   const consent = rows.find(row => row.method === 'runtime.stand_in.telemetry.configure')
   assert.equal(consent.consentEnabled, false, 'The isolated fixture must decline telemetry')
   assert.equal(consent.status, 200, 'Consent synchronization did not succeed')
@@ -126,6 +128,7 @@ export function assertIdleExecutorTraffic(rows, windows) {
           'runtime.worktrees.capabilities',
           'runtime.stand_in.telemetry.configure',
           'executor.events',
+          'chat_groups.list',
         ].includes(row.method)
       ),
       `${window.name} repeated startup configuration or discovery`

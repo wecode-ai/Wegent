@@ -1689,6 +1689,7 @@ class LoopItemService:
                     else item.parent_id
                 ),
                 values.position,
+                user_id=user_id,
             )
         if "security_level" in values.model_fields_set:
             require_collaboration_container_access(
@@ -2315,7 +2316,7 @@ class LoopItemService:
             if values.position.before_item_id is not None:
                 self.get(db, values.position.before_item_id, user_id)
             position_order = position_siblings(
-                db, item, item.parent_id, values.position
+                db, item, item.parent_id, values.position, user_id=user_id
             )
         require_issue_action(
             access,

@@ -55,6 +55,11 @@ impl LocalTaskStore {
         let mut items = collect_items(rows)?;
         drop(statement);
         chat_groups::annotate_threads(&connection, &mut items)?;
+        if project.resource_type == "project" {
+            for item in &mut items {
+                item.sort_order = project_board_order::rank(&project, item);
+            }
+        }
         let containers: std::collections::BTreeSet<String> = items
             .iter()
             .filter_map(|item| item.cloud_project_id.clone())
@@ -626,13 +631,23 @@ impl LocalTaskStore {
         }
         assignment_receipts::sync_assignment_receipt(&transaction, project_id, task_id, &metadata)?;
         if let Some(position) = input.position.as_ref() {
-            ordering::move_task(
-                &transaction,
-                project_id,
-                task_id,
-                parent_id.as_deref(),
-                position,
-            )?;
+            if let Some(classification) = position.classification_project_id.as_deref() {
+                project_board_order::move_task(
+                    &transaction,
+                    classification,
+                    task_id,
+                    parent_id.as_deref(),
+                    position,
+                )?;
+            } else {
+                ordering::move_task(
+                    &transaction,
+                    project_id,
+                    task_id,
+                    parent_id.as_deref(),
+                    position,
+                )?;
+            }
         }
         refresh_runtime_projection_additional_context(&transaction, task_id)?;
         if previous_parent_id != parent_id {
@@ -702,12 +717,7 @@ impl LocalTaskStore {
         }
         transaction.commit()?;
         drop(connection);
-        let item = self.get_item(task_id, "task")?;
-        let connection = self.connection()?;
-        Ok(attach_execution(
-            item,
-            latest_execution(&connection, task_id)?,
-        ))
+        self.get_task(project_id, task_id)
     }
 
     // ------------------------------------------------------------------

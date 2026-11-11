@@ -23,6 +23,7 @@ import {
 
 export interface ProjectBoardPosition {
   beforeItemId: string | null;
+  classificationProjectId?: string;
 }
 
 export interface StandardCloudBoardItem {
@@ -60,6 +61,10 @@ export function mergePersistedBoardMove<T extends StandardCloudBoardItem>(
 ): T[] {
   const current = items.find((item) => item.id === saved.id);
   if (!current || (current.version ?? -1) >= (saved.version ?? 0)) return items;
+  if (position.classificationProjectId)
+    return items.map((item) =>
+      item.id === saved.id ? { ...saved, sort_order: item.sort_order } : item,
+    );
   const siblings = items
     .filter(
       (item) =>
@@ -366,6 +371,7 @@ export function resolveStandardCloudBoardDrop<
   items,
   sourceColumnKey,
   targetParentId,
+  classificationProjectId,
 }: {
   activeItemId: string;
   beforeItemId: string | null;
@@ -376,6 +382,7 @@ export function resolveStandardCloudBoardDrop<
   items: T[];
   sourceColumnKey: string;
   targetParentId?: string | null;
+  classificationProjectId?: string;
 }): StandardCloudBoardDrop | null {
   const sourceColumn = columns.find((column) => column.key === sourceColumnKey);
   const column = columns.find((column) => column.key === columnDropKey);
@@ -397,7 +404,8 @@ export function resolveStandardCloudBoardDrop<
     beforeItemId &&
     (!target ||
       target.parent_id !== item.parent_id ||
-      target.cloud_project_id !== item.cloud_project_id ||
+      (!classificationProjectId &&
+        target.cloud_project_id !== item.cloud_project_id) ||
       !matchesStandardCloudBoardColumn(target, column, groupBy, extensions))
   )
     return null;
@@ -418,6 +426,7 @@ export interface StandardCloudBoardControllerOptions<
   createColumns(groupBy: ProjectBoardGroupBy): ProjectBoardColumn[];
   currentParentId?: string | null;
   supportsOrder?: boolean;
+  classificationProjectId?: string;
   extensions: StandardCloudBoardHostExtensions<T>;
   items: T[];
   hierarchyItems?: T[];
@@ -656,6 +665,7 @@ export function resolveStandardCloudBoardMutation<
 >({
   manualSort = false,
   supportsOrder = true,
+  classificationProjectId,
   extensions = {},
   ...input
 }: {
@@ -667,6 +677,7 @@ export function resolveStandardCloudBoardMutation<
   sourceColumn: ProjectBoardColumn;
   manualSort?: boolean;
   supportsOrder?: boolean;
+  classificationProjectId?: string;
   extensions?: Pick<StandardCloudBoardHostExtensions<T>, "noTagGroupValue">;
 }): StandardCloudBoardMutation<T> | null {
   if (
@@ -704,7 +715,8 @@ export function resolveStandardCloudBoardMutation<
     .filter(
       (candidate) =>
         candidate.parent_id === input.item.parent_id &&
-        candidate.cloud_project_id === input.item.cloud_project_id,
+        (classificationProjectId !== undefined ||
+          candidate.cloud_project_id === input.item.cloud_project_id),
     )
     .sort((a, b) => compareProjectBoardItems(a, b, []));
   const remaining = siblings.filter(
@@ -738,7 +750,10 @@ export function resolveStandardCloudBoardMutation<
   );
   return {
     ...mutation,
-    position: { beforeItemId: remaining[insertion + 1]?.id ?? null },
+    position: {
+      beforeItemId: remaining[insertion + 1]?.id ?? null,
+      ...(classificationProjectId ? { classificationProjectId } : {}),
+    },
     optimisticItems: mutation.optimisticItems.map((candidate) =>
       positions.has(candidate.id)
         ? { ...candidate, sort_order: positions.get(candidate.id)! }
@@ -758,6 +773,7 @@ export function useStandardCloudBoardController<
   onCurrentParentIdChange,
   onMove,
   supportsOrder = true,
+  classificationProjectId,
   tagLimitError,
   view,
   currentUserId,
@@ -823,6 +839,7 @@ export function useStandardCloudBoardController<
         items,
         manualSort,
         supportsOrder,
+        classificationProjectId,
         extensions,
         sourceColumn,
       });
@@ -860,6 +877,7 @@ export function useStandardCloudBoardController<
       items,
       onMove,
       supportsOrder,
+      classificationProjectId,
       tagLimitError,
       stateOptions.viewScope,
     ],
@@ -893,6 +911,7 @@ export function useStandardCloudBoardController<
         items,
         sourceColumnKey,
         targetParentId,
+        classificationProjectId,
       });
       if (drop)
         moveItem(
@@ -902,7 +921,14 @@ export function useStandardCloudBoardController<
           drop.sourceColumn,
         );
     },
-    [boardState.groupBy, columns, extensions, items, moveItem],
+    [
+      boardState.groupBy,
+      columns,
+      extensions,
+      items,
+      moveItem,
+      classificationProjectId,
+    ],
   );
 
   const visibleItems = useMemo(
