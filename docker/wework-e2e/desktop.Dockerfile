@@ -7,7 +7,13 @@ ARG UV_VERSION=0.11.17
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Match the GitHub-hosted Ubuntu runner's primary archive while preserving
+# Ubuntu's suites and signing keyring inside the build container.
+RUN sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu#http://azure.archive.ubuntu.com/ubuntu#g' \
+      /etc/apt/sources.list.d/ubuntu.sources \
+  && getent ahostsv4 azure.archive.ubuntu.com \
+  && apt-get -o APT::Update::Error-Mode=any update \
+  && apt-get install -y --no-install-recommends \
     apparmor \
     build-essential \
     ca-certificates \
