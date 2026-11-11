@@ -1919,6 +1919,9 @@ export function createHybridWorkbenchServices(
           deviceId
         )
       },
+      async deviceIdentity(deviceId) {
+        return (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
+      },
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
       },

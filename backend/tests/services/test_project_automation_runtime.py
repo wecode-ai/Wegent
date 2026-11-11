@@ -17,7 +17,9 @@ from app.services.project_automation_execution import (
 
 
 @pytest.mark.asyncio
-async def test_event_processing_wakes_cloud_executor_after_dispatch(monkeypatch):
+async def test_event_processing_wakes_only_dispatched_execution_without_queue_scan(
+    monkeypatch,
+):
     rule = SimpleNamespace(
         id="rule-1",
         status="enabled",
@@ -39,12 +41,27 @@ async def test_event_processing_wakes_cloud_executor_after_dispatch(monkeypatch)
     db.query.return_value = query
     dispatch = AsyncMock()
     monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    execution = SimpleNamespace(
+        status="queued",
+        execution_environment="cloud",
+        execution_device_id="created-task-device",
+        executor_owner_user_id=7,
+    )
+    monkeypatch.setattr(
+        project_automation_execution, "_execution_for_run", lambda *_: execution
+    )
     processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
 
-    with patch(
-        "app.tasks.robot_queue_tasks.consume_queues_background",
-        new=AsyncMock(),
-    ) as wake:
+    with (
+        patch(
+            "app.tasks.robot_queue_tasks.consume_queues_background",
+            new=AsyncMock(
+                side_effect=AssertionError("Creation must not scan the queue")
+            ),
+        ) as scan,
+        patch("app.core.async_utils.schedule_async_task") as schedule,
+        patch("app.tasks.robot_queue_tasks.notify_execution_targets") as notify,
+    ):
         dispatched = await processor.process(
             db,
             ProjectAutomationEvent(
@@ -59,7 +76,9 @@ async def test_event_processing_wakes_cloud_executor_after_dispatch(monkeypatch)
 
     assert dispatched == 1
     dispatch.assert_awaited_once_with(db, rule, run)
-    wake.assert_awaited_once_with()
+    scan.assert_not_awaited()
+    schedule.assert_called_once_with(notify, [(7, "created-task-device")])
+    notify.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -255,6 +274,9 @@ async def test_unbound_issue_does_not_dispatch_multiple_matching_automations(
 
 @pytest.mark.asyncio
 async def test_bound_issue_dispatches_only_its_matching_automation(monkeypatch):
+    monkeypatch.setattr(
+        project_automation_execution, "_execution_for_run", lambda *_: None
+    )
     bound_rule = SimpleNamespace(
         id="rule-1",
         status="enabled",

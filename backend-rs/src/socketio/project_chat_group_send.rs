@@ -107,7 +107,7 @@ pub(super) async fn send_message(
 ) -> Result<(Value, bool), Value> {
     let actor =
         i32::try_from(user).map_err(|_| ack_error("SCOPE_NOT_FOUND", "Chat group not found"))?;
-    let result = state.mysql.with_transaction(async |tx| {
+    let result = crate::transaction_outcome::run_mysql_with_deadlock_retry(&state.mysql, async |tx| {
         let (group, members) = repository::lock_message_authority(tx, &request.project_id, actor).await?;
         let thread: Option<store::Node> = if let Some(id) = request.task_id.as_deref() {
             Some(tx.fetch_optional(

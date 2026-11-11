@@ -1193,3 +1193,12 @@ path = "/api/v1/loop-items/:item_id/project-link"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/loop-items/:item_id/participants"
+
+# Account HTTP local plugin execution; independent of Device registration.
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/local-sync"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/native-auth/exchange"

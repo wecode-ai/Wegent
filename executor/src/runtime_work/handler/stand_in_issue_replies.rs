@@ -299,7 +299,7 @@ impl RuntimeWorkRpcHandler {
         }
         let response = self.runtime_request(reqwest::Method::POST, &format!("/v1/cloud-projects/{}/loop-items/{}/activity-comments", origin["cloudProjectId"].as_str().unwrap_or_default(), origin["loopItemId"].as_str().unwrap_or_default()), Some(&json!({
             "body":report["body"],"stand_in":{
-                "device_id":self.device_id,"task_id":task,"role_id":origin["standInId"],
+                "device_id":self.cloud_device_id()?,"task_id":task,"role_id":origin["standInId"],
                 "role_name":origin["roleName"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Stand-in"),
                 "message_id":report["messageId"],"human_assignment_id":if origin["trigger"] == "mention" {Value::Null} else {origin["humanAssignmentId"].clone()},
                 "trigger_comment_id":origin["triggerCommentId"]

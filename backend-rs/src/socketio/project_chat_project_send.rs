@@ -1,4 +1,6 @@
 //! Project chat writes serialize with changes to their Thread owner.
+use std::collections::BTreeSet;
+
 use brz_mysql::MysqlTransaction;
 use serde_json::{Map, Value, json};
 
@@ -85,9 +87,8 @@ pub(super) async fn send_message(
     if let Some(reply_preview) = reply.preview.filter(|preview| !preview.is_empty()) {
         target["replyPreview"] = json!(reply_preview);
     }
-    let (saved, pending) = state
-        .mysql
-        .with_transaction(async |tx| {
+    let (saved, pending) =
+        crate::transaction_outcome::run_mysql_with_deadlock_retry(&state.mysql, async |tx| {
             let item = match crate::socketio::project_chat_write_scope::lock(
                 tx,
                 &request.project_id,
@@ -144,10 +145,14 @@ pub(super) async fn send_message(
                     )
                     .await?;
                 }
-                for recipient in &recipients {
+                for recipient in mentions
+                    .iter()
+                    .filter_map(Mention::user_id)
+                    .collect::<BTreeSet<_>>()
+                {
                     crate::stand_in_issue_events::enqueue_mention_on(
                         tx,
-                        *recipient,
+                        recipient,
                         &request.project_id,
                         item_id,
                         &message_id,

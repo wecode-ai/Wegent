@@ -40,6 +40,7 @@ from app.models.user import User
 from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.project_chat import ProjectChatWorkspaceBindingView
 from app.schemas.runtime_work import RuntimeTaskCreateRequest
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.loop_item_executions.notification import notify_execution_lifecycle
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
@@ -880,10 +881,14 @@ class LoopItemExecutionService:
     ) -> LoopItemExecution:
         """Persist queue identity and its immutable non-secret V2 intent."""
 
-        from app.services.loop_item_executions.admission_scope import lock_execution_subject
+        from app.services.loop_item_executions.admission_scope import (
+            lock_execution_subject,
+        )
 
         lock_execution_subject(
-            db, container_id=cloud_project_id, thread_id=loop_item_id,
+            db,
+            container_id=cloud_project_id,
+            thread_id=loop_item_id,
             actor_user_id=assigner_user_id,
         )
 
@@ -1512,6 +1517,7 @@ class LoopItemExecutionService:
         db.refresh(candidate)
         return candidate
 
+    @execution_resource_scope()
     def claim_next_for_device(
         self,
         db: Session,
@@ -3548,6 +3554,7 @@ class LoopItemExecutionService:
             execution_target_id=None,
         )
 
+    @execution_resource_scope()
     def build_executor_runtime_payload(
         self,
         db: Session,

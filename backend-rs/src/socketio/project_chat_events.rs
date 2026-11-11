@@ -15,6 +15,8 @@
 //! targets a missing project task, and the AI comment-execution pipeline
 //! (loop item assignments, robot queue) remains a documented remainder.
 //!
+//! Mention delivery and durable stand-in wakeups share the comment transaction.
+
 use std::sync::Arc;
 
 use brz_socket_io::{ClientError, Reply};

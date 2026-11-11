@@ -568,15 +568,20 @@ export function WeworkSharedProject({
         services.localProjectChatAgentApi,
         project.project_store === 'local' ? detailServices?.modelApi : undefined,
         services.pluginApi,
-        services.deviceApi
+        services.deviceApi,
+        project.project_store !== 'local' && detailServices
+          ? { agents: api.agents, modelApi: detailServices.modelApi, name: project.name }
+          : undefined
       ),
     [
       services.agentResourceApi,
       services.localProjectChatAgentApi,
       project.project_store,
-      detailServices?.modelApi,
       services.pluginApi,
       services.deviceApi,
+      api.agents,
+      detailServices,
+      project.name,
     ]
   )
   const projectHost = useMemo<CollaborationHostAdapter>(

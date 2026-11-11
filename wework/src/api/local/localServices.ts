@@ -1575,7 +1575,6 @@ async function buildLocalRuntimeExecutionRequest(
     ...(input.clientUserMessageId ? { client_user_message_id: input.clientUserMessageId } : {}),
     ephemeral: Boolean(input.ephemeral),
     is_group_chat: false,
-    collaboration_model: 'single',
     ...(collaborationMode ? { collaborationMode } : {}),
     mode: 'code',
     task_mode: 'code',

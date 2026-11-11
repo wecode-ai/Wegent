@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -9,6 +9,69 @@ import { resolveSpawnCommand } from './spawn-command.js'
 
 const directories: string[] = []
 const execFileAsync = promisify(execFile)
+
+function posixQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+function windowsQuote(value: string): string {
+  return `"${value.replaceAll('%', '%%').replaceAll('"', '""')}"`
+}
+
+function posixCommandFixture(logPath: string, includeElectronRunAsNode: boolean): string {
+  return [
+    '#!/bin/sh',
+    '{',
+    ...(includeElectronRunAsNode
+      ? [
+          '  if [ -n "${ELECTRON_RUN_AS_NODE+x}" ]; then',
+          '    printf "%s\\n" "$ELECTRON_RUN_AS_NODE"',
+          '  else',
+          '    printf "unset\\n"',
+          '  fi',
+        ]
+      : []),
+    '  for argument in "$@"; do',
+    '    printf "%s\\n" "$argument"',
+    '  done',
+    `} > ${posixQuote(logPath)}`,
+    '',
+  ].join('\n')
+}
+
+function windowsCommandFixture(logPath: string, includeElectronRunAsNode: boolean): string {
+  return [
+    '@echo off',
+    `> ${windowsQuote(logPath)} (`,
+    ...(includeElectronRunAsNode
+      ? ['  if "%ELECTRON_RUN_AS_NODE%"=="" (echo unset) else (echo %ELECTRON_RUN_AS_NODE%)']
+      : []),
+    '  for %%A in (%*) do echo(%%~A',
+    ')',
+    '',
+  ].join('\r\n')
+}
+
+async function createCommandFixture(
+  root: string,
+  name: string,
+  logPath: string,
+  includeElectronRunAsNode: boolean
+): Promise<string> {
+  if (process.platform === 'win32') {
+    const path = join(root, `${name}.cmd`)
+    await writeFile(path, windowsCommandFixture(logPath, includeElectronRunAsNode))
+    return path
+  }
+  const path = join(root, name)
+  await writeFile(path, posixCommandFixture(logPath, includeElectronRunAsNode), { mode: 0o755 })
+  await chmod(path, 0o755)
+  return path
+}
+
+async function readCommandLog(path: string): Promise<string[]> {
+  return (await readFile(path, 'utf8')).replace(/\r\n?/g, '\n').trim().split('\n')
+}
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
@@ -43,39 +106,40 @@ describe('installWeworkCli', () => {
     const workspace = join(root, 'project')
     const appLog = join(root, 'app.log')
     const nodeLog = join(root, 'node.log')
-    const appCommand = join(root, 'app.cjs')
-    const nodeCommand = join(root, 'node.cjs')
     const cliSourcePath = join(root, 'wework-cli-source.mjs')
     await mkdir(workspace)
     await writeFile(cliSourcePath, '#!/usr/bin/env node\n')
-    await writeFile(
-      appCommand,
-      `require('node:fs').writeFileSync(${JSON.stringify(appLog)}, [process.env.ELECTRON_RUN_AS_NODE || 'unset', ...process.argv.slice(2)].join('\\n'))`
-    )
-    await writeFile(
-      nodeCommand,
-      `require('node:fs').writeFileSync(${JSON.stringify(nodeLog)}, process.argv.slice(2).join('\\n'))`
-    )
+
+    // process.execPath is the packaged Wework/Electron executable when tests run
+    // inside Wework. Passing it as the fake app would launch the real application,
+    // which persists this temporary workspace as a local project.
+    const appCommand = await createCommandFixture(root, 'fake-app', appLog, true)
+    const nodeCommand = await createCommandFixture(root, 'fake-node', nodeLog, false)
 
     await installWeworkCli(runtimeBin, cliSourcePath, process.platform, {
-      appCommand: [process.execPath, appCommand],
-      nodeCommand: [process.execPath, nodeCommand],
+      appCommand: [appCommand],
+      nodeCommand: [nodeCommand],
     })
+
+    const env = {
+      ...process.env,
+      CODEX_HOME: join(root, 'codex-home'),
+      ELECTRON_RUN_AS_NODE: '1',
+      WEWORK_USER_DATA_DIR: join(root, 'user-data'),
+    }
 
     const launcher = join(runtimeBin, process.platform === 'win32' ? 'wework.cmd' : 'wework')
     const desktop = resolveSpawnCommand(launcher, ['desktop', 'instances'])
-    await execFileAsync(desktop.command, desktop.args)
-    expect((await readFile(nodeLog, 'utf8')).trim().split('\n')).toEqual([
+    await execFileAsync(desktop.command, desktop.args, { env })
+    expect(await readCommandLog(nodeLog)).toEqual([
       join(runtimeBin, 'wework-cli.mjs'),
       'desktop',
       'instances',
     ])
 
     const open = resolveSpawnCommand(launcher, [workspace])
-    await execFileAsync(open.command, open.args, {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    })
-    expect((await readFile(appLog, 'utf8')).trim().split('\n')).toEqual([
+    await execFileAsync(open.command, open.args, { env })
+    expect(await readCommandLog(appLog)).toEqual([
       'unset',
       '--open-workspace',
       await realpath(workspace),

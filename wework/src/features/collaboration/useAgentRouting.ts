@@ -261,6 +261,7 @@ export function useAgentRouting(
       .filter(Boolean)
       .join(' · ') || null
   return {
+    changed: !initializedDraft.unchanged,
     activated,
     activate,
     hasProject: Boolean(projectId),
