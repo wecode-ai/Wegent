@@ -233,12 +233,14 @@ where
         let (runtime_event_tx, _) = broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
         let event_hub = ExecutorEventHub::new(runtime_event_tx.clone());
         event_hub.ensure_started();
+        let device_route_id = Arc::new(Mutex::new(None));
         let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
             RuntimeWorkRpcHandler::with_event_sender(
                 config.device_id.clone(),
                 resolve_codex_binary(),
                 runtime_event_tx,
             )
+            .with_backend_device_route(device_route_id.clone())
             .with_backend_connection(Arc::new(Mutex::new(
                 connection_snapshot_from_config(&config),
             ))),
@@ -250,6 +252,7 @@ where
             event_hub,
             session_gateway_profile,
         )
+        .with_device_route_id_slot(device_route_id)
     }
 
     pub fn new_for_app_sidecar_with_shared_runtime_work_handler(
@@ -887,6 +890,7 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
             resolve_codex_binary(),
             runtime_event_tx.clone(),
         )
+        .with_backend_device_route(device_route_id.clone())
         .with_backend_connection(backend_connection_snapshot.clone()),
     );
     let backend_connection = LocalBackendConnectionController::start_with_runtime(

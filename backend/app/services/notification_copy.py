@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 BOARD_LABEL = "看板"
-RUNTIME_REPLY_HINT = "引用本通知回复，即可继续该任务。"
+RUNTIME_REPLY_HINT = (
+    "在分身模式下引用本通知回复，可交给当前分身处理。发送 /standin 可进入。"
+)
 COMMENT_PREVIEW_MAX_CHARS = 200
 WEWORK_LINK_LABEL = "在 Wework 中打开"
 WEB_LINK_LABEL = "查看任务"

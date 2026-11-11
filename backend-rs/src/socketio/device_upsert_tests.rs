@@ -540,6 +540,11 @@ fn cloud_runtime_spec_pins_the_runtime_on_the_stored_document() {
     assert_eq!(updated["spec"]["runtimeTransferHost"], "192.0.2.1");
     assert_eq!(updated["spec"]["runtimeTransferPort"], 17888);
     assert_eq!(updated["spec"]["cloudConfig"]["sandboxId"], "sandbox-1");
+    assert_eq!(updated["status"]["state"], "Available");
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(updated["status"]["lastSeenAt"].as_str().unwrap())
+            .is_ok()
+    );
 }
 
 #[test]

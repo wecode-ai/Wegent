@@ -5,6 +5,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/devices'
 import type { DeviceGitAccountSyncResult, GitAccountSyncSummary } from '@/types/gitCredentials'
 import { createSettingsDeviceApi } from './settings-cloud-api'
+import { Button } from '@/components/ui/button'
+import { gitAccountSettingsUrl } from '@/lib/git-access'
+import { openExternalUrl } from '@/lib/external-links'
 
 interface DeviceGitSyncSectionProps {
   devices?: DeviceInfo[]
@@ -44,6 +47,7 @@ export function DeviceGitSyncSection({
 }: DeviceGitSyncSectionProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  const settingsUrl = gitAccountSettingsUrl(cloudConnection)
   const refreshCloudUser = cloudConnection.refreshUser
   const syncConnection = useMemo(
     () => ({
@@ -150,7 +154,6 @@ export function DeviceGitSyncSection({
 
   const requestSync = () => {
     if ((syncSummary?.effective_count ?? 0) === 0) {
-      setConfirmClear(true)
       return
     }
     void performSync(false)
@@ -172,9 +175,21 @@ export function DeviceGitSyncSection({
               <p className="mt-1 text-xs leading-5 text-text-secondary">
                 {t(
                   'workbench.git_device_sync_description',
-                  '把云端 Git 账户同步到一台在线的 ClaudeCode 云端或远程设备。只有点击同步后才会写入设备。'
+                  '把云端 Git 账户同步到在线的 ClaudeCode 云端或远程设备。克隆或环境准备遇到认证失败时也会同步已配置账户，不修改本机原生 Git 配置。'
                 )}
               </p>
+              {settingsUrl && cloudConnection.isConnected && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  data-testid="git-device-sync-configure"
+                  onClick={() =>
+                    void openExternalUrl(settingsUrl, { source: 'device-git-settings' })
+                  }
+                >
+                  {t('workbench.git_access_configure')}
+                </Button>
+              )}
             </div>
           </div>
           <button
@@ -280,18 +295,27 @@ export function DeviceGitSyncSection({
             </label>
 
             <div className="flex flex-wrap items-center gap-3">
-              <button
+              <Button
                 type="button"
                 data-testid="git-device-sync-submit"
                 onClick={requestSync}
-                disabled={!activeSelectedDeviceId || syncing}
-                className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm text-primary-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 wework:text-white"
+                size="sm"
+                disabled={!activeSelectedDeviceId || syncing || syncSummary.effective_count === 0}
               >
                 {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {syncSummary.effective_count > 0
-                  ? t('workbench.git_device_sync_submit', '同步 Git 配置')
-                  : t('workbench.git_device_sync_clear', '清理 Wegent Git 配置')}
-              </button>
+                {t('workbench.git_device_sync_submit', '同步 Git 配置')}
+              </Button>
+              {syncSummary.effective_count === 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="git-device-sync-clear"
+                  disabled={!activeSelectedDeviceId || syncing}
+                  onClick={() => setConfirmClear(true)}
+                >
+                  {t('workbench.git_device_sync_clear', '清理 Wegent Git 配置')}
+                </Button>
+              )}
               <span className="text-xs text-text-muted">
                 {t(
                   'workbench.git_device_sync_security_hint',

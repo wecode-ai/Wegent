@@ -183,6 +183,29 @@ it('returns immediately while settings refresh in the background and pauses hidd
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
 
+it('returns to the bound primary device when reopening the active workspace from a remote role', async () => {
+  const { props } = fixture()
+  const onSelectLocation = vi.fn()
+  render(
+    <StandInOverviewPage
+      {...props}
+      initialDeviceId="remote"
+      primaryDeviceId="mac"
+      initialSelectedRoleId="default"
+      onSelectLocation={onSelectLocation}
+    />
+  )
+  await screen.findByTestId('identity-conversation')
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+        detail: { kind: 'task', contentRoute: '/stand-in' },
+      })
+    )
+  })
+  await waitFor(() => expect(onSelectLocation).toHaveBeenCalledExactlyOnceWith('mac'))
+})
+
 it('handles primary and calendar entry requests received while the retained page was inactive', async () => {
   const { props } = fixture()
   const view = render(
@@ -240,6 +263,34 @@ it('keeps lifecycle controls in management and only exposes details in the role 
   expect(screen.getByTestId('stand-in-settings-tools')).not.toContainElement(picker)
   expect(within(header).getByTestId('stand-in-create-role')).toBeVisible()
   expect(within(header).getByTestId('stand-in-primary-open')).toBeVisible()
+})
+
+it('keeps an existing primary binding read-only while role devices are independent', async () => {
+  const { props } = fixture()
+  render(<StandInOverviewPage {...props} primaryDeviceId="mac" />)
+  await openRoles()
+  await userEvent.click(await navigationEntry('stand-in-settings-open'))
+  await screen.findByTestId('stand-in-preferences')
+  expect(screen.queryByTestId('stand-in-device')).not.toBeInTheDocument()
+})
+
+it('returns to the bound primary device after deleting a role on another device', async () => {
+  const { props } = fixture([{ ...newStandInRole('device', 'review'), name: 'Review' }])
+  const onSelectLocation = vi.fn()
+  render(
+    <StandInOverviewPage
+      {...props}
+      initialDeviceId="device"
+      initialSelectedRoleId="review"
+      primaryDeviceId="mac"
+      onSelectLocation={onSelectLocation}
+    />
+  )
+  await screen.findByTestId('identity-conversation')
+  await userEvent.click(await navigationEntry('stand-in-settings-open'))
+  await userEvent.click(await screen.findByTestId('stand-in-role-delete'))
+  await userEvent.click(screen.getByTestId('stand-in-role-delete-confirm'))
+  await waitFor(() => expect(onSelectLocation).toHaveBeenCalledExactlyOnceWith('mac'))
 })
 
 it('opens a scheduled activity in an editor dialog while preserving the profile and main chat', async () => {

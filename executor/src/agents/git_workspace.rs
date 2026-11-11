@@ -424,11 +424,33 @@ async fn clone_repo(
             failed_fields.push(("git_domain", git_domain));
         }
         log_executor_event("git clone credentials missing", &failed_fields);
-        return Err(format!(
-            "git credentials missing for protected repository: {}",
-            mask_url_credentials(git_url)
-        ));
+        return Err(crate::local::git_access::GitAccessFailure::new(
+            "credentials-required",
+            &request_git_domain(request).unwrap_or_default(),
+            "Configure Git credentials for the protected repository before retrying",
+        )
+        .wire_error());
     }
+
+    let mut auth_environment = crate::local::git_access::noninteractive_environment(
+        &auth_environment.into_iter().collect(),
+    );
+    auth_environment.insert(
+        "GIT_HTTP_LOW_SPEED_LIMIT".into(),
+        git_http_low_speed_limit().to_string(),
+    );
+    auth_environment.insert(
+        "GIT_HTTP_LOW_SPEED_TIME".into(),
+        git_http_low_speed_time_seconds().to_string(),
+    );
+    crate::local::git_access::preflight(
+        git_url,
+        None,
+        &auth_environment,
+        git_clone_timeout_seconds() as f64,
+    )
+    .await
+    .map_err(|failure| failure.wire_error())?;
 
     let mut command = Command::new("git");
     clear_local_git_env(command.as_std_mut());
@@ -445,15 +467,6 @@ async fn clone_repo(
     command.arg(git_url).arg(project_path);
     command.envs(auth_environment);
     command
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env(
-            "GIT_HTTP_LOW_SPEED_LIMIT",
-            git_http_low_speed_limit().to_string(),
-        )
-        .env(
-            "GIT_HTTP_LOW_SPEED_TIME",
-            git_http_low_speed_time_seconds().to_string(),
-        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);

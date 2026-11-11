@@ -101,7 +101,7 @@ async fn execute_inner(app: &AppState, input: &Execute) -> Result<Value> {
             app,
             setup.task_id,
             data.subscription.user_id,
-            setup.assistant_message_id - 1,
+            setup.user_message_id,
         )
         .await?;
     }
@@ -156,6 +156,8 @@ async fn execute_inner(app: &AppState, input: &Execute) -> Result<Value> {
             new_session: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
+            web_runtime_guidance: false,
+            subtask_bot_resolved: false,
         },
         data.spec["skillRefs"]
             .as_array()

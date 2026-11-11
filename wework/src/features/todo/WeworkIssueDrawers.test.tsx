@@ -1,9 +1,10 @@
 import '@/i18n'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type {
   CollaborationApp,
   CollaborationIssue,
+  SharedWorkspaceApi,
   WorkspaceTaskBinding,
 } from '@wegent/collaboration'
 import { useState, type ComponentProps } from 'react'
@@ -18,6 +19,9 @@ const chatCallbacks = vi.hoisted(
 )
 const chatPreparations = vi.hoisted(
   () => new Map<string, ComponentProps<typeof AiChatModal>['prepareTask']>()
+)
+const chatCompletions = vi.hoisted(
+  () => new Map<string, ComponentProps<typeof AiChatModal>['onTaskCreated']>()
 )
 
 const issue = {
@@ -43,6 +47,9 @@ beforeAll(() => {
   })
 })
 beforeEach(() => {
+  chatCallbacks.clear()
+  chatPreparations.clear()
+  chatCompletions.clear()
   getAnimations.mockReset().mockReturnValue([])
   taskBindings = []
   boardColumnKeys = ['pending']
@@ -238,6 +245,7 @@ vi.mock('./AiChatModal', () => ({
     const [mountId] = useState(() => ++chatMountCount)
     chatCallbacks.set(address?.taskId ?? 'new', props.onAddressChange)
     chatPreparations.set(address?.taskId ?? 'new', props.prepareTask)
+    chatCompletions.set(address?.taskId ?? 'new', props.onTaskCreated)
     return (
       <aside
         data-testid="ai-chat-modal"
@@ -261,12 +269,14 @@ function Project({
   executionEnvironment,
   runtimeWork,
   runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() },
+  issues,
 }: {
   executionEnvironment?: ComponentProps<
     typeof WeworkSharedProject
   >['project']['execution_environment']
   runtimeWork?: ComponentProps<typeof WeworkSharedProject>['runtimeWork']
   runtimePort?: ComponentProps<typeof WeworkSharedProject>['runtimePort']
+  issues?: Pick<SharedWorkspaceApi['issues'], 'get' | 'update'>
 } = {}) {
   const [location, setLocation] = useState<ComponentProps<typeof WeworkSharedProject>['location']>({
     platformView: 'spaces',
@@ -301,7 +311,10 @@ function Project({
               },
             ]),
           },
-          issues: {},
+          issues: issues ?? {
+            get: vi.fn(async () => ({ ...issue, tags: [], version: 1 })),
+            update: vi.fn(async (_id, update) => ({ ...issue, ...update, version: 2 })),
+          },
           taskBindings: {
             list: vi.fn(async () =>
               ['run-1', 'run-2'].map(taskId => ({
@@ -349,6 +362,67 @@ function Project({
 }
 
 describe('Wework Issue conversation drawers', () => {
+  it('settles the Issue start before execution and never writes it after creation', async () => {
+    const source = { ...issue, tags: [], version: 3 }
+    let finishUpdate!: (value: typeof source) => void
+    const update = new Promise<typeof source>(resolve => {
+      finishUpdate = resolve
+    })
+    const issues = {
+      get: vi.fn(async () => source),
+      update: vi.fn(() => update),
+    }
+    const runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() }
+    render(<Project issues={issues} runtimePort={runtimePort} />)
+    await userEvent.click(screen.getByText('Open Issue'))
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }))
+    const address = { deviceId: 'device', taskId: 'prepared-task' }
+    let prepared = false
+    const preparation = Promise.resolve(chatPreparations.get('new')!(address, null)).then(
+      rollback => {
+        prepared = true
+        return rollback
+      }
+    )
+    await waitFor(() =>
+      expect(issues.update).toHaveBeenCalledWith(issue.id, {
+        version: 3,
+        status: 'in_progress',
+      })
+    )
+    expect(runtimePort.bindTask).toHaveBeenCalledOnce()
+    expect(prepared).toBe(false)
+    await act(async () => {
+      finishUpdate({ ...source, status: 'in_progress', version: 4 })
+      await preparation
+      await chatCompletions.get('new')!(address, null, null)
+    })
+    expect(prepared).toBe(true)
+    expect(issues.get).toHaveBeenCalledOnce()
+    expect(issues.update).toHaveBeenCalledOnce()
+    const rollback = await preparation
+    await act(async () => {
+      if (rollback) await rollback()
+    })
+    expect(runtimePort.unbindTask).toHaveBeenCalledOnce()
+  })
+
+  it('does not update the Issue when binding the task is denied', async () => {
+    const issues = { get: vi.fn(), update: vi.fn() }
+    const runtimePort = {
+      bindTask: vi.fn().mockRejectedValue(new Error('Task binding denied')),
+      unbindTask: vi.fn(),
+    }
+    render(<Project issues={issues} runtimePort={runtimePort} />)
+    await userEvent.click(screen.getByText('Open Issue'))
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }))
+    await expect(
+      chatPreparations.get('new')!({ deviceId: 'device', taskId: 'prepared-task' }, null)
+    ).rejects.toThrow('Task binding denied')
+    expect(issues.get).not.toHaveBeenCalled()
+    expect(issues.update).not.toHaveBeenCalled()
+  })
+
   it('keeps the assignee directory scoped to the current project', async () => {
     render(<Project />)
 

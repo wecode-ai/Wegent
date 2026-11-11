@@ -328,7 +328,11 @@ async fn resolve_create_scope(
             continuation,
             team_id: team.id,
             bot_ids: &bots.bot_ids,
+            create_assistant: true,
+            model_override_type: None,
+            model_options: None,
             input_text,
+            additional_skills: &[],
             crd: TaskCrdInput {
                 task_id: 0,
                 team_name: &team.name,
@@ -673,7 +677,7 @@ fn source_group_error(error: crate::task_source_group::SourceGroupError) -> Fast
 }
 
 /// The matching team member's `role` and `prompt` for the resolved bot.
-fn team_member_context(
+pub(crate) fn team_member_context(
     team_json: &serde_json::Value,
     bot_name: &str,
     bot_namespace: &str,
@@ -760,7 +764,7 @@ async fn reload_request_user(
 /// The new row is then recorded in the `task-run-monitor:v2` run totals. The
 /// source hook logs and swallows a store failure, so neither step can change
 /// the committed setup.
-async fn publish_inserted_assistant_subtask_metrics(
+pub(crate) async fn publish_inserted_assistant_subtask_metrics(
     state: &AppState,
     task_id: i64,
     subtask_id: i64,

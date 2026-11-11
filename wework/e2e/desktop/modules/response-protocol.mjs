@@ -598,15 +598,17 @@ function requestAdvertisesViewImageTool(request) {
 
 function selectTool(request, name, argumentsValue) {
   const tools = wireDeclarations(request, 'responses')
-  if (requestAdvertisesProgrammaticExec(request) && !tools.some(tool => tool.name === name))
+  const matches = tools.filter(
+    tool => tool.name === name || (!tool.namespace && tool.name === `functions__${name}`)
+  )
+  if (requestAdvertisesProgrammaticExec(request) && matches.length === 0)
     return programmaticSelection(request, name, argumentsValue)
-  const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
-  assert.ok(names.has(name), `Real Codex did not advertise ${name}: ${[...names].join(', ')}`)
-  const entry = tools.find(tool => tool.name === name)
+  assert.equal(matches.length, 1, `Real Codex must advertise exactly one ${name}`)
+  const [entry] = matches
   return {
-    name,
+    name: entry.name,
     arguments: argumentsValue,
-    ...(entry?.namespace ? { namespace: entry.namespace } : {}),
+    ...(entry.namespace ? { namespace: entry.namespace } : {}),
   }
 }
 

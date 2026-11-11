@@ -62,12 +62,14 @@ pub(crate) fn create_skill_identity_token(
     user_name: &str,
     task_id: i64,
     subtask_id: i64,
+    executor_name: &str,
 ) -> Result<String, FastApiError> {
     let claims = skill_identity_claims(
         user_id,
         user_name,
         task_id,
         subtask_id,
+        executor_name,
         chrono::Utc::now().timestamp(),
         skill_identity_token_expire_minutes(),
     );
@@ -75,21 +77,30 @@ pub(crate) fn create_skill_identity_token(
 }
 
 /// `create_skill_identity_token`'s payload: `iat` is the issue clock and `exp`
-/// is `iat + SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES * 60`.
+/// is `iat + SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES * 60`. `runtime_name` is the
+/// assistant subtask's persisted `executor_name`
+/// (`request_builder.py:3410`), and only a missing/empty one falls back to
+/// `task-{task_id}-subtask-{subtask_id}`.
 fn skill_identity_claims(
     user_id: i64,
     user_name: &str,
     task_id: i64,
     subtask_id: i64,
+    executor_name: &str,
     issued_at: i64,
     ttl_minutes: i64,
 ) -> Value {
+    let runtime_name = if executor_name.is_empty() {
+        format!("task-{task_id}-subtask-{subtask_id}")
+    } else {
+        executor_name.to_string()
+    };
     serde_json::json!({
         "type": "skill_identity",
         "user_id": user_id,
         "user_name": user_name,
         "runtime_type": "executor",
-        "runtime_name": format!("task-{task_id}-subtask-{subtask_id}"),
+        "runtime_name": runtime_name,
         "iat": issued_at,
         "exp": issued_at + ttl_minutes * 60,
     })
@@ -144,7 +155,8 @@ mod tests {
     fn skill_identity_claims_match_the_recorded_ttl() {
         // Recorded case e5c837d8: iat=1792479672, exp=1793343672, i.e. the
         // deployed 14400-minute (10-day) lifetime.
-        let claims = skill_identity_claims(6582, "sample-service", 42, 43, 1_792_479_672, 14_400);
+        let claims =
+            skill_identity_claims(6582, "sample-service", 42, 43, "", 1_792_479_672, 14_400);
         assert_eq!(claims["iat"], json!(1_792_479_672_i64));
         assert_eq!(claims["exp"], json!(1_793_343_672_i64));
         assert_eq!(
@@ -164,7 +176,31 @@ mod tests {
             })
         );
         // The one-day default keeps its own offset.
-        let claims = skill_identity_claims(1, "u", 2, 3, 100, 1440);
+        let claims = skill_identity_claims(1, "u", 2, 3, "", 100, 1440);
         assert_eq!(claims["exp"], json!(100_i64 + 1440 * 60));
+    }
+
+    /// `_generate_skill_identity_token` (`request_builder.py:3410`):
+    /// `runtime_name` is the assistant subtask's persisted `executor_name`
+    /// (recorded assistant subtask 85487029222116 carries
+    /// `wegent-task-haoxuan3-7c2a3a222e00cad`), and only an empty value falls
+    /// back to `task-{id}-subtask-{id}`.
+    #[test]
+    fn skill_identity_runtime_name_uses_the_persisted_executor_name() {
+        let claims = skill_identity_claims(
+            6582,
+            "sample-service",
+            42,
+            43,
+            "wegent-task-haoxuan3-7c2a3a222e00cad",
+            100,
+            14400,
+        );
+        assert_eq!(
+            claims["runtime_name"],
+            json!("wegent-task-haoxuan3-7c2a3a222e00cad")
+        );
+        let fallback = skill_identity_claims(6582, "sample-service", 42, 43, "", 100, 14400);
+        assert_eq!(fallback["runtime_name"], json!("task-42-subtask-43"));
     }
 }

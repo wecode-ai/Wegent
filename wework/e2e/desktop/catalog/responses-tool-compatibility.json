@@ -1,0 +1,6 @@
+{
+  "order": 84500,
+  "scenario": "./scenarios/responses-tool-compatibility.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "cloud": { "order": 3500, "shard": 2, "position": 8500 } }
+}
