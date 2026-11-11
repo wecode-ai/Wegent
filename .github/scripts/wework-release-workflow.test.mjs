@@ -199,7 +199,6 @@ test("release creation waits for every candidate build and validation", () => {
   const create = names.indexOf("Create or update draft release");
   for (const name of [
     "Download release builds",
-    "Reuse verified arm64 upgrade paths for macOS x64",
     "Generate desktop update manifests",
     "Report completed upgrade duration before publication",
   ])
@@ -248,8 +247,9 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
         : platforms,
     );
   }
-  const reuse = jobs.publish.steps.find(
-    (step) => step.name === "Reuse verified arm64 upgrade paths for macOS x64",
+  const reuse = jobs["aggregate-upgrades"].steps.find(
+    (step) =>
+      step.name === "Verify macOS architecture equivalence before publication",
   );
   assert.match(reuse.run, /mirror-macos-upgrade-policy.mjs/);
   assert.equal(
@@ -476,4 +476,34 @@ fi
     "rejected",
     "A long ZIP listing must not bypass the gate through SIGPIPE",
   );
+});
+
+test("dry runs certify security boundaries and x64 identities before any publication", () => {
+  const formal = jobs.build.steps.find(
+    (step) => step.name === "Verify formal release package",
+  );
+  assert.match(
+    formal.run,
+    /release-package-startup,component-update,security-boundaries/,
+  );
+  assert.equal(formal.env.WEWORK_E2E_PARALLEL_CHECKPOINTS, "1");
+  const steps = jobs["aggregate-upgrades"].steps;
+  const download = steps.find(
+    (step) => step.name === "Download exact macOS x64 package identity",
+  );
+  assert.equal(
+    download.with["run-id"],
+    "${{ needs.prepare-upgrade-inputs.outputs.run_id }}",
+  );
+  assert.match(download.with.name, /wework-upgrade-metadata-/);
+  const mirror = steps.find(
+    (step) =>
+      step.name === "Verify macOS architecture equivalence before publication",
+  );
+  const upload = steps.find(
+    (step) => step.name === "Upload complete verified upgrade policies",
+  );
+  assert.ok(steps.indexOf(download) < steps.indexOf(mirror));
+  assert.ok(steps.indexOf(mirror) < steps.indexOf(upload));
+  assert.doesNotMatch(jobs["aggregate-upgrades"].if, /publish_release/);
 });

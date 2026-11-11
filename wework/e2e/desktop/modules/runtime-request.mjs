@@ -26,12 +26,13 @@ export async function fetchLocalRuntimeJson(control, url, init = {}) {
 }
 
 /** Invoke a native capability through the real authenticated renderer HTTP boundary. */
-export async function invokeLocalHost(control, capability, params = {}) {
+export async function invokeLocalHost(control, capability, params = {}, { timeoutMs } = {}) {
   const origin = await control.command('getLocationOrigin', 'body')
   const body = await fetchLocalRuntimeJson(control, `${origin}/wework/electron-host/v1/invoke`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ capability, params }),
+    timeoutMs,
   })
   assert.equal(body.ok, true, `${capability} failed: ${body.error?.message}`)
   return body.result

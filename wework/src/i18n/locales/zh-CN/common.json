@@ -2271,8 +2271,8 @@
     "core_dsh_plugins_loading": "正在读取 Wework 插件…",
     "core_dsh_plugins_empty": "尚未安装用户 Wework 插件。",
     "core_dsh_plugins_builtins": "{{count}} 个 Wework 内置插件",
-    "core_dsh_plugins_install_confirm_title": "安装 Wework 插件？",
-    "core_dsh_plugins_install_confirm_description": "插件及其安装脚本会以当前用户权限运行。仅安装你信任的 npm、Git 或本地包。",
+    "core_dsh_plugins_install_confirm_title": "允许安装此 Core 插件吗？",
+    "core_dsh_plugins_install_confirm_description": "插件及其依赖可能执行本机代码，并使用当前用户权限访问文件和网络。仅在信任此来源时继续。本次确认仅适用于本次安装，其他操作仍需各自授权。",
     "core_dsh_plugins_uninstall_confirm_title": "卸载 Wework 插件？",
     "core_dsh_plugins_uninstall_confirm_description": "将从 Wework 插件运行时中移除 {{name}}。",
     "core_dsh_plugins_uninstall": "卸载",
@@ -4304,7 +4304,13 @@
     "diagram_render_failed": "图表渲染失败，源码如下",
     "diagram_retry": "重试",
     "plugin_python_temporary": "插件临时使用本机 Python {{version}}，托管环境继续准备。",
-    "runtime_task_load_failed": "无法加载该任务，请刷新后重试。"
+    "runtime_task_load_failed": "无法加载该任务，请刷新后重试。",
+    "core_dsh_plugins_native_title": "Core 插件安装确认",
+    "core_dsh_plugins_update_confirm_title": "允许更新此 Core 插件吗？",
+    "core_dsh_plugins_allow_install": "允许安装",
+    "core_dsh_plugins_allow_update": "允许更新",
+    "core_dsh_plugins_cancel": "取消",
+    "core_dsh_plugins_source": "来源"
   },
   "delivery": {
     "action": "交付",

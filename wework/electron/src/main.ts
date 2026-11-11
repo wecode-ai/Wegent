@@ -1,4 +1,5 @@
 import { ModelConfigurationStore } from './host/model-configuration-store.js'
+import { confirmCoreDshPluginInstall } from './host/core-dsh-plugin-approval.js'
 import { McpAppRuntime } from './host/mcp-app-runtime.js'
 import {
   readCloudConnection,
@@ -375,6 +376,7 @@ const mcpAppCleanups = new Set<() => Promise<void>>()
 let mcpAppRuntime: McpAppRuntime | null = null
 const dshWindowLabels = new Map<number, string>()
 let applicationMenu: ApplicationMenu | null = null
+let nativeDialogLanguage: string | undefined
 let lastMenuWindow: BrowserWindow | null = null
 const menuCapabilities = new Map<string, ApplicationMenuCapabilityState>()
 let primaryDshLoaded = false
@@ -2474,6 +2476,8 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   desktopRuntime = new DesktopRuntime({
     applicationId,
+    confirmPluginInstall: request =>
+      confirmCoreDshPluginInstall(request, mainWindow, nativeDialogLanguage),
     modelConfiguration,
     environment,
     dataDirectory: app.getPath('userData'),
@@ -2538,7 +2542,10 @@ async function configureDesktopRuntime(): Promise<void> {
             const window = applicationMenuWindow()
             if (window && menuLabelForWindow(window) === label) syncApplicationMenuCapabilities()
           },
-          updateApplicationMenuLanguage: language => applicationMenu?.setLanguage(language),
+          updateApplicationMenuLanguage: language => {
+            nativeDialogLanguage = language
+            applicationMenu?.setLanguage(language)
+          },
           quitApplication: () => requestApplicationShutdown(() => app.quit()),
           relaunchApplication: () => {
             app.relaunch()

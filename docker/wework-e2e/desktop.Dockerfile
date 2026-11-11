@@ -12,11 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
+    dbus \
     fontconfig \
     fonts-noto-cjk \
     gnupg \
     gh \
     git \
+    gnome-keyring \
     imagemagick \
     libasound2t64 \
     libatk-bridge2.0-0t64 \
@@ -25,9 +27,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libdrm2 \
     libgbm1 \
     libgtk-3-0t64 \
+    libglib2.0-bin \
     libmagic1 \
     libnss3 \
     librsvg2-dev \
+    libsecret-1-0 \
+    libsecret-tools \
     libssl-dev \
     libwebkit2gtk-4.1-dev \
     libxshmfence1 \
@@ -41,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     umoci \
     x11-utils \
+    xdotool \
     xvfb \
     zstd \
   && curl --proto '=https' --tlsv1.2 -fsSL \

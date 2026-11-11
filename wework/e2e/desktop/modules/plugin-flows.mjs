@@ -1,4 +1,5 @@
 import { realpath } from 'node:fs/promises'
+import { withNativePluginDecision } from './native-plugin-approval.mjs'
 
 import {
   assertMentionRenderedAsToken,
@@ -204,8 +205,9 @@ async function verifyCoreDshPluginManagement({
   await control.command('fill', '[data-testid="core-dsh-plugin-spec-input"]', {
     value: pluginRoot,
   })
-  await control.command('click', '[data-testid="core-dsh-plugin-install-button"]')
-  await control.command('click', '[data-testid="core-dsh-plugin-install-confirm"]')
+  await withNativePluginDecision(control, () =>
+    control.command('click', '[data-testid="core-dsh-plugin-install-button"]')
+  )
   await control.command('waitFor', '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

@@ -334,6 +334,13 @@ jobs:
       - name: Synchronize desktop build version
         run: node wework/scripts/sync-desktop-release-version.mjs "${{ needs.prepare-release.outputs.version }}"
 
+      - name: Prepare isolated Linux credential verification
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnome-keyring libsecret-tools libglib2.0-bin
+          node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs
+
       - name: Verify native contracts before packaging
         shell: bash
         run: |
@@ -459,6 +466,45 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Set up real cloud verification dependencies
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Prepare real cloud services
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        run: bash .github/scripts/prepare-macos-inspector-e2e.sh
+
+      - name: Set up cached native Backend transport
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+        with:
+          version: 1.3.1
+
+      - name: Resolve matching native Backend source
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        id: backend-source
+        run: echo "digest=$(node .github/scripts/macos-e2e-source-digest.mjs backend-rs)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore matching native Backend
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-backend-rs-runtime-v1-${{ steps.backend-source.outputs.digest }}
+
+      - name: Prepare matching native Backend
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        env:
+          BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ steps.backend-source.outputs.digest }}
+        run: |
+          backend_bin="$HOME/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs"
+          bash .github/scripts/restore-macos-e2e-runtime-oci.sh "$backend_bin" wegent-backend-rs "$BACKEND_SOURCE_REF"
+          bash .github/scripts/build-macos-e2e-runtimes.sh \
+            "$PWD/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor" "$backend_bin"
+          echo "WEWORK_E2E_BACKEND_RS_BIN=$backend_bin" >> "$GITHUB_ENV"
+
       - name: Verify formal release package
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         env:
@@ -472,7 +518,18 @@ jobs:
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
         run: |
           pnpm --filter wework e2e:desktop -- \
-            --parallel-segments release-package-startup,component-update
+            --parallel-segments release-package-startup,component-update,security-boundaries
+
+      - name: Retain formal security verification evidence
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-formal-security-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            wework/test-results/desktop-e2e/**/security-boundaries-result.json
+            wework/test-results/desktop-e2e/**/real-cloud-credentials-result.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Prune formal release verification diagnostics
         if: failure() && matrix.platform == 'macos' && matrix.arch == 'arm64'
@@ -517,6 +574,14 @@ jobs:
           path: ${{ runner.temp }}/wework-release-assets/*
           if-no-files-found: error
           compression-level: 0
+
+      - name: Share exact macOS x64 package identity
+        if: matrix.platform == 'macos' && matrix.arch == 'x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-upgrade-metadata-${{ needs.prepare-release.outputs.version }}-macos-x64
+          path: ${{ runner.temp }}/wework-release-assets/release-macos-x64.json
+          if-no-files-found: error
 
       - name: Prepare standalone upgrade test driver
         if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
@@ -761,6 +826,7 @@ jobs:
           sparse-checkout: |
             /.github/scripts/
             /wework/scripts/aggregate-release-upgrades.mjs
+            /wework/scripts/mirror-macos-upgrade-policy.mjs
             /wework/scripts/lib/
             /wework/upgrade-policy.json
             /wework/e2e/desktop/upgrade-suite.mjs
@@ -783,6 +849,19 @@ jobs:
           WEWORK_UPGRADE_CHANNEL: ${{ needs.prepare-upgrade-inputs.outputs.channel }}
           WEWORK_APPROVED_BASELINE_EXCLUSIONS: ${{ inputs.approved_baseline_exclusions }}
         run: node wework/scripts/aggregate-release-upgrades.mjs upgrade-plan upgrade-shards upgrade-policies
+      - name: Download exact macOS x64 package identity
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
+          name: wework-upgrade-metadata-${{ needs.prepare-upgrade-inputs.outputs.version }}-macos-x64
+          path: upgrade-policies
+      - name: Verify macOS architecture equivalence before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node wework/scripts/mirror-macos-upgrade-policy.mjs upgrade-policies "${{ needs.prepare-upgrade-inputs.outputs.channel }}" "$GITHUB_REPOSITORY"
+          rm upgrade-policies/release-macos-x64.json
       - name: Upload complete verified upgrade policies
         uses: actions/upload-artifact@v4
         with:
@@ -845,11 +924,6 @@ jobs:
           pattern: wework-${{ needs.prepare-release.outputs.version }}-*
           path: release-assets
           merge-multiple: true
-
-      - name: Reuse verified arm64 upgrade paths for macOS x64
-        env:
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-        run: node wework/scripts/mirror-macos-upgrade-policy.mjs release-assets "${{ needs.prepare-release.outputs.channel }}" "$GITHUB_REPOSITORY"
 
       - name: Generate desktop update manifests
         env:

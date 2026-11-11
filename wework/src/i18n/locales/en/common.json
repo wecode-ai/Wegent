@@ -2275,8 +2275,8 @@
     "core_dsh_plugins_loading": "Reading Wework plugins…",
     "core_dsh_plugins_empty": "No user Wework plugins are installed.",
     "core_dsh_plugins_builtins": "{{count}} built-in Wework plugins",
-    "core_dsh_plugins_install_confirm_title": "Install Wework plugin?",
-    "core_dsh_plugins_install_confirm_description": "The plugin and its install scripts run with your user permissions. Install only trusted npm, Git, or local packages.",
+    "core_dsh_plugins_install_confirm_title": "Install this Core plugin?",
+    "core_dsh_plugins_install_confirm_description": "The plugin and its dependencies may execute local code and access files and networks with your user permissions. Continue only if you trust this source. This decision applies to this installation only; other operations still require their own approvals.",
     "core_dsh_plugins_uninstall_confirm_title": "Uninstall Wework plugin?",
     "core_dsh_plugins_uninstall_confirm_description": "This removes {{name}} from the Wework plugin runtime.",
     "core_dsh_plugins_uninstall": "Uninstall",
@@ -4309,7 +4309,13 @@
     "diagram_render_failed": "Could not render the diagram. Source shown below.",
     "diagram_retry": "Retry",
     "plugin_python_temporary": "The plugin temporarily uses local Python {{version}} while the managed environment is being prepared.",
-    "runtime_task_load_failed": "Unable to load this task. Refresh and try again."
+    "runtime_task_load_failed": "Unable to load this task. Refresh and try again.",
+    "core_dsh_plugins_native_title": "Confirm Core plugin installation",
+    "core_dsh_plugins_update_confirm_title": "Update this Core plugin?",
+    "core_dsh_plugins_allow_install": "Allow installation",
+    "core_dsh_plugins_allow_update": "Allow update",
+    "core_dsh_plugins_cancel": "Cancel",
+    "core_dsh_plugins_source": "Source"
   },
   "delivery": {
     "action": "Deliver",

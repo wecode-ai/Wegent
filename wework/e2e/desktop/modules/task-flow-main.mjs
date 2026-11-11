@@ -1588,6 +1588,7 @@ async function main() {
         await stopDesktopAppProcess(child)
         throw error
       }
+      control.applicationProcessId = child.pid
       return child
     }
     app = await startDesktopAppProcess()

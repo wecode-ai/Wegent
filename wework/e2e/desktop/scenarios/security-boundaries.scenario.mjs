@@ -1,3 +1,7 @@
+import {
+  verifyRealCloudCredentials,
+  verifyNativePluginAdmission,
+} from '../modules/security-credential-flows.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
@@ -5,6 +9,7 @@ import { createLinkedDocumentFixture } from '../modules/office-preview-fixtures.
 import { fetchLocalRuntime, invokeLocalHost } from '../modules/runtime-request.mjs'
 import { createLocalProject } from '../modules/streaming-text-fixture.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import {
   assistantMessage,
   createSse,
@@ -25,9 +30,29 @@ export function createDesktopScenario({
   electronUserDataDirectory,
   restartDesktopApp,
   uiTimeoutMs,
+  resultDir,
 }) {
   let nativeProbes = 0
+  let cloud
+  let proxy
+  // This checkpoint uses production login and restart restoration, never token seeding.
+  const appEnvironment = {
+    WEWORK_E2E_CLOUD_BACKEND_URL: '',
+    VITE_WEWORK_E2E_CLOUD_BACKEND_URL: '',
+    WEWORK_E2E_CLOUD_TOKEN: '',
+    VITE_WEWORK_E2E_CLOUD_TOKEN: '',
+  }
   return {
+    requiresCloudEnvironment: true,
+    requiresRemoteExecutor: false,
+    appEnvironment,
+    setCloudEnvironment(environment) {
+      cloud = environment
+    },
+    async prepareCloud({ backendUrl }) {
+      proxy = await new TransportFaultProxy(backendUrl).start()
+      appEnvironment.WEWORK_BACKEND_URL = proxy.url
+    },
     async handleHttp(request, response, url) {
       if (request.method !== 'POST') return false
       if (url.pathname === '/v1/chat/completions') {
@@ -71,6 +96,16 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
+      await verifyRealCloudCredentials({
+        control,
+        cloud,
+        proxy,
+        electronUserDataDirectory,
+        restartDesktopApp,
+        resultDir,
+      })
+      await verifyNativePluginAdmission({ control, electronUserDataDirectory, resultDir })
+
       const payload = `document.body.setAttribute('${MARKER}','yes')`
       const links = [
         { target: `javascript:${payload}`, type: 'image' },
@@ -190,6 +225,27 @@ export function createDesktopScenario({
           providers: originalProviders,
         })
       }
+      await writeFile(
+        join(resultDir, 'security-boundaries-result.json'),
+        JSON.stringify(
+          {
+            completed: true,
+            sourceSha: process.env.GITHUB_SHA ?? null,
+            checks: [
+              'real-cloud-login-restart-refresh-authentication-and-logout-marker',
+              'native-plugin-install-and-update-cancel-and-allow',
+              'docx-unsafe-links-inert-and-https-preserved',
+              'renderer-secure-storage-denied',
+              'model-key-protected-and-native-authentication-after-restart',
+            ],
+          },
+          null,
+          2
+        )
+      )
+    },
+    async cleanup() {
+      await proxy?.stop()
     },
   }
 }
