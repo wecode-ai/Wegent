@@ -64,7 +64,7 @@ pub(crate) async fn authorized_project<M: Mysql>(
 
 pub(crate) use access::{
     LOOP_ITEMS_COLUMNS, WORKSPACE_ID_COLUMN, entity_columns, project_access_point_statement,
-    role_for_priority,
+    project_permission_statement, role_for_priority,
 };
 
 /// `PATCH /api/v1/cloud-projects/{project_id}`: update one cloud project.

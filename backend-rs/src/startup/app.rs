@@ -71,6 +71,12 @@ pub async fn build_with_clients(
     let decision_http = crate::decisions::provider::build_client()?;
     let url_metadata_http =
         crate::url_metadata::build_client().context("failed to build the url-metadata client")?;
+    // `terminal_session_service.start()` runs at process startup: the
+    // `terminal_session:invalidations` subscription must be ready before
+    // terminal traffic, and losing it fails terminal authorization closed.
+    if let Some(redis) = redis.as_ref() {
+        crate::socketio::terminal_attach::start_invalidation_listener(redis.clone()).await;
+    }
     // The Celery result consumer keeps its own connection
     // (`celery/backends/redis.py:ResultConsumer.start`). It is best-effort like
     // the shared service: without it an index dispatch fails exactly as an
@@ -126,6 +132,7 @@ pub async fn build_with_clients(
         user_profile: Arc::new(crate::user_profile::DefaultUserViewExtension),
         user_git_info: Arc::new(crate::user_profile::StoredGitInfo),
         user_git_info_mask: Arc::new(crate::user_profile::NoGitInfoMasking),
+        user_info_extension: Arc::new(crate::user_profile::NoUserInfoExtension),
         media_policy: Arc::new(crate::media_policy::DefaultMediaPolicy),
         external_media: Arc::new(crate::attachments::external_media::NoExternalMediaRelay),
         attachment_upload: Arc::new(crate::attachments::upload::MySqlStorageBackend),

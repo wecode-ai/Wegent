@@ -49,6 +49,7 @@ export function StandInPrimaryProfile({
   services,
   devices,
   onSelectDevice,
+  deviceReadOnly = false,
   initialCalendar = false,
   onCalendarViewChange,
   onReload,
@@ -67,6 +68,7 @@ export function StandInPrimaryProfile({
   services: WorkbenchServices
   devices: DeviceInfo[]
   onSelectDevice(deviceId: string): void
+  deviceReadOnly?: boolean
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
@@ -306,6 +308,7 @@ export function StandInPrimaryProfile({
             runtimeWork={runtimeWork}
             deviceControl={
               <StandInDeviceSelect
+                readOnly={deviceReadOnly}
                 value={settings.executionDeviceId}
                 currentDeviceId={localDeviceId}
                 devices={devices}

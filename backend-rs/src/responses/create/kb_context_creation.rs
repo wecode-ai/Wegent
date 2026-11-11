@@ -45,7 +45,7 @@ pub(super) const REFRESH_CONTEXT: &str = "SELECT subtask_contexts.id, \
     WHERE subtask_contexts.id = ?";
 
 /// One `ResolvedKnowledgeBase` (`openapi/kb_resolver.py:26-38`).
-pub(super) struct ResolvedKb {
+pub(crate) struct ResolvedKb {
     pub(super) kb_id: i64,
     pub(super) namespace: String,
     pub(super) name: String,
@@ -318,9 +318,17 @@ async fn resolve_refs(
     }
 
     for knowledge_base in &mut resolved {
-        if !knowledge_base.scope_restricted {
-            continue;
-        }
+        resolve_scope(state, user_id, knowledge_base).await?;
+    }
+    Ok(resolved)
+}
+
+async fn resolve_scope(
+    state: &AppState,
+    user_id: i64,
+    knowledge_base: &mut ResolvedKb,
+) -> Result<(), FastApiError> {
+    if knowledge_base.scope_restricted {
         let request = DocumentScopeRequest {
             knowledge_base_id: knowledge_base.kb_id,
             user_id,
@@ -343,7 +351,7 @@ async fn resolve_refs(
         .await
         .map_err(scope_error)?;
     }
-    Ok(resolved)
+    Ok(())
 }
 
 /// `raise HTTPException(400, detail=str(exc))` for the source's scope
@@ -372,6 +380,47 @@ mod tests {
             include_subfolders: true,
             scope_specified: false,
         }
+    }
+
+    #[test]
+    fn chat_binding_keeps_exact_documents_until_a_whole_base_is_selected() {
+        let mut spec = json!({});
+        let mut selection = ResolvedKb {
+            kb_id: 7,
+            namespace: "default".into(),
+            name: "Team docs".into(),
+            scope_restricted: true,
+            folder_ids: None,
+            explicit_document_ids: Some(vec![11]),
+            include_subfolders: true,
+            resolved_document_ids: vec![11],
+        };
+        merge_chat_binding(&mut spec, &selection, "owner");
+        assert_eq!(
+            spec["knowledgeBaseScopes"][0]["explicitDocumentIds"],
+            json!([11])
+        );
+        selection.explicit_document_ids = Some(vec![11, 12]);
+        merge_chat_binding(&mut spec, &selection, "owner");
+        assert_eq!(
+            spec["knowledgeBaseScopes"][0]["explicitDocumentIds"],
+            json!([11, 12])
+        );
+
+        selection.scope_restricted = false;
+        merge_chat_binding(&mut spec, &selection, "owner");
+        assert_eq!(spec["knowledgeBaseScopes"], json!([]));
+        assert_eq!(spec["knowledgeBaseRefs"][0]["id"], 7);
+    }
+
+    #[test]
+    fn chat_rejects_invalid_scope_instead_of_widening_it() {
+        assert!(chat_scope_ids(Some(&json!(["bad"]))).is_err());
+        assert!(chat_scope_ids(Some(&json!([0]))).is_err());
+        assert_eq!(
+            chat_scope_ids(Some(&json!(["12"]))).unwrap(),
+            Some(vec![12])
+        );
     }
 
     /// `build_execution_request` prefers `knowledge_base_refs` and falls back
@@ -513,4 +562,216 @@ mod task_scope_tests {
         apply_task_scope_refs(&mut primitive, &[kb(3, "kb")], "bob");
         assert_eq!(primitive["spec"]["knowledgeBaseScopes"][0]["id"], json!(3));
     }
+}
+
+/// Resolve Socket.IO selections by stable knowledge base ID before opening the
+/// chat write transaction. Use the same scope and access checks as API tools.
+pub(crate) async fn resolve_chat_contexts(
+    state: &AppState,
+    user_id: i64,
+    items: &[Value],
+) -> Result<Vec<ResolvedKb>, FastApiError> {
+    use super::bound_knowledge::int_value;
+    use brz_http_server::StatusCode;
+
+    let items = items.iter().filter(|item| item["type"] == "knowledge_base");
+    let mut resolved = Vec::new();
+    for item in items {
+        let data = &item["data"];
+        let kb_id = int_value(&data["knowledge_id"])
+            .filter(|id| *id > 0)
+            .ok_or_else(|| {
+                FastApiError::detail(StatusCode::BAD_REQUEST, "Invalid knowledge base ID")
+            })?;
+        let kb =
+            crate::knowledge_documents_content::access::knowledge_base_record(&state.mysql, kb_id)
+                .await
+                .map_err(super::request::dependency)?;
+        let forbidden = || {
+            FastApiError::detail(
+                StatusCode::FORBIDDEN,
+                "Knowledge base not found or access denied",
+            )
+        };
+        let kb = kb.ok_or_else(forbidden)?;
+        let allowed = crate::knowledge_documents_content::access::knowledge_base_access(
+            &state.mysql,
+            state.redis.as_ref(),
+            &state.entity_resolvers,
+            &kb,
+            user_id,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                detail = error.detail(),
+                kb_id,
+                "chat knowledge access check failed"
+            );
+            FastApiError::internal()
+        })?;
+        if !allowed {
+            return Err(forbidden());
+        }
+
+        let folder_ids = chat_scope_ids(data.get("folder_ids"))?;
+        let explicit_document_ids = chat_scope_ids(data.get("document_ids"))?;
+        let include_subfolders = data["include_subfolders"].as_bool().unwrap_or(true);
+        let document = kb.kinds_json.to_value();
+        let mut selection = ResolvedKb {
+            kb_id,
+            namespace: kb.kinds_namespace,
+            name: document["spec"]["name"]
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .or_else(|| document["metadata"]["name"].as_str())
+                .unwrap_or_default()
+                .to_string(),
+            scope_restricted: data["scope_restricted"].as_bool().unwrap_or(false)
+                || folder_ids.is_some()
+                || explicit_document_ids.is_some(),
+            folder_ids,
+            explicit_document_ids,
+            include_subfolders,
+            resolved_document_ids: Vec::new(),
+        };
+        resolve_scope(state, user_id, &mut selection).await?;
+        resolved.push(selection);
+    }
+    Ok(resolved)
+}
+
+fn chat_scope_ids(value: Option<&Value>) -> Result<Option<Vec<i64>>, FastApiError> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let ids = value.as_array().and_then(|items| {
+        items
+            .iter()
+            .map(|item| super::bound_knowledge::int_value(item).filter(|id| *id > 0))
+            .collect::<Option<Vec<_>>>()
+    });
+    ids.map(|ids| (!ids.is_empty()).then_some(ids))
+        .ok_or_else(|| {
+            FastApiError::detail(
+                brz_http_server::StatusCode::BAD_REQUEST,
+                "Invalid knowledge scope IDs",
+            )
+        })
+}
+
+/// Write current contexts and update the inherited task scope together.
+pub(crate) async fn link_chat_contexts(
+    sql: &mut dyn crate::request_sql::RequestSql,
+    store: &dyn crate::task_store::TaskStore,
+    setup: &mut super::session::ChatSessionSetup,
+    actor: (i64, &str),
+    owner_user_id: i64,
+    updated_at: &str,
+    refs: &[ResolvedKb],
+) -> brz_mysql::MysqlResult<()> {
+    use crate::request_sql::RouteKey;
+    use crate::sql_support::StatementArg::{Int, Str};
+    let (user_id, user_name) = actor;
+
+    let table = store.table_templates().tasks;
+    let row = sql
+        .fetch_optional_row(
+            RouteKey::Task(setup.task_id as u64),
+            &format!("SELECT json FROM {table} WHERE id = ? FOR UPDATE"),
+            vec![Int(setup.task_id)],
+        )
+        .await?
+        .ok_or_else(|| brz_mysql::MysqlError::InvalidQuery {
+            reason: "Chat task disappeared".into(),
+        })?;
+    let mut task_json = row.get_required::<Json<Value>>("json")?.0;
+    for reference in refs {
+        sql.execute_statement(
+            RouteKey::None,
+            INSERT_CONTEXT,
+            vec![
+                Int(setup.user_subtask_id),
+                Int(user_id),
+                Str(reference.name.clone()),
+                Str(crate::json_compat::python_json_value(&type_data(reference))),
+            ],
+        )
+        .await?;
+        merge_chat_binding(&mut task_json["spec"], reference, user_name);
+    }
+    store
+        .update_task_json_on(
+            sql,
+            setup.task_id,
+            owner_user_id,
+            &crate::json_compat::python_json_value(&task_json),
+            updated_at,
+        )
+        .await?;
+    setup.task_json = task_json;
+    Ok(())
+}
+
+fn merge_chat_binding(spec: &mut Value, reference: &ResolvedKb, user_name: &str) {
+    let matches_kb = |value: &Value| value["id"].as_i64() == Some(reference.kb_id);
+    let mut whole = spec["knowledgeBaseRefs"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut scopes = spec["knowledgeBaseScopes"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let bound_at = chrono::Utc::now().to_rfc3339();
+    if !reference.scope_restricted {
+        if let Some(existing) = whole.iter_mut().find(|value| matches_kb(value)) {
+            existing["name"] = json!(reference.name);
+        } else {
+            if whole.len() >= 10 {
+                return;
+            }
+            whole.push(json!({
+                "id": reference.kb_id, "name": reference.name,
+                "boundBy": user_name, "boundAt": bound_at,
+            }));
+        }
+        scopes.retain(|scope| !matches_kb(scope));
+    } else if !whole.iter().any(matches_kb)
+        && (reference.folder_ids.is_some() || reference.explicit_document_ids.is_some())
+    {
+        if let Some(existing) = scopes.iter_mut().find(|scope| matches_kb(scope)) {
+            if existing["scopeRestricted"].as_bool() != Some(true) {
+                return;
+            }
+            for (key, ids) in [
+                ("folderIds", &reference.folder_ids),
+                ("explicitDocumentIds", &reference.explicit_document_ids),
+            ] {
+                if let Some(ids) = ids {
+                    let mut merged =
+                        super::bound_knowledge::int_list(existing.get(key)).unwrap_or_default();
+                    for &id in ids {
+                        if !merged.contains(&id) {
+                            merged.push(id);
+                        }
+                    }
+                    existing[key] = json!(merged);
+                }
+            }
+            if reference.folder_ids.is_some() {
+                existing["includeSubfolders"] = json!(reference.include_subfolders);
+            }
+        } else {
+            scopes.push(json!({
+                "id": reference.kb_id, "namespace": reference.namespace, "name": reference.name,
+                "scopeRestricted": true, "folderIds": reference.folder_ids,
+                "explicitDocumentIds": reference.explicit_document_ids,
+                "includeSubfolders": reference.include_subfolders,
+                "boundBy": user_name, "boundAt": bound_at,
+            }));
+        }
+    }
+    spec["knowledgeBaseRefs"] = Value::Array(whole);
+    spec["knowledgeBaseScopes"] = Value::Array(scopes);
 }
