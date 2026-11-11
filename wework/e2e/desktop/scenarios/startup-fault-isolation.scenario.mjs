@@ -19,15 +19,17 @@ async function reloadWorkbench(control, timeoutMs) {
 async function verifyInitialStorageWriteFailure({ control, data, pid, resultDir, timeoutMs }) {
   const path = join(data, 'renderer-local-storage.json')
   const original = await readFile(path)
-  const seed = JSON.parse(original)
   const marker = 'wework.e2e.initialPersistence'
-  seed.entries[marker] = 'preserved'
-  const seeded = JSON.stringify(seed)
   const backup = `${path}.startup-original`
   const blocked = `${path}.${pid}.tmp`
   let ownsObstruction = false
   try {
-    await writeFile(path, seeded)
+    // Seed through the active renderer so an in-flight host write cannot replace it.
+    await control.command('setLocalStorageItem', 'body', {
+      value: JSON.stringify({ key: marker, value: 'preserved' }),
+    })
+    await control.command('flushRendererStorage', 'body')
+    assert.equal(JSON.parse(await readFile(path, 'utf8')).entries[marker], 'preserved')
     await reloadWorkbench(control, timeoutMs)
     await control.command('flushRendererStorage', 'body')
     // Acquire the path after any already-open atomic write releases its temporary file.
