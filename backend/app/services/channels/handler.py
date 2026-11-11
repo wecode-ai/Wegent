@@ -1174,6 +1174,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         """Return True when a provider-specific quoted-card follow-up must wait."""
         return False
 
+    async def _delete_private_im_runtime_callback(self, callback_key: str) -> None:
+        """Delete only the failed stand-in turn's callback address."""
+        callback_service = self.get_callback_service()
+        if callback_service:
+            await callback_service.delete_callback_info(callback_key)
+
     async def _fail_private_im_runtime_continuation(
         self,
         *,

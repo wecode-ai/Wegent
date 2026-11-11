@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 import pytest
@@ -260,3 +262,66 @@ async def test_chat_task_mirror_ignores_missing_session(
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_address_refresh_preserves_a_concurrent_task_mapping(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    session = await im_session_service.get_or_create_private_session(
+        db=None,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-race",
+        sender_id="staff-a",
+    )
+    original_get_session = im_session_service.get_session
+    address_lock_acquired = asyncio.Event()
+    release_address_lock = asyncio.Event()
+    original_lock = im_session_service._session_write_lock
+
+    @asynccontextmanager
+    async def pause_address_write(session_key: str):
+        async with original_lock(session_key):
+            address_lock_acquired.set()
+            await release_address_lock.wait()
+            yield
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(im_session_service, "_session_write_lock", pause_address_write)
+    try:
+        refresh = asyncio.create_task(
+            im_session_service.get_or_create_private_session(
+                db=None,
+                user_id=test_user.id,
+                channel_type="dingtalk",
+                channel_id=77,
+                conversation_id="conv-race",
+                sender_id="staff-a",
+                display_name="Updated",
+            )
+        )
+        await address_lock_acquired.wait()
+        remember = asyncio.create_task(
+            im_session_service.remember_chat_task(
+                user_id=test_user.id,
+                channel_type="dingtalk",
+                channel_id=77,
+                conversation_id="conv-race",
+                task_id=42,
+            )
+        )
+        await asyncio.sleep(0)
+        assert not remember.done()
+        monkeypatch.undo()
+        release_address_lock.set()
+        await refresh
+        await remember
+    finally:
+        monkeypatch.undo()
+
+    current = await original_get_session(session.session_key)
+    assert current.chat_task_id == 42
+    assert current.display_name == "Updated"

@@ -15,6 +15,23 @@ from app.services.channels.dingtalk.callback import (
 
 
 @pytest.mark.asyncio
+async def test_cleanup_prunes_only_expired_callback_refresh_entries(monkeypatch):
+    from app.services.channels import callback as callback_module
+
+    service = DingTalkCallbackService()
+    monotonic = Mock(return_value=10_000.0)
+    monkeypatch.setattr(callback_module.time, "monotonic", monotonic)
+    service._callback_ttl_refreshed_at = {
+        "expired": 10_000.0 - callback_module.CHANNEL_TASK_CALLBACK_TTL - 1,
+        "active": 10_000.0,
+    }
+
+    await service._cleanup_expired_emitters()
+
+    assert service._callback_ttl_refreshed_at == {"active": 10_000.0}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "chat_card", [None, {"template_id": "custom.schema", "content_key": "answer"}]
 )

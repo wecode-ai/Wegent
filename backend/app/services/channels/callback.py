@@ -329,6 +329,10 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 f"expired after {self._emitter_ttl}s, cleaning up"
             )
             await self._remove_emitter(task_id)
+        monotonic_now = time.monotonic()
+        for task_id, refreshed_at in list(self._callback_ttl_refreshed_at.items()):
+            if monotonic_now - refreshed_at > CHANNEL_TASK_CALLBACK_TTL:
+                self._callback_ttl_refreshed_at.pop(task_id, None)
 
     async def register_emitter(
         self, task_id: TaskCallbackKey, emitter: "ResultEmitter"
