@@ -2,6 +2,7 @@ import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { waitForRestoredTranscript } from '../modules/transcript-restoration.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -121,6 +122,7 @@ async function waitForSettled(control, timeoutMs) {
 export function createDesktopScenario({
   captureScreenshot,
   uiTimeoutMs,
+  workbenchReadyTimeoutMs,
   workspacePath,
   resultDir,
 }) {
@@ -182,6 +184,9 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
+      const beforeReload = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      const taskId = beforeReload.workbench?.currentRuntimeTask?.taskId
+      assert.ok(taskId, 'The streaming conversation must retain its Runtime task')
       const readyCountBeforeReload = control.readyCount
       await control.command('reloadMainWindow', 'body')
       releaseCompletionResolve()
@@ -194,6 +199,7 @@ export function createDesktopScenario({
           )
         ),
       ])
+      await waitForRestoredTranscript(control, taskId, workbenchReadyTimeoutMs)
 
       await control.command('waitFor', ASSISTANT_SELECTOR, {
         text: COMPLETION_TEXT,
