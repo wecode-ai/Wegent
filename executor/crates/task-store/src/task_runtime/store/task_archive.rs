@@ -4,6 +4,11 @@ impl LocalTaskStore {
     pub fn archive_task(&self, project_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let owner = work_container_from(&transaction, project_id)?
+            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        if owner.resource_type == "chat_group" {
+            chat_groups::local_group(&transaction, project_id, true)?;
+        }
         let parent_id: Option<String> = transaction
             .query_row(
                 "SELECT parent_id FROM loop_items
@@ -72,9 +77,9 @@ impl LocalTaskStore {
         offset: usize,
         limit: usize,
     ) -> Result<ArchivedLoopItemPage, TaskRuntimeError> {
-        self.get_project(project_id)?;
+        let owner = self.get_work_container(project_id)?;
         let connection = self.connection()?;
-        let mut statement = connection.prepare(
+        let mut statement = connection.prepare(&format!(
             "SELECT item.id, item.resource_type, item.project_space, item.cloud_project_id,
                     item.parent_id, item.public_id, item.project_key, item.name, item.title,
                     item.description, item.sequence_number, item.next_item_number, item.status,
@@ -84,17 +89,23 @@ impl LocalTaskStore {
                     item.deleted_at
              FROM loop_items item
              LEFT JOIN loop_items parent ON parent.id = item.parent_id
-             WHERE item.resource_type = 'task' AND item.cloud_project_id = ?1
+             WHERE item.resource_type = 'task' AND {}
                AND item.deleted_at IS NOT NULL
                AND (
                    item.parent_id IS NULL OR item.parent_id = '' OR parent.id IS NULL
                    OR parent.deleted_at IS NULL OR parent.deleted_at != item.deleted_at
                )
              ORDER BY item.deleted_at DESC, item.id DESC
-             LIMIT ?2 OFFSET ?3",
-        )?;
+             LIMIT ?3 OFFSET ?4",
+            thread_project_links::project_task_scope("item"),
+        ))?;
         let rows = statement.query_map(
-            params![project_id, limit.saturating_add(1), offset],
+            params![
+                project_id,
+                owner.resource_type == "project",
+                limit.saturating_add(1),
+                offset
+            ],
             |row| {
                 Ok(ArchivedLoopItem {
                     item: map_loop_item(&connection, row)?,
@@ -105,6 +116,9 @@ impl LocalTaskStore {
         let mut items = rows.collect::<Result<Vec<_>, _>>()?;
         let has_more = items.len() > limit;
         items.truncate(limit);
+        for archived in &mut items {
+            chat_groups::annotate_threads(&connection, std::slice::from_mut(&mut archived.item))?;
+        }
         Ok(ArchivedLoopItemPage {
             items,
             next_cursor: has_more.then(|| offset.saturating_add(limit).to_string()),
@@ -116,9 +130,13 @@ impl LocalTaskStore {
         project_id: &str,
         task_id: &str,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        self.get_project(project_id)?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let owner = work_container_from(&transaction, project_id)?
+            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        if owner.resource_type == "chat_group" {
+            chat_groups::local_group(&transaction, project_id, true)?;
+        }
         let (archived_at, parent_id): (String, Option<String>) = transaction
             .query_row(
                 "SELECT item.deleted_at, item.parent_id
@@ -200,8 +218,11 @@ impl LocalTaskStore {
         }
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let project = get_item_from(&transaction, project_id, "project")?
+        let project = work_container_from(&transaction, project_id)?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        if project.resource_type == "chat_group" {
+            chat_groups::local_group(&transaction, project_id, true)?;
+        }
         if let Some(status) = &input.status {
             project_status::validate(&project.metadata, status)?;
         }

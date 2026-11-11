@@ -827,6 +827,26 @@ pub(crate) async fn changed_item_recipients<T: MysqlTransaction>(
     let Some(row) = row else {
         return Ok(None);
     };
+    let project_id = row.cloud_project_id.clone().unwrap_or_default();
+    let kind: Option<(String,)> = transaction
+        .fetch_optional(
+            "SELECT resource_type FROM loop_items WHERE id=?",
+            (project_id.as_str(),),
+        )
+        .await?;
+    if kind.is_some_and(|kind| kind.0 == "chat_group") {
+        let users: Vec<super::chat_audience::GroupRecipient> = transaction
+            .fetch_all(
+                super::chat_audience::GROUP_USERS_SQL,
+                (project_id.as_str(), item_id, item_id),
+            )
+            .await?;
+        return Ok(Some(ChangeRecipients {
+            project_id,
+            version: row.version.unwrap_or(0),
+            users: users.into_iter().map(|row| row.id).collect(),
+        }));
+    }
     let collaborators: Vec<IdRow> = transaction
         .fetch_all(
             "SELECT loop_items.user_id AS id FROM loop_items \
@@ -870,14 +890,6 @@ struct ChangeRow {
 #[derive(Debug, FromMysqlRow)]
 struct IdRow {
     id: Option<i64>,
-}
-
-/// `project_chat_room(project_id, task_id)`.
-pub(crate) fn project_chat_room(project_id: &str, task_id: Option<&str>) -> String {
-    match task_id.filter(|value| !value.is_empty()) {
-        Some(task_id) => format!("wework-project-chat:task:{project_id}:{task_id}"),
-        None => format!("wework-project-chat:project:{project_id}"),
-    }
 }
 
 /// Encode one business failure so the transaction rolls back and the handler
@@ -936,22 +948,30 @@ pub(crate) async fn handle(
             .and_then(Value::as_str)
             .unwrap_or_default();
         let task_id = message.get("taskId").and_then(Value::as_str);
-        let room = project_chat_room(project_id, task_id);
-        if let Err(error) = runtime
-            .emitters()
-            .project_chat_message(&room, false, message)
-            .await
-        {
-            tracing::warn!(%error, room, "project chat snapshot local delivery failed");
+        let rooms = match super::chat_audience::rooms(&state.mysql, project_id, task_id).await {
+            Ok(rooms) => rooms,
+            Err(error) => {
+                tracing::warn!(?error, "Snapshot chat audience unavailable");
+                continue;
+            }
+        };
+        for room in rooms {
+            if let Err(error) = runtime
+                .emitters()
+                .project_chat_message(&room, false, message)
+                .await
+            {
+                tracing::warn!(%error, room, "project chat snapshot local delivery failed");
+            }
+            super::device_lifecycle::publish_room_event(
+                state,
+                super::device_runtime_event::PROJECT_CHAT_CREATED_EVENT,
+                message,
+                super::device_runtime_event::RUNTIME_NAMESPACE,
+                &room,
+            )
+            .await;
         }
-        super::device_lifecycle::publish_room_event(
-            state,
-            super::device_runtime_event::PROJECT_CHAT_CREATED_EVENT,
-            message,
-            super::device_runtime_event::RUNTIME_NAMESPACE,
-            &room,
-        )
-        .await;
     }
     for item_id in &reconciled.changed_items {
         publish_item_change(state, runtime, item_id, 0).await;
@@ -1091,6 +1111,7 @@ mod tests {
 
     #[test]
     fn the_room_follows_the_project_and_task_identity() {
+        use crate::socketio::device_runtime_event::project_chat_room;
         assert_eq!(
             project_chat_room("7", Some("task-1")),
             "wework-project-chat:task:7:task-1"

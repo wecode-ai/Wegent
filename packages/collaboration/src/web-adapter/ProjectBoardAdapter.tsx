@@ -477,7 +477,9 @@ export function ProjectBoardAdapter({
             settings={{
               cardDisplay: project.card_display,
               boardConfig: project.board_config,
-              canEditStatuses: project.task_provider === "local",
+              canEditStatuses:
+                project.resource_type !== "chat_group" &&
+                project.task_provider === "local",
             }}
             translate={translate}
           />
@@ -593,7 +595,9 @@ export function ProjectBoardAdapter({
                   ariaLabel: translate(
                     "todo.board_create_in_column",
                     undefined,
-                    { column: column.label },
+                    {
+                      column: column.label,
+                    },
                   ),
                   label: translate("todo.board_create_first"),
                   onClick: () => {
@@ -740,7 +744,22 @@ export function ProjectBoardAdapter({
             showPriority: display.show_priority,
             showTags: display.show_tags,
           };
-          const metadata = renderMilestoneMetadata(issue);
+          const metadata = (
+            <>
+              {issue.group_id &&
+              issue.group_id !== project.id &&
+              issue.group_name ? (
+                <span
+                  data-testid={`thread-source-group-${issue.id}`}
+                  className="block truncate text-xs text-text-muted"
+                  title={issue.group_name}
+                >
+                  # {issue.group_name}
+                </span>
+              ) : null}
+              {renderMilestoneMetadata(issue)}
+            </>
+          );
           const cardProps = {
             metadata,
             translate,
@@ -810,7 +829,7 @@ export function ProjectBoardAdapter({
           );
         }}
         renderSkeleton={() => null}
-        rootLabel="Issue"
+        rootLabel={translate("todo.thread_label")}
         rootUnitLabel={translate(
           layerCount === 1
             ? "todo.board_issue_unit_one"

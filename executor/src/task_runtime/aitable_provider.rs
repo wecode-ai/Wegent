@@ -1255,6 +1255,7 @@ fn board_loop_item(
         resource_type: "task".to_owned(),
         project_space: project.project_space.clone(),
         cloud_project_id: Some(project.id.clone()),
+        thread_context: None,
         parent_id: parent_record_id(record, mapping, title_records)
             .map(|parent| format!("aitable:{}:{parent}", project_key_of(project))),
         public_id: None,

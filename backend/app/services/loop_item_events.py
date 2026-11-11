@@ -9,7 +9,12 @@ from concurrent.futures import Future
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem, LoopItemCollaborator
+from app.models.delivery import (
+    CollaborationChatGroup,
+    LoopItem,
+    LoopItemCollaborator,
+    loop_datetime_value_is_unset,
+)
 from app.models.resource_member import (
     APPROVED_MEMBER_STATUS_VALUES,
     ResourceMember,
@@ -21,6 +26,27 @@ logger = logging.getLogger(__name__)
 
 LOOP_ITEM_CHANGED_EVENT = "wework:loop_item:changed"
 _LOG_CONTEXT = "project=%s issue=%s version=%s reason=%s recipients=%s"
+
+
+def queue_loop_item_changed_after_commit(
+    db: Session, *, item: LoopItem, reason: str, actor_user_id: int
+) -> None:
+    from app.db.session import get_db_session
+    from app.services.collaboration_after_commit import queue_after_commit
+
+    item_id = str(item.id)
+
+    def publish() -> None:
+        with get_db_session() as current:
+            persisted = current.get(LoopItem, item_id)
+            if persisted is not None and loop_datetime_value_is_unset(
+                persisted.deleted_at
+            ):
+                publish_loop_item_changed(
+                    current, item=persisted, reason=reason, actor_user_id=actor_user_id
+                )
+
+    queue_after_commit(db, f"thread:{item_id}", publish)
 
 
 def publish_loop_item_changed(
@@ -35,29 +61,40 @@ def publish_loop_item_changed(
     project_id = str(item.cloud_project_id)
     item_id = str(item.id)
     item_version = int(item.version)
-    recipient_ids = {actor_user_id, int(item.created_by_user_id or 0)}
-    recipient_ids.update(
-        int(value)
-        for (value,) in db.query(LoopItemCollaborator.user_id)
-        .filter(LoopItemCollaborator.loop_item_id == item_id)
-        .all()
-        if value
-    )
-    recipient_ids.update(
-        int(value)
-        for (value,) in db.query(ResourceMember.user_id)
-        .filter(
-            ResourceMember.resource_type.in_(
-                (ResourceType.CLOUD_PROJECT.value, ResourceType.CLOUD_PROJECT.name)
-            ),
-            ResourceMember.resource_id == project_id,
-            ResourceMember.entity_type == "user",
-            ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
+    group = db.get(CollaborationChatGroup, project_id)
+    if group is not None:
+        from app.services.chat_group_access import chat_group_members
+
+        recipient_ids = (
+            {int(member["user_id"]) for member in chat_group_members(db, project_id)}
+            if group.status in {"active", "archived"}
+            and loop_datetime_value_is_unset(group.deleted_at)
+            else set()
         )
-        .all()
-        if value
-    )
-    recipient_ids.discard(0)
+    else:
+        recipient_ids = {actor_user_id, int(item.created_by_user_id or 0)}
+        recipient_ids.update(
+            int(value)
+            for (value,) in db.query(LoopItemCollaborator.user_id)
+            .filter(LoopItemCollaborator.loop_item_id == item_id)
+            .all()
+            if value
+        )
+        recipient_ids.update(
+            int(value)
+            for (value,) in db.query(ResourceMember.user_id)
+            .filter(
+                ResourceMember.resource_type.in_(
+                    (ResourceType.CLOUD_PROJECT.value, ResourceType.CLOUD_PROJECT.name)
+                ),
+                ResourceMember.resource_id == project_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
+            )
+            .all()
+            if value
+        )
+        recipient_ids.discard(0)
     log_context = (project_id, item_id, item_version, reason, len(recipient_ids))
 
     loop = get_socketio_loop()

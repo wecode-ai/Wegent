@@ -221,7 +221,7 @@ pub(crate) enum PermissionSource {
 
 /// `cloud_project_visibility.effective_project_role`: CP05 and CP08 preserve
 /// space administration while permitting direct project promotion or demotion.
-fn effective_project_role<'a>(
+pub(crate) fn effective_project_role<'a>(
     direct_role: Option<&'a str>,
     inherited_role: Option<&'a str>,
 ) -> Option<&'a str> {

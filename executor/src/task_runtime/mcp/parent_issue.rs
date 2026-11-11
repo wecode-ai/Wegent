@@ -63,7 +63,9 @@ async fn read_issue(
     project_id: &str,
     item_id: &str,
 ) -> Result<Value, String> {
-    if is_locally_routed_project(runtime, project_id, "get_board_item") {
+    if is_locally_routed_project(runtime, project_id, "get_board_item")
+        .map_err(|error| error.to_string())?
+    {
         return runtime
             .get_task(project_id, item_id)
             .await

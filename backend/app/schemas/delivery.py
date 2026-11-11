@@ -27,6 +27,7 @@ from app.utils.schedule_time import normalize_schedule_datetime
 
 
 class LoopItemCreate(BaseModel):
+    classification_project_id: str | None = Field(default=None, max_length=64)
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     title: str = Field(min_length=1, max_length=255)
@@ -150,6 +151,10 @@ class LoopItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    group_id: str | None = None
+    group_name: str | None = None
+    joined: bool | None = None
+    can_join: bool | None = None
     cloud_project_id: SnowflakeId
     sequence_number: int
     parent_id: str | None

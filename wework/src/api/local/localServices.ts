@@ -1,4 +1,5 @@
 import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
+import { createLocalChatGroupApi } from '@/api/chatGroups'
 import { createStandInExecutorApi } from '@/api/standIn'
 import { modelInterfaceRuntimeConfig } from '../../../electron/src/host/model-interface-runtime'
 import type { McpAppRequest } from '@/api/mcpApps'
@@ -4707,6 +4708,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
 
   return {
     teamApi,
+    chatGroupApis: { local: createLocalChatGroupApi(request) },
     localParticipationIdentity,
     localIssueHumanRequestsApi: createLocalIssueHumanRequestsApi(
       request,

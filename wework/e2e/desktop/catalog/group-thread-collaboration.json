@@ -1,0 +1,19 @@
+{
+  "order": 23010,
+  "scenario": "./scenarios/group-thread-collaboration.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 23010,
+      "shard": 8,
+      "position": 14100
+    }
+  },
+  "paths": [
+    "wework/src/features/collaboration/*",
+    "wework/src/api/chatGroups.ts",
+    "executor/crates/task-store/src/task_runtime/store/chat_groups.rs",
+    "executor/crates/task-store/src/task_runtime/store/thread_project_links.rs",
+    "executor/crates/task-store/src/task_runtime/store/thread_migration.rs"
+  ]
+}

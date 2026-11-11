@@ -3548,7 +3548,7 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     expect(brand?.textContent).toBe("协作首页");
     expect(byTestId("collaboration-primary-home").textContent).toContain(
-      "新建 Issue",
+      "新建事项",
     );
     expect(byTestId("collaboration-primary-agents").textContent).toContain(
       "智能体",
@@ -3663,15 +3663,15 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.assignments?.list).toHaveBeenCalledExactlyOnceWith(issue.id);
   });
 
-  it('shows the parent layout toggle and groups child issues on the Web project board', async () => {
+  it("shows the parent layout toggle and groups child issues on the Web project board", async () => {
     const child = {
       ...issue,
-      id: 'child-issue',
+      id: "child-issue",
       sequence_number: 2,
       parent_id: issue.id,
-      title: '实现子事项',
-    }
-    const { api } = createApi({ initialIssues: [issue, child] })
+      title: "实现子事项",
+    };
+    const { api } = createApi({ initialIssues: [issue, child] });
 
     await render(
       <PlatformHarness
@@ -3681,31 +3681,31 @@ describe("CollaborationPlatformApp real component flow", () => {
           workspaceId: workspace.id,
           projectId: project.id,
         }}
-      />
-    )
+      />,
+    );
 
-    const toggle = byTestId('cloud-board-parent-layout')
-    expect(toggle.textContent).toContain('按父事项')
-    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    const toggle = byTestId("cloud-board-parent-layout");
+    expect(toggle.textContent).toContain("按父事项");
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
     expect(
-      container.querySelector(`[data-testid="cloud-todo-card-${child.id}"]`)
-    ).toBeNull()
+      container.querySelector(`[data-testid="cloud-todo-card-${child.id}"]`),
+    ).toBeNull();
 
-    await click(toggle)
+    await click(toggle);
 
-    expect(toggle.getAttribute('aria-pressed')).toBe('true')
-    expect(byTestId(`cloud-board-parent-row-${issue.id}`).textContent).toContain(
-      child.title
-    )
-
-    await click(toggle)
-
-    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
     expect(
-      container.querySelector('[data-testid="cloud-board-parent-rows"]')
-    ).toBeNull()
-    expect(byTestId(`cloud-todo-card-${issue.id}`)).toBeTruthy()
-  })
+      byTestId(`cloud-board-parent-row-${issue.id}`).textContent,
+    ).toContain(child.title);
+
+    await click(toggle);
+
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(
+      container.querySelector('[data-testid="cloud-board-parent-rows"]'),
+    ).toBeNull();
+    expect(byTestId(`cloud-todo-card-${issue.id}`)).toBeTruthy();
+  });
 
   it("keeps the loaded board when its workspace catalog arrives later", async () => {
     const target = {
@@ -5190,7 +5190,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       byTestId("collaboration-workspace-starter-configure-agents").textContent,
     ).toContain("配置智能体");
     expect(container.textContent).toContain(
-      "项目负责组织 Issue、成员和分配方式；智能体与执行环境可以稍后配置。",
+      "项目用于归类和汇总工作，事项的讨论和成员由所属群管理。",
     );
     await click(byTestId("collaboration-workspace-starter-configure-agents"));
     expect(

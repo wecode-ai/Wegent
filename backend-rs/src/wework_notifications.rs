@@ -21,6 +21,15 @@ use serde_json::json;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
+mod group_access;
+use group_access::GROUP_READ_PREDICATE;
+
+#[cfg(test)]
+#[path = "wework_notifications/group_access_tests.rs"]
+mod group_access_tests;
+#[cfg(test)]
+pub(crate) use group_access_tests::verify_group_notification_reads;
+
 /// FastAPI `Query(default=50, ge=1, le=100)` default for `limit`.
 const DEFAULT_LIMIT: i64 = 50;
 /// FastAPI `Query(default=0, ge=0)` default for `offset`.
@@ -40,7 +49,7 @@ enum Category {
 /// (assigned, mentioned or run) rather than a message sent to them directly.
 /// Rendered as the SQLAlchemy `IN`/`NOT IN` literal list.
 const COLLABORATION_NOTIFICATION_KINDS: &str =
-    "'assignment', 'mention', 'execution', 'issue_dispatch_assignment'";
+    "'assignment', 'mention', 'execution', 'issue_dispatch_assignment', 'thread_message'";
 
 impl Category {
     /// FastAPI `Literal` coercion: an absent value stays `None`, a value inside
@@ -272,8 +281,9 @@ fn inbox_view(
 
 /// The list query rendered by the source
 /// `db.query(WeworkNotification).filter(user_id == user.id)` chain plus the
-/// optional `category` kind filter, ordered by `created_at DESC, id DESC` and
-/// limited to `limit + 1`.
+/// optional `category` kind filter and current group read authority, ordered
+/// by `created_at DESC, id DESC` and limited to `limit + 1`. Apply access before
+/// pagination so inaccessible rows cannot leave holes or inflate unread counts.
 ///
 /// SQLAlchemy renders the labeled projection with inline literals for
 /// offset/limit. Replay matches the text form; the user id, offset, and limit
@@ -282,7 +292,7 @@ fn list_sql(user_id: i64, offset: i64, limit_plus_one: i64, category: Option<Cat
     let kind = category.map(Category::kind_predicate).unwrap_or_default();
     format!(
         "SELECT {NOTIFICATION_COLUMNS} \nFROM wework_notifications \n\
-         WHERE wework_notifications.user_id = {user_id}{kind} \
+         WHERE wework_notifications.user_id = {user_id}{GROUP_READ_PREDICATE}{kind} \
          ORDER BY wework_notifications.created_at DESC, \
          wework_notifications.id DESC \n LIMIT {offset}, {limit_plus_one}",
     )
@@ -296,7 +306,7 @@ fn unread_count_sql(user_id: i64, category: Option<Category>) -> String {
     format!(
         "SELECT count(*) AS count_1 \nFROM (SELECT {NOTIFICATION_COLUMNS} \n\
          FROM wework_notifications \n\
-         WHERE wework_notifications.user_id = {user_id}{kind} \
+         WHERE wework_notifications.user_id = {user_id}{GROUP_READ_PREDICATE}{kind} \
          AND wework_notifications.is_read IS false) AS anon_1",
     )
 }
@@ -460,15 +470,15 @@ mod tests {
     fn list_sql_without_category_matches_recorded() {
         let expected = format!(
             "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
-        );
+        ).replace("user_id = 151", &format!("user_id = 151{GROUP_READ_PREDICATE}"));
         assert_eq!(list_sql(151, 0, 51, None), expected);
     }
 
     #[test]
     fn list_sql_collaboration_matches_recorded() {
         let expected = format!(
-            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment') ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
-        );
+            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment', 'thread_message') ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
+        ).replace("user_id = 151", &format!("user_id = 151{GROUP_READ_PREDICATE}"));
         assert_eq!(
             list_sql(151, 0, 51, Some(Category::Collaboration)),
             expected
@@ -478,8 +488,8 @@ mod tests {
     #[test]
     fn list_sql_general_matches_recorded() {
         let expected = format!(
-            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND (wework_notifications.kind NOT IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment')) ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
-        );
+            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND (wework_notifications.kind NOT IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment', 'thread_message')) ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
+        ).replace("user_id = 151", &format!("user_id = 151{GROUP_READ_PREDICATE}"));
         assert_eq!(list_sql(151, 0, 51, Some(Category::General)), expected);
     }
 
@@ -487,15 +497,15 @@ mod tests {
     fn unread_count_sql_without_category_matches_recorded() {
         let expected = format!(
             "SELECT count(*) AS count_1 \nFROM (SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.is_read IS false) AS anon_1"
-        );
+        ).replace("user_id = 151", &format!("user_id = 151{GROUP_READ_PREDICATE}"));
         assert_eq!(unread_count_sql(151, None), expected);
     }
 
     #[test]
     fn unread_count_sql_collaboration_matches_recorded() {
         let expected = format!(
-            "SELECT count(*) AS count_1 \nFROM (SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment') AND wework_notifications.is_read IS false) AS anon_1"
-        );
+            "SELECT count(*) AS count_1 \nFROM (SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment', 'thread_message') AND wework_notifications.is_read IS false) AS anon_1"
+        ).replace("user_id = 151", &format!("user_id = 151{GROUP_READ_PREDICATE}"));
         assert_eq!(
             unread_count_sql(151, Some(Category::Collaboration)),
             expected

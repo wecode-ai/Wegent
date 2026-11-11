@@ -241,6 +241,7 @@ class CloudProjectService(CloudProjectMemberService):
         project = require_cloud_project_role(
             db, project_id, user_id, BaseRole.Maintainer
         ).project
+        project = self._lock_project(db, project_id)
         if values.tag_change is not None:
             from app.services.cloud_projects.tags import change_project_tag
 

@@ -524,6 +524,9 @@ export function createWeworkDeliverySharedWorkspaceApi(
               start_at: input.startAt,
               due_at: input.dueAt,
               milestone_id: input.milestoneId,
+              ...(input.classificationProjectId !== undefined
+                ? { classification_project_id: input.classificationProjectId }
+                : {}),
               parent_id: input.parentId,
               tags: input.tags,
               local_project_id: input.localProjectId,

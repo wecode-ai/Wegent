@@ -3,10 +3,12 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem
+from app.models.delivery import CloudProject, CollaborationChatGroup, LoopItem
 from app.schemas.project_chat import ProjectChatMention
 from app.services.cloud_project_visibility import project_participant_ids
-from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.collaboration_container_access import (
+    require_collaboration_container_access,
+)
 from app.services.loop_items.access import can_view_item
 from app.services.notification_copy import (
     NotificationTarget,
@@ -20,7 +22,7 @@ from app.services.wework_notifications import create_notification
 def notify_project_chat_mentions(
     db: Session,
     *,
-    project: CloudProject,
+    project: CloudProject | CollaborationChatGroup,
     task_id: str | None,
     item: LoopItem | None,
     comment_id: str,
@@ -37,12 +39,44 @@ def notify_project_chat_mentions(
     notification service after the comment and its notifications commit.
     """
 
+    member_ids = None
+    if isinstance(project, CollaborationChatGroup):
+        from app.services.chat_group_access import chat_group_members
+        from app.services.project_chat.group_message_authority import mentioned_user_ids
+
+        member_ids = {
+            int(row["user_id"])
+            for row in chat_group_members(
+                db, project.id, lock=True, user_ids=mentioned_user_ids(mentions)
+            )
+        }
+
+    if isinstance(project, CollaborationChatGroup) and task_id and item is not None:
+        from app.services.thread_notifications import notify_thread_message
+
+        notify_thread_message(
+            db,
+            group=project,
+            thread=item,
+            comment_id=comment_id,
+            actor_user_id=actor_user_id,
+            actor_name=actor_name,
+            content=content,
+            mentioned_ids=set(_mentioned_member_ids(mentions, member_ids)),
+            reply_preview=reply_preview,
+        )
+        return
     if not mentions:
         return
     recipient_ids = [
         user_id
         for user_id in _mentioned_member_ids(
-            mentions, project_participant_ids(db, project)
+            mentions,
+            (
+                member_ids
+                if member_ids is not None
+                else project_participant_ids(db, project)
+            ),
         )
         if user_id != actor_user_id
     ]
@@ -103,7 +137,7 @@ def _authorized_mention_target(
                     422, "Mentioned user cannot view this issue"
                 ) from exc
             raise
-    access = require_cloud_project_role(db, int(project.id), recipient_id)
+    access = require_collaboration_container_access(db, int(project.id), recipient_id)
     if item is None or not can_view_item(db, access, item, recipient_id):
         raise HTTPException(422, "Mentioned user cannot view this issue")
     return board_notification_target(db, project, item)

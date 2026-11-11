@@ -70,6 +70,8 @@ pub(crate) use access::{
 /// `PATCH /api/v1/cloud-projects/{project_id}`: update one cloud project.
 mod update;
 
+pub(crate) use update::normalize_board_setting;
+
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct CloudMetadataInput {

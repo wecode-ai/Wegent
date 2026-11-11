@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
-from sqlalchemy import String, bindparam, cast, func, or_, select
+from sqlalchemy import String, bindparam, cast, false, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
@@ -25,10 +25,12 @@ from app.models.cloud_project import (
     LoopItemTaskBinding,
 )
 from app.models.delivery import (
+    CollaborationChatGroup,
     LoopItem,
     LoopItemAttachment,
     LoopItemCollaborator,
     LoopItemComment,
+    LoopNode,
     ProjectAutomationRule,
     ProjectChatAgent,
     adapt_loop_node_values_for_dialect,
@@ -59,8 +61,12 @@ from app.services.cloud_projects.access import (
     IssueAction,
     issue_permissions,
     issue_update_actions,
-    require_cloud_project_role,
     require_issue_action,
+)
+from app.services.collaboration_container_access import (
+    get_collaboration_container,
+    lock_scoped_thread,
+    require_collaboration_container_access,
 )
 from app.services.delivery.storage import (
     DeliveryStorageUnavailableError,
@@ -205,11 +211,9 @@ class LoopItemService:
         user_id: int,
         required_role: BaseRole = BaseRole.Viewer,
     ) -> CloudProjectAccess:
-        access = require_cloud_project_role(
-            db, cloud_project_id, user_id, BaseRole.Viewer
+        access = require_collaboration_container_access(
+            db, cloud_project_id, user_id, required_role
         )
-        if not has_permission(access.role, required_role):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         self._require_local_task_provider(access.project)
         return access
 
@@ -237,7 +241,12 @@ class LoopItemService:
             user_id=user_id,
         )
         can_view_detail = can_view_item(db, access, item, user_id)
-        return can_view_detail, permissions.edit_content
+
+        writable = (
+            not isinstance(access.project, CollaborationChatGroup)
+            or access.project.status == "active"
+        )
+        return can_view_detail, permissions.edit_content and writable
 
     def response_values(
         self,
@@ -248,7 +257,7 @@ class LoopItemService:
         *,
         read_context: LoopItemReadContext | None = None,
     ) -> dict[str, object]:
-        access = access or require_cloud_project_role(
+        access = access or require_collaboration_container_access(
             db, item.cloud_project_id, user_id, BaseRole.Viewer
         )
         context = read_context or LoopItemReadContext.load(db, [item], user_id, access)
@@ -258,20 +267,35 @@ class LoopItemService:
             issue_creator_user_id=item.created_by_user_id,
             user_id=user_id,
         )
+        from app.services.thread_participation import is_participant
+
+        is_thread = isinstance(access.project, CollaborationChatGroup)
+        joined = not is_thread or is_participant(db, str(item.id), user_id)
+        writable = not is_thread or access.project.status == "active"
+        executable = not is_thread or item.status not in {
+            "completed",
+            "cancelled",
+            "archived",
+        }
         values = {
             **item.__dict__,
             "created_at": database_datetime_as_utc(db, item.created_at),
             "updated_at": database_datetime_as_utc(db, item.updated_at),
             "can_view_detail": can_view_detail,
-            "can_edit": permissions.edit_content,
+            "can_edit": permissions.edit_content and writable,
             "security_level": item_security(item, access.project),
             "permissions": {
-                "edit_content": permissions.edit_content,
-                "comment": permissions.comment,
-                "assign": permissions.assign,
-                "execute": permissions.execute,
+                "edit_content": permissions.edit_content and writable,
+                "comment": permissions.comment and joined and writable,
+                "assign": permissions.assign and writable,
+                "execute": permissions.execute and joined and writable and executable,
             },
         }
+        if is_thread:
+            values["joined"] = joined
+            values["can_join"] = not joined and access.project.status == "active"
+            values["group_id"] = str(access.project.id)
+            values["group_name"] = access.project.name
         if item.assignee_user_id:
             assignee = context.users.get(item.assignee_user_id)
             values["assignee_name"] = assignee.user_name if assignee else None
@@ -479,10 +503,20 @@ class LoopItemService:
         user_id: int,
         *,
         action: IssueAction | None = None,
+        write: bool = False,
+        include_deleted: bool = False,
     ) -> CloudProjectAccess:
-        access = require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Viewer
+        access = require_collaboration_container_access(
+            db,
+            item.cloud_project_id,
+            user_id,
+            BaseRole.Viewer,
+            write=write or action is not None,
         )
+        if write or action is not None:
+            item = lock_scoped_thread(
+                db, access.project.id, item.id, include_deleted=include_deleted
+            )
         can_view_detail, _ = self._item_permissions(db, access, item, user_id)
         if not can_view_detail:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
@@ -493,6 +527,14 @@ class LoopItemService:
                 issue_creator_user_id=item.created_by_user_id,
                 user_id=user_id,
             )
+            if action in {IssueAction.COMMENT, IssueAction.EXECUTE}:
+                from app.services.thread_participation import (
+                    require_thread_participation,
+                )
+
+                require_thread_participation(
+                    db, item, user_id, execute=action == IssueAction.EXECUTE
+                )
         return access
 
     def ensure_collaborator(
@@ -507,7 +549,7 @@ class LoopItemService:
     ) -> LoopItemCollaborator:
         """Ensure one project member participates in a TODO."""
 
-        require_cloud_project_role(
+        require_collaboration_container_access(
             db,
             item.cloud_project_id,
             collaborator_user_id,
@@ -597,31 +639,47 @@ class LoopItemService:
         assign_creator_if_unassigned: bool = True,
         apply_project_workflow: bool = True,
     ) -> LoopItem:
-        self._require_internal_task_project(
+        access = self._require_internal_task_project(
             db,
             cloud_project_id,
             user_id,
             BaseRole.Developer,
         )
+        from app.services.thread_project_links import (
+            create_thread_classification,
+            prepare_thread_classification,
+        )
+
+        classification = prepare_thread_classification(
+            db, access.project, user_id, values.classification_project_id
+        )
         if values.parent_id is not None:
             self._require_parent(db, values.parent_id, cloud_project_id)
         project = (
-            db.query(CloudProject)
-            .filter(CloudProject.id == cloud_project_id)
+            db.query(LoopNode)
+            .filter(LoopNode.id == cloud_project_id)
             .with_for_update()
             .populate_existing()
             .one()
         )
         sequence = project.next_item_number
         project.next_item_number += 1
-        payload = values.model_dump(exclude={"notify_assignee", "runner_selection"})
+        payload = values.model_dump(
+            exclude={
+                "notify_assignee",
+                "runner_selection",
+                "classification_project_id",
+            }
+        )
         runner_selection = (
             values.runner_selection.model_dump(exclude_none=True)
             if values.runner_selection is not None
             else (automation_context or {}).get("runner_selection")
         )
         milestone_id = payload.pop("milestone_id", None)
-        require_milestone(db, project.id, milestone_id)
+        require_milestone(
+            db, classification.id if classification else project.id, milestone_id
+        )
         tags = payload.pop("tags")
         explicit_workflow = values.workflow
         explicit_execution_config = values.execution_config
@@ -840,6 +898,13 @@ class LoopItemService:
             item.completed_at = self._now()
         db.add(item)
         db.flush()
+        if classification is not None:
+            create_thread_classification(db, item, classification)
+        from app.services.thread_lifecycle import record_thread_lifecycle
+        from app.services.thread_participation import initialize_thread_participants
+
+        initialize_thread_participants(db, item)
+        record_thread_lifecycle(db, item, user_id, "created")
         if collaboration_group is not None:
             from app.services.collaboration_group_execution import (
                 dispatch_collaboration_group_assignment,
@@ -956,7 +1021,7 @@ class LoopItemService:
         assignee_id: str | None = None,
         execution_state: str | None = None,
     ) -> list[LoopItem]:
-        access = require_cloud_project_role(db, cloud_project_id, user_id)
+        access = require_collaboration_container_access(db, cloud_project_id, user_id)
         return self.list_for_access(
             db,
             access,
@@ -975,47 +1040,30 @@ class LoopItemService:
         assignee_type: str | None = None,
         assignee_id: str | None = None,
         execution_state: str | None = None,
+        include_project_threads: bool = False,
     ) -> list[LoopItem]:
         self._require_local_task_provider(access.project)
-        query = db.query(LoopItem).filter(
-            LoopItem.cloud_project_id == access.project.id,
-            loop_datetime_is_unset(LoopItem.deleted_at),
-        )
+        scope = LoopItem.cloud_project_id == access.project.id
         if not has_permission(access.role, BaseRole.Maintainer):
-            query = query.filter(visible_item_filter(user_id, access.project))
-        if assignee_type == "user" and assignee_id:
-            try:
-                assignee_user_id = int(assignee_id)
-            except ValueError as exc:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    "User assignee id must be numeric",
-                ) from exc
-            query = query.filter(LoopItem.assignee_user_id == assignee_user_id)
-        elif assignee_type == "agent" and assignee_id:
-            query = query.filter(LoopItem.assignee_agent_id == assignee_id)
-        elif assignee_type == "team" and assignee_id:
-            try:
-                assignee_team_id = int(assignee_id)
-            except ValueError as exc:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    "Team assignee id must be numeric",
-                ) from exc
-            query = query.filter(LoopItem.assignee_team_id == assignee_team_id)
-        if execution_state:
-            from app.models.loop_item_execution import LoopItemExecution
+            scope = scope & visible_item_filter(user_id, access.project)
+        if include_project_threads:
+            from app.services.project_thread_aggregation import linked_thread_ids
 
-            query = query.filter(
-                LoopItem.id.in_(
-                    select(LoopItemExecution.loop_item_id).where(
-                        LoopItemExecution.status == execution_state
-                    )
-                )
+            scope = or_(
+                scope,
+                LoopItem.id.in_(linked_thread_ids(str(access.project.id), user_id)),
             )
-        return query.order_by(
-            LoopItem.sort_order, LoopItem.updated_at.desc(), LoopItem.id
-        ).all()
+        query = db.query(LoopItem).filter(
+            scope, loop_datetime_is_unset(LoopItem.deleted_at)
+        )
+        from app.services.loop_items.listing import filtered_items
+
+        return filtered_items(
+            query,
+            assignee_type=assignee_type,
+            assignee_id=assignee_id,
+            execution_state=execution_state,
+        )
 
     def reorder(
         self,
@@ -1081,7 +1129,32 @@ class LoopItemService:
     def list_comments(
         self, db: Session, item_id: str, user_id: int
     ) -> list[dict[str, object]]:
-        self.get(db, item_id, user_id)
+        item = self.get(db, item_id, user_id)
+
+        if db.get(CollaborationChatGroup, str(item.cloud_project_id)) is not None:
+            from app.models.project_chat_message import ProjectChatMessage
+
+            messages = (
+                db.query(ProjectChatMessage)
+                .filter(
+                    ProjectChatMessage.project_id == str(item.cloud_project_id),
+                    ProjectChatMessage.task_id == str(item.id),
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                )
+                .order_by(ProjectChatMessage.id)
+                .all()
+            )
+            return [
+                {
+                    "id": row.message_id,
+                    "body": row.content,
+                    "author": row.sender_name,
+                    "web_url": None,
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                }
+                for row in messages
+            ]
         comments = (
             db.query(LoopItemComment)
             .filter(
@@ -1135,6 +1208,41 @@ class LoopItemService:
         commit: bool = True,
     ) -> dict[str, object]:
         item = self.get(db, item_id, user_id)
+
+        if db.get(CollaborationChatGroup, str(item.cloud_project_id)) is not None:
+            from uuid import uuid4
+
+            from app.schemas.project_chat import ProjectChatSend
+            from app.services.project_chat.push import queue_project_chat_after_commit
+            from app.services.project_chat.service import project_chat_service
+
+            author = db.get(User, user_id)
+            result = project_chat_service.send(
+                db,
+                user_id=user_id,
+                user_name=author.user_name if author else "",
+                request=ProjectChatSend(
+                    project_id=str(item.cloud_project_id),
+                    task_id=str(item.id),
+                    client_message_id=str(uuid4()),
+                    content=body,
+                ),
+                commit=False,
+            )
+            message = result.message
+            queue_project_chat_after_commit(
+                db, message.model_dump(by_alias=True, mode="json")
+            )
+            if commit:
+                db.commit()
+            return {
+                "id": message.message_id,
+                "body": message.content,
+                "author": message.sender.get("name", ""),
+                "web_url": None,
+                "created_at": message.created_at,
+                "updated_at": message.updated_at,
+            }
         self._require_item_access(db, item, user_id, action=IssueAction.COMMENT)
         comment = LoopItemComment(
             cloud_project_id=item.cloud_project_id,
@@ -1188,7 +1296,7 @@ class LoopItemService:
     def list_project_attachments(
         self, db: Session, cloud_project_id: int, user_id: int
     ) -> list[tuple[LoopItemAttachment, LoopItem]]:
-        access = require_cloud_project_role(db, cloud_project_id, user_id)
+        access = require_collaboration_container_access(db, cloud_project_id, user_id)
         attachment = aliased(LoopItemAttachment)
         item = aliased(LoopItem)
         query = (
@@ -1237,7 +1345,10 @@ class LoopItemService:
     ) -> LoopItemAttachment:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
-        project = db.get(CloudProject, item.cloud_project_id)
+        from app.services.thread_participation import require_thread_participation
+
+        require_thread_participation(db, item, user_id)
+        project = get_collaboration_container(db, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
 
@@ -1263,10 +1374,12 @@ class LoopItemService:
 
         from app.services.context import context_service
         from app.services.context.context_service import NotFoundException
+        from app.services.thread_participation import require_thread_participation
 
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
-        project = db.get(CloudProject, item.cloud_project_id)
+        require_thread_participation(db, item, user_id)
+        project = get_collaboration_container(db, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
 
@@ -1434,7 +1547,7 @@ class LoopItemService:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN, "Invalid feedback attachment"
             )
-        project = db.get(CloudProject, item.cloud_project_id)
+        project = get_collaboration_container(db, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
         return self._store_attachment(
@@ -1578,7 +1691,7 @@ class LoopItemService:
                 values.position,
             )
         if "security_level" in values.model_fields_set:
-            require_cloud_project_role(
+            require_collaboration_container_access(
                 db, int(item.cloud_project_id), user_id, BaseRole.Maintainer
             )
         assignee_fields = {
@@ -1588,7 +1701,7 @@ class LoopItemService:
         }
         assignee_changed = bool(assignee_fields & values.model_fields_set)
         group_changed = "assignee_group_id" in values.model_fields_set
-        access = self._require_item_access(db, item, user_id)
+        access = self._require_item_access(db, item, user_id, write=True)
         for action in issue_update_actions(values.model_fields_set) or [
             IssueAction.EDIT_CONTENT
         ]:
@@ -1703,7 +1816,9 @@ class LoopItemService:
             # metadata keys survive the update.
             metadata = dict(item.metadata_json or {})
             if "milestone_id" in values.model_fields_set:
-                require_milestone(db, item.cloud_project_id, values.milestone_id)
+                from app.services.thread_project_links import require_thread_milestone
+
+                require_thread_milestone(db, item, user_id, values.milestone_id)
                 updates.pop("milestone_id")
                 if values.milestone_id is None:
                     metadata.pop("milestone_id", None)
@@ -1790,7 +1905,7 @@ class LoopItemService:
                     assignee_team_id=None,
                 )
                 if "status" not in values.model_fields_set:
-                    project = db.get(CloudProject, item.cloud_project_id)
+                    project = get_collaboration_container(db, item.cloud_project_id)
                     if project is None:
                         raise HTTPException(
                             status.HTTP_404_NOT_FOUND, "Cloud project not found"
@@ -1890,7 +2005,7 @@ class LoopItemService:
             if target_id is not None:
                 from app.services.issue_assignments import issue_assignment_service
 
-                project = db.get(CloudProject, item.cloud_project_id)
+                project = get_collaboration_container(db, item.cloud_project_id)
                 if project is None:
                     raise HTTPException(
                         status.HTTP_404_NOT_FOUND, "Cloud project not found"
@@ -1940,14 +2055,14 @@ class LoopItemService:
                 )
         next_status = updates.get("status")
         if "status" in values.model_fields_set and next_status is not None:
-            project = db.get(CloudProject, item.cloud_project_id)
+            project = get_collaboration_container(db, item.cloud_project_id)
             if project is None or next_status not in self._project_status_ids(project):
-                if next_status != "":
+                if next_status != "" or isinstance(project, CollaborationChatGroup):
                     raise HTTPException(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
                     )
         if "status" in values.model_fields_set and updates.get("status") != item.status:
-            project = db.get(CloudProject, item.cloud_project_id)
+            project = get_collaboration_container(db, item.cloud_project_id)
             if project is not None:
                 metadata = updates.get("metadata_json")
                 if not isinstance(metadata, dict):
@@ -2054,6 +2169,15 @@ class LoopItemService:
                 actor_user_id=user_id,
                 automation_run_id=(automation_context or {}).get("run_id"),
             )
+        from app.services.thread_lifecycle import record_thread_lifecycle
+        from app.services.thread_participation import join_thread
+
+        if db.get(CollaborationChatGroup, str(item.cloud_project_id)) is not None:
+            db.refresh(item)
+            if assignee_changed and item.assignee_user_id:
+                join_thread(db, item, item.assignee_user_id)
+            if status_changed:
+                record_thread_lifecycle(db, item, user_id, "status_changed")
         if commit:
             db.commit()
         else:
@@ -2124,7 +2248,7 @@ class LoopItemService:
             and assignment.metadata.get("trigger") == "default"
         )
         project_id = int(item.cloud_project_id)
-        project = db.get(CloudProject, project_id)
+        project = get_collaboration_container(db, project_id)
         if project is None or (
             not is_implicit_creator_assignment
             and target_user_id
@@ -2696,7 +2820,9 @@ class LoopItemService:
         """Restore the TODO subtree archived in the same operation."""
 
         item = self._get_item_row(db, item_id, include_deleted=True)
-        self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
+        self._require_item_access(
+            db, item, user_id, action=IssueAction.EDIT_CONTENT, include_deleted=True
+        )
         if loop_datetime_value_is_unset(item.deleted_at):
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO is not archived")
         archived_at = item.deleted_at
@@ -2723,7 +2849,11 @@ class LoopItemService:
             restored_items.extend(children)
         for descendant in restored_items[1:]:
             self._require_item_access(
-                db, descendant, user_id, action=IssueAction.EDIT_CONTENT
+                db,
+                descendant,
+                user_id,
+                action=IssueAction.EDIT_CONTENT,
+                include_deleted=True,
             )
         for restored_item in restored_items:
             restored_item.deleted_at = None
@@ -2744,15 +2874,31 @@ class LoopItemService:
     ) -> tuple[list[LoopItem], str | None]:
         """List archived subtree roots, most recently archived first."""
 
-        access = require_cloud_project_role(
+        access = require_collaboration_container_access(
             db, cloud_project_id, user_id, BaseRole.Viewer
         )
         parent = aliased(LoopItem)
+        scope = LoopItem.cloud_project_id == access.project.id
+        if access.project.task_provider in {"github", "gitlab"}:
+            scope = false()
+        if not has_permission(access.role, BaseRole.Maintainer):
+            scope = scope & visible_item_filter(user_id, access.project)
+        if not isinstance(access.project, CollaborationChatGroup):
+            from app.services.project_thread_aggregation import linked_thread_ids
+
+            scope = or_(
+                scope,
+                LoopItem.id.in_(
+                    linked_thread_ids(
+                        str(access.project.id), user_id, include_archived=True
+                    )
+                ),
+            )
         query = (
             db.query(LoopItem)
             .outerjoin(parent, parent.id == LoopItem.parent_id)
             .filter(
-                LoopItem.cloud_project_id == cloud_project_id,
+                scope,
                 ~loop_datetime_is_unset(LoopItem.deleted_at),
                 or_(
                     LoopItem.parent_id.is_(None),
@@ -2763,8 +2909,6 @@ class LoopItemService:
                 ),
             )
         )
-        if not has_permission(access.role, BaseRole.Maintainer):
-            query = query.filter(visible_item_filter(user_id, access.project))
         rows = (
             query.order_by(LoopItem.deleted_at.desc(), LoopItem.id.desc())
             .offset(offset)
@@ -2860,6 +3004,7 @@ class LoopItemService:
         commit: bool = True,
     ) -> LoopItemTaskBinding:
         item = self.get(db, item_id, user_id)
+        self._require_item_access(db, item, user_id, action=IssueAction.EXECUTE)
         if values.stand_in_conversation_id:
             from app.services.loop_items.stand_in_conversations import (
                 require_conversation_reservation,
@@ -2868,7 +3013,6 @@ class LoopItemService:
             require_conversation_reservation(
                 db, item=item, values=values, user_id=user_id
             )
-        self._require_item_access(db, item, user_id, action=IssueAction.EXECUTE)
         self._validate_backend_task(db, values.backend_task_id, user_id)
         logger.info(
             "[LoopItem] Bind runtime session: item=%s runtime_task=%s team=%s model_selected=%s",
@@ -2941,7 +3085,9 @@ class LoopItemService:
     ) -> LoopItemTaskBinding:
         """Associate a runtime Task with a cloud project without choosing a TODO."""
 
-        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Viewer)
+        require_collaboration_container_access(
+            db, cloud_project_id, user_id, BaseRole.Viewer
+        )
         self._validate_backend_task(db, values.backend_task_id, user_id)
         bindings = active_task_binding_query(
             db,
@@ -3013,10 +3159,10 @@ class LoopItemService:
         )
         if binding is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud context not found")
-        project = db.get(CloudProject, binding.cloud_project_id)
+        project = get_collaboration_container(db, binding.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
-        require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
+        require_collaboration_container_access(db, project.id, user_id, BaseRole.Viewer)
         item = db.get(LoopItem, binding.loop_item_id) if binding.loop_item_id else None
         return binding, project, item
 
@@ -3092,7 +3238,7 @@ class LoopItemService:
         *,
         item_ids: list[str],
     ) -> list[LoopItemTaskBinding]:
-        access = require_cloud_project_role(db, project_id, user_id)
+        access = require_collaboration_container_access(db, project_id, user_id)
         return self.list_project_task_bindings_for_access(
             db, access, user_id=user_id, item_ids=item_ids
         )
@@ -3468,7 +3614,7 @@ class LoopItemService:
                 status.HTTP_403_FORBIDDEN,
                 "Only the robot creator can approve or reject this run",
             )
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        require_collaboration_container_access(db, project_id, user_id, BaseRole.Viewer)
 
     @staticmethod
     def record_assignment_change(

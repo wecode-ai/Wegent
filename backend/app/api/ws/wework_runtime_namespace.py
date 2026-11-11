@@ -50,8 +50,15 @@ from app.services.device.runtime_rpc_service import (
     encode_runtime_rpc_response,
     runtime_rpc_service,
 )
+from app.services.project_chat.audience import (
+    publication_rooms_for_message,
+    subscription_room,
+)
 from app.services.project_chat.execution_snapshot import reconcile_execution_snapshot
-from app.services.project_chat.service import project_chat_service
+from app.services.project_chat.service import (
+    chat_task_scope_filter,
+    project_chat_service,
+)
 from shared.telemetry.context import set_request_context, set_user_context
 
 logger = logging.getLogger(__name__)
@@ -344,17 +351,60 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             return project_chat_error("UNAUTHENTICATED", "Not authenticated")
         try:
             request = ProjectChatSubscribe.model_validate(project_chat_payload(data))
-            messages = await run_sync_in_executor(
+            subscription = await run_sync_in_executor(
                 _subscribe_project_chat_sync,
                 int(identity["user_id"]),
                 request,
             )
-            messages = list(messages)
+            messages = list(subscription["messages"])
         except (ValidationError, HTTPException) as exc:
             return project_chat_exception_ack(exc)
 
-        room = project_chat_room(request.project_id, request.task_id)
+        room = subscription["room"]
+        if room is None:
+            return {
+                "ok": True,
+                "result": {
+                    "messages": messages,
+                    "currentUserId": str(identity["user_id"]),
+                    "latestSequence": (
+                        messages[-1]["sequenceNumber"]
+                        if messages
+                        else request.after_sequence
+                    ),
+                    **(
+                        {"history": subscription["history"]}
+                        if "history" in subscription
+                        else {}
+                    ),
+                },
+            }
         await self.enter_room(sid, room)
+        if (
+            request.focus_message_id
+            or request.history_window
+            or request.before_sequence
+        ):
+            try:
+                # Recheck scope after joining, retaining a single bounded history window.
+                window = await run_sync_in_executor(
+                    _subscribe_project_chat_sync, int(identity["user_id"]), request
+                )
+            except (ValidationError, HTTPException) as exc:
+                await self.leave_room(sid, room)
+                return project_chat_exception_ack(exc)
+            rows = window["messages"]
+            return {
+                "ok": True,
+                "result": {
+                    "messages": rows,
+                    "history": window["history"],
+                    "currentUserId": str(identity["user_id"]),
+                    "latestSequence": (
+                        rows[-1]["sequenceNumber"] if rows else request.after_sequence
+                    ),
+                },
+            }
         latest_sequence = (
             messages[-1]["sequenceNumber"] if messages else request.after_sequence
         )
@@ -363,11 +413,12 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 catch_up_request = request.model_copy(
                     update={"after_sequence": latest_sequence}
                 )
-                catch_up = await run_sync_in_executor(
+                next_subscription = await run_sync_in_executor(
                     _subscribe_project_chat_sync,
                     int(identity["user_id"]),
                     catch_up_request,
                 )
+                catch_up = next_subscription["messages"]
                 if not catch_up:
                     break
                 messages.extend(catch_up)
@@ -419,11 +470,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
 
         if result["created"]:
             message = result["message"]
-            await self.emit(
-                PROJECT_CHAT_CREATED_EVENT,
-                message,
-                room=project_chat_room(request.project_id, request.task_id),
-            )
+            await emit_project_chat_message(self, message)
         return {
             "ok": True,
             "created": result["created"],
@@ -741,13 +788,9 @@ def project_chat_room(project_id: str, task_id: str | None) -> str:
 async def emit_project_chat_message(
     namespace: WeworkRuntimeNamespace, message: dict[str, Any]
 ) -> None:
-    project_id = str(message["projectId"])
-    task_id = message.get("taskId")
-    await namespace.emit(
-        PROJECT_CHAT_CREATED_EVENT,
-        message,
-        room=project_chat_room(project_id, str(task_id) if task_id else None),
-    )
+    rooms = await run_sync_in_executor(publication_rooms_for_message, message)
+    for room in rooms:
+        await namespace.emit(PROJECT_CHAT_CREATED_EVENT, message, room=room)
 
 
 def project_chat_error(code: str, message: str) -> dict[str, Any]:
@@ -783,10 +826,41 @@ def _reconcile_execution_snapshot_sync(
 
 def _subscribe_project_chat_sync(
     user_id: int, request: ProjectChatSubscribe
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     with get_db_session() as db:
         messages = project_chat_service.subscribe(db, user_id=user_id, request=request)
-        return [message.model_dump(mode="json", by_alias=True) for message in messages]
+        result = {
+            "messages": [
+                message.model_dump(mode="json", by_alias=True) for message in messages
+            ],
+            "room": subscription_room(db, request.project_id, request.task_id, user_id),
+        }
+        if (
+            request.focus_message_id
+            or request.history_window
+            or request.before_sequence
+        ):
+            from app.models.delivery import loop_datetime_is_unset
+            from app.models.project_chat_message import ProjectChatMessage
+
+            query = db.query(ProjectChatMessage.id).filter(
+                ProjectChatMessage.project_id == request.project_id,
+                chat_task_scope_filter(ProjectChatMessage.task_id, request.task_id),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            first = messages[0].sequence_number if messages else 0
+            last = messages[-1].sequence_number if messages else 0
+            result["history"] = {
+                "firstSequence": first,
+                "lastSequence": last,
+                "hasOlder": bool(
+                    first and query.filter(ProjectChatMessage.id < first).first()
+                ),
+                "hasNewer": bool(
+                    last and query.filter(ProjectChatMessage.id > last).first()
+                ),
+            }
+        return result
 
 
 def _send_project_chat_sync(

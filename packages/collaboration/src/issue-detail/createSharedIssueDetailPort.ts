@@ -310,11 +310,45 @@ function toDeliveryDetail(
   };
 }
 
-/**
- * Canonical cloud controller used by every host rendering the shared issue
- * detail. Desktop-only effects are injected instead of encoded in the cloud
- * DTO adapter.
- */
+/** Adapt shared metadata writes without requiring unrelated detail services. */
+export function createSharedIssueUpdatePort(
+  api: Pick<SharedWorkspaceApi["issues"], "get" | "update">,
+): Pick<SharedIssueDetailPort["issues"], "get" | "update"> {
+  return {
+    get: api.get,
+    update: (issueId, input) =>
+      api.update(issueId, {
+        version: input.version,
+        milestoneId: input.milestone_id,
+        ...(input.security_level !== undefined
+          ? { securityLevel: input.security_level }
+          : {}),
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.priority !== undefined ? { priority: input.priority } : {}),
+        ...(input.parent_id !== undefined ? { parentId: input.parent_id } : {}),
+        ...(input.assignee_user_id !== undefined
+          ? { assigneeUserId: input.assignee_user_id }
+          : {}),
+        ...(input.assignee_agent_id !== undefined
+          ? { assigneeAgentId: input.assignee_agent_id }
+          : {}),
+        ...(input.assignee_team_id !== undefined
+          ? { assigneeTeamId: input.assignee_team_id }
+          : {}),
+        ...(input.assignee_group_id !== undefined
+          ? { assigneeGroupId: input.assignee_group_id }
+          : {}),
+        ...(input.start_at !== undefined ? { startAt: input.start_at } : {}),
+        ...(input.due_at !== undefined ? { dueAt: input.due_at } : {}),
+        ...(input.tags !== undefined ? { tags: input.tags } : {}),
+      }),
+  };
+}
+
 export function createSharedIssueDetailPort(
   api: SharedIssueDetailWorkspaceApi,
   saveFile: (blob: Blob, filename: string) => Promise<void>,
@@ -333,7 +367,7 @@ export function createSharedIssueDetailPort(
   return {
     milestones: api.milestones,
     issues: {
-      get: api.issues.get,
+      ...createSharedIssueUpdatePort(api.issues),
       create: (projectId, input) =>
         api.issues.create(projectId, {
           milestoneId: input.milestone_id,
@@ -361,38 +395,6 @@ export function createSharedIssueDetailPort(
           ...(input.notify_assignee !== undefined
             ? { notifyAssignee: input.notify_assignee }
             : {}),
-        }),
-      update: (issueId, input) =>
-        api.issues.update(issueId, {
-          version: input.version,
-          milestoneId: input.milestone_id,
-          ...(input.security_level !== undefined
-            ? { securityLevel: input.security_level }
-            : {}),
-          ...(input.title !== undefined ? { title: input.title } : {}),
-          ...(input.description !== undefined
-            ? { description: input.description }
-            : {}),
-          ...(input.status !== undefined ? { status: input.status } : {}),
-          ...(input.priority !== undefined ? { priority: input.priority } : {}),
-          ...(input.parent_id !== undefined
-            ? { parentId: input.parent_id }
-            : {}),
-          ...(input.assignee_user_id !== undefined
-            ? { assigneeUserId: input.assignee_user_id }
-            : {}),
-          ...(input.assignee_agent_id !== undefined
-            ? { assigneeAgentId: input.assignee_agent_id }
-            : {}),
-          ...(input.assignee_team_id !== undefined
-            ? { assigneeTeamId: input.assignee_team_id }
-            : {}),
-          ...(input.assignee_group_id !== undefined
-            ? { assigneeGroupId: input.assignee_group_id }
-            : {}),
-          ...(input.start_at !== undefined ? { startAt: input.start_at } : {}),
-          ...(input.due_at !== undefined ? { dueAt: input.due_at } : {}),
-          ...(input.tags !== undefined ? { tags: input.tags } : {}),
         }),
       assign: api.issues.assign,
     },

@@ -553,6 +553,7 @@ async def test_device_runtime_event_persists_project_chat_before_browser_relay(
         calls.append("persist")
         return {
             "mode": "snapshot",
+            "rooms": ["wework-project-chat:task:project-1:task-1"],
             "message": {
                 "projectId": "project-1",
                 "taskId": "task-1",
@@ -586,6 +587,9 @@ async def test_device_runtime_event_persists_project_chat_before_browser_relay(
     assert calls == ["persist", "emit", "emit"]
     assert sio.emit.await_args_list[0].args[0] == (
         "wework:project_chat:message:created"
+    )
+    assert sio.emit.await_args_list[0].kwargs["room"] == (
+        "wework-project-chat:task:project-1:task-1"
     )
     assert sio.emit.await_args_list[1].args[0] == "runtime:event"
 
@@ -1016,7 +1020,12 @@ async def test_project_chat_subscribe_joins_project_room_and_returns_history(
     monkeypatch.setattr(
         wework_runtime_namespace,
         "run_sync_in_executor",
-        AsyncMock(side_effect=[history, catch_up]),
+        AsyncMock(
+            side_effect=[
+                {"messages": history, "room": "wework-project-chat:project:project-1"},
+                {"messages": catch_up, "room": "wework-project-chat:project:project-1"},
+            ]
+        ),
     )
 
     response = await namespace.on_project_chat_subscribe(
@@ -1052,7 +1061,12 @@ async def test_project_chat_send_broadcasts_only_its_task_room(monkeypatch):
     monkeypatch.setattr(
         wework_runtime_namespace,
         "run_sync_in_executor",
-        AsyncMock(return_value={"created": True, "message": message}),
+        AsyncMock(
+            side_effect=[
+                {"created": True, "message": message},
+                ["wework-project-chat:task:project-1:task-1"],
+            ]
+        ),
     )
 
     response = await namespace.on_project_chat_message_send(
@@ -1088,7 +1102,7 @@ async def test_project_chat_agent_start_creates_one_streaming_message(monkeypatc
         AsyncMock(return_value={"user_id": 7, "user_name": "Ada"}),
     )
     monkeypatch.setattr(namespace, "emit", AsyncMock())
-    start = AsyncMock(return_value=message)
+    start = AsyncMock(side_effect=[message, ["wework-project-chat:project:project-1"]])
     monkeypatch.setattr(wework_runtime_namespace, "run_sync_in_executor", start)
 
     response = await namespace.on_project_chat_agent_start(
@@ -1103,7 +1117,10 @@ async def test_project_chat_agent_start_creates_one_streaming_message(monkeypatc
     )
 
     assert response == {"ok": True, "result": message}
-    start.assert_awaited_once()
+    assert [call.args[0] for call in start.await_args_list] == [
+        wework_runtime_namespace._start_project_chat_agent_sync,
+        wework_runtime_namespace.publication_rooms_for_message,
+    ]
     namespace.emit.assert_awaited_once_with(
         "wework:project_chat:message:created",
         message,

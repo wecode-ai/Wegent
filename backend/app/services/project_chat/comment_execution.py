@@ -522,6 +522,7 @@ async def execute_comment(
         project_id=request.project_id,
         task_id=request.task_id,
         required_role=BaseRole.Developer,
+        execute=True,
     )
     trigger = (
         _messages(db, request)

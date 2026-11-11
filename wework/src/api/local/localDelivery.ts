@@ -78,6 +78,11 @@ interface LocalLoopItemRecord {
   id: string
   resource_type: 'project' | 'task' | string
   cloud_project_id: string | null
+  group_id?: string
+  group_name?: string
+  joined?: boolean
+  can_join?: boolean
+  group_status?: string
   parent_id: string | null
   public_id: string | null
   project_key: string | null
@@ -844,6 +849,9 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
 
 function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLoopItem {
   const role = project?.access_role ?? 'Owner'
+  const writable =
+    ['Owner', 'Maintainer', 'Developer'].includes(role) &&
+    (!record.group_id || record.group_status === 'active')
   const storedTags = stringList(record.metadata.tags)
   const localProjectAssociation = localProjectAssociationFromTags(storedTags)
   const creatorLabelName =
@@ -859,12 +867,29 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     runner_binding: record.metadata.runner_binding as CloudLoopItem['runner_binding'],
     id: record.id,
     cloud_project_id: record.cloud_project_id ?? '',
+    group_id: record.group_id,
+    group_name: record.group_name,
+    joined: record.joined,
+    can_join: record.can_join,
     sequence_number: record.sequence_number ?? 0,
     parent_id: record.parent_id,
     created_by_user_id: record.created_by_user_id,
     created_by_user_name: creatorLabelName || localCreatorName,
     can_view_detail: true,
-    can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role),
+    can_edit: writable,
+    ...(record.group_id
+      ? {
+          permissions: {
+            edit_content: writable,
+            assign: writable,
+            comment: writable && record.joined === true,
+            execute:
+              writable &&
+              record.joined === true &&
+              !['completed', 'cancelled', 'archived'].includes(record.status ?? ''),
+          },
+        }
+      : {}),
     security_level: record.metadata.security_level === 'related' ? 'related' : 'open',
     content_revision: record.version,
     badges: Array.isArray(record.metadata.badges)
@@ -1015,28 +1040,26 @@ export function createLocalDeliveryApi(
   }
 
   function rememberTasks(projectId: CloudProjectId, records: LocalLoopItemRecord[]) {
-    for (const record of records) taskProjects.set(record.id, projectId)
+    for (const record of records) taskProjects.set(record.id, record.cloud_project_id ?? projectId)
   }
 
   async function resolveProjectId(itemId: string): Promise<CloudProjectId> {
     const known = taskProjects.get(itemId)
     if (known) return known
+    const owner = await request<string | null>('todos.owner', { task_id: itemId })
+    if (owner) {
+      taskProjects.set(itemId, owner)
+      return owner
+    }
     const projectRecords = await loadProjectRecords()
     const projects = projectRecords.map(localProject)
-    const prefixMatches = projects.filter(project => itemId.startsWith(`${project.project_key}-`))
+    const prefixMatches = projects.filter(
+      project =>
+        project.task_provider !== 'local' &&
+        (itemId.startsWith(`${project.project_key}-`) ||
+          itemId.startsWith(`aitable:${project.project_key}:`))
+    )
     if (prefixMatches.length === 1) return prefixMatches[0].id
-    for (const project of projects) {
-      try {
-        const record = await request<LocalLoopItemRecord>('todos.get', {
-          project_id: project.id,
-          task_id: itemId,
-        })
-        taskProjects.set(record.id, project.id)
-        return project.id
-      } catch {
-        // Read-only probing is safe when legacy projects reuse a project key.
-      }
-    }
     throw new Error('Local task not found')
   }
 
@@ -1276,6 +1299,7 @@ export function createLocalDeliveryApi(
     async createLoopItem(
       projectId: CloudProjectId,
       data: {
+        classification_project_id?: string
         title: string
         milestone_id?: string | null
         description?: string
@@ -1306,6 +1330,9 @@ export function createLocalDeliveryApi(
       const record = await request<LocalLoopItemRecord>('todos.create', {
         project_id: projectId,
         todo: {
+          ...(data.classification_project_id !== undefined
+            ? { classification_project_id: data.classification_project_id }
+            : {}),
           milestone_id: data.milestone_id,
           title: data.title,
           description: data.description ?? '',

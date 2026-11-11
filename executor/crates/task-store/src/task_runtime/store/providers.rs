@@ -134,6 +134,7 @@ pub(super) fn descriptor_loop_item(
         resource_type: "project".to_owned(),
         project_space: "default".to_owned(),
         cloud_project_id: None,
+        thread_context: None,
         parent_id: None,
         public_id: project.public_id,
         project_key: Some(project.project_key),

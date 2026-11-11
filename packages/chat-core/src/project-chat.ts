@@ -40,6 +40,12 @@ export interface ProjectChatMessage {
 }
 
 export interface ProjectChatSubscription {
+  history?: {
+    firstSequence: number
+    lastSequence: number
+    hasOlder: boolean
+    hasNewer: boolean
+  }
   messages: ProjectChatMessage[]
   latestSequence: number
   currentUserId: string
@@ -53,17 +59,22 @@ export interface LoopItemChangedEvent {
 }
 
 export interface ProjectChatClient {
-  reconcileExecutionSnapshot?: (
-    snapshot: RuntimeExecutionSnapshot,
-  ) => Promise<ProjectChatMessage[]>
+  reconcileExecutionSnapshot?: (snapshot: RuntimeExecutionSnapshot) => Promise<ProjectChatMessage[]>
   subscribe: (
     projectId: string,
     taskId: string | undefined,
     afterSequence: number,
     onMessage: (message: ProjectChatMessage) => void,
     onChunk?: (message: ProjectChatMessage) => void,
+    options?: {
+      focusMessageId?: string
+      beforeSequence?: number
+      historyWindow?: boolean
+      containerKind?: 'project' | 'chat_group'
+    }
   ) => Promise<{ snapshot: ProjectChatSubscription; unsubscribe: () => void }>
   send: (input: {
+    containerKind?: 'project' | 'chat_group'
     projectId: string
     taskId?: string
     clientMessageId: string
@@ -117,7 +128,7 @@ export interface ProjectChatClient {
     attachmentIds?: number[]
   }) => Promise<ProjectChatMessage>
   subscribeLoopItemChanges?: (
-    onChange: (event: LoopItemChangedEvent) => void,
+    onChange: (event: LoopItemChangedEvent) => void
   ) => Promise<() => void>
   onReconnect?: (callback: () => void) => () => void
   dispose: () => void
@@ -154,9 +165,7 @@ interface SocketAck<T> {
   }
 }
 
-export function createProjectChatClient(
-  options: ProjectChatClientOptions,
-): ProjectChatClient {
+export function createProjectChatClient(options: ProjectChatClientOptions): ProjectChatClient {
   const client = createSocketClient({
     socketBaseUrl:
       typeof options.socketBaseUrl === 'function'
@@ -170,8 +179,12 @@ export function createProjectChatClient(
   })
   const subscriptionLeases = new Map<string, number>()
 
-  const acquireSubscriptionLease = (projectId: string, taskId?: string) => {
-    const key = JSON.stringify([projectId, taskId ?? null])
+  const acquireSubscriptionLease = (
+    projectId: string,
+    taskId?: string,
+    containerKind?: 'project' | 'chat_group'
+  ) => {
+    const key = JSON.stringify([projectId, taskId ?? null, containerKind ?? 'project'])
     subscriptionLeases.set(key, (subscriptionLeases.get(key) ?? 0) + 1)
     let released = false
     return () => {
@@ -183,23 +196,26 @@ export function createProjectChatClient(
         return
       }
       subscriptionLeases.delete(key)
-      client.socket.emit(UNSUBSCRIBE_EVENT, { projectId, taskId })
+      client.socket.emit(UNSUBSCRIBE_EVENT, {
+        projectId,
+        taskId,
+        ...(containerKind ? { containerKind } : {}),
+      })
     }
   }
 
   return {
     reconcileExecutionSnapshot(snapshot) {
-      return emitWithAck<ProjectChatMessage[]>(
-        client,
-        'wework:project_chat:execution:snapshot',
-        { ...snapshot },
-      )
+      return emitWithAck<ProjectChatMessage[]>(client, 'wework:project_chat:execution:snapshot', {
+        ...snapshot,
+      })
     },
-    async subscribe(projectId, taskId, afterSequence, onMessage, onChunk) {
+    async subscribe(projectId, taskId, afterSequence, onMessage, onChunk, options) {
       await client.ensureConnected()
       const releaseSubscriptionLease = acquireSubscriptionLease(
         projectId,
         taskId,
+        options?.containerKind
       )
       let subscribed = false
       const handler = (message: ProjectChatMessage) => {
@@ -219,31 +235,24 @@ export function createProjectChatClient(
         void emitWithAck<ProjectChatSubscription>(client, SUBSCRIBE_EVENT, {
           projectId,
           taskId,
-          afterSequence: 0,
+          afterSequence: options?.historyWindow ? afterSequence : 0,
+          ...(options ?? {}),
         })
-          .then((snapshot) =>
-            snapshot.messages.forEach((message) => onMessage(message)),
-          )
-          .catch((error) => {
-            console.warn(
-              '[Wework] Failed to refresh project chat after reconnect',
-              error,
-            )
+          .then(snapshot => snapshot.messages.forEach(message => onMessage(message)))
+          .catch(error => {
+            console.warn('[Wework] Failed to refresh project chat after reconnect', error)
           })
       }
       client.socket.on(CREATED_EVENT, handler)
       client.socket.on(AGENT_CHUNK_EVENT, chunkHandler)
       client.socket.on('connect', reconnectHandler)
       try {
-        const snapshot = await emitWithAck<ProjectChatSubscription>(
-          client,
-          SUBSCRIBE_EVENT,
-          {
-            projectId,
-            taskId,
-            afterSequence,
-          },
-        )
+        const snapshot = await emitWithAck<ProjectChatSubscription>(client, SUBSCRIBE_EVENT, {
+          projectId,
+          taskId,
+          afterSequence,
+          ...(options ?? {}),
+        })
         subscribed = true
         return {
           snapshot,
@@ -264,6 +273,7 @@ export function createProjectChatClient(
     },
     send(input) {
       return emitWithAck<ProjectChatMessage>(client, SEND_EVENT, {
+        ...(input.containerKind ? { containerKind: input.containerKind } : {}),
         projectId: input.projectId,
         taskId: input.taskId,
         clientMessageId: input.clientMessageId,
@@ -295,7 +305,7 @@ export function createProjectChatClient(
           client,
           'wework:project_chat:comment:execute',
           input,
-          90_000,
+          90_000
         )
       } catch (error) {
         const request = (
@@ -312,16 +322,12 @@ export function createProjectChatClient(
           client,
           'wework:project_chat:comment:execute',
           { ...input, runnerSelection },
-          90_000,
+          90_000
         )
       }
     },
     continueWegentTask(input) {
-      return emitWithAck<ProjectChatMessage>(
-        client,
-        WEGENT_CONTINUE_EVENT,
-        input,
-      )
+      return emitWithAck<ProjectChatMessage>(client, WEGENT_CONTINUE_EVENT, input)
     },
     async subscribeLoopItemChanges(onChange) {
       const handler = (event: LoopItemChangedEvent) => {
@@ -358,22 +364,19 @@ async function emitWithAck<T>(
   client: AuthenticatedSocketClient,
   event: string,
   payload: Record<string, unknown>,
-  timeoutMs = ACK_TIMEOUT_MS,
+  timeoutMs = ACK_TIMEOUT_MS
 ): Promise<T> {
   await client.ensureConnected()
   return new Promise<T>((resolve, reject) => {
-    const timeout = window.setTimeout(
-      () => reject(new Error(`${event} timed out`)),
-      timeoutMs,
-    )
+    const timeout = window.setTimeout(() => reject(new Error(`${event} timed out`)), timeoutMs)
     client.socket.emit(event, payload, (ack: SocketAck<T> | undefined) => {
       window.clearTimeout(timeout)
       if (!ack || ack.ok === false || ack.error) {
         reject(
-          Object.assign(
-            new Error(ack?.error?.message || 'Project chat request failed'),
-            { detail: ack?.error?.detail, code: ack?.error?.code },
-          ),
+          Object.assign(new Error(ack?.error?.message || 'Project chat request failed'), {
+            detail: ack?.error?.detail,
+            code: ack?.error?.code,
+          })
         )
         return
       }

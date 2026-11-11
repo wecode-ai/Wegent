@@ -288,6 +288,7 @@ function Project({
   })
   return (
     <WeworkSharedProject
+      onOpenGroupThread={vi.fn()}
       api={
         {
           projects: {

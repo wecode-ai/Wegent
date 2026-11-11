@@ -588,6 +588,8 @@ pub struct LoopItem {
     pub resource_type: String,
     pub project_space: String,
     pub cloud_project_id: Option<String>,
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    pub thread_context: Option<ThreadReadContext>,
     pub parent_id: Option<String>,
     pub public_id: Option<String>,
     pub project_key: Option<String>,
@@ -615,6 +617,15 @@ pub struct LoopItem {
     pub execution_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ThreadReadContext {
+    pub group_id: String,
+    pub group_name: String,
+    pub joined: bool,
+    pub can_join: bool,
+    pub group_status: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

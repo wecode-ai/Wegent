@@ -177,6 +177,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "external_projects.*",
     "external_todos.*",
     "files.*",
+    "chat_groups.*",
     "projects.*",
     "milestones.*",
     "runtime.*",
@@ -854,7 +855,8 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
-        if method.starts_with("milestones.")
+        if method.starts_with("chat_groups.")
+            || method.starts_with("milestones.")
             || method.starts_with("projects.")
             || method.starts_with("external_projects.")
             || method.starts_with("dws.")
@@ -1915,6 +1917,9 @@ fn app_ipc_event_data(message: &Value) -> Option<&Value> {
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
     let runtime = TaskRuntime::from_env().map_err(task_runtime_error)?;
     match method {
+        group if group.starts_with("chat_groups.") => runtime
+            .chat_group_request(group.trim_start_matches("chat_groups."), params)
+            .map_err(task_runtime_error),
         "dws.auth_status" => serialize_task_value(
             runtime
                 .dws_auth_status()
@@ -2293,6 +2298,11 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "todos.owner" => serialize_task_value(
+            runtime
+                .task_owner(required_task_string(&params, "task_id")?)
+                .map_err(task_runtime_error)?,
+        ),
         "todos.get" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;
@@ -2343,11 +2353,12 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .create_task_with_schedule(
+                    .create_task_with_context(
                         project_id,
                         input,
                         optional_nullable_task_string(todo, "start_at")?.flatten(),
                         optional_nullable_task_string(todo, "due_at")?.flatten(),
+                        optional_nullable_task_string(todo, "classification_project_id")?.flatten(),
                     )
                     .await
                     .map_err(task_runtime_error)?,
@@ -2424,7 +2435,10 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         }
         "todos.comment.list" => {
             let project_id = required_task_string(&params, "project_id")?;
-            let task_id = required_task_string(&params, "task_id")?;
+            let task_id = params
+                .get("task_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| AppIpcError::new("bad_request", "task_id must be a string"))?;
             let after_sequence = params
                 .get("after_sequence")
                 .and_then(Value::as_i64)

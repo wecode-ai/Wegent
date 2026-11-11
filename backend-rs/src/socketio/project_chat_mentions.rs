@@ -58,6 +58,10 @@ impl Mention {
     pub(super) fn is_user(&self) -> bool {
         self.kind == MentionKind::User
     }
+
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 pub(super) async fn validate_agents(

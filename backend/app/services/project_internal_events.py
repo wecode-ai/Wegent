@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
+    CollaborationChatGroup,
     LoopItem,
     ProjectAutomationRun,
     ProjectIncomingEvent,
@@ -30,6 +31,11 @@ def queue_issue_status_changed(
 ) -> ProjectIncomingEvent | None:
     """Queue an actual transition atomically with the Issue's state update."""
     if item.status == previous_status:
+        return
+    # Independent group lifecycle facts are written by ThreadLifecycle in the
+    # same transaction. A classification link must not enroll the group in a
+    # project's incoming-event subscriptions or automatic processing rules.
+    if db.get(CollaborationChatGroup, str(item.cloud_project_id)) is not None:
         return
     from app.services.project_incoming_hooks import project_incoming_hook_service
 

@@ -77,6 +77,127 @@ const taskRecord = {
 }
 
 describe('local delivery API', () => {
+  test('resolves a cold retained ID by actual ownership before considering its old prefix', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.owner') return 'group-1'
+      if (method === 'todos.get')
+        return { ...taskRecord, cloud_project_id: 'group-1', group_id: 'group-1' }
+      throw new Error(`Unexpected method ${method}`)
+    })
+    const issue = await createLocalDeliveryApi(request).getLoopItem('LOCAL-1')
+    expect(issue.cloud_project_id).toBe('group-1')
+    expect(request).toHaveBeenNthCalledWith(1, 'todos.owner', { task_id: 'LOCAL-1' })
+    expect(request).toHaveBeenNthCalledWith(2, 'todos.get', {
+      project_id: 'group-1',
+      task_id: 'LOCAL-1',
+    })
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  test('does not probe projects after an authoritative ownership error', async () => {
+    const request = vi.fn(async () => {
+      throw new Error('Task is no longer readable')
+    })
+    await expect(createLocalDeliveryApi(request).getLoopItem('LOCAL-1')).rejects.toThrow(
+      'Task is no longer readable'
+    )
+    expect(request).toHaveBeenCalledExactlyOnceWith('todos.owner', { task_id: 'LOCAL-1' })
+  })
+
+  test('does not recreate local ownership from a matching project key', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.owner') return null
+      if (method === 'projects.list') return [projectRecord]
+      throw new Error(`Unexpected method ${method}`)
+    })
+    await expect(createLocalDeliveryApi(request).getLoopItem('LOCAL-1')).rejects.toThrow(
+      'Local task not found'
+    )
+    expect(request).not.toHaveBeenCalledWith('todos.get', expect.anything())
+  })
+
+  test('sends optional classification in the same native Thread creation request', async () => {
+    const request = vi.fn(async () => ({
+      ...taskRecord,
+      cloud_project_id: 'group-1',
+      group_id: 'group-1',
+      group_name: 'Design',
+      joined: true,
+      can_join: false,
+      group_status: 'active',
+    }))
+    const result = await createLocalDeliveryApi(request).createLoopItem('group-1', {
+      title: 'Thread',
+      classification_project_id: 'project-1',
+    })
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      'todos.create',
+      expect.objectContaining({
+        project_id: 'group-1',
+        todo: expect.objectContaining({ classification_project_id: 'project-1' }),
+      })
+    )
+    expect(result).toMatchObject({ group_id: 'group-1', group_name: 'Design', joined: true })
+  })
+
+  test.each([
+    {
+      joined: false,
+      status: 'pending',
+      group_status: 'active',
+      canEdit: true,
+      comment: false,
+      execute: false,
+    },
+    {
+      joined: true,
+      status: 'completed',
+      group_status: 'active',
+      canEdit: true,
+      comment: true,
+      execute: false,
+    },
+    {
+      joined: true,
+      status: 'pending',
+      group_status: 'archived',
+      canEdit: false,
+      comment: false,
+      execute: false,
+    },
+  ])('keeps aggregated Thread authority in its owning group: %j', async state => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list')
+        return [
+          {
+            ...taskRecord,
+            cloud_project_id: 'group-1',
+            group_id: 'group-1',
+            joined: state.joined,
+            can_join: !state.joined,
+            status: state.status,
+            group_status: state.group_status,
+          },
+        ]
+      if (method === 'todos.get') return { ...taskRecord, cloud_project_id: 'group-1' }
+      throw new Error(`Unexpected method ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    const { items } = await api.listLoopItems(projectRecord.id)
+    expect(items[0]).toMatchObject({
+      cloud_project_id: 'group-1',
+      group_id: 'group-1',
+      joined: state.joined,
+      can_edit: state.canEdit,
+      permissions: { comment: state.comment, execute: state.execute },
+    })
+    await api.getLoopItem(taskRecord.id)
+    expect(request).toHaveBeenLastCalledWith('todos.get', {
+      project_id: 'group-1',
+      task_id: taskRecord.id,
+    })
+  })
+
   test('includes native project work in My Work while isolating a failed project read', async () => {
     const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'projects.list')
@@ -320,6 +441,7 @@ describe('local delivery API', () => {
     }
     const prepareAssignmentExecutionPayload = vi.fn().mockResolvedValue(executionPayload)
     const request = vi.fn(async (method: string) => {
+      if (method === 'todos.owner') return projectRecord.id
       if (method === 'projects.list') return [projectRecord]
       if (method === 'todos.update') {
         return {

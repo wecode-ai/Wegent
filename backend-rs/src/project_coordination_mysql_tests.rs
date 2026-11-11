@@ -302,6 +302,36 @@ async fn verify_mention_inbox(mysql: &MysqlService, user: i64, count: usize) {
     }
 }
 
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn group_notification_reads_recheck_current_membership() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        crate::wework_notifications::verify_group_notification_reads(&mysql).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn thread_classification_reads_current_permission_facts() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        crate::chat_groups::verify_project_classification_facts(&mysql).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn group_management_locks_shared_accounts_in_message_order() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        crate::chat_groups::verify_group_account_order(&mysql).await;
+    })
+    .await;
+}
+
 async fn with_schema<F, Fut>(capacity: u32, verify: F)
 where
     F: FnOnce(MysqlService) -> Fut,

@@ -48,10 +48,13 @@ def main() -> None:
             with connection.cursor() as cursor:
                 cursor.execute(request["sql"], request.get("params", []))
                 cursor.fetchall()
-            print(json.dumps({"locked": True}), flush=True)
+            print(json.dumps({"locked": True, "connectionId": connection.thread_id()}), flush=True)
             # Hold a real transaction until the runner releases it or closes stdin.
-            sys.stdin.readline()
-            connection.rollback()
+            release = sys.stdin.readline()
+            if release.strip() == "commit":
+                connection.commit()
+            else:
+                connection.rollback()
             result = {"released": True}
         else:
             with connection.cursor() as cursor:

@@ -228,6 +228,7 @@ function CollaborationPlatformNavigation({
   onNewConversation,
   onArchiveProject,
   footer,
+  header,
 }: {
   domain: CollaborationDomain;
   host: CollaborationPlatformHostAdapter;
@@ -246,6 +247,7 @@ function CollaborationPlatformNavigation({
   onNewConversation(project: CollaborationProject): void;
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
+  header?: React.ReactNode;
 }) {
   const { workspaces: navigationWorkspaces, projectsByWorkspace } = useMemo(
     () =>
@@ -315,6 +317,7 @@ function CollaborationPlatformNavigation({
       className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? "full"}`}
       data-testid="collaboration-platform-sidebar"
     >
+      {header}
       {fullSidebar ? (
         <>
           <div className="collaboration-platform-brand">
@@ -1936,6 +1939,7 @@ function CollaborationPlatformAppContent({
   renderProject,
   renderShell,
   sidebarFooter,
+  sidebarHeader,
 }: {
   api: SharedWorkspaceApi;
   refreshKey?: string;
@@ -1954,6 +1958,7 @@ function CollaborationPlatformAppContent({
     sidebar: React.ReactNode;
   }): React.ReactNode;
   sidebarFooter?: React.ReactNode;
+  sidebarHeader?: React.ReactNode;
 }) {
   const messages = platformMessages[locale];
   const translate = createCollaborationTranslator(locale);
@@ -2578,6 +2583,7 @@ function CollaborationPlatformAppContent({
           onProjectChange={commands.registerProject}
           showProjectBack={false}
           host={{
+            openGroupThread: host.openGroupThread,
             capabilities: {
               automation: host.capabilities.automation,
               dingtalkAitable: host.capabilities.dingtalkAitable,
@@ -2762,6 +2768,8 @@ function CollaborationPlatformAppContent({
           messages={messages}
           onOpenItem={openMyWorkItem}
         />
+      ) : host.renderThreadHome ? (
+        host.renderThreadHome({ projects: domainProjects })
       ) : (
         <div
           className={
@@ -3151,6 +3159,7 @@ function CollaborationPlatformAppContent({
 
   const sidebar = (
     <CollaborationPlatformNavigation
+      header={sidebarHeader}
       domain={collaborationDomain}
       host={host}
       messages={messages}

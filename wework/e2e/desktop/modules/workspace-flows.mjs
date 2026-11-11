@@ -84,8 +84,19 @@ export async function openDirectProjectCreation(
   )
 }
 
+export async function enterProjectCollaborationView(
+  control,
+  contentSelector,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  const selector = `${contentSelector} [data-testid="collaboration-view-projects"]`
+  await control.command('waitFor', selector, { visible: true, timeoutMs })
+  await control.command('click', selector)
+}
+
 export async function selectCollaborationDomain(control, contentSelector, domain) {
   assert.ok(domain === 'local' || domain === 'cloud', `Unknown collaboration domain: ${domain}`)
+  await enterProjectCollaborationView(control, contentSelector)
   await control.command(
     'waitFor',
     `${contentSelector} [data-testid="collaboration-platform-root"]`,
@@ -467,6 +478,7 @@ async function waitForNativeCollaborationPlatform(
   contentSelector,
   timeoutMs = WORKBENCH_READY_TIMEOUT_MS
 ) {
+  await enterProjectCollaborationView(control, contentSelector, timeoutMs)
   const weworkPlatformSelector = `${contentSelector} [data-testid="${WEWORK_COLLABORATION_PLATFORM_TEST_ID}"]`
   await control.command('waitFor', weworkPlatformSelector, {
     visible: true,

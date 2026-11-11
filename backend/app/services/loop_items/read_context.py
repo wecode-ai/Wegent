@@ -101,17 +101,18 @@ def _visible_ids(
     item_ids = {item.id for item in items}
     if not items or has_permission(access.role, BaseRole.Maintainer):
         return item_ids
+    open_ids = {
+        item.id for item in items if item_security(item, access.project) == "open"
+    }
+    if open_ids == item_ids:
+        return item_ids
     related_ids = {
         item_id
         for (item_id,) in db.query(LoopItem.id).filter(
             LoopItem.id.in_(item_ids), related_item_filter(user_id)
         )
     }
-    return {
-        item.id
-        for item in items
-        if item_security(item, access.project) == "open" or item.id in related_ids
-    }
+    return {item.id for item in items if item.id in open_ids or item.id in related_ids}
 
 
 def _messages(

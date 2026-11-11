@@ -36,7 +36,7 @@ impl LocalTaskStore {
             .and_then(|payload| payload.get("dispatch_role"))
             .and_then(Value::as_str);
         if !matches!(dispatch_role, Some("manager" | "member")) {
-            let project = get_item_from(&transaction, &current.cloud_project_id, "project")?
+            let project = work_container_from(&transaction, &current.cloud_project_id)?
                 .ok_or(TaskRuntimeError::ProjectNotFound)?;
             let next_status = current.task_status.as_deref().map(|status| {
                 project_status::runtime_transition_status(&project.metadata, status, "in_review")

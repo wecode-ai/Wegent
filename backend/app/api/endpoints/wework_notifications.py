@@ -77,6 +77,10 @@ def read_notification(
     )
     if row is None:
         raise HTTPException(404, "Notification not found")
+    from app.services.thread_notifications import group_notification_readable
+
+    if not group_notification_readable(db, user.id, row.payload or {}):
+        raise HTTPException(404, "Notification not found")
     if not row.is_read:
         db.query(WeworkNotification).filter(
             WeworkNotification.id == row.id,

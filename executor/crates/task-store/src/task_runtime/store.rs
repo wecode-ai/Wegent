@@ -312,6 +312,11 @@ mod archive_tests;
 #[path = "store/tests/mod.rs"]
 mod tests;
 
+mod chat_groups;
+mod thread_migration;
+mod thread_project_links;
+use chat_groups::work_container_from;
+
 mod project_records;
 
 mod task_records;

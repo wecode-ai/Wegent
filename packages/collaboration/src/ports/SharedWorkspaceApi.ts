@@ -141,6 +141,7 @@ export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
 }
 
 export interface WorkspaceIssueCreateInput {
+  classificationProjectId?: string;
   milestoneId?: string | null;
   title: string;
   description?: string;

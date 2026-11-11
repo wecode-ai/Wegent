@@ -95,6 +95,7 @@ mod apps_installed;
 mod attachment_block;
 mod attachments;
 mod attachments_task_all;
+mod chat_groups;
 pub use wegent_identity::auth;
 mod authenticate;
 pub mod background_jobs;

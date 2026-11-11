@@ -6,7 +6,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import event, or_
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -14,6 +14,7 @@ from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.schemas.base_role import BaseRole
 from app.schemas.wework_notification import NotificationCreate
+from app.services.collaboration_after_commit import queue_after_commit
 from app.services.notification_copy import (
     WEB_LINK_LABEL,
     WEWORK_LINK_LABEL,
@@ -32,7 +33,6 @@ from app.services.wework_notification_preferences import (
 from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
-_PENDING = "wework_notification_ids"
 
 
 @trace_sync()
@@ -104,6 +104,16 @@ def web_issue_url(project_id: str, item_id: str) -> str:
     )
 
 
+def group_thread_url(
+    group_id: str, thread_id: str | None = None, comment_id: str | None = None
+) -> str:
+    url = f"wework://groups/backend/{quote(group_id, safe='')}"
+    if not thread_id:
+        return f"{url}/comments/{quote(comment_id, safe='')}" if comment_id else url
+    url = f"{url}/threads/{quote(thread_id, safe='')}"
+    return f"{url}/comments/{quote(comment_id, safe='')}" if comment_id else url
+
+
 def notification_links(notification: WeworkNotification) -> list[NotificationLink]:
     """Every destination a push for one stored notification should offer.
 
@@ -124,7 +134,7 @@ def _notification_links(notification: dict) -> list[NotificationLink]:
         links.append(NotificationLink(label=WEWORK_LINK_LABEL, url=notification["url"]))
     project_id = payload.get("projectId")
     item_id = payload.get("itemId")
-    if project_id and item_id:
+    if project_id and item_id and not payload.get("groupId"):
         links.append(
             NotificationLink(
                 label=WEB_LINK_LABEL,
@@ -150,6 +160,11 @@ def create_notification(
 ) -> WeworkNotification:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     channels = _delivery_channels(db, user_id=user_id, kind=kind)
+    if url is None:
+        if payload and payload.get("groupId"):
+            url = group_thread_url(str(payload["groupId"]), item_id, comment_id)
+        else:
+            url = issue_url(project_id, item_id, comment_id) if project_id else ""
     notification = WeworkNotification(
         id=str(uuid4()),
         user_id=user_id,
@@ -157,11 +172,7 @@ def create_notification(
         kind=kind,
         title=title,
         body=body,
-        url=(
-            url
-            if url is not None
-            else issue_url(project_id, item_id, comment_id) if project_id else ""
-        ),
+        url=url,
         payload=payload or {},
         created_at=now,
         is_read=False,
@@ -169,45 +180,33 @@ def create_notification(
     )
     if channels["in_app"]:
         db.add(notification)
-        db.info.setdefault(_PENDING, []).append(
-            {"type": "stored", "id": notification.id, "channels": channels}
-        )
+        _queue_delivery(db, notification, channels, stored=True)
     elif channels["system"] or channels["im"]:
-        db.info.setdefault(_PENDING, []).append(
-            {
-                "type": "transient",
-                "notification": _delivery_payload(notification),
-                "channels": channels,
-            }
-        )
+        _queue_delivery(db, notification, channels, stored=False)
     return notification
 
 
-@event.listens_for(Session, "after_rollback")
-def _discard_delivery(db: Session) -> None:
-    db.info.pop(_PENDING, None)
+def _queue_delivery(
+    db: Session,
+    notification: WeworkNotification,
+    channels: dict[str, bool],
+    *,
+    stored: bool,
+) -> None:
+    notification_id = notification.id
+    payload = None if stored else _delivery_payload(notification)
+    if db.get_transaction() is None:
+        db.begin()
 
+    def publish() -> None:
+        from app.core.async_utils import schedule_async_task
 
-@event.listens_for(Session, "after_commit")
-def _schedule_delivery(db: Session) -> None:
-    from app.core.async_utils import schedule_async_task
+        if payload is None:
+            schedule_async_task(deliver_notification, notification_id, channels)
+        else:
+            schedule_async_task(deliver_notification_payload, payload, channels)
 
-    for pending in db.info.pop(_PENDING, []):
-        try:
-            if pending["type"] == "stored":
-                schedule_async_task(
-                    deliver_notification,
-                    pending["id"],
-                    pending["channels"],
-                )
-            else:
-                schedule_async_task(
-                    deliver_notification_payload,
-                    pending["notification"],
-                    pending["channels"],
-                )
-        except Exception:
-            logger.exception("Wework delivery scheduling failed: pending=%s", pending)
+    queue_after_commit(db, f"notification:{notification_id}", publish)
 
 
 @trace_async()
@@ -255,6 +254,13 @@ async def _deliver_notification_payload(
     *,
     emit_inbox: bool,
 ) -> None:
+    from app.services.thread_notifications import group_notification_allowed
+
+    source = notification.get("payload")
+    if isinstance(source, dict) and not group_notification_allowed(
+        db, int(notification["user_id"]), source
+    ):
+        return
     from app.api.ws.wework_runtime_namespace import (
         WEWORK_RUNTIME_EVENT,
         WEWORK_RUNTIME_NAMESPACE,

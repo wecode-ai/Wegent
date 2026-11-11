@@ -34,6 +34,91 @@ const message: ProjectChatMessage = {
 }
 
 describe('createProjectChatClient', () => {
+  it('retains group identity through reconnect, sending and independent room leases', async () => {
+    socket.emit.mockImplementation((_event, _payload, ack) =>
+      ack?.({
+        ok: true,
+        result: { messages: [], latestSequence: 0, currentUserId: '7' },
+      })
+    )
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+    const group = await client.subscribe('12', 'T-1', 0, vi.fn(), undefined, {
+      containerKind: 'chat_group',
+      focusMessageId: 'older',
+    })
+    const legacy = await client.subscribe('12', 'T-1', 0, vi.fn())
+    const reconnect = socket.on.mock.calls.filter(([event]) => event === 'connect')
+    for (const [, callback] of reconnect) callback()
+    await Promise.resolve()
+    const groupRequests = socket.emit.mock.calls.filter(
+      ([event, input]) => event === 'wework:project_chat:subscribe' && input.containerKind
+    )
+    expect(groupRequests).toHaveLength(2)
+    for (const [, input] of groupRequests)
+      expect(input).toMatchObject({
+        containerKind: 'chat_group',
+        focusMessageId: 'older',
+      })
+    await client.send({
+      clientMessageId: 'group-message',
+      projectId: '12',
+      taskId: 'T-1',
+      text: 'hello',
+      containerKind: 'chat_group',
+    })
+    expect(socket.emit).toHaveBeenCalledWith(
+      'wework:project_chat:message:send',
+      expect.objectContaining({ containerKind: 'chat_group' }),
+      expect.any(Function)
+    )
+    group.unsubscribe()
+    expect(socket.emit).toHaveBeenCalledWith('wework:project_chat:unsubscribe', {
+      projectId: '12',
+      taskId: 'T-1',
+      containerKind: 'chat_group',
+    })
+    legacy.unsubscribe()
+    expect(socket.emit).toHaveBeenLastCalledWith('wework:project_chat:unsubscribe', {
+      projectId: '12',
+      taskId: 'T-1',
+    })
+  })
+  it('sends the exact history anchor on initial subscription and reconnect', async () => {
+    const listeners = new Map<string, () => void>()
+    socket.on.mockImplementation((event, handler) => listeners.set(event, handler))
+    socket.emit.mockImplementation((_event, _payload, callback) =>
+      callback?.({
+        ok: true,
+        result: { messages: [], latestSequence: 0, currentUserId: '7' },
+      })
+    )
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+    const subscription = await client.subscribe('12', 'T-1', 0, vi.fn(), undefined, {
+      focusMessageId: 'older',
+    })
+    listeners.get('connect')!()
+    await Promise.resolve()
+    const requests = socket.emit.mock.calls.filter(
+      call => call[0] === 'wework:project_chat:subscribe'
+    )
+    expect(requests).toHaveLength(2)
+    for (const request of requests)
+      expect(request[1]).toEqual({
+        projectId: '12',
+        taskId: 'T-1',
+        afterSequence: 0,
+        focusMessageId: 'older',
+      })
+    subscription.unsubscribe()
+  })
   beforeEach(() => {
     socket.emit.mockReset()
     socket.on.mockReset()
@@ -76,11 +161,9 @@ describe('createProjectChatClient', () => {
             message: 'Choose a runner',
             detail: { runner_selection_request: request },
           },
-        }),
+        })
       )
-      .mockImplementationOnce((_event, _payload, ack) =>
-        ack({ ok: true, result: [message] }),
-      )
+      .mockImplementationOnce((_event, _payload, ack) => ack({ ok: true, result: [message] }))
     const requestRunnerSelection = vi.fn(async () => selection)
     const client = createProjectChatClient({
       socketBaseUrl: 'https://cloud.example.com',
@@ -100,7 +183,7 @@ describe('createProjectChatClient', () => {
     expect(socket.emit).toHaveBeenLastCalledWith(
       'wework:project_chat:comment:execute',
       { ...input, runnerSelection: selection },
-      expect.any(Function),
+      expect.any(Function)
     )
   })
 
@@ -123,17 +206,12 @@ describe('createProjectChatClient', () => {
       getToken: () => 'token',
     })
 
-    const subscription = await client.subscribe(
-      'project-1',
-      undefined,
-      3,
-      vi.fn(),
-    )
+    const subscription = await client.subscribe('project-1', undefined, 3, vi.fn())
 
     expect(subscription.snapshot.messages).toEqual([message])
     expect(socket.on).toHaveBeenCalledWith(
       'wework:project_chat:message:created',
-      expect.any(Function),
+      expect.any(Function)
     )
     subscription.unsubscribe()
     expect(socket.off).toHaveBeenCalledTimes(3)
@@ -162,7 +240,7 @@ describe('createProjectChatClient', () => {
         taskId: 'task-1',
         clientMessageId: 'client-1',
         text: 'hello',
-      }),
+      })
     ).resolves.toEqual(message)
   })
 
@@ -179,7 +257,7 @@ describe('createProjectChatClient', () => {
 
     expect(ensureConnected).toHaveBeenCalled()
     const handler = socket.on.mock.calls.find(
-      ([event]) => event === 'wework:loop_item:changed',
+      ([event]) => event === 'wework:loop_item:changed'
     )?.[1]
     expect(handler).toBeTypeOf('function')
     const event = {
@@ -206,14 +284,12 @@ describe('createProjectChatClient', () => {
   it('receives buffered invalidations delivered before connection readiness resolves', async () => {
     vi.spyOn(console, 'debug').mockImplementation(() => undefined)
     const listeners = new Map<string, (event: LoopItemChangedEvent) => void>()
-    socket.on.mockImplementation((event, handler) =>
-      listeners.set(event, handler),
-    )
+    socket.on.mockImplementation((event, handler) => listeners.set(event, handler))
     let finishConnection!: () => void
     ensureConnected.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
+      new Promise<void>(resolve => {
         finishConnection = resolve
-      }),
+      })
     )
     const onChange = vi.fn()
     const client = createProjectChatClient({
@@ -239,9 +315,7 @@ describe('createProjectChatClient', () => {
 
   it('removes the invalidation listener when connection readiness rejects', async () => {
     const listeners = new Map<string, (event: LoopItemChangedEvent) => void>()
-    socket.on.mockImplementation((event, handler) =>
-      listeners.set(event, handler),
-    )
+    socket.on.mockImplementation((event, handler) => listeners.set(event, handler))
     socket.off.mockImplementation((event, handler) => {
       if (listeners.get(event) === handler) listeners.delete(event)
     })
@@ -253,15 +327,10 @@ describe('createProjectChatClient', () => {
       getToken: () => 'token',
     })
 
-    await expect(client.subscribeLoopItemChanges!(vi.fn())).rejects.toBe(
-      connectionError,
-    )
+    await expect(client.subscribeLoopItemChanges!(vi.fn())).rejects.toBe(connectionError)
 
     expect(listeners.has('wework:loop_item:changed')).toBe(false)
-    expect(socket.off).toHaveBeenCalledWith(
-      'wework:loop_item:changed',
-      expect.any(Function),
-    )
+    expect(socket.off).toHaveBeenCalledWith('wework:loop_item:changed', expect.any(Function))
   })
 
   it('refreshes the newest message window after reconnecting', async () => {
@@ -279,7 +348,7 @@ describe('createProjectChatClient', () => {
             latestSequence: 7,
             currentUserId: '1',
           },
-        }),
+        })
       )
       .mockImplementationOnce((event, payload, ack) => {
         expect(event).toBe('wework:project_chat:subscribe')
@@ -300,9 +369,7 @@ describe('createProjectChatClient', () => {
       getToken: () => 'token',
     })
     await client.subscribe('project-1', undefined, 0, onMessage)
-    const connectHandler = socket.on.mock.calls.find(
-      ([event]) => event === 'connect',
-    )?.[1]
+    const connectHandler = socket.on.mock.calls.find(([event]) => event === 'connect')?.[1]
 
     connectHandler()
 
@@ -330,17 +397,14 @@ describe('createProjectChatClient', () => {
     first.unsubscribe()
     expect(socket.emit).not.toHaveBeenCalledWith(
       'wework:project_chat:unsubscribe',
-      expect.anything(),
+      expect.anything()
     )
 
     second.unsubscribe()
-    expect(socket.emit).toHaveBeenCalledWith(
-      'wework:project_chat:unsubscribe',
-      {
-        projectId: 'project-1',
-        taskId: 'task-1',
-      },
-    )
+    expect(socket.emit).toHaveBeenCalledWith('wework:project_chat:unsubscribe', {
+      projectId: 'project-1',
+      taskId: 'task-1',
+    })
   })
 
   it('starts a server-owned streaming AI response', async () => {
@@ -367,7 +431,7 @@ describe('createProjectChatClient', () => {
         agentId: '12',
         runtimeDeviceId: 'device-1',
         runtimeTaskId: 'runtime-task-1',
-      }),
+      })
     ).resolves.toEqual(message)
   })
 
@@ -396,7 +460,7 @@ describe('createProjectChatClient', () => {
         triggerMessageId: 'message-7',
         agentId: '12',
         attachmentIds: [9],
-      }),
+      })
     ).resolves.toEqual(message)
   })
 })
@@ -423,6 +487,6 @@ it('requests comment execution using only the saved project comment identity', a
       taskId: 't',
       triggerMessageId: 'm',
       attachmentIds: [9],
-    }),
+    })
   ).resolves.toEqual([message])
 })

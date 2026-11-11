@@ -66,6 +66,7 @@ export interface CollaborationScheduleViewConfig {
 
 export interface CollaborationProject {
   id: CollaborationProjectId;
+  resource_type?: "project" | "chat_group";
   workspace_access_role?: CollaborationWorkspaceRole | null;
   membership_mode?: "inherit" | "restricted";
   permission_sources?: CollaborationPermissionSource[];
@@ -124,6 +125,10 @@ export type BackendCollaborationProject = CollaborationProject & {
 };
 
 export interface CollaborationIssue {
+  group_id?: string | null;
+  group_name?: string | null;
+  joined?: boolean | null;
+  can_join?: boolean | null;
   human_requests?: import("./issueParticipation").IssueHumanRequest[];
   milestone_id?: string | null;
   id: string;
@@ -142,7 +147,7 @@ export interface CollaborationIssue {
   assignee_team_name?: string | null;
   execution_id?: number | null;
   execution_state?: string | null;
-  processing_actor?: { kind: 'agent' | 'stand_in'; name: string } | null;
+  processing_actor?: { kind: "agent" | "stand_in"; name: string } | null;
   execution_note?: string | null;
   can_approve?: boolean;
   human_task_binding?: {
@@ -550,6 +555,11 @@ export interface CollaborationLocation {
 }
 
 export interface CollaborationHostAdapter {
+  openGroupThread?(
+    groupId: string,
+    threadId: string,
+    store: "local" | "backend",
+  ): void;
   capabilities: CollaborationCapabilities;
   defaultAssistant?: CollaborationDefaultAssistant;
   location: CollaborationLocation;

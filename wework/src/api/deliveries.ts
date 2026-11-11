@@ -121,6 +121,10 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  group_id?: string | null
+  group_name?: string | null
+  joined?: boolean | null
+  can_join?: boolean | null
   human_requests?: CollaborationIssue['human_requests']
   milestone_id?: string | null
   runner_binding?: { environment_id: string } | null
@@ -979,6 +983,7 @@ export function createDeliveryApi(client: HttpClient) {
     createLoopItem(
       projectId: CloudProjectIdInput,
       data: {
+        classification_project_id?: string
         title: string
         milestone_id?: string | null
         description?: string

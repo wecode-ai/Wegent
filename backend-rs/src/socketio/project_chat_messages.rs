@@ -480,13 +480,23 @@ pub(crate) async fn insert_message(
 ) -> Result<i64, Value> {
     state
         .mysql
-        .execute(INSERT_MESSAGE_SQL, insert_message_args(message))
+        .with_transaction(async |tx| {
+            if let Err(error) =
+                super::project_chat_write_scope::lock(tx, message.project_id, Some(message.task_id))
+                    .await?
+            {
+                return Ok(Err(error));
+            }
+            let inserted = tx
+                .execute(INSERT_MESSAGE_SQL, insert_message_args(message))
+                .await?;
+            Ok(Ok(inserted.last_insert_id as i64))
+        })
         .await
-        .map(|execution| execution.last_insert_id as i64)
         .map_err(|error| {
             tracing::error!(%error, "project chat message insert failed");
             ack_error("INVALID_MESSAGE", "database query failed")
-        })
+        })?
 }
 
 pub(super) const INSERT_MESSAGE_SQL: &str = "INSERT INTO project_chat_messages (message_id, client_message_id, project_id, \
@@ -542,6 +552,15 @@ pub(crate) async fn update_message(
     state
         .mysql
         .with_transaction(async |transaction| {
+            if let Err(error) = super::project_chat_write_scope::lock(
+                transaction,
+                &row.project_id,
+                Some(&row.task_id),
+            )
+            .await?
+            {
+                return Ok(Err(error));
+            }
             transaction
                 .execute(
                     sql,
@@ -554,13 +573,13 @@ pub(crate) async fn update_message(
                     ),
                 )
                 .await?;
-            Ok(())
+            Ok(Ok(()))
         })
         .await
         .map_err(|error| {
             tracing::error!(%error, "project chat message update failed");
             ack_error("INVALID_MESSAGE", "database query failed")
-        })
+        })?
 }
 
 /// `ProjectChatMessageView`.

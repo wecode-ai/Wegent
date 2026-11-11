@@ -77,7 +77,7 @@ describe('saved view persistence', () => {
           accept,
           translate,
         })
-      ).rejects.toThrow('项目已被更新')
+      ).rejects.toThrow('看板已被更新')
       expect(api.update).toHaveBeenCalledOnce()
       expect(api.get).toHaveBeenCalledExactlyOnceWith('one')
       expect(accept).toHaveBeenCalledWith(project)

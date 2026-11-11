@@ -121,6 +121,6 @@ describe("collaboration file browser", () => {
         deliveryFiles,
         t,
       ).map((item) => item.name),
-    ).toEqual(["文件", "Issues", "Release", "Write report", "reports"]);
+    ).toEqual(["文件", "事项", "Release", "Write report", "reports"]);
   });
 });

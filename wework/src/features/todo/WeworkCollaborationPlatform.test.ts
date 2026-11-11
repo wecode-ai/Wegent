@@ -1131,6 +1131,7 @@ describe('Wework collaboration workspace API', () => {
       )
       render(
         createElement(WeworkSharedProject, {
+          onOpenGroupThread: vi.fn(),
           api: {
             projects: { list: vi.fn().mockResolvedValue([project]) },
             issues: {},
@@ -1222,6 +1223,7 @@ describe('Wework collaboration workspace API', () => {
       }
       render(
         createElement(WeworkSharedProject, {
+          onOpenGroupThread: vi.fn(),
           api: {
             projects: {
               list: vi.fn().mockResolvedValue([project]),
@@ -1334,6 +1336,7 @@ describe('Wework collaboration workspace API', () => {
     const subscribe = vi.fn().mockRejectedValue(new Error('offline'))
     render(
       createElement(WeworkSharedProject, {
+        onOpenGroupThread: vi.fn(),
         api: { projects: {}, issues: {} } as unknown as SharedWorkspaceApi,
         detailServices: { projectChatClient: { subscribe } } as never,
         localProjects: [],
@@ -1448,6 +1451,7 @@ describe('Wework collaboration workspace API', () => {
       projectA
     )
     const projectProps = (projectId: string) => ({
+      onOpenGroupThread: vi.fn(),
       api: {
         projects: {},
         issues: {},
@@ -1480,10 +1484,12 @@ describe('Wework collaboration workspace API', () => {
         'div',
         null,
         createElement(WeworkSharedProject, {
+          onOpenGroupThread: vi.fn(),
           ...projectProps(projectA.projectId),
           runtimeTaskLifecycle: snapshot,
         }),
         createElement(WeworkSharedProject, {
+          onOpenGroupThread: vi.fn(),
           ...projectProps(projectB.projectId),
           runtimeTaskLifecycle: snapshot,
         })
@@ -1554,6 +1560,7 @@ describe('Wework collaboration workspace API', () => {
     }
     const view = () =>
       createElement(WeworkSharedProject, {
+        onOpenGroupThread: vi.fn(),
         ...props,
         runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
       })
@@ -1650,6 +1657,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkSharedProject, {
+        onOpenGroupThread: vi.fn(),
         api: {
           projects: {},
           issues: { getBoardSnapshot },
@@ -1708,6 +1716,7 @@ describe('Wework collaboration workspace API', () => {
 
   it('refreshes only the open project targeted by task context and binding changes', () => {
     const projectProps = (projectId: string) => ({
+      onOpenGroupThread: vi.fn(),
       api: {
         projects: {},
         issues: {},

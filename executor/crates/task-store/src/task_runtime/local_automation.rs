@@ -159,8 +159,8 @@ pub(super) fn on_event(
     task_id: &str,
     event: AutomationEvent<'_>,
 ) -> Result<(), TaskRuntimeError> {
-    let project = get_item_from(connection, project_id, "project")?
-        .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let project =
+        work_container_from(connection, project_id)?.ok_or(TaskRuntimeError::ProjectNotFound)?;
     if matches!(event, AutomationEvent::Created)
         && get_item_from(connection, task_id, "task")?
             .is_some_and(|task| task.assignee_user_id.is_some())

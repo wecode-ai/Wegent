@@ -46,8 +46,25 @@ export function useProjectBoardState({
   const [externalGroupFilter, setExternalGroupFilter] = useState("");
   const [externalQuery, setExternalQuery] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const initializedScope = useRef<{
+    defaultGroupBy: ProjectBoardGroupBy;
+    personalGroupStorageKey: string | null;
+    viewScope: string | undefined;
+  } | null>(null);
 
   useEffect(() => {
+    if (
+      initializedScope.current?.defaultGroupBy === defaultGroupBy &&
+      initializedScope.current.personalGroupStorageKey ===
+        personalGroupStorageKey &&
+      initializedScope.current.viewScope === viewScope
+    )
+      return;
+    initializedScope.current = {
+      defaultGroupBy,
+      personalGroupStorageKey,
+      viewScope,
+    };
     const personalGroup = personalGroupStorageKey
       ? localStorage.getItem(personalGroupStorageKey)
       : null;

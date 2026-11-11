@@ -4,6 +4,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { hasTooManyTags } from "../tagging";
+import { isThreadStatus } from "../board";
 import { matchesBoardView, type SavedBoardView } from "./projectBoardViews";
 
 import {
@@ -25,6 +26,7 @@ export interface ProjectBoardPosition {
 }
 
 export interface StandardCloudBoardItem {
+  group_id?: string | null;
   human_requests?: readonly import("../issueParticipation").IssueHumanRequest[];
   id: string;
   parent_id: string | null;
@@ -566,6 +568,7 @@ function resolveStandardCloudBoardGroupMutation<
   )
     return null;
   if (type === "status") {
+    if (item.group_id && !isThreadStatus(column.groupValue)) return null;
     return {
       kind: "status",
       status: column.groupValue,

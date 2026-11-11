@@ -1,6 +1,13 @@
 export type WeworkDestination =
   | { kind: 'boards' }
   | {
+      kind: 'group'
+      groupStore: 'local' | 'backend'
+      groupId: string
+      threadId?: string
+      commentId?: string
+    }
+  | {
       kind: 'board'
       projectId: string
       projectStore?: 'local' | 'backend'
@@ -34,6 +41,16 @@ export function weworkIssueScheme(
 
 export function weworkAppScheme(appId: string): string {
   return `wework://apps/${encodeURIComponent(appId)}`
+}
+
+export function weworkThreadScheme(
+  groupId: string,
+  threadId: string,
+  groupStore: 'local' | 'backend' = 'backend',
+  commentId?: string
+): string {
+  const base = `wework://groups/${groupStore}/${encodeURIComponent(groupId)}/threads/${encodeURIComponent(threadId)}`
+  return commentId ? `${base}/comments/${encodeURIComponent(commentId)}` : base
 }
 
 export function weworkSmartAppScheme(smartAppId: number): string {
@@ -75,6 +92,31 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
       return null
     if (url.hostname === 'boards' && ['', '/'].includes(url.pathname)) return { kind: 'boards' }
     const parts = url.pathname.split('/').slice(1)
+    if (url.hostname === 'groups' && [2, 4, 6].includes(parts.length)) {
+      const groupStore = parts[0]
+      const groupId = segment(parts[1])
+      if (
+        !['local', 'backend'].includes(groupStore) ||
+        !groupId ||
+        (groupStore === 'backend' && !/^[1-9]\d*$/.test(groupId))
+      )
+        return null
+      const group = {
+        kind: 'group' as const,
+        groupStore: groupStore as 'local' | 'backend',
+        groupId,
+      }
+      if (parts.length === 2) return group
+      if (parts.length === 4 && parts[2] === 'comments') {
+        const commentId = segment(parts[3])
+        return commentId ? { ...group, commentId } : null
+      }
+      const threadId = segment(parts[3])
+      if (parts[2] !== 'threads' || !threadId) return null
+      if (parts.length === 4) return { ...group, threadId }
+      const commentId = segment(parts[5])
+      return parts[4] === 'comments' && commentId ? { ...group, threadId, commentId } : null
+    }
     if (url.hostname === 'interactions' && parts.length === 3) {
       const deviceId = segment(parts[0])
       const taskId = segment(parts[1])
@@ -127,6 +169,19 @@ export function weworkDestinationRoute(
   focusRequest?: string
 ): string {
   if (destination.kind === 'boards') return '/todo'
+  if (destination.kind === 'group') {
+    const params = new URLSearchParams({
+      collaborationView: 'groups',
+      groupStore: destination.groupStore === 'backend' ? 'cloud' : 'local',
+      groupId: destination.groupId,
+      groupTab: 'chat',
+    })
+    if (destination.threadId) params.set('threadId', destination.threadId)
+    if (destination.commentId) params.set('commentId', destination.commentId)
+    if ((destination.threadId || destination.commentId) && focusRequest)
+      params.set('focusRequest', focusRequest)
+    return `/todo?${params}`
+  }
   if (destination.kind === 'interaction') {
     return `/pending-interactions?${new URLSearchParams({ interaction: JSON.stringify([destination.deviceId, destination.taskId, destination.requestKey]) })}`
   }

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from app.models.delivery import CloudProject
+from app.models.delivery import CloudProject, CollaborationChatGroup
 from app.schemas.cloud_project import CloudProjectBoardConfig, default_board_statuses
 from app.services.loop_item_history_actor import automation_history_actor
 
@@ -47,6 +47,8 @@ def project_board_statuses(project: CloudProject) -> list[tuple[str, str]]:
     A legacy project without an explicit ``board_config`` still recognizes the
     five default status ids, mirroring ``default_board_statuses``.
     """
+    if isinstance(project, CollaborationChatGroup):
+        return [(status.id, status.name) for status in default_board_statuses()]
     metadata = project.metadata_json if isinstance(project.metadata_json, dict) else {}
     board_config = metadata.get("board_config")
     raw = (
@@ -65,6 +67,8 @@ def project_board_statuses(project: CloudProject) -> list[tuple[str, str]]:
 
 
 def project_board_config(project: CloudProject) -> CloudProjectBoardConfig:
+    if isinstance(project, CollaborationChatGroup):
+        return CloudProjectBoardConfig()
     metadata = project.metadata_json if isinstance(project.metadata_json, dict) else {}
     raw = metadata.get("board_config")
     return CloudProjectBoardConfig.model_validate(raw if isinstance(raw, dict) else {})

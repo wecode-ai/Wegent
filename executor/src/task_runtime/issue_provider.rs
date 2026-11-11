@@ -1196,6 +1196,7 @@ fn issue_loop_item(
         resource_type: "task".to_owned(),
         project_space: project.project_space.clone(),
         cloud_project_id: Some(project.id.clone()),
+        thread_context: None,
         parent_id,
         public_id: Some(web_url.clone()),
         project_key: project.project_key.clone(),

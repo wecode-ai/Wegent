@@ -38,6 +38,7 @@ mod device_pull_payload;
 pub mod device_reconcile;
 #[cfg(test)]
 pub(crate) use device_reconcile::verify_reconnect_projection;
+pub(crate) mod chat_audience;
 pub mod device_responses;
 pub mod device_runtime_event;
 pub mod device_runtime_tasks;
@@ -56,6 +57,7 @@ pub mod project_chat_events;
 mod project_chat_mentions;
 pub(crate) mod project_chat_messages;
 pub(crate) mod project_chat_snapshot;
+mod project_chat_write_scope;
 pub mod runner_catalog;
 pub mod runtime;
 pub mod runtime_event_order;

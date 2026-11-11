@@ -164,6 +164,10 @@ export interface LocalParticipationIdentity {
 }
 
 export interface WorkbenchServices {
+  chatGroupApis?: {
+    local?: import('@/api/chatGroups').ChatGroupApi
+    cloud?: import('@/api/chatGroups').ChatGroupApi
+  }
   localParticipationIdentity?: LocalParticipationIdentity
   issueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
   localIssueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi

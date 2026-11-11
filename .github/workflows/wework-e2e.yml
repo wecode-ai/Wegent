@@ -453,7 +453,7 @@ jobs:
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Set up real object storage for collaboration E2E
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing') || contains(matrix.segments, 'group-thread-cloud')
         uses: ./.github/actions/setup-minio-e2e
 
       - name: Run Wework desktop Core shard E2E

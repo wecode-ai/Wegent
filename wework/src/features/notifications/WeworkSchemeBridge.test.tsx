@@ -62,6 +62,46 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('Wework scheme bridge', () => {
+  it('opens a local Thread in the group view and repeats message focus without cloud login', () => {
+    render(<WeworkSchemeBridge />)
+    const url = 'wework://groups/local/group/threads/T-1/comments/message'
+    act(() => openWeworkScheme(url))
+    act(() => openWeworkScheme(url))
+    expect(openTab).toHaveBeenCalledTimes(2)
+    const routes = openTab.mock.calls.map(call => new URL(call[1].contentRoute, 'https://local'))
+    for (const route of routes) {
+      expect(route.searchParams.get('groupId')).toBe('group')
+      expect(route.searchParams.get('threadId')).toBe('T-1')
+      expect(route.searchParams.get('commentId')).toBe('message')
+      expect(route.searchParams.has('projectId')).toBe(false)
+    }
+    expect(routes[0].searchParams.get('focusRequest')).not.toBe(
+      routes[1].searchParams.get('focusRequest')
+    )
+  })
+  it('defers a cloud group link until authentication is restored', async () => {
+    const view = (connected: boolean) => (
+      <CloudConnectionContext.Provider
+        value={
+          {
+            status: connected ? 'connected' : 'restoring',
+            isConnected: connected,
+            token: connected ? 'test-token' : null,
+          } as CloudConnectionContextValue
+        }
+      >
+        <WeworkSchemeBridge />
+      </CloudConnectionContext.Provider>
+    )
+    const rendered = render(view(false))
+    act(() => openWeworkScheme('wework://groups/backend/12/threads/T-1'))
+    expect(openTab).not.toHaveBeenCalled()
+    rendered.rerender(view(true))
+    await waitFor(() => expect(openTab).toHaveBeenCalledOnce())
+    const route = new URL(openTab.mock.calls[0][1].contentRoute, 'https://local')
+    expect(route.searchParams.get('groupStore')).toBe('cloud')
+    expect(route.searchParams.get('groupId')).toBe('12')
+  })
   it('opens a local assignment even when cloud authentication is unavailable', () => {
     render(<WeworkSchemeBridge />)
     act(() => {

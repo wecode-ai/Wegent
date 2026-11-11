@@ -27,6 +27,7 @@ impl LocalTaskStore {
                 "Stand-in Issue conversation owner does not match".into(),
             ));
         }
+        chat_groups::require_participation(&transaction, project, issue_id, false)?;
         let sender = format!(
             "stand-in:{user}:{}",
             origin["standInId"].as_str().unwrap_or_default()
@@ -112,6 +113,20 @@ impl LocalTaskStore {
     ) -> Result<LocalComment, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if !create.task_id.is_empty() {
+            chat_groups::require_participation(
+                &transaction,
+                &create.project_id,
+                &create.task_id,
+                false,
+            )?;
+        } else {
+            let owner = chat_groups::work_container_from(&transaction, &create.project_id)?
+                .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            if owner.resource_type == "chat_group" && owner.status.as_deref() != Some("active") {
+                return Err(TaskRuntimeError::Invalid("Chat group is archived".into()));
+            }
+        }
         let comment = insert_comment(&transaction, create, "completed")?;
         transaction.commit()?;
         Ok(comment)
@@ -133,6 +148,7 @@ impl LocalTaskStore {
         } = *input;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        chat_groups::require_participation(&transaction, project_id, task_id, true)?;
         if let Some((message_id, status)) = transaction
             .query_row(
                 "SELECT message_id, status FROM loop_item_comments

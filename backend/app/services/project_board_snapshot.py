@@ -7,17 +7,26 @@
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
+from app.models.delivery import CollaborationChatGroup
 from app.schemas.cloud_project import CloudProjectMemberResponse
 from app.schemas.delivery import (
     LoopItemResponse,
     LoopItemTaskBindingResponse,
 )
 from app.schemas.project_board import ProjectBoardSnapshotResponse
+from app.services.chat_group_access import chat_group_members
 from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.access import CloudProjectAccess
+from app.services.collaboration_container_access import (
+    require_collaboration_container_access,
+)
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
+from app.services.project_thread_aggregation import (
+    external_project_thread_values,
+    linked_thread_values,
+)
 
 
 class ProjectBoardSnapshotService:
@@ -31,7 +40,7 @@ class ProjectBoardSnapshotService:
         assignee_id: str | None = None,
         execution_state: str | None = None,
     ) -> tuple[CloudProject, list[LoopItemResponse]]:
-        access = cloud_project_service.access(db, project_id, user_id)
+        access = require_collaboration_container_access(db, project_id, user_id)
         return access.project, self._item_views(
             db,
             access,
@@ -60,7 +69,17 @@ class ProjectBoardSnapshotService:
                 assignee_type=assignee_type,
                 assignee_id=assignee_id,
             )
-            return [LoopItemResponse.model_validate(item) for item in items]
+            return [LoopItemResponse.model_validate(item) for item in items] + [
+                LoopItemResponse.model_validate(value)
+                for value in external_project_thread_values(
+                    db,
+                    str(project.id),
+                    user_id,
+                    assignee_type=assignee_type,
+                    assignee_id=assignee_id,
+                    execution_state=execution_state,
+                )
+            ]
 
         items = loop_item_service.list_for_access(
             db,
@@ -69,12 +88,27 @@ class ProjectBoardSnapshotService:
             assignee_type=assignee_type,
             assignee_id=assignee_id,
             execution_state=execution_state,
+            include_project_threads=not isinstance(project, CollaborationChatGroup),
         )
-        return [
-            LoopItemResponse.model_validate(values)
-            for values in loop_item_service.response_values_many(
-                db, items, user_id, access=access
+        values = loop_item_service.response_values_many(
+            db,
+            [item for item in items if item.cloud_project_id == project.id],
+            user_id,
+            access=access,
+        )
+        if not isinstance(project, CollaborationChatGroup):
+            values.extend(
+                linked_thread_values(
+                    db,
+                    [item for item in items if item.cloud_project_id != project.id],
+                    user_id,
+                )
             )
+        by_id = {value["id"]: value for value in values}
+        return [
+            LoopItemResponse.model_validate(by_id[item.id])
+            for item in items
+            if item.id in by_id
         ]
 
     def get(
@@ -83,7 +117,7 @@ class ProjectBoardSnapshotService:
         project_id: int,
         user_id: int,
     ) -> ProjectBoardSnapshotResponse:
-        access = cloud_project_service.access(db, project_id, user_id)
+        access = require_collaboration_container_access(db, project_id, user_id)
         items = self._item_views(db, access, user_id)
         if access.is_viewer:
             return ProjectBoardSnapshotResponse(
@@ -99,7 +133,11 @@ class ProjectBoardSnapshotService:
             user_id=user_id,
             item_ids=item_ids,
         )
-        members = cloud_project_service.list_members_for_access(db, access, user_id)
+        members = (
+            chat_group_members(db, access.project.id)
+            if isinstance(access.project, CollaborationChatGroup)
+            else cloud_project_service.list_members_for_access(db, access, user_id)
+        )
         agents = project_chat_service.list_agents_for_access(
             db,
             access,

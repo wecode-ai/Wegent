@@ -1,8 +1,33 @@
 use super::*;
 
 impl LocalTaskStore {
+    pub fn task_owner(&self, task_id: &str) -> Result<Option<String>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let stored: Option<(Option<String>, Option<String>)> = connection
+            .query_row(
+                "SELECT cloud_project_id, deleted_at FROM loop_items
+                 WHERE id=?1 AND resource_type='task'",
+                [task_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        drop(connection);
+        let Some((owner, deleted_at)) = stored else {
+            return Ok(None);
+        };
+        if deleted_at.is_some() {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        let owner = owner.ok_or(TaskRuntimeError::TaskNotFound)?;
+        let container = self.get_work_container(&owner)?;
+        if container.metadata["project_store"] == json!("backend") {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        Ok(Some(owner))
+    }
+
     pub fn list_tasks(&self, project_id: &str) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        let project = self.get_project(project_id)?;
+        let project = self.get_work_container(project_id)?;
         let provider = task_provider(&project)?;
         if provider != TaskProviderKind::Local {
             return Err(TaskRuntimeError::UnsupportedProvider(format!(
@@ -10,26 +35,39 @@ impl LocalTaskStore {
             )));
         }
         let connection = self.connection()?;
-        let mut statement = connection.prepare(
+        let mut statement = connection.prepare(&format!(
             "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
                     public_id, project_key, name, title, description, sequence_number,
                     next_item_number, status, priority, sort_order, current_delivery_id,
                     metadata, version, created_at, updated_at, completed_at,
                     assignee_agent_id, created_by_user_id, assignee_user_id
              FROM loop_items
-             WHERE resource_type = 'task' AND cloud_project_id = ?1
+             WHERE resource_type = 'task'
+               AND {}
                AND deleted_at IS NULL
              ORDER BY sort_order, updated_at DESC, id",
+            thread_project_links::project_task_scope("loop_items"),
+        ))?;
+        let rows = statement.query_map(
+            params![project_id, project.resource_type == "project"],
+            projections::map_loop_item_fields,
         )?;
-        let rows = statement.query_map([project_id], projections::map_loop_item_fields)?;
         let mut items = collect_items(rows)?;
         drop(statement);
-        crate::task_runtime::runner_history::enrich_project_tasks(
-            &connection,
-            project_id,
-            &mut items,
-        )?;
-        let executions = latest_executions_for_project(&connection, project_id)?;
+        chat_groups::annotate_threads(&connection, &mut items)?;
+        let containers: std::collections::BTreeSet<String> = items
+            .iter()
+            .filter_map(|item| item.cloud_project_id.clone())
+            .collect();
+        let mut executions = std::collections::HashMap::new();
+        for container in containers {
+            crate::task_runtime::runner_history::enrich_project_tasks(
+                &connection,
+                &container,
+                &mut items,
+            )?;
+            executions.extend(latest_executions_for_project(&connection, &container)?);
+        }
         Ok(items
             .into_iter()
             .map(|item| {
@@ -40,11 +78,13 @@ impl LocalTaskStore {
     }
 
     pub fn get_task(&self, project_id: &str, task_id: &str) -> Result<LoopItem, TaskRuntimeError> {
-        let item = self.get_item(task_id, "task")?;
+        self.get_work_container(project_id)?;
+        let mut item = self.get_item(task_id, "task")?;
         if item.cloud_project_id.as_deref() != Some(project_id) {
             return Err(TaskRuntimeError::TaskNotFound);
         }
         let connection = self.connection()?;
+        chat_groups::annotate_threads(&connection, std::slice::from_mut(&mut item))?;
         Ok(attach_execution(
             item,
             latest_execution(&connection, task_id)?,
@@ -94,15 +134,16 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.create_task_with_schedule(project_id, input, None, None)
+        self.create_task_with_context(project_id, input, None, None, None)
     }
 
-    pub fn create_task_with_schedule(
+    pub fn create_task_with_context(
         &self,
         project_id: &str,
         input: TaskCreate,
         start_at: Option<String>,
         due_at: Option<String>,
+        classification_project_id: Option<String>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         validate_name(&input.title, "task title")?;
         validate_priority(&input.priority)?;
@@ -110,8 +151,19 @@ impl LocalTaskStore {
         validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let project = get_item_from(&transaction, project_id, "project")?
+        let project = work_container_from(&transaction, project_id)?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        if let Some(target) = classification_project_id.as_deref() {
+            if project.resource_type != "chat_group" {
+                return Err(TaskRuntimeError::Invalid(
+                    "Project classification requires an owning group".into(),
+                ));
+            }
+            thread_project_links::require_target(&transaction, target)?;
+        }
+        if project.resource_type == "chat_group" {
+            chat_groups::local_group(&transaction, project_id, true)?;
+        }
         project_status::validate(&project.metadata, &input.status)?;
         if task_provider(&project)? != TaskProviderKind::Local {
             return Err(TaskRuntimeError::UnsupportedProvider("external".to_owned()));
@@ -151,7 +203,11 @@ impl LocalTaskStore {
             input.status
         };
         let completed_at = (status == "completed").then(|| now.clone());
-        milestones::require_milestone(&transaction, project_id, input.milestone_id.as_deref())?;
+        milestones::require_milestone(
+            &transaction,
+            classification_project_id.as_deref().unwrap_or(project_id),
+            input.milestone_id.as_deref(),
+        )?;
         let mut metadata = json!({"tags": input.tags});
         if let Some(milestone_id) = input.milestone_id {
             metadata["milestone_id"] = json!(milestone_id);
@@ -265,9 +321,13 @@ impl LocalTaskStore {
             &id,
             local_automation::AutomationEvent::Created,
         )?;
+        chat_groups::initialize_thread(&transaction, &project, &id)?;
+        if let Some(target) = classification_project_id.as_deref() {
+            thread_project_links::create_link(&transaction, &id, target)?;
+        }
         transaction.commit()?;
         drop(connection);
-        self.get_item(&id, "task")
+        self.get_task(project_id, &id)
     }
 
     pub fn update_task(
@@ -294,6 +354,9 @@ impl LocalTaskStore {
         if current.cloud_project_id.as_deref() != Some(project_id) {
             return Err(TaskRuntimeError::TaskNotFound);
         }
+        if get_item_from(&transaction, project_id, "chat_group")?.is_some() {
+            chat_groups::local_group(&transaction, project_id, true)?;
+        }
         if current.version != input.version {
             return Err(TaskRuntimeError::VersionConflict);
         }
@@ -301,7 +364,7 @@ impl LocalTaskStore {
             validate_name(title, "task title")?;
         }
         if let Some(status) = input.status.as_deref() {
-            let project = get_item_from(&transaction, project_id, "project")?
+            let project = work_container_from(&transaction, project_id)?
                 .ok_or(TaskRuntimeError::ProjectNotFound)?;
             project_status::validate(&project.metadata, status)?;
         }
@@ -351,7 +414,7 @@ impl LocalTaskStore {
             && previous_group_id.as_deref() != requested_group_id.as_deref();
         let selected_collaboration_group =
             if let Some(Some(group_id)) = input.assignee_group_id.as_ref() {
-                let project = get_item_from(&transaction, project_id, "project")?
+                let project = work_container_from(&transaction, project_id)?
                     .ok_or(TaskRuntimeError::ProjectNotFound)?;
                 Some(collaboration_group(&project, group_id)?)
             } else {
@@ -359,7 +422,26 @@ impl LocalTaskStore {
             };
         let mut metadata = current.metadata;
         if let Some(milestone_id) = input.milestone_id {
-            milestones::require_milestone(&transaction, project_id, milestone_id.as_deref())?;
+            let linked_project = if get_item_from(&transaction, project_id, "chat_group")?.is_some()
+                && milestone_id.is_some()
+            {
+                Some(
+                    thread_project_links::linked_project(&transaction, task_id)?.ok_or_else(
+                        || {
+                            TaskRuntimeError::Invalid(
+                                "Associate a project before choosing a milestone".into(),
+                            )
+                        },
+                    )?,
+                )
+            } else {
+                None
+            };
+            milestones::require_milestone(
+                &transaction,
+                linked_project.as_deref().unwrap_or(project_id),
+                milestone_id.as_deref(),
+            )?;
             if let Some(milestone_id) = milestone_id {
                 metadata["milestone_id"] = json!(milestone_id);
             } else if let Some(metadata) = metadata.as_object_mut() {
@@ -504,7 +586,7 @@ impl LocalTaskStore {
             && selected_collaboration_group.is_some())
             || (assignee_changed && assignee_agent_id.is_some());
         if starts_runtime_dispatch {
-            let project = get_item_from(&transaction, project_id, "project")?
+            let project = work_container_from(&transaction, project_id)?
                 .ok_or(TaskRuntimeError::ProjectNotFound)?;
             status = status.map(|status| {
                 project_status::robot_assignment_status(&project.metadata, &status).to_owned()
@@ -612,6 +694,11 @@ impl LocalTaskStore {
                 task_id,
                 local_automation::AutomationEvent::TagsAdded(&added_tags),
             )?;
+        }
+        if status_changed {
+            let container = work_container_from(&transaction, project_id)?
+                .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            chat_groups::lifecycle(&transaction, &container, task_id, "status_changed")?;
         }
         transaction.commit()?;
         drop(connection);

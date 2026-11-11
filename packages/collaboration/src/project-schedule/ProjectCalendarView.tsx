@@ -29,6 +29,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { canEditCollaborationIssue } from "../permissions";
+import { dueDateTimeLocalFromSource } from "../issue-detail/dateTime";
 import type { CollaborationIssue, CollaborationStatus } from "../types";
 import { collaborationTestIds } from "../testIds";
 import { useCollaborationPortalTheme } from "../theme";
@@ -131,18 +132,10 @@ export function statusLabel(
   );
 }
 
-function issueDueTime(
-  issue: CollaborationIssue,
-  locale: "zh-CN" | "en",
-): string | null {
+function issueDueTime(issue: CollaborationIssue): string | null {
   if (!issue.due_at?.includes("T")) return null;
-  const dueDate = parseScheduleDate(issue.due_at);
-  if (!dueDate) return null;
-  return new Intl.DateTimeFormat(locale === "zh-CN" ? "zh-CN" : "en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(dueDate);
+  const local = dueDateTimeLocalFromSource(issue.due_at);
+  return local ? local.slice(11) : null;
 }
 
 function scheduleDateLabel(
@@ -780,9 +773,7 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
         <ScheduleViewControls {...props} view="calendar" />
         <div className="min-h-0 flex-1 overflow-auto">
           <div
-            className={`flex min-h-full flex-col ${
-              scale === "day" ? "min-w-0" : "min-w-[720px]"
-            }`}
+            className={`flex min-h-full flex-col ${scale === "day" ? "min-w-0" : "min-w-[720px]"}`}
           >
             <div
               className="sticky top-0 z-10 grid shrink-0 border-b border-border bg-background"
@@ -878,7 +869,7 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
                           !segment.continuesBefore &&
                           !segment.continuesAfter;
                         const dueTime = singleDay
-                          ? issueDueTime(segment.issue, locale)
+                          ? issueDueTime(segment.issue)
                           : null;
                         return (
                           <DraggableScheduleBar
@@ -897,11 +888,7 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
                               segment.continuesBefore
                                 ? "rounded-l-none"
                                 : "rounded-l-md"
-                            } ${
-                              segment.continuesAfter
-                                ? "rounded-r-none"
-                                : "rounded-r-md"
-                            }`}
+                            } ${segment.continuesAfter ? "rounded-r-none" : "rounded-r-md"}`}
                             bodyClassName="flex items-center gap-1.5 px-2 text-left"
                             bodyCursorClassName="cursor-pointer"
                             liftTogether

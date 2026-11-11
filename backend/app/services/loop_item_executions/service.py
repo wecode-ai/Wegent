@@ -880,6 +880,13 @@ class LoopItemExecutionService:
     ) -> LoopItemExecution:
         """Persist queue identity and its immutable non-secret V2 intent."""
 
+        from app.services.loop_item_executions.admission_scope import lock_execution_subject
+
+        lock_execution_subject(
+            db, container_id=cloud_project_id, thread_id=loop_item_id,
+            actor_user_id=assigner_user_id,
+        )
+
         # A queued run may be resolved from a desktop App registration id that
         # is not unique across active devices. Persisting the canonical logical
         # device id keeps the row claimable by the names the App puller sends.

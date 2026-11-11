@@ -334,6 +334,33 @@ def main() -> None:
                 == "READ-COMMITTED"
             )
         asyncio.run(verify_async_isolation())
+        from tests.integration.thread_group_permissions_mysql import (
+            verify_group_write_revocation,
+        )
+
+        verify_group_write_revocation(engine)
+        from tests.integration.thread_classification_mysql import (
+            verify_thread_classification,
+        )
+
+        verify_thread_classification(engine)
+        from tests.integration.thread_binding_mysql import (
+            verify_group_conversation_binding,
+            verify_group_repeatable_read_revocation,
+        )
+
+        verify_group_conversation_binding(engine)
+        verify_group_repeatable_read_revocation(engine)
+        from tests.integration.thread_current_facts_mysql import (
+            verify_group_current_facts,
+        )
+
+        verify_group_current_facts(engine)
+        from tests.integration.thread_cross_group_mentions_mysql import (
+            verify_cross_group_mentions,
+        )
+
+        verify_cross_group_mentions(engine)
     finally:
         if engine is not None:
             engine.dispose()

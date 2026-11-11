@@ -4,6 +4,7 @@ import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   completeLocalCollaborationFolderImport,
+  enterProjectCollaborationView,
   inCollaborationSidebar,
 } from '../modules/workspace-flows.mjs'
 
@@ -31,6 +32,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await enterProjectCollaborationView(control, ACTIVE_WORKBENCH_SELECTOR, uiTimeoutMs)
       await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
         timeoutMs: uiTimeoutMs,
       })

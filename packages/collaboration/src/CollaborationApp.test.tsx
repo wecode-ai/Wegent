@@ -438,6 +438,85 @@ describe("CollaborationApp API boundary", () => {
     });
   });
 
+  it.each(["board", "table", "calendar", "gantt"] as const)(
+    "opens a classified Thread from %s in its owning group",
+    (view) => {
+      const host = createHost(false, "home");
+      host.location = { projectId: "project-1", issueId: null, view };
+      host.openGroupThread = vi.fn();
+      const project = createProject(1);
+      const controller = controllerWithProject(project);
+      const issue = {
+        id: "T-1",
+        group_id: "owning-group",
+        cloud_project_id: "owning-group",
+        sequence_number: 1,
+        parent_id: null,
+        created_by_user_id: 1,
+        title: "Thread",
+        description: "",
+        status: "pending",
+        priority: "none",
+        assignee_user_id: null,
+        tags: [],
+        sort_order: 0,
+        version: 1,
+        created_at: project.created_at,
+        updated_at: project.updated_at,
+        completed_at: null,
+        current_delivery_id: null,
+        due_at: null,
+      } satisfies CollaborationIssue;
+      collaborationAppMocks.useController.mockReturnValue({
+        ...controller,
+        state: { ...controller.state, issues: [issue] },
+      });
+      const shell = findByType(renderApp(host), CollaborationProjectViewShell)!;
+      const surface =
+        view === "calendar" || view === "gantt"
+          ? shell.props.extensions.find(
+              (entry: { id: string }) => entry.id === view,
+            )?.content
+          : findByType(
+              shell.props.slots[view],
+              view === "board" ? ProjectBoardAdapter : ProjectIssueTable,
+            );
+      expect(surface?.props.onOpen).toBeTypeOf("function");
+      surface.props.onOpen(issue);
+      expect(host.openGroupThread).toHaveBeenCalledExactlyOnceWith(
+        "owning-group",
+        "T-1",
+        "backend",
+      );
+      expect(host.navigate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("embeds a group board without a duplicate project heading while preserving schedule views", () => {
+    const host = createHost(false, "home");
+    host.location = { projectId: "group-1", issueId: null, view: "board" };
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject({ ...createProject(1), id: "group-1" }),
+    );
+    const tree = CollaborationApp({
+      api: createApi(),
+      host,
+      showProjectBack: false,
+      showProjectHeading: false,
+      enabledStandardViews: ["board", "table"],
+    });
+    const shell = findByType(tree, CollaborationProjectViewShell);
+    expect(shell?.props.title).toBeNull();
+    expect(shell?.props.titleIcon).toBeNull();
+    expect(shell?.props.backAction).toBeUndefined();
+    expect(shell?.props.enabledStandardViews).toEqual(["board", "table"]);
+    expect(
+      shell?.props.extensions.map((view: { id: string }) => view.id),
+    ).toEqual(expect.arrayContaining(["calendar", "gantt"]));
+    expect(shell?.props.slots.board).toBeDefined();
+    expect(shell?.props.slots.table).toBeDefined();
+  });
+
   it("keeps project settings mounted across polling refreshes", () => {
     const host = createHost(false, "home");
     host.location = {

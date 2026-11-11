@@ -91,8 +91,10 @@ export function createLocalProjectChatClient(
   const subscribe: ProjectChatClient['subscribe'] = async (
     projectId,
     taskId,
-    _afterSequence,
-    onMessage
+    afterSequence,
+    onMessage,
+    _onChunk,
+    options
   ) => {
     let stopped = false
     let inFlight = false
@@ -132,6 +134,25 @@ export function createLocalProjectChatClient(
     const snapshotMessages = [...knownMessages.values()].sort(
       (left, right) => left.sequenceNumber - right.sequenceNumber
     )
+    let windowMessages = snapshotMessages
+    if (options?.focusMessageId) {
+      const anchor = snapshotMessages.findIndex(
+        message => message.messageId === options.focusMessageId
+      )
+      if (anchor < 0)
+        throw Object.assign(new Error('Message not found in this conversation'), {
+          code: 'SCOPE_NOT_FOUND',
+        })
+      windowMessages = snapshotMessages.slice(Math.max(0, anchor + 1 - 200), anchor + 1)
+    } else if (options?.beforeSequence) {
+      windowMessages = snapshotMessages
+        .filter(message => message.sequenceNumber < options.beforeSequence!)
+        .slice(-200)
+    } else if (options?.historyWindow) {
+      windowMessages = snapshotMessages
+        .filter(message => message.sequenceNumber > afterSequence)
+        .slice(0, 200)
+    }
     const timer = window.setInterval(() => {
       void refresh().catch(error =>
         console.error('[local-project-chat] refresh failed', {
@@ -149,9 +170,31 @@ export function createLocalProjectChatClient(
     activeUnsubscribers.add(unsubscribe)
 
     const snapshot: ProjectChatSubscription = {
-      messages: snapshotMessages,
-      latestSequence,
+      messages: windowMessages,
+      latestSequence: options
+        ? (windowMessages.at(-1)?.sequenceNumber ?? afterSequence)
+        : latestSequence,
       currentUserId,
+      ...(options?.historyWindow || options?.focusMessageId || options?.beforeSequence
+        ? {
+            history: {
+              firstSequence: windowMessages[0]?.sequenceNumber ?? 0,
+              lastSequence: windowMessages.at(-1)?.sequenceNumber ?? 0,
+              hasOlder: Boolean(
+                windowMessages.length &&
+                snapshotMessages.some(
+                  message => message.sequenceNumber < windowMessages[0].sequenceNumber
+                )
+              ),
+              hasNewer: Boolean(
+                windowMessages.length &&
+                snapshotMessages.some(
+                  message => message.sequenceNumber > windowMessages.at(-1)!.sequenceNumber
+                )
+              ),
+            },
+          }
+        : {}),
     }
     return { snapshot, unsubscribe }
   }

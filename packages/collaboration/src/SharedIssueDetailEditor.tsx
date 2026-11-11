@@ -1,4 +1,5 @@
 import { MilestonePicker } from "./milestones/MilestonePicker";
+import { providerTerminology } from "./issue-detail/providerTerminology";
 import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
 import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
@@ -687,7 +688,10 @@ export function TodoEditor(props: TodoEditorProps) {
   const { allItems, onClose } = props;
   const editorPort = props.port;
   const extensions = props.extensions;
-  const t = props.translate ?? ((_key: string, fallback = _key) => fallback);
+  const t = providerTerminology(
+    props.project?.task_provider,
+    props.translate ?? ((_key: string, fallback = _key) => fallback),
+  );
   const showChildren = props.showChildren !== false;
   const showAssignee = props.showAssignee !== false;
   const createProps = props.mode === "create" ? props : null;
@@ -2396,9 +2400,7 @@ export function TodoEditor(props: TodoEditorProps) {
         priorityBadgeClasses[priority],
       )}
     >
-      {priority === "none"
-        ? t("todo.priority_medium", "普通")
-        : t(`todo.priority_${priority}`, priority)}
+      {t(`todo.priority_${priority}`, priority)}
     </span>
   );
   const collaboratorPreview = collaborators.slice(0, 2);
@@ -3276,6 +3278,11 @@ export function TodoEditor(props: TodoEditorProps) {
                       <textarea
                         data-testid="cloud-todo-detail-description"
                         aria-label={t("todo.issue_description", "任务描述")}
+                        placeholder={
+                          isCreate
+                            ? t("todo.thread_goals", "目标与验收标准")
+                            : undefined
+                        }
                         value={description}
                         onChange={(event) => setDescription(event.target.value)}
                         readOnly={!editable || (readFirst && !editingContent)}
@@ -3794,7 +3801,9 @@ export function TodoEditor(props: TodoEditorProps) {
                                   aria-label={t(
                                     "todo.remove_collaborator",
                                     "移除参与者 {{name}}",
-                                    { name: collaborator.user_name },
+                                    {
+                                      name: collaborator.user_name,
+                                    },
                                   )}
                                   disabled={collaboratorBusy}
                                   onClick={() =>
@@ -3865,7 +3874,9 @@ export function TodoEditor(props: TodoEditorProps) {
                                 {t(
                                   "todo.attachment_count",
                                   "{{count}} 个附件",
-                                  { count: delivery.assets.length },
+                                  {
+                                    count: delivery.assets.length,
+                                  },
                                 )}
                               </span>
                               <span className="ml-auto shrink-0 text-text-muted">
@@ -3974,7 +3985,9 @@ export function TodoEditor(props: TodoEditorProps) {
                                 : t(
                                     "todo.view_all_count",
                                     "查看全部 {{count}} 个",
-                                    { count: childItems.length },
+                                    {
+                                      count: childItems.length,
+                                    },
                                   )}
                             </button>
                           )}
@@ -4074,7 +4087,9 @@ export function TodoEditor(props: TodoEditorProps) {
                               : t(
                                   "todo.view_all_count",
                                   "查看全部 {{count}} 个",
-                                  { count: effectiveTasks.length },
+                                  {
+                                    count: effectiveTasks.length,
+                                  },
                                 )}
                           </button>
                         )}
@@ -4120,7 +4135,9 @@ export function TodoEditor(props: TodoEditorProps) {
                                   ? t(
                                       "todo.attachment_count",
                                       "{{count}} 个附件",
-                                      { count: delivery.assets.length },
+                                      {
+                                        count: delivery.assets.length,
+                                      },
                                     )
                                   : t("todo.delivery_result", "交付结果")}
                               </span>
@@ -4141,7 +4158,9 @@ export function TodoEditor(props: TodoEditorProps) {
                               : t(
                                   "todo.view_all_count",
                                   "查看全部 {{count}} 个",
-                                  { count: deliveries.length },
+                                  {
+                                    count: deliveries.length,
+                                  },
                                 )}
                           </button>
                         )}

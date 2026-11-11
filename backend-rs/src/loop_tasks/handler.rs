@@ -14,6 +14,7 @@
 //! `_get_item_row` (absent or deleted -> 404 "TODO not found") followed by
 //! `_require_item_access` (`require_cloud_project_role(Viewer)` plus
 //! `can_view_item`), then lists the caller-owned binding rows newest first.
+//! Group-owned tasks use current group grants instead of project authority.
 use chrono::NaiveDateTime;
 
 use super::http_error::HttpError;
@@ -62,20 +63,30 @@ async fn loop_item_tasks(
     Ok(bindings.iter().map(binding_response).collect())
 }
 
-/// `LoopItemService._require_item_access` with no issue action:
-/// `require_cloud_project_role(Viewer)` then `can_view_item`.
+/// Read through the actual owner; private binding rows remain caller-owned.
 async fn require_item_access(
     state: &AppState,
     item: &TaskItemFullRow,
     user_id: i32,
 ) -> Result<(), FastApiError> {
-    // `collaboration_permission_service.check` rejects a non-decimal
-    // `cloud_project_id` before any statement runs (404, not 422).
+    // Reject malformed cloud container identities before querying storage.
     let project_number: i64 = item
         .cloud_project_id
         .parse()
         .map_err(|_| HttpError::cloud_project_not_found())?;
-
+    let owner_kind: Option<(String,)> = state
+        .mysql
+        .fetch_optional(
+            "SELECT resource_type FROM loop_items WHERE id=?",
+            (item.cloud_project_id.as_str(),),
+        )
+        .await
+        .map_err(HttpError::internal)?;
+    if owner_kind.is_some_and(|kind| kind.0 == "chat_group") {
+        crate::chat_groups::repository::access(&state.mysql, &item.cloud_project_id, user_id)
+            .await?;
+        return Ok(());
+    }
     // The access point statement plus the caller's permission-source reads.
     let Some(access) = project_access_details(&state.mysql, project_number, user_id)
         .await

@@ -1,4 +1,14 @@
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
+import {
+  CollaborationGroupsSurface,
+  type GroupSource,
+} from '@/features/collaboration/CollaborationGroupsSurface'
+import { CollaborationViewSwitcher } from '@/features/collaboration/CollaborationViewSwitcher'
+import { ThreadCreateDialog } from '@/features/collaboration/ThreadCreateDialog'
+import { ThreadCreationHome } from '@/features/collaboration/ThreadCreationHome'
+import { useLegacyThreadDestination } from '@/features/collaboration/useLegacyThreadDestination'
+import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
+import { Button } from '@/components/ui/button'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { useStandInProjects } from './useStandInProjects'
 import { StandInIcon } from '@wegent/collaboration'
@@ -9,7 +19,7 @@ import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 import { MessageSquare } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { StandInPopover } from './StandInPopover'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, replaceTo } from '@/lib/navigation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
 import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
 import {
@@ -22,6 +32,7 @@ import { getRuntimeConfig } from '@/config/runtime'
 // eslint-disable-next-line react-refresh/only-export-components
 export { createLocalWorkspaceApi, createWeworkPlatformApi }
 import {
+  Activity,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -361,6 +372,7 @@ function projectWorkspaceRoots(project: CollaborationProject): string[] {
 
 /** Adapts a project to desktop services, separating public stand-in and experimental coordinator actions. */
 export function WeworkSharedProject({
+  draftAccountScope,
   api,
   projectCatalogApi,
   detailServices,
@@ -372,6 +384,7 @@ export function WeworkSharedProject({
   locale,
   location,
   onFocusedItemHandled,
+  onOpenGroupThread,
   onOpenSettings,
   onOpenStandInSettings,
   standInDeviceId,
@@ -388,6 +401,7 @@ export function WeworkSharedProject({
   userId,
   workspace,
 }: {
+  draftAccountScope: string
   api: SharedWorkspaceApi
   projectCatalogApi?: SharedWorkspaceApi['projects']
   detailServices?: ProjectSpaceDetailServices
@@ -399,6 +413,7 @@ export function WeworkSharedProject({
   locale: 'zh-CN' | 'en'
   location: CollaborationPlatformLocation
   onFocusedItemHandled?: () => void
+  onOpenGroupThread: NonNullable<CollaborationHostAdapter['openGroupThread']>
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onOpenStandInSettings?(roleId: string, deviceId: string): void
   standInDeviceId?: string
@@ -656,6 +671,7 @@ export function WeworkSharedProject({
         }))
         if (!next.issueId && focusedItemId) onFocusedItemHandled?.()
       },
+      openGroupThread: onOpenGroupThread,
       notify,
       ...(onOpenSettings
         ? {
@@ -684,6 +700,7 @@ export function WeworkSharedProject({
       scopedApi,
       onOpenRuntimeTask,
       onFocusedItemHandled,
+      onOpenGroupThread,
       services,
       projectAgentConfiguration,
       userId,
@@ -1158,6 +1175,26 @@ export function WeworkSharedProject({
           isIssueRunning={isIssueRunning}
           parentGroupingEnabled
           api={scopedApi}
+          renderIssueCreate={form => (
+            <ThreadCreateDialog
+              key={`${project.project_store}:${project.id}`}
+              form={form}
+              externalForm={
+                ['github', 'gitlab', 'dingtalk_aitable'].includes(form.project.task_provider)
+                  ? form
+                  : undefined
+              }
+              api={api}
+              groups={
+                project.project_store === 'local'
+                  ? services.chatGroupApis?.local
+                  : services.chatGroupApis?.cloud
+              }
+              store={project.project_store === 'local' ? 'local' : 'cloud'}
+              locale={locale}
+              accountScope={project.project_store === 'local' ? 'local' : draftAccountScope}
+            />
+          )}
           initialProject={project}
           onProjectChange={nextProject => {
             latestProjectRef.current = nextProject
@@ -1388,15 +1425,255 @@ export function WeworkSharedProject({
 
 export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformProps) {
   const markdownServices = useCollaborationMarkdownServices()
+  const { i18n } = useTranslation('common')
+  const { t: collaborationText } = useTranslation('collaboration')
+  const cloud = useOptionalCloudConnection()
+  const draftAccountScope = workbenchOwnershipKey(cloud, props.user)
+  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
+  const [search, setSearch] = useState(() => window.location.search)
+  const [boardReturn, setBoardReturn] = useState<{
+    scope: string
+    groupId: string
+    search: string
+  } | null>(null)
+  if (boardReturn && boardReturn.scope !== draftAccountScope) setBoardReturn(null)
+  const [retainedView, setRetainedView] = useState(props.activeProjectRef ? 'projects' : 'groups')
+  const view =
+    new URLSearchParams(search).get('collaborationView') ??
+    (props.activeProjectRef ? 'projects' : retainedView)
+  if (retainedView !== view) setRetainedView(view)
+  const [connectOpen, setConnectOpen] = useState(false)
+  const savedGroupSearch = useRef('?collaborationView=groups')
+  const savedProjectSearch = useRef(
+    new URLSearchParams(window.location.search).has('itemId')
+      ? '?collaborationView=projects'
+      : window.location.search
+  )
+  useEffect(() => {
+    const changed = () => setSearch(window.location.search)
+    window.addEventListener('popstate', changed)
+    return () => window.removeEventListener('popstate', changed)
+  }, [])
+  const onNavigate = useCallback(
+    (nextSearch: string) => {
+      if (view === 'groups') savedGroupSearch.current = search
+      else savedProjectSearch.current = search
+      const next = new URLSearchParams(nextSearch)
+      setBoardReturn(current =>
+        current && next.get('groupId') === current.groupId && next.has('threadId') ? current : null
+      )
+      if (next.size === 1 && next.has('collaborationView')) {
+        const restored = new URLSearchParams(
+          next.get('collaborationView') === 'groups'
+            ? savedGroupSearch.current
+            : savedProjectSearch.current
+        )
+        restored.set('collaborationView', next.get('collaborationView')!)
+        nextSearch = `?${restored.toString()}`
+      }
+      setSearch(nextSearch)
+      navigateTo(`/todo${nextSearch}`)
+    },
+    [search, view]
+  )
+  const openProjectThread: NonNullable<CollaborationHostAdapter['openGroupThread']> = (
+    groupId,
+    threadId,
+    store
+  ) => {
+    const origin = new URLSearchParams(search)
+    origin.set('collaborationView', 'projects')
+    origin.delete('itemId')
+    origin.delete('commentId')
+    origin.delete('focusRequest')
+    setBoardReturn({ scope: draftAccountScope, groupId, search: `?${origin.toString()}` })
+    const target = new URLSearchParams({
+      collaborationView: 'groups',
+      groupStore: store === 'local' ? 'local' : 'cloud',
+      groupId,
+      threadId,
+      groupTab: 'chat',
+    })
+    onNavigate(`?${target.toString()}`)
+  }
+  const local = useMemo(
+    () =>
+      createLocalWorkspaceApi(
+        props.services.projectSpaceApis?.local,
+        Number(props.user.id),
+        props.user.user_name,
+        props.user.email ?? null,
+        props.services.projectSpaceDetailServices?.local,
+        locale
+      ),
+    [
+      props.services.projectSpaceApis?.local,
+      props.services.projectSpaceDetailServices?.local,
+      props.user.id,
+      props.user.user_name,
+      props.user.email,
+      locale,
+    ]
+  )
+  const sources = useMemo(() => {
+    const sources: GroupSource[] = []
+    if (local && props.services.chatGroupApis?.local)
+      sources.push({
+        store: 'local',
+        groups: props.services.chatGroupApis.local,
+        workspace: local,
+        chat: props.services.localProjectChatClient,
+      })
+    if (
+      cloud.isConnected &&
+      props.services.sharedWorkspaceApi &&
+      props.services.chatGroupApis?.cloud
+    )
+      sources.push({
+        store: 'cloud',
+        groups: props.services.chatGroupApis.cloud,
+        workspace: props.services.sharedWorkspaceApi,
+        chat: props.services.projectChatClient,
+      })
+    return sources
+  }, [
+    local,
+    cloud.isConnected,
+    props.services.chatGroupApis,
+    props.services.sharedWorkspaceApi,
+    props.services.localProjectChatClient,
+    props.services.projectChatClient,
+  ])
+  const legacyParams = new URLSearchParams(search)
+  const legacyStore = legacyParams.get('projectStore') === 'local' ? 'local' : 'cloud'
+  const resolveLegacyDestination = useCallback((nextSearch: string) => {
+    setSearch(nextSearch)
+    replaceTo(`/todo${nextSearch}`)
+  }, [])
+  const legacyDestination = useLegacyThreadDestination({
+    api: sources.find(source => source.store === legacyStore)?.workspace,
+    itemId: legacyParams.has('groupId') ? null : legacyParams.get('itemId'),
+    store: legacyStore,
+    commentId: legacyParams.get('commentId'),
+    focusRequest: legacyParams.get('focusRequest'),
+    onNavigate: resolveLegacyDestination,
+  })
+  const readySent = useRef(false)
+  const onReady = useCallback(() => {
+    if (
+      !props.startupActive ||
+      readySent.current ||
+      !isElectronRuntime() ||
+      getDesktopWindowLabel() !== 'main'
+    )
+      return
+    readySent.current = true
+    void invokeDesktopHost<void>('renderer.startupReady').catch(error =>
+      console.error('[Wework] Failed to reveal collaboration', error)
+    )
+  }, [props.startupActive])
+  useEffect(() => {
+    if (legacyDestination.failed) onReady()
+  }, [legacyDestination.failed, onReady])
   return (
     <MarkdownServicesProvider value={markdownServices}>
-      <WeworkCollaborationPlatformContent {...props} />
+      {legacyDestination.pending || legacyDestination.failed ? (
+        <div className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-text-muted">
+          <p role={legacyDestination.failed ? 'alert' : 'status'}>
+            {collaborationText(legacyDestination.failed ? 'threadLinkUnavailable' : 'loading')}
+          </p>
+          {legacyDestination.failed && (
+            <div className="flex items-center gap-2">
+              <Button data-testid="thread-link-retry" onClick={legacyDestination.retry}>
+                {collaborationText('retry')}
+              </Button>
+              <Button
+                variant="ghost"
+                data-testid="thread-link-back"
+                onClick={() => resolveLegacyDestination(savedGroupSearch.current)}
+              >
+                {collaborationText('backToGroups')}
+              </Button>
+              {legacyStore === 'cloud' && !cloud.isConnected && (
+                <Button
+                  variant="ghost"
+                  data-testid="thread-link-connect"
+                  onClick={() => setConnectOpen(true)}
+                >
+                  {collaborationText('connectCloud')}
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      ) : view === 'groups' ? (
+        <CollaborationGroupsSurface
+          accountScope={draftAccountScope}
+          sources={sources}
+          search={search}
+          locale={locale}
+          onNavigate={onNavigate}
+          onBackToBoard={
+            boardReturn?.scope === draftAccountScope &&
+            boardReturn.groupId === new URLSearchParams(search).get('groupId')
+              ? () => onNavigate(boardReturn.search)
+              : undefined
+          }
+          onReady={onReady}
+          onConnectCloud={cloud.isConnected ? undefined : () => setConnectOpen(true)}
+          footer={
+            props.onOpenSettings && props.onLogout ? (
+              <DesktopSidebarAccount
+                user={props.user}
+                onOpenSettings={props.onOpenSettings}
+                onLogout={props.onLogout}
+              />
+            ) : null
+          }
+        />
+      ) : null}
+      <Activity
+        key={draftAccountScope}
+        mode={
+          view !== 'groups' && !legacyDestination.pending && !legacyDestination.failed
+            ? 'visible'
+            : 'hidden'
+        }
+      >
+        <div className="flex h-full min-h-0 min-w-0 flex-1">
+          <WeworkCollaborationPlatformContent
+            {...props}
+            groupSources={sources}
+            draftAccountScope={draftAccountScope}
+            onGroupView={() => onNavigate('?collaborationView=groups')}
+            onOpenGroupThread={openProjectThread}
+          />
+        </div>
+      </Activity>
+      {connectOpen && (
+        <CloudConnectionDialog
+          open
+          onlineCloudDeviceCount={0}
+          onClose={() => setConnectOpen(false)}
+          onOpenSettings={() => {
+            setConnectOpen(false)
+            props.onOpenSettings?.({ settingsPage: 'connections' })
+          }}
+        />
+      )}
     </MarkdownServicesProvider>
   )
 }
 
 /** Binds project navigation and stand-in indicators to the current account and project catalog. */
-function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
+function WeworkCollaborationPlatformContent(
+  props: WeworkCollaborationPlatformProps & {
+    onGroupView(): void
+    onOpenGroupThread: NonNullable<CollaborationHostAdapter['openGroupThread']>
+    groupSources: GroupSource[]
+    draftAccountScope: string
+  }
+) {
   const { i18n, t } = useTranslation('common')
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
@@ -1708,6 +1985,12 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         />
       )}
       <CollaborationPlatformApp
+        sidebarHeader={
+          <CollaborationViewSwitcher
+            value="projects"
+            onChange={view => view === 'groups' && props.onGroupView()}
+          />
+        }
         api={platformApi}
         refreshKey={String(Boolean(props.startupActive))}
         navigationApis={navigationApis}
@@ -1743,7 +2026,15 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             authenticated: cloudConnection.isConnected,
             requestLogin: () => setCloudLoginOpen(true),
           },
-          renderIssueComposer: composerProps => <WeworkIssueHomeComposer {...composerProps} />,
+          renderThreadHome: ({ projects }) => (
+            <ThreadCreationHome
+              accountScope={props.draftAccountScope}
+              sources={props.groupSources}
+              projects={projects}
+              locale={locale}
+              onConnectCloud={() => setCloudLoginOpen(true)}
+            />
+          ),
           loadProjectCollaborationGroupGenerationModels: async () => {
             const response = await props.services.modelApi.listModels()
             const models = response.data.filter(
@@ -2003,6 +2294,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               : props.services.workspaceRuntimePort
           return (
             <WeworkSharedProject
+              draftAccountScope={props.draftAccountScope}
               api={projectApi}
               projectCatalogApi={platformApi?.projects}
               detailServices={
@@ -2043,6 +2335,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               runtimePort={runtimePort}
               services={props.services}
               setLocation={setLocation}
+              onOpenGroupThread={props.onOpenGroupThread}
               userId={props.user.id}
               workspace={workspace}
             />
@@ -2053,5 +2346,4 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     </div>
   )
 }
-import { WeworkIssueHomeComposer } from './WeworkIssueHomeComposer'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'

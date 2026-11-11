@@ -17,7 +17,7 @@ def validate_wework_url(value: str) -> str:
     url = urlsplit(value)
     if (
         url.scheme != "wework"
-        or url.netloc not in {"boards", "tasks"}
+        or url.netloc not in {"boards", "tasks", "groups"}
         or "?" in value
         or "#" in value
     ):
@@ -35,6 +35,17 @@ def validate_wework_url(value: str) -> str:
         raise ValueError("Invalid Wework destination identifier")
     if url.netloc == "tasks" and len(parts) == 2:
         return value
+    if url.netloc == "groups" and len(parts) in {2, 4, 6}:
+        if parts[0] not in {"local", "backend"}:
+            raise ValueError("Invalid group storage")
+        if parts[0] == "backend" and not re.fullmatch(r"[1-9][0-9]*", parts[1]):
+            raise ValueError("Invalid group identifier")
+        if (
+            len(parts) == 2
+            or (len(parts) == 4 and parts[2] == "comments")
+            or (parts[2] == "threads" and (len(parts) == 4 or parts[4] == "comments"))
+        ):
+            return value
     if url.netloc == "boards" and re.fullmatch(r"[1-9][0-9]*", parts[0]):
         # /{projectId}; /{projectId}/issues/{itemId}; and the same item followed
         # by /comments/{commentId} when the link targets one comment.

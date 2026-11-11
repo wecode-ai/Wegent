@@ -33,6 +33,9 @@ from app.schemas.delivery import (
     LoopItemTaskBind,
 )
 from app.schemas.project_incoming_hook import ChangeRequestBindingInput
+from app.services.collaboration_container_access import (
+    get_collaboration_container,
+)
 from app.services.delivery.access import require_loop_item_access
 from app.services.delivery.storage import (
     DeliveryStorage,
@@ -97,7 +100,7 @@ class DeliveryService:
                 status.HTTP_413_CONTENT_TOO_LARGE, "Delivery text is too large"
             )
 
-        project = db.get(CloudProject, item.cloud_project_id)
+        project = get_collaboration_container(db, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
         source_binding, source_snapshot = self._resolve_source_task(
@@ -285,12 +288,9 @@ class DeliveryService:
         values: DeliveryFinalize,
     ) -> Delivery:
         delivery = self._require_delivery(db, delivery_id, user_id, draft=True)
-        authorized_item = require_loop_item_access(
-            db, delivery.loop_item_id, user_id, BaseRole.Developer
-        )
         item = (
             db.query(LoopItem)
-            .filter(LoopItem.id == authorized_item.id)
+            .filter(LoopItem.id == delivery.loop_item_id)
             .with_for_update()
             .first()
         )
@@ -559,19 +559,28 @@ class DeliveryService:
         self, db: Session, delivery_id: str, user_id: int, draft: bool = False
     ) -> Delivery:
         query = db.query(Delivery).filter(Delivery.id == delivery_id)
-        if draft:
-            query = query.with_for_update()
         delivery = query.first()
         if delivery is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery not found")
-        require_loop_item_access(db, delivery.loop_item_id, user_id)
+        require_loop_item_access(
+            db,
+            delivery.loop_item_id,
+            user_id,
+            BaseRole.Developer if draft else BaseRole.Viewer,
+        )
+        if draft:
+            delivery = query.with_for_update().populate_existing().first()
+            if delivery is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery not found")
         if draft and delivery.status != "draft":
             raise HTTPException(status.HTTP_409_CONFLICT, "Delivery is immutable")
         return delivery
 
     def _delivery_prefix_for(self, db: Session, delivery: Delivery) -> str:
         item = db.get(LoopItem, delivery.loop_item_id)
-        project = db.get(CloudProject, item.cloud_project_id) if item else None
+        project = (
+            get_collaboration_container(db, item.cloud_project_id) if item else None
+        )
         if item is None or project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery project not found")
         return _delivery_prefix(project.public_id, item.id, delivery.id)

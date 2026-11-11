@@ -1337,7 +1337,7 @@ export function DesktopWorkbenchLayout({
                     if (!project) {
                       workspaceTabs.updateTab(ownedWorkspaceTab.id, {
                         title: t('workbench.workspace_tab_board', '协作'),
-                        contentRoute: '/todo',
+                        contentRoute: '/todo?collaborationView=projects',
                       })
                       return
                     }

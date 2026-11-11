@@ -1146,3 +1146,50 @@ path = "/api/v1/wework-human-requests"
 [[routes]]
 methods = ["PUT"]
 path = "/api/im/private-sessions/:session_key/stand-in"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/chat-groups"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/chat-groups"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/chat-groups/:group_id"
+
+[[routes]]
+methods = ["PATCH"]
+path = "/api/v1/chat-groups/:group_id"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/chat-groups/:group_id/members"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/loop-items/:item_id/participation"
+
+[[routes]]
+methods = ["PUT"]
+path = "/api/v1/loop-items/:item_id/participation"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/chat-group-navigation"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/chat-groups/:group_id/members"
+
+[[routes]]
+methods = ["DELETE"]
+path = "/api/v1/chat-groups/:group_id/members/:user_id"
+
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/v1/loop-items/:item_id/project-link"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/loop-items/:item_id/participants"

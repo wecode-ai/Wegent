@@ -191,6 +191,19 @@ def project_membership_rows(
     db: Session, project: CloudProject
 ) -> tuple[Kind | None, list[ResourceMember]]:
     """Load roster inputs once, including retained direct grant identities."""
+    from app.models.delivery import CollaborationChatGroup
+    from app.services.chat_group_access import GROUP_RESOURCE_TYPE
+
+    if isinstance(project, CollaborationChatGroup):
+        return None, (
+            db.query(ResourceMember)
+            .filter_by(
+                resource_type=GROUP_RESOURCE_TYPE,
+                resource_id=int(project.id),
+                entity_type="user",
+            )
+            .all()
+        )
     workspace = db.get(Kind, project.workspace_id) if project.workspace_id else None
     grants = (
         db.query(ResourceMember)
@@ -230,6 +243,19 @@ def project_participant_roles(
     required_role: BaseRole = BaseRole.Viewer,
 ) -> dict[int, str]:
     """Apply roster policy to loaded relationships, excluding public visitors."""
+    from app.models.delivery import CollaborationChatGroup
+    from app.services.chat_group_access import GROUP_RESOURCE_TYPE
+
+    if isinstance(project, CollaborationChatGroup):
+        if project.status != "active":
+            return {}
+        return {
+            int(entity_id): role
+            for (resource_type, entity_id), role in project_grant_roles(grants).items()
+            if resource_type == GROUP_RESOURCE_TYPE
+            and entity_id.isdecimal()
+            and ROLE_HIERARCHY[role] <= ROLE_HIERARCHY[required_role.value]
+        }
     if (
         project.status != "active"
         or workspace is None

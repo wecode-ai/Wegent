@@ -391,12 +391,11 @@ impl LocalTaskStore {
                 if !matches!(dispatch_role.as_deref(), Some("manager" | "member")) {
                     let task = get_item_from(&transaction, &task_id, "task")?
                         .ok_or(TaskRuntimeError::TaskNotFound)?;
-                    let project = get_item_from(
+                    let project = work_container_from(
                         &transaction,
                         task.cloud_project_id
                             .as_deref()
                             .ok_or(TaskRuntimeError::ProjectNotFound)?,
-                        "project",
                     )?
                     .ok_or(TaskRuntimeError::ProjectNotFound)?;
                     let next_status = task.status.as_deref().map(|status| {

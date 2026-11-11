@@ -41,6 +41,8 @@ describe('project stand-in availability', () => {
       } as CollaborationProject
       render(
         <WeworkSharedProject
+          onOpenGroupThread={vi.fn()}
+          draftAccountScope="fixture:user-7"
           api={
             {
               projects: { list: async () => [project] },

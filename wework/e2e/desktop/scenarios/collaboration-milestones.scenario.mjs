@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
+import { URL } from 'node:url'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   createLocalCollaborationProject,
@@ -28,6 +28,26 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   let project
   let milestone
   let issue
+  let localGroupId
+  const localGroupName = `Milestone discussion ${process.pid}`
+  const chooseThreadGroup = async (control, create = false) => {
+    await control.command('waitFor', scoped('thread-create-group-select'))
+    await control.command('select', scoped('thread-create-group-select'), {
+      value: create ? '__new__' : localGroupId,
+    })
+    if (create) {
+      await control.command('fill', scoped('thread-create-new-group-name'), {
+        value: localGroupName,
+      })
+    }
+    await control.command('clickWhenEnabled', scoped('thread-create-group-next'))
+    await control.command('waitFor', scoped('thread-create-context'), { text: localGroupName })
+    if (create) {
+      const catalog = await requestExecutor(control, 'chat_groups.list', {}, uiTimeoutMs)
+      localGroupId = catalog.items.find(group => group.name === localGroupName)?.id
+      assert.ok(localGroupId)
+    }
+  }
   const request = async (path, method = 'GET', body, expectedStatus, token = cloud.authToken) => {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method,
@@ -236,6 +256,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await request(milestonePath, 'DELETE', { version: milestone.version + 1 }, 409)
       issue = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, 'POST', {
         title: 'Cloud milestone Issue',
+        description: 'Describe the delivery scope before splitting it into child Issues.',
         milestone_id: milestone.id,
         status: 'completed',
       })
@@ -334,6 +355,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await control.command('scrollIntoView', scoped(`cloud-todo-card-milestone-${issue.id}`))
       await captureScreenshot(control, 'milestones-02b-cloud-card-metadata.png', 'body')
+      await control.command('click', scoped(`cloud-todo-card-${issue.id}`))
+      await control.command('waitFor', scoped('collaboration-issue-detail'))
+      const [properties] = JSON.parse(
+        await control.command('getElementMetrics', scoped('issue-title-properties'))
+      )
+      const [description] = JSON.parse(
+        await control.command('getElementMetrics', `${CONTENT} .task-detail-workspace-description`)
+      )
+      const [children] = JSON.parse(
+        await control.command('getElementMetrics', scoped('issue-hierarchy-summary'))
+      )
+      assert.ok(
+        properties && description && children,
+        'Expected properties, body and child section'
+      )
+      assert.ok(properties.bottom <= description.top + 1, 'Properties must precede the body')
+      assert.ok(description.bottom <= children.top + 1, 'Child Issues must follow the body')
+      await captureScreenshot(control, 'milestones-02c-legacy-detail-layout.png', 'body')
+      await control.command('click', scoped('cloud-todo-detail-close'))
       await request(`/api/v1/loop-items/${issue.id}`, 'DELETE')
       await openMilestones(control)
       await control.command('waitFor', scoped(`milestone-${milestone.id}`), { text: '100%' })
@@ -397,6 +437,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await captureScreenshot(control, 'milestones-05c-local-edited.png', 'body')
       await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', scoped('collaboration-issue-create'))
+      await chooseThreadGroup(control, true)
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
       await selectMilestone(control, localId)
       await control.command('fill', scoped('cloud-todo-title'), { value: 'Local milestone Issue' })
@@ -405,6 +446,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await control.command('click', scoped('cloud-todo-modal-close'))
       await control.command('clickWhenEnabled', scoped('collaboration-issue-create'))
+      await chooseThreadGroup(control)
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
       assert.equal(
         await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
@@ -415,50 +457,31 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const [unassigned] = JSON.parse(await control.command('getElementMetrics', assigneeLabel))
       assert.ok(unassigned.scrollWidth <= unassigned.clientWidth + 1, 'Short assignee must fit')
       await captureScreenshot(control, 'milestones-05b-local-restored-draft.png', 'body')
-      await control.command('click', scoped('cloud-todo-modal-close'))
-      const localIssue = await createCollaborationBoardIssue(
-        control,
-        'Local milestone Issue',
-        'completed',
-        uiTimeoutMs
+      await control.command('select', scoped('cloud-todo-create-status'), { value: 'completed' })
+      await control.command('clickWhenEnabled', scoped('cloud-todo-create-confirm'))
+      await control.command('waitFor', scoped('thread-room'), { text: 'Local milestone Issue' })
+      const createdRoute = new URL(JSON.parse(await control.command('snapshot', CONTENT)).location)
+      const localIssue = createdRoute.searchParams.get('threadId')
+      assert.ok(localIssue)
+      assert.equal(createdRoute.searchParams.get('groupId'), localGroupId)
+      await control.command('click', scoped('thread-settings'))
+      await control.command(
+        'waitFor',
+        `${scoped('thread-settings-milestone')} option[value="${localId}"]`
       )
-      await control.command('click', scoped(`cloud-todo-card-${localIssue}`))
-      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
-        timeoutMs: uiTimeoutMs,
-      })
-      assert.equal(
-        await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
-        localId
-      )
-      await selectMilestone(control, '')
-      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
-        timeoutMs: uiTimeoutMs,
-      })
-      await selectMilestone(control, localId)
-      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
-        timeoutMs: uiTimeoutMs,
-      })
-      assert.equal(
-        await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
-        localId
-      )
-      const [properties] = JSON.parse(
-        await control.command('getElementMetrics', scoped('issue-title-properties'))
-      )
-      const [description] = JSON.parse(
-        await control.command('getElementMetrics', `${CONTENT} .task-detail-workspace-description`)
-      )
-      const [children] = JSON.parse(
-        await control.command('getElementMetrics', scoped('issue-hierarchy-summary'))
-      )
-      assert.ok(
-        properties && description && children,
-        'Expected properties, body and child section'
-      )
-      assert.ok(properties.bottom <= description.top + 1, 'Properties must precede the body')
-      assert.ok(description.bottom <= children.top + 1, 'Child Issues must follow the body')
+      assert.equal(await control.command('getValue', scoped('thread-settings-milestone')), localId)
+      await control.command('select', scoped('thread-settings-milestone'), { value: '' })
+      await control.command('clickWhenEnabled', scoped('thread-settings-save'))
+      await control.command('waitFor', scoped('thread-settings-panel'), { text: '已保存' })
+      await control.command('select', scoped('thread-settings-milestone'), { value: localId })
+      await control.command('clickWhenEnabled', scoped('thread-settings-save'))
+      await control.command('waitFor', scoped('thread-settings-panel'), { text: '已保存' })
+      assert.equal(await control.command('getValue', scoped('thread-settings-milestone')), localId)
       await captureScreenshot(control, 'milestones-06-local-issue-assignment.png', 'body')
-      await control.command('click', scoped('cloud-todo-detail-close'))
+      await control.command('click', scoped('thread-settings-close'))
+      await control.command('openWeworkScheme', 'body', {
+        value: `wework://boards/local/${localProject.id}`,
+      })
       await openMilestones(control)
       await control.command('waitFor', scoped(`milestone-${localId}`), {
         text: '100%',
@@ -527,6 +550,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       assert.ok(followUp)
       await control.command('click', scoped(`milestone-open-${followUp.id}`))
       await control.command('click', scoped('collaboration-issue-table-empty-create'))
+      await chooseThreadGroup(control)
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
       assert.equal(
         await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
@@ -538,6 +562,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await selectMilestone(control, '')
       await control.command('click', scoped('cloud-todo-modal-close'))
       await control.command('click', scoped('collaboration-issue-table-empty-create'))
+      await chooseThreadGroup(control)
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
       assert.equal(
         await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
@@ -552,11 +577,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await captureScreenshot(control, 'milestones-08e-context-create.png', 'body')
       await control.command('clickWhenEnabled', scoped('cloud-todo-create-confirm'))
-      await control.command('waitFor', scoped('collaboration-issue-detail'), {
+      await control.command('waitFor', scoped('thread-room'), {
         text: 'Remaining local delivery',
       })
-      await control.command('click', scoped('cloud-todo-detail-close'))
-      await control.command('click', scoped('milestones-back'))
+      await control.command('openWeworkScheme', 'body', {
+        value: `wework://boards/local/${localProject.id}`,
+      })
+      await openMilestones(control)
       await bulkMilestone(control, followUp.id)
       await assertCompactActions(control, true)
       await captureScreenshot(control, 'milestones-08c-local-table-bulk.png', 'body')
@@ -581,8 +608,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         control,
         'todos.create',
         {
-          project_id: localProject.id,
+          project_id: localGroupId,
           todo: {
+            classification_project_id: localProject.id,
             title: 'Cross-milestone child',
             parent_id: localIssue,
             milestone_id: followUp.id,
@@ -676,14 +704,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', scoped(`cloud-todo-card-${localIssue}`))
-      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
+      await control.command('waitFor', scoped('thread-room'))
+      await control.command('click', scoped('thread-settings'))
+      await control.command('waitFor', `${scoped('thread-settings-milestone')}:enabled`, {
         timeoutMs: uiTimeoutMs,
       })
-      assert.equal(
-        await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
-        ''
-      )
-      await control.command('click', scoped('cloud-todo-detail-close'))
+      assert.equal(await control.command('getValue', scoped('thread-settings-milestone')), '')
+      await control.command('click', scoped('thread-settings-close'))
       await control.command('navigate', 'body', { value: '/settings/appearance' })
       await control.command('waitFor', '[data-testid="appearance-mode-dark"]')
       await control.command('click', '[data-testid="appearance-mode-dark"]')
