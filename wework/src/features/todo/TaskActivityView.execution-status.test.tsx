@@ -201,7 +201,7 @@ describe('opening an activity execution with the real pane session', () => {
     expect(reply).toHaveTextContent('回复')
     expect(reply).not.toHaveTextContent('继续此任务')
     await userEvent.click(reply)
-    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent('继续此 Issue 对话')
+    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent('继续此事项对话')
     expect(screen.getByTestId('issue-reply-composer')).not.toHaveTextContent('原执行任务')
   })
 

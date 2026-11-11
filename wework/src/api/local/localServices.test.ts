@@ -251,6 +251,7 @@ describe('createLocalAppServices', () => {
     const updates: Array<Record<string, unknown>> = []
     const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'projects.list') return [project]
+      if (method === 'todos.owner') return task.cloud_project_id
       if (method === 'todos.get') return task
       if (method === 'runtime.runner.catalog') {
         return {
