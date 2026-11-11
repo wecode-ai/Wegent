@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { inspectBeforeStart } from './inspect-before-start.mjs'
+import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 
 /** Exercise the delivered bootstrap, real IPC/preload, and recovery window. */
@@ -31,21 +32,27 @@ export async function verifyStartupFaultIsolation({ appBinary, environment, resu
     const original = fault === 'invalid-release' ? '{broken-release' : JSON.stringify(descriptor)
     const descriptorPath = join(slot, 'release.json')
     await writeFile(descriptorPath, original)
-    const evidencePath = join(root, 'result.json')
-    const child = spawn(appBinary, ['--inspect-brk=127.0.0.1:0'], {
-      env: {
-        ...environment,
-        WEWORK_USER_DATA_DIR: data,
-        WEWORK_RELEASE_ROOT: releases,
-        WEWORK_RELEASE_SUPERVISED: descriptor.id,
-        WEWORK_RELEASE_RECOVERY: '',
-        WEWORK_E2E_RELEASE_FAILURE_VERSION: '',
-        WEWORK_E2E_CONTROL_URL: '',
-        WEWORK_E2E_BACKGROUND_WINDOW: '0',
-      },
-      detached: process.platform !== 'win32',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const evidencePath = join(resultDir, `startup-fault-${fault}.json`)
+    const child = spawn(
+      appBinary,
+      resolveElectronLaunchArguments({
+        extraArguments: ['--inspect-brk=127.0.0.1:0'],
+      }),
+      {
+        env: {
+          ...environment,
+          WEWORK_USER_DATA_DIR: data,
+          WEWORK_RELEASE_ROOT: releases,
+          WEWORK_RELEASE_SUPERVISED: descriptor.id,
+          WEWORK_RELEASE_RECOVERY: '',
+          WEWORK_E2E_RELEASE_FAILURE_VERSION: '',
+          WEWORK_E2E_CONTROL_URL: '',
+          WEWORK_E2E_BACKGROUND_WINDOW: '0',
+        },
+        detached: process.platform !== 'win32',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    )
     let output = ''
     child.stdout.on('data', chunk => {
       output += chunk
@@ -55,7 +62,11 @@ export async function verifyStartupFaultIsolation({ appBinary, environment, resu
     })
     const ended = new Promise((accept, reject) => {
       child.once('error', reject)
-      child.once('close', code => accept(code))
+      // Chromium descendants can retain output pipes after the host has exited.
+      child.once('exit', (code, signal) => {
+        output += `\n[recovery-probe] exit ${JSON.stringify({ code, signal, at: Date.now() })}\n`
+        accept(code)
+      })
     })
     try {
       await inspectBeforeStart(child, recoveryWindowAssertion(evidencePath))
@@ -63,7 +74,12 @@ export async function verifyStartupFaultIsolation({ appBinary, environment, resu
         ended,
         new Promise((_, reject) => {
           const timer = setTimeout(
-            () => reject(new Error('Recovery window verification timed out')),
+            () =>
+              reject(
+                new Error(
+                  `Recovery window verification timed out (exitCode=${child.exitCode}, signalCode=${child.signalCode})`
+                )
+              ),
             15_000
           )
           timer.unref()
@@ -80,7 +96,7 @@ export async function verifyStartupFaultIsolation({ appBinary, environment, resu
       assert.equal(await readFile(descriptorPath, 'utf8'), original)
     } finally {
       await stopProcessGroup(child)
-      await writeFile(join(root, 'app.log'), output)
+      await writeFile(join(resultDir, `startup-fault-${fault}.log`), output)
     }
   }
 }
