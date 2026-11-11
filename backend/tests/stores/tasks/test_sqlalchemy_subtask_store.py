@@ -130,6 +130,32 @@ def test_list_by_task_ordered_excludes_subtasks(test_db: Session) -> None:
     assert [subtask.id for subtask in subtasks] == [61, 63]
 
 
+def test_list_by_task_ordered_can_load_only_recent_rows(test_db: Session) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(7, owner_id=10))
+    test_db.add_all(
+        [
+            _subtask(subtask_id=71, task_id=7, user_id=10, message_id=1),
+            _subtask(subtask_id=72, task_id=7, user_id=10, message_id=2),
+            _subtask(subtask_id=73, task_id=7, user_id=10, message_id=3),
+        ]
+    )
+    test_db.commit()
+
+    subtasks = store.list_by_task_ordered(
+        test_db,
+        task_id=7,
+        owner_user_id=10,
+        recent_limit=2,
+    )
+
+    assert [subtask.id for subtask in subtasks] == [72, 73]
+    assert (
+        store.list_by_task_ordered(test_db, task_id=7, owner_user_id=10, recent_limit=0)
+        == []
+    )
+
+
 def test_get_basic_by_id_returns_subtask(test_db: Session) -> None:
     store = SqlAlchemySubtaskStore()
     test_db.add(_task(1, owner_id=10))

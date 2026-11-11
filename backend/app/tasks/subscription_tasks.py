@@ -609,6 +609,7 @@ async def _create_subscription_task(
         branch_name=ws.branch_name,
         task_type="task" if resolved_device_id else None,
         device_id=resolved_device_id,
+        history_window=ctx.history_message_count if ctx.preserve_history else None,
     )
 
     result = await create_chat_task(

@@ -66,6 +66,7 @@ class TaskForkHistoryResolver:
                 db,
                 task_id=node.task.id,
                 owner_user_id=node.task.user_id,
+                recent_limit=limit,
             )
             for subtask in subtasks:
                 if (

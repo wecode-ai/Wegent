@@ -111,6 +111,9 @@ class TaskCreationParams:
     generate_params: Optional[Dict[str, Any]] = None
     # Message source metadata for user subtask persistence.
     message_source: Optional[Dict[str, Any]] = None
+    # Optional DB-level window for callers that only consume recent history.
+    # A null value preserves the existing full-history behavior.
+    history_window: Optional[int] = None
 
     def __post_init__(self) -> None:
         """Treat an explicit model_id as an override selection."""

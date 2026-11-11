@@ -828,6 +828,7 @@ class SqlAlchemySubtaskStore:
         exclude_deleted: bool = False,
         order_by: Literal["id", "message_id", "created_at"] = "message_id",
         owner_user_id: Optional[int] = None,
+        recent_limit: Optional[int] = None,
     ) -> list[Subtask]:
         query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
@@ -845,6 +846,14 @@ class SqlAlchemySubtaskStore:
             query = query.order_by(Subtask.created_at.asc(), Subtask.id.asc())
         else:
             query = query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
+        if recent_limit is not None:
+            if recent_limit <= 0:
+                return []
+            query = query.order_by(None).order_by(Subtask.id.desc()).limit(recent_limit)
+            recent_rows = query.all()
+            subtasks = self._load_ordered(db, [row[0] for row in recent_rows][::-1])
+            self._attach_sender_user_names(db, subtasks)
+            return subtasks
         rows = query.all()
         subtasks = self._load_ordered(db, [row[0] for row in rows])
         self._attach_sender_user_names(db, subtasks)

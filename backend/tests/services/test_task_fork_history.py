@@ -76,7 +76,9 @@ def test_resolve_for_plain_task_returns_local_history(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        lambda db, task_id, owner_user_id=None: local if task_id == 1 else [],
+        lambda db, task_id, owner_user_id=None, recent_limit=None: (
+            local if task_id == 1 else []
+        ),
     )
 
     items = task_fork_history_resolver.resolve_for_task(
@@ -88,6 +90,39 @@ def test_resolve_for_plain_task_returns_local_history(monkeypatch):
     assert [item.subtask.id for item in items] == [1]
     assert items[0].inherited is False
     assert items[0].origin_task_id == 1
+
+
+def test_resolve_for_task_passes_recent_limit_to_store(monkeypatch):
+    root = _task(1, 7)
+    local = [
+        _subtask(1, 1, 7, 1, SubtaskRole.USER),
+        _subtask(2, 1, 7, 2, SubtaskRole.ASSISTANT),
+    ]
+    calls = []
+
+    monkeypatch.setattr(
+        "app.services.task_fork_history.task_store.get_by_id",
+        lambda db, task_id, owner_user_id=None: root if task_id == 1 else None,
+    )
+
+    def list_by_task_ordered(_db, *, task_id, owner_user_id=None, recent_limit=None):
+        calls.append((task_id, owner_user_id, recent_limit))
+        return local if recent_limit is None else local[-recent_limit:]
+
+    monkeypatch.setattr(
+        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
+        list_by_task_ordered,
+    )
+
+    items = task_fork_history_resolver.resolve_for_task(
+        db=None,
+        task_id=1,
+        user_id=7,
+        limit=2,
+    )
+
+    assert calls == [(1, 7, 2)]
+    assert [item.subtask.id for item in items] == [1, 2]
 
 
 def test_resolve_for_fork_uses_parent_cutoff(monkeypatch):
@@ -112,7 +147,7 @@ def test_resolve_for_fork_uses_parent_cutoff(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        lambda db, task_id, owner_user_id=None: subtasks[task_id],
+        lambda db, task_id, owner_user_id=None, recent_limit=None: subtasks[task_id],
     )
 
     items = task_fork_history_resolver.resolve_for_task(
@@ -157,7 +192,7 @@ def test_resolve_for_fork_uses_parent_task_owner(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        lambda db, task_id, owner_user_id=None: (
+        lambda db, task_id, owner_user_id=None, recent_limit=None: (
             subtasks[task_id] if owner_user_id in {7, 8} else []
         ),
     )

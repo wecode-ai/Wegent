@@ -357,6 +357,7 @@ def prepare_execution_session(
             task_id=task.id,
             user_id=subtask_user_id,
             current_task=task,
+            limit=resolved_task_params.history_window,
         )
     ]
     next_message_id = task_fork_history_resolver.get_next_message_id(
