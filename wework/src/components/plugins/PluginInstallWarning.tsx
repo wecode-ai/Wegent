@@ -6,9 +6,12 @@ export function PluginInstallWarning() {
   return (
     <div
       data-testid="plugin-install-unofficial-warning"
-      className="flex items-start gap-2 rounded-lg bg-orange-500/10 p-3 text-sm text-text-primary"
+      className="flex items-start gap-2 rounded-lg bg-warning/10 p-3 text-sm text-text-primary wework:bg-orange-500/10"
     >
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" aria-hidden="true" />
+      <AlertTriangle
+        className="mt-0.5 h-4 w-4 shrink-0 text-warning wework:text-orange-600"
+        aria-hidden="true"
+      />
       <div>
         <p className="font-medium">
           {t('workbench.plugins_install_unofficial_title', '非官方插件提醒')}

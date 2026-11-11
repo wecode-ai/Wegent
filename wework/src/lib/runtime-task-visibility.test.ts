@@ -1,5 +1,27 @@
 import { describe, expect, test } from 'vitest'
-import { isPrimaryStandInConversation } from './runtime-task-visibility'
+import { isPrimaryStandInConversation, isStandInMemoryReviewTask } from './runtime-task-visibility'
+
+describe('memory review task visibility', () => {
+  test('identifies scheduled memory maintenance by its stored origin', () => {
+    expect(
+      isStandInMemoryReviewTask({
+        runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
+      })
+    ).toBe(true)
+  })
+
+  test.each([
+    {},
+    { runtimeHandle: { origin: null } },
+    { runtimeHandle: { origin: [] } },
+    { runtimeHandle: { origin: { type: 'stand_in_schedule', weeklyReview: true } } },
+    { runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: false } } },
+    { runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: 'true' } } },
+    { runtimeHandle: { origin: { type: 'stand_in_task', memoryReview: true } } },
+  ])('keeps unrelated or incomplete origins visible: %j', task => {
+    expect(isStandInMemoryReviewTask(task)).toBe(false)
+  })
+})
 
 describe('primary stand-in conversation visibility', () => {
   const primary = {

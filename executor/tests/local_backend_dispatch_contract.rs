@@ -17,6 +17,42 @@ use wegent_executor::{
     server::{RunnerResult, TaskRunner},
 };
 
+#[path = "support/git_clone_fixture.rs"]
+mod git_clone_fixture;
+
+#[tokio::test]
+async fn backend_clone_preserves_cwd_for_preflight_and_relative_destination() {
+    for device_type in ["local", "cloud", "remote"] {
+        for relative_source in [true, false] {
+            let fixture = git_clone_fixture::GitCloneFixture::new();
+            let transport = RecordingTransport::default();
+            let mut config = local_backend_config();
+            config.device_type = device_type.to_owned();
+            let runner = LocalBackendRunner::with_task_runner(
+                config,
+                transport.clone(),
+                RecordingTaskRunner::default(),
+            );
+            runner.register_handlers();
+            let result = transport.handler("device:execute_command").unwrap()(json!({
+                "command_key": "git_clone",
+                "command": "git clone",
+                "cwd": fixture.directory.path(),
+                "args": fixture.args(relative_source),
+                "env": fixture.env,
+                "timeout_seconds": 10,
+            }))
+            .await
+            .unwrap();
+            assert_eq!(
+                result["success"], true,
+                "{device_type}, {relative_source}: {result}"
+            );
+            fixture.assert_checkout();
+        }
+    }
+}
+
 #[tokio::test]
 async fn device_workspace_file_commands_read_unregistered_directories() {
     let directory = tempfile::tempdir().unwrap();

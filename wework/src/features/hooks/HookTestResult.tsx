@@ -10,7 +10,7 @@ export function HookTestResult({ run }: { run: HookRunSummary }) {
         <pre className="mt-2 overflow-auto whitespace-pre-wrap text-code">{run.stdoutPreview}</pre>
       )}
       {run.stderrPreview && (
-        <pre className="mt-2 overflow-auto whitespace-pre-wrap text-code text-red-500">
+        <pre className="mt-2 overflow-auto whitespace-pre-wrap text-code text-destructive wework:text-red-500">
           {run.stderrPreview}
         </pre>
       )}

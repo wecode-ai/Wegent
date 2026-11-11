@@ -15,6 +15,16 @@ const EMPTY_STATUS: LocalExecutorCloudConnectionStatus = {
 
 let status = EMPTY_STATUS
 let refreshRevision = 0
+type ExecutorBackendStatus = {
+  configured?: boolean
+  connected: boolean
+  explicitly_disconnected?: boolean
+} | null
+let pendingRefresh: {
+  apiBaseUrl: string
+  revision: number
+  promise: Promise<ExecutorBackendStatus>
+} | null = null
 const listeners = new Set<() => void>()
 
 export function setLocalExecutorCloudConnectionStatus(
@@ -42,25 +52,44 @@ export function useLocalExecutorCloudConnectionStatus(): LocalExecutorCloudConne
   )
 }
 
-export async function refreshLocalExecutorCloudConnectionStatus(
+export function refreshLocalExecutorCloudConnectionStatus(
   apiBaseUrl: string
-): Promise<boolean> {
+): Promise<ExecutorBackendStatus> {
+  if (pendingRefresh?.apiBaseUrl === apiBaseUrl && pendingRefresh.revision === refreshRevision) {
+    return pendingRefresh.promise
+  }
   const revision = ++refreshRevision
+  const promise = readLocalExecutorCloudConnectionStatus(apiBaseUrl, revision)
+  pendingRefresh = { apiBaseUrl, revision, promise }
+  void promise.finally(() => {
+    if (pendingRefresh?.promise === promise) pendingRefresh = null
+  })
+  return promise
+}
+
+async function readLocalExecutorCloudConnectionStatus(
+  apiBaseUrl: string,
+  revision: number
+): Promise<ExecutorBackendStatus> {
   try {
     const response = await requestLocalExecutor<{
       configured?: boolean
       connected?: boolean
+      explicitly_disconnected?: boolean
     }>('executor.backend.status')
     const connected = response.configured === true && response.connected === true
-    if (revision === refreshRevision) {
-      setLocalExecutorCloudConnectionStatus({ apiBaseUrl, connected })
+    if (revision !== refreshRevision) return null
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl, connected })
+    return {
+      configured: response.configured,
+      connected,
+      ...(response.explicitly_disconnected === true ? { explicitly_disconnected: true } : {}),
     }
-    return connected
   } catch {
     if (revision === refreshRevision) {
       setLocalExecutorCloudConnectionStatus({ apiBaseUrl, connected: false })
     }
-    return false
+    return null
   }
 }
 

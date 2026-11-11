@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-// The desktop app exports host-specific WEGENT_* variables (for example
+// The desktop app exports host-specific environment variables (for example
 // WEGENT_BUNDLED_HOOKS_DIR pointing inside the installed app bundle) into
 // every process it spawns, including `cargo test`. Tests that rely on a
 // hermetic environment must not observe them, so scrub the variables that
@@ -20,6 +20,8 @@ const HOST_STATE_VARS: &[&str] = &[
     "WEGENT_MANAGED_HOOKS_DIR",
     "WEGENT_EXECUTOR_HOME",
     "WEGENT_NATIVE_CODEX_HOME",
+    "WEWORK_PYTHON_RUNTIME_URL",
+    "WEWORK_PYTHON_RUNTIME_TOKEN",
 ];
 
 #[used]
@@ -55,4 +57,44 @@ pub fn zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
         writer.write_all(content.as_bytes()).unwrap();
     }
     writer.finish().unwrap().into_inner()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_environment_is_scrubbed_before_tests_start() {
+        const CHILD: &str = "WEGENT_TEST_HOST_SCRUB_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            for key in HOST_STATE_VARS {
+                assert!(
+                    std::env::var_os(key).is_none(),
+                    "Inherited host state: {key}"
+                );
+            }
+            assert_eq!(std::env::var("WEGENT_EXTRA_PATHS").unwrap(), "test-path");
+            return;
+        }
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "tests::host_environment_is_scrubbed_before_tests_start",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("WEGENT_EXTRA_PATHS", "test-path");
+        for key in HOST_STATE_VARS {
+            command.env(key, "synthetic-host-state");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
 }

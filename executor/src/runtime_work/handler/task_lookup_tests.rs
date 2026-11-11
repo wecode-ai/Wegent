@@ -30,7 +30,8 @@ async fn continuation_identity_rejects_archived_and_deleted_tasks() {
         if let Some(id) = deleted {
             handler
                 .store
-                .mark_deleted_archived_task_ids(vec![id.to_owned()]);
+                .mark_deleted_archived_task_ids(vec![id.to_owned()])
+                .unwrap();
         }
         let error = handler
             .dispatch(
@@ -227,6 +228,43 @@ async fn task_lookup_reports_missing_and_archived_without_device_offline_error()
         .dispatch("runtime.tasks.get", json!({}))
         .await
         .is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn task_model_selection_survives_cold_lookup_and_transcript_read() {
+    let (mut handler, root) = isolated_runtime_work_handler("api-cold-model-lookup");
+    for model in ["model-a", "model-b"] {
+        let mut link =
+            RuntimeTaskLink::new_pending(model.into(), "/projects/shared".into(), model.into());
+        link.runtime_handle = json!({
+            "modelSelection": {"modelName": model, "modelType": "public"}
+        });
+        handler.upsert_local_task(link);
+    }
+    handler.store = RuntimeWorkStore::new(handler.store.index_path().to_path_buf());
+
+    for model in ["model-a", "model-b"] {
+        let payload = json!({
+            "taskId": model,
+            "modelSelection": {"modelName": "unrelated-default", "modelType": "public"}
+        });
+        let response = handler
+            .dispatch("runtime.tasks.get", payload.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            response["task"]["runtimeHandle"]["modelSelection"]["modelName"],
+            model
+        );
+        let transcript = handler
+            .dispatch("runtime.tasks.transcript", payload)
+            .await
+            .unwrap();
+        assert_eq!(transcript["success"], true);
+        let saved = handler.store.get_task_summary(model).unwrap();
+        assert_eq!(saved.runtime_handle["modelSelection"]["modelName"], model);
+    }
     fs::remove_dir_all(root).unwrap();
 }
 

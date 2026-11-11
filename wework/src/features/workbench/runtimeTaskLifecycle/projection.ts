@@ -1,6 +1,17 @@
-import type { RuntimeTaskSummary } from '@/types/api'
+import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import type { RuntimeTaskLifecycleSnapshot } from './types'
+
+export function emptyRuntimeTaskSummary(address: RuntimeTaskAddress): RuntimeTaskSummary {
+  return {
+    taskId: address.taskId,
+    threadId: address.threadId,
+    workspacePath: address.workspacePath ?? '',
+    title: address.taskId,
+    runtime: address.runtime ?? 'codex',
+    runtimeHandle: address.runtimeHandle,
+  }
+}
 
 export function summarizeRuntimeTaskExecution(task: RuntimeTaskSummary | null) {
   if (!task) return null
@@ -273,6 +284,7 @@ export function isRuntimeTurnRunningStatus(status: string | null | undefined): b
   const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
   return (
     normalized === 'active' ||
+    normalized === 'running' ||
     normalized === 'inprogress' ||
     normalized === 'pending' ||
     normalized === 'streaming'

@@ -189,7 +189,7 @@ function CodexCatalogEditorDialog({
             {error && (
               <div
                 data-testid="codex-catalog-editor-error"
-                className="mt-4 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500"
+                className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-500"
               >
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>{error}</span>
@@ -404,7 +404,7 @@ export function CodexOfficialModelsSection({
           {t('workbench.codex_official_models_loading')}
         </div>
       ) : error ? (
-        <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-3 text-sm text-red-500">
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-3 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-500">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error}</span>
         </div>
@@ -461,7 +461,7 @@ export function CodexOfficialModelsSection({
               {expanded && (
                 <div id={`codex-model-provider-panel-${provider.id}`}>
                   {provider.error ? (
-                    <div className="flex items-start gap-2 px-3 py-3 text-sm text-red-500">
+                    <div className="flex items-start gap-2 px-3 py-3 text-sm text-destructive wework:text-red-500">
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>{provider.error}</span>
                     </div>
@@ -496,7 +496,7 @@ export function CodexOfficialModelsSection({
                                   </span>
                                 )}
                                 {pendingRestart && (
-                                  <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600">
+                                  <span className="rounded-full bg-warning/10 px-2 py-0.5 text-xs text-warning wework:bg-amber-500/10 wework:text-amber-600">
                                     {t('workbench.local_model_catalog_pending_restart')}
                                   </span>
                                 )}
@@ -557,7 +557,7 @@ export function CodexOfficialModelsSection({
       {catalogError && (
         <div
           data-testid="codex-catalog-error"
-          className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-3 text-sm text-red-500"
+          className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-3 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-500"
         >
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{catalogError}</span>

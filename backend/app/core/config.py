@@ -324,6 +324,7 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    SOCKETIO_REDIS_CLIENT_NAME: str | None = None
     SOCKETIO_REDIS_SOCKET_TIMEOUT: float = Field(
         default=30.0, gt=0, allow_inf_nan=False
     )
@@ -332,6 +333,9 @@ class Settings(BaseSettings):
     )
     SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL: float = Field(
         default=15.0, gt=0, allow_inf_nan=False
+    )
+    SOCKETIO_REDIS_ACK_PROBE_INTERVAL_SECONDS: float = Field(
+        default=30.0, gt=0, allow_inf_nan=False
     )
     TERMINAL_SESSION_CACHE_MAX_ENTRIES: int = 8192
     TERMINAL_SESSION_CACHE_TTL_SECONDS: float = 5.0

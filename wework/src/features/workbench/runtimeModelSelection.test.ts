@@ -200,8 +200,8 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
-        weworkCloudModelNativeToolSearch: 'true',
-        weworkCloudModelNativeNamespaceTools: 'true',
+        weworkCloudModelNativeToolSearch: 'false',
+        weworkCloudModelNativeNamespaceTools: 'false',
         weworkCloudVisionSidecar:
           '{"modelName":"cloud-vision","modelType":"user","namespace":"default","resourceUserId":42,"apiFormat":"openai-responses"}',
       },
@@ -292,7 +292,7 @@ describe('runtimeModelSelection', () => {
     ['gpt-5.6-sol', null],
     ['gpt-6-astra', 'wework-gpt-6-astra'],
     ['custom-responses-model', null],
-  ])('enables native Codex tools by default for Responses cloud model %s', (modelId, catalogId) => {
+  ])('defaults to bridged tools for Responses cloud model %s', (modelId, catalogId) => {
     const cloudModel: UnifiedModel = {
       name: 'shared-gpt-model',
       modelId,
@@ -312,8 +312,8 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
-        weworkCloudModelNativeToolSearch: 'true',
-        weworkCloudModelNativeNamespaceTools: 'true',
+        weworkCloudModelNativeToolSearch: 'false',
+        weworkCloudModelNativeNamespaceTools: 'false',
         ...(catalogId ? { weworkCloudModelCodexCatalogModelId: catalogId } : {}),
       },
     })
@@ -321,18 +321,18 @@ describe('runtimeModelSelection', () => {
 
   test.each([
     {
-      override: { native_tool_search: false },
-      disabledOption: 'weworkCloudModelNativeToolSearch',
+      override: { native_tool_search: true },
+      enabledOption: 'weworkCloudModelNativeToolSearch',
       inferredOption: 'weworkCloudModelNativeNamespaceTools',
     },
     {
-      override: { nativeNamespaceTools: false },
-      disabledOption: 'weworkCloudModelNativeNamespaceTools',
+      override: { nativeNamespaceTools: true },
+      enabledOption: 'weworkCloudModelNativeNamespaceTools',
       inferredOption: 'weworkCloudModelNativeToolSearch',
     },
   ])(
-    'honors an explicit false override for $disabledOption independently',
-    ({ override, disabledOption, inferredOption }) => {
+    'honors an explicit native override for $enabledOption independently',
+    ({ override, enabledOption, inferredOption }) => {
       const cloudModel: UnifiedModel = {
         name: 'gpt-5.6-sol',
         type: 'user',
@@ -345,8 +345,8 @@ describe('runtimeModelSelection', () => {
 
       const modelOptions = selectedModelExecutionFields(cloudModel, {}).modelOptions
 
-      expect(modelOptions).toHaveProperty(disabledOption, 'false')
-      expect(modelOptions).toHaveProperty(inferredOption, 'true')
+      expect(modelOptions).toHaveProperty(enabledOption, 'true')
+      expect(modelOptions).toHaveProperty(inferredOption, 'false')
     }
   )
 
@@ -427,8 +427,8 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
-        weworkCloudModelNativeToolSearch: 'true',
-        weworkCloudModelNativeNamespaceTools: 'true',
+        weworkCloudModelNativeToolSearch: 'false',
+        weworkCloudModelNativeNamespaceTools: 'false',
         weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
       },
     })

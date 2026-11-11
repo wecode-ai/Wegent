@@ -601,13 +601,16 @@ impl TaskRuntime {
         project_id: &str,
         task_id: &str,
         activity_sequence: Option<i64>,
+        content_revision: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
-            TaskProviderKind::Local => {
-                self.local_store
-                    .mark_task_read(project_id, task_id, activity_sequence)
-            }
+            TaskProviderKind::Local => self.local_store.mark_task_read(
+                project_id,
+                task_id,
+                activity_sequence,
+                content_revision,
+            ),
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),

@@ -26,6 +26,7 @@ pub(super) struct FileDigests {
 impl FileDigests {
     pub fn read(&mut self, path: &Path) -> io::Result<String> {
         let mut file = File::open(path)?;
+        let observed_at = std::time::SystemTime::now();
         let before = FileStamp::read(&file)?;
         if let Some(stamp) = &before {
             if let Some((cached, digest)) = self.entries.get(path) {
@@ -50,7 +51,7 @@ impl FileDigests {
             return Err(io::Error::other("File changed during capability detection"));
         }
         let digest = format!("sha256:{:x}", digest.finalize());
-        if let Some(stamp) = before {
+        if let Some(stamp) = before.filter(|stamp| stamp.cacheable_at(observed_at)) {
             self.entries
                 .insert(path.to_owned(), (stamp, digest.clone()));
         }
@@ -67,6 +68,28 @@ struct FileStamp {
 }
 
 impl FileStamp {
+    #[cfg(unix)]
+    fn cacheable_at(&self, observed_at: std::time::SystemTime) -> bool {
+        use std::time::{Duration, UNIX_EPOCH};
+
+        // A nonzero nanosecond field can still come from a coarse kernel
+        // clock. A later write in that same tick may leave ctime unchanged.
+        // Only cache files whose recorded change precedes this read by at
+        // least a full second, so a write after the read leaves that tick.
+        let Ok(seconds) = u64::try_from(self.changed[0]) else {
+            return false;
+        };
+        let changed = UNIX_EPOCH.checked_add(Duration::new(seconds, self.changed[1] as u32));
+        changed
+            .and_then(|changed| observed_at.duration_since(changed).ok())
+            .is_some_and(|elapsed| elapsed >= Duration::from_secs(1))
+    }
+
+    #[cfg(not(unix))]
+    fn cacheable_at(&self, _observed_at: std::time::SystemTime) -> bool {
+        true
+    }
+
     #[cfg(unix)]
     fn read(file: &File) -> io::Result<Option<Self>> {
         use std::os::unix::fs::MetadataExt;
@@ -103,6 +126,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("payload");
         std::fs::write(&path, b"verified content").unwrap();
+        #[cfg(unix)]
+        std::thread::sleep(std::time::Duration::from_secs(1));
         let reusable = FileStamp::read(&File::open(&path).unwrap())
             .unwrap()
             .is_some();

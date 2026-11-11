@@ -3,6 +3,7 @@ import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
+import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
 import { createPluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
 import {
   isWegentManagedStorePlugin,
@@ -127,6 +128,7 @@ import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
 import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
+import { createRuntimeWorkRefreshQueue } from './workbenchDataRefreshHelpers'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { reportArchivedCleanupFailure } from '@/components/settings/archivedConversationsSettingsState'
@@ -199,7 +201,7 @@ import {
   readProjectWorkPreference,
   resolveProjectWorkPreferenceScope,
 } from './projectWorkPreferences'
-import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
+import { defaultNewChatModelSelection } from './runtimeModelSelection'
 import { resolveWorkbenchOwnership } from './workbenchOwnership'
 import {
   createDefaultWorkbenchServices,
@@ -1118,7 +1120,6 @@ function OwnedWorkbenchProvider({
     updateLocalRuntimeTaskPinned,
     rollbackLocalRuntimeTaskPinned,
     updateLocalRuntimeTaskTitle,
-    getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
     user: workbenchIdentity,
     ownershipKey,
@@ -1849,40 +1850,6 @@ function OwnedWorkbenchProvider({
     [resolvedServices]
   )
 
-  const bindRuntimeTaskToImSessions = useCallback(
-    (address: RuntimeTaskAddress, sessionKeys: string[]) => {
-      if (!resolvedServices.runtimeWorkApi) {
-        return Promise.reject(new Error('Runtime work API is unavailable'))
-      }
-      const task = resolveRuntimeTaskSummary(address)
-      const taskTitle = task?.title.trim()
-      if (!taskTitle) {
-        return Promise.reject(new Error('Runtime task title is unavailable'))
-      }
-      let taskModelSelection =
-        task?.modelSelection ?? modelSelectionFromRuntimeHandle(address.runtimeHandle) ?? null
-      const taskModel = findModelForSelection(modelSelection.models, taskModelSelection)
-      if (taskModelSelection && taskModel) {
-        const executionModel = selectedModelExecutionFields(
-          taskModel,
-          taskModelSelection.options ?? {}
-        )
-        taskModelSelection = {
-          modelName: executionModel.modelId ?? taskModelSelection.modelName,
-          modelType: executionModel.modelType ?? taskModelSelection.modelType,
-          options: executionModel.modelOptions ?? {},
-        }
-      }
-      return resolvedServices.runtimeWorkApi.bindRuntimeTaskImSessions({
-        address,
-        taskTitle,
-        sessionKeys,
-        ...(taskModelSelection ? { modelSelection: taskModelSelection } : {}),
-      })
-    },
-    [modelSelection.models, resolveRuntimeTaskSummary, resolvedServices]
-  )
-
   const getImNotificationSettings = useCallback(() => {
     if (!resolvedServices.runtimeWorkApi) {
       return Promise.reject(new Error('Runtime work API is unavailable'))
@@ -2093,22 +2060,36 @@ function OwnedWorkbenchProvider({
       console.warn('[Wework] Failed to refresh runtime work after tab reveal', error)
     })
   }, [stableRefreshWorkLists, workspaceTabRevealRevision])
-  useEffect(
-    () =>
-      resolvedServices.chatStream.subscribe({
-        onRuntimeWorkChanged: payload => {
-          if (payload.archiveCleanup?.errors.length) {
-            const { workspacePath, errors } = payload.archiveCleanup
-            reportArchivedCleanupFailure(
-              `${payload.deviceId ?? ''}\0${workspacePath}\0${payload.taskId}`,
-              t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
-            )
-          }
-          void stableRefreshWorkLists({ refreshDevices: false })
-        },
-      }),
-    [resolvedServices.chatStream, stableRefreshWorkLists, t]
-  )
+  useEffect(() => {
+    const queue = createRuntimeWorkRefreshQueue(() =>
+      stableRefreshWorkLists({ refreshDevices: false })
+    )
+    const refreshChangedWork = () => queue.refresh()
+    const unsubscribe = resolvedServices.chatStream.subscribe({
+      onRuntimeWorkChanged: payload => {
+        if (payload.archiveCleanup?.errors.length) {
+          const { workspacePath, errors } = payload.archiveCleanup
+          reportArchivedCleanupFailure(
+            `${payload.deviceId ?? ''}\0${workspacePath}\0${payload.taskId}`,
+            t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
+          )
+        }
+        void refreshChangedWork().catch(error => {
+          console.warn('[Wework] Failed to refresh changed runtime work', error)
+        })
+      },
+    })
+    const listener = installMainRuntimeWorkChangedListener(refreshChangedWork)
+    return () => {
+      queue.dispose()
+      unsubscribe()
+      void listener
+        ?.then(unlisten => disposeDesktopListener(unlisten, 'runtime work changed'))
+        .catch(error => {
+          console.debug('[Wework] Runtime work listener was unavailable during cleanup', error)
+        })
+    }
+  }, [resolvedServices.chatStream, stableRefreshWorkLists, t])
   const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedLifecycle = lifecycleStore.getTask(address)
     void refreshRuntimeTask(address)
@@ -2302,17 +2283,6 @@ function OwnedWorkbenchProvider({
     ]
   )
 
-  useEffect(() => {
-    const listener = installMainRuntimeWorkChangedListener(stableRefreshWorkLists)
-
-    return () => {
-      void listener
-        ?.then(unlisten => disposeDesktopListener(unlisten, 'runtime work changed'))
-        .catch(error => {
-          console.debug('[Wework] Runtime work listener was unavailable during cleanup', error)
-        })
-    }
-  }, [stableRefreshWorkLists])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
@@ -2365,7 +2335,6 @@ function OwnedWorkbenchProvider({
   const stableSetRuntimeGoal = useStableEvent(runtimeTasks.setRuntimeGoal)
   const stableClearRuntimeGoal = useStableEvent(runtimeTasks.clearRuntimeGoal)
   const stableListImPrivateSessions = useStableEvent(listImPrivateSessions)
-  const stableBindRuntimeTaskToImSessions = useStableEvent(bindRuntimeTaskToImSessions)
   const stableGetImNotificationSettings = useStableEvent(getImNotificationSettings)
   const stableUpdateGlobalImNotification = useStableEvent(updateGlobalImNotification)
   const stableSubscribeRuntimeTaskNotifications = useStableEvent(subscribeRuntimeTaskNotifications)
@@ -2373,7 +2342,6 @@ function OwnedWorkbenchProvider({
     unsubscribeRuntimeTaskNotifications
   )
   const stableRefreshDevices = useStableEvent(refreshDevices)
-  const stableGetRemoteDeviceStartupCommand = useStableEvent(getRemoteDeviceStartupCommand)
   const stableUpgradeDevice = useStableEvent(upgradeDevice)
   const stableCreateProject = useStableEvent(projectActions.createProject)
   const stableCreateLocalRuntimeProject = useStableEvent(projectActions.createLocalRuntimeProject)
@@ -2754,6 +2722,7 @@ function OwnedWorkbenchProvider({
       selectedModel: modelSelection.selectedModel,
       activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
+      modelSelectionDiagnostics: modelSelection.modelSelectionDiagnostics,
       isModelCatalogReady: modelSelection.isCatalogReady,
       isModelSelectionReady:
         modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
@@ -2850,6 +2819,7 @@ function OwnedWorkbenchProvider({
       activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
+      modelSelection.modelSelectionDiagnostics,
       modelSelection.setSelectedModel,
       modelSelection.setSelectedModelAndOptions,
       continueInNewConversation,
@@ -2915,14 +2885,12 @@ function OwnedWorkbenchProvider({
       setRuntimeGoal: stableSetRuntimeGoal,
       clearRuntimeGoal: stableClearRuntimeGoal,
       listImPrivateSessions: stableListImPrivateSessions,
-      bindRuntimeTaskToImSessions: stableBindRuntimeTaskToImSessions,
       getImNotificationSettings: stableGetImNotificationSettings,
       updateGlobalImNotification: stableUpdateGlobalImNotification,
       subscribeRuntimeTaskNotifications: stableSubscribeRuntimeTaskNotifications,
       unsubscribeRuntimeTaskNotifications: stableUnsubscribeRuntimeTaskNotifications,
       refreshWorkLists: stableRefreshWorkLists,
       refreshDevices: stableRefreshDevices,
-      getRemoteDeviceStartupCommand: stableGetRemoteDeviceStartupCommand,
       upgradeDevice: stableUpgradeDevice,
       createProject: stableCreateProject,
       createLocalRuntimeProject: stableCreateLocalRuntimeProject,
@@ -2978,7 +2946,6 @@ function OwnedWorkbenchProvider({
       stableArchiveProjectConversations,
       stableArchiveProjectsConversations,
       stableArchiveRuntimeTask,
-      stableBindRuntimeTaskToImSessions,
       stableCancelRuntimeTask,
       stableCancelRuntimePaneTask,
       stableCompactRuntimePaneTask,
@@ -3003,7 +2970,6 @@ function OwnedWorkbenchProvider({
       stableGetRuntimeGoal,
       stableGetImNotificationSettings,
       stableGetProjectWorkspaceRoot,
-      stableGetRemoteDeviceStartupCommand,
       stableListDeviceDirectories,
       stableListEnvironmentBranches,
       stableListGitBranches,
@@ -3088,7 +3054,9 @@ function OwnedWorkbenchProvider({
                 services={resolvedServices}
               />
               <RunnerSelectionHost />
-              <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+              <DesktopGitAccountConfigurationProvider>
+                <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+              </DesktopGitAccountConfigurationProvider>
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>
         </WorkspaceFileReaderProvider>

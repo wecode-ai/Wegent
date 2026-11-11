@@ -643,6 +643,62 @@ describe('WorkspaceTabsProvider routing', () => {
     }
   )
 
+  test('updates fixed default tab labels on language changes without renaming projects', () => {
+    const fixedTabs = [
+      { id: 'fixed-task', kind: 'task' as const, title: '任务', contentRoute: '/', fixed: true },
+      {
+        id: 'fixed-board',
+        kind: 'board' as const,
+        title: '协作',
+        contentRoute: '/todo',
+        fixed: true,
+      },
+      {
+        id: 'fixed-agent',
+        kind: 'agent' as const,
+        title: '智能体',
+        contentRoute: '/app/wegent',
+        fixed: true,
+      },
+      {
+        id: 'project-board',
+        kind: 'board' as const,
+        title: '产品规划',
+        contentRoute: '/todo?projectId=project-1',
+        fixed: true,
+      },
+    ]
+    let current!: WorkspaceTabsContextValue
+    const onContextValue = (value: WorkspaceTabsContextValue) => {
+      current = value
+    }
+    const { rerender } = render(
+      <RoutingHarness
+        fixedTabs={fixedTabs}
+        restoreSessionTabs={false}
+        onContextValue={onContextValue}
+      />
+    )
+    const ids = current.tabs.map(tab => tab.id)
+    rerender(
+      <RoutingHarness
+        fixedTabs={fixedTabs}
+        restoreSessionTabs={false}
+        onContextValue={onContextValue}
+        labels={{ ...labels, task: 'Task', board: 'Collaboration', agent: 'Agent' }}
+      />
+    )
+    expect(current.tabs.map(tab => tab.id)).toEqual(ids)
+    expect(current.tabs.find(tab => tab.id === 'fixed-task')?.title).toBe('Task')
+    expect(current.tabs.find(tab => tab.id === 'fixed-board')?.title).toBe('Collaboration')
+    expect(current.tabs.find(tab => tab.id === 'fixed-agent')?.title).toBe('Agent')
+    expect(current.tabs.find(tab => tab.id === 'project-board')?.title).toBe('产品规划')
+    expect(current.tabs.find(tab => tab.id === 'project-board')?.contentRoute).toBe(
+      '/todo?projectId=project-1'
+    )
+    expect(current.activeTab.contentRoute).toBe('/')
+  })
+
   test('the explicit new-tab action still opens a separate tab', () => {
     render(<RoutingHarness />)
 

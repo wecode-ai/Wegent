@@ -92,8 +92,11 @@ class RedisSubscriptionServer:
             }
         ).encode()
         for subscriber in tuple(self.subscribers):
-            subscriber.write(self.message(channel, callback))
-            await subscriber.drain()
+            try:
+                subscriber.write(self.message(channel, callback))
+                await subscriber.drain()
+            except ConnectionError:
+                self.subscribers.discard(subscriber)
 
     async def handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -123,6 +126,9 @@ class RedisSubscriptionServer:
                 else:
                     writer.write(b"+OK\r\n")
                 await writer.drain()
+        except ConnectionError:
+            # A disconnected client must not abort another subscriber's callback.
+            pass
         finally:
             self.subscribers.discard(writer)
             heartbeat = self.heartbeats.pop(writer, None)
@@ -145,6 +151,42 @@ class RedisSubscriptionServer:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_subscription_cleanup_handles_reset_during_command_read() -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
+    reader = AsyncMock(spec=asyncio.StreamReader)
+    reader.readline.side_effect = ConnectionResetError("peer reset")
+    writer = Mock(spec=asyncio.StreamWriter)
+    writer.wait_closed = AsyncMock()
+
+    await stub.handle(reader, writer)
+
+    writer.close.assert_called_once_with()
+    writer.wait_closed.assert_awaited_once_with()
+    assert not stub.handlers
+    assert stub.connections_closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_callback_fanout_survives_a_disconnected_subscriber() -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
+    disconnected = Mock(spec=asyncio.StreamWriter)
+    disconnected.write.side_effect = ConnectionResetError("peer reset")
+    healthy = Mock(spec=asyncio.StreamWriter)
+    healthy.drain = AsyncMock()
+    stub.subscribers.update([disconnected, healthy])
+    payload = json.dumps(
+        {"callback": ["device", "/local-executor", 1], "host_id": "owner"}
+    ).encode()
+
+    await stub.publish_callback(b"socketio", payload)
+
+    healthy.write.assert_called_once()
+    healthy.drain.assert_awaited_once()
+    assert disconnected not in stub.subscribers
+    assert healthy in stub.subscribers
 
 
 @pytest.mark.asyncio
@@ -212,6 +254,7 @@ async def redis_subscription(
         "settings",
         SimpleNamespace(
             REDIS_URL=f"redis://127.0.0.1:{port}/0",
+            SOCKETIO_REDIS_CLIENT_NAME=None,
             SOCKETIO_REDIS_SOCKET_TIMEOUT=0.2,
             SOCKETIO_REDIS_CONNECT_TIMEOUT=1.0,
             SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL=0.1,

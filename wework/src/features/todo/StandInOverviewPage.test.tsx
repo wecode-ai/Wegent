@@ -51,13 +51,16 @@ vi.mock('./StandInConversation', () => ({
   StandInConversation: ({
     roleId,
     draftRequest,
+    contentFooter,
   }: {
     roleId?: string
     draftRequest?: { text: string }
+    contentFooter?: import('react').ReactNode
   }) => (
     <div data-testid="identity-conversation">
       {roleId ?? 'primary'}
       {draftRequest?.text}
+      {contentFooter}
     </div>
   ),
 }))
@@ -180,6 +183,29 @@ it('returns immediately while settings refresh in the background and pauses hidd
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
 
+it('returns to the bound primary device when reopening the active workspace from a remote role', async () => {
+  const { props } = fixture()
+  const onSelectLocation = vi.fn()
+  render(
+    <StandInOverviewPage
+      {...props}
+      initialDeviceId="remote"
+      primaryDeviceId="mac"
+      initialSelectedRoleId="default"
+      onSelectLocation={onSelectLocation}
+    />
+  )
+  await screen.findByTestId('identity-conversation')
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+        detail: { kind: 'task', contentRoute: '/stand-in' },
+      })
+    )
+  })
+  await waitFor(() => expect(onSelectLocation).toHaveBeenCalledExactlyOnceWith('mac'))
+})
+
 it('handles primary and calendar entry requests received while the retained page was inactive', async () => {
   const { props } = fixture()
   const view = render(
@@ -237,6 +263,34 @@ it('keeps lifecycle controls in management and only exposes details in the role 
   expect(screen.getByTestId('stand-in-settings-tools')).not.toContainElement(picker)
   expect(within(header).getByTestId('stand-in-create-role')).toBeVisible()
   expect(within(header).getByTestId('stand-in-primary-open')).toBeVisible()
+})
+
+it('keeps an existing primary binding read-only while role devices are independent', async () => {
+  const { props } = fixture()
+  render(<StandInOverviewPage {...props} primaryDeviceId="mac" />)
+  await openRoles()
+  await userEvent.click(await navigationEntry('stand-in-settings-open'))
+  await screen.findByTestId('stand-in-preferences')
+  expect(screen.queryByTestId('stand-in-device')).not.toBeInTheDocument()
+})
+
+it('returns to the bound primary device after deleting a role on another device', async () => {
+  const { props } = fixture([{ ...newStandInRole('device', 'review'), name: 'Review' }])
+  const onSelectLocation = vi.fn()
+  render(
+    <StandInOverviewPage
+      {...props}
+      initialDeviceId="device"
+      initialSelectedRoleId="review"
+      primaryDeviceId="mac"
+      onSelectLocation={onSelectLocation}
+    />
+  )
+  await screen.findByTestId('identity-conversation')
+  await userEvent.click(await navigationEntry('stand-in-settings-open'))
+  await userEvent.click(await screen.findByTestId('stand-in-role-delete'))
+  await userEvent.click(screen.getByTestId('stand-in-role-delete-confirm'))
+  await waitFor(() => expect(onSelectLocation).toHaveBeenCalledExactlyOnceWith('mac'))
 })
 
 it('opens a scheduled activity in an editor dialog while preserving the profile and main chat', async () => {
@@ -726,12 +780,16 @@ it('opens a pending configuration explicitly without resolving it when the dialo
   render(<StandInOverviewPage {...props} />)
   await screen.findByTestId('identity-conversation')
   const entry = await navigationEntry('stand-in-proposal-open')
-  expect(screen.queryByTestId('stand-in-proposal')).not.toBeInTheDocument()
-  expect(screen.queryByText(proposal.summary)).not.toBeInTheDocument()
+  expect(
+    within(screen.getByTestId('identity-conversation')).getByTestId('stand-in-proposal')
+  ).toHaveTextContent(proposal.summary)
   await user.click(entry)
   expect(await screen.findByTestId('stand-in-proposal')).toHaveTextContent(proposal.summary)
   await user.click(screen.getByTestId('stand-in-proposal-dialog-close'))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(
+    within(screen.getByTestId('identity-conversation')).getByTestId('stand-in-proposal')
+  ).toBeVisible()
   expect(api.resolveProposal).not.toHaveBeenCalled()
   expect(screen.getByTestId('stand-in-details-open')).toHaveFocus()
   await user.click(await navigationEntry('stand-in-proposal-open'))
@@ -755,6 +813,113 @@ it('keeps an outdated configuration visibly unconfirmable inside the review dial
   expect(screen.getByTestId('stand-in-proposal-reject')).toBeEnabled()
   await userEvent.click(screen.getByTestId('stand-in-proposal-dialog-close'))
   expect(api.resolveProposal).not.toHaveBeenCalled()
+})
+
+it('keeps a failed inline proposal editable and shows an applied receipt only after saving succeeds', async () => {
+  const { props } = fixture()
+  const api = props.services.standInApi!
+  const current = await api.personalGet(7, 'device')
+  const proposal = {
+    id: 'inline-save',
+    roleId: null,
+    status: 'pending',
+    summary: 'Add Platform group to the reply role',
+    settings: { ...current, roles: [{ ...current.roles[0]!, name: 'Group replies' }] },
+  } as StandInProposal
+  vi.mocked(api.proposal).mockResolvedValue(proposal)
+  api.resolveProposal = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Save failed'))
+    .mockResolvedValueOnce({ ...proposal.settings, version: current.version + 1 })
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await user.click(await screen.findByTestId('stand-in-proposal-accept'))
+  expect(
+    await within(screen.getByTestId('identity-conversation')).findByRole('alert')
+  ).toHaveTextContent('暂时无法完成此操作。请保留当前修改，重新加载后再试。')
+  expect(screen.queryByTestId('stand-in-proposal-result')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-proposal-accept')).toBeEnabled()
+  await user.click(screen.getByTestId('stand-in-proposal-accept'))
+  expect(await screen.findByTestId('stand-in-proposal-result')).toHaveTextContent('Group replies')
+  expect(screen.queryByTestId('stand-in-proposal-accept')).not.toBeInTheDocument()
+})
+
+it('does not resurrect a settled proposal when an older poll finishes after confirmation', async () => {
+  vi.useFakeTimers()
+  try {
+    const { props } = fixture()
+    const api = props.services.standInApi!
+    const current = await api.personalGet(7, 'device')
+    const proposal = {
+      id: 'late-poll',
+      roleId: null,
+      status: 'pending',
+      summary: 'Update role',
+      settings: { ...current, roles: [{ ...current.roles[0]!, name: 'Updated role' }] },
+    } as StandInProposal
+    let resolvePoll!: (value: StandInProposal) => void
+    vi.mocked(api.proposal)
+      .mockResolvedValueOnce(proposal)
+      .mockImplementation(
+        () =>
+          new Promise(resolve => {
+            resolvePoll = resolve
+          })
+      )
+    api.resolveProposal = vi.fn(async () => ({ ...proposal.settings, version: 1 }))
+    await act(async () => {
+      render(<StandInOverviewPage {...props} />)
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(api.proposal).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('stand-in-proposal-accept'))
+    })
+    await act(async () => {
+      resolvePoll(proposal)
+    })
+    expect(screen.queryByTestId('stand-in-proposal')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-proposal-result')).toHaveTextContent('配置已应用')
+    expect(api.resolveProposal).toHaveBeenCalledOnce()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('retains a save failure when background polling successfully rereads the same draft', async () => {
+  vi.useFakeTimers()
+  try {
+    const { props } = fixture()
+    const api = props.services.standInApi!
+    const current = await api.personalGet(7, 'device')
+    vi.mocked(api.proposal).mockResolvedValue({
+      id: 'save-failure',
+      roleId: null,
+      status: 'pending',
+      summary: 'Pending change',
+      settings: current,
+    } as StandInProposal)
+    api.resolveProposal = vi.fn().mockRejectedValue(new Error('save unavailable'))
+    await act(async () => {
+      render(<StandInOverviewPage {...props} />)
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('stand-in-proposal-accept'))
+    })
+    const conversation = within(screen.getByTestId('identity-conversation'))
+    expect(conversation.getByRole('alert')).toBeVisible()
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(api.proposal).toHaveBeenCalledTimes(2)
+    expect(conversation.getByRole('alert')).toBeVisible()
+    expect(conversation.getByTestId('stand-in-proposal-accept')).toBeEnabled()
+    expect(screen.queryByTestId('stand-in-proposal-result')).not.toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 it('keeps unsaved settings mounted when the menu requests scheduled work', async () => {

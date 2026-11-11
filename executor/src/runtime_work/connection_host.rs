@@ -153,11 +153,26 @@ pub(crate) async fn call(
     Ok(body["result"].clone())
 }
 
+pub(super) fn collection_runtime_retry_after_ms(code: &str) -> Option<u64> {
+    // A runtime read timeout is not a provider rejection or an action outcome.
+    (code == "request_timeout").then_some(30_000)
+}
+
 fn response_error(method: &str, error: &Value) -> AppIpcError {
-    let failure = AppIpcError::new(
+    let mut failure = AppIpcError::new(
         error["code"].as_str().unwrap_or("connection_failed"),
         error["message"].as_str().unwrap_or("Connection failed"),
     );
+    failure.provider_code = error["providerCode"]
+        .as_str()
+        .filter(|code| {
+            !code.is_empty()
+                && code.len() <= 64
+                && code
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-.:".contains(&byte))
+        })
+        .map(str::to_owned);
     if method == "collect"
         && !matches!(
             failure.code.as_str(),
@@ -173,6 +188,7 @@ fn response_error(method: &str, error: &Value) -> AppIpcError {
         if let Some(delay) = error["retryAfterMs"]
             .as_u64()
             .filter(|delay| (1..=3_600_000).contains(delay))
+            .or_else(|| collection_runtime_retry_after_ms(&failure.code))
         {
             return failure.with_retry_after_ms(delay);
         }
@@ -229,6 +245,34 @@ mod tests {
             let mut invalid = error.clone();
             invalid["retryAfterMs"] = delay;
             assert_eq!(response_error("collect", &invalid).retry_after_ms, None);
+        }
+    }
+
+    #[test]
+    fn cli_request_cause_survives_host_rpc_and_only_collection_can_back_off() {
+        let error = json!({"code":"connection_cli_request_unavailable","message":"Plugin tool request failed (request_failed)","providerCode":"request_failed","retryAfterMs":30000});
+        let failure = response_error("collect", &error);
+        assert_eq!(failure.retry_after_ms, Some(30000));
+        assert_eq!(failure.provider_code.as_deref(), Some("request_failed"));
+        for method in ["executeAction", "readSource", "initialize", "validate"] {
+            assert_eq!(response_error(method, &error).retry_after_ms, None);
+        }
+        for code in ["", "private token", "invalid\ncode"] {
+            let mut invalid = error.clone();
+            invalid["providerCode"] = json!(code);
+            assert_eq!(response_error("collect", &invalid).provider_code, None);
+        }
+    }
+
+    #[test]
+    fn runtime_timeouts_retry_collection_only_without_provider_retry_metadata() {
+        let error = json!({"code":"request_timeout","message":"Executor read timed out"});
+        assert_eq!(
+            response_error("collect", &error).retry_after_ms,
+            Some(30_000)
+        );
+        for method in ["executeAction", "readSource", "initialize", "validate"] {
+            assert_eq!(response_error(method, &error).retry_after_ms, None);
         }
     }
 

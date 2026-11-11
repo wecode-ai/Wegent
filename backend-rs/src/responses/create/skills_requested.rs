@@ -356,7 +356,6 @@ pub(crate) async fn resolve_request_preload_skills<
     user_preferences: Option<&str>,
     tokens: &T,
     is_subscription: bool,
-    binding_context: &SkillBindingContext<'_>,
     access: &SkillAccess<'_>,
     team_namespace: &str,
 ) -> Result<(), FastApiError> {
@@ -398,9 +397,8 @@ pub(crate) async fn resolve_request_preload_skills<
         tokens,
         is_subscription,
         &format!("user:{user_id}"),
-        binding_context,
         Some(access),
-        false,
+        None,
     )
     .await?;
     append_requested_skills(

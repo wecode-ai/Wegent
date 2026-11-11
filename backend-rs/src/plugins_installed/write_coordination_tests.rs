@@ -429,6 +429,34 @@ async fn acquisition_deadline_also_bounds_an_unresponsive_redis_request() {
 }
 
 #[tokio::test]
+async fn blocked_acquisition_polls_at_the_redis_py_sleep_interval() {
+    let redis = LeaseRedis::default();
+    redis
+        .owners
+        .lock()
+        .unwrap()
+        .insert("wegent:plugin-write:23".into(), "fixture".into());
+
+    // redis-py's Lock sleeps 100ms between attempts and stops as soon as the
+    // next attempt would pass the 350ms blocking timeout: four SET ... NX
+    // commands. The previous fixed 50ms loop produced eight.
+    let error =
+        PluginWriteLease::acquire_token(&redis, 23, "contended".into(), Duration::from_millis(350))
+            .await
+            .err()
+            .expect("the fixture keeps the lease busy");
+    assert_eq!(
+        http_error(error).detail_message(),
+        Some("plugin_write_busy")
+    );
+    let attempts = redis.commands.lock().unwrap().len();
+    assert!(
+        (3..=5).contains(&attempts),
+        "redis-py retries every 100ms; observed {attempts} attempts in 350ms"
+    );
+}
+
+#[tokio::test]
 async fn acquisition_deadline_prevents_another_set_after_the_last_wait() {
     let redis = LeaseRedis {
         release_after_contention: true,

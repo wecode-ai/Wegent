@@ -5,6 +5,7 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    /// Read task identity and model configuration without starting a provider or returning profiles.
     pub(super) fn get_task(&self, payload: &Value) -> Result<Value, AppIpcError> {
         let task_id = runtime_task_id(payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -19,6 +20,7 @@ impl RuntimeWorkRpcHandler {
                 "error": "Task not found on the owning Runtime",
             }));
         };
+        log_runtime_archive_link("runtime task get resolved link", &link, false);
         if link.status == "archived" {
             return Ok(json!({
                 "success": false,
@@ -134,9 +136,6 @@ impl RuntimeWorkRpcHandler {
         } else {
             self.collect_query_links(false).await
         };
-        for link in &collected_links {
-            self.project_runtime_link_status(link);
-        }
         log_runtime_work_list_diagnostic(
             "links_collected",
             started_at,
@@ -449,6 +448,7 @@ impl RuntimeWorkRpcHandler {
         .await
     }
 
+    /// Record the resolved task's model identity before reading cached or native transcript content.
     pub(super) async fn read_thread_transcript(
         &self,
         payload: Value,
@@ -513,6 +513,9 @@ impl RuntimeWorkRpcHandler {
         } else {
             self.transcript_read_link(&local_task_id, bounded_native)
         };
+        if let Some(link) = local_link.as_ref() {
+            log_runtime_archive_link("runtime task transcript resolved link", link, false);
+        }
         let codex_client = match local_link.as_ref() {
             Some(link) => self
                 .codex_app_server
@@ -622,11 +625,7 @@ impl RuntimeWorkRpcHandler {
                 .or_else(|| string_field(&thread, "cwd"))
                 .or_else(|| workspace_path(&payload))
                 .unwrap_or_default();
-            let prefer_rollout_history = local_link.as_ref().is_some_and(|link| {
-                link.runtime_handle
-                    .get("cloudTranscript")
-                    .is_some_and(Value::is_object)
-            });
+            let prefer_rollout_history = local_link.as_ref().is_some_and(uses_rollout_history);
             let navigation = self
                 .codex_transcript_navigation(
                     &codex_client,
@@ -837,11 +836,7 @@ impl RuntimeWorkRpcHandler {
                 },
                 full_content: include_full_content,
                 bounded_items: payload["transcriptProtocolVersion"] == 2,
-                prefer_rollout_history: local_link.as_ref().is_some_and(|link| {
-                    link.runtime_handle
-                        .get("cloudTranscript")
-                        .is_some_and(Value::is_object)
-                }),
+                prefer_rollout_history: local_link.as_ref().is_some_and(uses_rollout_history),
             },
         )
         .await;
@@ -919,7 +914,25 @@ impl RuntimeWorkRpcHandler {
                     None,
                 ));
             }
-            Err(error) => return Err(error.0),
+            Err(error) => {
+                log_executor_event(
+                    "runtime work native transcript read failed",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("thread_id", thread_id.clone()),
+                        ("code", error.0.code.clone()),
+                        ("error", error.0.message.clone()),
+                        (
+                            "archived",
+                            local_link
+                                .as_ref()
+                                .is_some_and(|link| link.status == "archived")
+                                .to_string(),
+                        ),
+                    ],
+                );
+                return Err(error.0);
+            }
         };
         let handler = self.clone();
         let input = super::queries_projection::TranscriptProjectionInput {
@@ -1003,6 +1016,16 @@ impl RuntimeWorkRpcHandler {
             .filter(|entry| entry.cached_at.elapsed() < CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL)
             .map(|entry| entry.navigation.clone())
     }
+}
+
+fn uses_rollout_history(link: &RuntimeTaskLink) -> bool {
+    // Native timeline paging rejects archived threads. Read their canonical
+    // history directly, without unarchiving or resuming an execution.
+    link.status == "archived"
+        || link
+            .runtime_handle
+            .get("cloudTranscript")
+            .is_some_and(Value::is_object)
 }
 
 async fn delay_desktop_e2e_transcript_response() {

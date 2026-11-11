@@ -2,6 +2,7 @@ import { act, waitFor } from '@testing-library/react'
 import { getSharedHighlighter } from '@pierre/diffs'
 import { Editor } from '@pierre/diffs/edit'
 import { expect, vi } from 'vitest'
+import { WEWORK_CODE_THEME } from '@/lib/code-theme'
 
 let editSpy = vi.spyOn(Editor.prototype, 'edit')
 
@@ -23,7 +24,7 @@ export async function installPierreEditorTestPlatform() {
   Element.prototype.scrollTo ??= vi.fn()
   await getSharedHighlighter({
     langs: ['typescript', 'text'],
-    themes: ['pierre-light', 'pierre-dark'],
+    themes: [WEWORK_CODE_THEME, 'pierre-light', 'pierre-dark'],
     preferredHighlighter: 'highlights',
   })
 }

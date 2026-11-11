@@ -122,11 +122,10 @@ function configuredBooleanValue(
   return typeof value === "boolean" ? value : null;
 }
 
-function cloudNativeToolCapabilities(
-  model: UnifiedModel,
-  upstreamApiFormat: string,
-): { nativeToolSearch: boolean; nativeNamespaceTools: boolean } {
-  const nativeByDefault = upstreamApiFormat === "openai-responses";
+function cloudNativeToolCapabilities(model: UnifiedModel): {
+  nativeToolSearch: boolean;
+  nativeNamespaceTools: boolean;
+} {
   const mode = model.config?.codex_request_mode;
   if (mode === "standard" || mode === "passthrough") {
     return {
@@ -140,13 +139,13 @@ function cloudNativeToolCapabilities(
         model.config,
         "native_tool_search",
         "nativeToolSearch",
-      ) ?? nativeByDefault,
+      ) ?? false,
     nativeNamespaceTools:
       configuredBooleanValue(
         model.config,
         "native_namespace_tools",
         "nativeNamespaceTools",
-      ) ?? nativeByDefault,
+      ) ?? false,
   };
 }
 
@@ -318,10 +317,7 @@ export function selectedModelExecutionFields(
     if (upstreamApiFormat) {
       modelOptions[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] = upstreamApiFormat;
       if (upstreamApiFormat === "openai-responses") {
-        const nativeCapabilities = cloudNativeToolCapabilities(
-          selectedModel,
-          upstreamApiFormat,
-        );
+        const nativeCapabilities = cloudNativeToolCapabilities(selectedModel);
         modelOptions[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION] = String(
           nativeCapabilities.nativeToolSearch,
         );
