@@ -24,6 +24,7 @@ export function verifiedUpgradeEdge({
   arch,
   channel,
 }) {
+  const manifest = evidence.manifestRecovery
   if (
     from.fixture ||
     to.fixture ||
@@ -45,6 +46,14 @@ export function verifiedUpgradeEdge({
     evidence.channel !== channel ||
     evidence.upgrade !== 'passed' ||
     evidence.rollback !== 'passed' ||
+    manifest?.schemaVersion !== 2 ||
+    manifest.restarted !== true ||
+    manifest.rolledBack !== true ||
+    typeof manifest.backup !== 'string' ||
+    typeof manifest.historicalBackup !== 'string' ||
+    !manifest.backup.startsWith('manifest.json.empty-') ||
+    !manifest.historicalBackup.startsWith('manifest.json.empty-') ||
+    manifest.backup === manifest.historicalBackup ||
     compareVersions(from.version, to.version) >= 0 ||
     compareVersions(from.version, to.minSourceVersion) < 0
   ) {
