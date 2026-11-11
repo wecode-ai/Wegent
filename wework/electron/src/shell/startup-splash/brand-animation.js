@@ -394,7 +394,7 @@
     }
   }
 
-  function createStartupBrandAnimation(canvas, footerElement) {
+  function createStartupBrandAnimation(canvas, footerElement, slowElement) {
     const container = canvas.parentElement
     const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
     const viewport = { footerTop: 0, pixelRatio: 1 }
@@ -490,13 +490,15 @@
       const footer = footerElement.getBoundingClientRect()
       const footerTop = Math.max(0, Math.min(height, footer.top - bounds.top))
       canvas.style.maskImage = `linear-gradient(to bottom, #000 ${Math.max(0, footerTop - LOGO_CLEARANCE)}px, transparent ${footerTop}px)`
+      const unobstructedFooterTop = footerTop + (slowElement.hidden ? 0 : SLOW_CARD_FOOTER_GROWTH)
       const deviceFooterTop = footerTop * (canvas.height / height)
+      const deviceUnobstructedFooterTop = unobstructedFooterTop * (canvas.height / height)
       if (
         sizeChanged ||
         viewport.stableFooterTop === undefined ||
         elapsed < FORMATION_DURATION_MS
       ) {
-        viewport.stableFooterTop = deviceFooterTop
+        viewport.stableFooterTop = deviceUnobstructedFooterTop
       }
       viewport.footerTop = deviceFooterTop
       viewport.pixelRatio = ratio

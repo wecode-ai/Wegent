@@ -145,6 +145,7 @@ export async function createAnimationFixture(
   const canvas = createCanvas()
   let footerTop = options.footerTop
   const footer = { getBoundingClientRect: () => ({ top: footerTop ?? canvas.clientHeight }) }
+  const slowCard = { hidden: true }
   let now = 0
   let frameId = 0
   const frames = new Map<number, FrameRequestCallback>()
@@ -214,14 +215,18 @@ export async function createAnimationFixture(
   }
   runInNewContext(`${markScript}\n${animationScript}`, environment)
   const runtime = window as typeof window & {
-    createStartupBrandAnimation: (target: typeof canvas, status: typeof footer) => BrandAnimation
+    createStartupBrandAnimation: (
+      target: typeof canvas,
+      status: typeof footer,
+      slow: typeof slowCard
+    ) => BrandAnimation
     WEWORK_STARTUP_BRAND_CONTOURS: Array<{
       name: string
       hole: boolean
       curves: Array<Array<[number, number]>>
     }>
   }
-  const animation = runtime.createStartupBrandAnimation(canvas, footer)
+  const animation = runtime.createStartupBrandAnimation(canvas, footer, slowCard)
   const step = (timestamp: number) => {
     now = timestamp
     const pending = [...frames.values()]
@@ -242,6 +247,7 @@ export async function createAnimationFixture(
     brand,
     canvas,
     footer,
+    slowCard,
     contours: runtime.WEWORK_STARTUP_BRAND_CONTOURS,
     markScript,
     logoStyle,
@@ -259,6 +265,9 @@ export async function createAnimationFixture(
     setFooterTop: (top: number) => {
       footerTop = top
       resizeCallback()
+    },
+    setSlowVisible: (visible: boolean) => {
+      slowCard.hidden = !visible
     },
     setPixelRatio: (ratio: number) => {
       window.devicePixelRatio = ratio

@@ -4,6 +4,34 @@ import { basename, join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import { createAnimationFixture } from '../../test-fixtures/startup-brand-animation'
 
+type AnimationFixture = Awaited<ReturnType<typeof createAnimationFixture>>
+type AnimationContext = AnimationFixture['contexts'][number]
+
+function renderedLogoBounds(
+  context: AnimationContext,
+  canvas: { width: number; height: number },
+  logo: { points: Array<{ x: number; y: number }> },
+  pixelRatio = 1
+) {
+  const [fit, , , , offsetX, offsetY] = context.setTransform.mock.calls.at(-1)!
+  const points = logo.points.map(point => ({
+    x: (point.x + 600) * fit + offsetX,
+    y: (point.y + 340) * fit + offsetY,
+  }))
+  const left = Math.min(...points.map(point => point.x))
+  const right = Math.max(...points.map(point => point.x))
+  const top = Math.min(...points.map(point => point.y))
+  const bottom = Math.max(...points.map(point => point.y))
+  return {
+    left,
+    right,
+    top,
+    bottom,
+    width: (right - left) / pixelRatio,
+    height: (bottom - top) / pixelRatio,
+  }
+}
+
 describe('startup brand animation lifecycle', () => {
   test.each([
     { width: 1440, height: 960, footerTop: 840, pixelRatio: 1 },
@@ -41,17 +69,48 @@ describe('startup brand animation lifecycle', () => {
   )
 
   test('keeps the mark fixed after reserving the slow-card space', async () => {
-    const { animation, contexts, setFooterTop } = await createAnimationFixture(
+    const { animation, contexts, setFooterTop, setSlowVisible } = await createAnimationFixture(
       true,
       { width: 1440, height: 900 },
       { footerTop: 783 }
     )
     const before = contexts[0].setTransform.mock.calls.at(-1)!
-    setFooterTop(650)
+    setSlowVisible(true)
+    setFooterTop(711)
     const after = contexts[0].setTransform.mock.calls.at(-1)!
     expect(after[0]).toBeCloseTo(before[0], 8)
     expect(after[4]).toBeCloseTo(before[4], 8)
     expect(after[5]).toBeCloseTo(before[5], 8)
+    animation.destroy()
+  })
+
+  test('keeps the slow-card baseline through a DPR resize', async () => {
+    const { animation, canvas, contexts, paths, setFooterTop, setPixelRatio, setSlowVisible } =
+      await createAnimationFixture(true, { width: 1440, height: 900 }, { footerTop: 783 })
+    const logo = paths[0]
+    const initial = renderedLogoBounds(contexts[0], canvas, logo)
+    setSlowVisible(true)
+    setFooterTop(711)
+    setPixelRatio(2)
+    const resized = renderedLogoBounds(contexts[0], canvas, logo, 2)
+    expect(resized.width).toBeCloseTo(initial.width, 8)
+    expect(resized.height).toBeCloseTo(initial.height, 8)
+    expect(resized.bottom).toBeLessThanOrEqual((711 - 12) * 2 + 1e-8)
+    animation.destroy()
+  })
+
+  test('does not rebase the footer while the slow card appears during formation', async () => {
+    const { animation, canvas, contexts, paths, setFooterTop, setSlowVisible, step } =
+      await createAnimationFixture(false, { width: 1440, height: 900 }, { footerTop: 783 })
+    step(0)
+    step(1_000)
+    const initial = renderedLogoBounds(contexts[0], canvas, paths[0])
+    setSlowVisible(true)
+    setFooterTop(711)
+    const visible = renderedLogoBounds(contexts[0], canvas, paths[0])
+    expect(visible.width).toBeCloseTo(initial.width, 8)
+    expect(visible.height).toBeCloseTo(initial.height, 8)
+    expect(visible.bottom).toBeLessThanOrEqual(711 - 12 + 1e-8)
     animation.destroy()
   })
 
