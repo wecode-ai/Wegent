@@ -10,6 +10,17 @@ async fn held_scan(
     tokio::task::JoinHandle<Result<Value, AppIpcError>>,
 ) {
     let fixture = Arc::new(Fixture::new(Plan::Valid, unconfirmed).await);
+    held_scan_for(fixture, phase).await
+}
+
+async fn held_scan_for(
+    fixture: Arc<Fixture>,
+    phase: usize,
+) -> (
+    Arc<Fixture>,
+    HeldDigest,
+    tokio::task::JoinHandle<Result<Value, AppIpcError>>,
+) {
     fixture
         .installer
         .digest_gate
@@ -166,6 +177,95 @@ async fn recovery_results_merge_during_either_scan_without_invalidating_it() {
                 }
             }
         }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn terminal_recovery_during_either_scan_completes_without_rescanning() {
+    for phase in [1, 2] {
+        for (reply, archive) in [
+            (RecoveryReply::Superseded, "supersededOperations"),
+            (RecoveryReply::Rejected, "rejectedOperations"),
+        ] {
+            let fixture = Arc::new(Fixture::with_recovery(Plan::Valid, reply).await);
+            let original = load_journal(&fixture.path).unwrap()["pending"][0].clone();
+            let (fixture, held, full) = held_scan_for(fixture, phase).await;
+            tokio::time::timeout(Duration::from_secs(3), fixture.recovery_entered.notified())
+                .await
+                .unwrap();
+            fixture.recovery_release.notify_one();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    if load_journal(&fixture.path).unwrap()[archive]
+                        .as_array()
+                        .is_some_and(|rows| !rows.is_empty())
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("Recovery could not archive while scanning");
+            drop(held);
+            assert_eq!(full.await.unwrap().unwrap()["localCompleted"], true);
+            let journal = load_journal(&fixture.path).unwrap();
+            assert_eq!(journal["pending"], json!([]));
+            assert_eq!(journal["nextIntentOrder"], 7);
+            let archived = if archive == "rejectedOperations" {
+                &journal[archive][0]["request"]
+            } else {
+                &journal[archive][0]
+            };
+            for field in [
+                "operationId",
+                "intentOrder",
+                "action",
+                "targetId",
+                "payload",
+                "accepted",
+            ] {
+                assert_eq!(
+                    archived[field], original[field],
+                    "{phase}: {archive}: {field}"
+                );
+            }
+            assert_eq!(journal["reconcilePending"], phase == 2);
+            if phase == 2 {
+                assert!(
+                    journal["revision"].is_null(),
+                    "Late retirement lost its cache invalidation"
+                );
+            }
+            assert_eq!(fixture.installer.digest_calls.load(Ordering::SeqCst), 2);
+            assert_eq!(fixture.installer.applications.load(Ordering::SeqCst), 1);
+            assert_eq!(fixture.plans.lock().unwrap().len(), 1);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_foreground_order_advance_alone_invalidates_either_scan() {
+    for phase in [1, 2] {
+        let (fixture, held, full) = held_scan(phase, true).await;
+        settle_recovery(&fixture, true).await;
+        let current = {
+            let _lease = fixture
+                .controller
+                .acquire_local_sync_lease(&fixture.connection, &fixture.path)
+                .await
+                .unwrap();
+            let mut journal = load_journal(&fixture.path).unwrap();
+            journal["nextIntentOrder"] = json!(8);
+            persist(&fixture.path, &journal).unwrap();
+            journal
+        };
+        drop(held);
+        assert_eq!(
+            full.await.unwrap().unwrap_err().code,
+            "plugin_local_sync_busy"
+        );
+        assert_eq!(load_journal(&fixture.path).unwrap(), current);
     }
 }
 

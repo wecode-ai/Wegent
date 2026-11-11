@@ -50,6 +50,14 @@ enum Plan {
     HeldApplication,
 }
 
+#[derive(Clone, Copy)]
+enum RecoveryReply {
+    Accepted,
+    Unconfirmed,
+    Superseded,
+    Rejected,
+}
+
 #[derive(Clone)]
 struct Installer {
     plan: Plan,
@@ -120,6 +128,18 @@ impl Drop for Fixture {
 
 impl Fixture {
     async fn new(plan: Plan, unconfirmed: bool) -> Self {
+        Self::with_recovery(
+            plan,
+            if unconfirmed {
+                RecoveryReply::Unconfirmed
+            } else {
+                RecoveryReply::Accepted
+            },
+        )
+        .await
+    }
+
+    async fn with_recovery(plan: Plan, reply: RecoveryReply) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let connection = ConnectionConfig {
             backend_url: format!("http://{}", listener.local_addr().unwrap()),
@@ -214,11 +234,19 @@ impl Fixture {
                         assert_eq!(query["release_id"], "3");
                         entered.notify_one();
                         release.notified().await;
-                        let mut response = Json(json!({})).into_response();
-                        if !unconfirmed {
+                        let (status, body, state) = match reply {
+                            RecoveryReply::Accepted | RecoveryReply::Unconfirmed => (axum::http::StatusCode::OK, json!({}), None),
+                            RecoveryReply::Superseded => (axum::http::StatusCode::CONFLICT, json!({"detail":"INTENT_SUPERSEDED"}), Some("superseded")),
+                            RecoveryReply::Rejected => (axum::http::StatusCode::NOT_FOUND, json!({"detail":"Marketplace plugin not found"}), Some("rejected")),
+                        };
+                        let mut response = (status, Json(body)).into_response();
+                        if !matches!(reply, RecoveryReply::Unconfirmed) {
                             for (name,value) in [("X-Plugin-Delivery-Mode","local_pull_v1"),("X-Plugin-Operation-Id","original"),("X-Plugin-Intent-Order","7")] {
                                 response.headers_mut().insert(name,value.parse().unwrap());
                             }
+                        }
+                        if let Some(state) = state {
+                            response.headers_mut().insert("X-Plugin-Operation-State", state.parse().unwrap());
                         }
                         response
                     }

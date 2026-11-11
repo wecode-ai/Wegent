@@ -6,20 +6,6 @@ pub(super) struct LocalSyncLease {
     _serial: tokio::sync::OwnedMutexGuard<()>,
 }
 
-fn execution_stamp(journal: &Value) -> Value {
-    let mut pending = journal["pending"].clone();
-    for entry in pending.as_array_mut().unwrap() {
-        for field in ["accepted", "lastAttemptAt", "lastErrorCode"] {
-            entry.as_object_mut().unwrap().remove(field);
-        }
-    }
-    json!({
-        "version":journal["version"],"nextIntentOrder":journal["nextIntentOrder"],
-        "pending":pending,"revision":journal["revision"],
-        "verifiedDigest":journal["verifiedDigest"],"lastResult":journal["lastResult"]
-    })
-}
-
 impl LocalBackendConnectionController {
     pub(super) async fn acquire_local_sync_lease(
         &self,
@@ -54,7 +40,9 @@ impl LocalBackendConnectionController {
         journal: &mut Value,
         lease: &mut Option<LocalSyncLease>,
     ) -> Result<Option<String>, AppIpcError> {
-        let expected = execution_stamp(journal);
+        // New foreground intents advance this durable sequence; recovery only
+        // settles existing IDs. Publication is fenced separately by the manifest.
+        let foreground_order = journal["nextIntentOrder"].clone();
         let revision = session.handler.local_plugin_revision();
         let handler = session.handler.clone();
         let scanning = recovery::lock_file(&session.path.with_extension("scan.lock"))?;
@@ -73,7 +61,7 @@ impl LocalBackendConnectionController {
                 .await?,
         );
         let current = load_journal(session.path)?;
-        if execution_stamp(&current) != expected {
+        if current["nextIntentOrder"] != foreground_order {
             return Err(error("plugin_local_sync_busy"));
         }
         let (digest, after) = scanned.map_err(|_| error("plugin_local_scan_failed"))?;
