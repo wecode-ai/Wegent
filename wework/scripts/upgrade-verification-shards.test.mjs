@@ -90,6 +90,13 @@ function fixture(required = []) {
         cloudDeviceSignature: true,
         ...(stage === 'rolled-back' ? { writeAuthenticated: true } : {}),
       })),
+      manifestRecovery: {
+        schemaVersion: 2,
+        backup: 'manifest.json.empty-recovered',
+        historicalBackup: 'manifest.json.empty-previous-upgrade',
+        restarted: true,
+        rolledBack: true,
+      },
     }),
   }))
   return { options, frozen, shards }

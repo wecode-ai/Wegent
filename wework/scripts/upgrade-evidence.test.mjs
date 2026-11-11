@@ -406,6 +406,13 @@ function input() {
       cloudDeviceSignature: true,
       ...(stage === 'rolled-back' ? { writeAuthenticated: true } : {}),
     })),
+    manifestRecovery: {
+      schemaVersion: 2,
+      backup: 'manifest.json.empty-recovered',
+      historicalBackup: 'manifest.json.empty-previous-upgrade',
+      restarted: true,
+      rolledBack: true,
+    },
   }
   return {
     from,
@@ -439,6 +446,9 @@ test('only exact artifacts and a successful rollback grant a release edge', () =
     { suiteVersion: 2 },
     { fromSourceSha: 'f'.repeat(40) },
     { toSourceSha: undefined },
+    { manifestRecovery: undefined },
+    { manifestRecovery: { ...input().evidence.manifestRecovery, restarted: false } },
+    { manifestRecovery: { ...input().evidence.manifestRecovery, rolledBack: false } },
   ]) {
     const value = input()
     Object.assign(value.evidence, change)
