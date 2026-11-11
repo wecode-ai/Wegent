@@ -10,7 +10,7 @@ interface ErrorTranslation {
 
 const ERROR_TRANSLATIONS: ErrorTranslation[] = [
   {
-    pattern: /^Stop the Smart app before installing a new version$/,
+    pattern: /^Stop the (?:workbench|Smart app) before installing a new version$/,
     key: 'workbench.smart_apps_install_stop_first',
     fallback: '请先停止工作台，再安装新版本。',
   },
