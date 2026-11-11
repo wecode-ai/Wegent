@@ -24,11 +24,27 @@ async function verifyInitialStorageWriteFailure({ control, data, pid, resultDir,
   const seeded = JSON.stringify(seed)
   const backup = `${path}.startup-original`
   const blocked = `${path}.${pid}.tmp`
+  let ownsObstruction = false
   try {
     await writeFile(path, seeded)
     await reloadWorkbench(control, timeoutMs)
     await control.command('flushRendererStorage', 'body')
-    await mkdir(blocked)
+    // Acquire the path after any already-open atomic write releases its temporary file.
+    await waitForValue(
+      async () => {
+        try {
+          await mkdir(blocked)
+          ownsObstruction = true
+          return true
+        } catch (error) {
+          if (error.code === 'EEXIST') return false
+          throw error
+        }
+      },
+      Boolean,
+      'The active renderer-storage write did not release its temporary file',
+      timeoutMs
+    )
     await rename(path, backup)
     const preserved = await readFile(backup, 'utf8')
     assert.equal(JSON.parse(preserved).entries[marker], 'preserved')
@@ -40,6 +56,7 @@ async function verifyInitialStorageWriteFailure({ control, data, pid, resultDir,
     )
 
     await rm(blocked, { recursive: true })
+    ownsObstruction = false
     await reloadWorkbench(control, timeoutMs)
     assert.equal(JSON.parse(await readFile(path, 'utf8')).entries[marker], 'preserved')
     await writeFile(
@@ -47,7 +64,7 @@ async function verifyInitialStorageWriteFailure({ control, data, pid, resultDir,
       JSON.stringify({ workbenchAvailable: true, seedPreserved: true, persistenceRepaired: true })
     )
   } finally {
-    await rm(blocked, { recursive: true, force: true })
+    if (ownsObstruction) await rm(blocked, { recursive: true, force: true })
     await writeFile(path, original)
     await rm(backup, { force: true })
   }
