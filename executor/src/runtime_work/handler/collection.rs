@@ -236,14 +236,17 @@ impl RuntimeWorkRpcHandler {
         self.store.find_summary_by_thread_id(thread_id)
     }
 
+    pub(super) fn canonical_local_task_id(&self, task_id: &str) -> String {
+        self.local_task_link(task_id)
+            .or_else(|| self.local_task_by_thread_id(task_id))
+            .map(|link| link.local_task_id)
+            .unwrap_or_else(|| task_id.to_owned())
+    }
+
     pub(super) fn task_send_gate(&self, local_task_id: &str) -> Arc<AsyncMutex<()>> {
         // Callers may address a task by its local task ID or provider thread ID.
         // Both aliases must share one gate so send and history edits serialize.
-        let canonical_task_id = self
-            .local_task_link(local_task_id)
-            .or_else(|| self.local_task_by_thread_id(local_task_id))
-            .map(|link| link.local_task_id)
-            .unwrap_or_else(|| local_task_id.to_owned());
+        let canonical_task_id = self.canonical_local_task_id(local_task_id);
         let mut gates = self
             .task_send_gates
             .lock()

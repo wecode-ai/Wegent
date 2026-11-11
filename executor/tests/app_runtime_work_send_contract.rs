@@ -5003,7 +5003,7 @@ async fn runtime_tasks_rollback_serializes_with_concurrent_send() {
                     "address": {
                         "deviceId": "device-1",
                         "workspacePath": "/tmp/project",
-                        "taskId": "thread-1",
+                        "taskId": "local-edit-race",
                         "runtimeHandle": {"threadId": "thread-1"}
                     },
                     "message": "edited prompt",
@@ -5027,7 +5027,7 @@ async fn runtime_tasks_rollback_serializes_with_concurrent_send() {
                 "method": "runtime.tasks.send",
                 "payload": {
                     "workspacePath": "/tmp/project",
-                    "taskId": "local-edit-race",
+                    "taskId": "thread-1",
                     "message": "follow up after edit",
                     "queueIfBusy": true,
                     "executionRequest": codex_execution_request(
@@ -5079,6 +5079,25 @@ async fn runtime_tasks_rollback_serializes_with_concurrent_send() {
         send_response["status"], "queued",
         "the follow-up must queue behind the replacement turn"
     );
+    let unqueued_send = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "thread-1",
+                "message": "must not start while the edited turn is active",
+                "queueIfBusy": false,
+                "executionRequest": codex_execution_request(
+                    "must not start while the edited turn is active",
+                    "/tmp/project",
+                    "gpt-4.1"
+                )
+            }
+        }))
+        .await
+        .expect("busy send should return a contract response");
+    assert_eq!(unqueued_send["success"], false);
+    assert_eq!(unqueued_send["code"], "bad_request");
 
     wait_for_method_count(&log_path, "turn/start", 1).await;
     let calls = read_json_lines(&log_path);

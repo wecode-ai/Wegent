@@ -1025,8 +1025,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<Option<Value>, AppIpcError> {
-        let id = runtime_task_id(&payload)
+        let requested_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let id = self.canonical_local_task_id(&requested_id);
         let gate = self.task_send_gate(&id);
         let _guard = gate.lock().await;
         let Some(mut link) = self.local_task_link(&id) else {
@@ -1104,10 +1105,21 @@ impl RuntimeWorkRpcHandler {
         mut payload: Value,
         activity: bool,
     ) -> Result<Value, AppIpcError> {
+        let requested_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let local_task_id = self.canonical_local_task_id(&requested_task_id);
+        if local_task_id != requested_task_id {
+            replace_runtime_task_id(&mut payload, &local_task_id);
+            log_executor_event(
+                "runtime work send task alias resolved",
+                &[
+                    ("requested_task_id", requested_task_id),
+                    ("local_task_id", local_task_id.clone()),
+                ],
+            );
+        }
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
-        let local_task_id = runtime_task_id(&payload)
-            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
         let payload = if let Some(link) = &existing_link {
             self.refresh_project_coordinator_payload(payload, link)
@@ -1412,8 +1424,9 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn interrupt_and_send(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let local_task_id = runtime_task_id(&payload)
+        let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let local_task_id = self.canonical_local_task_id(&requested_task_id);
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
         let check_provider_turn = self.local_task_link(&local_task_id).map_or_else(
