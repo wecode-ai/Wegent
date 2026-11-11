@@ -132,7 +132,8 @@ fn busy_writer(directory: &Path) -> Result<Option<File>, String> {
             match file.try_lock_exclusive() {
                 Ok(()) => {}
                 Err(e) if e.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
-                    return Ok(Some(file))
+                    super::writer_diagnostics::report(&path, &file, &e);
+                    return Ok(Some(file));
                 }
                 Err(e) => return Err(error(e)),
             }
@@ -148,7 +149,10 @@ fn lock(path: &Path, wait_for_writers: bool) -> Result<FileLease, String> {
     } else {
         file.try_lock_exclusive()
     })
-    .map_err(|_| "Codex provider migration is blocked by a live writer".to_owned())?;
+    .map_err(|error| {
+        super::writer_diagnostics::report(path, &file, &error);
+        "Codex provider migration is blocked by a live writer".to_owned()
+    })?;
     Ok(FileLease(file))
 }
 
