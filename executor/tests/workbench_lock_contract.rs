@@ -69,6 +69,34 @@ fn locks_exclude_other_processes_and_release_on_kill_without_deleting_files() {
 }
 
 #[test]
+fn startup_can_hold_all_migration_resources_in_one_lock_process() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = (0..11)
+        .map(|index| root.path().join(format!("resource-{index}.lock")))
+        .collect::<Vec<_>>();
+
+    let mut holder = hold(&paths);
+
+    assert!(paths.iter().all(|path| path.is_file()));
+    drop(holder.0.stdin.take());
+    assert!(holder.0.wait().unwrap().success());
+}
+
+#[test]
+fn rejects_migration_lock_sets_above_the_bounded_limit() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = (0..33)
+        .map(|index| root.path().join(format!("resource-{index}.lock")))
+        .collect::<Vec<_>>();
+
+    let output = command(&paths).output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("Invalid Workbench migration lock resources"));
+}
+
+#[test]
 fn partial_acquisition_failure_releases_earlier_locks() {
     let root = tempfile::tempdir().unwrap();
     let first = root.path().join("a.lock");

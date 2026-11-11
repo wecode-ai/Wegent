@@ -8,13 +8,17 @@ import {
 import { migrateWorkbenchHome } from './workbench-home-migration.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { assertCodexHomeCanMove } from './workbench-codex-migration.js'
-import { executorMigrationLock } from './workbench-migration-lock.js'
+import {
+  executorMigrationLock,
+  type WorkbenchMigrationLockAdapter,
+} from './workbench-migration-lock.js'
 import { migrateWorkbenchDataInWorker } from './workbench-data-worker.js'
 
 interface WorkbenchEnvironmentOptions {
   environment: NodeJS.ProcessEnv
   metadata: BrandRuntimeMetadata
   homeDirectory: string
+  validateExecutor?: (environment: NodeJS.ProcessEnv) => Promise<void>
 }
 
 export interface WorkbenchPaths {
@@ -102,67 +106,87 @@ export async function prepareWorkbenchEnvironment(
     branded.WORKSPACE_ROOT = join(homeDirectory, '.wegent', 'workspace')
   }
 
-  await assertExecutorWorkbenchCompatibility(branded)
-  const acquireLock = executorMigrationLock(branded.WEWORK_EXECUTOR_PATH!)
-  if (!environment.WEGENT_CODEX_HOME?.trim())
-    await migrateWorkbenchHome({
-      acquireLock,
-      sourceHome: join(executorHome, 'codex'),
-      targetHome: paths.codexHome,
-      stateDirectory: join(paths.migrations, 'codex-home-v1'),
-      initialize: true,
-      beforeMove: home => assertCodexHomeCanMove(branded.WEWORK_EXECUTOR_PATH!, home),
-    })
-  if (!environment.WEGENT_CAPABILITIES_HOME?.trim()) {
-    await migrateWorkbenchHome({
-      acquireLock,
-      sourceHome: join(executorHome, 'capabilities'),
-      targetHome: paths.capabilities,
-      stateDirectory: join(paths.migrations, 'capabilities-v1'),
-      initialize: true,
-    })
-  }
+  await (options.validateExecutor ?? assertExecutorWorkbenchCompatibility)(branded)
+  const executorCommand = branded.WEWORK_EXECUTOR_PATH!
+  const codexSourceHome = join(executorHome, 'codex')
+  const codexStateDirectory = join(paths.migrations, 'codex-home-v1')
+  const capabilitiesSourceHome = join(executorHome, 'capabilities')
+  const capabilitiesStateDirectory = join(paths.migrations, 'capabilities-v1')
   const customClaudeHome =
     environment.WEGENT_CLAUDE_HOME?.trim() || environment.CLAUDE_CONFIG_DIR?.trim()
   let claudeHome = customClaudeHome || paths.claudeHome
-  if (!customClaudeHome) {
-    // The user's ~/.claude is not owned by Wework and must never be relocated.
-    await migrateWorkbenchHome({
-      acquireLock,
-      sourceHome: join(executorHome, 'claude'),
-      targetHome: paths.claudeHome,
-      stateDirectory: join(paths.migrations, 'claude-home-v1'),
-      initialize: true,
-      preserveExistingSource: true,
-    })
-    await migrateWorkbenchHome({
-      acquireLock,
-      sourceHome: join(executorHome, 'claude'),
-      targetHome: paths.claudeHome,
-      stateDirectory: join(paths.migrations, 'claude-home-v1'),
-    })
-    // Claude hashes the lexical CLAUDE_CONFIG_DIR for Keychain service identity.
-    // Keep its lexical spelling while physically relocating the backing data.
-    const legacyClaudeHome = join(executorHome, 'claude')
-    const journal = JSON.parse(
-      await readFile(
-        join(paths.migrations, 'claude-home-v1', 'workbench-home-migration.json'),
-        'utf8'
-      )
-    )
-    if (journal.strategy === 'relocate-source') claudeHome = legacyClaudeHome
+  const claudeSourceHome = join(executorHome, 'claude')
+  const claudeStateDirectory = join(paths.migrations, 'claude-home-v1')
+
+  // One native lock process covers every migration in this startup. Individual
+  // migrations receive a non-owning lease so their transaction semantics remain local.
+  const lockResources = [executorHome, paths.desktop]
+  if (!environment.WEGENT_CODEX_HOME?.trim()) {
+    lockResources.push(codexSourceHome, paths.codexHome, codexStateDirectory)
   }
-  const lock = await acquireLock([executorHome, paths.desktop])
+  if (!environment.WEGENT_CAPABILITIES_HOME?.trim()) {
+    lockResources.push(capabilitiesSourceHome, paths.capabilities, capabilitiesStateDirectory)
+  }
+  if (!customClaudeHome) {
+    lockResources.push(claudeSourceHome, paths.claudeHome, claudeStateDirectory)
+  }
+  const migrationLock = await executorMigrationLock(executorCommand)(lockResources)
+  const acquireLock: WorkbenchMigrationLockAdapter = async () => ({
+    assertHeld: () => migrationLock.assertHeld(),
+    release: async () => undefined,
+  })
   try {
-    lock.assertHeld()
+    if (!environment.WEGENT_CODEX_HOME?.trim()) {
+      await migrateWorkbenchHome({
+        acquireLock,
+        sourceHome: codexSourceHome,
+        targetHome: paths.codexHome,
+        stateDirectory: codexStateDirectory,
+        initialize: true,
+        beforeMove: home => assertCodexHomeCanMove(executorCommand, home),
+      })
+    }
+    if (!environment.WEGENT_CAPABILITIES_HOME?.trim()) {
+      await migrateWorkbenchHome({
+        acquireLock,
+        sourceHome: capabilitiesSourceHome,
+        targetHome: paths.capabilities,
+        stateDirectory: capabilitiesStateDirectory,
+        initialize: true,
+      })
+    }
+    if (!customClaudeHome) {
+      // The user's ~/.claude is not owned by Wework and must never be relocated.
+      await migrateWorkbenchHome({
+        acquireLock,
+        sourceHome: claudeSourceHome,
+        targetHome: paths.claudeHome,
+        stateDirectory: claudeStateDirectory,
+        initialize: true,
+        preserveExistingSource: true,
+      })
+      await migrateWorkbenchHome({
+        acquireLock,
+        sourceHome: claudeSourceHome,
+        targetHome: paths.claudeHome,
+        stateDirectory: claudeStateDirectory,
+      })
+      // Claude hashes the lexical CLAUDE_CONFIG_DIR for Keychain service identity.
+      // Keep its lexical spelling while physically relocating the backing data.
+      const journal = JSON.parse(
+        await readFile(join(claudeStateDirectory, 'workbench-home-migration.json'), 'utf8')
+      )
+      if (journal.strategy === 'relocate-source') claudeHome = claudeSourceHome
+    }
+    migrationLock.assertHeld()
     await migrateWorkbenchDataInWorker({
       source: executorHome,
       target: paths.desktop,
       state: paths.migrations,
     })
-    lock.assertHeld()
+    migrationLock.assertHeld()
   } finally {
-    await lock.release()
+    await migrationLock.release()
   }
   return {
     ...branded,

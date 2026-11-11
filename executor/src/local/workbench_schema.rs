@@ -2,12 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::workbench_lock::MAX_MIGRATION_LOCK_RESOURCES;
+
 /// Read-only startup handshake. Keep this independent of config, logging and Homes.
 pub fn response() -> serde_json::Value {
     serde_json::json!({
         "protocol_version": 1,
         "workbench_layout_versions": [1],
         "capability_manifest_versions": [2],
+        "workbench_lock_resources": MAX_MIGRATION_LOCK_RESOURCES,
     })
 }
 
@@ -33,5 +36,13 @@ mod tests {
         assert!(!is_query(["--version"]));
         assert!(!is_query(["--workbench-schema", "--upgrade"]));
         assert!(!is_query(["--config", "--workbench-schema"]));
+    }
+
+    #[test]
+    fn advertises_the_startup_migration_lock_capacity() {
+        assert_eq!(
+            response()["workbench_lock_resources"],
+            MAX_MIGRATION_LOCK_RESOURCES
+        );
     }
 }

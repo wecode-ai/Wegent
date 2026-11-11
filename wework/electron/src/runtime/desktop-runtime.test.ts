@@ -498,6 +498,38 @@ describe('DesktopRuntime lifecycle generation', () => {
     )
   })
 
+  test('shares one compatibility verifier and reports executor preparation substeps', async () => {
+    const verify = vi.fn(async () => undefined)
+    const resolveDeviceId = vi.fn(async () => 'prefetched-device')
+    const startupSteps: string[] = []
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      {
+        assertExecutorCompatibility: verify,
+        resolveDeviceId,
+        createExecutor: () => new FakeExecutor(),
+        onStartupStep: (step, status) => startupSteps.push(`${step}:${status}`),
+      }
+    )
+
+    await runtime.start()
+
+    expect(verify).toHaveBeenCalledOnce()
+    expect(resolveDeviceId).toHaveBeenCalledOnce()
+    expect(createdOptions).toHaveLength(1)
+    expect(createdOptions[0].env?.WEGENT_APP_IPC_DEVICE_ID).toBe('prefetched-device')
+    expect(startupSteps).toEqual(
+      expect.arrayContaining([
+        'executor-compatibility:started',
+        'executor-compatibility:completed',
+        'device-id:started',
+        'device-id:completed',
+        'device-name:started',
+        'device-name:completed',
+      ])
+    )
+  })
+
   test('an old-generation start cannot clear a new-generation start', async () => {
     const runtime = createRuntime(EXTERNAL_DSH)
     const oldStartHang = deferred<void>()
