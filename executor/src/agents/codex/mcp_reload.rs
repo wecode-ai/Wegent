@@ -79,15 +79,9 @@ impl CodexAppServerClient {
                 tokio::pin!(notified);
                 notified.as_mut().enable();
                 let guard = Arc::clone(&gate).lock_owned().await;
-                let active = self
-                    .state
-                    .lock()
-                    .await
-                    .active_threads_snapshot()
-                    .get(thread_id)
-                    .copied()
-                    .unwrap_or(0)
-                    > 0;
+                // Goal continuation eligibility protects idle restarts, but its
+                // next turn may require this resume before it can start.
+                let active = self.state.lock().await.thread_has_active_turn(thread_id);
                 if active
                     && matches!(
                         plan.start,
