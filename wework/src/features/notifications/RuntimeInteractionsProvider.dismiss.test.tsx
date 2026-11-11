@@ -227,3 +227,88 @@ it('keeps unarchived work readable when dismissal-marker storage cannot be read'
   expect(() => context!.isDismissed?.('project-issue:local:12:ISSUE-2:untracked')).not.toThrow()
   expect(context!.isDismissed?.('project-issue:local:12:ISSUE-2:untracked')).toBe(false)
 })
+
+it.each(['same-question', 'later-question', 'another-issue'])(
+  'preserves native dismissal across the shared representation: %s',
+  async scenario => {
+    const { interactionQuestion, interactionTask } = await import('./runtimeInteractions.fixtures')
+    const task = {
+      ...interactionTask,
+      address: { ...interactionTask.address, deviceId: 'native-device-alias' },
+      task: {
+        ...interactionTask.task,
+        runtimeHandle: {
+          origin: {
+            type: 'board_comment',
+            cloudProjectId: 'project',
+            loopItemId: 'ISSUE-1',
+            rootCommentId: 'root',
+            projectStore: 'backend',
+          },
+        },
+      },
+    }
+    const rendered = view(interactionQuestion, task)
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const native = context!.pending[0]
+    await act(async () => {
+      await context!.dismiss(native)
+    })
+    const question = {
+      id: 'shared-after-discovery',
+      project_id: 'project',
+      issue_id: scenario === 'another-issue' ? 'ISSUE-2' : 'ISSUE-1',
+      root_comment_id: 'root',
+      runtime_device_id: interactionTask.address.deviceId,
+      runtime_task_id: native.task.address.taskId,
+      item_id: scenario === 'later-question' ? 'later-question' : native.payload.itemId!,
+      question: 'Shared question',
+      recipient_user_id: 7,
+      status: 'pending',
+      version: 1,
+      blocks_progress: true,
+      created_at: new Date(native.createdAt).toISOString(),
+    }
+    const inbox = vi.fn().mockResolvedValue({ items: [question] })
+    rendered.rerenderSource({
+      ...rendered.taskSource,
+      userId: 7,
+      services: {
+        ...rendered.taskSource.services!,
+        issueHumanRequestsApi: {
+          inbox,
+          list: vi.fn().mockResolvedValue({ items: [] }),
+          assign: vi.fn(),
+        },
+      },
+    })
+    await act(async () => {
+      await context!.refresh()
+    })
+    await waitFor(() => expect(inbox).toHaveBeenCalled())
+    expect(context!.pending.some(item => item.sharedRequest?.id === question.id)).toBe(
+      scenario !== 'same-question'
+    )
+    if (scenario === 'same-question') {
+      rendered.unmount()
+      localStorage.setItem('wework.interactions:test:1:history', '[]')
+      const restarted = view(interactionQuestion, task)
+      restarted.rerenderSource({
+        ...restarted.taskSource,
+        userId: 7,
+        services: {
+          ...restarted.taskSource.services!,
+          issueHumanRequestsApi: {
+            inbox,
+            list: vi.fn().mockResolvedValue({ items: [] }),
+            assign: vi.fn(),
+          },
+        },
+      })
+      await act(async () => {
+        await context!.refresh()
+      })
+      expect(context!.pending.some(item => item.sharedRequest?.id === question.id)).toBe(false)
+    }
+  }
+)

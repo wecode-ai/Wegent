@@ -188,3 +188,28 @@ it('adds local dismissal without losing authoritative resolution or changing his
   saveInteractionState('history', dismissed)
   expect(readInteractionHistory('history')).toEqual(dismissed)
 })
+
+it('validates the exact Issue identity of a local dismissal without granting resolution authority', () => {
+  const dismissed = {
+    ...entry(1),
+    dismissed: true as const,
+    dismissedQuestionIdentity: JSON.stringify([
+      'backend',
+      'project',
+      'ISSUE-1',
+      'review',
+      'question',
+    ]),
+  }
+  saveInteractionState('history', [dismissed])
+  expect(readInteractionHistory('history')).toEqual([dismissed])
+  expect(readInteractionHistory('history')[0].resolvedIssueQuestion).toBeUndefined()
+  for (const invalid of [
+    'not-json',
+    JSON.stringify(['backend', 'project']),
+    JSON.stringify(['other', 'project', 'ISSUE-1', 'review', 'question']),
+  ]) {
+    saveInteractionState('history', [{ ...dismissed, dismissedQuestionIdentity: invalid }])
+    expect(readInteractionHistory('history')).toEqual([])
+  }
+})

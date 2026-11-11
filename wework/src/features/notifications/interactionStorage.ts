@@ -26,21 +26,32 @@ function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-function validIssueResolution(value: unknown, id: string): boolean {
-  if (
-    !record(value) ||
-    typeof value.questionIdentity !== 'string' ||
-    value.nativeInteractionId !== id
-  )
-    return false
+function validIssueQuestionIdentity(value: unknown): value is string {
+  if (typeof value !== 'string') return false
   try {
-    const identity: unknown = JSON.parse(value.questionIdentity)
-    const native: unknown = JSON.parse(id)
+    const identity: unknown = JSON.parse(value)
     return (
       Array.isArray(identity) &&
       identity.length === 5 &&
       ['local', 'backend'].includes(identity[0]) &&
-      identity.every(part => typeof part === 'string' && part.length > 0) &&
+      identity.every(part => typeof part === 'string' && part.length > 0)
+    )
+  } catch {
+    return false
+  }
+}
+
+function validIssueResolution(value: unknown, id: string): boolean {
+  if (
+    !record(value) ||
+    !validIssueQuestionIdentity(value.questionIdentity) ||
+    value.nativeInteractionId !== id
+  )
+    return false
+  try {
+    const identity = JSON.parse(value.questionIdentity) as string[]
+    const native: unknown = JSON.parse(id)
+    return (
       Array.isArray(native) &&
       native.length === 3 &&
       native.every(part => typeof part === 'string' && part.length > 0) &&
@@ -171,6 +182,8 @@ function interactionHistoryRows(value: unknown): InteractionHistory[] {
         record(row) &&
         typeof row.id === 'string' &&
         (row.dismissed === undefined || row.dismissed === true) &&
+        (row.dismissedQuestionIdentity === undefined ||
+          (row.dismissed === true && validIssueQuestionIdentity(row.dismissedQuestionIdentity))) &&
         (row.resolvedIssueQuestion === undefined ||
           validIssueResolution(row.resolvedIssueQuestion, row.id)) &&
         (row.source === undefined || isInteractionSource(row.source)) &&
@@ -195,6 +208,10 @@ function interactionHistoryRows(value: unknown): InteractionHistory[] {
 
 export function readInteractionHistory(key: string): InteractionHistory[] {
   return interactionHistoryRows(read(key)).slice(0, 100)
+}
+
+export function parseInteractionHistory(value: string | null): InteractionHistory[] {
+  return interactionHistoryRows(value === null ? null : JSON.parse(value)).slice(0, 100)
 }
 
 export type InteractionDraftState = Record<string, string | InteractionReplyDraft>
@@ -244,6 +261,8 @@ export function archiveInteraction(
   if (previous) {
     if (
       (!entry.dismissed || previous.dismissed) &&
+      (!entry.dismissedQuestionIdentity ||
+        previous.dismissedQuestionIdentity === entry.dismissedQuestionIdentity) &&
       (!entry.resolvedIssueQuestion ||
         JSON.stringify(previous.resolvedIssueQuestion) ===
           JSON.stringify(entry.resolvedIssueQuestion))
@@ -254,6 +273,9 @@ export function archiveInteraction(
         ? {
             ...row,
             ...(entry.dismissed ? { dismissed: true as const } : {}),
+            ...(entry.dismissedQuestionIdentity
+              ? { dismissedQuestionIdentity: entry.dismissedQuestionIdentity }
+              : {}),
             ...(entry.resolvedIssueQuestion
               ? { resolvedIssueQuestion: entry.resolvedIssueQuestion }
               : {}),

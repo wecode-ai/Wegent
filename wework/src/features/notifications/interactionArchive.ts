@@ -1,10 +1,9 @@
-import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
-import type { InteractionHistory } from './RuntimeInteractionsContext'
 import {
-  archiveInteraction,
-  readInteractionHistory,
-  saveInteractionState,
-} from './interactionStorage'
+  commitLocalStorageValue,
+  readCommittedLocalStorageValue,
+} from '@/desktop/localStoragePersistence'
+import type { InteractionHistory } from './RuntimeInteractionsContext'
+import { archiveInteraction, parseInteractionHistory } from './interactionStorage'
 import {
   interactionSource,
   interactionOriginalScheme,
@@ -31,26 +30,12 @@ export function interactionHistoryEntry(
 export async function persistInteractionArchive(
   key: string,
   entry: InteractionHistory,
-  failedWrites: Map<string, InteractionHistory[] | null>,
   onCommitted: (history: InteractionHistory[]) => void
 ): Promise<void> {
   await navigator.locks.request(key, async () => {
-    const current = failedWrites.get(key) ?? readInteractionHistory(key)
+    const current = parseInteractionHistory(await readCommittedLocalStorageValue(key))
     const next = archiveInteraction(current, entry)
-    let written = false
-    try {
-      if (next !== current || failedWrites.has(key)) {
-        if (!saveInteractionState(key, next)) throw new Error('Could not save interaction history')
-        written = true
-      }
-      await flushDesktopLocalStoragePersistence()
-      failedWrites.delete(key)
-    } catch (cause) {
-      // Restore the visible snapshot before another item can acquire the archive lock.
-      const restored = !written || saveInteractionState(key, current)
-      failedWrites.set(key, restored ? null : current)
-      throw cause
-    }
+    if (next !== current) await commitLocalStorageValue(key, JSON.stringify(next))
     onCommitted(next)
   })
 }

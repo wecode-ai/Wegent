@@ -157,7 +157,6 @@ function RuntimeInteractionsState({
   const successfulReadApi = useRef(source?.services?.runtimeWorkApi)
   const fetching = useRef(false)
   const reportedOfflineDevices = useRef(new Set<string>())
-  const failedArchiveWrites = useRef(new Map<string, InteractionHistory[] | null>())
   const mounted = useRef(true)
   const [loading, setLoading] = useState(false)
   const [replyNotice, setReplyNotice] = useState<string | null>(null)
@@ -224,7 +223,6 @@ function RuntimeInteractionsState({
           ...('task' in item ? interactionHistoryEntry(item, answeredAt) : { ...item, answeredAt }),
           ...(resolvedIssueQuestion ? { resolvedIssueQuestion } : {}),
         },
-        failedArchiveWrites.current,
         next => {
           if (mounted.current) {
             setHistory(next)
@@ -512,9 +510,17 @@ function RuntimeInteractionsState({
   }, [refresh, signature, source?.services?.runtimeWorkApi])
 
   const isDismissed = useCallback(
-    (id: string) =>
-      history.some(entry => entry.id === id && entry.dismissed) ||
-      readInteractionDismissal(acceptancePrefix + id),
+    (id: string, questionIdentity?: string | null) =>
+      history.some(
+        entry =>
+          entry.dismissed &&
+          (questionIdentity
+            ? entry.dismissedQuestionIdentity === questionIdentity
+            : entry.id === id)
+      ) ||
+      readInteractionDismissal(
+        acceptancePrefix + (questionIdentity ? `issue:${questionIdentity}` : id)
+      ),
     [history, acceptancePrefix]
   )
   const pending = useMemo(() => {
@@ -560,7 +566,7 @@ function RuntimeInteractionsState({
       ...runtime.filter(
         item => !shared.has(item.id) && !sharedQuestions.has(issueQuestionIdentity(item))
       ),
-      ...sharedItems.filter(item => !isDismissed(item.id)),
+      ...sharedItems.filter(item => !isDismissed(item.id, issueQuestionIdentity(item))),
     ].sort((a, b) => b.createdAt - a.createdAt)
   }, [
     acceptancePrefix,
@@ -615,14 +621,19 @@ function RuntimeInteractionsState({
       try {
         await navigator.locks.request(historyKey + ':' + item.id, async () => {
           const handledAt = Date.now()
+          const questionIdentity =
+            'task' in item ? issueQuestionIdentity(item) : item.dismissedQuestionIdentity
           await archive(
             {
               ...('task' in item ? interactionHistoryEntry(item, handledAt) : item),
               dismissed: true,
+              ...(questionIdentity ? { dismissedQuestionIdentity: questionIdentity } : {}),
             },
             handledAt
           )
           saveInteractionState(acceptancePrefix + item.id, 'dismissed')
+          if (questionIdentity)
+            saveInteractionState(acceptancePrefix + `issue:${questionIdentity}`, 'dismissed')
           if (!mounted.current) return
           markHandled(item.id)
           clearReplyDraft(item.id)

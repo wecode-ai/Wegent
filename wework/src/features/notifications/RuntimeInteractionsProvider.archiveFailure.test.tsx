@@ -46,26 +46,20 @@ it.each(['queued', 'synchronous'])(
     await waitFor(() => expect(context!.pending[0].sharedRequest?.id).toBe(question.id))
     const failure = new Error('Native storage update failed')
     const historyKey = 'wework.interactions:test:1:history'
-    const originalSetItem = Storage.prototype.setItem
+    const commitStorage = harness.commitStorage.getMockImplementation()!
     let historyWrites = 0
     let historyAttempts = 0
-    let flushedWrites = 0
     let storageAvailable = false
-    let stickyFailure: Error | null = null
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
-      if (this === localStorage && key === historyKey) {
+    harness.commitStorage.mockImplementation(async (key: string, value: string) => {
+      if (key === historyKey) {
         historyAttempts++
         if (mode === 'synchronous' && !storageAvailable) throw failure
       }
-      originalSetItem.call(this, key, value)
-      if (this === localStorage && key === historyKey) historyWrites++
+      await commitStorage(key, value)
+      if (key === historyKey) historyWrites++
     })
     harness.flushStorage.mockImplementation(async () => {
-      if (historyWrites !== flushedWrites) {
-        flushedWrites = historyWrites
-        stickyFailure = storageAvailable ? null : failure
-      }
-      if (stickyFailure) throw stickyFailure
+      if (!storageAvailable) throw failure
     })
     inbox.mockResolvedValue({ items: [] })
     list.mockResolvedValue({
@@ -102,8 +96,8 @@ it.each(['queued', 'synchronous'])(
       await context!.refresh()
     })
     await waitFor(() => expect(context!.history).toHaveLength(1))
-    expect(historyWrites).toBe(mode === 'queued' ? 5 : 1)
-    expect(historyAttempts).toBe(mode === 'queued' ? 5 : 3)
+    expect(historyWrites).toBe(1)
+    expect(historyAttempts).toBe(3)
     expect(context!.pending).toHaveLength(0)
     expect(harness.send).not.toHaveBeenCalled()
     const proof = context!.history[0].resolvedIssueQuestion!
@@ -123,8 +117,8 @@ it.each(['queued', 'synchronous'])(
     await act(async () => {
       await context!.refresh()
     })
-    expect(historyWrites).toBe(mode === 'queued' ? 5 : 1)
-    expect(historyAttempts).toBe(mode === 'queued' ? 5 : 3)
+    expect(historyWrites).toBe(1)
+    expect(historyAttempts).toBe(3)
     expect(context!.history).toHaveLength(1)
   }
 )

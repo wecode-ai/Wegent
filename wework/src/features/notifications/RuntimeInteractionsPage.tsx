@@ -9,7 +9,7 @@ import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { issueWaitingSince } from '@wegent/collaboration'
 import { IssueWaitingTime } from './IssueWaitingTime'
 import { usePendingProjectIssues } from './usePendingProjectIssues'
-import { issueHumanInteraction } from './issueHumanInteractions'
+import { issueHumanInteraction, issueQuestionIdentity } from './issueHumanInteractions'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   INTERACTION_SOURCES,
@@ -129,14 +129,14 @@ export function RuntimeInteractionsPage({
   const projectRows = projectIssues.items.filter(
     row =>
       !interactions?.isDismissed?.(projectDismissalId(row)) &&
-      !row.item.human_requests?.some(
-        request =>
-          (request.status === 'pending' || request.status === 'answering') &&
-          (interactions?.isDismissed?.(issueHumanInteraction(request, row.store).id) ||
-            interactions?.history.some(
-              accepted => accepted.id === issueHumanInteraction(request, row.store).id
-            ))
-      ) &&
+      !row.item.human_requests?.some(request => {
+        if (request.status !== 'pending' && request.status !== 'answering') return false
+        const interaction = issueHumanInteraction(request, row.store)
+        return (
+          interactions?.isDismissed?.(interaction.id, issueQuestionIdentity(interaction)) ||
+          interactions?.history.some(accepted => accepted.id === interaction.id)
+        )
+      }) &&
       !interactions?.pending.some(
         request =>
           request.project?.store === row.store &&
