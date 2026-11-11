@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import {
   createCollaborationTranslator,
@@ -9,11 +9,14 @@ import {
   dueDateTimeLocalFromSource,
   dueDateTimeLocalToSource,
   IssueDetailPrioritySelect,
+  IssueDetailSearchableSelect,
   IssueDetailStatusSelect,
   isScheduleRangeInvalid,
   parseIssueAssigneeTarget,
   persistIssueDetailFields,
   useIssueDetailDraft,
+  useIssueFieldSaves,
+  type IssueDetailDraftValue,
   TagEditor,
   type CollaborationIssue,
   type CollaborationProject,
@@ -31,6 +34,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useStandInPanelNavigation } from '@/features/todo/useStandInPanelNavigation'
 import { ThreadParticipants } from './ThreadParticipants'
+import type { ThreadHierarchyRenderContext } from './threadHierarchy'
 
 const field =
   'w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-text-primary focus-visible:ring-2 focus-visible:ring-focus'
@@ -51,6 +55,7 @@ export function ThreadSettings({
   onChanged,
   onClose,
   registerLeaveGuard,
+  renderHierarchy,
 }: {
   group: ChatGroup
   project: CollaborationProject
@@ -66,18 +71,14 @@ export function ThreadSettings({
   onChanged(): void
   onClose(): void
   registerLeaveGuard?(guard: ((action: () => void) => void) | null): void
+  renderHierarchy?(context: ThreadHierarchyRenderContext): ReactNode
 }) {
   const { t } = useTranslation('collaboration')
   const translate = useMemo(() => createCollaborationTranslator(locale), [locale])
   const port = useMemo(() => createSharedIssueUpdatePort(api.issues), [api.issues])
-  const { draft, setField, dirty } = useIssueDetailDraft({
-    source: item,
-    initial: item,
-    startDateFromSource: dueDateTimeLocalFromSource,
-    dueDateFromSource: dueDateTimeLocalFromSource,
-  })
+  const [persisted, setPersisted] = useState<CollaborationIssue | null>(null)
+  const current = persisted?.id === item.id && persisted.version > item.version ? persisted : item
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [projects, setProjects] = useState<CollaborationProject[]>([])
   const [link, setLink] = useState<ProjectLink | null>(null)
@@ -90,18 +91,33 @@ export function ThreadSettings({
     items: Milestone[]
     error: string | null
   } | null>(null)
-  const [selectedMilestone, setSelectedMilestone] = useState<string | null>(null)
+  const [selectedMilestone, setSelectedMilestone] = useState<{ value: string } | null>(null)
   const editable = group.status === 'active' && group.role !== 'Viewer'
   const projectId = link?.project?.id ?? null
   const milestones = milestoneResult?.projectId === projectId ? milestoneResult.items : []
   const milestoneFailure = milestoneResult?.projectId === projectId ? milestoneResult.error : null
-  const actualMilestone = selectedMilestone ?? item.milestone_id ?? ''
+  const actualMilestone = selectedMilestone?.value ?? current.milestone_id ?? ''
+  const fieldSaves = useIssueFieldSaves(current, updated => {
+    setPersisted(updated)
+    onChanged()
+  })
+  const { draft, setField, dirty } = useIssueDetailDraft({
+    source: current,
+    preserveEditedFields: fieldSaves.pending,
+    initial: item,
+    startDateFromSource: dueDateTimeLocalFromSource,
+    dueDateFromSource: dueDateTimeLocalFromSource,
+  })
+  const descriptionDirty = draft.description !== current.description
+  const canSaveDescription = descriptionDirty || fieldSaves.pendingKeys.includes('description')
+  const busy = saving || fieldSaves.pending
   const invalidDates = isScheduleRangeInvalid(draft.startDate, draft.dueDate)
+  const dateErrorId = useId()
   const excludedParents = useMemo(() => collectIssueSubtreeIds(items, item.id), [items, item.id])
   const metadataDirty = dirty || selectedMilestone !== null
   const navigation = useStandInPanelNavigation(
     metadataDirty || selectedProject !== null,
-    saving,
+    busy,
     () => setConfirmClose(true)
   )
   useEffect(() => {
@@ -156,60 +172,61 @@ export function ThreadSettings({
     }
   }, [catalog, projectId])
   const statuses = threadStatuses(collaborationMessages[locale])
-  const save = async () => {
-    if (saving || !editable || !draft.title.trim() || invalidDates) return
-    setSaving(true)
-    setError(null)
+  const saveProperties = (
+    key: string,
+    values: Parameters<typeof persistIssueDetailFields>[1],
+    onSaved?: (updated: CollaborationIssue) => void
+  ) => {
+    if (!editable || saving) return
     setSaved(false)
-    try {
-      const assignment = parseIssueAssigneeTarget(draft.assigneeTarget)
-      await persistIssueDetailFields(
-        item,
-        {
-          title: draft.title.trim(),
-          description: draft.description,
-          status: draft.status,
-          priority: draft.priority,
-          tags: draft.tags,
-          parent_id: draft.parentId || null,
-          start_at:
-            dueDateTimeLocalToSource(draft.startDate, {
-              sourceValue: item.start_at ?? null,
-              sourceInputValue: dueDateTimeLocalFromSource(item.start_at ?? null),
-            }) || null,
-          due_at:
-            dueDateTimeLocalToSource(draft.dueDate, {
-              sourceValue: item.due_at,
-              sourceInputValue: dueDateTimeLocalFromSource(item.due_at),
-            }) || null,
-          ...(draft.assigneeTarget !==
-          (item.assignee_user_id != null
-            ? `user:${item.assignee_user_id}`
-            : item.assignee_agent_id
-              ? `agent:${item.assignee_agent_id}`
-              : '')
-            ? {
-                assignee_user_id: assignment.assigneeUserId,
-                assignee_agent_id: assignment.assigneeAgentId,
-                assignee_team_id: assignment.assigneeTeamId,
-              }
-            : {}),
-          ...(selectedMilestone !== null ? { milestone_id: selectedMilestone || null } : {}),
-        },
-        port
-      )
-      setSelectedMilestone(null)
-      setSaved(true)
-      onChanged()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setSaving(false)
+    return fieldSaves.save(key, source => persistIssueDetailFields(source, values, port), onSaved)
+  }
+  const saveTitle = () => {
+    const title = draft.title.trim()
+    if (!title) return
+    setField('title', title)
+    void saveProperties('title', { title })
+  }
+  const changeProperty = <K extends keyof IssueDetailDraftValue>(
+    key: K,
+    value: IssueDetailDraftValue[K]
+  ) => {
+    setField(key, value)
+    if (key === 'startDate' || key === 'dueDate') {
+      const start = key === 'startDate' ? String(value) : draft.startDate
+      const due = key === 'dueDate' ? String(value) : draft.dueDate
+      if (isScheduleRangeInvalid(start, due)) return
+      void saveProperties('schedule', {
+        start_at:
+          dueDateTimeLocalToSource(start, {
+            sourceValue: current.start_at ?? null,
+            sourceInputValue: dueDateTimeLocalFromSource(current.start_at ?? null),
+          }) || null,
+        due_at:
+          dueDateTimeLocalToSource(due, {
+            sourceValue: current.due_at,
+            sourceInputValue: dueDateTimeLocalFromSource(current.due_at),
+          }) || null,
+      })
+    } else if (key === 'assigneeTarget') {
+      const assignment = parseIssueAssigneeTarget(value as IssueDetailDraftValue['assigneeTarget'])
+      void saveProperties(key, {
+        assignee_user_id: assignment.assigneeUserId,
+        assignee_agent_id: assignment.assigneeAgentId,
+        assignee_team_id: assignment.assigneeTeamId,
+      })
+    } else {
+      void saveProperties(key, { [key === 'parentId' ? 'parent_id' : key]: value || null })
     }
+  }
+  const saveDescription = async () => {
+    if (!canSaveDescription) return
+    const updated = await saveProperties('description', { description: draft.description })
+    if (updated) setSaved(true)
   }
   const applyProject = async () => {
     if (
-      saving ||
+      busy ||
       selectedProject === null ||
       !canClassify ||
       metadataDirty ||
@@ -247,7 +264,7 @@ export function ThreadSettings({
             type="button"
             data-testid="thread-settings-close"
             aria-label={t('close')}
-            disabled={saving}
+            disabled={busy}
             onClick={() => navigation.requestLeave(onClose)}
             className="rounded p-1 text-text-muted hover:bg-hover"
           >
@@ -264,15 +281,9 @@ export function ThreadSettings({
           type="submit"
           form="thread-metadata-form"
           data-testid="thread-settings-save"
-          disabled={
-            saving ||
-            !editable ||
-            !draft.title.trim() ||
-            invalidDates ||
-            (!dirty && selectedMilestone === null)
-          }
+          disabled={saving || !editable || !canSaveDescription}
         >
-          {t('saveMetadata')}
+          {t('saveDescription')}
         </Button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
@@ -282,7 +293,7 @@ export function ThreadSettings({
             className="space-y-5"
             onSubmit={event => {
               event.preventDefault()
-              void save()
+              void saveDescription()
             }}
           >
             <label className="block space-y-2 text-sm text-text-primary">
@@ -298,6 +309,13 @@ export function ThreadSettings({
                   setField('title', event.target.value)
                   setSaved(false)
                 }}
+                onBlur={saveTitle}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                    event.preventDefault()
+                    saveTitle()
+                  }
+                }}
               />
             </label>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -310,7 +328,7 @@ export function ThreadSettings({
                   statuses={statuses}
                   value={draft.status}
                   disabled={!editable || saving}
-                  onChange={value => setField('status', value)}
+                  onChange={value => changeProperty('status', value)}
                 />
               </label>
               <label className="space-y-2 text-sm text-text-primary">
@@ -328,7 +346,7 @@ export function ThreadSettings({
                     high: translate('todo.priority_high'),
                     urgent: translate('todo.priority_urgent'),
                   }}
-                  onChange={value => setField('priority', value)}
+                  onChange={value => changeProperty('priority', value)}
                 />
               </label>
               <label className="space-y-2 text-sm text-text-primary">
@@ -339,7 +357,10 @@ export function ThreadSettings({
                   disabled={!editable || saving}
                   value={draft.assigneeTarget}
                   onChange={event =>
-                    setField('assigneeTarget', event.target.value as typeof draft.assigneeTarget)
+                    changeProperty(
+                      'assigneeTarget',
+                      event.target.value as typeof draft.assigneeTarget
+                    )
                   }
                 >
                   <option value="">{t('unassigned')}</option>
@@ -367,7 +388,7 @@ export function ThreadSettings({
                   className={field}
                   disabled={!editable || saving}
                   value={draft.parentId}
-                  onChange={event => setField('parentId', event.target.value)}
+                  onChange={event => changeProperty('parentId', event.target.value)}
                 >
                   <option value="">{t('none')}</option>
                   {items
@@ -384,10 +405,12 @@ export function ThreadSettings({
                 <input
                   type="datetime-local"
                   data-testid="thread-settings-start"
+                  aria-invalid={invalidDates || undefined}
+                  aria-describedby={invalidDates ? dateErrorId : undefined}
                   className={field}
                   disabled={!editable || saving}
                   value={draft.startDate}
-                  onChange={event => setField('startDate', event.target.value)}
+                  onChange={event => changeProperty('startDate', event.target.value)}
                 />
               </label>
               <label className="space-y-2 text-sm text-text-primary">
@@ -395,15 +418,17 @@ export function ThreadSettings({
                 <input
                   type="datetime-local"
                   data-testid="thread-settings-due"
+                  aria-invalid={invalidDates || undefined}
+                  aria-describedby={invalidDates ? dateErrorId : undefined}
                   className={field}
                   disabled={!editable || saving}
                   value={draft.dueDate}
-                  onChange={event => setField('dueDate', event.target.value)}
+                  onChange={event => changeProperty('dueDate', event.target.value)}
                 />
               </label>
             </div>
             {invalidDates && (
-              <p role="alert" className="text-sm text-destructive">
+              <p id={dateErrorId} role="alert" className="text-sm text-destructive">
                 {t('invalidDates')}
               </p>
             )}
@@ -412,7 +437,7 @@ export function ThreadSettings({
               <span className="flex min-h-10 rounded-md border border-border px-3 py-2 focus-within:ring-2 focus-within:ring-focus">
                 <TagEditor
                   tags={draft.tags}
-                  onChange={value => setField('tags', value)}
+                  onChange={value => changeProperty('tags', value)}
                   disabled={!editable || saving}
                   testIdPrefix="thread-settings-tags"
                   placeholder={t('addTag')}
@@ -430,26 +455,38 @@ export function ThreadSettings({
                 rows={5}
                 disabled={!editable || saving}
                 value={draft.description}
-                onChange={event => setField('description', event.target.value)}
+                onChange={event => {
+                  setField('description', event.target.value)
+                  setSaved(false)
+                }}
               />
             </label>
             {projectId && (
               <label className="block space-y-2 text-sm text-text-primary">
                 <span>{t('milestone')}</span>
-                <select
-                  data-testid="thread-settings-milestone"
+                <IssueDetailSearchableSelect
+                  testId="thread-settings-milestone"
+                  accessibleLabel={t('milestone')}
                   className={field}
                   disabled={!editable || saving || Boolean(milestoneFailure)}
                   value={actualMilestone}
-                  onChange={event => setSelectedMilestone(event.target.value)}
-                >
-                  <option value="">{t('none')}</option>
-                  {milestones.map(milestone => (
-                    <option key={milestone.id} value={milestone.id}>
-                      {milestone.title}
-                    </option>
-                  ))}
-                </select>
+                  searchPlaceholder={translate('todo.search_milestone')}
+                  emptyLabel={translate('todo.no_matching_milestone')}
+                  options={[
+                    { value: '', label: translate('todo.not_set') },
+                    ...milestones.map(milestone => ({
+                      value: milestone.id,
+                      label: milestone.title,
+                    })),
+                  ]}
+                  onChange={value => {
+                    const selection = { value }
+                    setSelectedMilestone(selection)
+                    void saveProperties('milestone', { milestone_id: value || null }, () => {
+                      setSelectedMilestone(current => (current === selection ? null : current))
+                    })
+                  }}
+                />
               </label>
             )}
             {projectId && milestoneFailure && (
@@ -457,17 +494,40 @@ export function ThreadSettings({
                 {milestoneFailure}
               </p>
             )}
-            {error && (
-              <p role="alert" className="text-sm text-destructive">
-                {error}
-              </p>
+            <p role="status" className="text-xs text-text-muted">
+              {fieldSaves.pending ? t('savingProperties') : t('autosaveProperties')}
+            </p>
+            {Boolean(fieldSaves.error) && (
+              <div role="alert" className="space-y-2 text-sm text-destructive">
+                <p>
+                  {fieldSaves.error instanceof Error ? fieldSaves.error.message : t('saveFailed')}
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  data-testid="thread-settings-retry"
+                  disabled={busy || !editable}
+                  onClick={fieldSaves.retry}
+                >
+                  {t('retry')}
+                </Button>
+              </div>
             )}
-            {saved && (
+            {saved && !descriptionDirty && (
               <p role="status" className="text-sm text-text-muted">
                 {t('saved')}
               </p>
             )}
           </form>
+          {renderHierarchy?.({
+            item: current,
+            classificationProject: canClassify
+              ? editableProjects.find(
+                  candidate => candidate.id === projectId && candidate.status === 'active'
+                )
+              : undefined,
+            requestLeave: navigation.requestLeave,
+          })}
           <section className="space-y-3 border-t border-border pt-6">
             <h2 className="text-sm font-medium text-text-primary">{t('optionalProject')}</h2>
             <p className="text-xs text-text-muted">{t('projectBoundary')}</p>
@@ -480,7 +540,7 @@ export function ThreadSettings({
                   value={
                     selectedProject ?? (link.restricted ? '__restricted__' : (projectId ?? ''))
                   }
-                  disabled={!canClassify || saving || metadataDirty}
+                  disabled={!canClassify || busy || metadataDirty}
                   onChange={event => {
                     setSelectedProject(event.target.value)
                     if (projectDraftVersion === null) setProjectDraftVersion(link.thread_version)
@@ -504,7 +564,7 @@ export function ThreadSettings({
                   disabled={
                     !canClassify ||
                     metadataDirty ||
-                    saving ||
+                    busy ||
                     selectedProject === null ||
                     selectedProject === (link.restricted ? '__restricted__' : (projectId ?? ''))
                   }
@@ -578,7 +638,7 @@ export function ThreadSettings({
         confirmLabel={t('discard')}
         confirmTestId="thread-settings-discard"
         destructive
-        pending={saving}
+        pending={busy}
         onClose={() => {
           navigation.cancelLeave()
           setConfirmClose(false)

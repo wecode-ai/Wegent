@@ -21,3 +21,24 @@ export function retainBoardReturnOrigin(
     ? origin
     : null
 }
+
+/** Only explicit hierarchy navigation can carry a board origin to another Thread. */
+export function nextBoardReturnOrigin(
+  origin: BoardReturnOrigin | null,
+  scope: string,
+  currentSearch: string,
+  nextSearch: string,
+  relatedThreadId?: string
+): BoardReturnOrigin | null {
+  const current = retainBoardReturnOrigin(origin, scope, currentSearch)
+  const target = new URLSearchParams(nextSearch)
+  const threadId = target.get('threadId')
+  if (
+    current &&
+    relatedThreadId === current.threadId &&
+    threadId &&
+    retainBoardReturnOrigin({ ...current, threadId }, scope, nextSearch)
+  )
+    return { ...current, threadId }
+  return retainBoardReturnOrigin(current, scope, nextSearch)
+}

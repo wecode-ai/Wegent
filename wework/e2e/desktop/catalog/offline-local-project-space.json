@@ -8,5 +8,6 @@
       "shard": 7,
       "position": 9000
     }
-  }
+  },
+  "paths": ["wework/e2e/desktop/modules/collaboration-schedule-views.mjs"]
 }

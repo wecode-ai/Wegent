@@ -92,6 +92,29 @@ export function createBoardReturnVerification(contentSelector, uiTimeoutMs) {
     await control.command('press', '[data-testid="cloud-board-tag-filter-search"]', {
       key: 'Escape',
     })
+    const [toolbar] = JSON.parse(
+      await control.command('getElementMetrics', `${contentSelector} .project-board-toolbar`)
+    )
+    assert.ok(toolbar, 'The board toolbar must expose its visible layout')
+    assert.ok(
+      toolbar.scrollWidth <= toolbar.clientWidth + 1,
+      'Board filters must remain visible without horizontal toolbar scrolling'
+    )
+    for (const testId of [
+      'cloud-board-group-filter-label',
+      'cloud-board-tag-filter',
+      'cloud-board-search',
+      'board-view-picker',
+    ]) {
+      const [controlMetrics] = JSON.parse(
+        await control.command('getElementMetrics', scoped(testId))
+      )
+      assert.ok(controlMetrics?.width > 0, `${testId} must remain visible`)
+      assert.ok(
+        controlMetrics.left >= toolbar.left - 1 && controlMetrics.right <= toolbar.right + 1,
+        `${testId} was clipped outside the board toolbar`
+      )
+    }
   }
 
   return { selectFilters, assertFilters, readSelectedView }

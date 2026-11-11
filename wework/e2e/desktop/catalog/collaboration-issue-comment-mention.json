@@ -8,5 +8,12 @@
       "shard": 4,
       "position": 15000
     }
-  }
+  },
+  "paths": [
+    "wework/src/features/collaboration/GroupChatMessage.*",
+    "wework/src/features/collaboration/GroupMessageComposer.*",
+    "wework/src/features/collaboration/groupReply.ts",
+    "wework/src/features/collaboration/GroupConversation.*",
+    "packages/collaboration/src/issue-detail/IssueThreadReplyComposer.*"
+  ]
 }

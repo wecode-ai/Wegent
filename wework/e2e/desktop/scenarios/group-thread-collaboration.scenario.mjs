@@ -4,6 +4,7 @@ import { URL } from 'node:url'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { createBoardReturnVerification } from '../modules/group-thread-board-return.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import { ensureTaskRowVisible } from '../modules/memory-tool-flows.mjs'
@@ -315,6 +316,13 @@ export function createDesktopScenario({
       const threadId = location.searchParams.get('threadId')
       const groupId = location.searchParams.get('groupId')
       assert.ok(threadId && groupId, 'The new Thread did not expose its owning group route')
+      const readThread = () =>
+        requestExecutor(
+          control,
+          'todos.get',
+          { project_id: groupId, task_id: threadId },
+          uiTimeoutMs
+        )
       const sidebarThread = `thread-nav-${threadId}`
       await wait(control, sidebarThread)
       await control.command('waitFor', `${scoped('group-message-input')}[contenteditable="true"]`, {
@@ -371,7 +379,7 @@ export function createDesktopScenario({
       await wait(control, 'group-message-list', { text: '历史定位上下文 45' })
 
       await click(control, 'thread-settings')
-      await fill(control, 'thread-settings-title', '尚未保存的草稿')
+      await fill(control, 'thread-settings-description', '尚未保存的草稿')
       await click(control, 'collaboration-view-projects')
       await control.command('waitFor', '[data-testid="thread-settings-discard"]', {
         timeoutMs: uiTimeoutMs,
@@ -383,10 +391,9 @@ export function createDesktopScenario({
       )
       await control.command('click', '[data-testid="thread-settings-discard-cancel-button"]')
       assert.equal(
-        await control.command('getValue', scoped('thread-settings-title')),
+        await control.command('getValue', scoped('thread-settings-description')),
         '尚未保存的草稿'
       )
-      await fill(control, 'thread-settings-title', THREAD_TITLE)
       await fill(control, 'thread-settings-description', '验收群与事项的独立生命周期')
       const today = new Intl.DateTimeFormat('sv-SE').format(new Date())
       await fill(control, 'thread-settings-start', `${today}T09:00`)
@@ -394,7 +401,7 @@ export function createDesktopScenario({
       await fill(control, 'thread-settings-tags-input', '自定义/待评审')
       await control.command('press', scoped('thread-settings-tags-input'), { key: 'Enter' })
       await wait(control, 'thread-settings-tags-tag-自定义/待评审')
-      await click(control, 'thread-settings-save')
+      await control.command('clickWhenEnabled', scoped('thread-settings-save'))
       await wait(control, 'thread-settings-panel', { text: '已保存' })
       for (const [value, label] of [
         ['pending', '待开始'],
@@ -402,9 +409,13 @@ export function createDesktopScenario({
         ['in_review', '待确认'],
       ]) {
         await control.command('select', scoped('thread-settings-status'), { value })
-        await click(control, 'thread-settings-save')
-        await wait(control, 'thread-settings-panel', { text: '已保存' })
-        await click(control, 'thread-settings-close')
+        await waitForValue(
+          readThread,
+          issue => issue.status === value,
+          'Status must persist without Save',
+          uiTimeoutMs
+        )
+        await control.command('clickWhenEnabled', scoped('thread-settings-close'))
         await control.command('waitFor', `${scoped('thread-room')} header`, {
           text: label,
           timeoutMs: uiTimeoutMs,
@@ -726,15 +737,18 @@ export function createDesktopScenario({
       })
       assert.equal(await control.command('getValue', scoped('thread-project-select')), projectId)
       await capture(control, 'group-thread-project-link.png')
-      await control.command(
-        'waitFor',
-        `${scoped('thread-settings-milestone')} option[value="${milestoneId}"]`
+      await control.command('clickWhenEnabled', scoped('thread-settings-milestone'))
+      const milestoneOption = `[data-testid="thread-settings-milestone-option-${milestoneId}"]`
+      await control.command('waitFor', milestoneOption, { timeoutMs: uiTimeoutMs })
+      await control.command('click', milestoneOption)
+      await waitForValue(
+        readThread,
+        issue => issue.metadata.milestone_id === milestoneId,
+        'Milestone must persist without Save',
+        uiTimeoutMs
       )
-      await control.command('select', scoped('thread-settings-milestone'), { value: milestoneId })
-      await control.command('clickWhenEnabled', scoped('thread-settings-save'))
-      await wait(control, 'thread-settings-panel', { text: '已保存' })
       await capture(control, 'group-thread-project-milestone-assigned.png')
-      await click(control, 'thread-settings-close')
+      await control.command('clickWhenEnabled', scoped('thread-settings-close'))
       await click(control, 'collaboration-view-projects')
       await control.command('clickWhenEnabled', scoped(projectTestId), {
         visible: true,
@@ -752,7 +766,7 @@ export function createDesktopScenario({
       await click(control, 'board-view-picker')
       await control.command('click', '[data-testid="board-view-new"]')
       await control.command('fill', '[data-testid="board-view-name"]', {
-        value: '项目返回评审视图',
+        value: '项目返回评审视图·跨群交付与成员权限回归验收',
       })
       assert.equal(
         Number(
@@ -766,7 +780,9 @@ export function createDesktopScenario({
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
-      await wait(control, 'board-view-picker', { text: '项目返回评审视图' })
+      await wait(control, 'board-view-picker', {
+        text: '项目返回评审视图·跨群交付与成员权限回归验收',
+      })
       const projectFilters = await selectReturnBoardFilters(control, '待确认')
       assert.notEqual(projectFilters.viewId, projectDefault.id)
       await assertReturnBoardFilters(control, projectFilters, threadId)
@@ -879,7 +895,12 @@ export function createDesktopScenario({
         await wait(control, 'thread-room', { text: title })
         await click(control, 'thread-settings')
         await wait(control, 'thread-settings-milestone')
-        assert.equal(await control.command('getValue', scoped('thread-settings-milestone')), '')
+        assert.equal(
+          await control.command('getAttribute', scoped('thread-settings-milestone'), {
+            value: 'data-value',
+          }),
+          ''
+        )
         await click(control, 'thread-settings-close')
       }
       await capture(control, 'group-thread-project-milestone-deleted.png')
@@ -917,6 +938,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="cloud-todo-create-confirm"]')
       await wait(control, 'thread-room', { text: standaloneTitle })
       await click(control, 'thread-settings')
+      await wait(control, 'thread-project-select')
       assert.equal(await control.command('getValue', scoped('thread-project-select')), '')
       await capture(control, 'group-thread-created-without-project.png')
       await click(control, 'thread-settings-close')

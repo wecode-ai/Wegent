@@ -70,6 +70,7 @@ interface ActionMenuProps {
   disabled?: boolean;
   variant?: "horizontal" | "vertical";
   triggerClassName?: string;
+  triggerButtonRef?: { current: HTMLButtonElement | null };
   placement?: "side" | "bottom-end";
   contextMenuPosition?: MenuPosition | null;
   width?: number;
@@ -96,6 +97,7 @@ export function ActionMenu({
   disabled = false,
   variant = "horizontal",
   triggerClassName,
+  triggerButtonRef,
   placement = "side",
   contextMenuPosition,
   width,
@@ -469,7 +471,10 @@ export function ActionMenu({
 
   const trigger = (
     <button
-      ref={triggerRef}
+      ref={(element) => {
+        triggerRef.current = element;
+        if (triggerButtonRef) triggerButtonRef.current = element;
+      }}
       type="button"
       data-testid={testId}
       disabled={disabled}

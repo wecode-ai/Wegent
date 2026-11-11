@@ -8,5 +8,11 @@
       "shard": 10,
       "position": 6000
     }
-  }
+  },
+  "paths": [
+    "wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs",
+    "wework/e2e/desktop/modules/collaboration-gantt-hierarchy.mjs",
+    "wework/src/features/collaboration/ThreadHierarchySection.tsx",
+    "wework/src/features/collaboration/ThreadArchiveDialog.tsx"
+  ]
 }

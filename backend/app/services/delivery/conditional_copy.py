@@ -66,18 +66,26 @@ class ConditionalCopyMinio(Minio):
         destination_write = (method == "PUT" and body is not None and not query) or (
             method == "POST" and "uploadId" in query
         )
-        if (
+        create_only_destination = (
             _CREATE_ONLY_TARGET.get() == (bucket_name, object_name)
             and destination_write
-        ):
-            headers = {**(headers or {}), "If-None-Match": "*"}
-        return super()._execute(
-            method,
-            bucket_name,
-            object_name,
-            body=body,
-            headers=headers,
-            query_params=query_params,
-            preload_content=preload_content,
-            no_body_trace=no_body_trace,
         )
+        if create_only_destination:
+            headers = {**(headers or {}), "If-None-Match": "*"}
+        try:
+            return super()._execute(
+                method,
+                bucket_name,
+                object_name,
+                body=body,
+                headers=headers,
+                query_params=query_params,
+                preload_content=preload_content,
+                no_body_trace=no_body_trace,
+            )
+        except S3Error as exc:
+            if create_only_destination and exc.code == "PreconditionFailed":
+                # Legacy MinIO closes conflict sockets without a close header.
+                # Retire them before the SDK sends multipart-abort cleanup.
+                self._http.clear()
+            raise

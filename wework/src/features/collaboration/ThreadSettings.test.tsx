@@ -4,6 +4,7 @@ import '@/i18n'
 import type { CollaborationIssue, SharedWorkspaceApi } from '@wegent/collaboration'
 import type { ChatGroup, ChatGroupApi, ThreadParticipation } from '@/api/chatGroups'
 import { ThreadSettings } from './ThreadSettings'
+import type { ThreadHierarchyRenderContext as ThreadSettingsHierarchyContext } from './threadHierarchy'
 import { groupBoardContext } from './groupWorkspaceApi'
 
 const group: ChatGroup = {
@@ -53,12 +54,28 @@ function setup(
     saveError?: Error
     linkError?: Error
     localPrincipal?: boolean
+    role?: ChatGroup['role']
+    renderHierarchy?: (context: ThreadSettingsHierarchyContext) => import('react').ReactNode
   } = {}
 ) {
   const project = { ...groupBoardContext(group, 'cloud'), id: 'project', name: 'Plan' }
+  let stored = item
   const update = options.saveError
     ? vi.fn().mockRejectedValue(options.saveError)
-    : vi.fn().mockImplementation(async (_id, input) => ({ ...item, ...input, version: 2 }))
+    : vi.fn().mockImplementation(async (_id, input) => {
+        const changes = Object.fromEntries(
+          Object.entries(input).filter(([, value]) => value !== undefined)
+        )
+        stored = {
+          ...stored,
+          ...changes,
+          version: stored.version + 1,
+          ...(input.milestoneId !== undefined ? { milestone_id: input.milestoneId } : {}),
+          ...(input.startAt !== undefined ? { start_at: input.startAt } : {}),
+          ...(input.dueAt !== undefined ? { due_at: input.dueAt } : {}),
+        }
+        return stored
+      })
   const issues = {
     get: vi
       .fn()
@@ -98,7 +115,7 @@ function setup(
   const registerLeaveGuard = vi.fn()
   render(
     <ThreadSettings
-      group={group}
+      group={{ ...group, role: options.role ?? group.role }}
       project={groupBoardContext(group, 'cloud')}
       item={item}
       items={[item]}
@@ -123,6 +140,7 @@ function setup(
       onChanged={onChanged}
       onClose={onClose}
       registerLeaveGuard={registerLeaveGuard}
+      renderHierarchy={options.renderHierarchy}
     />
   )
   return {
@@ -155,7 +173,8 @@ describe('Thread settings domain boundaries', () => {
     const { milestoneList } = setup({ linked: true })
     await waitFor(() => expect(milestoneList).toHaveBeenCalledWith('project'))
     expect(milestoneList).not.toHaveBeenCalledWith('group')
-    expect(await screen.findByRole('option', { name: 'Release' })).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('thread-settings-milestone'))
+    expect(await screen.findByTestId('thread-settings-milestone-option-milestone')).toBeVisible()
   })
 
   it('prevents removing a restricted project link without source project authority', async () => {
@@ -236,7 +255,7 @@ describe('Thread settings domain boundaries', () => {
       })
     )
     fireEvent.change(screen.getByTestId('thread-settings-title'), { target: { value: 'Saving' } })
-    fireEvent.click(screen.getByTestId('thread-settings-save'))
+    fireEvent.blur(screen.getByTestId('thread-settings-title'))
     await waitFor(() => expect(update).toHaveBeenCalledOnce())
     expect(screen.getByTestId('thread-settings-close')).toBeDisabled()
     const navigate = vi.fn()
@@ -262,10 +281,342 @@ describe('Thread settings domain boundaries', () => {
     fireEvent.change(screen.getByTestId('thread-settings-title'), {
       target: { value: 'My new title' },
     })
-    fireEvent.click(screen.getByTestId('thread-settings-save'))
+    fireEvent.blur(screen.getByTestId('thread-settings-title'))
     await waitFor(() => expect(update).toHaveBeenCalled())
     expect(await screen.findByText('Thread changed')).toBeVisible()
     expect(screen.getByTestId('thread-settings-title')).toHaveValue('My new title')
     expect(onChanged).not.toHaveBeenCalled()
+  })
+
+  it('autosaves properties and Enter-committed title without submitting the description draft', async () => {
+    const { update } = setup({ linked: true })
+    await waitFor(() => expect(screen.getByTestId('thread-settings-milestone')).toBeEnabled())
+    fireEvent.change(screen.getByTestId('thread-settings-description'), {
+      target: { value: 'Draft description' },
+    })
+    fireEvent.change(screen.getByTestId('thread-settings-title'), { target: { value: 'Renamed' } })
+    fireEvent.keyDown(screen.getByTestId('thread-settings-title'), { key: 'Enter' })
+    fireEvent.change(screen.getByTestId('thread-settings-priority'), {
+      target: { value: 'urgent' },
+    })
+    fireEvent.click(screen.getByTestId('thread-settings-milestone'))
+    fireEvent.click(await screen.findByTestId('thread-settings-milestone-option-milestone'))
+    fireEvent.change(screen.getByTestId('thread-settings-tags-input'), {
+      target: { value: 'review' },
+    })
+    fireEvent.keyDown(screen.getByTestId('thread-settings-tags-input'), { key: 'Enter' })
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(4))
+    expect(update.mock.calls.map(([, input]) => input.version)).toEqual([1, 2, 3, 4])
+    expect(
+      update.mock.calls.map(([, input]) =>
+        Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined))
+      )
+    ).toEqual([
+      { version: 1, title: 'Renamed' },
+      { version: 2, priority: 'urgent' },
+      { version: 3, milestoneId: 'milestone' },
+      { version: 4, tags: ['review'] },
+    ])
+    expect(screen.getByTestId('thread-settings-description')).toHaveValue('Draft description')
+    await waitFor(() => expect(screen.getByTestId('thread-settings-save')).toBeEnabled())
+    fireEvent.click(screen.getByTestId('thread-settings-save'))
+    await waitFor(() =>
+      expect(update).toHaveBeenLastCalledWith('G-1', {
+        version: 5,
+        milestoneId: undefined,
+        description: 'Draft description',
+      })
+    )
+    await waitFor(() => expect(screen.getByTestId('thread-settings-save')).toBeDisabled())
+  })
+
+  it('retains a failed property draft and retries the same field without saving the description', async () => {
+    const { update } = setup()
+    update.mockRejectedValueOnce(new Error('Connection lost'))
+    fireEvent.change(screen.getByTestId('thread-settings-description'), {
+      target: { value: 'Still a draft' },
+    })
+    fireEvent.change(screen.getByTestId('thread-settings-priority'), {
+      target: { value: 'urgent' },
+    })
+    expect(await screen.findByText('Connection lost')).toBeVisible()
+    expect(screen.getByTestId('thread-settings-priority')).toHaveValue('urgent')
+    fireEvent.click(screen.getByTestId('thread-settings-retry'))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update).toHaveBeenLastCalledWith('G-1', {
+      version: 1,
+      priority: 'urgent',
+      milestoneId: undefined,
+    })
+    await waitFor(() =>
+      expect(screen.queryByTestId('thread-settings-retry')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('thread-settings-description')).toHaveValue('Still a draft')
+  })
+
+  it('does not persist an invalid date range and saves both dates after correction', async () => {
+    const { update } = setup()
+    fireEvent.change(screen.getByTestId('thread-settings-start'), {
+      target: { value: '2026-11-12T17:00' },
+    })
+    await waitFor(() => expect(update).toHaveBeenCalledOnce())
+    fireEvent.change(screen.getByTestId('thread-settings-due'), {
+      target: { value: '2026-11-12T09:00' },
+    })
+    expect(screen.getByText('截止时间不能早于开始时间')).toBeVisible()
+    expect(update).toHaveBeenCalledOnce()
+    fireEvent.change(screen.getByTestId('thread-settings-due'), {
+      target: { value: '2026-11-12T18:00' },
+    })
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update.mock.calls[1][1]).toMatchObject({ version: 2, dueAt: expect.any(String) })
+    expect(screen.queryByText('截止时间不能早于开始时间')).not.toBeInTheDocument()
+  })
+
+  it('does not grant property writes to a read-only group member', async () => {
+    const { update } = setup({ role: 'Viewer' })
+    expect(screen.getByTestId('thread-settings-priority')).toBeDisabled()
+    expect(screen.getByTestId('thread-settings-title')).toBeDisabled()
+    fireEvent.change(screen.getByTestId('thread-settings-priority'), {
+      target: { value: 'urgent' },
+    })
+    fireEvent.blur(screen.getByTestId('thread-settings-title'))
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('queues an explicit description save behind an in-flight title save', async () => {
+    const { update } = setup()
+    let finish!: (value: CollaborationIssue) => void
+    update
+      .mockImplementationOnce(
+        () =>
+          new Promise<CollaborationIssue>(resolve => {
+            finish = resolve
+          })
+      )
+      .mockResolvedValueOnce({
+        ...item,
+        title: 'Queued title',
+        description: 'Saved description',
+        version: 3,
+      })
+    fireEvent.change(screen.getByTestId('thread-settings-title'), {
+      target: { value: 'Queued title' },
+    })
+    fireEvent.blur(screen.getByTestId('thread-settings-title'))
+    await waitFor(() => expect(update).toHaveBeenCalledOnce())
+    fireEvent.change(screen.getByTestId('thread-settings-description'), {
+      target: { value: 'Saved description' },
+    })
+    expect(screen.getByTestId('thread-settings-save')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('thread-settings-save'))
+    expect(update).toHaveBeenCalledOnce()
+    finish({ ...item, title: 'Queued title', version: 2 })
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update).toHaveBeenLastCalledWith('G-1', {
+      version: 2,
+      milestoneId: undefined,
+      description: 'Saved description',
+    })
+    await waitFor(() => expect(screen.getByTestId('thread-settings-save')).toBeDisabled())
+    expect(screen.getByTestId('thread-settings-title')).toHaveValue('Queued title')
+    expect(screen.getByTestId('thread-settings-close')).toBeEnabled()
+  })
+
+  it.each([
+    {
+      field: 'title',
+      original: 'Review',
+      next: 'Renamed',
+      response: { title: 'Renamed' },
+      patch: { title: 'Review' },
+    },
+    {
+      field: 'priority',
+      original: 'none',
+      next: 'urgent',
+      response: { priority: 'urgent' },
+      patch: { priority: 'none' },
+    },
+    {
+      field: 'start',
+      original: '',
+      next: '2026-11-12T09:00',
+      response: { start_at: new Date('2026-11-12T09:00').toISOString() },
+      patch: { startAt: null },
+    },
+  ])(
+    'persists a $field return to its original value behind an in-flight change without replacing the latest input',
+    async ({ field, original, next, response, patch }) => {
+      const { update } = setup()
+      let finishFirst!: (value: CollaborationIssue) => void
+      let finishSecond!: (value: CollaborationIssue) => void
+      update
+        .mockImplementationOnce(
+          () =>
+            new Promise<CollaborationIssue>(resolve => {
+              finishFirst = resolve
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<CollaborationIssue>(resolve => {
+              finishSecond = resolve
+            })
+        )
+      const input = screen.getByTestId('thread-settings-' + field)
+      fireEvent.change(input, { target: { value: next } })
+      if (field === 'title') fireEvent.keyDown(input, { key: 'Enter' })
+      await waitFor(() => expect(update).toHaveBeenCalledOnce())
+      fireEvent.change(input, { target: { value: original } })
+      if (field === 'title') fireEvent.keyDown(input, { key: 'Enter' })
+      expect(update).toHaveBeenCalledOnce()
+      finishFirst({ ...item, ...response, version: 2 } as CollaborationIssue)
+      await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+      expect(update).toHaveBeenNthCalledWith(2, 'G-1', {
+        version: 2,
+        milestoneId: undefined,
+        ...patch,
+      })
+      expect(input).toHaveValue(original)
+      expect(screen.getByTestId('thread-settings-close')).toBeDisabled()
+      finishSecond({ ...item, version: 3 })
+      await waitFor(() => expect(screen.getByTestId('thread-settings-close')).toBeEnabled())
+      expect(input).toHaveValue(original)
+    }
+  )
+
+  it('allows explicitly saving the original description while an older description save is in flight', async () => {
+    const { update } = setup()
+    let finishFirst!: (value: CollaborationIssue) => void
+    let finishSecond!: (value: CollaborationIssue) => void
+    update
+      .mockImplementationOnce(
+        () =>
+          new Promise<CollaborationIssue>(resolve => {
+            finishFirst = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<CollaborationIssue>(resolve => {
+            finishSecond = resolve
+          })
+      )
+    const input = screen.getByTestId('thread-settings-description')
+    fireEvent.change(input, { target: { value: 'First description' } })
+    fireEvent.click(screen.getByTestId('thread-settings-save'))
+    await waitFor(() => expect(update).toHaveBeenCalledOnce())
+    fireEvent.change(input, { target: { value: '' } })
+    expect(screen.getByTestId('thread-settings-save')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('thread-settings-save'))
+    finishFirst({ ...item, description: 'First description', version: 2 })
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update).toHaveBeenNthCalledWith(2, 'G-1', {
+      version: 2,
+      milestoneId: undefined,
+      description: '',
+    })
+    expect(input).toHaveValue('')
+    finishSecond({ ...item, version: 3 })
+    await waitFor(() => expect(screen.getByTestId('thread-settings-save')).toBeDisabled())
+    expect(input).toHaveValue('')
+  })
+
+  it('keeps a milestone clear intent through an earlier unrelated response and an intermediate assignment response', async () => {
+    const { update } = setup({ linked: true })
+    await screen.findByTestId('thread-settings-milestone')
+    let finishPriority!: (value: CollaborationIssue) => void
+    let finishAssignment!: (value: CollaborationIssue) => void
+    let finishClear!: (value: CollaborationIssue) => void
+    update
+      .mockImplementationOnce(
+        () =>
+          new Promise<CollaborationIssue>(resolve => {
+            finishPriority = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<CollaborationIssue>(resolve => {
+            finishAssignment = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<CollaborationIssue>(resolve => {
+            finishClear = resolve
+          })
+      )
+    fireEvent.change(screen.getByTestId('thread-settings-priority'), {
+      target: { value: 'urgent' },
+    })
+    await waitFor(() => expect(update).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByTestId('thread-settings-milestone'))
+    fireEvent.click(await screen.findByTestId('thread-settings-milestone-option-milestone'))
+    fireEvent.click(screen.getByTestId('thread-settings-milestone'))
+    fireEvent.click(await screen.findByTestId('thread-settings-milestone-option-empty'))
+    finishPriority({ ...item, priority: 'urgent', version: 2 })
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    finishAssignment({ ...item, priority: 'urgent', milestone_id: 'milestone', version: 3 })
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(3))
+    expect(update).toHaveBeenNthCalledWith(3, 'G-1', { version: 3, milestoneId: null })
+    expect(screen.getByTestId('thread-settings-milestone')).toHaveAttribute('data-value', '')
+    finishClear({ ...item, priority: 'urgent', milestone_id: null, version: 4 })
+    await waitFor(() => expect(screen.getByTestId('thread-project-select')).toBeEnabled())
+    expect(screen.getByTestId('thread-settings-milestone')).toHaveAttribute('data-value', '')
+  })
+
+  it('keeps a failed milestone intent and completes that same draft after retry', async () => {
+    const { update } = setup({ linked: true })
+    update.mockRejectedValueOnce(new Error('Milestone unavailable'))
+    await screen.findByTestId('thread-settings-milestone')
+    fireEvent.click(screen.getByTestId('thread-settings-milestone'))
+    fireEvent.click(await screen.findByTestId('thread-settings-milestone-option-milestone'))
+    expect(await screen.findByText('Milestone unavailable')).toBeVisible()
+    expect(screen.getByTestId('thread-settings-milestone')).toHaveAttribute(
+      'data-value',
+      'milestone'
+    )
+    expect(screen.getByTestId('thread-project-select')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('thread-settings-retry'))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByTestId('thread-project-select')).toBeEnabled())
+    expect(screen.getByTestId('thread-settings-milestone')).toHaveAttribute(
+      'data-value',
+      'milestone'
+    )
+  })
+
+  it.each([false, true])(
+    'exposes hierarchy classification only with current project authority (restricted=%s)',
+    async restricted => {
+      const hierarchy = vi.fn<(context: ThreadSettingsHierarchyContext) => null>(() => null)
+      setup({ linked: true, restricted, renderHierarchy: hierarchy })
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Plan' })).toBeInTheDocument())
+      const context = hierarchy.mock.calls.at(-1)?.[0] as ThreadSettingsHierarchyContext
+      expect(context.classificationProject?.id).toBe(restricted ? undefined : 'project')
+      expect(context.item.id).toBe(item.id)
+    }
+  )
+
+  it('provides the accepted current item and the existing unsaved-draft guard to hierarchy actions', async () => {
+    const hierarchy = vi.fn<(context: ThreadSettingsHierarchyContext) => null>(() => null)
+    setup({ renderHierarchy: hierarchy })
+    fireEvent.change(screen.getByTestId('thread-settings-title'), {
+      target: { value: 'Hierarchy title' },
+    })
+    fireEvent.keyDown(screen.getByTestId('thread-settings-title'), { key: 'Enter' })
+    await waitFor(() => expect(hierarchy.mock.calls.at(-1)?.[0].item.title).toBe('Hierarchy title'))
+    expect(hierarchy.mock.calls.at(-1)?.[0].item.version).toBe(2)
+    fireEvent.change(screen.getByTestId('thread-settings-description'), {
+      target: { value: 'Unsaved hierarchy draft' },
+    })
+    const openChild = vi.fn()
+    hierarchy.mock.calls.at(-1)?.[0].requestLeave(openChild)
+    expect(await screen.findByRole('dialog')).toBeVisible()
+    expect(openChild).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('thread-settings-discard'))
+    expect(openChild).toHaveBeenCalledOnce()
   })
 })

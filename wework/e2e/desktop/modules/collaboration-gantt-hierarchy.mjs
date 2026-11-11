@@ -7,7 +7,7 @@ const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const test = id => `${CONTENT} [data-testid="${id}"]`
 
 /** User stories: plan nested work, schedule by dragging, and archive from a tag board. */
-export async function verifyGanttHierarchyAndDetailArchive(control, project, timeoutMs) {
+export async function verifyGanttHierarchyAndDetailArchive(control, project, group, timeoutMs) {
   const rpc = (method, params) => requestExecutor(control, method, params, timeoutMs)
   const click = id => control.command('clickWhenEnabled', test(id), { timeoutMs })
   const wait = (id, visible = true) => control.command('waitFor', test(id), { visible, timeoutMs })
@@ -22,12 +22,13 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   const create = (title, parent_id, status, scheduled = true) =>
     rpc('todos.create', {
-      project_id: project.id,
+      project_id: group.id,
       todo: {
         title,
         parent_id,
         status,
         tags: ['design'],
+        classification_project_id: project.id,
         ...(scheduled ? { start_at: date, due_at: date } : {}),
       },
     })
@@ -136,7 +137,9 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   await wait(`collaboration-gantt-issue-${undated.id}`)
   await waitForBoardValue(
     async () => {
-      const stored = await rpc('todos.get', { project_id: project.id, task_id: undated.id })
+      const stored = await rpc('todos.get', { project_id: group.id, task_id: undated.id })
+      assert.equal(stored.group_id, group.id)
+      assert.equal(stored.cloud_project_id, group.id)
       return [stored.metadata.start_at?.slice(0, 10), stored.metadata.due_at?.slice(0, 10)]
     },
     [date, date],
@@ -148,8 +151,9 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   await selectCollaborationProjectView(control, CONTENT, 'board', timeoutMs)
   await click(`cloud-todo-card-${parent.id}`)
   await control.command('focusMainWindow', 'body')
-  await click('cloud-todo-more-properties')
-  await control.command('clickWhenEnabled', '[data-testid="cloud-todo-detail-delete"]', {
+  await wait('thread-room')
+  await click('thread-more')
+  await control.command('clickWhenEnabled', '[data-testid="thread-menu-archive"]', {
     timeoutMs,
   })
   await wait('collaboration-issue-archive-dialog')
@@ -162,18 +166,19 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   await assertFocus('collaboration-issue-archive-cancel')
   await click('collaboration-issue-archive-cancel')
   await wait('collaboration-issue-archive-dialog', false)
-  await assertFocus('cloud-todo-more-properties')
+  await assertFocus('thread-more')
   assert.ok(
     (await rpc('todos.list', { project_id: project.id })).some(item => item.id === parent.id),
     'Cancelling archive must leave the task tree active'
   )
-  await click('cloud-todo-more-properties')
-  await control.command('clickWhenEnabled', '[data-testid="cloud-todo-detail-delete"]', {
+  await wait('thread-room')
+  await click('thread-more')
+  await control.command('clickWhenEnabled', '[data-testid="thread-menu-archive"]', {
     timeoutMs,
   })
   await click('collaboration-issue-archive-confirm')
   await wait('collaboration-issue-archive-dialog', false)
-  await wait('collaboration-issue-detail', false)
+  await wait('thread-room', false)
   const active = await rpc('todos.list', { project_id: project.id })
   for (const issue of [parent, child, grandchild]) {
     assert.ok(

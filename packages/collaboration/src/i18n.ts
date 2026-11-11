@@ -756,7 +756,7 @@ const sharedMessages: Record<
     "todo.archive_issue_description": "“{{title}}”将从看板中归档。",
     "todo.archive_issue_children_description":
       "“{{title}}”及其子事项将从看板中归档。",
-    "todo.archive_issue_restore_hint": "归档后可从当前项目的归档箱恢复。",
+    "todo.archive_issue_restore_hint": "归档后可从当前看板的归档箱恢复。",
     "todo.archive_issue_failed_count": "{{count}} 个事项归档失败，请重试。",
     "todo.archive_completed_tasks": "归档已完成任务",
     "todo.archive_completed_tasks_title": "归档已完成任务？",
@@ -1347,7 +1347,7 @@ const sharedMessages: Record<
     "todo.archive_issue_children_description":
       "“{{title}}” and its child Threads will be removed from the board.",
     "todo.archive_issue_restore_hint":
-      "You can restore it later from this project's archive.",
+      "You can restore it later from this board's archive.",
     "todo.archive_issue_failed_count":
       "{{count}} Threads could not be archived. Try again.",
     "todo.archive_completed_tasks": "Archive completed Threads",

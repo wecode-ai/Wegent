@@ -241,4 +241,93 @@ describe('Thread reading and notification participation', () => {
     expect(screen.queryByTestId('thread-menu-lifecycle')).not.toBeInTheDocument()
     expect(await screen.findByTestId('thread-menu-notifications')).toBeVisible()
   })
+  it('keeps the readable action context across updates and releases it on unmount', async () => {
+    const onContext = vi.fn()
+    const participation = {
+      current_user_id: 8,
+      participants: [],
+      joined: false,
+      can_comment: false,
+      show_in_sidebar: false,
+    }
+    const api = {} as SharedWorkspaceApi
+    const props = {
+      group,
+      project: groupBoardContext(group, 'local'),
+      item,
+      items: [item],
+      api,
+      catalog: api,
+      members: [],
+      groups: { participation: vi.fn(async () => participation) } as unknown as ChatGroupApi,
+      chat: undefined,
+      locale: 'zh-CN' as const,
+      accountScope: 'account-one',
+      requestLeave: vi.fn(),
+      onThreadActionContext: onContext,
+      onOpenThread: vi.fn(),
+      onBack: vi.fn(),
+      onChanged: vi.fn(),
+      onClearFocus: vi.fn(),
+    }
+    const view = render(<GroupConversation {...props} />)
+    await waitFor(() =>
+      expect(onContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({ item, participation, api, accountScope: 'account-one' })
+      )
+    )
+    onContext.mockClear()
+    const updated = { ...item, title: 'Updated', version: 2 }
+    view.rerender(<GroupConversation {...props} item={updated} />)
+    await waitFor(() =>
+      expect(onContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({ item: updated, participation })
+      )
+    )
+    expect(onContext.mock.calls.every(([context]) => context !== null)).toBe(true)
+    view.unmount()
+    expect(onContext).toHaveBeenLastCalledWith(null)
+  })
+
+  it('retains persisted linked-work badges and a fully readable long title', async () => {
+    const title = 'A long readable Thread title that retains the full context of the work'
+    const withBadge = {
+      ...item,
+      title,
+      badges: [{ id: 'pr', label: '#4015', icon: 'git-pull-request' }],
+    }
+    const api = {} as SharedWorkspaceApi
+    render(
+      <GroupConversation
+        group={group}
+        project={groupBoardContext(group, 'local')}
+        item={withBadge}
+        items={[withBadge]}
+        api={api}
+        catalog={api}
+        members={[]}
+        groups={
+          {
+            participation: vi.fn(async () => ({
+              current_user_id: 8,
+              participants: [],
+              joined: false,
+              can_comment: false,
+              show_in_sidebar: false,
+            })),
+          } as unknown as ChatGroupApi
+        }
+        chat={undefined}
+        locale="zh-CN"
+        onOpenThread={vi.fn()}
+        onBack={vi.fn()}
+        onChanged={vi.fn()}
+        onClearFocus={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('thread-title')).toHaveTextContent(title)
+    expect(screen.getByTestId('thread-title')).not.toHaveClass('truncate')
+    expect(screen.getByTestId('issue-badges')).toHaveTextContent('#4015')
+    await screen.findByText('0 人参与')
+  })
 })

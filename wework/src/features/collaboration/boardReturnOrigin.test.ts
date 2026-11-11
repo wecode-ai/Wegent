@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { retainBoardReturnOrigin, type BoardReturnOrigin } from './boardReturnOrigin'
+import {
+  nextBoardReturnOrigin,
+  retainBoardReturnOrigin,
+  type BoardReturnOrigin,
+} from './boardReturnOrigin'
 
 const origin: BoardReturnOrigin = {
   scope: 'backend:account-7',
@@ -39,5 +43,31 @@ describe('the originating board of a Thread visit', () => {
       retainBoardReturnOrigin(origin, origin.scope, thread.replace('cloud', 'local'))
     ).toBeNull()
     expect(retainBoardReturnOrigin(origin, 'backend:account-8', thread)).toBeNull()
+  })
+
+  it('keeps the exact originating board when explicitly opening a child or parent Thread', () => {
+    const child = thread.replace('thread-1', 'thread-2')
+    const next = nextBoardReturnOrigin(origin, origin.scope, thread, child, origin.threadId)
+    expect(next).toEqual({ ...origin, threadId: 'thread-2' })
+    expect(nextBoardReturnOrigin(next, origin.scope, child, thread, 'thread-2')).toEqual(origin)
+    expect(nextBoardReturnOrigin(origin, origin.scope, thread, child)).toBeNull()
+  })
+
+  it('never revives a stale board through a hierarchy callback after leaving its visit', () => {
+    expect(
+      nextBoardReturnOrigin(origin, origin.scope, origin.search, thread, origin.threadId)
+    ).toBeNull()
+    expect(
+      nextBoardReturnOrigin(
+        origin,
+        origin.scope,
+        thread,
+        thread.replace('cloud', 'local'),
+        origin.threadId
+      )
+    ).toBeNull()
+    expect(
+      nextBoardReturnOrigin(origin, 'backend:account-8', thread, thread, origin.threadId)
+    ).toBeNull()
   })
 })

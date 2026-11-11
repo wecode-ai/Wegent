@@ -464,21 +464,46 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const localIssue = createdRoute.searchParams.get('threadId')
       assert.ok(localIssue)
       assert.equal(createdRoute.searchParams.get('groupId'), localGroupId)
+      const readLocalIssue = () =>
+        requestExecutor(
+          control,
+          'todos.get',
+          { project_id: localGroupId, task_id: localIssue },
+          uiTimeoutMs
+        )
+      const createdLocalIssue = await readLocalIssue()
+      assert.equal(createdLocalIssue.group_id, localGroupId)
+      assert.equal(createdLocalIssue.cloud_project_id, localGroupId)
       await control.command('click', scoped('thread-settings'))
-      await control.command(
-        'waitFor',
-        `${scoped('thread-settings-milestone')} option[value="${localId}"]`
+      await control.command('waitFor', `${scoped('thread-settings-milestone')}:enabled`)
+      assert.equal(
+        await control.command('getAttribute', scoped('thread-settings-milestone'), {
+          value: 'data-value',
+        }),
+        localId
       )
-      assert.equal(await control.command('getValue', scoped('thread-settings-milestone')), localId)
-      await control.command('select', scoped('thread-settings-milestone'), { value: '' })
-      await control.command('clickWhenEnabled', scoped('thread-settings-save'))
-      await control.command('waitFor', scoped('thread-settings-panel'), { text: '已保存' })
-      await control.command('select', scoped('thread-settings-milestone'), { value: localId })
-      await control.command('clickWhenEnabled', scoped('thread-settings-save'))
-      await control.command('waitFor', scoped('thread-settings-panel'), { text: '已保存' })
-      assert.equal(await control.command('getValue', scoped('thread-settings-milestone')), localId)
+      await selectMilestone(control, '', 'thread-settings-milestone')
+      await waitForValue(
+        readLocalIssue,
+        item => (item.metadata.milestone_id ?? null) === null,
+        'Clearing the milestone must persist without saving the description',
+        uiTimeoutMs
+      )
+      await selectMilestone(control, localId, 'thread-settings-milestone')
+      await waitForValue(
+        readLocalIssue,
+        item => item.metadata.milestone_id === localId,
+        'Restoring the milestone must persist on the same group-owned item',
+        uiTimeoutMs
+      )
+      assert.equal(
+        await control.command('getAttribute', scoped('thread-settings-milestone'), {
+          value: 'data-value',
+        }),
+        localId
+      )
       await captureScreenshot(control, 'milestones-06-local-issue-assignment.png', 'body')
-      await control.command('click', scoped('thread-settings-close'))
+      await control.command('clickWhenEnabled', scoped('thread-settings-close'))
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/local/${localProject.id}`,
       })

@@ -4,6 +4,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
+  reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
@@ -14,35 +15,33 @@ const ACTIVE_BOARD = `${ACTIVE_CONTENT} [data-testid="wework-collaboration-platf
 const MENTION_CANDIDATE_PREFIX = 'collaboration-issue-mention-member-'
 const MENTION_MENU = '[data-testid="local-skill-autocomplete"]'
 const MENTION_CHIP = '[data-composer-reference-kind="member"]'
-const CARD_REPLY_TOGGLE_PREFIX = 'cloud-task-activity-reply-toggle-'
-const REPLY_COMPOSER = 'issue-reply-composer'
+const REPLY_ACTION_PREFIX = 'group-message-reply-'
+const scoped = id => `${ACTIVE_CONTENT} [data-testid="${id}"]`
 
 function board(selector) {
   return `${ACTIVE_BOARD} ${selector}`
 }
 
 /**
- * The Issue detail page renders through the Wework collaboration platform, so
- * its comment composers only offer project members when that host wiring passes
- * the member list down. Both composers must offer the same picker the
- * collaboration home uses, keep the pick as its chip, and submit it as the
- * plain "@name" the home submits.
+ * Root messages and referenced replies use the same real editor and owning-group
+ * roster. Both modes must keep selected mentions as chips, send plain @name,
+ * and persist the reply relationship independently from the optional project.
  */
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
-  async function mentionCandidate(control, scope) {
-    const snapshot = JSON.parse(await control.command('snapshot', scope))
+  async function mentionCandidate(control) {
+    const snapshot = JSON.parse(await control.command('snapshot', MENTION_MENU))
     const candidate = snapshot.testIds.find(testId => testId.startsWith(MENTION_CANDIDATE_PREFIX))
     assert.ok(
       candidate,
-      `The comment composer did not offer any project member to mention: ${JSON.stringify(
+      `The comment composer did not offer any owning-group member to mention: ${JSON.stringify(
         snapshot.testIds.filter(testId => testId.includes('mention'))
       )}`
     )
     return `[data-testid="${candidate}"]`
   }
 
-  async function chooseMention(control, { captureName, composer, scope }) {
-    const menu = board(MENTION_MENU)
+  async function chooseMention(control, { captureName, composer }) {
+    const menu = MENTION_MENU
     assert.equal(
       Number(await control.command('getElementCount', menu)),
       0,
@@ -50,7 +49,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     )
     await control.command('fill', composer, { value: '@' })
     await control.command('waitFor', menu, { visible: true, timeoutMs: uiTimeoutMs })
-    const candidate = await mentionCandidate(control, scope)
+    const candidate = await mentionCandidate(control)
     if (captureName) await captureScreenshot(control, captureName)
     await control.command('click', candidate, { visible: true })
     await control.command('waitFor', menu, {
@@ -91,86 +90,111 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'clickWhenEnabled',
         board('[data-testid="collaboration-empty-project-create"]')
       )
-      await control.command('waitFor', board('[data-testid="cloud-todo-title"]'), {
+      await control.command('chooseWhenEnabled', '[data-testid="thread-create-group-select"]', {
+        value: '__new__',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', board('[data-testid="cloud-todo-title"]'), {
+      await control.command('fill', '[data-testid="thread-create-new-group-name"]', {
+        value: `评论提及协作群-${process.pid}`,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="thread-create-group-next"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('cloud-todo-title'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', scoped('cloud-todo-title'), {
         value: ISSUE_NAME,
       })
-      await control.command(
-        'clickWhenEnabled',
-        board('[data-testid="cloud-todo-create-confirm"]'),
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command('waitFor', board('[data-testid="cloud-todo-detail"]'), {
+      await control.command('clickWhenEnabled', scoped('cloud-todo-create-confirm'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('thread-room'), {
         text: ISSUE_NAME,
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', board('[data-testid="cloud-todo-detail-title"]'), {
-        value: ISSUE_NAME,
+      await control.command('waitFor', `${scoped('group-message-input')}[contenteditable="true"]`, {
         timeoutMs: uiTimeoutMs,
       })
 
-      const commentComposer = board('[data-testid="cloud-task-activity-composer"]')
+      const commentComposer = scoped('group-message-input')
       await control.command('waitFor', commentComposer, { visible: true, timeoutMs: uiTimeoutMs })
-      const commentSend = board(
-        '[data-testid="task-comment-form"] [data-testid="send-message-button"]'
-      )
+      const commentSend = scoped('group-message-send')
       const commentName = await chooseMention(control, {
         captureName: 'collaboration-issue-comment-mention-01-popup.png',
         composer: commentComposer,
-        scope: ACTIVE_BOARD,
       })
       await control.command('clickWhenEnabled', commentSend, { timeoutMs: uiTimeoutMs })
-      await control.command('waitFor', board('[data-testid="cloud-task-activity-list"]'), {
+      await control.command('waitFor', scoped('group-message-list'), {
         text: `@${commentName}`,
         timeoutMs: uiTimeoutMs,
       })
 
-      const collapsedCardSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
-      const cardReplyToggleTestId = collapsedCardSnapshot.testIds.find(testId =>
-        testId.startsWith(CARD_REPLY_TOGGLE_PREFIX)
+      const collapsedCardSnapshot = JSON.parse(
+        await control.command('snapshot', scoped('group-message-list'))
       )
-      assert.ok(
-        cardReplyToggleTestId,
-        'The posted comment did not render its reply action in the Issue activity'
+      const replyAction = collapsedCardSnapshot.testIds.find(testId =>
+        testId.startsWith(REPLY_ACTION_PREFIX)
       )
-      await control.command('click', board(`[data-testid="${cardReplyToggleTestId}"]`), {
-        visible: true,
-      })
-      const rootId = cardReplyToggleTestId.slice(CARD_REPLY_TOGGLE_PREFIX.length)
-      await control.command('waitFor', board(`[data-testid="${REPLY_COMPOSER}"]`), {
+      assert.ok(replyAction, 'The posted comment did not expose a reply action in the Thread')
+      const rootId = replyAction.slice(REPLY_ACTION_PREFIX.length)
+      assert.equal(
+        (await control.command('getText', scoped(`group-message-content-${rootId}`))).trim(),
+        `@${commentName}`
+      )
+      await control.command('hover', scoped(`group-message-${rootId}`))
+      await control.command('clickWhenEnabled', scoped(replyAction), { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', scoped('group-reply-context'), {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
-      const cardSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
-      assert.ok(
-        cardSnapshot.testIds.includes(REPLY_COMPOSER),
-        'The posted comment did not activate the Issue reply composer'
+      assert.equal(
+        await control.command('getAttribute', scoped('group-reply-context'), {
+          value: 'data-reply-to-message-id',
+        }),
+        rootId
       )
       const replyName = await chooseMention(control, {
         captureName: 'collaboration-issue-comment-mention-02-card-reply.png',
-        composer: board(
-          `[data-testid="${REPLY_COMPOSER}"] [data-testid="cloud-task-activity-composer"]`
-        ),
-        scope: ACTIVE_BOARD,
+        composer: commentComposer,
       })
-      await control.command(
-        'clickWhenEnabled',
-        board('[data-testid="task-comment-form"] [data-testid="send-message-button"]'),
-        { timeoutMs: uiTimeoutMs }
+      await control.command('clickWhenEnabled', commentSend, { timeoutMs: uiTimeoutMs })
+      const replyRow = `${scoped('group-message-list')} [data-message-id][data-reply-to-message-id="${rootId}"]`
+      await control.command('waitFor', replyRow, {
+        text: `@${replyName}`,
+        timeoutMs: uiTimeoutMs,
+      })
+      const replyId = await control.command('getAttribute', replyRow, { value: 'data-message-id' })
+      assert.ok(replyId, 'The server-accepted reply did not retain its message identity')
+      assert.equal(
+        (await control.command('getText', scoped(`group-message-content-${replyId}`))).trim(),
+        `@${replyName}`
       )
-      await control.command(
-        'waitFor',
-        board(`[data-testid="cloud-task-activity-replies-${rootId}"]`),
-        {
-          text: `@${replyName}`,
-          timeoutMs: uiTimeoutMs,
-        }
+      await control.command('waitFor', scoped(`group-message-quoted-${replyId}`), {
+        text: `@${commentName}`,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('group-reply-context'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'collaboration-issue-comment-mention-03-reply-sent.png')
+      await reloadMainWindow(control, 'The root mention and its referenced reply must persist')
+      await control.command('waitFor', replyRow, { text: `@${replyName}`, timeoutMs: uiTimeoutMs })
+      assert.equal(
+        (await control.command('getText', scoped(`group-message-content-${rootId}`))).trim(),
+        `@${commentName}`
       )
+      assert.equal(
+        (await control.command('getText', scoped(`group-message-content-${replyId}`))).trim(),
+        `@${replyName}`
+      )
+      await control.command('waitFor', scoped(`group-message-quoted-${replyId}`), {
+        text: `@${commentName}`,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'collaboration-issue-comment-mention-04-reply-persisted.png')
     },
   }
 }

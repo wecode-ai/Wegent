@@ -32,6 +32,7 @@
   "close": "Close",
   "loading": "Loading…",
   "loadFailed": "Groups could not be loaded. Please retry.",
+  "workLoadFailed": "Work records could not be loaded. Try again.",
   "threadLinkUnavailable": "This Thread could not be opened. It may have been deleted or your access may have changed.",
   "files": "Group files",
   "noResults": "No Threads match this filter",
@@ -77,6 +78,7 @@
   "unmute": "Receive notifications",
   "createdEvent": "Started Thread",
   "changedEvent": "Updated Thread status",
+  "changedEventTo": "Changed Thread status to {{status}}",
   "completedEvent": "Completed Thread",
   "reopenedEvent": "Reopened Thread",
   "notifications": "Notifications",
@@ -114,8 +116,7 @@
   "removeMember": "Remove from group",
   "noPeople": "No matching people",
   "memberBoundary": "New members can read existing group and Thread discussions and deliveries. Invitations grant group access only, without project, device or private agent permissions.",
-  "saveMetadata": "Save basic information",
-  "saveBeforeClassify": "Save basic information before changing the project link.",
+  "saveBeforeClassify": "Resolve unsaved changes before changing the project link.",
   "classificationPermission": "Changing a link requires work classification permissions in the group and both the previous and new projects.",
   "discardTitle": "Discard unsaved changes?",
   "discardDescription": "Your unsaved changes will be lost when leaving this page.",
@@ -129,5 +130,9 @@
   "historyWindow": "Viewing message history",
   "historyOlder": "Earlier messages",
   "historyNewer": "Later messages",
-  "latestMessages": "Back to latest"
+  "latestMessages": "Back to latest",
+  "saveDescription": "Save description",
+  "autosaveProperties": "Properties save automatically. Save the description separately.",
+  "savingProperties": "Saving properties…",
+  "saveFailed": "Could not save. Please retry."
 }

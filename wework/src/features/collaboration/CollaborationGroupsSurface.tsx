@@ -2,6 +2,7 @@ import {
   Activity,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -9,10 +10,10 @@ import {
   type ReactNode,
 } from 'react'
 import { ChevronDown, Hash, MessageCircle, Plus } from 'lucide-react'
-import { TemplateDialog } from '@wegent/collaboration/templates'
 import {
   CollaborationApp,
   createCollaborationTranslator,
+  collaborationMessages,
   IssueCreate,
   CollaborationFilesAdapter,
   type CollaborationIssue,
@@ -27,7 +28,10 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { CollaborationViewSwitcher } from './CollaborationViewSwitcher'
 import { createGroupWorkspaceApi, groupBoardContext } from './groupWorkspaceApi'
 import { GroupConversation } from './GroupConversation'
-import { GroupMembersSettings } from './GroupMembersSettings'
+import { CreateGroupOrThread, GroupSettings } from './GroupManagementDialogs'
+import { ThreadCreateDialog } from './ThreadCreateDialog'
+import { ThreadArchiveDialog } from './ThreadArchiveDialog'
+import type { ThreadActionContext, ThreadArchivePreparationContext } from './threadActions'
 
 export interface GroupSource {
   store: 'local' | 'cloud'
@@ -44,8 +48,6 @@ type NavEntry = {
   title: string
   status: string
 }
-const fieldClass =
-  'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary focus-visible:ring-2 focus-visible:ring-focus'
 
 export function CollaborationGroupsSurface({
   sources,
@@ -58,16 +60,22 @@ export function CollaborationGroupsSurface({
   accountScope,
   onBackToBoard,
   renderBoardIssueCard,
+  renderThreadActions,
+  onThreadActionContext,
+  onPrepareThreadArchive,
 }: {
   sources: GroupSource[]
   search: string
   locale: 'zh-CN' | 'en'
   footer?: ReactNode
-  onNavigate(search: string): void
+  onNavigate(search: string, relatedThreadId?: string): void
   onReady(): void
   onConnectCloud?: () => void
   accountScope: string
   onBackToBoard?(): void
+  renderThreadActions?(context: ThreadActionContext): ReactNode
+  onThreadActionContext?(context: ThreadActionContext | null): void
+  onPrepareThreadArchive?(context: ThreadArchivePreparationContext): Promise<void>
   renderBoardIssueCard?(
     project: CollaborationProject,
     context: Parameters<
@@ -81,11 +89,14 @@ export function CollaborationGroupsSurface({
   const registerLeaveGuard = useCallback((guard: ((action: () => void) => void) | null) => {
     leaveGuard.current = guard
   }, [])
-  const requestNavigate = (nextSearch: string) => {
-    const action = () => onNavigate(nextSearch)
+  const requestLeave = useCallback((action: () => void) => {
     if (leaveGuard.current) leaveGuard.current(action)
     else action()
-  }
+  }, [])
+  const requestNavigate = (nextSearch: string, relatedThreadId?: string) =>
+    requestLeave(() =>
+      relatedThreadId ? onNavigate(nextSearch, relatedThreadId) : onNavigate(nextSearch)
+    )
   const params = useMemo(() => new URLSearchParams(search), [search])
   const store = params.get('groupStore') ?? 'local'
   const groupId = params.get('groupId')
@@ -126,6 +137,45 @@ export function CollaborationGroupsSurface({
     [source, groupId, refresh]
   )
   const owner = `${store === 'local' ? 'local' : accountScope}:${store}:${groupId ?? ''}`
+  const childScope = `${accountScope}:${owner}:${threadId ?? ''}`
+  const [childDraft, setChildDraft] = useState<{
+    owner: string
+    parent: CollaborationIssue
+    classificationProject?: CollaborationProject
+  } | null>(null)
+  const currentChild = childDraft?.owner === childScope ? childDraft : null
+  if (childDraft && !currentChild) setChildDraft(null)
+  const [archiveTarget, setArchiveTarget] = useState<{
+    owner: string
+    item: CollaborationIssue
+  } | null>(null)
+  const currentArchive = archiveTarget?.owner === childScope ? archiveTarget : null
+  if (archiveTarget && !currentArchive) setArchiveTarget(null)
+  const childBinding = useRef({
+    scope: childScope,
+    draft: childDraft,
+    archive: archiveTarget,
+    mounted: true,
+  })
+  useLayoutEffect(() => {
+    childBinding.current = {
+      scope: childScope,
+      draft: childDraft,
+      archive: archiveTarget,
+      mounted: true,
+    }
+    return () => {
+      childBinding.current.mounted = false
+    }
+  }, [childScope, childDraft, archiveTarget])
+  const ownsChild = () =>
+    childBinding.current.mounted &&
+    childBinding.current.scope === childScope &&
+    childBinding.current.draft === currentChild
+  const ownsArchive = () =>
+    childBinding.current.mounted &&
+    childBinding.current.scope === childScope &&
+    childBinding.current.archive === currentArchive
   const notice = noticeState?.owner === owner ? noticeState.message : null
   const [snapshot, setSnapshot] = useState<{
     owner: string
@@ -161,7 +211,7 @@ export function CollaborationGroupsSurface({
       releases.forEach(release => release())
     }
   }, [sources, refresh])
-  const navigate = (patch: Record<string, string | null>) => {
+  const navigate = (patch: Record<string, string | null>, relatedThreadId?: string) => {
     const next = new URLSearchParams(search)
     if ('threadId' in patch || 'groupId' in patch || 'groupTab' in patch) {
       next.delete('commentId')
@@ -172,7 +222,7 @@ export function CollaborationGroupsSurface({
       if (value === null) next.delete(key)
       else next.set(key, value)
     }
-    requestNavigate(`?${next.toString()}`)
+    requestNavigate(`?${next.toString()}`, relatedThreadId)
   }
   useEffect(() => {
     let active = true
@@ -251,9 +301,12 @@ export function CollaborationGroupsSurface({
     }
   }, [api, source, groupId, owner, revision])
   const thread = threadId ? current?.items.find(item => item.id === threadId) : null
-  const boardContext = current
-    ? groupBoardContext(current.group, store === 'local' ? 'local' : 'cloud')
-    : null
+  const boardGroup = current?.group
+  const boardContext = useMemo(
+    () =>
+      boardGroup ? groupBoardContext(boardGroup, store === 'local' ? 'local' : 'cloud') : null,
+    [boardGroup, store]
+  )
   const openThread = (id: string) =>
     navigate({ threadId: id, groupTab: tab === 'board' ? 'board' : 'chat' })
   const returnToGroup = () => navigate({ threadId: null, groupTab: 'chat' })
@@ -429,6 +482,19 @@ export function CollaborationGroupsSurface({
                   onBack={returnToGroup}
                   onBackToBoard={returnToBoard}
                   onOpenThread={openThread}
+                  onOpenRelatedThread={id =>
+                    navigate({ threadId: id, groupTab: 'chat' }, thread.id)
+                  }
+                  onCreateChild={(parent, classificationProject) =>
+                    setChildDraft({ owner: childScope, parent, classificationProject })
+                  }
+                  accountScope={accountScope}
+                  renderThreadActions={renderThreadActions}
+                  onThreadActionContext={onThreadActionContext}
+                  requestLeave={requestLeave}
+                  onArchiveThread={item =>
+                    requestLeave(() => setArchiveTarget({ owner: childScope, item }))
+                  }
                   onChanged={refresh}
                 />
               ) : (
@@ -483,6 +549,7 @@ export function CollaborationGroupsSurface({
                   {tab === 'chat' && (
                     <GroupConversation
                       key={owner}
+                      accountScope={accountScope}
                       focusedCommentId={params.get('commentId')}
                       onClearFocus={() => navigate({ commentId: null, focusRequest: null })}
                       focusRequestKey={params.get('focusRequest')}
@@ -565,6 +632,12 @@ export function CollaborationGroupsSurface({
                       showProjectHeading={false}
                       enabledStandardViews={['board', 'table']}
                       parentGroupingEnabled
+                      issueArchiveEnabled
+                      onPrepareIssueArchive={
+                        source.store === 'local' && onPrepareThreadArchive
+                          ? item => onPrepareThreadArchive({ item, api, sourceStore: source.store })
+                          : undefined
+                      }
                       refreshProjectRequestKey={revision}
                       host={{
                         capabilities: {
@@ -625,6 +698,65 @@ export function CollaborationGroupsSurface({
           </>
         )}
       </main>
+      {currentArchive && api && current && source && (
+        <ThreadArchiveDialog
+          key={`${childScope}:${currentArchive.item.id}`}
+          item={currentArchive.item}
+          items={current.items}
+          api={api}
+          locale={locale}
+          onPrepare={
+            source.store === 'local' && onPrepareThreadArchive
+              ? item => onPrepareThreadArchive({ item, api, sourceStore: source.store })
+              : undefined
+          }
+          onClose={() => {
+            if (ownsArchive()) setArchiveTarget(null)
+          }}
+          onArchived={() => {
+            if (!ownsArchive()) return
+            setArchiveTarget(null)
+            refresh()
+            if (onBackToBoard) onBackToBoard()
+            else navigate({ threadId: null, groupTab: 'board' })
+          }}
+        />
+      )}
+      {currentChild && source && current && (
+        <ThreadCreateDialog
+          key={`${childScope}:${currentChild.parent.id}`}
+          api={source.workspace}
+          groups={source.groups}
+          store={source.store}
+          locale={locale}
+          accountScope={accountScope}
+          form={{
+            api: source.workspace,
+            project: currentChild.classificationProject,
+            allIssues: current.items,
+            defaults: {
+              status: 'inbox',
+              parent: currentChild.parent,
+              tags: [],
+              draftScope: `child:${currentChild.parent.id}`,
+            },
+            messages: collaborationMessages[locale],
+            translate,
+            onClose: () => {
+              if (ownsChild()) setChildDraft(null)
+            },
+            onError: () => {
+              if (ownsChild()) setNotice({ owner, message: t('threadCreateFailed') })
+            },
+            onCreated: created => {
+              if (!ownsChild()) return
+              setChildDraft(null)
+              refresh()
+              navigate({ threadId: created.id, groupTab: 'chat' }, currentChild.parent.id)
+            },
+          }}
+        />
+      )}
       {creating && (
         <CreateGroupOrThread
           kind={creating}
@@ -643,235 +775,5 @@ export function CollaborationGroupsSurface({
         />
       )}
     </section>
-  )
-}
-
-function CreateGroupOrThread({
-  kind,
-  sources,
-  source,
-  api,
-  group,
-  onClose,
-  onCreated,
-}: {
-  kind: 'group' | 'thread'
-  sources: GroupSource[]
-  source?: GroupSource
-  api: SharedWorkspaceApi | null
-  group?: ChatGroup
-  onClose(): void
-  onCreated(source: GroupSource['store'], id: string): void
-}) {
-  const { t } = useTranslation('collaboration')
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [store, setStore] = useState(
-    source?.store ?? (sources.some(source => source.store === 'cloud') ? 'cloud' : 'local')
-  )
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  return (
-    <TemplateDialog
-      title={t(kind === 'group' ? 'newGroup' : 'newThread')}
-      description={t(kind === 'group' ? 'emptyHint' : 'threadDescription')}
-      closeLabel={t('close')}
-      onClose={onClose}
-      busy={busy}
-    >
-      <form
-        className="space-y-4"
-        data-testid={`create-${kind}-dialog`}
-        onSubmit={async event => {
-          event.preventDefault()
-          if (busy || !name.trim()) return
-          setBusy(true)
-          setError(null)
-          try {
-            if (kind === 'group') {
-              const target = sources.find(source => source.store === store)
-              if (!target) throw new Error(t('readOnly'))
-              const result = await target.groups.create({ name: name.trim(), description })
-              onCreated(store, result.group.id)
-            } else {
-              if (!api || !group || !source) throw new Error(t('readOnly'))
-              const thread = await api.issues.create(group.id, {
-                title: name.trim(),
-                description,
-              })
-              onCreated(source.store, thread.id)
-            }
-          } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause))
-          } finally {
-            setBusy(false)
-          }
-        }}
-      >
-        <label className="block space-y-2 text-sm text-text-primary">
-          <span>{t(kind === 'group' ? 'groupName' : 'threadTitle')}</span>
-          <input
-            autoFocus
-            required
-            maxLength={255}
-            data-testid={`create-${kind}-name`}
-            className={fieldClass}
-            value={name}
-            onChange={event => setName(event.target.value)}
-          />
-        </label>
-        <label className="block space-y-2 text-sm text-text-primary">
-          <span>{t(kind === 'group' ? 'groupDescription' : 'threadDescription')}</span>
-          <textarea
-            data-testid={`create-${kind}-description`}
-            className={fieldClass}
-            rows={3}
-            value={description}
-            onChange={event => setDescription(event.target.value)}
-          />
-        </label>
-        {kind === 'group' && (
-          <>
-            <label className="block space-y-2 text-sm text-text-primary">
-              <span>{t('storage')}</span>
-              <select
-                data-testid="create-group-store"
-                className={fieldClass}
-                value={store}
-                onChange={event => setStore(event.target.value as GroupSource['store'])}
-              >
-                {sources.map(source => (
-                  <option key={source.store} value={source.store}>
-                    {t(source.store)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {store === 'local' && <p className="text-xs text-text-muted">{t('localHint')}</p>}
-          </>
-        )}
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            data-testid="create-group-cancel"
-            disabled={busy}
-            onClick={onClose}
-          >
-            {t('cancel')}
-          </Button>
-          <Button
-            type="submit"
-            data-testid={`create-${kind}-submit`}
-            disabled={busy || !name.trim()}
-          >
-            {t('create')}
-          </Button>
-        </div>
-      </form>
-    </TemplateDialog>
-  )
-}
-
-function GroupSettings({
-  group,
-  members,
-  groups,
-  directory,
-  shared,
-  onChanged,
-}: {
-  group: ChatGroup
-  members: ChatGroupMember[]
-  groups: ChatGroupApi
-  directory: SharedWorkspaceApi['members']
-  shared: boolean
-  onChanged(): void
-}) {
-  const { t } = useTranslation('collaboration')
-  const [name, setName] = useState(group.name)
-  const [description, setDescription] = useState(group.description)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const manage = group.role === 'Owner' || group.role === 'Maintainer'
-  return (
-    <div className="h-full overflow-y-auto p-6">
-      <form
-        className="max-w-xl space-y-5"
-        onSubmit={async event => {
-          event.preventDefault()
-          if (!manage || busy) return
-          setBusy(true)
-          setError(null)
-          try {
-            await groups.update(group.id, {
-              name,
-              description,
-              version: group.version,
-              status: group.status,
-            })
-            onChanged()
-          } catch (cause) {
-            setError(String(cause))
-          } finally {
-            setBusy(false)
-          }
-        }}
-      >
-        <label className="block space-y-2 text-sm text-text-primary">
-          <span>{t('groupName')}</span>
-          <input
-            data-testid="group-settings-name"
-            className={fieldClass}
-            required
-            disabled={!manage}
-            value={name}
-            onChange={event => setName(event.target.value)}
-          />
-        </label>
-        <label className="block space-y-2 text-sm text-text-primary">
-          <span>{t('groupDescription')}</span>
-          <textarea
-            data-testid="group-settings-description"
-            className={fieldClass}
-            disabled={!manage}
-            rows={3}
-            value={description}
-            onChange={event => setDescription(event.target.value)}
-          />
-        </label>
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        {manage && (
-          <Button
-            data-testid="group-settings-save"
-            type="submit"
-            disabled={
-              busy || !name.trim() || (name === group.name && description === group.description)
-            }
-          >
-            {t('save')}
-          </Button>
-        )}
-      </form>
-      <div className="mt-8 max-w-xl border-t border-border pt-6">
-        <GroupMembersSettings
-          group={group}
-          members={members}
-          groups={groups}
-          directory={directory}
-          shared={shared}
-          onChanged={onChanged}
-        />
-      </div>
-    </div>
   )
 }

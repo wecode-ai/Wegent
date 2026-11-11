@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
-import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
@@ -32,39 +31,84 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         },
         uiTimeoutMs
       )
-      const readIssue = id =>
-        requestExecutor(control, 'todos.get', { project_id: project.id, task_id: id }, uiTimeoutMs)
-      const first = await createCollaborationBoardIssue(
-        control,
-        'First tagged Issue',
-        'pending',
-        uiTimeoutMs
-      )
-      const second = await createCollaborationBoardIssue(
-        control,
-        'Second tagged Issue',
-        'pending',
-        uiTimeoutMs
-      )
-      const untagged = await createCollaborationBoardIssue(
-        control,
-        'Untagged Issue',
-        'pending',
-        uiTimeoutMs
-      )
+      let groupId
+      const owners = new Map()
+      const openBoard = async () => {
+        await control.command('openWeworkScheme', 'body', {
+          value: `wework://boards/local/${project.id}`,
+        })
+        await control.command('waitFor', scoped('collaboration-board'), { timeoutMs: uiTimeoutMs })
+      }
+      const openSettings = async () => {
+        await control.command('waitFor', scoped('thread-room'), { timeoutMs: uiTimeoutMs })
+        await control.command('click', scoped('thread-settings'))
+        await control.command('waitFor', scoped('thread-settings-panel'), {
+          timeoutMs: uiTimeoutMs,
+        })
+      }
+      const readIssue = id => {
+        assert.ok(owners.has(id), 'The created Thread must retain its actual group owner')
+        return requestExecutor(
+          control,
+          'todos.get',
+          { project_id: owners.get(id), task_id: id },
+          uiTimeoutMs
+        )
+      }
+      const createIssue = async (title, status) => {
+        await control.command('clickWhenEnabled', scoped('collaboration-issue-create'))
+        await control.command('chooseWhenEnabled', portal('thread-create-group-select'), {
+          value: groupId ?? '__new__',
+          timeoutMs: uiTimeoutMs,
+        })
+        if (!groupId)
+          await control.command('fill', portal('thread-create-new-group-name'), {
+            value: name + ' group',
+          })
+        await control.command('clickWhenEnabled', portal('thread-create-group-next'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', scoped('cloud-todo-title'), { timeoutMs: uiTimeoutMs })
+        await control.command('fill', scoped('cloud-todo-title'), { value: title })
+        await control.command('select', scoped('cloud-todo-create-status'), { value: status })
+        await control.command('clickWhenEnabled', scoped('cloud-todo-create-confirm'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', scoped('thread-room'), {
+          text: title,
+          timeoutMs: uiTimeoutMs,
+        })
+        const created = await waitForValue(
+          () => requestExecutor(control, 'todos.list', { project_id: project.id }, uiTimeoutMs),
+          issues => issues.some(issue => issue.title === title),
+          'UI-created Thread must appear in its optional project',
+          uiTimeoutMs
+        )
+        const issue = created.find(issue => issue.title === title)
+        assert.ok(issue.group_id, 'Creation must produce a group-owned Thread')
+        assert.equal(issue.cloud_project_id, issue.group_id)
+        groupId = issue.group_id
+        owners.set(issue.id, groupId)
+        await openBoard()
+        return issue.id
+      }
+      const first = await createIssue('First tagged Issue', 'pending')
+      const second = await createIssue('Second tagged Issue', 'pending')
+      const untagged = await createIssue('Untagged Issue', 'pending')
       const editTag = async (id, tag) => {
         await control.command('click', scoped(`cloud-todo-card-${id}`))
-        await control.command('click', scoped('cloud-todo-more-properties'))
-        await control.command('fill', portal('cloud-todo-detail-tag-input'), { value: tag })
-        await control.command('press', portal('cloud-todo-detail-tag-input'), { key: 'Enter' })
+        await openSettings()
+        await control.command('fill', scoped('thread-settings-tags-input'), { value: tag })
+        await control.command('press', scoped('thread-settings-tags-input'), { key: 'Enter' })
         await waitForValue(
           () => readIssue(id),
           issue => issue.metadata.tags.includes(tag),
           'Tag must persist without pressing Save',
           uiTimeoutMs
         )
-        await control.command('press', portal('cloud-todo-detail-tag-input'), { key: 'Escape' })
-        await control.command('click', scoped('cloud-todo-detail-close'))
+        await control.command('press', scoped('thread-settings-tags-input'), { key: 'Escape' })
+        await control.command('clickWhenEnabled', scoped('thread-settings-close'))
+        await openBoard()
       }
       await editTag(first, 'bug')
       await editTag(second, 'feature')
@@ -88,13 +132,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('click', scoped('cloud-board-tag-filter-clear'))
       await control.command('waitFor', scoped(`cloud-todo-card-${untagged}`))
       await control.command('click', scoped(`cloud-todo-card-${first}`))
-      await control.command('fill', scoped('cloud-todo-detail-title'), {
+      await openSettings()
+      await control.command('fill', scoped('thread-settings-title'), {
         value: 'Immediately renamed Issue',
       })
-      await control.command('press', scoped('cloud-todo-detail-title'), { key: 'Enter' })
-      await control.command('click', scoped('issue-milestone'))
-      await control.command('fill', portal('issue-milestone-search'), { value: 'searchable' })
-      await control.command('click', portal(`issue-milestone-option-${milestone.id}`))
+      await control.command('press', scoped('thread-settings-title'), { key: 'Enter' })
+      await control.command('click', scoped('thread-settings-milestone'))
+      await control.command('fill', portal('thread-settings-milestone-search'), {
+        value: 'searchable',
+      })
+      await control.command('click', portal(`thread-settings-milestone-option-${milestone.id}`))
       await waitForValue(
         () => readIssue(first),
         issue =>
@@ -103,12 +150,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'Title and milestone must persist independently',
         uiTimeoutMs
       )
-      await control.command('click', scoped('cloud-todo-detail-description'))
-      await control.command('fill', scoped('cloud-todo-detail-description'), {
+      await control.command('click', scoped('thread-settings-description'))
+      await control.command('fill', scoped('thread-settings-description'), {
         value: 'Description requires an explicit save',
       })
-      await control.command('click', scoped('cloud-todo-more-properties'))
-      await control.command('select', portal('cloud-todo-detail-priority'), { value: 'urgent' })
+      await control.command('select', scoped('thread-settings-priority'), { value: 'urgent' })
       await waitForValue(
         () => readIssue(first),
         issue => issue.priority === 'urgent',
@@ -120,8 +166,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         '',
         'Autosaving properties must not submit the description draft'
       )
-      await control.command('click', scoped('cloud-todo-more-properties'))
-      await control.command('clickWhenEnabled', scoped('cloud-todo-save'))
+      await control.command('clickWhenEnabled', scoped('thread-settings-save'))
       await waitForValue(
         () => readIssue(first),
         issue => issue.description.includes('Description requires an explicit save'),
@@ -129,21 +174,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         uiTimeoutMs
       )
       await captureScreenshot(control, 'issue-property-autosave.png', CONTENT)
+      await control.command('clickWhenEnabled', scoped('thread-settings-close'))
+      await openBoard()
       await reloadMainWindow(control, 'Persisted Issue properties must survive reloading')
       await control.command('waitFor', scoped(`cloud-todo-card-${first}`), {
         text: 'Immediately renamed Issue',
       })
       await control.command('click', scoped(`cloud-todo-card-${first}`))
-      await control.command('waitFor', scoped('cloud-todo-detail-title'))
+      await openSettings()
+      await control.command('waitFor', scoped('thread-settings-title'))
       await waitForValue(
-        () => control.command('getValue', scoped('cloud-todo-detail-title')),
+        () => control.command('getValue', scoped('thread-settings-title')),
         title => title === 'Immediately renamed Issue',
         'Renamed title must survive reloading',
         uiTimeoutMs
       )
-      await control.command('waitFor', scoped('issue-milestone'), { text: 'Searchable release' })
+      await control.command('waitFor', scoped('thread-settings-milestone'), {
+        text: 'Searchable release',
+      })
       assert.equal((await readIssue(first)).priority, 'urgent')
-      await control.command('click', scoped('cloud-todo-detail-close'))
+      await control.command('clickWhenEnabled', scoped('thread-settings-close'))
+      await openBoard()
       await control.command('navigate', 'body', { value: '/settings/appearance' })
       await control.command('clickWhenEnabled', '[data-testid="appearance-mode-dark"]')
       await control.command('waitFor', 'html[data-theme="dark"]')

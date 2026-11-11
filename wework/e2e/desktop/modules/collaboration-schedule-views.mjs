@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
+import { requestExecutor } from './executor-rpc.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 
 function dateKey(value) {
   const year = value.getFullYear()
@@ -91,23 +93,39 @@ export async function verifyCollaborationScheduleViews({
   })
   const keys = collaborationScheduleDates()
 
-  await control.command('click', scoped('[aria-label="时间范围"]'))
-  await control.command('waitFor', '[data-testid="cloud-todo-detail-start-date"]', {
+  const route = new URL(JSON.parse(await control.command('snapshot', scoped('').trim())).location)
+  const groupId = route.searchParams.get('groupId')
+  const threadId = route.searchParams.get('threadId')
+  assert.ok(groupId && threadId, 'Scheduling must use the created item’s actual owning group')
+  const readThread = () =>
+    requestExecutor(control, 'todos.get', { project_id: groupId, task_id: threadId }, timeoutMs)
+  const created = await readThread()
+  assert.equal(created.group_id, groupId)
+  assert.equal(created.cloud_project_id, groupId)
+  await control.command('click', scoped('[data-testid="thread-settings"]'))
+  await control.command('waitFor', scoped('[data-testid="thread-settings-start"]'), {
     visible: true,
     timeoutMs,
   })
-  await control.command('fill', '[data-testid="cloud-todo-detail-start-date"]', {
-    value: keys.initialStart,
+  await control.command('fill', scoped('[data-testid="thread-settings-start"]'), {
+    value: `${keys.initialStart}T12:00`,
   })
-  await control.command('fill', '[data-testid="cloud-todo-detail-due-date"]', {
-    value: keys.initialEnd,
+  await control.command('fill', scoped('[data-testid="thread-settings-due"]'), {
+    value: `${keys.initialEnd}T12:00`,
   })
-  await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
-    visible: false,
-    timeoutMs,
-  })
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-  await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+  await waitForValue(
+    readThread,
+    item =>
+      item.metadata.start_at &&
+      item.metadata.due_at &&
+      dateKey(new Date(item.metadata.start_at)) === keys.initialStart &&
+      dateKey(new Date(item.metadata.due_at)) === keys.initialEnd,
+    'The schedule must persist on the group-owned item without a metadata Save',
+    timeoutMs
+  )
+  await control.command('clickWhenEnabled', scoped('[data-testid="thread-settings-close"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="thread-back-to-board"]'))
+  await control.command('waitFor', scoped('[data-testid="thread-room"]'), {
     visible: false,
     timeoutMs,
   })

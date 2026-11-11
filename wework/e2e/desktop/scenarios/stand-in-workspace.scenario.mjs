@@ -368,19 +368,45 @@ export function createDesktopScenario({
       assert.equal(saved.collaboration.enabled, false)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-home"]`)
-      await control.command('waitFor', '[data-testid="collaboration-issue-project-trigger"]', {
+      await control.command('waitFor', '[data-testid="thread-creation-home"]', {
         visible: true,
       })
-      await control.command('click', '[data-testid="collaboration-issue-project-trigger"]')
-      await control.command('click', selector(`collaboration-issue-project-${project.id}`))
+      await control.command('select', '[data-testid="thread-home-store"]', { value: 'local' })
+      await control.command('chooseWhenEnabled', '[data-testid="thread-home-project"]', {
+        value: project.id,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="thread-home-create"]')
+      await control.command('chooseWhenEnabled', '[data-testid="thread-create-group-select"]', {
+        value: '__new__',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', '[data-testid="thread-create-new-group-name"]', {
+        value: `${PROJECT}协作群`,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="thread-create-group-next"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-title"]`, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         await control.command('getElementCount', '[data-testid="issue-stand-in-select"]'),
         '0'
       )
-      await control.command('fill', '[data-testid="collaboration-home-issue-content"]', {
+      await control.command('fill', `${CONTENT} [data-testid="cloud-todo-title"]`, {
         value: MARKER,
       })
-      await control.command('clickWhenEnabled', '[data-testid="collaboration-home-create-issue"]')
+      await control.command(
+        'clickWhenEnabled',
+        `${CONTENT} [data-testid="cloud-todo-create-confirm"]`
+      )
+      await control.command('waitFor', `${CONTENT} [data-testid="thread-room"]`, {
+        text: MARKER,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'stand-in-workspace-group-owned-issue.png', CONTENT)
       const deadline = Date.now() + modelResponseTimeoutMs
       let task
       let delegatedIssueId
@@ -393,12 +419,14 @@ export function createDesktopScenario({
         )
         const issue = issues.find(issue => issue.title === MARKER)
         if (issue) {
+          assert.ok(issue.group_id, 'The UI-created Thread must belong to a group')
+          assert.equal(issue.cloud_project_id, issue.group_id)
           if (delegatedIssueId !== issue.id) {
             await requestExecutor(
               control,
               'runtime.stand_in.run',
               {
-                projectId: project.id,
+                projectId: issue.group_id,
                 issueId: issue.id,
                 userId: USER_ID,
                 projectStore: 'local',
@@ -422,7 +450,7 @@ export function createDesktopScenario({
             const assigned = await requestExecutor(
               control,
               'todos.get',
-              { project_id: project.id, task_id: issue.id },
+              { project_id: issue.group_id, task_id: issue.id },
               uiTimeoutMs
             )
             assert.equal(

@@ -35,6 +35,11 @@
     display: block;
   }
 
+  .project-board-group-filter[data-active='true'] .project-board-action-label {
+    display: inline;
+    margin-inline-start: 6px;
+  }
+
   .project-board-search {
     min-width: 128px;
   }

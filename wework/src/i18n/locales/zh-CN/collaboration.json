@@ -32,6 +32,7 @@
   "close": "关闭",
   "loading": "正在加载…",
   "loadFailed": "群暂时无法加载，请重试。",
+  "workLoadFailed": "工作记录暂时无法加载，请重试。",
   "threadLinkUnavailable": "无法打开此事项，它可能已删除或你已失去访问权限。",
   "files": "群文件",
   "noResults": "没有符合筛选条件的事项",
@@ -77,6 +78,7 @@
   "unmute": "接收通知",
   "createdEvent": "发起了事项",
   "changedEvent": "更新了事项状态",
+  "changedEventTo": "将事项状态更新为 {{status}}",
   "completedEvent": "完成了事项",
   "reopenedEvent": "重新打开了事项",
   "notifications": "通知",
@@ -114,8 +116,7 @@
   "removeMember": "移出群",
   "noPeople": "没有找到匹配的人",
   "memberBoundary": "新成员可查看本群及事项已有的讨论和交付。邀请仅授予群权限，不授予项目、设备或私有智能体权限。",
-  "saveMetadata": "保存基本信息",
-  "saveBeforeClassify": "请先保存基本信息，再修改项目关联。",
+  "saveBeforeClassify": "请先处理未保存的修改，再修改项目关联。",
   "classificationPermission": "修改关联需要群及原项目、新项目的工作归类权限。",
   "discardTitle": "放弃未保存的修改？",
   "discardDescription": "离开此页面后，本次未保存的修改将丢失。",
@@ -129,5 +130,9 @@
   "historyWindow": "正在查看历史消息",
   "historyOlder": "更早消息",
   "historyNewer": "后续消息",
-  "latestMessages": "返回最新消息"
+  "latestMessages": "返回最新消息",
+  "saveDescription": "保存说明",
+  "autosaveProperties": "属性修改自动保存；说明需单独保存。",
+  "savingProperties": "正在保存属性…",
+  "saveFailed": "保存失败，请重试。"
 }

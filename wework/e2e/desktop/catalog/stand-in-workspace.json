@@ -4,7 +4,9 @@
   "scenarioOnly": true,
   "paths": [
     "wework/e2e/desktop/modules/stand-in-instance-flows.mjs",
-    "wework/e2e/desktop/modules/stand-in-instant-open.mjs"
+    "wework/e2e/desktop/modules/stand-in-instant-open.mjs",
+    "wework/src/features/collaboration/ThreadCreationHome.tsx",
+    "wework/src/features/collaboration/ThreadCreateDialog.tsx"
   ],
   "ci": {
     "core": {
