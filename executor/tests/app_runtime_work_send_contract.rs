@@ -4022,8 +4022,8 @@ async fn refreshed_transcript_reads_without_resuming_an_active_thread() {
         }))
         .await
         .expect("create should be accepted");
-    wait_until_task_running(&handler, "local-task-active-transcript-refresh").await;
     wait_for_method_count(&log_path, "turn/start", 1).await;
+    wait_until_native_turn_recorded(&handler, "local-task-active-transcript-refresh").await;
 
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -4080,8 +4080,8 @@ async fn active_transcript_without_a_snapshot_reads_provider_history() {
         }))
         .await
         .expect("create should be accepted");
-    wait_until_task_running(&handler, "local-task-active-transcript-no-snapshot").await;
     wait_for_method_count(&log_path, "turn/start", 1).await;
+    wait_until_native_turn_recorded(&handler, "local-task-active-transcript-no-snapshot").await;
 
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -5953,6 +5953,34 @@ fn process_exists(pid: u32) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+async fn wait_until_native_turn_recorded(handler: &RuntimeWorkRpcHandler, local_task_id: &str) {
+    // A logged request precedes its response and the native turn's durable mapping.
+    for _ in 0..50 {
+        let listed = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.list",
+                "payload": {}
+            }))
+            .await
+            .expect("list should succeed");
+        let started = listed["workspaces"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+            .any(|task| {
+                task["taskId"] == local_task_id
+                    && task["running"] == true
+                    && task["runtimeHandle"]["lastTurnId"] == "turn-1"
+            });
+        if started {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("native turn identity was not recorded");
 }
 
 async fn wait_until_task_running(handler: &RuntimeWorkRpcHandler, local_task_id: &str) {
