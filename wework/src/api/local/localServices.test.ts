@@ -2379,6 +2379,8 @@ describe('createLocalAppServices', () => {
         ],
       }),
     })
+    const creation = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(creation.executionRequest).not.toHaveProperty('collaboration_model')
     expect(request).toHaveBeenCalledWith('device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'home_dir',
