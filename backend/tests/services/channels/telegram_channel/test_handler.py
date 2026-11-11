@@ -1033,6 +1033,61 @@ class TestTelegramChannelHandler:
         assert trigger_mock.await_args.kwargs["result_emitter"] is None
 
     @pytest.mark.asyncio
+    async def test_callback_registration_failure_marks_task_and_closes_message(
+        self, handler
+    ):
+        task = SimpleNamespace(id=33, json={"status": {"status": "PENDING"}})
+        assistant_subtask = SimpleNamespace(
+            id=52,
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            error_message="",
+            completed_at=None,
+        )
+        streaming_emitter = _streaming_emitter()
+        streaming_emitter.emit_error = AsyncMock()
+        db = MagicMock()
+
+        with (
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=streaming_emitter),
+            ),
+            patch.object(
+                handler,
+                "_register_streaming_emitter",
+                new=AsyncMock(side_effect=RuntimeError("cache down")),
+            ),
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(),
+            ) as trigger,
+        ):
+            result = await handler._trigger_private_im_task_response(
+                db=db,
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=SimpleNamespace(id=38),
+                user=SimpleNamespace(id=1),
+                user_subtask_id=51,
+                message="hello",
+                message_context=_message_context(),
+                params=SimpleNamespace(is_group_chat=False),
+            )
+
+        assert result is False
+        assert assistant_subtask.status == SubtaskStatus.FAILED
+        assert task.json["status"]["status"] == "FAILED"
+        db.commit.assert_called_once()
+        streaming_emitter.emit_error.assert_awaited_once_with(
+            task_id=33, subtask_id=52, error="cache down"
+        )
+        send_reply.assert_awaited_once()
+        trigger.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_model_command_hides_models_blocked_by_agent(self, handler):
         """The /models list must only offer models the current agent allows."""
         message_context = _message_context()

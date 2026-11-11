@@ -156,6 +156,49 @@ async def test_conversation_timeout_clears_cache_and_mirror(
 
 
 @pytest.mark.asyncio
+async def test_mirror_failure_does_not_block_dispatch_or_restore_stale_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    cache, session_service, _, _ = _patch_dependencies(
+        monkeypatch, cached_task_id=None, mirrored_task_id=None, task=None
+    )
+    session_service.remember_chat_task.side_effect = RuntimeError("lock unavailable")
+
+    await handler._set_conversation_task_id("conv-private", 9, 42)
+
+    cache.set.assert_any_await(
+        _mapping_key("conv-private", 9), 42, expire=CHANNEL_CONV_TASK_TTL
+    )
+    disabled_key = cache.set.await_args_list[-1].args[0]
+    assert disabled_key.startswith("channel:conv_task:no_restore:dingtalk:")
+    cache.get.side_effect = [None, True]
+
+    task_id, auto_new_conversation = await handler._get_conversation_task_id(
+        "conv-private", 9
+    )
+
+    assert (task_id, auto_new_conversation) == (None, False)
+    session_service.get_chat_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reset_mirror_failure_does_not_block_new_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    cache, session_service, _, _ = _patch_dependencies(
+        monkeypatch, cached_task_id=None, mirrored_task_id=None, task=None
+    )
+    session_service.forget_chat_task.side_effect = RuntimeError("session index down")
+
+    await handler._delete_conversation_task_id("conv-private", 9)
+
+    cache.delete.assert_awaited_once_with(_mapping_key("conv-private", 9))
+    cache.set.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_set_and_delete_mirror_the_private_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
