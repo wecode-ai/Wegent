@@ -33,6 +33,7 @@ interface PendingWorkRow {
   sourceMessageIds?: string[]
   waitingSince?: string | null
   projectItem?: boolean
+  dismissalId?: string
 }
 
 function originalUrl(row: PendingWorkRow): string {
@@ -121,11 +122,13 @@ export function RuntimeInteractionsPage({
     setHistory(false)
     setShowList(!selectedId)
   }
-  const projectItemId = ({ item, store, userId }: (typeof projectIssues.items)[number]) =>
-    `project-issue:${store}:${item.cloud_project_id}:${item.id}:${issueWaitingSince(item, userId) ?? item.updated_at}`
+  const projectItemId = ({ item, store }: (typeof projectIssues.items)[number]) =>
+    `project-issue:${store}:${item.cloud_project_id}:${item.id}`
+  const projectDismissalId = (row: (typeof projectIssues.items)[number]) =>
+    `${projectItemId(row)}:${issueWaitingSince(row.item, row.userId) ?? 'untracked'}`
   const projectRows = projectIssues.items.filter(
     row =>
-      !interactions?.isDismissed?.(projectItemId(row)) &&
+      !interactions?.isDismissed?.(projectDismissalId(row)) &&
       !row.item.human_requests?.some(
         request =>
           (request.status === 'pending' || request.status === 'answering') &&
@@ -179,6 +182,7 @@ export function RuntimeInteractionsPage({
           const { item, store, userId } = projectRow
           return {
             id: projectItemId(projectRow),
+            dismissalId: projectDismissalId(projectRow),
             source: 'project' as const,
             timestamp: Date.parse(issueWaitingSince(item, userId) ?? item.updated_at),
             title: item.project_name,
@@ -201,7 +205,7 @@ export function RuntimeInteractionsPage({
           const request = pending.find(item => item.id === entry.id)
           await interactions.dismiss(
             request ?? {
-              id: entry.id,
+              id: entry.dismissalId ?? entry.id,
               source: entry.source,
               title: entry.title,
               question: entry.question,

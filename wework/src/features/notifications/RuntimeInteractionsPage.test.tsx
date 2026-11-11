@@ -698,6 +698,8 @@ it('keeps a later project handoff visible after an earlier handoff was ignored',
         cloud_project_id: '12',
         project_name: 'Project',
         title: 'New handoff',
+        execution_state: 'succeeded',
+        human_waiting_since: '2026-11-09T00:00:00Z',
         updated_at: '2026-11-09T00:00:00Z',
         created_by_user_id: 0,
         status: 'pending',
@@ -731,4 +733,71 @@ it('does not count locally ignored project work', () => {
   expect(screen.queryByTestId('interaction-list-item')).not.toBeInTheDocument()
   expect(reportProjectPendingCount).toHaveBeenLastCalledWith(0)
   expect(screen.getByTestId('interactions-dismiss-all')).toBeDisabled()
+})
+
+it('preserves the existing project-row identity while archiving the handoff separately', async () => {
+  projectWork.items = [
+    {
+      item: {
+        id: 'ISSUE-1',
+        cloud_project_id: '12',
+        project_name: 'Project',
+        title: 'Decide',
+        execution_state: 'succeeded',
+        human_waiting_since: '2026-11-08T00:00:00Z',
+        updated_at: '2026-11-09T00:00:00Z',
+        created_by_user_id: 0,
+        status: 'pending',
+      } as PendingProjectIssue['item'],
+      store: 'local',
+      userId: 0,
+    },
+  ]
+  const dismiss = vi.fn().mockResolvedValue(undefined)
+  view(undefined, {}, { pending: [], dismiss })
+  expect(screen.getByTestId('interaction-list-item')).toHaveAttribute(
+    'data-interaction-id',
+    'project-issue:local:12:ISSUE-1'
+  )
+  fireEvent.click(screen.getByTestId('interaction-dismiss'))
+  await waitFor(() =>
+    expect(dismiss).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'project-issue:local:12:ISSUE-1:2026-11-08T00:00:00Z',
+      })
+    )
+  )
+})
+
+it('does not revive ignored work after an edit when its handoff time is unknown', () => {
+  const project = {
+    item: {
+      id: 'ISSUE-1',
+      cloud_project_id: '12',
+      project_name: 'Project',
+      title: 'Decide',
+      updated_at: '2026-11-08T00:00:00Z',
+      created_by_user_id: 0,
+      status: 'pending',
+    } as PendingProjectIssue['item'],
+    store: 'local' as const,
+    userId: 0,
+  }
+  projectWork.items = [project]
+  const value = interactionValue({
+    pending: [],
+    isDismissed: id => id === 'project-issue:local:12:ISSUE-1:untracked',
+  })
+  const page = () => (
+    <RuntimeInteractionsContext.Provider value={value}>
+      <RuntimeInteractionsPage />
+    </RuntimeInteractionsContext.Provider>
+  )
+  const { rerender } = render(page())
+  expect(screen.queryByTestId('interaction-list-item')).not.toBeInTheDocument()
+  projectWork.items = [
+    { ...project, item: { ...project.item, updated_at: '2026-11-09T00:00:00Z' } },
+  ]
+  rerender(page())
+  expect(screen.queryByTestId('interaction-list-item')).not.toBeInTheDocument()
 })
