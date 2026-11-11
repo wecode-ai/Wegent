@@ -1,8 +1,8 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   ManagedExecutorRuntime,
   executorRequestTimeoutMs,
@@ -14,6 +14,39 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('managed executor runtime', () => {
+  test('keeps the runtime available after credential import fails and can import after repair', async () => {
+    const directory = await temporaryDirectory('managed-auth-unavailable-')
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const native = join(directory.path, 'native')
+      const managed = join(directory.path, 'managed')
+      await mkdir(native)
+      const credential = 'synthetic-credential-never-log-or-delete'
+      await writeFile(join(native, 'auth.json'), credential)
+      await writeFile(managed, 'preserve-existing-file')
+      const options = {
+        dataDirectory: directory.path,
+        environment: {
+          VITE_WEWORK_E2E: 'true',
+          WEWORK_E2E_NATIVE_CODEX_HOME: native,
+          WEGENT_CODEX_HOME: managed,
+          WEGENT_EXECUTOR_HOME: directory.path,
+        },
+      }
+      expect(prepareManagedExecutorEnvironment(options).CODEX_HOME).toBe(managed)
+      expect(warning).toHaveBeenCalledOnce()
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(credential)
+      expect(await readFile(managed, 'utf8')).toBe('preserve-existing-file')
+      expect(await readFile(join(native, 'auth.json'), 'utf8')).toBe(credential)
+      await rm(managed)
+      prepareManagedExecutorEnvironment(options)
+      expect(await readFile(join(managed, 'auth.json'), 'utf8')).toBe(credential)
+    } finally {
+      warning.mockRestore()
+      await directory.remove()
+    }
+  })
+
   test('allows Python provisioning before auth operations without extending ordinary requests', () => {
     for (const method of [
       'executor.plugin_auth.migrate',
