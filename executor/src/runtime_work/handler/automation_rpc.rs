@@ -396,6 +396,60 @@ pub(super) fn add_automation_context(
 mod tests {
     use super::*;
 
+    #[test]
+    fn scheduler_uses_the_bound_connection_and_observes_credential_rotation() {
+        let _lock = crate::test_env::lock();
+        let directory = tempfile::tempdir().unwrap();
+        let _home = super::super::tests::ScalarEnv::set(
+            "WEGENT_EXECUTOR_HOME",
+            directory.path().to_str().unwrap(),
+        );
+        tokio::runtime::Builder::new_current_thread().enable_all().start_paused(true)
+            .build().unwrap().block_on(async {
+                use axum::{http::HeaderMap, routing::get, Json, Router};
+                let router = Router::new().route("/api/models/unified", get(|headers: HeaderMap| async move {
+                    assert_eq!(headers["authorization"], "Bearer rotated-token");
+                    Json(json!({"data":[]}))
+                }));
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let backend_url = format!("http://{}", listener.local_addr().unwrap());
+                let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+                let connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+                    backend_url, auth_token:"initial-token".into(), ..Default::default()
+                })));
+                let route = Arc::new(Mutex::new(Some("runtime-route".into())));
+                let (events, mut receiver) = broadcast::channel(64);
+                let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+                    "scheduler-device", "/bin/false", events, Some(connection.clone()), Some(route.clone()),
+                );
+                assert!(Arc::ptr_eq(&handler.backend_connection, &connection));
+                assert!(Arc::ptr_eq(handler.backend_device_route.as_ref().unwrap(), &route));
+                let automation = handler.automation_store.create(serde_json::from_value(json!({
+                    "id":"bound-scheduler","version":0,"name":"Bound scheduler","prompt":"Run",
+                    "schedule":{"type":"one_time","execute_at":Utc::now()-chrono::Duration::minutes(1)},
+                    "taskPayload":{"runtime":"codex","modelId":"removed-model","modelType":"public",
+                        "modelOptions":{"weworkCloudModelNamespace":"default","weworkCloudModelResourceUserId":"0"},
+                        "executionRequest":{"model_config":{"api_key":"expired-token"}}}
+                })).unwrap()).unwrap();
+                tokio::task::yield_now().await;
+                connection.lock().unwrap().as_mut().unwrap().auth_token = "rotated-token".into();
+                tokio::time::advance(Duration::from_secs(31)).await;
+                tokio::time::resume();
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        let event = receiver.recv().await.unwrap();
+                        if event["event"] == "runtime.automation_runs.changed"
+                            && event["payload"]["automationId"] == automation.id { break; }
+                    }
+                }).await.unwrap();
+                let runs = handler.automation_store.list_runs(Some(&automation.id));
+                assert_eq!(runs.len(), 1);
+                assert_eq!(runs[0].status, AutomationRunStatus::Failed);
+                assert!(runs[0].error.as_deref().unwrap().contains("no longer authorized"));
+                server.abort();
+            });
+    }
+
     #[tokio::test]
     async fn scheduled_cloud_models_refresh_rotated_credentials_and_reject_revoked_access() {
         use axum::{http::HeaderMap, routing::get, Json, Router};
