@@ -42,3 +42,30 @@ test('Windows package cleanup preserves composed and packaged assets beyond MAX_
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('Windows copies nested plugin trees without dropping entries', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-managed-copy-'))
+  try {
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    for (let directory = 0; directory < 8; directory += 1) {
+      await mkdir(join(source, `dir-${directory}`), { recursive: true })
+      for (let file = 0; file < 16; file += 1) {
+        await writeFile(join(source, `dir-${directory}`, `file-${file}.js`), `${directory}-${file}`)
+      }
+    }
+
+    await copyManagedPlugin(source, destination, { platform: 'win32' })
+
+    for (let directory = 0; directory < 8; directory += 1) {
+      for (let file = 0; file < 16; file += 1) {
+        assert.equal(
+          await readFile(join(destination, `dir-${directory}`, `file-${file}.js`), 'utf8'),
+          `${directory}-${file}`
+        )
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

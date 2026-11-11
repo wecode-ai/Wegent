@@ -363,11 +363,13 @@ export class DesktopRuntime {
           'WEWORK_HARNESS_RUNTIME_ROOT is required when DSH is not externally managed'
         )
       }
+      this.startupStep('core-dsh-runtime-prepare', 'started')
       managedRuntime = await prepareCoreDshRuntime({
         runtimeRoot: managedRoot,
         dataDirectory: this.options.dataDirectory,
         environment: this.options.environment,
       })
+      this.startupStep('core-dsh-runtime-prepare', 'completed')
       if (this.lifecycleGeneration !== generation) return null
       cwd = managedRuntime.cwd
       dshHome = managedRuntime.dshHome
@@ -380,11 +382,13 @@ export class DesktopRuntime {
         environment: managedRuntime.environment,
       })
       if (this.options.readWorkbenchMode) {
+        this.startupStep('core-dsh-mode-apply', 'started')
         recordReleaseDiagnostic('core-preparation', { phase: 'mode-read-start' }, true)
         const mode = await this.options.readWorkbenchMode()
         recordReleaseDiagnostic('core-preparation', { phase: 'mode-apply-start' }, true)
         await applyWorkbenchModeToCorePlugins(mode, plugins)
         recordReleaseDiagnostic('core-preparation', { phase: 'mode-apply-finish' }, true)
+        this.startupStep('core-dsh-mode-apply', 'completed')
         if (this.lifecycleGeneration !== generation) return null
       }
       const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
@@ -398,7 +402,9 @@ export class DesktopRuntime {
     await executorPrerequisite
     if (this.lifecycleGeneration !== generation) return null
     const dshUrl = externalDshUrl || 'http://127.0.0.1:0'
+    this.startupStep('core-dsh-device-id', 'started')
     const deviceId = await this.resolveDesktopDeviceId()
+    this.startupStep('core-dsh-device-id', 'completed')
     if (this.lifecycleGeneration !== generation) return null
     if (managedRuntime) {
       const launch = createCoreDshLaunch(managedRuntime, 0)
