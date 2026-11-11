@@ -11,8 +11,6 @@
   const GLOW_MARGIN = 16
   const FOOTER_GAP = 32
   const LOGO_CLEARANCE = 12
-  // Reserve the slow-card footer growth before it appears so the mark never moves.
-  const SLOW_CARD_FOOTER_GROWTH = 72
   const PALETTES = {
     dark: { aura: '12, 59, 126', auraOpacity: 0.055 },
     light: { aura: '37, 99, 180', auraOpacity: 0 },
@@ -297,7 +295,7 @@
     context.setTransform(1, 0, 0, 1, 0, 0)
     context.clearRect(0, 0, width, height)
     const glow = GLOW_MARGIN * viewport.pixelRatio
-    const stableFooterTop = viewport.stableFooterTop ?? viewport.footerTop
+    const stableFooterTop = viewport.stableFooterTop ?? viewport.reservedFooterTop
     const belowCenter = stableFooterTop - height / 2 - glow - FOOTER_GAP * viewport.pixelRatio
     const fit = Math.max(
       0,
@@ -313,7 +311,7 @@
     if (fit === 0) return false
     const offsetX = (width - WIDTH * fit) / 2
     const centeredOffsetY = (height - HEIGHT * fit) / 2
-    const reservedFooterTop = stableFooterTop - SLOW_CARD_FOOTER_GROWTH * viewport.pixelRatio
+    const reservedFooterTop = viewport.reservedFooterTop ?? stableFooterTop
     const footerLimit = reservedFooterTop - LOGO_CLEARANCE * viewport.pixelRatio
     const maxOffsetY = footerLimit - (CENTER_Y + logo.halfHeight) * fit
     const minOffsetY = -(CENTER_Y - logo.halfHeight) * fit
@@ -394,10 +392,11 @@
     }
   }
 
-  function createStartupBrandAnimation(canvas, footerElement, slowElement) {
+  function createStartupBrandAnimation(canvas, footerElement, footerGrowthStates = []) {
     const container = canvas.parentElement
     const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const viewport = { footerTop: 0, pixelRatio: 1 }
+    const viewport = { stableFooterTop: 0, reservedFooterTop: 0, pixelRatio: 1 }
+    const footerGrowthElements = [...new Set(footerGrowthStates.flat())]
     const render = createRenderer(canvas, viewport)
     let elapsed = motionQuery.matches ? FORMATION_DURATION_MS : 0
     let externalPause = false
@@ -475,6 +474,34 @@
       syncPlayback()
     }
 
+    // Measure transient footer states without a paint so wrapped copy and every reserved row
+    // share one unobstructed baseline at the current window width and locale.
+    function measureFooterTops(height, bounds) {
+      const footerTop = () => {
+        const footer = footerElement.getBoundingClientRect()
+        return Math.max(0, Math.min(height, footer.top - bounds.top))
+      }
+      const previousHidden = footerGrowthElements.map(element => element.hidden)
+      try {
+        footerGrowthElements.forEach(element => {
+          element.hidden = true
+        })
+        const stableFooterTop = footerTop()
+        let reservedFooterTop = stableFooterTop
+        footerGrowthStates.forEach(state => {
+          footerGrowthElements.forEach(element => {
+            element.hidden = !state.includes(element)
+          })
+          reservedFooterTop = Math.min(reservedFooterTop, footerTop())
+        })
+        return { stableFooterTop, reservedFooterTop }
+      } finally {
+        footerGrowthElements.forEach((element, index) => {
+          element.hidden = previousHidden[index]
+        })
+      }
+    }
+
     function resize() {
       if (destroyed) return
       const width = canvas.clientWidth
@@ -483,24 +510,16 @@
       const ratio = Math.min(window.devicePixelRatio || 1, 2)
       const nextWidth = Math.round(width * ratio)
       const nextHeight = Math.round(height * ratio)
-      const sizeChanged = canvas.width !== nextWidth || canvas.height !== nextHeight
       canvas.width = nextWidth
       canvas.height = nextHeight
       const bounds = container.getBoundingClientRect()
       const footer = footerElement.getBoundingClientRect()
       const footerTop = Math.max(0, Math.min(height, footer.top - bounds.top))
       canvas.style.maskImage = `linear-gradient(to bottom, #000 ${Math.max(0, footerTop - LOGO_CLEARANCE)}px, transparent ${footerTop}px)`
-      const unobstructedFooterTop = footerTop + (slowElement.hidden ? 0 : SLOW_CARD_FOOTER_GROWTH)
-      const deviceFooterTop = footerTop * (canvas.height / height)
-      const deviceUnobstructedFooterTop = unobstructedFooterTop * (canvas.height / height)
-      if (
-        sizeChanged ||
-        viewport.stableFooterTop === undefined ||
-        elapsed < FORMATION_DURATION_MS
-      ) {
-        viewport.stableFooterTop = deviceUnobstructedFooterTop
-      }
-      viewport.footerTop = deviceFooterTop
+      const measured = measureFooterTops(height, bounds)
+      const deviceScale = canvas.height / height
+      viewport.stableFooterTop = measured.stableFooterTop * deviceScale
+      viewport.reservedFooterTop = measured.reservedFooterTop * deviceScale
       viewport.pixelRatio = ratio
       render(elapsed / 1000)
     }

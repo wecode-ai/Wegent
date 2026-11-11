@@ -61,7 +61,7 @@ describe('startup brand animation lifecycle', () => {
       expect(left).toBeGreaterThan(0)
       expect(right).toBeLessThan(canvas.width)
       expect(top).toBeGreaterThan(0)
-      expect(bottom).toBeLessThan((options.footerTop - 72) * (canvas.height / options.height))
+      expect(bottom).toBeLessThan((options.footerTop - 110) * (canvas.height / options.height))
       expect(resizeObserver.observe).toHaveBeenCalledWith(canvas)
       expect(resizeObserver.observe).toHaveBeenCalledWith(footer)
       animation.destroy()
@@ -69,14 +69,13 @@ describe('startup brand animation lifecycle', () => {
   )
 
   test('keeps the mark fixed after reserving the slow-card space', async () => {
-    const { animation, contexts, setFooterTop, setSlowVisible } = await createAnimationFixture(
+    const { animation, contexts, setSlowVisible } = await createAnimationFixture(
       true,
       { width: 1440, height: 900 },
-      { footerTop: 783 }
+      { footerTop: 783, slowFooterGrowth: 96 }
     )
     const before = contexts[0].setTransform.mock.calls.at(-1)!
     setSlowVisible(true)
-    setFooterTop(711)
     const after = contexts[0].setTransform.mock.calls.at(-1)!
     expect(after[0]).toBeCloseTo(before[0], 8)
     expect(after[4]).toBeCloseTo(before[4], 8)
@@ -84,33 +83,57 @@ describe('startup brand animation lifecycle', () => {
     animation.destroy()
   })
 
-  test('keeps the slow-card baseline through a DPR resize', async () => {
-    const { animation, canvas, contexts, paths, setFooterTop, setPixelRatio, setSlowVisible } =
-      await createAnimationFixture(true, { width: 1440, height: 900 }, { footerTop: 783 })
+  test.each([
+    { growth: 96, label: 'wrapped slow card', state: 'slow' },
+    { growth: 110, label: 'timeout note and actions', state: 'timeout' },
+  ])('keeps the measured $label reserve through a DPR resize', async ({ growth, state }) => {
+    const {
+      animation,
+      canvas,
+      contexts,
+      paths,
+      setPixelRatio,
+      setSlowVisible,
+      setTimeoutVisible,
+      slowCard,
+      timeoutActions,
+      timeoutNote,
+    } = await createAnimationFixture(
+      true,
+      { width: 1440, height: 900 },
+      { footerTop: 783, slowFooterGrowth: 96, timeoutFooterGrowth: 110 }
+    )
     const logo = paths[0]
     const initial = renderedLogoBounds(contexts[0], canvas, logo)
-    setSlowVisible(true)
-    setFooterTop(711)
+    expect(initial.bottom).toBeLessThanOrEqual(783 - growth - 12 + 1e-8)
+    if (state === 'slow') setSlowVisible(true)
+    else setTimeoutVisible(true)
     setPixelRatio(2)
     const resized = renderedLogoBounds(contexts[0], canvas, logo, 2)
     expect(resized.width).toBeCloseTo(initial.width, 8)
     expect(resized.height).toBeCloseTo(initial.height, 8)
-    expect(resized.bottom).toBeLessThanOrEqual((711 - 12) * 2 + 1e-8)
+    expect(resized.bottom).toBeLessThanOrEqual((783 - growth - 12) * 2 + 1e-8)
+    expect(slowCard.hidden).toBe(state !== 'slow')
+    expect(timeoutNote.hidden).toBe(state !== 'timeout')
+    expect(timeoutActions.hidden).toBe(state !== 'timeout')
     animation.destroy()
   })
 
   test('does not rebase the footer while the slow card appears during formation', async () => {
-    const { animation, canvas, contexts, paths, setFooterTop, setSlowVisible, step } =
-      await createAnimationFixture(false, { width: 1440, height: 900 }, { footerTop: 783 })
+    const { animation, canvas, contexts, paths, setSlowVisible, step } =
+      await createAnimationFixture(
+        false,
+        { width: 1440, height: 900 },
+        { footerTop: 783, slowFooterGrowth: 96 }
+      )
     step(0)
     step(1_000)
     const initial = renderedLogoBounds(contexts[0], canvas, paths[0])
     setSlowVisible(true)
-    setFooterTop(711)
     const visible = renderedLogoBounds(contexts[0], canvas, paths[0])
     expect(visible.width).toBeCloseTo(initial.width, 8)
     expect(visible.height).toBeCloseTo(initial.height, 8)
-    expect(visible.bottom).toBeLessThanOrEqual(711 - 12 + 1e-8)
+    expect(visible.bottom).toBeLessThanOrEqual(783 - 96 - 12 + 1e-8)
     animation.destroy()
   })
 

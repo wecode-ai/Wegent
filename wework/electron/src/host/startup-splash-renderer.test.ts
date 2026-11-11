@@ -364,7 +364,10 @@ describe('startup splash renderer', () => {
     expect(createStartupBrandAnimation).toHaveBeenCalledExactlyOnceWith(
       element('#startup-brand-canvas'),
       element('#startup-status'),
-      element('#startup-slow')
+      [
+        [element('#startup-slow')],
+        [element('#startup-timeout'), element('#startup-timeout-actions')],
+      ]
     )
     expect(element('documentElement').dataset.animationReady).toBeUndefined()
     expect(frames.size).toBe(1)
