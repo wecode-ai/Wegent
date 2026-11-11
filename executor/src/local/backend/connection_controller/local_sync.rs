@@ -509,7 +509,17 @@ impl LocalBackendConnectionController {
             }
             persist(path, &journal)?;
         }
-        let digest = handler.local_plugin_digest();
+        let installed_plugin_id = params["installedPluginId"]
+            .as_u64()
+            .filter(|_| selected.is_none() && params["full"] != true);
+        let targeted = selected.is_some() || installed_plugin_id.is_some();
+        // Only a complete reconciliation can reuse global content evidence.
+        // Deltas always fetch a plan and retain the installer's target checks.
+        let digest = if targeted {
+            None
+        } else {
+            handler.local_plugin_digest()
+        };
         let verified = digest
             .as_ref()
             .is_some_and(|digest| journal["verifiedDigest"].as_str() == Some(digest.as_str()));
@@ -517,10 +527,6 @@ impl LocalBackendConnectionController {
             .as_str()
             .filter(|_| verified)
             .map(str::to_owned);
-        let installed_plugin_id = params["installedPluginId"]
-            .as_u64()
-            .filter(|_| selected.is_none() && params["full"] != true);
-        let targeted = selected.is_some() || installed_plugin_id.is_some();
         let operation_ids: Vec<String> = if let Some(operation) = operation {
             vec![operation.to_owned()]
         } else if !targeted {
@@ -605,7 +611,11 @@ impl LocalBackendConnectionController {
             } else {
                 snapshot["revision"].clone()
             };
-            journal["verifiedDigest"] = json!(handler.local_plugin_digest());
+            journal["verifiedDigest"] = if targeted {
+                Value::Null
+            } else {
+                json!(handler.local_plugin_digest())
+            };
             journal["lastResult"] = result.clone();
             if let Some(operation) = operation {
                 journal["pending"]

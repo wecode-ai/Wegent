@@ -2,9 +2,23 @@
 use super::super::LocalBackendConnectionProfile;
 use super::*;
 use crate::local::backend::CapabilitySyncRpcHandler;
-use axum::{extract::Query, response::IntoResponse, routing::post, Json, Router};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use axum::{
+    extract::Query,
+    response::IntoResponse,
+    routing::{post, put},
+    Json, Router,
+};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+};
 use tokio::sync::Notify;
+
+mod digest_tests;
 
 #[derive(Clone, Copy, Debug)]
 enum Plan {
@@ -21,11 +35,15 @@ struct Installer {
     plan: Plan,
     entered: Arc<Notify>,
     release: Arc<Notify>,
+    digest: Arc<Mutex<Option<String>>>,
+    digest_calls: Arc<AtomicUsize>,
+    applications: Arc<AtomicUsize>,
 }
 
 impl CapabilitySyncRpcHandler for Installer {
     fn local_plugin_digest(&self) -> Option<String> {
-        Some("actual".into())
+        self.digest_calls.fetch_add(1, Ordering::SeqCst);
+        self.digest.lock().unwrap().clone()
     }
 
     fn handle_sync_capabilities<'a>(
@@ -33,12 +51,16 @@ impl CapabilitySyncRpcHandler for Installer {
         payload: Value,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Value> + Send + 'a>> {
         Box::pin(async move {
+            self.applications.fetch_add(1, Ordering::SeqCst);
             if matches!(self.plan, Plan::HeldApplication) {
                 self.entered.notify_one();
                 self.release.notified().await;
             }
             let success = !matches!(self.plan, Plan::FailedApplication);
-            json!({"success":success,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":[{"id":8,"status":if success {"synced"}else{"failed"}}]})
+            let removed = payload["removed_plugins"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty());
+            json!({"success":success,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":[{"id":8,"status":if !success {"failed"}else if removed {"removed"}else{"synced"}}]})
         })
     }
 }
@@ -52,6 +74,7 @@ struct Fixture {
     recovery_entered: Arc<Notify>,
     recovery_release: Arc<Notify>,
     probe_entered: Arc<Notify>,
+    plans: Arc<Mutex<Vec<Value>>>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -74,20 +97,54 @@ impl Fixture {
         let recovery_entered = Arc::new(Notify::new());
         let recovery_release = Arc::new(Notify::new());
         let probe_entered = Arc::new(Notify::new());
+        let plans = Arc::new(Mutex::new(Vec::new()));
+        let removals = Arc::new(Mutex::new(HashMap::<String, bool>::new()));
+        let accept_intent = {
+            let removals = removals.clone();
+            move |method: axum::http::Method, Query(query): Query<HashMap<String, String>>| {
+                let removals = removals.clone();
+                async move {
+                    removals.lock().unwrap().insert(
+                        query["operation_id"].clone(),
+                        method == axum::http::Method::DELETE,
+                    );
+                    let mut response = Json(json!({})).into_response();
+                    for (name, value) in [
+                        ("X-Plugin-Delivery-Mode", "local_pull_v1"),
+                        ("X-Plugin-Operation-Id", query["operation_id"].as_str()),
+                        (
+                            "X-Plugin-Intent-Order",
+                            query["local_intent_order"].as_str(),
+                        ),
+                    ] {
+                        response.headers_mut().insert(name, value.parse().unwrap());
+                    }
+                    response
+                }
+            }
+        };
         let router = Router::new()
+            .route("/api/plugins/marketplace/8/install", post(accept_intent.clone()))
+            .route("/api/plugins/installed/8", put(accept_intent.clone()).delete(accept_intent.clone()))
+            .route("/api/plugins/builtin/example/ensure-installed", post(accept_intent))
             .route("/api/plugins/local-sync", post({
                 let entered = entered.clone();
                 let release = release.clone();
                 let probe_entered = probe_entered.clone();
+                let plans = plans.clone();
+                let removals = removals.clone();
                 move |Json(body): Json<Value>| {
                     let entered = entered.clone();
                     let release = release.clone();
                     let probe_entered = probe_entered.clone();
+                    let plans = plans.clone();
+                    let removals = removals.clone();
                     async move {
                         if body["probeOnly"] == true {
                             probe_entered.notify_one();
                             return Json(json!({"enabled":true,"protocolVersion":1,"contractRevision":3,"accountId":1})).into_response();
                         }
+                        plans.lock().unwrap().push(body.clone());
                         if matches!(plan, Plan::HeldHttp) {
                             entered.notify_one();
                             release.notified().await;
@@ -99,7 +156,12 @@ impl Fixture {
                             return Json(json!({"protocolVersion":1,"generation":0})).into_response();
                         }
                         let targeted = body["targeted"] == true;
-                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"snapshotId":"snapshot","generation":1,"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":[{"installed_plugin_id":8}],"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
+                        if !targeted && body["knownRevision"] == "a".repeat(64) && body["actualRevision"] == body["knownRevision"] && body["recoveryPending"] != true {
+                            return Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"unchanged":true})).into_response();
+                        }
+                        let operation = body["operationId"].as_str();
+                        let removed = operation.is_some_and(|id| removals.lock().unwrap().get(id) == Some(&true));
+                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":8}])},"removed_plugins":if removed {json!([{"installed_plugin_id":8}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
                     }
                 }
             }))
@@ -142,6 +204,9 @@ impl Fixture {
             plan,
             entered,
             release,
+            digest: Arc::new(Mutex::new(Some("actual".into()))),
+            digest_calls: Arc::new(AtomicUsize::new(0)),
+            applications: Arc::new(AtomicUsize::new(0)),
         };
         controller.state.lock().await.plugin_sync = Some(Arc::new(installer.clone()));
         Self {
@@ -153,6 +218,7 @@ impl Fixture {
             recovery_entered,
             recovery_release,
             probe_entered,
+            plans,
             server,
         }
     }
