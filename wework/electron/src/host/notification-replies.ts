@@ -11,9 +11,10 @@ export interface NotificationReply {
 /** Native replies survive renderer reloads until the main window acknowledges them. */
 const replies = new Map<string, NotificationReply>()
 
-export function enqueueNotificationReply(reply: Omit<NotificationReply, 'id'>): void {
+export function enqueueNotificationReply(reply: Omit<NotificationReply, 'id'>): string {
   const id = randomUUID()
   replies.set(id, { ...reply, id })
+  return id
 }
 
 export function pendingNotificationReplies(accountKey: string): NotificationReply[] {
