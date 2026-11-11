@@ -173,9 +173,13 @@ function interactionHistoryRows(value: unknown): InteractionHistory[] {
         typeof row.question === 'string' &&
         typeof row.answeredAt === 'number' &&
         Number.isFinite(row.answeredAt) &&
-        record(row.address) &&
-        typeof row.address.deviceId === 'string' &&
-        typeof row.address.taskId === 'string' &&
+        ((record(row.address) &&
+          typeof row.address.deviceId === 'string' &&
+          typeof row.address.taskId === 'string') ||
+          (row.address === undefined &&
+            row.source === 'project' &&
+            typeof row.originalUrl === 'string' &&
+            parseWeworkScheme(row.originalUrl)?.kind === 'board')) &&
         (row.sourceMessageIds === undefined ||
           (Array.isArray(row.sourceMessageIds) &&
             row.sourceMessageIds.every(id => typeof id === 'string'))) &&

@@ -43,3 +43,95 @@ it('does not persist dismissal before its history lock is acquired', async () =>
   expect(context!.busy.size).toBe(0)
   expect(harness.send).not.toHaveBeenCalled()
 })
+
+it('archives project work without inventing a runtime task and retains it after remount', async () => {
+  const rendered = view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const entry = {
+    id: 'project-issue:local:12:ISSUE-1:handoff',
+    source: 'project' as const,
+    title: 'Project',
+    question: 'Decide',
+    originalUrl: 'wework://boards/local/12/issues/ISSUE-1',
+    answeredAt: Date.now(),
+  }
+  await act(async () => {
+    await context!.dismiss(entry)
+  })
+  expect(context!.history).toContainEqual(entry)
+  expect(context!.isDismissed?.(entry.id)).toBe(true)
+  rendered.unmount()
+  view()
+  await waitFor(() => expect(context!.history).toContainEqual(entry))
+  expect(context!.isDismissed?.(entry.id)).toBe(true)
+  expect(harness.send).not.toHaveBeenCalled()
+})
+
+it('locally dismisses a shared question without answering or assigning its Issue', async () => {
+  const rendered = view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const native = context!.pending[0]
+  const question = {
+    id: 'shared',
+    project_id: 'project',
+    issue_id: 'ISSUE-1',
+    root_comment_id: 'root',
+    runtime_device_id: native.task.address.deviceId,
+    runtime_task_id: native.task.address.taskId,
+    item_id: 'question',
+    question: 'Shared decision',
+    recipient_user_id: 7,
+    responsible_user_id: 7,
+    status: 'pending',
+    version: 1,
+    blocks_progress: true,
+    created_at: new Date(native.createdAt).toISOString(),
+  }
+  const inbox = vi.fn().mockResolvedValue({ items: [question] })
+  const list = vi.fn().mockResolvedValue({ items: [question] })
+  const assign = vi.fn()
+  rendered.rerenderSource({
+    ...rendered.taskSource,
+    userId: 7,
+    services: { ...rendered.taskSource.services!, issueHumanRequestsApi: { inbox, list, assign } },
+  })
+  await act(async () => {
+    await context!.refresh()
+  })
+  await waitFor(() =>
+    expect(context!.pending.some(item => item.sharedRequest?.id === 'shared')).toBe(true)
+  )
+  const shared = context!.pending.find(item => item.sharedRequest?.id === 'shared')!
+  await act(async () => {
+    await context!.dismiss(shared)
+  })
+  expect(context!.pending.some(item => item.id === shared.id)).toBe(false)
+  await act(async () => {
+    await context!.refresh()
+  })
+  expect(context!.pending.some(item => item.id === shared.id)).toBe(false)
+  expect(context!.history).toContainEqual(expect.objectContaining({ id: shared.id }))
+  expect(assign).not.toHaveBeenCalled()
+  expect(harness.send).not.toHaveBeenCalled()
+})
+
+it('keeps dismissal pending when durable storage fails and allows recovery', async () => {
+  view()
+  await waitFor(() => expect(context!.pending).toHaveLength(1))
+  const item = context!.pending[0]
+  harness.flushStorage.mockRejectedValue(new Error('Disk unavailable'))
+  await act(async () => {
+    await expect(context!.dismiss(item)).rejects.toThrow('Disk unavailable')
+  })
+  expect(context!.pending).toHaveLength(1)
+  expect(context!.history).toHaveLength(0)
+  expect(context!.busy.size).toBe(0)
+  expect(context!.isDismissed?.(item.id)).toBe(false)
+  harness.flushStorage.mockResolvedValue(undefined)
+  await act(async () => {
+    await context!.dismiss(item)
+  })
+  expect(context!.pending).toHaveLength(0)
+  expect(context!.history[0].id).toBe(item.id)
+  expect(harness.send).not.toHaveBeenCalled()
+})

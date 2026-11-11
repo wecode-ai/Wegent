@@ -6270,6 +6270,8 @@
     "reply": "Reply",
     "reply_placeholder": "Write a reply…",
     "send": "Send",
+    "dismiss_all": "Dismiss all",
+    "dismiss_failed": "Some items could not be dismissed. Please try again.",
     "skip": "Dismiss item",
     "dismiss": "Dismiss reminder",
     "add_detail": "Add a note",

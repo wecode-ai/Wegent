@@ -609,3 +609,126 @@ it('lets keyboard users enter the scrollable original question before opening th
   await userEvent.tab()
   expect(screen.getByTestId('interaction-open-original')).toHaveFocus()
 })
+
+it('keeps the close action available for shared Issue questions', () => {
+  const shared = { ...approval, sharedRequest: { id: 'shared' } } as RuntimeInteraction
+  const dismiss = vi.fn().mockResolvedValue(undefined)
+  view(undefined, {}, { pending: [shared], dismiss })
+  const close = screen.getByTestId('interaction-dismiss')
+  expect(close).not.toHaveClass('md:opacity-0')
+  fireEvent.click(close)
+  expect(dismiss).toHaveBeenCalledWith(shared)
+})
+
+it('dismisses ordinary project work using its real Issue destination', async () => {
+  projectWork.items = [
+    {
+      item: {
+        id: 'ISSUE-1',
+        cloud_project_id: '12',
+        project_name: 'Project',
+        title: 'Decide',
+        updated_at: '2026-11-08T00:00:00Z',
+        created_by_user_id: 0,
+        status: 'pending',
+      } as PendingProjectIssue['item'],
+      store: 'local',
+      userId: 0,
+    },
+  ]
+  const dismiss = vi.fn().mockResolvedValue(undefined)
+  view(undefined, {}, { pending: [], dismiss })
+  fireEvent.click(screen.getByTestId('interaction-dismiss'))
+  await waitFor(() =>
+    expect(dismiss).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'project',
+        originalUrl: 'wework://boards/local/12/issues/ISSUE-1',
+        question: 'Decide',
+      })
+    )
+  )
+  expect(dismiss.mock.calls[0][0]).not.toHaveProperty('address')
+})
+
+it('dismisses a snapshot of all groups, continues after failure and reports it', async () => {
+  const items = [
+    approval,
+    { ...approval, id: 'project', source: 'project' as const },
+    { ...approval, id: 'stand-in', source: 'stand_in' as const },
+  ]
+  const dismiss = vi.fn().mockResolvedValue(undefined).mockRejectedValueOnce(new Error('Disk full'))
+  view(undefined, {}, { pending: items, dismiss })
+  fireEvent.click(screen.getByTestId('interactions-dismiss-all'))
+  await waitFor(() => expect(dismiss).toHaveBeenCalledTimes(3))
+  expect(dismiss.mock.calls.map(([item]) => item.id)).toEqual(items.map(item => item.id))
+  expect(screen.getByRole('alert')).toHaveTextContent('interactions.dismiss_failed')
+})
+
+it('prevents duplicate batch actions while archiving and re-enables after completion', async () => {
+  let release!: () => void
+  const dismiss = vi.fn(
+    () =>
+      new Promise<void>(resolve => {
+        release = resolve
+      })
+  )
+  view(undefined, {}, { dismiss })
+  fireEvent.click(screen.getByTestId('interactions-dismiss-all'))
+  expect(screen.getByTestId('interactions-dismiss-all')).toBeDisabled()
+  expect(screen.getByTestId('interaction-dismiss')).toBeDisabled()
+  fireEvent.click(screen.getByTestId('interaction-dismiss'))
+  expect(dismiss).toHaveBeenCalledTimes(1)
+  release()
+  await waitFor(() => expect(screen.getByTestId('interactions-dismiss-all')).toBeEnabled())
+})
+
+it('disables dismiss-all when empty or responding and hides it in history', () => {
+  view(undefined, {}, { busy: new Set([approval.id]) })
+  expect(screen.getByTestId('interactions-dismiss-all')).toBeDisabled()
+  fireEvent.click(screen.getByTestId('interactions-history'))
+  expect(screen.queryByTestId('interactions-dismiss-all')).not.toBeInTheDocument()
+})
+
+it('keeps a later project handoff visible after an earlier handoff was ignored', () => {
+  projectWork.items = [
+    {
+      item: {
+        id: 'ISSUE-1',
+        cloud_project_id: '12',
+        project_name: 'Project',
+        title: 'New handoff',
+        updated_at: '2026-11-09T00:00:00Z',
+        created_by_user_id: 0,
+        status: 'pending',
+      } as PendingProjectIssue['item'],
+      store: 'local',
+      userId: 0,
+    },
+  ]
+  view(undefined, {}, { pending: [], isDismissed: id => id.endsWith('2026-11-08T00:00:00Z') })
+  expect(screen.getByTestId('interaction-list-item')).toHaveTextContent('New handoff')
+})
+
+it('does not count locally ignored project work', () => {
+  projectWork.items = [
+    {
+      item: {
+        id: 'ISSUE-1',
+        cloud_project_id: '12',
+        project_name: 'Project',
+        title: 'Ignored',
+        updated_at: '2026-11-08T00:00:00Z',
+        created_by_user_id: 0,
+        status: 'pending',
+      } as PendingProjectIssue['item'],
+      store: 'local',
+      userId: 0,
+    },
+  ]
+  const reportProjectPendingCount = vi.fn()
+  view(undefined, {}, { pending: [], isDismissed: () => true, reportProjectPendingCount })
+  expect(screen.queryByTestId('interaction-list-item')).not.toBeInTheDocument()
+  expect(reportProjectPendingCount).toHaveBeenLastCalledWith(0)
+  expect(screen.getByTestId('interactions-dismiss-all')).toBeDisabled()
+})

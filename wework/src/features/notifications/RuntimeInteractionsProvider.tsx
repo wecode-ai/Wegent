@@ -213,14 +213,14 @@ function RuntimeInteractionsState({
 
   const archive = useCallback(
     async (
-      item: RuntimeInteraction,
-      answeredAt = item.createdAt,
+      item: RuntimeInteraction | InteractionHistory,
+      answeredAt = 'task' in item ? item.createdAt : item.answeredAt,
       resolvedIssueQuestion?: InteractionHistory['resolvedIssueQuestion']
     ) => {
       await persistInteractionArchive(
         historyKey,
         {
-          ...interactionHistoryEntry(item, answeredAt),
+          ...('task' in item ? interactionHistoryEntry(item, answeredAt) : { ...item, answeredAt }),
           ...(resolvedIssueQuestion ? { resolvedIssueQuestion } : {}),
         },
         failedArchiveWrites.current,
@@ -552,7 +552,9 @@ function RuntimeInteractionsState({
       ...runtime.filter(
         item => !shared.has(item.id) && !sharedQuestions.has(issueQuestionIdentity(item))
       ),
-      ...sharedItems,
+      ...sharedItems.filter(
+        item => !submitted.has(item.id) && localStorage.getItem(acceptancePrefix + item.id) === null
+      ),
     ].sort((a, b) => b.createdAt - a.createdAt)
   }, [
     acceptancePrefix,
@@ -599,8 +601,8 @@ function RuntimeInteractionsState({
   )
   useRuntimeInteractionSettlements(pending, settleFromConversation)
   const dismiss = useCallback(
-    async (item: RuntimeInteraction) => {
-      if (item.sharedRequest || inFlight.current.has(item.id)) return
+    async (item: RuntimeInteraction | InteractionHistory) => {
+      if (inFlight.current.has(item.id)) return
       inFlight.current.add(item.id)
       setBusy(new Set(inFlight.current))
       try {
@@ -897,6 +899,8 @@ function RuntimeInteractionsState({
       loading,
       respond,
       dismiss,
+      isDismissed: (id: string) =>
+        submitted.has(id) || localStorage.getItem(acceptancePrefix + id) !== null,
       refresh,
       open,
       notice,
@@ -916,6 +920,8 @@ function RuntimeInteractionsState({
       loading,
       respond,
       dismiss,
+      submitted,
+      acceptancePrefix,
       refresh,
       open,
       notice,

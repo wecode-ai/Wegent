@@ -7,7 +7,7 @@ export interface InteractionHistory {
   id: string
   title: string
   question: string
-  address: RuntimeInteraction['task']['address']
+  address?: RuntimeInteraction['task']['address']
   originalUrl?: string
   sourceMessageIds?: string[]
   answeredAt: number
@@ -32,7 +32,8 @@ export interface RuntimeInteractionsValue {
     answer: string,
     options?: { clientMessageId?: string; send?: () => Promise<boolean> }
   ) => Promise<boolean>
-  dismiss: (item: RuntimeInteraction) => Promise<void>
+  dismiss: (item: RuntimeInteraction | InteractionHistory) => Promise<void>
+  isDismissed?: (id: string) => boolean
   refresh: () => Promise<void>
   open: (id?: string) => void
   notice: RuntimeInteraction | null
