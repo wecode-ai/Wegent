@@ -78,6 +78,8 @@ impl RuntimeWorkRpcHandler {
         if current {
             return Ok(json!({"status": "ready", "updated": false}));
         }
+        // Native marketplace edits and full config rewrites share one transaction boundary.
+        let _configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
         let name = target.plugin_key.clone();
         // Completed turns can still own live processes in the app-server.
         let _turn_admission = self.turn_queue_operation.lock().await;
@@ -444,6 +446,49 @@ fn plugin_config_enabled(codex_home: &Path, plugin_key: &str) -> Result<bool, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn bundled_sync_waits_for_native_marketplace_configuration_transaction() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let codex_home = root.path().join("codex");
+        write_plugin_fixture(&source, "new");
+        fs::create_dir_all(&codex_home).unwrap();
+        let target = LocalPluginInstallTarget {
+            plugin_key: "example@wework-personal".to_owned(),
+            source_root: source,
+            cache_root: codex_home.join("plugins/cache/wework-personal/example/1.0.0"),
+            codex_home: codex_home.clone(),
+        };
+        let mut handler = RuntimeWorkRpcHandler::new("plugin-config-gate", "/bin/false");
+        handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+        let transaction = handler
+            .bundled_plugin_marketplace_reconciliation
+            .lock()
+            .await;
+        let syncing = handler.sync_bundled_plugin_target(target.clone());
+        tokio::pin!(syncing);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut syncing)
+                .await
+                .is_err()
+        );
+        assert!(
+            !target.cache_root.exists(),
+            "A full rewrite entered an active native config transaction"
+        );
+        fs::write(codex_home.join("config.toml"), "[marketplaces.wework-personal]\nsource_type = \"local\"\nsource = \"synthetic-source\"\n").unwrap();
+        drop(transaction);
+        assert_eq!(
+            syncing.await.unwrap(),
+            json!({"status":"ready", "updated":true})
+        );
+        let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        assert!(
+            config.contains("synthetic-source"),
+            "The full rewrite discarded the completed native edit"
+        );
+    }
 
     #[tokio::test]
     async fn background_terminals_defer_plugin_mutation_until_native_exit() {
