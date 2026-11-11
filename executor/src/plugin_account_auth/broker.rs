@@ -2,7 +2,6 @@
 //! Authenticated loopback business API shared by desktop and standalone runners.
 
 use super::{execute, AuthError, ExecutionRequest};
-use crate::local::backend::LocalBackendTransport;
 use axum::{
     extract::{DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode},
@@ -110,7 +109,7 @@ struct BrokerState<T> {
     capacity: Arc<Semaphore>,
 }
 
-pub async fn start<T: LocalBackendTransport>(
+pub async fn start<T: super::PluginAuthTransport>(
     transport: T,
     home: PathBuf,
     connected: Arc<AtomicBool>,
@@ -145,7 +144,7 @@ pub async fn start<T: LocalBackendTransport>(
                 _ = revocation_cancel.changed() => break,
                 _ = tokio::time::sleep(std::time::Duration::from_secs(15)) => {}
             }
-            if revocation_connected.load(Ordering::Acquire) {
+            if revocation_transport.available(revocation_connected.load(Ordering::Acquire)) {
                 tokio::select! {
                     _ = revocation_cancel.changed() => break,
                     _ = super::revoke_pending(revocation_transport.clone(), &revocation_home) => {}
@@ -165,7 +164,7 @@ pub async fn start<T: LocalBackendTransport>(
     let automation = tokio::spawn(async move {
         let mut reconciler = super::automation::Reconciler::default();
         loop {
-            if automatic_connected.load(Ordering::Acquire) {
+            if automatic_transport.available(automatic_connected.load(Ordering::Acquire)) {
                 tokio::select! {
                     _ = automatic_cancel.changed() => break,
                     _ = reconciler.reconcile(automatic_transport.clone(), &automatic_home) => {}
@@ -213,7 +212,7 @@ pub async fn start<T: LocalBackendTransport>(
     })
 }
 
-async fn run<T: LocalBackendTransport>(
+async fn run<T: super::PluginAuthTransport>(
     State(state): State<BrokerState<T>>,
     headers: HeaderMap,
     body: Result<Json<Value>, axum::extract::rejection::JsonRejection>,
@@ -243,11 +242,14 @@ async fn run<T: LocalBackendTransport>(
     (status, [("cache-control", "no-store")], Json(result))
 }
 
-async fn run_authorized<T: LocalBackendTransport>(
+async fn run_authorized<T: super::PluginAuthTransport>(
     state: BrokerState<T>,
     body: Result<Json<Value>, axum::extract::rejection::JsonRejection>,
 ) -> Result<String, AuthError> {
-    if !state.connected.load(Ordering::Acquire) {
+    if !state
+        .transport
+        .available(state.connected.load(Ordering::Acquire))
+    {
         return Err(AuthError("plugin_auth_backend_unavailable"));
     }
     let _permit = state

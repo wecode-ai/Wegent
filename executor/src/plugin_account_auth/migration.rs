@@ -2,7 +2,6 @@
 //! Metadata-only migration entry point used by the native desktop host.
 
 use super::{AuthError, ConnectionMetadata, NativeAdapter, NativeAuthGateway, OAuthOperation};
-use crate::local::backend::LocalBackendTransport;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -33,7 +32,7 @@ pub struct PreparedEnrollment {
     pub operation: EnrollmentOperation,
 }
 
-pub async fn migrate<T: LocalBackendTransport>(
+pub async fn migrate<T: super::PluginAuthTransport>(
     transport: T,
     executor_home: &Path,
     migration_id: &str,
@@ -41,7 +40,7 @@ pub async fn migrate<T: LocalBackendTransport>(
     migrate_inner(transport, executor_home, migration_id, None).await
 }
 
-pub(super) async fn migrate_prepared<T: LocalBackendTransport>(
+pub(super) async fn migrate_prepared<T: super::PluginAuthTransport>(
     transport: T,
     executor_home: &Path,
     migration_id: &str,
@@ -50,7 +49,7 @@ pub(super) async fn migrate_prepared<T: LocalBackendTransport>(
     migrate_inner(transport, executor_home, migration_id, Some(expected)).await
 }
 
-async fn migrate_inner<T: LocalBackendTransport>(
+async fn migrate_inner<T: super::PluginAuthTransport>(
     transport: T,
     executor_home: &Path,
     migration_id: &str,
@@ -144,7 +143,7 @@ pub(super) fn package_uses_python(
     Ok(super::process::adapter_uses_python(&adapter))
 }
 
-async fn finish_transfer<T: LocalBackendTransport>(
+async fn finish_transfer<T: super::PluginAuthTransport>(
     gateway: &NativeAuthGateway<T>,
     adapter: &NativeAdapter,
     interpreter: &Path,
