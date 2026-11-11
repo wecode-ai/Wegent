@@ -66,34 +66,42 @@ vi.mock('node:fs/promises', () => ({
     path.replace(join('legacy', 'releases'), join('user-data', 'releases')),
 }))
 
-vi.mock('./runtime/release-store.js', () => ({
-  atomicReleaseWrite: async (path: string, value: string) => {
-    startup.markers[basename(path)] = value
-  },
-  optionalText: async (path: string) =>
-    startup.markers[basename(path)] ??
-    (basename(path) === 'bridge'
-      ? startup.bridge
-      : basename(path) === 'macos-rollback'
-        ? startup.macosRollback
-        : null),
-  ReleaseStore: class {
-    constructor(root: string) {
-      startup.roots.push(root)
-    }
+vi.mock('./runtime/release-store.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('./runtime/release-store.js')>()
+  return {
+    ...actual,
+    atomicReleaseWrite: async (path: string, value: string) => {
+      startup.markers[basename(path)] = value
+    },
+    optionalText: async (path: string) =>
+      startup.markers[basename(path)] ??
+      (basename(path) === 'bridge'
+        ? startup.bridge
+        : basename(path) === 'macos-rollback'
+          ? startup.macosRollback
+          : null),
+    ReleaseStore: class {
+      constructor(readonly root: string) {
+        startup.roots.push(root)
+      }
 
-    async active() {
-      if (startup.historyError) throw startup.historyError
-      return startup.activeRelease
-    }
-    async activation() {
-      return startup.activation
-    }
-    async rollback() {
-      return startup.rollback()
-    }
-  },
-}))
+      async isSlotExecutable(executable: string) {
+        return actual.ReleaseStore.prototype.isSlotExecutable.call(this as never, executable)
+      }
+
+      async active() {
+        if (startup.historyError) throw startup.historyError
+        return startup.activeRelease
+      }
+      async activation() {
+        return startup.activation
+      }
+      async rollback() {
+        return startup.rollback()
+      }
+    },
+  }
+})
 
 beforeEach(() => {
   vi.resetModules()
