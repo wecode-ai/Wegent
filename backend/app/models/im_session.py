@@ -28,6 +28,10 @@ class IMPrivateSession:
     sender_id: str
     proactive_recipient_id: str = ""
     display_name: str = ""
+    # Last chat task this conversation continued. The conversation -> task
+    # cache entry expires, while the session has no TTL, so this mirror lets
+    # the mapping be rebuilt instead of silently starting a new task.
+    chat_task_id: int | None = None
     last_seen_at: datetime = field(default_factory=datetime.now)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
