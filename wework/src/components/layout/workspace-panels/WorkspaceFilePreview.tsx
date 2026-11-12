@@ -37,7 +37,7 @@ import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/work
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { useWorkspaceCodeEditor } from './useWorkspaceCodeEditor'
 import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
-import { isMarkdownFile } from './workspaceFileTypes'
+import { isHtmlFile, isMarkdownFile } from './workspaceFileTypes'
 import { isDocxPreviewFile, safeOfficePreviewFile } from '@/lib/safe-office-preview'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
@@ -132,7 +132,7 @@ interface WorkspaceFilePreviewProps {
   loadVersion?: number
   onEditedContentChange?: (content: string) => void
   onSave?: () => void
-  markdownMode?: 'preview' | 'source'
+  previewMode?: 'preview' | 'source'
 }
 
 const FILE_VIEWER_TYPE_BY_MIME: Record<string, string> = {
@@ -357,15 +357,12 @@ interface WorkspaceFilePreviewContentProps {
   onSave?: () => void
 }
 
-function isHtmlFile(file: WorkspaceTextFileResponse) {
-  return /\.(?:html?|xhtml)$/i.test(file.name)
-}
-
 function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
+  const { t } = useTranslation('common')
   return (
     <section
       data-testid="workspace-html-file-preview"
-      className="min-w-0 flex-1 overflow-hidden bg-background"
+      className="relative min-w-0 flex-1 overflow-hidden bg-background"
     >
       <iframe
         title={file.name}
@@ -373,6 +370,14 @@ function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
         sandbox="allow-forms allow-popups allow-scripts"
         className="h-full w-full border-0 bg-white"
       />
+      {file.truncated && (
+        <div
+          data-testid="workspace-html-file-preview-truncated"
+          className="absolute inset-x-0 bottom-0 border-t border-border bg-background/95 px-4 py-2 text-xs text-warning backdrop-blur wework:text-amber-700"
+        >
+          {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
+        </div>
+      )}
     </section>
   )
 }
@@ -786,7 +791,7 @@ export function WorkspaceFilePreview({
   loadVersion,
   onEditedContentChange,
   onSave,
-  markdownMode = 'preview',
+  previewMode = 'preview',
 }: WorkspaceFilePreviewProps) {
   const { t } = useTranslation('common')
   const appearance = useOptionalAppearance()
@@ -829,7 +834,11 @@ export function WorkspaceFilePreview({
 
   if (error) {
     return (
-      <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-destructive wework:text-red-500">
+      <section
+        className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-destructive wework:text-red-500"
+        data-testid="workspace-file-preview-error"
+        role="alert"
+      >
         <p>{error}</p>
         <button
           type="button"
@@ -854,11 +863,11 @@ export function WorkspaceFilePreview({
     )
   }
 
-  if (!editing && isHtmlFile(file)) {
+  if (!editing && isHtmlFile(file.name) && previewMode === 'preview') {
     return <WorkspaceHtmlPreview file={file} />
   }
 
-  if (!editing && isMarkdownFile(file.name) && markdownMode === 'preview') {
+  if (!editing && isMarkdownFile(file.name) && previewMode === 'preview') {
     return <WorkspaceMarkdownPreview file={file} targetLineStart={targetLineStart} />
   }
 
