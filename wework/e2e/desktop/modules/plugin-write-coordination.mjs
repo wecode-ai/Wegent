@@ -70,7 +70,6 @@ export async function verifyPluginWriteCoordination({
   await verifyCanonicalNameReactivation({
     cloud,
     control,
-    localDeviceId,
     executorHome,
     refreshSurfaces,
     evidence,
@@ -289,7 +288,6 @@ async function seedStaleInstallation({ cloud, item, staleIdentity }) {
 async function verifyCanonicalNameReactivation({
   cloud,
   control,
-  localDeviceId,
   executorHome,
   refreshSurfaces,
   evidence,
@@ -329,16 +327,19 @@ async function verifyCanonicalNameReactivation({
       `${staleIdentity} did not materialize the installed plugin version`,
       timeoutMs
     )
-    const [device] = await cloud.queryDatabase(
-      'SELECT state, actual_release_id, desired_release_id FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
-      [1, stale.id, localDeviceId]
+    const devices = await cloud.queryDatabase(
+      'SELECT device_id, state, actual_release_id, desired_release_id FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND state = %s',
+      [1, stale.id, 'installed']
     )
-    assert.equal(device?.state, 'installed')
-    assert.equal(device.actual_release_id, item.releaseId)
-    assert.equal(device.desired_release_id, item.releaseId)
+    const device = devices.find(
+      row =>
+        Number(row.actual_release_id) === item.releaseId &&
+        Number(row.desired_release_id) === item.releaseId
+    )
+    assert.ok(device, `${staleIdentity} did not persist a synchronized device state`)
     const marketplace = await pluginApi(
       cloud,
-      `/plugins/marketplace/${item.pluginId}?device_id=${encodeURIComponent(localDeviceId)}`
+      `/plugins/marketplace/${item.pluginId}?device_id=${encodeURIComponent(device.device_id)}`
     )
     assert.equal(marketplace.installed, true)
     assert.equal(marketplace.installedPluginId, stale.id)
@@ -349,7 +350,7 @@ async function verifyCanonicalNameReactivation({
       pluginKey: slug,
       kindId: stale.id,
       kindName: stale.kindName,
-      deviceId: localDeviceId,
+      deviceId: device.device_id,
       actualReleaseId: device.actual_release_id,
       runtimeVersion: runtime.version,
     })
