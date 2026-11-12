@@ -58,9 +58,10 @@ test("CI package installation preserves distribution repositories and trust", (t
     options,
   );
   assert.equal(result.status, 0, result.stderr);
+  const aptOptions = "-o Acquire::ForceIPv4=true -o Acquire::Retries=3";
   const expected = [
-    "-o APT::Update::Error-Mode=any update",
-    "install --yes --no-install-recommends " + packages.join(" "),
+    `${aptOptions} -o APT::Update::Error-Mode=any update`,
+    `${aptOptions} install --yes --no-install-recommends ${packages.join(" ")}`,
     "",
   ].join("\n");
   assert.equal(readFileSync(calls, "utf8"), expected);
