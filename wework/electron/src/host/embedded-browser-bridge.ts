@@ -501,10 +501,11 @@ export class EmbeddedBrowserBridge {
           (await this.loadScript('embedded_browser_wait.js')).replace(
             '__WEWORK_WAIT_INPUT__',
             JSON.stringify(input)
-          )
+          ),
+          { awaitPromise: false }
         )
       } catch (error) {
-        if (!isUnavailableBrowserError(error, label)) throw error
+        if (!isWaitTargetUnavailable(error, label)) throw error
         await new Promise(resolve => setTimeout(resolve, pollMs))
         continue
       }
@@ -630,8 +631,12 @@ export class EmbeddedBrowserBridge {
   }
 }
 
-function isUnavailableBrowserError(error: unknown, label: string): boolean {
-  return errorMessage(error) === `Embedded browser is unavailable: ${label}`
+function isWaitTargetUnavailable(error: unknown, label: string): boolean {
+  const message = errorMessage(error)
+  return (
+    message === `Embedded browser is unavailable: ${label}` ||
+    message === 'Inspected target navigated or closed'
+  )
 }
 
 async function writeRuntimeRecord(path: string, record: RuntimeRecord): Promise<void> {

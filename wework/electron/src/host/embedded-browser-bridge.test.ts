@@ -543,6 +543,43 @@ describe('EmbeddedBrowserBridge', () => {
     expect(browser.evaluate).toHaveBeenCalledOnce()
   })
 
+  test.each([
+    { message: 'Inspected target navigated or closed', recovers: true },
+    { message: 'Unexpected evaluation failure', recovers: false },
+  ])('handles a wait observation failing with $message', async ({ message, recovers }) => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-wait-'))
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(true)
+    const matched = { ok: true, kind: 'browser.wait', reason: 'text_visible' }
+    browser.evaluate.mockRejectedValueOnce(new Error(message)).mockResolvedValue(matched)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    await bridge.start()
+    const env = bridge.environment()
+
+    const response = await fetch(env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL + '/browser', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer ' + env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'waitFor',
+        text: 'Parent directory entry',
+        timeoutMs: 1_000,
+        options: { pollMs: 50 },
+      }),
+    })
+
+    await expect(response.json()).resolves.toEqual(
+      recovers ? { ok: true, data: matched } : { ok: false, error: message }
+    )
+    expect(browser.evaluate).toHaveBeenCalledTimes(recovers ? 2 : 1)
+    for (const [, , options] of browser.evaluate.mock.calls) {
+      expect(options).toEqual({ awaitPromise: false })
+    }
+  })
+
   test('routes native clicks through Electron input events', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()
