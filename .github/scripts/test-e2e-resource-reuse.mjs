@@ -16,37 +16,64 @@ import { runtimeArtifact } from "./runtime-artifact.mjs";
 import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
 import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
 
-test("CI Ubuntu source rewriting preserves hosted mirror lists, suites and trust", () => {
-  const input = [
-    "URIs: http://archive.ubuntu.com/ubuntu/",
-    "URIs: https://security.ubuntu.com/ubuntu",
-    "deb http://azure.archive.ubuntu.com/ubuntu/ resolute main universe",
-    "URIs: mirror+file:/etc/apt/apt-mirrors.txt",
-    "Suites: noble noble-updates noble-security resolute",
-    "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
-    "deb https://deb.nodesource.com/node_24.x nodistro main",
-  ].join("\n");
+test("CI package installation preserves distribution repositories and trust", (t) => {
+  const root = resolve(import.meta.dirname, "../..");
+  const installer = readFileSync(
+    join(root, ".github/scripts/install-e2e-apt-packages.sh"),
+    "utf8",
+  );
+  const common = readFileSync(
+    join(root, ".github/scripts/lib/apt-packages.sh"),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    installer,
+    /sources\.list|rewrite_ci_ubuntu_archive|\btee\b/,
+  );
+  assert.doesNotMatch(common, /mirrors\.kernel\.org/);
+  const directory = mkdtempSync(join(tmpdir(), "apt-package-test-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const calls = join(directory, "commands");
+  writeFileSync(
+    join(directory, "apt-get"),
+    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$APT_TEST_COMMANDS"\n',
+  );
+  writeFileSync(join(directory, "sudo"), '#!/usr/bin/env bash\nexec "$@"\n');
+  for (const command of ["apt-get", "sudo"])
+    chmodSync(join(directory, command), 0o755);
+  const options = {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CI: "true",
+      PATH: directory + ":" + process.env.PATH,
+      APT_TEST_COMMANDS: calls,
+    },
+  };
+  const packages = ["iproute2", "ca-certificates", "openssl"];
   const result = spawnSync(
     "bash",
-    [
-      "-c",
-      "source .github/scripts/lib/apt-packages.sh; rewrite_ci_ubuntu_archive",
-    ],
-    { input, encoding: "utf8", cwd: resolve(import.meta.dirname, "../..") },
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    options,
   );
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(
-    result.stdout,
-    [
-      "URIs: https://mirrors.kernel.org/ubuntu",
-      "URIs: https://mirrors.kernel.org/ubuntu",
-      "deb https://mirrors.kernel.org/ubuntu resolute main universe",
-      "URIs: mirror+file:/etc/apt/apt-mirrors.txt",
-      "Suites: noble noble-updates noble-security resolute",
-      "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
-      "deb https://deb.nodesource.com/node_24.x nodistro main",
-    ].join("\n"),
+  const expected = [
+    "-o APT::Update::Error-Mode=any update",
+    "install --yes --no-install-recommends " + packages.join(" "),
+    "",
+  ].join("\n");
+  assert.equal(readFileSync(calls, "utf8"), expected);
+  const rejected = spawnSync(
+    "bash",
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    {
+      ...options,
+      env: { ...options.env, CI: "false" },
+    },
   );
+  assert.notEqual(rejected.status, 0);
+  assert.equal(readFileSync(calls, "utf8"), expected);
 });
 
 test("historical fixtures use the exact GitHub release asset by ID", async () => {
