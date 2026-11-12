@@ -2317,6 +2317,7 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .as_array()
                     .map(|values| values.iter().filter_map(Value::as_i64).collect::<Vec<_>>())
                     .unwrap_or_else(|| vec![0]),
+                params["order"].as_str() == Some("attention"),
             )
             .map_err(task_runtime_error),
         "todos.list" => {
@@ -2383,6 +2384,7 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                         input,
                         optional_nullable_task_string(todo, "start_at")?.flatten(),
                         optional_nullable_task_string(todo, "due_at")?.flatten(),
+                        todo["personal_task"].as_bool().unwrap_or(false),
                     )
                     .await
                     .map_err(task_runtime_error)?,

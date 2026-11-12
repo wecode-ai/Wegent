@@ -205,6 +205,7 @@ use concurrency::{RuntimeSettings, RuntimeTaskKind, RuntimeTurnScheduler};
 
 mod system;
 mod tasks;
+mod generated_issue_title;
 mod text_generation;
 mod transcript_diagnostics;
 mod transcript_overlays;

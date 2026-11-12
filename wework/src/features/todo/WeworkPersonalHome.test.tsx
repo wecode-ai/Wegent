@@ -7,10 +7,44 @@ import type {
 } from '@wegent/collaboration'
 import i18n from '@/i18n'
 import { WeworkPersonalHome, type PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
-import { RuntimeTaskLifecycleProvider, RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import type { ReactNode } from 'react'
 
 afterEach(cleanup)
+
+it('merges attention order across stores and puts projects needing intervention first', async () => {
+  const ordinary = {
+    ...issue('ordinary'),
+    attention_order: [3, 0, '2026-11-12T12:00:00Z'] as [number, number, string],
+  }
+  const pending = {
+    ...issue('pending', 'p2'),
+    attention_order: [1, 0, '2026-11-12T13:00:00Z'] as [number, number, string],
+  }
+  const intervention = {
+    ...issue('intervention', 'p2'),
+    attention_order: [0, 4, '2026-11-01T00:00:00Z'] as [number, number, string],
+  }
+  const a = source(vi.fn().mockResolvedValue([ordinary, pending]))
+  const b = source(vi.fn().mockResolvedValue([intervention]))
+  await setup([a, b])
+  await screen.findByText('Issue intervention')
+  await screen.findByText('Issue pending')
+  expect(screen.getAllByTestId(/^personal-home-project-/).map(node => node.dataset.testid)).toEqual(
+    ['personal-home-project-p2', 'personal-home-project-p1']
+  )
+  expect(screen.getAllByTestId(/^personal-home-issue-/).map(node => node.dataset.testid)).toEqual([
+    'personal-home-issue-intervention',
+    'personal-home-issue-pending',
+    'personal-home-issue-ordinary',
+  ])
+  expect(a.myWork!.page).toHaveBeenCalledWith(
+    expect.objectContaining({ order: 'attention', limit: 30 })
+  )
+})
 
 function issue(id: string, projectId = 'p1', status = 'pending'): WorkspaceMyWorkItem {
   return {
@@ -68,7 +102,9 @@ async function setup(sources: SharedWorkspaceApi[]) {
     ),
   }
   const store = new RuntimeTaskLifecycleStore()
-  const wrapper = ({ children }: { children: ReactNode }) => <RuntimeTaskLifecycleProvider store={store}>{children}</RuntimeTaskLifecycleProvider>
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <RuntimeTaskLifecycleProvider store={store}>{children}</RuntimeTaskLifecycleProvider>
+  )
   return { ...render(<WeworkPersonalHome {...props} />, { wrapper }), props, renderIssueDetail }
 }
 

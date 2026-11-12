@@ -205,7 +205,7 @@ export function projectRuntimeStatusSignature(
     .flatMap(([key, lifecycle]) => {
       if (!sameProjectSpace(projectSpaceForRuntimeTask(lifecycle.address), project)) return []
       const status = runtimeTaskTrackingExecutionStatus(lifecycle)
-      return status ? [`${key}:${status}`] : []
+      return status ? [`${key}:${status}:${lifecycle.task?.title ?? ''}`] : []
     })
     .sort()
     .join('|')

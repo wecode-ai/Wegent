@@ -213,7 +213,10 @@ def test_api_rejects_invalid_cursor(test_client, test_token):
     assert response.status_code == 400
 
 
-def test_my_work_batches_personal_bindings_and_assignment_comments(test_db, test_user):
+@pytest.mark.parametrize("attention", [False, True])
+def test_my_work_batches_personal_bindings_and_assignment_comments(
+    test_db, test_user, attention
+):
     from uuid import uuid4
 
     from sqlalchemy import event
@@ -265,7 +268,9 @@ def test_my_work_batches_personal_bindings_and_assignment_comments(test_db, test
 
         event.listen(test_db.bind, "before_cursor_execute", record_query)
         try:
-            rows, _ = loop_item_service.list_my_work_page(test_db, user_id, limit=limit)
+            rows, _ = loop_item_service.list_my_work_page(
+                test_db, user_id, limit=limit, attention=attention
+            )
         finally:
             event.remove(test_db.bind, "before_cursor_execute", record_query)
         counts.append(len(statements))
@@ -294,3 +299,81 @@ def test_assigned_scope_and_completion_filter_are_applied_before_pagination(
     )
     assert [row["id"] for row in page] == [rows[0].id]
     assert cursor is None
+
+
+def test_attention_order_is_applied_before_pages_and_keeps_completed_last(
+    test_db, test_user
+):
+    project = _make_project(test_db, test_user)
+    rows = add_items(test_db, project, test_user.id, 6, prefix="ATTENTION")
+    for row, status in zip(
+        rows, ["in_review", "pending", "inbox", "in_progress", "blocked", "completed"]
+    ):
+        row.assignee_user_id = test_user.id
+        row.status = status
+    rows[1].priority = "high"
+    rows[2].priority = "low"
+    rows[5].priority = "urgent"
+    test_db.commit()
+    seen, cursor = [], None
+    for _ in range(3):
+        page, cursor = loop_item_service.list_my_work_page(
+            test_db,
+            test_user.id,
+            limit=2,
+            assigned_only=True,
+            attention=True,
+            cursor=cursor,
+        )
+        seen.extend(page)
+    assert [row["id"] for row in seen] == [row.id for row in rows]
+    assert [row["attention_order"][0] for row in seen] == [0, 1, 1, 2, 3, 4]
+    assert cursor is None
+
+
+def test_participating_attention_uses_comment_activity_and_personal_handoffs(
+    test_db, test_user
+):
+    from app.models.delivery import LoopItemComment
+
+    project = _make_project(test_db, test_user)
+    rows = add_items(test_db, project, test_user.id, 3, prefix="DISCUSSION")
+    rows[2].priority = "urgent"
+    test_db.flush()
+    rows[2].updated_at = datetime(2026, 1, 1, 0, 2)
+    test_db.add(
+        LoopItemComment(
+            id="recent-comment",
+            loop_item_id=rows[0].id,
+            cloud_project_id=project.id,
+            description="Recent discussion",
+            created_by_user_id=test_user.id,
+            created_at=datetime(2026, 2, 1),
+            metadata_json={},
+        )
+    )
+    test_db.execute(
+        LoopItem.__table__.insert().values(
+            id="attention-question",
+            resource_type="human_request_index",
+            parent_id=rows[1].id,
+            assignee_user_id=test_user.id,
+            metadata={},
+        )
+    )
+    test_db.commit()
+    page, _ = loop_item_service.list_my_work_page(test_db, test_user.id, attention=True)
+    assert [row["id"] for row in page] == [rows[1].id, rows[0].id, rows[2].id]
+    assert [row["attention_order"][0] for row in page] == [0, 3, 3]
+    assert page[1]["attention_order"][2].startswith("2026-02-01")
+
+
+def test_attention_cursor_cannot_be_used_with_recent_order(test_db, test_user):
+    project = _make_project(test_db, test_user)
+    add_items(test_db, project, test_user.id, 2)
+    _, cursor = loop_item_service.list_my_work_page(
+        test_db, test_user.id, limit=1, attention=True
+    )
+    with pytest.raises(HTTPException) as failure:
+        loop_item_service.list_my_work_page(test_db, test_user.id, cursor=cursor)
+    assert failure.value.status_code == 400

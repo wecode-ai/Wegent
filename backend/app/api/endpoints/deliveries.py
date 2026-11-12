@@ -194,6 +194,7 @@ def list_my_work(
     cursor: str | None = Query(default=None, max_length=2048),
     scope: Literal["assigned", "participating"] = Query(default="participating"),
     include_completed: bool = Query(default=True),
+    order: Literal["recent", "attention"] = Query(default="recent"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MyWorkListResponse:
@@ -204,6 +205,7 @@ def list_my_work(
         cursor=cursor,
         assigned_only=scope == "assigned",
         include_completed=include_completed,
+        attention=order == "attention",
     )
     return MyWorkListResponse(
         items=[MyWorkItemResponse.model_validate(item) for item in items],

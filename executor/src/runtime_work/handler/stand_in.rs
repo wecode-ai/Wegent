@@ -5,6 +5,17 @@ use super::*;
 use crate::agents::normalize_reasoning_effort_alias;
 use crate::runtime_work::response::local_task_json;
 
+pub(super) fn personal_task_claimed(issue: &Value) -> bool {
+    let marker = issue.get("personal_task_assignment_at")
+        .filter(|value| value.is_string())
+        .or_else(|| issue["metadata"].get("personal_task_assignment_at"));
+    let history = issue.get("assignment_history").filter(|value| value.is_array())
+        .unwrap_or(&issue["metadata"]["assignment_history"]);
+    marker.is_some_and(|marker| marker.is_string() && history.as_array()
+        .and_then(|rows| rows.last())
+        .is_some_and(|assignment| assignment["at"] == *marker))
+}
+
 pub(super) fn stand_in_issue_identity(config: &Value, issue: &Value) -> String {
     use sha2::{Digest, Sha256};
     let identity = json!([
@@ -441,6 +452,7 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             let mut issue_value = serde_json::to_value(&issue).unwrap();
+            if personal_task_claimed(&issue_value) { continue; }
             issue_value["tags"] = issue.metadata["tags"].clone();
             let history = issue.metadata["assignment_history"].as_array();
             let Some(assignment) = history.and_then(|rows| rows.last()) else {
@@ -534,6 +546,7 @@ impl RuntimeWorkRpcHandler {
             issue["id"].as_str().unwrap_or_default()
         ));
         let _guard = gate.lock().await;
+        if personal_task_claimed(issue) { return Ok(()); }
         if issue["assignee_user_id"] != config["userId"] {
             self.log_stand_in_decision(
                 config,

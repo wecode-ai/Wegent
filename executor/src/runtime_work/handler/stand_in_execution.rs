@@ -25,6 +25,9 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn stand_in_issue_runs_here(&self, config: &Value, issue: &Value) -> bool {
+        if config["manual"] != true && super::stand_in::personal_task_claimed(issue) {
+            return false;
+        }
         self.stand_in_role_runs_here(config)
             || self
                 .store

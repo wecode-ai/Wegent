@@ -83,9 +83,10 @@ export function PersonalHomeIssueActivity({
         findWorkbenchDevice(workbench?.state?.devices ?? [], binding.deviceId)?.device_type ===
         'local'
     )
-  const countLabel = t(local ? 'personalHome.localTaskCount' : 'personalHome.linkedTaskCount', {
-    count: tasks.length,
-  })
+  const countLabel = t(
+    `personalHome.${local ? 'localTaskCount' : 'linkedTaskCount'}${tasks.length === 1 ? 'Single' : ''}`,
+    { count: tasks.length }
+  )
   const names = tasks
     .slice(0, 2)
     .map(task => task.title)
@@ -125,22 +126,25 @@ export function PersonalHomeIssueActivity({
           <SquareTerminal aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
           <span className="min-w-0 max-w-sm truncate">{names}</span>
           <span className="shrink-0">{countLabel}</span>
-          {counts.slice(0, 2).map(([status, count]) => (
-            <span
-              key={status}
-              className={`inline-flex shrink-0 items-center gap-1 text-xs ${status === 'failed' ? 'text-error' : 'text-text-muted'}`}
-            >
-              {status === 'running' ? (
-                <LoaderCircle aria-hidden="true" className="h-3 w-3 motion-safe:animate-spin" />
-              ) : (
-                <span
-                  aria-hidden="true"
-                  className={`h-1.5 w-1.5 rounded-full ${status === 'succeeded' ? 'bg-emerald-500' : 'bg-current'}`}
-                />
-              )}
-              {statusLabel(status)} {count}
-            </span>
-          ))}
+          {counts
+            .filter(([status]) => status !== 'unknown')
+            .slice(0, 2)
+            .map(([status, count]) => (
+              <span
+                key={status}
+                className={`inline-flex shrink-0 items-center gap-1 text-xs ${status === 'failed' ? 'text-error' : 'text-text-muted'}`}
+              >
+                {status === 'running' ? (
+                  <LoaderCircle aria-hidden="true" className="h-3 w-3 motion-safe:animate-spin" />
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className={`h-1.5 w-1.5 rounded-full ${status === 'succeeded' ? 'bg-emerald-500' : 'bg-current'}`}
+                  />
+                )}
+                {statusLabel(status)} {count}
+              </span>
+            ))}
           <ArrowUpRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-text-muted" />
         </button>
       )}

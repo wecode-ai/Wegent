@@ -277,6 +277,30 @@ async fn prior_assignment_binding_blocks_new_local_role_executions() {
 }
 
 #[tokio::test]
+async fn personal_task_creation_prevents_roles_from_reserving_additional_tasks() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let project = store.create_project(serde_json::from_value(json!({"name":"Personal work"})).unwrap()).unwrap();
+    let issue = store.create_task_with_schedule(&project.id, serde_json::from_value(json!({"title":"My work","assignee_user_id":0})).unwrap(), None, None, true).unwrap();
+    let issue_value = serde_json::to_value(&issue).unwrap();
+    assert!(super::stand_in::personal_task_claimed(&issue_value));
+    let configs = ["review", "docs"].map(|id| json!({"id":id,"userId":0,"projectId":project.id,"projectStore":"local","enabledAfter":"2000-01-01T00:00:00Z"}));
+    // Polling between Issue creation and task binding must not create reservations.
+    handler.poll_local_stand_in(&configs).await.unwrap();
+    assert!(store.list_task_bindings(&issue.id).unwrap().is_empty());
+    store.bind_task(&project.id, Some(&issue.id), None, serde_json::from_value(json!({"deviceId":"mac","taskId":"my-task"})).unwrap(), None).unwrap();
+    handler.poll_local_stand_in(&configs).await.unwrap();
+    assert_eq!(store.list_task_bindings(&issue.id).unwrap().len(), 1);
+    assert!(handler.local_task_links(true).is_empty());
+    let projected_cloud = json!({"personal_task_assignment_at":"first","assignment_history":[{"at":"first"}]});
+    assert!(super::stand_in::personal_task_claimed(&projected_cloud));
+    assert!(!super::stand_in::personal_task_claimed(&json!({"personal_task_assignment_at":"first","assignment_history":[{"at":"first"},{"at":"reassigned"}]})));
+}
+
+#[tokio::test]
 async fn prior_assignment_binding_blocks_new_cloud_role_executions() {
     let router = Router::new()
         .route("/api/v1/loop-items/issue/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-25T00:00:00Z"}]})) }))

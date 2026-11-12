@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
-from sqlalchemy import String, bindparam, cast, func, or_, select
+from sqlalchemy import String, and_, bindparam, cast, func, literal, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
@@ -614,7 +614,9 @@ class LoopItemService:
         )
         sequence = project.next_item_number
         project.next_item_number += 1
-        payload = values.model_dump(exclude={"notify_assignee", "runner_selection"})
+        payload = values.model_dump(
+            exclude={"notify_assignee", "runner_selection", "personal_task"}
+        )
         runner_selection = (
             values.runner_selection.model_dump(exclude_none=True)
             if values.runner_selection is not None
@@ -798,6 +800,15 @@ class LoopItemService:
                 None,
                 automation_context=automation_context,
             )
+        if values.personal_task:
+            if payload.get("assignee_user_id") != user_id:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Personal work must belong to its creator",
+                )
+            task_metadata["personal_task_assignment_at"] = task_metadata[
+                ASSIGNMENT_HISTORY_KEY
+            ][-1]["at"]
         configured_statuses = self._project_status_ids(project)
         requested_status = payload.get("status")
         if requested_status is None:
@@ -3168,6 +3179,7 @@ class LoopItemService:
         cursor: str | None = None,
         assigned_only: bool = False,
         include_completed: bool = True,
+        attention: bool = False,
     ) -> tuple[list[dict[str, object]], str | None]:
         if limit < 1 or limit > MY_WORK_ITEM_LIMIT:
             raise ValueError(f"limit must be between 1 and {MY_WORK_ITEM_LIMIT}")
@@ -3176,8 +3188,14 @@ class LoopItemService:
             decode_my_work_cursor,
             encode_my_work_cursor,
         )
+        from app.services.loop_items.my_work_ordering import attention_order
 
-        before = decode_my_work_cursor(cursor, user_id)
+        before = decode_my_work_cursor(cursor, user_id, attention)
+        rank, priority, activity = (
+            attention_order(user_id, assigned_only)
+            if attention
+            else (literal(0), literal(0), cast(LoopItem.updated_at, String))
+        )
         projects = accessible_cloud_projects(db, user_id).all()
         if not projects:
             return [], None
@@ -3192,32 +3210,48 @@ class LoopItemService:
         if not include_completed:
             my_work_filters.append(LoopItem.status.notin_(["completed", "cancelled"]))
         if before is not None:
-            updated_at, item_id = before
+            updated_at, item_id, before_rank, before_priority = before
             before_time = bindparam(
                 "my_work_before_updated_at", updated_at, type_=String()
             )
             my_work_filters.append(
                 or_(
-                    LoopItem.updated_at < before_time,
-                    (LoopItem.updated_at == before_time) & (LoopItem.id < item_id),
+                    rank > before_rank,
+                    and_(rank == before_rank, priority > before_priority),
+                    and_(
+                        rank == before_rank,
+                        priority == before_priority,
+                        or_(
+                            activity < before_time,
+                            (activity == before_time) & (LoopItem.id < item_id),
+                        ),
+                    ),
                 )
             )
         rows = (
             db.query(
-                LoopItem, cast(LoopItem.updated_at, String).label("cursor_updated_at")
+                LoopItem,
+                activity.label("cursor_updated_at"),
+                rank.label("attention_rank"),
+                priority.label("attention_priority"),
             )
             .filter(*my_work_filters)
-            .order_by(LoopItem.updated_at.desc(), LoopItem.id.desc())
+            .order_by(rank, priority, activity.desc(), LoopItem.id.desc())
             .limit(limit + 1)
             .all()
         )
         has_more = len(rows) > limit
         rows = rows[:limit]
-        items = [item for item, _ in rows]
+        items = [row[0] for row in rows]
         # Advance by database rows even if a provider cannot project this page.
         # Preserve database precision; SQLite CURRENT_TIMESTAMP omits fractions.
         next_cursor = (
-            encode_my_work_cursor(rows[-1][1], items[-1].id, user_id)
+            encode_my_work_cursor(
+                rows[-1][1],
+                items[-1].id,
+                user_id,
+                (rows[-1][2], rows[-1][3]) if attention else None,
+            )
             if has_more
             else None
         )
@@ -3467,6 +3501,22 @@ class LoopItemService:
                     "approval": self._approval_view(execution),
                 }
             )
+        if attention:
+            keys = {
+                row[0].id: (
+                    row[2],
+                    row[3],
+                    database_datetime_as_utc(
+                        db, datetime.fromisoformat(row[1])
+                    ).isoformat(),
+                )
+                for row in rows
+            }
+            for view in result:
+                view["attention_order"] = keys[view["id"]]
+                view["human_requests"] = (view.get("metadata_json") or {}).get(
+                    "human_requests", []
+                )
         return result, next_cursor
 
     @staticmethod

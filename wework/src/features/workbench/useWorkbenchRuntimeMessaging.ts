@@ -972,12 +972,14 @@ export function useWorkbenchRuntimeMessaging({
       const runtime = options?.runtime ?? inferRuntimeName(selectedModel)
       const friendlyTitle =
         runtime === 'codex'
-          ? friendlyTitleForTask(
-              preferences,
-              modelSelection.models,
-              executionModel,
-              options?.ephemeral
-            )
+          ? typeof options?.origin?.generatedIssueTitle === 'string' && !options?.ephemeral
+            ? titleModelForGeneration(preferences, modelSelection.models, executionModel)
+            : friendlyTitleForTask(
+                preferences,
+                modelSelection.models,
+                executionModel,
+                options?.ephemeral
+              )
           : null
       const taskSeed = createRuntimeTaskId(runtime)
       const taskId = createRuntimeTaskIdFromSeed(taskSeed)

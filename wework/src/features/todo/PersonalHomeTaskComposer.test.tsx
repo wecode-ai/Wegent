@@ -131,6 +131,7 @@ it.each([false, true])(
       description: 'Write a release summary',
       assigneeUserId: local ? 0 : 7,
       notifyAssignee: false,
+      personalTask: true,
     })
     expect(order).toEqual(['bind', 'run'])
     expect(port.bindTask).toHaveBeenCalledOnce()
@@ -142,6 +143,7 @@ it.each([false, true])(
           type: 'board_task',
           loopItemId: 'issue',
           projectStore: local ? 'local' : 'backend',
+          generatedIssueTitle: 'Write a release summary',
         }),
       })
     )

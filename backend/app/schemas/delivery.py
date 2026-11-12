@@ -27,6 +27,7 @@ from app.utils.schedule_time import normalize_schedule_datetime
 
 
 class LoopItemCreate(BaseModel):
+    personal_task: bool = False
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     title: str = Field(min_length=1, max_length=255)
@@ -168,6 +169,7 @@ class LoopItemResponse(BaseModel):
     processing_actor: dict[str, str] | None = None
     human_waiting_since: str | None = None
     human_requests: list[dict[str, Any]] = Field(default_factory=list)
+    personal_task_assignment_at: str | None = None
     execution_id: int | None = None
     execution_state: str | None = None
     execution_control_state: str | None = None
@@ -213,6 +215,16 @@ class LoopItemResponse(BaseModel):
     @classmethod
     def populate_tags(cls, value: object) -> object:
         """Fill tags and metadata-derived fields when the input has no tags key."""
+        if isinstance(value, dict):
+            metadata = value.get("metadata_json")
+            value = {
+                **value,
+                "personal_task_assignment_at": (
+                    metadata.get("personal_task_assignment_at")
+                    if isinstance(metadata, dict)
+                    else value.get("personal_task_assignment_at")
+                ),
+            }
         if isinstance(value, dict) and "tags" not in value:
             metadata = value.get("metadata_json")
             metadata = metadata if isinstance(metadata, dict) else {}
@@ -285,6 +297,9 @@ class LoopItemResponse(BaseModel):
                 "ai_state": ai_state,
                 "processing_actor": value.get("processing_actor"),
                 "human_waiting_since": value.get("human_waiting_since"),
+                "personal_task_assignment_at": metadata.get(
+                    "personal_task_assignment_at"
+                ),
                 "human_requests": value.get(
                     "human_requests", metadata.get("human_requests", [])
                 ),
@@ -550,6 +565,7 @@ class MyWorkAssignmentContextResponse(BaseModel):
 
 
 class MyWorkItemResponse(LoopItemResponse):
+    attention_order: tuple[int, int, str] | None = None
     project_key: str
     project_name: str
     has_active_task: bool

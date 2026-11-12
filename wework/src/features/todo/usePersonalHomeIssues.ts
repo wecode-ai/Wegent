@@ -35,6 +35,7 @@ export function usePersonalHomeIssues(
     if (!active) return
     const input = {
       limit: 30,
+      order: 'attention' as const,
       scope: assignedOnly ? ('assigned' as const) : ('participating' as const),
       includeCompleted,
       viewerIds: JSON.parse(viewers) as (string | number)[],
@@ -120,6 +121,7 @@ export function usePersonalHomeIssues(
             const page = await snapshot.api.myWork!.page!({
               cursor: snapshot.nextCursor!,
               limit: 30,
+              order: 'attention',
               scope: assignedOnly ? 'assigned' : 'participating',
               includeCompleted,
               viewerIds,

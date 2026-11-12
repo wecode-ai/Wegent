@@ -57,6 +57,9 @@ it('opens one real task directly and updates its running state from the shared r
   await i18n.changeLanguage('en')
   const { onOpenTask, store } = mount([binding])
   expect(screen.getByTestId('personal-home-task-issue-binding')).toHaveTextContent('Implementation')
+  expect(screen.getByTestId('personal-home-task-issue-binding')).not.toHaveTextContent(
+    'Status unavailable'
+  )
   act(() => store.executorStarted(binding))
   expect(screen.getByTestId('personal-home-task-issue-binding')).toHaveTextContent('Running')
   fireEvent.click(screen.getByTestId('personal-home-task-issue-binding'))

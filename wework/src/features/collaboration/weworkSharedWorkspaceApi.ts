@@ -211,7 +211,9 @@ function toMyWorkItem(
   return {
     ...item,
     ...toIssue(item),
-    task_bindings: (item.task_bindings ?? []).map(binding => mapWorkspaceTaskBindingDto(binding, String(item.cloud_project_id))),
+    task_bindings: (item.task_bindings ?? []).map(binding =>
+      mapWorkspaceTaskBindingDto(binding, String(item.cloud_project_id))
+    ),
   }
 }
 
@@ -549,6 +551,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               assignee_group_id: input.assigneeGroupId,
               assignee_agent_id: input.assigneeAgentId,
               notify_assignee: input.notifyAssignee,
+              personal_task: input.personalTask,
             }) as Parameters<DeliveryApi['createLoopItem']>[1]
           )
           .then(toIssue)

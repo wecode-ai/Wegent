@@ -119,12 +119,17 @@ export function PersonalHomeTaskComposer({
               ? LOCAL_USER.id
               : (project.current_user_id ?? Number(state.user?.id)),
           notifyAssignee: false,
+          personalTask: true,
         })
       preparedIssues.current.set(projectKey, issue)
       if (issue.description !== content || issue.title !== title) {
         issue = await persistIssueDetailFields(issue, { title, description: content }, api.issues)
         preparedIssues.current.set(projectKey, issue)
       }
+      const runtimeContext = buildWorkItemRuntimeContext(
+        project as unknown as CloudProject,
+        issue as unknown as CloudLoopItem
+      )
       const address = await workbench.createProjectRuntimeTask(content, {
         project: state.currentProject,
         deviceWorkspaceId: state.selectedDeviceWorkspaceId,
@@ -132,10 +137,11 @@ export function PersonalHomeTaskComposer({
         ...(goalDraftActive
           ? { initialGoal: { objective: content, status: 'active' as const } }
           : {}),
-        ...buildWorkItemRuntimeContext(
-          project as unknown as CloudProject,
-          issue as unknown as CloudLoopItem
-        ),
+        ...runtimeContext,
+        origin: {
+          ...runtimeContext.origin!,
+          generatedIssueTitle: issue.title,
+        },
         onError: setError,
         prepareRuntimeTask: address =>
           prepareIssueRuntimeTask({

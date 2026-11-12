@@ -83,6 +83,7 @@ export interface WorkspaceProjectUpdateInput {
 }
 
 export interface WorkspaceMyWorkItem extends CollaborationIssue {
+  attention_order?: [number, number, string] | null;
   project_key: string;
   project_name: string;
   has_active_task: boolean;
@@ -143,6 +144,7 @@ export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
 }
 
 export interface WorkspaceIssueCreateInput {
+  personalTask?: boolean;
   milestoneId?: string | null;
   title: string;
   description?: string;
@@ -488,7 +490,7 @@ export interface SharedWorkspaceProjectsApi {
 
 export interface SharedWorkspaceMyWorkApi {
   list(): Promise<WorkspaceMyWorkItem[]>;
-  page?(input?: { cursor?: string; limit?: number; scope?: "assigned" | "participating"; includeCompleted?: boolean; viewerIds?: readonly (string | number)[] }): Promise<WorkspacePage<WorkspaceMyWorkItem>>;
+  page?(input?: { cursor?: string; limit?: number; scope?: "assigned" | "participating"; includeCompleted?: boolean; order?: "recent" | "attention"; viewerIds?: readonly (string | number)[] }): Promise<WorkspacePage<WorkspaceMyWorkItem>>;
 }
 
 export interface SharedWorkspaceIssuesApi {

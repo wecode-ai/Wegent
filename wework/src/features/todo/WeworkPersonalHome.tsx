@@ -68,10 +68,28 @@ function PersonalIssueList({
   const labels = createIssueBoardCardLabels(
     createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
   )
+  const orderedItems = [...state.items].sort((left, right) => {
+    const a = left.attention_order
+    const b = right.attention_order
+    return (
+      (a?.[0] ?? 3) - (b?.[0] ?? 3) ||
+      (a?.[1] ?? 4) - (b?.[1] ?? 4) ||
+      (Date.parse(b?.[2] ?? right.updated_at) || 0) -
+        (Date.parse(a?.[2] ?? left.updated_at) || 0) ||
+      right.id.localeCompare(left.id)
+    )
+  })
+  const itemsByProject = new Map<string, WorkspaceMyWorkItem[]>()
+  for (const item of orderedItems) {
+    const key = String(item.cloud_project_id)
+    const items = itemsByProject.get(key) ?? []
+    items.push(item)
+    itemsByProject.set(key, items)
+  }
   const groups = projects
     .map(project => ({
       project,
-      items: state.items.filter(
+      items: (itemsByProject.get(String(project.id)) ?? []).filter(
         item =>
           String(item.cloud_project_id) === String(project.id) &&
           (!assignedOnly ||
@@ -85,6 +103,11 @@ function PersonalIssueList({
       ),
     }))
     .filter(group => group.items.length)
+    .sort(
+      (left, right) =>
+        Number(right.items.some(item => item.attention_order?.[0] === 0)) -
+        Number(left.items.some(item => item.attention_order?.[0] === 0))
+    )
   return (
     <>
       {state.loading && (
@@ -172,11 +195,13 @@ function PersonalIssueList({
                 summary={
                   <>
                     <PersonalHomeIssueActivity
-                      summary={item.description ? (
-                        <p className="line-clamp-2 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
-                          {item.description}
-                        </p>
-                      ) : undefined}
+                      summary={
+                        item.description ? (
+                          <p className="line-clamp-2 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
+                            {item.description}
+                          </p>
+                        ) : undefined
+                      }
                       assignment={item.assignment_context}
                       bindings={item.task_bindings}
                       onOpenTask={binding => onOpenTask(item, binding)}
@@ -249,7 +274,13 @@ export function WeworkPersonalHome({
   useLayoutEffect(() => {
     revealWorkspaceTab(tabsViewport.current)
   }, [activeTab, issueTabs.length])
-  const state = usePersonalHomeIssues(sources, active, assignedOnly, showCompleted, localUserIds ?? [userId])
+  const state = usePersonalHomeIssues(
+    sources,
+    active,
+    assignedOnly,
+    showCompleted,
+    localUserIds ?? [userId]
+  )
   const openIssue = (
     issue: WorkspaceMyWorkItem,
     taskRequest?: PersonalHomeIssueDetailContext['taskRequest']
@@ -356,7 +387,13 @@ export function WeworkPersonalHome({
             onOpenTask={(issue, binding) => openIssue(issue, { key: crypto.randomUUID(), binding })}
           />
           {state.hasMore && (
-            <button type="button" data-testid="personal-home-load-more" disabled={state.loading} onClick={() => void state.loadMore()} className="min-h-11 rounded-md px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8">
+            <button
+              type="button"
+              data-testid="personal-home-load-more"
+              disabled={state.loading}
+              onClick={() => void state.loadMore()}
+              className="min-h-11 rounded-md px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
+            >
               {t('personalHome.loadMore')}
             </button>
           )}

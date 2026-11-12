@@ -255,9 +255,10 @@ impl TaskRuntime {
         assigned_only: bool,
         include_completed: bool,
         viewer_ids: &[i64],
+        attention: bool,
     ) -> Result<Value, TaskRuntimeError> {
         self.local_store
-            .my_work_page(limit, cursor, assigned_only, include_completed, viewer_ids)
+            .my_work_page(limit, cursor, assigned_only, include_completed, viewer_ids, attention)
     }
 
     // Native DingTalk AI Table operations (dynamic schema, records, fields).
@@ -502,7 +503,7 @@ impl TaskRuntime {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.create_task_with_schedule(project_id, input, None, None)
+        self.create_task_with_schedule(project_id, input, None, None, false)
             .await
     }
 
@@ -512,12 +513,13 @@ impl TaskRuntime {
         input: TaskCreate,
         start_at: Option<String>,
         due_at: Option<String>,
+        personal_task: bool,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self
                 .local_store
-                .create_task_with_schedule(project_id, input, start_at, due_at),
+                .create_task_with_schedule(project_id, input, start_at, due_at, personal_task),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 if start_at.is_some() || due_at.is_some() {
                     return Err(TaskRuntimeError::UnsupportedProvider(format!(

@@ -113,7 +113,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const issueId = issueTestId.replace('cloud-todo-card-', '')
       const localProject = { id: projectId, name: PROJECT_NAME }
       await verifyCollaborationPersonalHome(control, { scoped, project: localProject, issue: { id: issueId, title: ISSUE_NAME } })
-      await verifyPersonalHomeStartWork(control, { scoped, project: localProject, viewerId: ownerTarget.replace('user:', '') })
+      // Native collaboration uses user 0 independently of the signed-in account identity.
+      await verifyPersonalHomeStartWork(control, { scoped, project: localProject, viewerId: 0 })
       await capture(control, 'collaboration-first-use-07-home-workflow.png')
     },
 
