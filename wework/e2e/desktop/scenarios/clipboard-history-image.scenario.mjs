@@ -125,11 +125,11 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       await control.command('waitFor', CREATE_DIALOG, { text: 'clipboard-issue.png' })
       await control.command(
         'waitFor',
-        `${CREATE_DIALOG} [data-testid="cloud-todo-attachment-thumbnail-pending-0"]`
+        `${CREATE_DIALOG} [data-testid="issue-detail-attachment-thumbnail-pending-0"]`
       )
       await waitForDecodedImage(
         control,
-        `${CREATE_DIALOG} [data-testid="cloud-todo-attachment-thumbnail-pending-0"]`,
+        `${CREATE_DIALOG} [data-testid="issue-detail-attachment-thumbnail-pending-0"]`,
         uiTimeoutMs
       )
 
