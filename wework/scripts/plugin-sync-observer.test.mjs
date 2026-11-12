@@ -100,3 +100,45 @@ test('rejects unobserved, older and unrelated generations even with successful A
     ).toBeNull()
   }
 })
+
+const scopedRequest = (generation, otherGeneration) => ({
+  ...request(generation),
+  pluginIds: ['71', '72'],
+  pluginSync: {
+    version: 3,
+    generation: Math.max(generation, otherGeneration),
+    complete: false,
+    revisions: { 71: generation, 72: otherGeneration },
+    intentRevisions: { 71: 1, 72: 4 },
+  },
+})
+
+test('orders V3 by the affected plugin even when another plugin has a higher counter', () => {
+  const older = scopedRequest(2, 99)
+  const current = scopedRequest(3, 4)
+  const observation = {
+    capabilities: [older, current],
+    acknowledgements: [ack(older), ack(current)],
+  }
+  expect(latestPluginSyncRequest(observation.capabilities, 71)).toBe(current)
+  expect(
+    acknowledgedPluginGeneration(observation, { plugin_sync_generation: 3 }, 71, older)
+  ).toEqual(ack(current))
+})
+
+test.each(['revisions', 'intentRevisions'])('rejects V3 ACK with mismatched %s', field => {
+  const current = scopedRequest(3, 99)
+  const acknowledgement = ack(current)
+  acknowledgement.pluginSync = {
+    ...current.pluginSync,
+    [field]: { ...current.pluginSync[field], 71: 2 },
+  }
+  expect(
+    acknowledgedPluginGeneration(
+      { capabilities: [current], acknowledgements: [acknowledgement] },
+      { plugin_sync_generation: 3 },
+      71,
+      current
+    )
+  ).toBeNull()
+})

@@ -14,6 +14,7 @@ import {
   acknowledgedPluginGeneration,
   latestPluginSyncRequest,
   observePluginSyncTransport,
+  pluginSyncGeneration,
 } from '../modules/plugin-sync-observer.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
@@ -142,7 +143,9 @@ export async function createDesktopScenario({
             const requests = target.observation.capabilities
               .slice(offsets[index])
               .filter(value => value.pluginIds.includes(String(fixture.installedId)))
-            const generations = requests.map(request => request.pluginSync.generation)
+            const generations = requests.map(request =>
+              pluginSyncGeneration(request.pluginSync, fixture.installedId)
+            )
             assert.equal(
               new Set(generations).size,
               requests.length,
@@ -150,7 +153,7 @@ export async function createDesktopScenario({
             )
             // Full snapshots can overtake an allocated delta. Settle against
             // the highest intent, never an older frame that happened to arrive last.
-            const request = latestPluginSyncRequest(requests)
+            const request = latestPluginSyncRequest(requests, fixture.installedId)
             const plugin = await materializedPlugin(target.home, fixture.installedId)
             return {
               request,
@@ -169,7 +172,8 @@ export async function createDesktopScenario({
           },
           value =>
             value.acknowledgement?.success === true &&
-            value.plugin?.plugin_sync_generation === value.request.pluginSync.generation &&
+            value.plugin?.plugin_sync_generation ===
+              pluginSyncGeneration(value.request.pluginSync, fixture.installedId) &&
             value.rows.length === 1 &&
             value.rows[0].state === 'installed' &&
             value.rows[0].desired_release_id === fixture.releaseId &&
@@ -184,7 +188,7 @@ export async function createDesktopScenario({
           case: 'setup-delta-acknowledged-and-persisted-before-baseline',
           target: target.kind,
           installedId: fixture.installedId,
-          generation: settled.request.pluginSync.generation,
+          generation: pluginSyncGeneration(settled.request.pluginSync, fixture.installedId),
           scope: settled.request.scope,
           currentGeneration: settled.plugin.plugin_sync_generation,
           currentGenerationAcknowledgement: settled.acknowledgement,
@@ -434,7 +438,10 @@ export async function createDesktopScenario({
       assert.equal(held.scope, 'plugin_delta')
       assert.equal(held.pluginSync.complete, false)
       target.missed = target.observation.capabilities.find(
-        value => value.pluginSync?.generation === held.pluginSync.generation
+        value =>
+          value.pluginSync?.version === 3 &&
+          pluginSyncGeneration(value.pluginSync, item.installedId) ===
+            pluginSyncGeneration(held.pluginSync, item.installedId)
       )
       assert.deepEqual(target.missed.pluginIds, [String(item.installedId)])
       assert.deepEqual(target.missed.removedIds, [])
@@ -466,21 +473,30 @@ export async function createDesktopScenario({
           value =>
             value.at >= recovered.request.at &&
             value.scope === 'plugins' &&
-            value.pluginSync?.complete === true
+            value.pluginSync?.version === 3 &&
+            value.pluginSync.complete === false &&
+            value.pluginIds.includes(String(item.installedId))
         ),
-      'The timer request did not produce a real complete plugin snapshot'
+      'The timer request did not produce a real per-plugin reconciliation snapshot'
     ).then(values =>
       values.find(
         value =>
           value.at >= recovered.request.at &&
           value.scope === 'plugins' &&
-          value.pluginSync?.complete
+          value.pluginSync?.version === 3 &&
+          value.pluginSync.complete === false &&
+          value.pluginIds.includes(String(item.installedId))
       )
     )
     assert.deepEqual(complete.skills, [])
     assert.deepEqual(complete.mcps, [])
     assert.equal(complete.deviceId, deviceRouteId)
-    assert.ok(complete.pluginSync.generation > target.missed.pluginSync.generation)
+    assert.deepEqual(
+      complete.pluginIds.toSorted(),
+      [item, retained].map(p => String(p.installedId)).toSorted()
+    )
+    const generation = pluginSyncGeneration(complete.pluginSync, item.installedId)
+    assert.ok(generation > pluginSyncGeneration(target.missed.pluginSync, item.installedId))
     const acknowledged = await until(
       () =>
         observation.acknowledgements.find(
@@ -488,7 +504,7 @@ export async function createDesktopScenario({
             value.at >= complete.at &&
             value.id === complete.id &&
             value.namespace === complete.namespace &&
-            value.pluginSync?.generation === complete.pluginSync.generation
+            pluginSyncGeneration(value.pluginSync, item.installedId) === generation
         ),
       Boolean,
       'The real Executor did not acknowledge automatic plugin reconciliation'

@@ -396,7 +396,7 @@ async function assertPluginSkill(
   )
 }
 
-async function syncFullCapabilities(request, deviceId, resultDir, timeoutMs) {
+async function syncFullCapabilities(request, deviceId, resultDir, timeoutMs, installedId) {
   const logOffset = (await readFile(join(resultDir, 'executor.log'), 'utf8')).length
   const synchronized = await request(
     `/api/plugins/installed/sync-device?device_id=${encodeURIComponent(deviceId)}`,
@@ -406,8 +406,11 @@ async function syncFullCapabilities(request, deviceId, resultDir, timeoutMs) {
   assert.ok(result, 'The real device did not acknowledge the complete capability snapshot')
   assert.equal(result.success, true)
   assert.equal(result.scope, 'all')
-  assert.equal(result.plugin_sync.version, 2)
-  assert.equal(result.plugin_sync.complete, true)
+  assert.equal(result.plugin_sync.version, 3)
+  assert.equal(result.plugin_sync.complete, false)
+  assert.ok(result.plugin_sync.revisions[String(installedId)] > 0)
+  assert.ok(result.plugin_sync.intentRevisions[String(installedId)] > 0)
+  assert.ok(result.plugins.some(plugin => Number(plugin.id) === installedId))
   await assertPluginSyncCompletion(
     resultDir,
     result.plugin_sync.generation,
@@ -479,7 +482,8 @@ async function verifyPluginFullSync(runtime, cloud, request, options) {
         request,
         device.device_id,
         resultDir,
-        timeoutMs
+        timeoutMs,
+        fixture.installedId
       )
       assert.ok(nextGeneration > generation, 'The full snapshot generation did not advance')
       generation = nextGeneration
@@ -512,7 +516,8 @@ async function verifyPluginFullSync(runtime, cloud, request, options) {
       request,
       device.device_id,
       resultDir,
-      timeoutMs
+      timeoutMs,
+      fixture.installedId
     )
     assert.ok(settledGeneration > reconnected.plugin_sync.full_generation)
     const reconnectLog = (await readFile(join(resultDir, 'executor.log'), 'utf8')).slice(
@@ -552,7 +557,7 @@ async function verifyPluginFullSync(runtime, cloud, request, options) {
       starts.at(-1),
       'The upgraded Codex process ID did not change'
     )
-    await syncFullCapabilities(request, device.device_id, resultDir, timeoutMs)
+    await syncFullCapabilities(request, device.device_id, resultDir, timeoutMs, fixture.installedId)
     await runtime.readConfig()
     assert.deepEqual(
       await runtime.processStarts(),
