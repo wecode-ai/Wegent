@@ -65,12 +65,28 @@ function setup() {
     services,
     resume: () => resume(),
     recover: () => handlers.onRuntimeEventLagged?.({ skipped: 0 }),
-    startTurn: () =>
+    startTurn: (turnId = 'turn-1') =>
       handlers.onChatStart?.({
         taskId: address.taskId,
         deviceId: address.deviceId,
-        subtaskId: 'turn-1',
+        subtaskId: turnId,
       }),
+    finishTurn: (turnId, failed = false, task?: RuntimeTaskSummary) =>
+      failed
+        ? handlers.onChatError?.({
+            taskId: address.taskId,
+            deviceId: address.deviceId,
+            subtaskId: turnId,
+            error: 'superseded turn failed',
+            ...(task ? { task } : {}),
+          } as never)
+        : handlers.onChatDone?.({
+            taskId: address.taskId,
+            deviceId: address.deviceId,
+            subtaskId: turnId,
+            result: {},
+            ...(task ? { task } : {}),
+          } as never),
     mount: () =>
       render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />),
   }
@@ -125,6 +141,52 @@ test('keeps checking an active turn without loading its transcript early', async
 
   expect(runtime.getRuntimeTask).toHaveBeenCalledTimes(2)
   expect(runtime.getRuntimeTranscript).toHaveBeenCalledOnce()
+  expect(store.getTask(address)?.turn.phase).toBe('idle')
+})
+
+test.each([
+  ['completion', false],
+  ['error', true],
+] as const)('keeps the new turn check after a stale %s event', async (_label, failed) => {
+  vi.useFakeTimers()
+  const { store, runtime, mount, startTurn, finishTurn } = setup()
+  runtime.getRuntimeTask.mockResolvedValue(nativeTask(false, '2', 'turn-2'))
+  runtime.getRuntimeTranscript.mockResolvedValue({
+    ...runtimeTranscript(false),
+    turns: [{ ...runtimeTranscript(false).turns[0]!, id: 'turn-2' }],
+  })
+  mount()
+
+  await act(async () => {
+    startTurn('turn-1')
+    startTurn('turn-2')
+    finishTurn('turn-1', failed, nativeTask(false, '1', 'turn-1'))
+  })
+
+  expect(store.getTask(address)?.turn.id).toBe('turn-2')
+  expect(store.getTask(address)?.turn.phase).toBe('streaming')
+  expect(runtime.getRuntimeTask).not.toHaveBeenCalled()
+
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(runtime.getRuntimeTask).toHaveBeenCalledOnce()
+  expect(store.getTask(address)?.turn.phase).toBe('idle')
+})
+
+test('checks a restored active turn without waiting for another start event', async () => {
+  vi.useFakeTimers()
+  const { store, runtime, mount } = setup()
+  store.turnStarted(address, 'restored-turn')
+  runtime.getRuntimeTask.mockResolvedValue(nativeTask(false, '2', 'restored-turn'))
+  runtime.getRuntimeTranscript.mockResolvedValue({
+    ...runtimeTranscript(false),
+    turns: [{ ...runtimeTranscript(false).turns[0]!, id: 'restored-turn' }],
+  })
+  mount()
+
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(runtime.getRuntimeTask).toHaveBeenCalledOnce()
   expect(store.getTask(address)?.turn.phase).toBe('idle')
 })
 

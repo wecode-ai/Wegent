@@ -169,10 +169,6 @@ export function createDesktopScenario({
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
       await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
-      // Exercise the bounded settlement check when the terminal notification is lost.
-      await control.command('dropNextRuntimeEvent', 'body', {
-        value: 'response.completed',
-      })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await Promise.race([
         requestStarted,
@@ -193,7 +189,6 @@ export function createDesktopScenario({
       assert.ok(taskId, 'The streaming conversation must retain its Runtime task')
       const readyCountBeforeReload = control.readyCount
       await control.command('reloadMainWindow', 'body')
-      releaseCompletionResolve()
       await Promise.race([
         control.awaitReadyAfter(readyCountBeforeReload),
         new Promise((_, reject) =>
@@ -205,10 +200,37 @@ export function createDesktopScenario({
       ])
       await waitForRestoredTranscript(control, taskId, workbenchReadyTimeoutMs)
 
+      // Prove that restoring an active turn schedules the executor check, and
+      // drop the terminal event only after the old renderer's flags are gone.
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({ method: 'runtime.tasks.get' }),
+      })
+      await control.command('dropNextRuntimeEvent', 'body', {
+        value: 'response.completed',
+      })
+      releaseCompletionResolve()
+
       await control.command('waitFor', ASSISTANT_SELECTOR, {
         text: COMPLETION_TEXT,
         timeoutMs: uiTimeoutMs,
       })
+      const recoveringSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.ok(
+        recoveringSnapshot.testIds.includes('pause-response-button'),
+        'The terminal event was not actually dropped before settle'
+      )
+      const recoveredRequest = JSON.parse(
+        await control.command('awaitLocalExecutorRequestHold', 'body')
+      )
+      assert.equal(recoveredRequest.method, 'runtime.tasks.get')
+      assert.ok(
+        recoveredRequest.heldCount > 0,
+        'The lost terminal event did not trigger an executor settlement check'
+      )
+      await control.command('releaseLocalExecutorRequestHold', 'body')
+
       await waitForSettled(control, uiTimeoutMs)
       const assistantText = await control.command('getText', ASSISTANT_SELECTOR)
       assert.equal(
@@ -218,7 +240,7 @@ export function createDesktopScenario({
       )
       await captureScreenshot(
         control,
-        'executor-stream-recovery-01-completed-after-renderer-reload.png',
+        'executor-stream-recovery-01-completed-after-lost-terminal-event.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
       active = false
