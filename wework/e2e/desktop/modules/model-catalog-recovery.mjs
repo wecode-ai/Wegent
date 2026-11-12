@@ -3,7 +3,11 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
-import { currentExecutorPid, waitForRestartedExecutor } from './executor-restart-readiness.mjs'
+import {
+  currentExecutorPid,
+  restartCodexWhenIdle,
+  waitForRestartedExecutor,
+} from './executor-restart-readiness.mjs'
 import { waitForLogPattern } from './shared.mjs'
 
 const loadedCatalogOverrides = new WeakMap()
@@ -103,7 +107,10 @@ export async function setNativeCatalogOverride(control, slug, fields, timeoutMs)
   if (!unchanged) {
     await rpc('runtime.codex.catalog.overrides.write', { slug, entry })
   }
-  const restarted = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
+  const restarted = await restartCodexWhenIdle(
+    () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
+    timeoutMs
+  )
   assert.equal(restarted.restarted, true, JSON.stringify(restarted))
   loaded.set(slug, structuredClone(entry))
 }
