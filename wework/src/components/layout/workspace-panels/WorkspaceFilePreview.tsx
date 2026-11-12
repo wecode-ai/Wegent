@@ -36,7 +36,7 @@ import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/work
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { useWorkspaceCodeEditor } from './useWorkspaceCodeEditor'
 import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
-import { isMarkdownFile } from './workspaceFileTypes'
+import { isHtmlFile, isMarkdownFile } from './workspaceFileTypes'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
@@ -130,7 +130,7 @@ interface WorkspaceFilePreviewProps {
   loadVersion?: number
   onEditedContentChange?: (content: string) => void
   onSave?: () => void
-  markdownMode?: 'preview' | 'source'
+  previewMode?: 'preview' | 'source'
 }
 
 const FILE_VIEWER_TYPE_BY_MIME: Record<string, string> = {
@@ -315,10 +315,6 @@ interface WorkspaceFilePreviewContentProps {
   loadVersion?: number
   onEditedContentChange?: (value: string) => void
   onSave?: () => void
-}
-
-function isHtmlFile(file: WorkspaceTextFileResponse) {
-  return /\.(?:html?|xhtml)$/i.test(file.name)
 }
 
 function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
@@ -745,7 +741,7 @@ export function WorkspaceFilePreview({
   loadVersion,
   onEditedContentChange,
   onSave,
-  markdownMode = 'preview',
+  previewMode = 'preview',
 }: WorkspaceFilePreviewProps) {
   const { t } = useTranslation('common')
   const appearance = useOptionalAppearance()
@@ -813,11 +809,11 @@ export function WorkspaceFilePreview({
     )
   }
 
-  if (!editing && isHtmlFile(file)) {
+  if (!editing && isHtmlFile(file.name) && previewMode === 'preview') {
     return <WorkspaceHtmlPreview file={file} />
   }
 
-  if (!editing && isMarkdownFile(file.name) && markdownMode === 'preview') {
+  if (!editing && isMarkdownFile(file.name) && previewMode === 'preview') {
     return <WorkspaceMarkdownPreview file={file} targetLineStart={targetLineStart} />
   }
 
