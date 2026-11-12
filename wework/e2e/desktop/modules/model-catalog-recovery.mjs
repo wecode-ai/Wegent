@@ -2,6 +2,7 @@ import { requestExecutor } from './executor-rpc.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { currentExecutorPid, waitForRestartedExecutor } from './executor-restart-readiness.mjs'
 import { waitForLogPattern } from './shared.mjs'
 
@@ -89,6 +90,11 @@ export async function setNativeCatalogOverride(control, slug, fields, timeoutMs)
   const catalog = await rpc('runtime.codex.catalog.overrides.read', { slugs: [slug] })
   const model = catalog.models.find(entry => entry.slug === slug)
   assert.ok(model, `Missing native catalog fixture: ${slug}`)
+  if (
+    Object.entries(fields).every(([key, value]) => isDeepStrictEqual(model.effective[key], value))
+  ) {
+    return
+  }
   await rpc('runtime.codex.catalog.overrides.write', {
     slug,
     entry: { ...model.effective, ...fields },

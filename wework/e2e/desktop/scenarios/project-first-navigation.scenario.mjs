@@ -39,7 +39,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await captureScreenshot(control, 'project-first-01-default.png', active)
 
-      await control.command('click', sidebar('collaboration-project-create-local'))
+      await control.command('clickWhenEnabled', sidebar('collaboration-project-create-local'), {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', '[data-testid="collaboration-project-name-input"]', {
         timeoutMs: uiTimeoutMs,
       })
