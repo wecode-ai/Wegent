@@ -9,7 +9,9 @@
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, RedisResult, SetOptions};
+use brz_redis::{
+    EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, FromRedisValue, RedisResult, SetOptions,
+};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -134,6 +136,15 @@ impl brz_redis::Redis for RecordingRedis {
     {
         self.record(format!("LSET {}", Self::key(&key)));
         Ok(())
+    }
+
+    async fn lrange<K, R>(&self, key: K, start: i64, stop: i64) -> RedisResult<Vec<R>>
+    where
+        K: EncodeRedisArg + Send,
+        R: FromRedisValue + Send,
+    {
+        self.record(format!("LRANGE {} {start} {stop}", Self::key(&key)));
+        Ok(Vec::new())
     }
 
     async fn publish<C, M>(&self, channel: C, payload: M) -> RedisResult<i64>
@@ -590,7 +601,12 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
         )
         .await;
         assert_terminal_commit(&mysql);
-        assert_eq!(redis.count("DEL chat:task_streaming:"), 1);
+        assert_eq!(
+            redis.count(&format!("DEL chat:task_streaming:{TASK_ID}")),
+            1,
+            "missing task streaming cleanup in {:?}",
+            redis.calls()
+        );
         let frames: Vec<Value> = redis
             .calls()
             .iter()
