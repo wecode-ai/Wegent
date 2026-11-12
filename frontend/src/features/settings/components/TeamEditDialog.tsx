@@ -1754,6 +1754,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         allowedAgents={effectiveAllowedAgents}
         scope={scope}
         groupName={groupName}
+        targetGroupNames={publishTarget === 'team' ? publishGroupNames : []}
       />
 
       {/* Mode change confirmation dialog */}

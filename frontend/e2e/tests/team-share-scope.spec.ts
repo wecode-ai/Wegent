@@ -4,6 +4,7 @@
 
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Browser, Locator, Page } from '@playwright/test'
+import JSZip from 'jszip'
 import { ADMIN_USER, REGULAR_USER } from '../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
 import { ApiClient, createApiClient } from '../utils/api-client'
@@ -22,6 +23,7 @@ interface ShareScopeFixture {
   groupTeamId: number
   groupTeamBotId: number
   developerToken: string
+  ownerApi: ApiClient
   reporterTeamId: number
   reporterUserId: number
   developerApi: ApiClient
@@ -50,14 +52,15 @@ async function createGroupTeam(
   api: ApiClient,
   prefix: string,
   namespace: string,
-  suffix: string
+  suffix: string,
+  botNamespace = namespace
 ): Promise<{ teamId: number; teamName: string; botId: number }> {
   const botResponse = await api.createBot({
     name: `${prefix}-${suffix}-bot`,
     shell_name: 'Chat',
     agent_config: {},
     system_prompt: 'Share scope E2E leader bot.',
-    namespace,
+    namespace: botNamespace,
     is_active: true,
   })
   expect(botResponse.status, JSON.stringify(botResponse.data)).toBe(201)
@@ -146,7 +149,7 @@ async function createShareScopeFixture(
 
     // The admin owns this private leader Bot while the Team itself is a group
     // resource, keeping the regression on the Team-context authorization path.
-    const groupTeam = await createGroupTeam(adminApi, prefix, 'default', 'group')
+    const groupTeam = await createGroupTeam(adminApi, prefix, groupName, 'group', 'default')
     createdBotIds.push(groupTeam.botId)
     createdTeamIds.push({
       id: groupTeam.teamId,
@@ -169,6 +172,7 @@ async function createShareScopeFixture(
       groupTeamId: groupTeam.teamId,
       groupTeamBotId: groupTeam.botId,
       developerToken: developerLogin.data!.access_token,
+      ownerApi: adminApi,
       reporterTeamId: reporterTeam.teamId,
       reporterUserId,
       developerApi,
@@ -403,11 +407,55 @@ test.describe('Agent share scope', () => {
     const prefix = `e2e-share-scope-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const fixture = await createShareScopeFixture(request, prefix)
     const page = await openUserPage(browser, fixture.developerToken)
+    let privateSkillId: number | undefined
+    let otherGroupName: string | undefined
+    let otherBotId: number | undefined
 
     try {
-      await page.goto(
-        `/resource-library?tab=mine&type=agent&source=group`
+      const privateSkillName = `${prefix}-owner-private-skill`
+      const archive = new JSZip()
+      archive.file(
+        `${privateSkillName}/SKILL.md`,
+        '---\ndescription: "Private Agent edit regression"\nversion: "1.0.0"\n---\n\n# Private Skill'
       )
+      const upload = await fixture.ownerApi.uploadSkill({
+        name: privateSkillName,
+        namespace: 'default',
+        file: await archive.generateAsync({ type: 'nodebuffer' }),
+      })
+      expect(upload.status, JSON.stringify(upload.data)).toBe(201)
+      const skills = await fixture.ownerApi.get<Array<{ id: number; name: string }>>(
+        '/api/v1/kinds/skills/unified?scope=personal&limit=100'
+      )
+      expect(skills.status, JSON.stringify(skills.data)).toBe(200)
+      privateSkillId = skills.data?.find(skill => skill.name === privateSkillName)?.id
+      expect(privateSkillId).toBeDefined()
+      const refs = {
+        [privateSkillName]: {
+          skill_id: privateSkillId!,
+          namespace: 'default',
+          is_public: false,
+        },
+      }
+      const configured = await fixture.ownerApi.put(`/api/bots/${fixture.groupTeamBotId}`, {
+        skills: [privateSkillName],
+        skill_refs: refs,
+        preload_skills: [privateSkillName],
+        preload_skill_refs: refs,
+      })
+      expect(configured.status, JSON.stringify(configured.data)).toBe(200)
+
+      const withoutContext = await fixture.developerApi.put(`/api/bots/${fixture.groupTeamBotId}`, {
+        system_prompt: 'Must not be saved without Team context.',
+      })
+      expect(withoutContext.status).toBe(403)
+      const reporterUpdate = await fixture.reporterApi.put(`/api/bots/${fixture.groupTeamBotId}`, {
+        team_id: fixture.groupTeamId,
+        system_prompt: 'Reporter must not edit.',
+      })
+      expect(reporterUpdate.status).toBe(403)
+
+      await page.goto('/resource-library?tab=mine&type=agent&source=group')
       await expect(page.getByTestId('my-resources')).toBeVisible({ timeout: 20000 })
       const card = page.getByTestId(`team-card-${fixture.groupTeamId}`)
       await expect(card).toBeVisible({ timeout: 20000 })
@@ -422,13 +470,84 @@ test.describe('Agent share scope', () => {
       await expect(dialog).toBeHidden({ timeout: 30000 })
 
       await expect
-        .poll(() => readLeaderBotPrompt(fixture.developerApi, fixture.groupTeamBotId), {
+        .poll(() => readLeaderBotPrompt(fixture.ownerApi, fixture.groupTeamBotId), {
           timeout: 20000,
         })
         .toBe('Updated by a group editor with only Team permission.')
+
+      const saved = await fixture.ownerApi.get<{
+        skills: string[]
+        skill_refs: Record<string, { skill_id: number }>
+        preload_skills: string[]
+      }>(`/api/bots/${fixture.groupTeamBotId}`)
+      expect(saved.status, JSON.stringify(saved.data)).toBe(200)
+      expect(saved.data?.skills).toEqual([privateSkillName])
+      expect(saved.data?.skill_refs[privateSkillName].skill_id).toBe(privateSkillId)
+      expect(saved.data?.preload_skills).toEqual([privateSkillName])
+
+      await page.reload()
+      await expect(card).toBeVisible({ timeout: 20000 })
+      await card.getByTestId(`edit-team-button-${fixture.groupTeamId}`).click()
+      await expect(dialog.getByTestId('simple-prompt-textarea')).toHaveValue(
+        'Updated by a group editor with only Team permission.'
+      )
+
+      // A reference from an editable Team cannot grant another group's
+      // source-edit permission, even if its owner installed that reference.
+      const otherGroup = DataBuilders.group()
+      const otherGroupResponse = await fixture.ownerApi.createGroup(otherGroup)
+      expect(otherGroupResponse.status, JSON.stringify(otherGroupResponse.data)).toBe(201)
+      otherGroupName = otherGroup.name
+      const otherBot = await fixture.ownerApi.createBot({
+        name: `${prefix}-other-group-bot`,
+        namespace: otherGroupName,
+        shell_name: 'Chat',
+        agent_config: {},
+        system_prompt: 'Other group original prompt.',
+      })
+      expect(otherBot.status, JSON.stringify(otherBot.data)).toBe(201)
+      otherBotId = (otherBot.data as { id: number }).id
+      const otherBots = [{ bot_id: otherBotId, role: 'leader' }]
+      const installed = await fixture.ownerApi.put(`/api/teams/${fixture.groupTeamId}`, {
+        bots: otherBots,
+      })
+      expect(installed.status, JSON.stringify(installed.data)).toBe(200)
+
+      const crossGroupUpdate = await fixture.developerApi.put(`/api/bots/${otherBotId}`, {
+        team_id: fixture.groupTeamId,
+        system_prompt: 'Cross-group overwrite must fail.',
+      })
+      expect(crossGroupUpdate.status).toBe(403)
+      const crossGroupReference = await fixture.developerApi.put(
+        `/api/teams/${fixture.groupTeamId}`,
+        { bots: otherBots }
+      )
+      expect(crossGroupReference.status).toBe(403)
+      const forgedTeam = await fixture.developerApi.createTeam({
+        name: `${prefix}-forged-team`,
+        namespace: fixture.groupName,
+        bots: otherBots,
+        workflow: { mode: 'solo' },
+      })
+      expect(forgedTeam.status).toBe(403)
+      expect(await readLeaderBotPrompt(fixture.ownerApi, otherBotId)).toBe(
+        'Other group original prompt.'
+      )
     } finally {
       await page.context().close()
       await fixture.cleanup()
+      if (privateSkillId !== undefined) {
+        const removed = await fixture.ownerApi.delete(`/api/v1/kinds/skills/${privateSkillId}`)
+        expect(removed.status, JSON.stringify(removed.data)).toBe(204)
+      }
+      if (otherBotId !== undefined) {
+        const removed = await fixture.ownerApi.delete(`/api/bots/${otherBotId}?force=true`)
+        expect(removed.status, JSON.stringify(removed.data)).toBe(200)
+      }
+      if (otherGroupName !== undefined) {
+        const removed = await fixture.ownerApi.deleteGroup(otherGroupName)
+        expect(removed.status, JSON.stringify(removed.data)).toBe(204)
+      }
     }
   })
 })

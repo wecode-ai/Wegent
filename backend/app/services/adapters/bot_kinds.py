@@ -18,6 +18,10 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
 from app.schemas.kind import BaseGhostRef, Bot, Ghost, Model, Shell, SkillRefMeta, Team
+from app.services.adapters.bot_edit_access import (
+    can_edit_bot,
+    resolve_replacement_shell_info,
+)
 from app.services.adapters.public_model import is_public_model_allowed_for_user_id
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
@@ -31,7 +35,6 @@ from app.services.group_permission import check_group_permission
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.skill_binding_service import skill_binding_service
 from app.services.skill_resolution import build_skill_ref_meta
-from app.services.team_access_policy import can_edit_team
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 logger = logging.getLogger(__name__)
@@ -174,6 +177,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         user_id: int,
     ) -> bool:
         """Whether the user may edit this Bot as a member of the given Team."""
+        if bot.namespace != "default":
+            return False
         team = (
             db.query(Kind)
             .filter(
@@ -183,21 +188,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             )
             .first()
         )
-        if team is None or not can_edit_team(db, team, user_id):
-            return False
-
-        if bot.namespace == "default" and bot.user_id != team.user_id:
-            return False
-
-        try:
-            team_crd = Team.model_validate(team.json)
-        except ValueError:
-            return False
-        return any(
-            member.botRef.name == bot.name
-            and (member.botRef.namespace or "default") == (bot.namespace or "default")
-            for member in team_crd.spec.members
-        )
+        return team is not None and can_edit_bot(db, bot, user_id, team)
 
     def _require_update_bot_permission(
         self,
@@ -1050,7 +1041,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         )
 
         update_data = obj_in.model_dump(exclude_unset=True)
-        logger.info(f"[DEBUG] update_with_user: update_data={update_data}")
+        logger.info(
+            "Bot update: bot_id=%s editor_id=%s fields=%s",
+            bot_id,
+            user_id,
+            sorted(update_data),
+        )
         provided_skill_refs = obj_in.skill_refs if "skill_refs" in update_data else None
         provided_preload_skill_refs = (
             obj_in.preload_skill_refs if "preload_skill_refs" in update_data else None
@@ -1084,10 +1080,43 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         ghost, shell, model = self._get_bot_components(
             db, bot, bot.user_id, viewer_id=user_id
         )
+        existing_bot_spec = Bot.model_validate(bot.json).spec
+        existing_ghost_spec = Ghost.model_validate(ghost.json).spec if ghost else None
+        retained_skill_refs = {}
+        if (
+            existing_ghost_spec
+            and bot.user_id != user_id
+            and {"skills", "preload_skills"} & update_data.keys()
+        ):
+            existing_names = existing_ghost_spec.skills or []
+            retained_skill_refs = {
+                name: ref
+                for name, ref in (existing_ghost_spec.skill_refs or {}).items()
+                if name in existing_names
+            }
+            missing_names = [
+                name for name in existing_names if name not in retained_skill_refs
+            ]
+            retained_skill_refs.update(
+                self._get_skill_refs(
+                    db, missing_names, bot.user_id, bot.namespace or "default"
+                )
+            )
         if "default_knowledge_base_refs" in update_data:
+            refs_to_validate = obj_in.default_knowledge_base_refs
+            if existing_ghost_spec and bot.user_id != user_id:
+                retained_kbs = {
+                    (ref.id, ref.name)
+                    for ref in existing_ghost_spec.defaultKnowledgeBaseRefs or []
+                }
+                refs_to_validate = [
+                    ref
+                    for ref in refs_to_validate or []
+                    if (ref.id, ref.name) not in retained_kbs
+                ]
             self._validate_default_knowledge_bases(
                 db,
-                obj_in.default_knowledge_base_refs,
+                refs_to_validate,
                 user_id,
                 bot.namespace or "default",
             )
@@ -1109,6 +1138,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             new_shell_name = update_data["shell_name"]
             bot_crd = Bot.model_validate(bot.json)
             shell_ref = bot_crd.spec.shellRef
+            replacement_shell_info = None
+            if bot.user_id != user_id and shell_ref.name != new_shell_name:
+                replacement_shell_info = resolve_replacement_shell_info(
+                    db,
+                    name=new_shell_name,
+                    owner_id=bot.user_id,
+                    editor_id=user_id,
+                )
             shell = None
             if shell_ref.name == new_shell_name:
                 existing_namespace = shell_ref.namespace or "default"
@@ -1127,7 +1164,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
             if shell is None:
                 try:
-                    shell_info = get_shell_info_by_name(db, new_shell_name, bot.user_id)
+                    shell_info = replacement_shell_info or get_shell_info_by_name(
+                        db, new_shell_name, bot.user_id
+                    )
                 except ValueError as e:
                     raise HTTPException(status_code=400, detail=str(e))
 
@@ -1153,7 +1192,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if "agent_config" in update_data:
             bot_crd = Bot.model_validate(bot.json)
             new_agent_config = update_data["agent_config"]
-            logger.info(f"[DEBUG] Updating agent_config: {new_agent_config}")
 
             if obj_in.execution_policy is not None:
                 bot_crd.spec.modelRef = None
@@ -1176,6 +1214,28 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                         self._get_model_namespace_from_config(new_agent_config)
                         or "default"
                     )
+                existing_ref = existing_bot_spec.modelRef
+                new_model_reference = not (
+                    existing_ref
+                    and existing_ref.name == model_name
+                    and existing_ref.namespace == model_namespace
+                )
+                if (
+                    model_type == "user"
+                    and bot.user_id != user_id
+                    and new_model_reference
+                ):
+                    raise HTTPException(
+                        403, "Cannot bind another owner's private model"
+                    )
+                if (
+                    model_type == "group"
+                    and new_model_reference
+                    and not check_group_permission(
+                        db, user_id, model_namespace, BaseRole.Reporter
+                    )
+                ):
+                    raise HTTPException(403, "Group model access denied")
                 logger.info(
                     f"[DEBUG] Predefined model detected, updating modelRef to: {model_name}, type: {model_type}, namespace: {model_namespace}"
                 )
@@ -1239,6 +1299,16 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     model_type,
                     viewer_id=user_id,
                 )
+                if (
+                    new_model_reference
+                    and bot.user_id != user_id
+                    and model is not None
+                    and model.user_id != 0
+                    and model.namespace == "default"
+                ):
+                    raise HTTPException(
+                        403, "Cannot bind another owner's private model"
+                    )
                 return_agent_config = new_agent_config
             else:
                 # For custom config, we need to check if we should update existing model or create new one
@@ -1320,7 +1390,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     }
 
                     model = Kind(
-                        user_id=user_id,
+                        user_id=bot.user_id,
                         kind="Model",
                         name=dedicated_model_name,
                         namespace=bot_namespace,
@@ -1368,17 +1438,22 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 raise HTTPException(
                     422, "Environment and model policies must be configured together"
                 )
+            policies_changed = (
+                bot_crd.spec.execution_policy != existing_bot_spec.execution_policy
+                or bot_crd.spec.model_policy != existing_bot_spec.model_policy
+            )
             if bot_crd.spec.execution_policy:
                 bot_crd.spec.modelRef = None
                 bot_crd.spec.routing_configuration_required = False
                 from app.services.runner_routing import validate_agent_policies
 
-                validate_agent_policies(
-                    db,
-                    user_id=user_id,
-                    policy=bot_crd.spec.execution_policy,
-                    model_policy=bot_crd.spec.model_policy,
-                )
+                if bot.user_id == user_id or policies_changed:
+                    validate_agent_policies(
+                        db,
+                        user_id=user_id,
+                        policy=bot_crd.spec.execution_policy,
+                        model_policy=bot_crd.spec.model_policy,
+                    )
             bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")
         if "capability_mode" in update_data:
@@ -1444,11 +1519,10 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     namespace=bot.namespace or "default",
                     provided_refs=provided_skill_refs,
                     target_group_names=obj_in.target_group_names,
+                    retained_refs=retained_skill_refs,
                 )
                 if skill_refs:
-                    ghost_crd.spec.skill_refs = {
-                        name: ref.model_dump() for name, ref in skill_refs.items()
-                    }
+                    ghost_crd.spec.skill_refs = skill_refs
             else:
                 ghost_crd.spec.skill_refs = None
             ghost.json = ghost_crd.model_dump()
@@ -1468,12 +1542,10 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     namespace=bot.namespace or "default",
                     provided_refs=provided_preload_skill_refs,
                     target_group_names=obj_in.target_group_names,
+                    retained_refs=retained_skill_refs,
                 )
                 if preload_skill_refs:
-                    ghost_crd.spec.preload_skill_refs = {
-                        name: ref.model_dump()
-                        for name, ref in preload_skill_refs.items()
-                    }
+                    ghost_crd.spec.preload_skill_refs = preload_skill_refs
             else:
                 ghost_crd.spec.preload_skill_refs = None
             ghost.json = ghost_crd.model_dump()
@@ -1794,9 +1866,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         logger.info(
             f"[DEBUG] _get_bot_components: ghost={ghost is not None}, shell={shell is not None}, model={model is not None}"
         )
-        if model:
-            logger.info(f"[DEBUG] _get_bot_components: model.json={model.json}")
-
         return ghost, shell, model
 
     def _get_bot_components_batch(self, db: Session, bots: List[Kind], user_id: int):
@@ -2024,9 +2093,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if override_agent_config is not None:
             # Use the override (for predefined models)
             agent_config = override_agent_config
-            logger.info(
-                f"[DEBUG] _convert_to_bot_dict: Using override_agent_config={agent_config}"
-            )
+            logger.debug("Returning overridden agent configuration")
         elif model and model.json:
             model_json = model.json
             model_crd = Model.model_validate(model_json)
@@ -2091,9 +2158,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 agent_config = dict(model_config) if model_config else {}
                 if protocol:
                     agent_config["protocol"] = protocol
-                logger.info(
-                    f"[DEBUG] _convert_to_bot_dict: Custom config model, returning full config with protocol: {agent_config}"
-                )
+                logger.debug("Returning dedicated custom model configuration")
             else:
                 # This is a dedicated private model but not marked as custom config
                 # Return bind_model format with type for backward compatibility
@@ -2467,6 +2532,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         namespace: str,
         provided_refs: Optional[Dict[str, SkillRefMeta]],
         target_group_names: Optional[List[str]] = None,
+        retained_refs: Optional[Dict[str, SkillRefMeta]] = None,
     ) -> Dict[str, SkillRefMeta]:
         """Resolve skill refs from request payload or fallback by skill name."""
         unique_skill_names = list(dict.fromkeys(skill_names or []))
@@ -2499,8 +2565,16 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             lookup_namespace = (
                 normalized_group_names[0] if normalized_group_names else namespace
             )
-            resolved_refs = self._get_skill_refs(
-                db, unique_skill_names, user_id, lookup_namespace
+            resolved_refs = {
+                name: ref
+                for name, ref in (retained_refs or {}).items()
+                if name in unique_skill_names
+            }
+            unresolved_names = [
+                name for name in unique_skill_names if name not in resolved_refs
+            ]
+            resolved_refs.update(
+                self._get_skill_refs(db, unresolved_names, user_id, lookup_namespace)
             )
             missing_names = [
                 name for name in unique_skill_names if name not in resolved_refs
@@ -2520,6 +2594,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 namespace=namespace,
                 provided_refs=resolved_refs,
                 target_group_names=normalized_group_names,
+                retained_refs=retained_refs,
             )
 
         provided_keys = set(provided_refs.keys())
@@ -2562,7 +2637,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 )
 
             is_public = skill.user_id == 0
-            if not is_public:
+            retained_ref = (retained_refs or {}).get(skill_name)
+            is_retained = (
+                retained_ref is not None
+                and retained_ref.skill_id == skill.id
+                and retained_ref.namespace == skill.namespace
+            )
+            if not is_public and not is_retained:
                 accessible_personal = (
                     skill.user_id == user_id and skill.namespace == "default"
                 )
@@ -2612,6 +2693,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 namespace=namespace,
                 provided_refs=None,
                 target_group_names=normalized_group_names,
+                retained_refs=retained_refs,
             )
             resolved.update(fallback_refs)
 

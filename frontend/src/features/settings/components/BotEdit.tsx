@@ -36,13 +36,7 @@ import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTu
 import { KnowledgeBaseMultiSelector } from './knowledge/KnowledgeBaseMultiSelector'
 
 import { Bot } from '@/types/api'
-import {
-  botApis,
-  CreateBotRequest,
-  KnowledgeBaseDefaultRef,
-  SkillRefMeta,
-  UpdateBotRequest,
-} from '@/apis/bots'
+import { botApis, CreateBotRequest, KnowledgeBaseDefaultRef, SkillRefMeta } from '@/apis/bots'
 import {
   isPredefinedModel,
   getModelFromConfig,
@@ -126,6 +120,9 @@ interface BotEditProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  /** Existing Agent context; never applied when creating or cloning a Bot */
+  teamId?: number
+  targetGroupNames?: string[]
   /** Model category allowed by the owning team's bind mode */
   modelCategoryType?: ModelCategoryType
   /** Allow a Chat Bot to bind a generation model as its primary model */
@@ -147,6 +144,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     hideActions = false,
     scope,
     groupName,
+    teamId,
+    targetGroupNames,
     modelCategoryType = 'llm',
     allowGenerationPrimaryModel = false,
   },
@@ -963,7 +962,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         }
 
         if (editingBotId && editingBotId > 0) {
-          const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
+          const updated = await botApis.updateBot(editingBotId, {
+            ...botReq,
+            team_id: teamId,
+            target_group_names: targetGroupNames,
+          })
           setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
           return updated.id
         } else {
@@ -981,7 +984,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } finally {
       setBotSaving(false)
     }
-  }, [validateBot, getBotData, editingBotId, setBots, toast, t, scope, groupName])
+  }, [
+    validateBot,
+    getBotData,
+    editingBotId,
+    setBots,
+    toast,
+    t,
+    scope,
+    groupName,
+    teamId,
+    targetGroupNames,
+  ])
 
   // Expose methods via ref
   // Use a stable object reference to avoid infinite loops with React 19 and Radix UI
@@ -1146,7 +1160,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
         if (editingBotId && editingBotId > 0) {
           // Edit existing bot
-          const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
+          const updated = await botApis.updateBot(editingBotId, {
+            ...botReq,
+            team_id: teamId,
+            target_group_names: targetGroupNames,
+          })
           setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
         } else {
           // Create new bot
