@@ -16,7 +16,7 @@ import { runtimeArtifact } from "./runtime-artifact.mjs";
 import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
 import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
 
-test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositories", () => {
+test("CI Ubuntu source rewriting preserves hosted mirror lists, suites and trust", () => {
   const input = [
     "URIs: http://archive.ubuntu.com/ubuntu/",
     "URIs: https://security.ubuntu.com/ubuntu",
@@ -41,7 +41,7 @@ test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositor
       "URIs: https://mirrors.kernel.org/ubuntu",
       "URIs: https://mirrors.kernel.org/ubuntu",
       "deb https://mirrors.kernel.org/ubuntu resolute main universe",
-      "URIs: https://mirrors.kernel.org/ubuntu",
+      "URIs: mirror+file:/etc/apt/apt-mirrors.txt",
       "Suites: noble noble-updates noble-security resolute",
       "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
       "deb https://deb.nodesource.com/node_24.x nodistro main",

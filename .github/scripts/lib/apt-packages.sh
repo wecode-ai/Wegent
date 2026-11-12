@@ -3,7 +3,8 @@
 set -euo pipefail
 
 rewrite_ci_ubuntu_archive() {
-  sed -E 's#https?://(archive|security|azure\.archive)\.ubuntu\.com/ubuntu/?|mirror\+file:/etc/apt/apt-mirrors\.txt#https://mirrors.kernel.org/ubuntu#g'
+  # Keep hosted runners' mirror lists, including their regional priorities.
+  sed -E 's#https?://(archive|security|azure\.archive)\.ubuntu\.com/ubuntu/?#https://mirrors.kernel.org/ubuntu#g'
 }
 
 find_missing_apt_packages() {
