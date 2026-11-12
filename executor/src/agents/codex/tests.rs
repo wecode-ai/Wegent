@@ -1109,7 +1109,7 @@ async fn interaction_answer_router_rejects_waiters_after_channel_closes() {
 
 #[test]
 fn normalize_reasoning_effort_preserves_supported_codex_levels() {
-    for effort in ["low", "medium", "high", "xhigh", "max", "ultra"] {
+    for effort in ["none", "low", "medium", "high", "xhigh", "max", "ultra"] {
         assert_eq!(normalize_reasoning_effort(Some(effort)), effort);
     }
 }

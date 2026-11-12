@@ -537,6 +537,8 @@ export function StandInOverviewPage({
                 userId={props.userId}
                 deviceId={deviceId}
                 roleId={roleId}
+                settings={roleId ? saved?.roles.find(role => role.id === roleId) : saved?.primary}
+                services={props.services}
                 onOpenTask={onOpenTask}
               />
             ) : null}

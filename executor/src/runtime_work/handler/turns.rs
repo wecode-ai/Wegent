@@ -429,6 +429,24 @@ impl RuntimeWorkRpcHandler {
         if self.existing_command(&turn)?.is_some() {
             return Ok(());
         }
+        // Existing threads retain their native model, even without a per-turn selection.
+        let resolved_default = is_codex_runtime(&turn.runtime)
+            && turn.direct_thread_id.is_none()
+            && turn.fork_thread_id.is_none()
+            && turn.resume_thread_id.is_none()
+            && (turn.request.new_session
+                || !self.local_task_link(&local_task_id).is_some_and(|link| {
+                    super::super::conversation_sessions::is_identity_conversation(&link)
+                }))
+            && self
+                .resolve_retired_codex_default(&mut turn.request)
+                .await?;
+        if resolved_default {
+            self.retain_runtime_model_config(&local_task_id, &turn.request.model_config);
+            self.store.update_task(&local_task_id, |link| {
+                store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
+            });
+        }
         if turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true)) {
             let user = turn
                 .request

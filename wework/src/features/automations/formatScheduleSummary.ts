@@ -4,8 +4,7 @@ import type { useTranslation } from '@/hooks/useTranslation'
 export function formatScheduleSummary(
   schedule: AutomationSchedule,
   locale: string,
-  t: ReturnType<typeof useTranslation>['t'],
-  timezone: string
+  t: ReturnType<typeof useTranslation>['t']
 ): string {
   if (schedule.type === 'interval') {
     return locale.startsWith('zh')
@@ -16,7 +15,6 @@ export function formatScheduleSummary(
     return new Intl.DateTimeFormat(locale, {
       dateStyle: 'short',
       timeStyle: 'short',
-      timeZone: timezone,
     }).format(new Date(schedule.executeAt))
   }
   const parts = schedule.expression.trim().split(/\s+/)
