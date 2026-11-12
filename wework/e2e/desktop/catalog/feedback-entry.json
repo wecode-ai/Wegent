@@ -10,7 +10,6 @@
     }
   },
   "paths": [
-    "wework/src/App.tsx",
     "wework/src/components/layout/DesktopWorkbenchLayout.tsx",
     "wework/src/components/layout/DesktopWorkbenchMain.tsx",
     "wework/src/components/topnav/ChromeTitlebar.tsx",
