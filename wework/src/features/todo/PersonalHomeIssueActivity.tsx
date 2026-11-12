@@ -115,6 +115,7 @@ export function PersonalHomeIssueActivity({
               ? `personal-home-task-${issueId}-${tasks[0].binding.id}`
               : `personal-home-tasks-summary-${issueId}`
           }
+          data-execution-state={tasks.length === 1 ? tasks[0].status : undefined}
           disabled={!onOpenTask || (tasks.length === 1 && tasks[0].status === 'reserved')}
           aria-haspopup={tasks.length > 1 ? 'dialog' : undefined}
           aria-expanded={tasks.length > 1 ? Boolean(taskAnchor) : undefined}

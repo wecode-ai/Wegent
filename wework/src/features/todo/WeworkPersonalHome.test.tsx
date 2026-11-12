@@ -226,6 +226,47 @@ it('updates the original list row when an issue is saved in the right workspace'
   expect(screen.getByTestId('personal-home-tab-editable')).toHaveTextContent('Updated issue')
 })
 
+it('shows the updated title in the newly created pinned Issue without restoring its creation snapshot', async () => {
+  const { props, rerender } = await setup([source()])
+  rerender(
+    <WeworkPersonalHome
+      {...props}
+      createdIssue={{ key: 'created', issue: issue('new'), project: projects[0] }}
+    />
+  )
+  fireEvent.click(await screen.findByTestId('save-new'))
+  expect(screen.getByTestId('personal-home-tab-new')).toHaveTextContent('Updated issue')
+  expect(screen.getByTestId('personal-home-issue-new')).toHaveTextContent('Updated issue')
+})
+
+it('keeps refreshed task bindings and assignment context when pinning a newly created Issue', async () => {
+  const created = issue('new')
+  const refreshed = {
+    ...created,
+    task_bindings: [
+      {
+        id: 'binding',
+        projectId: 'p1',
+        issueId: 'new',
+        deviceId: 'device',
+        taskId: 'task',
+        taskTitle: 'Current task',
+      },
+    ],
+    assignment_context: { body: 'Current assignment', created_at: '2026-11-12' },
+  }
+  const { props, rerender } = await setup([source(vi.fn().mockResolvedValue([refreshed]))])
+  await screen.findByText('Current task')
+  rerender(
+    <WeworkPersonalHome
+      {...props}
+      createdIssue={{ key: 'created', issue: created, project: projects[0] }}
+    />
+  )
+  expect(screen.getByTestId('personal-home-task-new-binding')).toHaveTextContent('Current task')
+  expect(screen.getByTestId('personal-home-assignment-new')).toHaveTextContent('Current assignment')
+})
+
 it('requests the selected ordering before pagination and keeps a newly created Issue visible across refreshes', async () => {
   const api = source(vi.fn().mockResolvedValue([issue('older')]))
   const { props, rerender } = await setup([api])

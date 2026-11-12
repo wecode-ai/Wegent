@@ -313,6 +313,22 @@ async function verifyPersonalHomeStartWorkWithAssistants(control, { scoped, proj
     'Reopening the linked task must load its real conversation without a history error'
   )
   await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
+  const selectedTab = await control.command(
+    'getAttribute',
+    scoped('[data-testid^="personal-home-tab-"][aria-selected="true"]'),
+    { value: 'data-testid' }
+  )
+  assert.ok(selectedTab.startsWith('personal-home-tab-'))
+  const issueId = selectedTab.slice('personal-home-tab-'.length)
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="cloud-todo-card-header-${issueId}"]`),
+    { text: HOME_ISSUE_TITLE }
+  )
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid^="personal-home-task-${issueId}-"][data-execution-state="succeeded"]`)
+  )
   assert.equal(
     await control.command('getValue', scoped('[data-testid="cloud-todo-detail-assignee"]')),
     `user:${viewerId}`,

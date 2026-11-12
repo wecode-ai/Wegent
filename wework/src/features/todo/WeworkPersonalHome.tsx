@@ -93,7 +93,10 @@ function PersonalIssueList({
   )
   const visibleItems = recentIssue
     ? [
-        recentIssue,
+        state.items.find(
+          item =>
+            item.id === recentIssue.id && item.cloud_project_id === recentIssue.cloud_project_id
+        ) ?? recentIssue,
         ...state.items.filter(
           item =>
             item.id !== recentIssue.id || item.cloud_project_id !== recentIssue.cloud_project_id
@@ -361,7 +364,8 @@ export function WeworkPersonalHome({
   }
   const [handledCreation, setHandledCreation] = useState<string>()
   const [recentCreation, setRecentCreation] = useState<{
-    issue: WorkspaceMyWorkItem
+    issueId: WorkspaceMyWorkItem['id']
+    projectId: WorkspaceMyWorkItem['cloud_project_id']
     assignedOnly: boolean
     order: PersonalHomeIssueOrder
   }>()
@@ -374,7 +378,12 @@ export function WeworkPersonalHome({
     const scope =
       assignedOnly && ownIds.some(id => String(id) === String(createdIssue.issue.assignee_user_id))
     setAssignedOnly(scope)
-    setRecentCreation({ issue: createdIssue.issue, assignedOnly: scope, order })
+    setRecentCreation({
+      issueId: createdIssue.issue.id,
+      projectId: createdIssue.issue.cloud_project_id,
+      assignedOnly: scope,
+      order,
+    })
     const id = issueTabId(createdIssue.project, createdIssue.issue)
     setIssueTabs([
       {
@@ -476,13 +485,12 @@ export function WeworkPersonalHome({
               recentIssue={
                 recentCreation &&
                 recentCreation.assignedOnly === assignedOnly &&
-                recentCreation.order === order &&
-                issueTabs.some(
-                  tab =>
-                    tab.issue.id === recentCreation.issue.id &&
-                    tab.issue.cloud_project_id === recentCreation.issue.cloud_project_id
-                )
-                  ? recentCreation.issue
+                recentCreation.order === order
+                  ? issueTabs.find(
+                      tab =>
+                        tab.issue.id === recentCreation.issueId &&
+                        tab.issue.cloud_project_id === recentCreation.projectId
+                    )?.issue
                   : undefined
               }
               order={order}
