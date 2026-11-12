@@ -380,7 +380,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     let state = ChatStreamState {
-        stream: Box::pin(stream),
+        stream: Box::pin(stream.fuse()),
         pending: String::new(),
         pending_utf8: Vec::new(),
         output: std::collections::VecDeque::new(),

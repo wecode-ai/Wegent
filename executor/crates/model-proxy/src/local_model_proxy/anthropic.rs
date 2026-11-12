@@ -208,7 +208,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     let state = AnthropicStreamState {
-        stream: Box::pin(stream),
+        stream: Box::pin(stream.fuse()),
         pending: String::new(),
         pending_utf8: Vec::new(),
         output: VecDeque::new(),
@@ -220,7 +220,7 @@ where
         output_tokens: 0,
         output_observed: false,
     };
-    chat::chat_sse_to_responses(anthropic_to_chat_stream(state).fuse(), context)
+    chat::chat_sse_to_responses(anthropic_to_chat_stream(state), context)
 }
 
 pub(super) fn anthropic_response_to_chat(response: &Value) -> Value {

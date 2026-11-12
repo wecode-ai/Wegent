@@ -210,6 +210,64 @@ async fn sse_regression_anthropic_flushes_a_final_cr_terminated_event() {
         .any(|event| event["type"] == "response.output_text.delta" && event["delta"] == "中文"));
 }
 
+async fn assert_no_upstream_poll_after_eof(branch: &str) {
+    let events = if branch == "chat" {
+        vec![json!({"choices":[{"index":0,"delta":{"content":"中文"},"finish_reason":"stop"}]})]
+    } else {
+        vec![
+            json!({"type":"message_start","message":{"id":"msg_eof","model":"test"}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"中文"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}),
+        ]
+    };
+    let input = events
+        .iter()
+        .map(|event| multiline_frame(event, "\n"))
+        .collect::<String>();
+    let mut chunk = Some(Bytes::from(input.trim_end().to_owned()));
+    let mut ended = false;
+    let source = futures_util::stream::poll_fn(move |_| {
+        assert!(!ended, "The adapter polled the upstream again after EOF");
+        let value = chunk.take().map(Ok::<_, std::io::Error>);
+        ended = value.is_none();
+        std::task::Poll::Ready(value)
+    });
+    let stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
+        if branch == "chat" {
+            Box::pin(chat::chat_sse_to_responses(
+                source,
+                chat::ToolContext::default(),
+            ))
+        } else {
+            Box::pin(anthropic::anthropic_sse_to_responses(
+                source,
+                chat::ToolContext::default(),
+            ))
+        };
+    let bytes = stream
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .flat_map(|chunk| chunk.unwrap())
+        .collect::<Vec<_>>();
+    let output = String::from_utf8(bytes).unwrap();
+    let values = parsed_events(&output);
+    assert!(values
+        .iter()
+        .any(|event| event["type"] == "response.output_text.delta" && event["delta"] == "中文"));
+    assert_eq!(values.last().unwrap()["type"], "response.completed");
+}
+
+#[tokio::test]
+async fn sse_regression_chat_does_not_poll_a_non_fused_source_after_eof() {
+    assert_no_upstream_poll_after_eof("chat").await;
+}
+
+#[tokio::test]
+async fn sse_regression_anthropic_does_not_poll_a_non_fused_source_after_eof() {
+    assert_no_upstream_poll_after_eof("anthropic").await;
+}
+
 #[tokio::test]
 async fn sse_regression_native_multiline_and_mixed_framing() {
     assert_branch_handles_multiline_and_mixed_framing("native").await;
