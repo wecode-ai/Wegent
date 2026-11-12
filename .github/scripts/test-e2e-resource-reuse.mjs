@@ -16,6 +16,39 @@ import { runtimeArtifact } from "./runtime-artifact.mjs";
 import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
 import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
 
+test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositories", () => {
+  const input = [
+    "URIs: http://archive.ubuntu.com/ubuntu/",
+    "URIs: https://security.ubuntu.com/ubuntu",
+    "deb http://azure.archive.ubuntu.com/ubuntu/ resolute main universe",
+    "URIs: mirror+file:/etc/apt/apt-mirrors.txt",
+    "Suites: noble noble-updates noble-security resolute",
+    "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
+    "deb https://deb.nodesource.com/node_24.x nodistro main",
+  ].join("\n");
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      "source .github/scripts/lib/apt-packages.sh; rewrite_ci_ubuntu_archive",
+    ],
+    { input, encoding: "utf8", cwd: resolve(import.meta.dirname, "../..") },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    result.stdout,
+    [
+      "URIs: https://mirrors.kernel.org/ubuntu",
+      "URIs: https://mirrors.kernel.org/ubuntu",
+      "deb https://mirrors.kernel.org/ubuntu resolute main universe",
+      "URIs: https://mirrors.kernel.org/ubuntu",
+      "Suites: noble noble-updates noble-security resolute",
+      "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
+      "deb https://deb.nodesource.com/node_24.x nodistro main",
+    ].join("\n"),
+  );
+});
+
 test("historical fixtures use the exact GitHub release asset by ID", async () => {
   const requests = [];
   const response = await fetchGithubReleaseAsset({

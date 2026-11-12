@@ -28,7 +28,7 @@ mod auth_tests;
 /// preference threaded through the executor environment.
 pub(super) fn codex_subscription_enabled() -> bool {
     env::var_os(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV)
-        .map(|value| value != "false")
+        .map(|value| value != "false" && value != "unavailable")
         .unwrap_or(true)
 }
 
@@ -153,6 +153,7 @@ pub(crate) fn select_wework_codex_user_instructions(
 pub(crate) use wegent_plugin_packages::codex_configuration::{log_config_state, replace_config};
 
 fn sync_user_codex_auth(codex_home: &Path, auth_enabled: bool) -> Result<(), String> {
+    require_known_auth_preference()?;
     let target = codex_home.join("auth.json");
     let native_source = user_codex_auth_path();
 
@@ -201,6 +202,15 @@ fn sync_user_codex_auth(codex_home: &Path, auth_enabled: bool) -> Result<(), Str
         })?;
     }
     write_managed_auth_marker(codex_home)
+}
+
+fn require_known_auth_preference() -> Result<(), String> {
+    if env::var_os(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV)
+        .is_some_and(|value| value == "unavailable")
+    {
+        return Err("Codex credential preference is unreadable; repair application settings and restart Wework before accessing Codex credentials".to_owned());
+    }
+    Ok(())
 }
 
 /// Removes only the auth link/copy managed by Wework. A user-managed auth file

@@ -29,6 +29,7 @@ import {
   verifyNativeReplyRecoveryAfterReload,
 } from '../modules/native-reply-recovery.mjs'
 import { openInteractionDraftWindow } from '../modules/interaction-draft-windows.mjs'
+import { waitForRestoredTranscript } from '../modules/transcript-restoration.mjs'
 
 const PROMPT = 'WEWORK_CONSECUTIVE_ASYNC_QUESTIONS'
 const COMPLETE = 'WEWORK_CONSECUTIVE_ANSWERS_ACCEPTED'
@@ -230,15 +231,18 @@ export function createDesktopScenario({
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
           { text: COMPLETE, visible: true }
         )
-        await waitForWorkbenchDebugState(
+        const settled = await waitForWorkbenchDebugState(
           control,
           snapshot => snapshot.pane?.status?.isBusy === false,
           'The combined answer must complete the turn'
         )
+        const taskId = settled.workbench?.currentRuntimeTask?.taskId
+        assert.ok(taskId, 'The answered conversation must retain its Runtime task')
         assert.equal(Number(await control.command('getElementCount', CARD)), 0)
         const readyCount = control.readyCount
         await control.command('reloadMainWindow', 'body')
         await control.awaitReadyAfter(readyCount)
+        await waitForRestoredTranscript(control, taskId, workbenchReadyTimeoutMs)
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-question-reply"]`,

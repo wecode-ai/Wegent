@@ -433,6 +433,11 @@ classify_workbench_path() {
       return
       ;;
 
+    wework/e2e/desktop/modules/harness-tool-result-order.*)
+      select_target "core:local-harness"
+      return
+      ;;
+
     # Local PTY-backed coding harnesses have dedicated desktop scenarios.
     wework/electron/src/host/local-terminal* | \
       wework/src/lib/local-harness* | \

@@ -3232,6 +3232,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "wegent-runtime-logging",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

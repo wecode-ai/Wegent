@@ -72,6 +72,8 @@ import {
 } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
+import { LocalRuntimeNotice } from '@/features/local-runtime/LocalRuntimeNotice'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { IdleTaskCoordinator } from '@/features/idle-tasks/IdleTaskCoordinator'
 import { WeworkIdleTasks } from '@/features/idle-tasks/WeworkIdleTasks'
@@ -1253,7 +1255,10 @@ function AppShell() {
     return (
       <CodexHomeInitializer>
         <LocalRuntimeInitializer startupReady={false}>
-          <div />
+          <div className="flex h-dvh flex-col">
+            <MacOSTitleBarDragRegion className="h-10 shrink-0" />
+            <LocalRuntimeNotice />
+          </div>
         </LocalRuntimeInitializer>
       </CodexHomeInitializer>
     )
@@ -1265,8 +1270,12 @@ function AppShell() {
 
   if (isIsolatedSurface) {
     const isolatedShell = (
-      <div data-testid="app-shell" className="fixed inset-0 overflow-hidden bg-background">
-        <div data-testid="app-route-host" className="h-full min-h-0 overflow-hidden">
+      <div
+        data-testid="app-shell"
+        className="fixed inset-0 flex flex-col overflow-hidden bg-background"
+      >
+        <LocalRuntimeNotice />
+        <div data-testid="app-route-host" className="min-h-0 flex-1 overflow-hidden">
           <AppRoutes />
         </div>
       </div>
