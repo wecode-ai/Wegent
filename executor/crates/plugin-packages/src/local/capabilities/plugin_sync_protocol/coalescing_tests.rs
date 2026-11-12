@@ -125,6 +125,39 @@ async fn a_full_snapshot_and_targeted_install_share_the_same_plugin_work() {
 }
 
 #[tokio::test]
+async fn a_renewed_path_retries_after_an_expired_shared_download() {
+    for (first_generation, second_generation) in [(10, 11), (11, 10), (10, 10)] {
+        let (_root, handler, mut entered) = gated_fixture(false, &["/alpha/new?expired"]);
+        let mut expired = desired("alpha", "new");
+        expired["download_path"] = json!("/alpha/new?expired");
+        let first = start(&handler, delta(first_generation, vec![expired], vec![]));
+        assert_eq!(next_download(&mut entered).await, "/alpha/new?expired");
+        let second = start(
+            &handler,
+            delta(second_generation, vec![desired("alpha", "new")], vec![]),
+        );
+        shared_target(&handler).await;
+        handler.package_provider.gates["/alpha/new?expired"].add_permits(1);
+        let failed = completed(first).await;
+        assert_eq!(failed["plugins"][0]["status"], "failed");
+        assert_eq!(failed["plugins"][0]["stage"], "download");
+        let renewed = completed(second).await;
+        assert_eq!(renewed["plugins"][0]["status"], "synced");
+        assert_eq!(renewed["plugins"][0]["generation"], second_generation);
+        assert_eq!(handler.package_provider.calls.load(Ordering::SeqCst), 2);
+        let manifest = handler.store.manifest.load().unwrap();
+        assert_eq!(
+            manifest["plugin_sync"]["entries"]["alpha@wework"]["generation"],
+            first_generation.max(second_generation)
+        );
+        assert_eq!(
+            manifest["plugin_sync"]["entries"]["alpha@wework"]["pending"],
+            false
+        );
+    }
+}
+
+#[tokio::test]
 async fn shared_failures_are_not_reported_as_success_and_a_later_request_can_retry() {
     let (_root, handler, mut entered) = gated_fixture(false, &["/alpha/new"]);
     handler.package_provider.fail.store(true, Ordering::SeqCst);

@@ -157,9 +157,23 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             let first = equivalent_generation(&manifest, &spec, generation, removing);
             format!("target:{first}:{}", target_fingerprint(&spec, removing))
         };
-        let (pending, owner) = self.plugin_sync_inflight.claim(&key);
+        let (pending, owner) = self
+            .plugin_sync_inflight
+            .claim(&key, spec.download_path.as_deref());
         if !owner {
             let result = pending.wait().await?;
+            if !removing
+                && result["status"] == "failed"
+                && result["stage"] == "download"
+                && spec.download_path.is_some()
+                && spec.download_path != pending.download_path
+            {
+                // The target is identical, but only the shared owner's URL was
+                // tried. Recheck ordering and try this request's path once.
+                return self
+                    .prepare_and_publish_plugin_once(spec, generation, removing)
+                    .await;
+            }
             return self
                 .confirm_shared_publication(&spec, generation, removing, result)
                 .await;

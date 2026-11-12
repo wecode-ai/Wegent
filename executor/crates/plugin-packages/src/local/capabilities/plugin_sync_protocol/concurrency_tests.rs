@@ -47,7 +47,7 @@ impl CapabilityPackageProvider for GatedPackages {
             if let Some(gate) = self.gates.get(path) {
                 gate.acquire().await.unwrap().forget();
             }
-            if self.fail.load(Ordering::SeqCst) {
+            if self.fail.load(Ordering::SeqCst) || path.ends_with("?expired") {
                 return Err(invalid("Injected download failure"));
             }
             if path.ends_with("/corrupt") {

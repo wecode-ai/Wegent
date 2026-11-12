@@ -207,17 +207,21 @@ pub(super) struct InFlightRequests(Mutex<BTreeMap<String, Arc<InFlight>>>);
 
 #[derive(Default)]
 struct InFlight {
+    download_path: Option<String>,
     result: Mutex<Option<Result<Value, String>>>,
     ready: Notify,
 }
 
 impl InFlightRequests {
-    fn claim(&self, key: &str) -> (Arc<InFlight>, bool) {
+    fn claim(&self, key: &str, download_path: Option<&str>) -> (Arc<InFlight>, bool) {
         let mut requests = self.0.lock().unwrap_or_else(|error| error.into_inner());
         match requests.get(key) {
             Some(pending) => (pending.clone(), false),
             None => {
-                let pending = Arc::new(InFlight::default());
+                let pending = Arc::new(InFlight {
+                    download_path: download_path.map(str::to_owned),
+                    ..Default::default()
+                });
                 requests.insert(key.to_owned(), pending.clone());
                 (pending, true)
             }
@@ -286,39 +290,13 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         request: PluginSyncRequest,
     ) -> Result<Value, CapabilitySyncError> {
         let started = Instant::now();
-        let mut target = payload.clone();
-        target["plugin_sync"]
-            .as_object_mut()
-            .expect("validated protocol")
-            .remove("generation");
-        for plugin in target
-            .get_mut("plugins")
-            .and_then(Value::as_array_mut)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(object) = plugin.as_object_mut() {
-                let trusted_checksum = object
-                    .get("checksum")
-                    .and_then(Value::as_str)
-                    .and_then(|checksum| checksum.strip_prefix("sha256:"))
-                    .is_some_and(|hash| {
-                        hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-                    });
-                if trusted_checksum {
-                    object.remove("download_path");
-                    object.remove("download_url_expires_at");
-                }
-            }
-        }
-        // New generations register their fences immediately; per-plugin work
-        // is shared below without delaying a newer update or uninstall.
+        // Only identical deliveries share the whole response. Keep renewed URLs
+        // distinct here; semantic sharing and download retries belong below.
         let key = format!(
-            "request:{}:{}",
-            request.generation,
-            serde_json::to_string(&target)?
+            "request:{}",
+            sha256_digest(serde_json::to_string(&payload)?.as_bytes())
         );
-        let (pending, owner) = self.plugin_sync_inflight.claim(&key);
+        let (pending, owner) = self.plugin_sync_inflight.claim(&key, None);
         if !owner {
             let result = pending.wait().await;
             crate::logging::log_executor_event(
