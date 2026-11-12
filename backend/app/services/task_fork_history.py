@@ -5,12 +5,12 @@
 """Fork-aware task history resolution."""
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task
 from app.stores.tasks import subtask_store, task_store
@@ -49,8 +49,8 @@ class TaskForkHistoryResolver:
         after_message_id: Optional[int] = None,
         limit: Optional[int] = None,
         current_task: Optional[TaskResource] = None,
-        statuses: Optional[tuple[Any, ...]] = None,
-        roles: Optional[tuple[Any, ...]] = None,
+        statuses: Optional[Sequence[SubtaskStatus]] = None,
+        roles: Optional[Sequence[SubtaskRole]] = None,
     ) -> list[ForkHistoryItem]:
         if limit is not None and limit <= 0:
             return []

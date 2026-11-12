@@ -850,32 +850,33 @@ class SqlAlchemySubtaskStore:
             if not roles:
                 return []
             query = query.filter(Subtask.role.in_(roles))
-        if order_by == "id":
-            query = query.order_by(Subtask.id.asc())
-        elif order_by == "created_at":
-            query = query.order_by(Subtask.created_at.asc(), Subtask.id.asc())
-        else:
-            query = query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
+        order_columns = self._history_order_columns(Subtask, order_by)
         if recent_limit is not None:
             if recent_limit <= 0:
                 return []
-            query = (
-                query.order_by(None)
-                .order_by(
-                    Subtask.message_id.desc(),
-                    Subtask.created_at.desc(),
-                    Subtask.id.desc(),
-                )
+            rows = (
+                query.order_by(*(column.desc() for column in order_columns))
                 .limit(recent_limit)
+                .all()
             )
-            recent_rows = query.all()
-            subtask_ids = [row[0] for row in recent_rows][::-1]
+            subtask_ids = [row[0] for row in rows][::-1]
         else:
-            rows = query.all()
+            rows = query.order_by(*(column.asc() for column in order_columns)).all()
             subtask_ids = [row[0] for row in rows]
         subtasks = self._load_ordered(db, subtask_ids)
         self._attach_sender_user_names(db, subtasks)
         return subtasks
+
+    @staticmethod
+    def _history_order_columns(
+        model: Any, order_by: Literal["id", "message_id", "created_at"]
+    ) -> tuple[Any, ...]:
+        """Use the same deterministic ordering for full and bounded history."""
+        if order_by == "id":
+            return (model.id,)
+        if order_by == "created_at":
+            return (model.created_at, model.id)
+        return (model.message_id, model.created_at, model.id)
 
     def list_recent_by_task_ids(
         self,

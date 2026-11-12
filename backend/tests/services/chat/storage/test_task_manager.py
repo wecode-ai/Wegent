@@ -787,6 +787,80 @@ def test_prepare_execution_session_uses_fork_history_next_message_id(monkeypatch
     assert calls["assistant_parent_id"] == 9
 
 
+@pytest.mark.parametrize("history_window", [0, 1, 20])
+def test_bounded_execution_preserves_recent_memory_context(
+    test_db: Session, test_user: User, monkeypatch, history_window: int
+) -> None:
+    from app.core.config import settings
+    from app.services.chat.trigger import lifecycle
+    from app.services.memory import build_context_messages
+
+    task = _build_existing_task(task_id=1385, user_id=test_user.id)
+    rows = []
+    for message_id in range(1, 7):
+        role = SubtaskRole.USER if message_id % 2 else SubtaskRole.ASSISTANT
+        rows.append(
+            Subtask(
+                id=message_id,
+                task_id=task.id,
+                user_id=test_user.id,
+                team_id=1256,
+                title=f"history-{message_id}",
+                bot_ids=[],
+                role=role,
+                message_id=message_id,
+                parent_id=message_id - 1,
+                status=(
+                    SubtaskStatus.COMPLETED
+                    if message_id <= 4
+                    else SubtaskStatus.CANCELLED
+                ),
+                prompt=f"prompt-{message_id}",
+                result={"value": f"answer-{message_id}"},
+                created_at=datetime(2026, 1, 1),
+            )
+        )
+    test_db.add(task)
+    test_db.add_all(rows)
+    test_db.flush()
+    team = SimpleNamespace(
+        id=1256, user_id=test_user.id, name="quickstart", namespace="default"
+    )
+    monkeypatch.setattr(lifecycle, "_load_team_crd", lambda _team: None)
+    monkeypatch.setattr(lifecycle, "get_bot_ids_from_team", lambda _db, _team: [])
+    monkeypatch.setattr(settings, "MEMORY_CONTEXT_MESSAGES", 3)
+
+    session = lifecycle.prepare_execution_session(
+        db=test_db,
+        user=test_user,
+        team=team,
+        input_text="current-message",
+        task_id=task.id,
+        task_params=TaskCreationParams(
+            message="current-message", history_window=history_window
+        ),
+        commit=False,
+    )
+
+    expected_ids = list(range(1, 7))[-history_window:] if history_window else []
+    assert [row.id for row in session.existing_subtasks] == expected_ids
+    assert [row.id for row in session.memory_history] == [4, 3]
+    assert session.user_subtask.message_id == 7
+    assert session.assistant_subtask.message_id == 8
+    assert build_context_messages(
+        db=test_db,
+        existing_subtasks=session.memory_history,
+        current_message=session.user_subtask.prompt,
+        current_user=test_user,
+        is_group_chat=False,
+        context_limit=3,
+    ) == [
+        {"role": "user", "content": "prompt-3"},
+        {"role": "assistant", "content": "answer-4"},
+        {"role": "user", "content": "current-message"},
+    ]
+
+
 @pytest.mark.asyncio
 async def test_create_task_and_subtasks_resets_existing_task_status_to_pending(
     test_db: Session,

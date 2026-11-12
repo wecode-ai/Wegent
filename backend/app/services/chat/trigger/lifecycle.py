@@ -375,6 +375,8 @@ def prepare_execution_session(
                 roles=(SubtaskRole.USER, SubtaskRole.ASSISTANT),
             )
         ]
+        # The memory context builder consumes history newest-first.
+        memory_history.reverse()
     else:
         memory_history = existing_subtasks
     next_message_id = task_fork_history_resolver.get_next_message_id(

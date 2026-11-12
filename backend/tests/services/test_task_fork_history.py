@@ -168,6 +168,60 @@ def test_resolve_for_fork_does_not_limit_parent_reads(monkeypatch):
     assert calls == [(1, None), (2, 2)]
 
 
+@pytest.mark.parametrize("limit", [0, -1])
+def test_resolve_for_task_with_nonpositive_limit_skips_reads(monkeypatch, limit):
+    monkeypatch.setattr(
+        "app.services.task_fork_history.task_store.get_by_id",
+        lambda *args, **kwargs: pytest.fail("disabled history must not read tasks"),
+    )
+    monkeypatch.setattr(
+        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
+        lambda *args, **kwargs: pytest.fail("disabled history must not read subtasks"),
+    )
+
+    assert (
+        task_fork_history_resolver.resolve_for_task(
+            db=None, task_id=1, user_id=7, limit=limit
+        )
+        == []
+    )
+
+
+def test_bounded_fork_history_keeps_messages_before_parent_cutoff(test_db):
+    root = _task(1, 7)
+    fork = _task(
+        2,
+        7,
+        fork={"sourceTaskId": 1, "afterMessageId": 3, "rootTaskId": 1},
+    )
+    test_db.add_all(
+        [root, fork]
+        + [_subtask(i, 1, 7, i, SubtaskRole.USER) for i in range(1, 10)]
+        + [_subtask(10, 2, 7, 4, SubtaskRole.USER)]
+    )
+    test_db.flush()
+
+    items = task_fork_history_resolver.resolve_for_task(
+        test_db, task_id=2, user_id=7, limit=3
+    )
+
+    assert [
+        (item.origin_task_id, item.subtask.message_id, item.inherited) for item in items
+    ] == [(1, 2, True), (1, 3, True), (2, 4, False)]
+
+
+def test_bounded_history_keeps_messages_before_requested_message(test_db):
+    test_db.add(_task(1, 7))
+    test_db.add_all([_subtask(i, 1, 7, i, SubtaskRole.USER) for i in range(1, 10)])
+    test_db.flush()
+
+    items = task_fork_history_resolver.resolve_for_task(
+        test_db, task_id=1, user_id=7, before_message_id=4, limit=2
+    )
+
+    assert [item.subtask.message_id for item in items] == [2, 3]
+
+
 def test_resolve_for_fork_with_zero_limit_returns_no_history(monkeypatch):
     root = _task(1, 7)
     fork = _task(
