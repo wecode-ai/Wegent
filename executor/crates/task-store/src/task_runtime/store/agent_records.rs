@@ -1,6 +1,34 @@
 use super::*;
 
 impl LocalTaskStore {
+    pub fn resolve_chat_agents_for_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        assignee_type: &str,
+        assignee_id: &str,
+        source_id: Option<&str>,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        chat_groups::require_participation(&transaction, project_id, task_id, true)?;
+        let owner = work_container_from(&transaction, project_id)?
+            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        let result = match assignee_type {
+            "agent" if source_id.is_none() => {
+                resolve_task_agent(&transaction, &owner, task_id, assignee_id)?
+            }
+            "group" => resolve_task_crew(&transaction, &owner, task_id, assignee_id, source_id)?,
+            _ => {
+                return Err(TaskRuntimeError::Invalid(
+                    "Invalid execution resource selection".into(),
+                ))
+            }
+        };
+        transaction.commit()?;
+        Ok(result)
+    }
+
     pub fn list_chat_agents(&self, project_id: &str) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
@@ -258,4 +286,58 @@ impl LocalTaskStore {
     // ------------------------------------------------------------------
     // Local comment thread
     // ------------------------------------------------------------------
+}
+
+fn resolve_task_agent(
+    connection: &Connection,
+    owner: &LoopItem,
+    task: &str,
+    reference: &str,
+) -> Result<Value, TaskRuntimeError> {
+    let agent = task_resource_agent(connection, &owner.id, task, reference)?;
+    let source = if owner.resource_type == "chat_group"
+        && agent.cloud_project_id.as_deref() != Some(owner.id.as_str())
+    {
+        thread_project_links::linked_project(connection, task)?
+            .ok_or(TaskRuntimeError::ProjectNotFound)?
+    } else {
+        owner.id.clone()
+    };
+    let mut references = serde_json::Map::new();
+    references.insert(reference.to_owned(), json!(agent.id));
+    references.insert(agent.id.clone(), json!(agent.id));
+    Ok(json!({"work_owner_id":owner.id,"resource_owner_id":source,
+        "agents":[map_chat_agent(agent)],"references":references,"collaboration_group":null}))
+}
+
+fn resolve_task_crew(
+    connection: &Connection,
+    owner: &LoopItem,
+    task: &str,
+    crew: &str,
+    source: Option<&str>,
+) -> Result<Value, TaskRuntimeError> {
+    let crew = task_resource_group(connection, &owner.id, task, crew, source)?;
+    let payload = json!({"collaboration_group":crew});
+    let mut agents = Vec::new();
+    let mut references = serde_json::Map::new();
+    let mut seen = HashSet::new();
+    for member in std::iter::once(&crew["leader"])
+        .chain(crew["members"].as_array().into_iter().flatten())
+        .filter(|member| member["kind"] == "agent")
+    {
+        let reference = member["id"]
+            .as_str()
+            .ok_or_else(|| TaskRuntimeError::Invalid("Group member identity is missing".into()))?;
+        let agent = task_execution_agent(connection, &owner.id, task, reference, &payload)?;
+        references.insert(reference.to_owned(), json!(agent.id));
+        references.insert(agent.id.clone(), json!(agent.id));
+        if seen.insert(agent.id.clone()) {
+            agents.push(map_chat_agent(agent));
+        }
+    }
+    Ok(
+        json!({"work_owner_id":owner.id,"resource_owner_id":crew["binding_owner_id"],
+        "agents":agents,"references":references,"collaboration_group":crew}),
+    )
 }

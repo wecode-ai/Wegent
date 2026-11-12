@@ -804,6 +804,23 @@ impl TaskRuntime {
         self.local_store.list_chat_agents(project_id)
     }
 
+    pub fn resolve_chat_agents_for_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        assignee_type: &str,
+        assignee_id: &str,
+        source_id: Option<&str>,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store.resolve_chat_agents_for_task(
+            project_id,
+            task_id,
+            assignee_type,
+            assignee_id,
+            source_id,
+        )
+    }
+
     pub fn create_chat_agent(
         &self,
         project_id: &str,
