@@ -56,6 +56,41 @@ pub(crate) fn admit(payload: &mut Value, connection: Option<&ConnectionConfig>) 
         .and_then(account)
         .map(Value::String)
         .unwrap_or(Value::Null);
+    admit_payload(payload, &account);
+}
+
+fn admit_payload(payload: &mut Value, account: &Value) {
+    admit_execution_request(payload, account);
+    if let Some(manager) = payload.get_mut("managerRuntimeRequest") {
+        admit_payload(manager, account);
+    }
+    for path in [
+        "/memberRuntimeProfiles",
+        "/runtimeHandle/collaborationMemberRuntimeProfiles",
+        "/runtime_handle/collaborationMemberRuntimeProfiles",
+    ] {
+        let Some(profiles) = payload.pointer_mut(path).and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for profile in profiles {
+            if let Some(member) = profile.get_mut("runtimePayload") {
+                admit_payload(member, account);
+            }
+            if let Some(variants) = profile
+                .get_mut("modelRuntimeProfiles")
+                .and_then(Value::as_array_mut)
+            {
+                for variant in variants {
+                    if let Some(member) = variant.get_mut("runtimePayload") {
+                        admit_payload(member, account);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn admit_execution_request(payload: &mut Value, account: &Value) {
     for key in ["executionRequest", "execution_request"] {
         if let Some(request) = payload.get_mut(key).and_then(Value::as_object_mut) {
             // This is the external RPC boundary. Supplied routing metadata is

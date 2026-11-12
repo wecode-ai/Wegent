@@ -59,6 +59,7 @@ pub(crate) struct BackendEventSubscription {
 
 struct JournalEvent {
     account: Option<String>,
+    terminal: bool,
     sequence: u64,
     bytes: usize,
     value: Value,
@@ -113,7 +114,7 @@ impl ExecutorEventHub {
                 .filter(|event| {
                     event.sequence > after
                         && event.account.as_deref() == Some(account)
-                        && !is_terminal(&event.value)
+                        && !event.terminal
                 })
                 .map(|event| event.value.clone())
                 .collect()
@@ -353,13 +354,15 @@ impl EventJournal {
         let envelope = event_envelope(raw, sequence);
         // Construct metadata once for every consumer, retaining the full
         // terminal payload before applying the UI history budget.
-        let terminal = is_terminal(&envelope).then(|| envelope.clone());
+        let terminal = is_terminal(&envelope);
+        let full_terminal = terminal.then(|| envelope.clone());
         let event = bounded_event_envelope(envelope);
-        let backend_event = terminal.unwrap_or_else(|| event.clone());
+        let backend_event = full_terminal.unwrap_or_else(|| event.clone());
         let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
 
         self.events.push_back(JournalEvent {
             account,
+            terminal,
             sequence,
             bytes,
             value: event.clone(),

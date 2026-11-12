@@ -116,8 +116,7 @@ pub fn working_envelope(data: &Map<String, Value>, logical_device_id: &str) -> V
     }
     Value::Object(envelope)
 }
-/// `_forward_runtime_event`: project, relay to the Runtime namespace room,
-/// publish on the Task live channel, then run the IM-only side effects.
+/// Accept notification intents before projection and live side effects.
 pub async fn forward(
     state: &AppState,
     runtime: &std::sync::Arc<SocketRuntime>,
@@ -128,6 +127,7 @@ pub async fn forward(
 ) -> Result<Value, crate::BoxError> {
     let envelope = working_envelope(data, logical_device_id);
     log_terminal_relay(&envelope, user_id, device_id, "received");
+    notify_runtime_event(state, user_id, logical_device_id, &envelope).await?;
     if let Some(identity) = RuntimeIdentity::parse(&envelope)
         && let Some(projected) =
             runtime_projection::project(state, runtime, user_id, device_id, &identity).await?
@@ -174,7 +174,6 @@ pub async fn forward(
     .await;
     publish_live(state, user_id, device_id, &envelope).await;
     forward_channel_event(state, logical_device_id, &envelope).await;
-    notify_runtime_event(state, user_id, logical_device_id, &envelope).await?;
     log_terminal_relay(&envelope, user_id, device_id, "forwarded");
     Ok(accepted())
 }
@@ -593,6 +592,42 @@ fn waits_for_user_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn rejected_notification_acceptance_does_not_project_or_relay() {
+        let mysql =
+            brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test").unwrap();
+        let state = crate::app_test_support::app(mysql);
+        // Neither SQL projection nor uninstalled emitters may be touched on rejection.
+        let (runtime, _workers) = SocketRuntime::new();
+        let event = json!({
+            "event":"response.completed","sequence":17,
+            "payload":{
+                "taskId":"task-a","event_type":"response.completed",
+                "data":{"turnId":"turn-a","value":"answer"}
+            }
+        });
+        for _ in 0..2 {
+            let error = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                forward(
+                    &state,
+                    &runtime,
+                    7,
+                    "device-a",
+                    "device-a",
+                    event.as_object().unwrap(),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("Redis client is not configured"),
+                "{error}"
+            );
+        }
+    }
 
     #[test]
     fn the_live_channel_hashes_the_python_identity() {

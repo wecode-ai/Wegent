@@ -42,7 +42,7 @@ impl RuntimeWorkRpcHandler {
             // credentials. Existing original-actor credentials stay intact.
             return;
         }
-        self.rewrite_model_gateway_backend(request);
+        Self::rewrite_model_gateway_backend(request, connection.as_ref());
         let Some(connection) = connection else { return };
         if connection.backend_url.trim().is_empty() || connection.auth_token.trim().is_empty() {
             return;
@@ -145,17 +145,17 @@ impl RuntimeWorkRpcHandler {
     /// connecting, so fall back to the request's own backend URL (environment,
     /// payload, or task API domain) and leave the gateway untouched when
     /// neither source yields a reachable address.
-    pub(super) fn rewrite_model_gateway_backend(&self, request: &mut ExecutionRequest) {
-        let snapshot_backend_url = self
-            .backend_connection_snapshot()
-            .ok()
-            .flatten()
-            .map(|connection| connection.backend_url)
+    pub(super) fn rewrite_model_gateway_backend(
+        request: &mut ExecutionRequest,
+        connection: Option<&ConnectionConfig>,
+    ) {
+        let snapshot_backend_url = connection
+            .map(|connection| connection.backend_url.as_str())
             .unwrap_or_default();
         let backend_url = if snapshot_backend_url.trim().is_empty() {
             crate::agents::request_backend_url(request).unwrap_or_default()
         } else {
-            snapshot_backend_url
+            snapshot_backend_url.to_owned()
         };
         crate::agents::bind_backend_model_gateway(request, &backend_url);
     }

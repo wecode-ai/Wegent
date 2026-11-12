@@ -36,12 +36,29 @@ fn oversized_completions_remain_deliverable_without_expanding_ui_history() {
     );
     let replay = hub.pending_backend_terminals("account-a").unwrap();
     assert!(replay.contains(&live));
+    assert!(hub.subscribe_backend("account-a", 0).replay.is_empty());
     hub.acknowledge_backend("account-a", &live).unwrap();
     assert!(hub
         .pending_backend_terminals("account-a")
         .unwrap()
         .iter()
         .all(|event| event["event"] != "response.completed"));
+}
+
+#[test]
+fn backend_replay_preserves_lag_markers_only_for_nonterminal_sources() {
+    for (event, expected) in [("response.completed", 0), ("response.output_text.delta", 1)] {
+        let hub = event_hub();
+        hub.publish(scoped(
+            json!({"event":event,"payload":{"taskId":"task-a","data":{"value":"x".repeat(EVENT_ENVELOPE_MAX_BYTES + 1)}}}),
+            "account-a",
+        ));
+        let replay = hub.subscribe_backend("account-a", 0).replay;
+        assert_eq!(replay.len(), expected, "{event}");
+        if expected > 0 {
+            assert_eq!(replay[0]["event"], "executor.event_lagged");
+        }
+    }
 }
 
 #[test]

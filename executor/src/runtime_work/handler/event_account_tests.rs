@@ -63,19 +63,105 @@ fn ipc_cannot_supply_event_account_ownership() {
     let snapshot = Arc::new(Mutex::new(Some(connection("account-a"))));
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false")
         .with_backend_connection(Arc::clone(&snapshot));
-    for key in ["executionRequest", "execution_request"] {
+    for (key, nested) in [
+        ("executionRequest", false),
+        ("execution_request", false),
+        ("executionRequest", true),
+        ("execution_request", true),
+    ] {
         *snapshot.lock().unwrap() = Some(connection("account-a"));
         let mut payload =
             json!({key:{"task_id":"task-a", "_runtime_event_account":"forged-account"}});
+        if nested {
+            payload = json!({"managerRuntimeRequest":payload});
+        }
         handler.admit_runtime_event_account(&mut payload);
         *snapshot.lock().unwrap() = Some(connection("account-b"));
-        let mut parsed = execution_request(&payload).unwrap();
+        let request_payload = if nested {
+            &payload["managerRuntimeRequest"]
+        } else {
+            &payload
+        };
+        let mut parsed = execution_request(request_payload).unwrap();
         handler.apply_backend_connection(&mut parsed);
         assert_eq!(
             parsed.extra[REQUEST_ACCOUNT],
             json!(account(&connection("account-a")).unwrap())
         );
         assert!(parsed.auth_token.is_none());
+    }
+}
+
+#[test]
+fn gateway_rewrite_uses_the_checked_connection_snapshot() {
+    let connection = |backend: &str| ConnectionConfig {
+        backend_url: format!("https://{backend}.example"),
+        auth_token: format!("account-{backend}"),
+        ..Default::default()
+    };
+    let snapshot = Arc::new(Mutex::new(Some(connection("a"))));
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false")
+        .with_backend_connection(Arc::clone(&snapshot));
+    let checked = handler.backend_connection_snapshot().unwrap();
+    *snapshot.lock().unwrap() = Some(connection("b"));
+    let mut request = ExecutionRequest {
+        auth_token: Some("original-actor-a".into()),
+        model_config: json!({
+            "base_url":"https://internal.example/api/runtime-work/llm-responses-proxy",
+            "api_key":"model-actor-a"
+        }),
+        ..Default::default()
+    };
+
+    RuntimeWorkRpcHandler::rewrite_model_gateway_backend(&mut request, checked.as_ref());
+
+    assert_eq!(
+        request.model_config["base_url"],
+        "https://a.example/api/runtime-work/llm-responses-proxy"
+    );
+    assert_eq!(request.auth_token.as_deref(), Some("original-actor-a"));
+    assert_eq!(request.model_config["api_key"], "model-actor-a");
+}
+
+#[test]
+fn collaboration_member_profiles_cannot_supply_event_account_ownership() {
+    let connection = ConnectionConfig {
+        backend_url: "https://backend.example".into(),
+        auth_token: "account-a".into(),
+        ..Default::default()
+    };
+    let snapshot = Arc::new(Mutex::new(Some(connection.clone())));
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false")
+        .with_backend_connection(Arc::clone(&snapshot));
+    let request =
+        json!({"executionRequest":{"task_id":"member-a","_runtime_event_account":"forged"}});
+    let profile =
+        json!({"runtimePayload":request,"modelRuntimeProfiles":[{"runtimePayload":request}]});
+    let mut payload = json!({
+        "memberRuntimeProfiles":[profile],
+        "managerRuntimeRequest":{"memberRuntimeProfiles":[profile]},
+        "runtimeHandle":{"collaborationMemberRuntimeProfiles":[profile]},
+        "runtime_handle":{"collaborationMemberRuntimeProfiles":[profile]}
+    });
+    handler.admit_runtime_event_account(&mut payload);
+    snapshot.lock().unwrap().as_mut().unwrap().auth_token = "account-b".into();
+
+    for base in [
+        "/memberRuntimeProfiles/0",
+        "/managerRuntimeRequest/memberRuntimeProfiles/0",
+        "/runtimeHandle/collaborationMemberRuntimeProfiles/0",
+        "/runtime_handle/collaborationMemberRuntimeProfiles/0",
+    ] {
+        for suffix in ["/runtimePayload", "/modelRuntimeProfiles/0/runtimePayload"] {
+            let mut parsed =
+                execution_request(payload.pointer(&format!("{base}{suffix}")).unwrap()).unwrap();
+            handler.apply_backend_connection(&mut parsed);
+            assert_eq!(
+                parsed.extra[REQUEST_ACCOUNT],
+                json!(account(&connection).unwrap())
+            );
+            assert!(parsed.auth_token.is_none());
+        }
     }
 }
 

@@ -4,7 +4,7 @@ sidebar_position: 36
 
 # 协作权限架构与不可破坏的规则
 
-Runtime 事件在回合受理时固定本地账号归属，队列持久化保留该归属；云端历史重放、实时转发和终态确认显式匹配连接账号。切换登录不能将原账号的迟到事件投递到新账号，ACK 也不能删除其他账号的同序号记录。归属只用于本地隔离，不替代后端账号、设备、Issue 与当前执行权限校验；CP01–CP20 不变。`local_turn_event_ownership_survives_account_switch_and_saved_request_recovery`、`switched_connections_never_send_another_accounts_replay_or_late_events` 和日志重启回归覆盖请求入口、历史、晚到事件与确认边界。
+Runtime 事件在回合受理时固定本地账号归属，队列持久化保留该归属，旧队列缺少归属时保持未归属；嵌套协作请求、成员配置及模型变体同样在入口覆盖客户端账号，模型网关和凭据绑定复用已校验的连接快照；云端历史重放、实时转发和终态确认显式匹配连接账号。切换登录不能将原账号的迟到事件投递到新账号，ACK 也不能删除其他账号的同序号记录。归属只用于本地隔离，不替代后端账号、设备、Issue 与当前执行权限校验；CP01–CP20 不变。`local_turn_event_ownership_survives_account_switch_and_saved_request_recovery`、`switched_connections_never_send_another_accounts_replay_or_late_events`、`gateway_rewrite_uses_the_checked_connection_snapshot`、`restored_queues_preserve_known_accounts_without_adopting_legacy_turns` 和日志重启回归覆盖请求入口、历史、晚到事件与确认边界。
 
 人工回答的精确接收确认可能晚于执行完成。Rust Socket.IO 原投影事务仅在设备归属、持久回答 ID、原执行、项目、Issue 及已完成活动的 Runtime 轮次全部匹配时结算原问题；依次锁定 Issue、执行和活动，提交后发布问题变化，不重复完成通知。执行状态、版本和事件序号不变，不重发输入。已有后续执行也不丢失原回答确认；旧消息、错误轮次与其他所有者不能结算。回归复用现有隔离 MySQL 迁移验收，覆盖乱序、重复确认、身份拒绝及重试轮次边界；该迟到确认行为仅由 Rust 事件主路径负责。CP01–CP20 不变。
 

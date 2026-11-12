@@ -134,11 +134,20 @@ pub(super) fn read_runtime_turn_state(queue_path: &Path) -> Result<RuntimeTurnQu
             payload.version
         ));
     }
-    Ok(RuntimeTurnQueueState {
+    let mut state = RuntimeTurnQueueState {
         queued_turns: payload.turns,
         active_goal_turns: payload.active_goal_turns,
         commands: payload.commands,
-    })
+    };
+    for turn in state
+        .queued_turns
+        .iter_mut()
+        .chain(state.active_goal_turns.values_mut())
+    {
+        // Old queues have no trustworthy event account to recover.
+        crate::local::event_scope::capture(&mut turn.request, None);
+    }
+    Ok(state)
 }
 
 #[cfg(test)]
@@ -2498,6 +2507,45 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["task-1", "task-2", "task-3"]
         );
+    }
+
+    #[test]
+    fn restored_queues_preserve_known_accounts_without_adopting_legacy_turns() {
+        use crate::local::event_scope::{capture, REQUEST_ACCOUNT};
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("turn-queue.json");
+        let connection = ConnectionConfig {
+            backend_url: "https://backend-b.example".into(),
+            auth_token: "account-b".into(),
+            ..Default::default()
+        };
+        for original in [None, Some(Value::Null), Some(json!("account-a"))] {
+            let mut turn = scheduled_turn("restored-task");
+            if let Some(account) = &original {
+                turn.request
+                    .extra
+                    .insert(REQUEST_ACCOUNT.into(), account.clone());
+            }
+            write_runtime_turn_state(
+                &path,
+                &VecDeque::from([turn.clone()]),
+                &HashMap::from([("goal-task".into(), turn)]),
+                &Default::default(),
+            )
+            .unwrap();
+            let mut state = read_runtime_turn_state(&path).unwrap();
+            let expected = original.unwrap_or(Value::Null);
+            for turn in state
+                .queued_turns
+                .iter_mut()
+                .chain(state.active_goal_turns.values_mut())
+            {
+                assert_eq!(turn.request.extra.get(REQUEST_ACCOUNT), Some(&expected));
+                capture(&mut turn.request, Some(&connection));
+                assert_eq!(turn.request.extra.get(REQUEST_ACCOUNT), Some(&expected));
+            }
+        }
     }
 
     #[test]
