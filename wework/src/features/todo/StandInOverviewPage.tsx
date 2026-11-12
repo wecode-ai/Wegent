@@ -46,6 +46,7 @@ import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
 import { useStandInProcessingStatus } from './useStandInProcessingStatus'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
+import type { StandInRoleLocation } from './useStandInRoleDirectory'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
 
@@ -67,6 +68,8 @@ export function StandInOverviewPage({
   localDeviceId,
   entryRequestKey,
   entryRoute = '/stand-in',
+  primaryDeviceId,
+  roleLocations,
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -81,6 +84,8 @@ export function StandInOverviewPage({
   localDeviceId?: string
   entryRequestKey?: number
   entryRoute?: string
+  primaryDeviceId?: string
+  roleLocations?: StandInRoleLocation[]
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
@@ -152,12 +157,17 @@ export function StandInOverviewPage({
     if (panelRef.current) panelRef.current.requestLeave(openSettings)
     else openSettings()
   }, [settingsRequestKey, props.initialProfileId, profile, roleId])
+  const deviceId = state.loadedDeviceId ?? props.initialDeviceId ?? saved?.executionDeviceId
   const requestNavigation = useCallback(
     (route: string) => {
       const [pathname, search] = route.split('?')
       if (pathname !== '/stand-in') return
       if (!search) {
         const openPrimary = () => {
+          if (primaryDeviceId && primaryDeviceId !== deviceId && onSelectLocation) {
+            onSelectLocation(primaryDeviceId)
+            return
+          }
           setRoleId(undefined)
           setDetailsAnchor(null)
           setCalendarRequest(0)
@@ -177,7 +187,7 @@ export function StandInOverviewPage({
       if (panelRef.current) panelRef.current.requestLeave(openView)
       else openView()
     },
-    [roleId, reload]
+    [roleId, reload, primaryDeviceId, deviceId, onSelectLocation]
   )
   const previousEntryRequest = useRef(entryRequestKey)
   useEffect(() => {
@@ -200,7 +210,6 @@ export function StandInOverviewPage({
     else action()
   }
   const pressedInPanel = useRef(false)
-  const deviceId = saved?.executionDeviceId ?? props.initialDeviceId
   const detailsScope = JSON.stringify([props.userId, deviceId, roleId, active])
   const selectedScheduleId = scheduleTarget?.scope === detailsScope ? scheduleTarget.id : undefined
   const setSelectedScheduleId = (id?: string) =>
@@ -247,8 +256,10 @@ export function StandInOverviewPage({
       clearTimeout(timer)
     }
   }, [active, api, deviceId, props.userId, roleId])
-  const roles = state.draft?.roles ?? []
-  const role = roles.find(value => value.id === roleId)
+  const roles = roleLocations?.map(entry => entry.role) ?? state.draft?.roles ?? []
+  const role =
+    roleLocations?.find(entry => entry.role.id === roleId && entry.deviceId === deviceId)?.role ??
+    state.draft?.roles.find(value => value.id === roleId)
   useStandInOpened(
     profile === 'memory' ? 'memory' : profile === 'primary' ? 'settings' : 'overview',
     roleId ? 'role' : 'primary',
@@ -274,11 +285,29 @@ export function StandInOverviewPage({
         inboxRuntimeItem(work, deviceId, merged.get(`${deviceId}\0${work.taskId}`))
       )
   const items = [...merged.values()]
-    .filter(item => item.address.deviceId === deviceId && standInWorkRole(item) !== null)
+    .filter(
+      item =>
+        standInWorkRole(item) !== null &&
+        (item.address.deviceId === deviceId ||
+          (roleId &&
+            role?.previousExecutionDevices?.includes(item.address.deviceId) &&
+            standInOrigin(item)?.userId === props.userId &&
+            standInWorkRole(item) === roleId))
+    )
     .sort((a, b) => standInState(b).updatedAt.localeCompare(standInState(a).updatedAt))
   const roleItems = roleId ? items.filter(item => standInWorkRole(item) === roleId) : items
-  const chooseRole = (id?: string) =>
+  const chooseRole = (id?: string, executionDevice?: string) =>
     leavePanel(() => {
+      const target =
+        executionDevice ??
+        (id
+          ? (roleLocations?.find(entry => entry.role.id === id)?.deviceId ??
+            roles.find(role => role.id === id)?.executionDeviceId)
+          : primaryDeviceId)
+      if (target && target !== deviceId && onSelectLocation) {
+        onSelectLocation(target, id)
+        return
+      }
       setCalendarRequest(0)
       setRoleId(id)
       setReview(null)
@@ -401,27 +430,29 @@ export function StandInOverviewPage({
                   ...projects.map(project => project.name),
                   ...(value.connections ?? []).map(source => source.name),
                 ].join(' · ')
+                const selected =
+                  roleId === value.id && (!roleLocations || value.executionDeviceId === deviceId)
                 return (
                   <button
-                    key={value.id}
+                    key={`${value.migrationSource ?? value.executionDeviceId}:${value.id}`}
                     type="button"
-                    data-testid={`stand-in-overview-role-${value.id}`}
-                    aria-current={roleId === value.id ? 'page' : undefined}
+                    data-testid={`stand-in-overview-role-${value.id}${roles.filter(role => role.id === value.id).length > 1 ? `-${value.executionDeviceId}` : ''}`}
+                    aria-current={selected ? 'page' : undefined}
                     title={
                       scope ||
                       t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')
                     }
-                    onClick={() => chooseRole(value.id)}
-                    className={roleTabClass(roleId === value.id)}
+                    onClick={() => chooseRole(value.id, value.executionDeviceId)}
+                    className={roleTabClass(selected)}
                   >
                     <StandInIcon
                       enabled={value.enabled}
-                      className={`h-4 w-4 ${roleId === value.id ? '[&_g]:text-background' : ''}`}
+                      className={`h-4 w-4 ${selected ? '[&_g]:text-background' : ''}`}
                     />
                     <span className="max-w-40 truncate">
                       {standInRoleName(value, index, t('standIn.personal.default_role'))}
                     </span>
-                    {roleId === value.id && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
+                    {selected && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
                     <span className="sr-only">{scope}</span>
                     <span className="sr-only">
                       {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
@@ -506,6 +537,8 @@ export function StandInOverviewPage({
                 userId={props.userId}
                 deviceId={deviceId}
                 roleId={roleId}
+                settings={roleId ? saved?.roles.find(role => role.id === roleId) : saved?.primary}
+                services={props.services}
                 onOpenTask={onOpenTask}
               />
             ) : null}
@@ -804,13 +837,16 @@ export function StandInOverviewPage({
                   <StandInPrimaryProfile
                     ref={panelRef}
                     management={management}
-                    footerLeading={headerActions}
+                    footerLeading={
+                      !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
+                    }
                     key={`${state.draft.executionDeviceId}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
                     settings={state.draft}
                     saving={state.saving || state.loading}
                     services={props.services}
                     devices={props.devices}
+                    deviceReadOnly={!!primaryDeviceId}
                     onSelectDevice={device => {
                       if (onSelectLocation) onSelectLocation(device, '@primary', true)
                       else state.setDeviceId(device)
@@ -837,15 +873,23 @@ export function StandInOverviewPage({
                     initialCalendar={calendarRequest > 0}
                     {...props}
                     management={management}
-                    footerLeading={headerActions}
+                    footerLeading={
+                      !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
+                    }
                     ref={panelRef}
                     initialProfileId={roleId}
-                    initialDeviceId={deviceId}
+                    initialDeviceId={
+                      profile === 'create'
+                        ? (localDeviceId ?? deviceId)
+                        : (role?.executionDeviceId ?? deviceId)
+                    }
                     initialCreate={profile === 'create'}
                     onDeleted={() => {
                       setRoleId(undefined)
                       setDetailsAnchor(null)
-                      reload()
+                      if (primaryDeviceId && primaryDeviceId !== deviceId && onSelectLocation)
+                        onSelectLocation(primaryDeviceId)
+                      else reload()
                       setProfile(null)
                     }}
                     onCancel={() => setProfile(null)}
@@ -879,10 +923,12 @@ export function StandInOverviewPage({
         projects: props.projects,
         localDeviceId: state.currentDeviceId,
         devices: props.devices,
-        onSelectDevice: device => {
-          if (onSelectLocation) onSelectLocation(device)
-          else state.setDeviceId(device)
-        },
+        onSelectDevice: primaryDeviceId
+          ? undefined
+          : device => {
+              if (onSelectLocation) onSelectLocation(device)
+              else state.setDeviceId(device)
+            },
         onSave: state.save,
         onReload: state.reload,
       }}

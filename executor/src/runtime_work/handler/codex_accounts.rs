@@ -43,6 +43,7 @@ impl RuntimeWorkRpcHandler {
         let account_id = string_field(&payload, "accountId")
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| AppIpcError::new("invalid_request", "accountId is required"))?;
+        let _restart_guard = codex_app_server_restart_gate().lock().await;
         self.codex_app_server
             .mutate_auth_if_idle(|| activate_account(account_id.trim()))
             .await
@@ -73,6 +74,19 @@ fn codex_auth_mutation_error(error: CodexIdleMutationError) -> AppIpcError {
             AppIpcError::new("codex_account_switch_failed", error)
         }
     }
+}
+
+pub(super) fn current_codex_account_type() -> Result<Option<String>, String> {
+    let auth = match fs::read(current_auth_path()) {
+        Ok(auth) => auth,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "failed to read current Codex authentication: {error}"
+            ))
+        }
+    };
+    Ok(parse_auth_account(&auth).map(|account| account.account_type))
 }
 
 fn update_current_account() -> Result<CodexAccountStore, String> {
@@ -163,10 +177,6 @@ struct ParsedAuthAccount {
 
 fn parse_auth_account(auth: &[u8]) -> Option<ParsedAuthAccount> {
     let auth = serde_json::from_slice::<Value>(auth).ok()?;
-    let account_type = auth
-        .get("auth_mode")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
     let claims = auth
         .pointer("/tokens/id_token")
         .and_then(Value::as_str)
@@ -176,6 +186,7 @@ fn parse_auth_account(auth: &[u8]) -> Option<ParsedAuthAccount> {
             normalized_string(claims.pointer("/https:~1~1api.openai.com~1auth/chatgpt_account_id"))
         })
     });
+    let account_type = auth_account_type(&auth, token_account_id.as_deref());
     let email = claims
         .as_ref()
         .and_then(|claims| normalized_string(claims.get("email")));
@@ -191,6 +202,17 @@ fn parse_auth_account(auth: &[u8]) -> Option<ParsedAuthAccount> {
         plan_type,
         token_account_id,
     })
+}
+
+fn auth_account_type<'a>(auth: &'a Value, token_account_id: Option<&str>) -> &'a str {
+    let has_api_key = normalized_string(auth.get("OPENAI_API_KEY")).is_some();
+    match auth.get("auth_mode").and_then(Value::as_str) {
+        Some("chatgpt") if has_api_key => "unknown",
+        Some(mode) => mode,
+        None if has_api_key => "apikey",
+        None if token_account_id.is_some() => "chatgpt",
+        None => "unknown",
+    }
 }
 
 fn parse_jwt_claims(token: &str) -> Option<Value> {
@@ -302,6 +324,73 @@ mod tests {
                 Some(value) => env::set_var("WEGENT_CODEX_HOME", value),
                 None => env::remove_var("WEGENT_CODEX_HOME"),
             }
+        }
+    }
+
+    #[test]
+    fn classifies_legacy_credentials_without_reclassifying_api_keys_or_unknown_modes() {
+        let claims = URL_SAFE_NO_PAD
+            .encode(br#"{"https://api.openai.com/auth":{"chatgpt_account_id":"workspace-1"}}"#);
+        for (auth, expected) in [
+            (json!({"auth_mode":"chatgpt"}), "chatgpt"),
+            (json!({"tokens":{"account_id":"workspace-1"}}), "chatgpt"),
+            (
+                json!({"tokens":{"id_token":format!("header.{claims}.signature")}}),
+                "chatgpt",
+            ),
+            (
+                json!({"OPENAI_API_KEY":"synthetic-key","tokens":{"account_id":"workspace-1"}}),
+                "apikey",
+            ),
+            (
+                json!({"auth_mode":"apiKey","tokens":{"account_id":"workspace-1"}}),
+                "apiKey",
+            ),
+            (
+                json!({"auth_mode":"future","tokens":{"account_id":"workspace-1"}}),
+                "future",
+            ),
+            (
+                json!({"auth_mode":"chatgpt","OPENAI_API_KEY":"synthetic-key","tokens":{"account_id":"workspace-1"}}),
+                "unknown",
+            ),
+        ] {
+            let parsed = parse_auth_account(&serde_json::to_vec(&auth).unwrap()).unwrap();
+            assert_eq!(parsed.account_type, expected);
+        }
+        let claims = URL_SAFE_NO_PAD.encode(br#"{"email":"one@example.test"}"#);
+        let auth = json!({"tokens":{"id_token":format!("header.{claims}.signature")}});
+        assert_eq!(
+            parse_auth_account(&serde_json::to_vec(&auth).unwrap())
+                .unwrap()
+                .account_type,
+            "unknown"
+        );
+        assert!(parse_auth_account(br#"{"tokens":{}}"#).is_none());
+    }
+
+    #[test]
+    fn reading_auth_type_does_not_create_or_update_account_snapshots() {
+        let _lock = crate::test_env::lock();
+        let _restore = EnvRestore::capture();
+        let home = tempfile::tempdir().unwrap();
+        env::set_var("WEGENT_CODEX_HOME", home.path());
+        assert_eq!(current_codex_account_type().unwrap(), None);
+        for (auth, expected) in [
+            (
+                br#"{"tokens":{"account_id":"workspace-1"}}"#.as_slice(),
+                Some("chatgpt"),
+            ),
+            (
+                br#"{"OPENAI_API_KEY":"synthetic-key"}"#.as_slice(),
+                Some("apikey"),
+            ),
+            (b"invalid".as_slice(), None),
+        ] {
+            fs::write(current_auth_path(), auth).unwrap();
+            assert_eq!(current_codex_account_type().unwrap().as_deref(), expected);
+            assert_eq!(fs::read(current_auth_path()).unwrap(), auth);
+            assert!(!account_store_directory().exists());
         }
     }
 

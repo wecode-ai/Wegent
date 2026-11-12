@@ -9,7 +9,6 @@ import { useOptionalAppearance } from '@/features/appearance'
 import { getRuntimeConfig } from '@/config/runtime'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
-import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { navigateTo } from '@/lib/navigation'
@@ -45,7 +44,6 @@ export function useDesktopMarkdownServices(): MarkdownServices {
       openExternalUrl,
       openAuthorizationUrl: (url: string) => openExternalUrl(url, { target: 'system' }),
       navigateTo,
-      openHtmlFile: requestEmbeddedBrowserOpen,
       fetchAttachmentBlob,
       readLocalFile: isElectronRuntime() ? readLocalFile : undefined,
       windowMarkdown: isElectronRuntime(),

@@ -116,6 +116,8 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   recordScenarioRequest,
   workspacePath,
+  beforeSubagentOutput,
+  subagentTextRelease,
 }) {
   const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
@@ -143,6 +145,8 @@ export function createDesktopScenario({
   let toolRegressionStage = 'initial'
   let reclassifiedCommentaryStage = 'initial'
   let timerStage = 'initial'
+  const timerToolReleasePath = join(resultDir, 'running-timer-tool-released')
+  const releaseTimerTool = () => writeFile(timerToolReleasePath, '')
   let releaseAppend
   let releaseLongCodeStream
   let releasePhaseFlipCompletion
@@ -263,6 +267,7 @@ export function createDesktopScenario({
     subagentToolRenderTimeoutMs,
     subagentPartialWritten,
     releaseSubagentCompletion,
+    beforeSubagentOutput,
     releasePhaseFlipCompletion,
     toolFollowUpReceived,
     releaseToolCompletion,
@@ -277,6 +282,7 @@ export function createDesktopScenario({
     modelResponseTimeoutMs,
     uiTimeoutMs,
     capture,
+    releaseTimerTool,
     releaseTimerFinalCompletion,
     requestReceived,
     getTargetRequest: () => targetRequest,
@@ -291,6 +297,7 @@ export function createDesktopScenario({
   return {
     cleanup() {
       guidanceOrder.cleanup()
+      return releaseTimerTool()
     },
     codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
     modelProviderAuthToml: '',
@@ -416,6 +423,7 @@ export function createDesktopScenario({
           'The child tool output was not returned to the subagent'
         )
         subagentChildStage = 'streaming-text'
+        await subagentTextRelease
         const stream = streamingEvents(responseId, SUBAGENT_CHILD_COMPLETION, 'final_answer')
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
@@ -633,6 +641,10 @@ export function createDesktopScenario({
         return true
       }
       if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
+        await assert.doesNotReject(
+          readFile(timerToolReleasePath),
+          'The native timer tool returned before its explicit release'
+        )
         timerStage = 'awaiting-final-completion'
         const stream = streamingEvents(responseId, TIMER_COMPLETION)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -664,8 +676,18 @@ export function createDesktopScenario({
 
       if (requestContainsTimerPrompt(body)) {
         if (timerStage === 'initial') {
-          // Keep the tool active while checking its timer and switching conversations.
-          const tool = selectShellTool(body, workspacePath, 'sleep 10', 20_000)
+          // Complete only after the running timer has been checked on both pages.
+          const releasePath = `'${timerToolReleasePath.replaceAll("'", process.platform === 'win32' ? "''" : "'\\''")}'`
+          const command =
+            process.platform === 'win32'
+              ? `while (-not (Test-Path -LiteralPath ${releasePath})) { Start-Sleep -Milliseconds 50 }`
+              : `while [ ! -f ${releasePath} ]; do sleep 0.05; done`
+          const tool = selectShellTool(
+            body,
+            workspacePath,
+            command,
+            Math.max(20_000, uiTimeoutMs * 3)
+          )
           timerStage = 'awaiting-tool-output'
           response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
           response.end(

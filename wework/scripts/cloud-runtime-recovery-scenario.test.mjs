@@ -45,7 +45,7 @@ beforeEach(() => {
   state.disconnected = false
 })
 
-async function fixture(summary) {
+async function fixture(summary, { assistantCount = 1, completedCopies = 1, userMessageCount = 1 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'cloud-recovery-scenario-'))
   onTestFinished(() => rm(root, { recursive: true, force: true }))
   const scenario = createDesktopScenario({ modelResponseTimeoutMs: 1000, uiTimeoutMs: 1000 })
@@ -92,7 +92,19 @@ async function fixture(summary) {
         )
       }
       if (command === 'getText') {
-        return state.disconnected ? 'CLOUD_STREAM_PARTIAL' : completed
+        if (state.disconnected) return 'CLOUD_STREAM_PARTIAL'
+        // The whole workbench also retains the turn-navigation response preview.
+        return selector.includes('message-assistant')
+          ? completed.repeat(completedCopies)
+          : `${completed}\n${completed}`
+      }
+      if (command === 'getElementCount') {
+        if (selector.includes('message-assistant')) return String(assistantCount)
+        assert.equal(
+          selector,
+          '[data-testid="desktop-workbench-main"] [data-testid="message-user"]'
+        )
+        return String(userMessageCount)
       }
       if (command === 'getWorkbenchDebugSnapshot') {
         return JSON.stringify({
@@ -120,6 +132,15 @@ test('accepts the completed runtime-work list projection without native executio
   assert.equal(state.disconnected, false)
 })
 
+test.each([{ assistantCount: 2 }, { completedCopies: 2 }])(
+  'rejects a duplicated assistant node or repeated completed answer: %j',
+  async duplicates => {
+    const { scenario, control } = await fixture({ status: 'done', running: false }, duplicates)
+    await assert.rejects(scenario.verify(control), assert.AssertionError)
+    assert.equal(state.disconnected, false, 'Failure cleanup must restore the proxy')
+  }
+)
+
 test.each([
   { status: 'running', running: true },
   { status: 'queued', running: false },
@@ -129,5 +150,11 @@ test.each([
 ])('rejects a cloud task that did not complete successfully: %j', async summary => {
   const { scenario, control } = await fixture(summary)
   await assert.rejects(scenario.verify(control), assert.AssertionError)
+  assert.equal(state.disconnected, false, 'Failure cleanup must restore the proxy')
+})
+
+test.each([0, 2])('rejects recovery with %i original user messages', async count => {
+  const { scenario, control } = await fixture({ status: 'done', running: false }, { userMessageCount: count })
+  await assert.rejects(scenario.verify(control), /Recovery duplicated the original user message/)
   assert.equal(state.disconnected, false, 'Failure cleanup must restore the proxy')
 })

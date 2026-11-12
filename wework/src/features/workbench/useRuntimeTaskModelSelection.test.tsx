@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import type { ModelSelectionConfig, UnifiedModel } from '@/types/api'
+import type { ModelSelectionConfig, RuntimeTaskSummary, UnifiedModel } from '@/types/api'
 import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
 import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 
@@ -33,6 +33,27 @@ function modelStore(models: UnifiedModel[]) {
 }
 
 describe('bound remote task model selection', () => {
+  it('reads provider switch capability from the owning runtime task without inheriting another task', () => {
+    const task = {
+      modelSelection: selection,
+      runtimeHandle: { modelProviderRouting: 'thread' },
+    } as RuntimeTaskSummary
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({
+        userId: 7,
+        resolveTask: current => (current.taskId === address.taskId ? task : null),
+        modelStore: modelStore([]),
+      })
+    )
+    expect(
+      result.current.resolveRuntimeTaskModelSelection(address).supportsModelProviderSwitch
+    ).toBe(true)
+    expect(
+      result.current.resolveRuntimeTaskModelSelection({ ...address, taskId: 'legacy' })
+        .supportsModelProviderSwitch
+    ).toBeUndefined()
+  })
+
   it('uses the persisted model before the remote task list and model catalog are available', () => {
     const store = modelStore([])
     const { result } = renderHook(() =>

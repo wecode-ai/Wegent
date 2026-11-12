@@ -12,6 +12,12 @@ sidebar_position: 19
 
 Open **bottom-left account menu → Settings → Personal → Models**. The task composer model selector chooses a model; it is not the provider configuration form.
 
+In an existing conversation, use **Task composer → model selector → choose a model → Switch model**.
+The next message uses that model. Switching between an OpenAI account, custom models and cloud
+models retains the conversation, draft and workspace panels instead of creating a referenced
+conversation. An in-progress reply keeps its original model; model capabilities and existing
+tool permissions still apply.
+
 | Feature                    | Steps and result                                                                                  | Limitations                                                                                                      |
 | -------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Local Codex subscription   | Toggle and restart when prompted; expand model or account management                              | Local Codex and Wegent cloud accounts are separate                                                               |

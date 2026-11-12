@@ -3,7 +3,10 @@ import zhCommon from '@/i18n/locales/zh-CN/common.json'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
-import { StrictMode } from 'react'
+import { StrictMode, type ComponentProps } from 'react'
+import { useStandInConversationModel } from '@/features/todo/useStandInConversationModel'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { WorkspaceStandInSettings } from '@wegent/collaboration'
 import { I18nextProvider } from 'react-i18next'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,7 +28,10 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
+import { projectRuntimeConversationTurns } from '@wegent/chat-core/runtime-conversation-turns'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import type { ConversationModelControls } from './conversationModelControls'
+import * as runtimeModelSelection from '@/features/workbench/runtimeModelSelection'
 import {
   clearWorkbenchWorkspaceLaunch,
   consumeWorkbenchWorkspaceLaunch,
@@ -70,6 +76,11 @@ const mocks = vi.hoisted(() => ({
   usageHandlers: [] as Array<{ onContextUsageUpdated?: (usage: RuntimeContextUsage) => void }>,
   resetAttachments: vi.fn(),
   busy: false,
+  realComposer: false,
+  runtimeModels: [] as UnifiedModel[],
+  continueInNewConversation: vi.fn(),
+  setGlobalModel: vi.fn(),
+  globalModelReady: true,
   busySendError: false,
   lifecycleOwnerEpoch: 0,
   interruptAndSendRuntimePaneMessage: vi.fn(async () => true),
@@ -81,15 +92,10 @@ const mocks = vi.hoisted(() => ({
   revertTurnFileChanges: vi.fn(),
   cancelRuntimePaneTask: vi.fn(async () => true),
   syncTranscript: vi.fn(),
-  conversationMessages: [] as Array<{
-    id: string
-    role: 'assistant' | 'user'
-    content: string
-    status: 'done' | 'failed'
-    createdAt: string
-    blocks?: WorkbenchMessage['blocks']
-  }>,
+  conversationMessages: [] as WorkbenchMessage[],
+  conversationTurns: [] as RuntimeConversationTurn[],
   lifecycleSnapshot: null as {
+    task?: { threadId?: string; modelSelection?: ModelSelectionConfig }
     unread?: boolean
     turn?: { id: string | null }
     derived: {
@@ -206,15 +212,19 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
           </span>
         ))
       )}
-      {onRetryFailedMessage && messages[0] ? (
-        <button
-          type="button"
-          data-testid="mock-retry"
-          onClick={() => onRetryFailedMessage(messages[0])}
-        >
-          重试
-        </button>
-      ) : null}
+      {onRetryFailedMessage &&
+        messages
+          .filter(message => message.role === 'assistant' && message.status === 'failed')
+          .map(message => (
+            <button
+              key={message.id}
+              type="button"
+              data-testid="mock-retry"
+              onClick={() => onRetryFailedMessage(message)}
+            >
+              重试
+            </button>
+          ))}
       {onSwitchModelForFailedMessage && messages[0] ? (
         <button
           type="button"
@@ -274,13 +284,15 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
   ),
 }))
 
-vi.mock('@/components/layout/BufferedChatInput', () => ({
-  BufferedChatInput: ({
+vi.mock('@/components/layout/BufferedChatInput', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/components/layout/BufferedChatInput')>()
+  const MockComposer = ({
     value,
     replaceDraftKey,
     onDraftEdit,
     onSubmit,
     disabled,
+    submitDisabled,
     error,
     collapseWhenIdle,
     goalDraftActive,
@@ -300,6 +312,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     queuedMessages?: Array<{ id: string; content: string }>
     onSendQueuedAsGuidance?: (id: string) => void
     disabled?: boolean
+    submitDisabled?: boolean
     error?: string | null
     collapseWhenIdle?: boolean
     goalDraftActive?: boolean
@@ -307,7 +320,11 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     onCancelGoalDraft?: () => void
     projectChat?: {
       scopeKey?: string
+      activeModel?: UnifiedModel | null
       selectedModel?: UnifiedModel | null
+      selectedModelOptions?: ModelOptions
+      isModelSelectionReady?: boolean
+      onModelSelectorOpenChange?: (open: boolean) => void
       contextUsage?: RuntimeContextUsage
       trialPluginName?: string
       showTrialGuide?: (title: string, app: LocalDeviceApp) => void
@@ -320,10 +337,20 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
       data-replace-draft-key={replaceDraftKey}
       data-collapse-when-idle={String(collapseWhenIdle)}
       data-selected-model={projectChat?.selectedModel?.name}
+      data-active-model={projectChat?.activeModel?.name}
+      data-selected-reasoning={projectChat?.selectedModelOptions?.reasoning}
       data-context-tokens={projectChat?.contextUsage?.last.totalTokens}
       data-trial-plugin={projectChat?.trialPluginName}
     >
       <CatalogBindingProbe scope={projectChat?.scopeKey} />
+      <button
+        type="button"
+        data-testid="mock-model-selector"
+        disabled={disabled}
+        onClick={() => projectChat?.onModelSelectorOpenChange?.(true)}
+      >
+        Select model
+      </button>
       <button
         type="button"
         data-testid="mock-edit-unpublished-draft"
@@ -364,7 +391,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
       <button
         type="button"
         data-testid="mock-send"
-        disabled={disabled}
+        disabled={disabled || submitDisabled || projectChat?.isModelSelectionReady === false}
         onClick={() => void onSubmit('发送附件')}
       >
         发送
@@ -385,10 +412,15 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
       ))}
       {error ? <span data-testid="mock-error">{error}</span> : null}
     </div>
-  ),
-}))
+  )
+  return {
+    BufferedChatInput: (props: ComponentProps<typeof actual.BufferedChatInput>) =>
+      mocks.realComposer ? <actual.BufferedChatInput {...props} /> : <MockComposer {...props} />,
+  }
+})
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
+vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/workbench/useWorkbench')>()),
   useWorkbenchPaneContext: () => ({
     services: {
       standInApi: { readTask: mocks.readTask },
@@ -408,22 +440,32 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       trialTemplates: [{ name: 'Main task', path: 'main' }],
       contextUsage: { last: { totalTokens: 999 } },
       models: [],
+      skills: [],
+      selectedSkills: [],
+      isOptionsLocked: false,
+      toggleSkill: vi.fn(),
       selectedModel: null,
+      continueInNewConversation: mocks.continueInNewConversation,
+      setSelectedModel: mocks.setGlobalModel,
+      setSelectedModelAndOptions: mocks.setGlobalModel,
+      setSelectedModelOption: mocks.setGlobalModel,
+      isModelSelectionReady: mocks.globalModelReady,
       selectedModelOptions: undefined,
       resolveRuntimeTaskModelSelection: (taskAddress: RuntimeTaskAddress) => {
         const selection =
           mocks.activeModelSelection ?? modelSelectionFromRuntimeHandle(taskAddress.runtimeHandle)
         const model = selection
-          ? {
+          ? (mocks.runtimeModels.find(model => model.name === selection.modelName) ?? {
               name: selection.modelName,
               displayName: selection.modelName,
               type: selection.modelType,
-            }
+            })
           : null
         return {
           taskSelection: selection,
           selectedModel: model,
           activeModel: model,
+          supportsModelProviderSwitch: taskAddress.runtimeHandle?.modelProviderRouting === 'thread',
           selectedModelOptions: selection?.options ?? {},
         }
       },
@@ -462,7 +504,8 @@ vi.mock('@/features/workbench/useWorkbenchAttachments', () => ({
   }),
 }))
 
-vi.mock('@/features/workbench/runtimeModelSelection', () => ({
+vi.mock('@/features/workbench/runtimeModelSelection', async importOriginal => ({
+  ...(await importOriginal<typeof runtimeModelSelection>()),
   selectedModelExecutionFields: (model: UnifiedModel | null, options: ModelOptions | undefined) =>
     model
       ? {
@@ -496,7 +539,7 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   beginRuntimeConversationHydration: vi.fn(),
   completeRuntimeConversationHydration: () => mocks.conversationMessages,
   getRuntimeConversationMessages: () => mocks.conversationMessages,
-  getRuntimeConversationTurns: () => [],
+  getRuntimeConversationTurns: () => mocks.conversationTurns,
   removeRuntimeConversationTurn: () => [],
   subscribeRuntimeConversation: () => () => undefined,
   updateRuntimeConversationBlocks: () => mocks.conversationMessages,
@@ -620,6 +663,10 @@ describe('TemporaryChatPanel', () => {
     mocks.usageHandlers = []
     mocks.lifecycleOwnerEpoch++
     mocks.busy = false
+    mocks.realComposer = false
+    mocks.runtimeModels = []
+    mocks.continueInNewConversation.mockClear()
+    mocks.setGlobalModel.mockClear()
     mocks.busySendError = false
     mocks.interruptAndSendRuntimePaneMessage.mockClear()
     mocks.resetAttachments.mockReset()
@@ -648,9 +695,11 @@ describe('TemporaryChatPanel', () => {
     mocks.cancelRuntimePaneTask.mockReset()
     mocks.cancelRuntimePaneTask.mockResolvedValue(true)
     mocks.conversationMessages = []
+    mocks.conversationTurns = []
     mocks.lifecycleSnapshot = null
     mocks.activeModelSelection = null
     mocks.isBootstrapping = false
+    mocks.globalModelReady = true
     mocks.runtimeWork = null
     mocks.inputByScope = {}
     mocks.setInputForScope.mockReset()
@@ -1044,6 +1093,763 @@ describe('TemporaryChatPanel', () => {
     )
     expect(screen.queryByTestId('goal-draft-pill')).not.toBeInTheDocument()
   })
+
+  it.each([
+    { existing: false, target: 'cloud', role: 'primary' },
+    { existing: true, target: 'cloud', role: 'primary', threadRouting: true },
+    { existing: true, target: 'custom', role: 'role-sales', threadRouting: true },
+    { existing: true, target: 'cloud', role: 'primary' },
+    { existing: false, target: 'custom', role: 'role-sales' },
+    { existing: true, target: 'custom', role: 'role-sales' },
+    { existing: true, target: 'cloud', role: 'primary', busy: true },
+    { existing: true, target: 'cloud', role: 'primary', globalCatalogEmpty: true },
+    { existing: true, target: 'cloud', role: 'primary', oldModelRemoved: true },
+    { existing: true, target: 'cloud', role: 'primary', localCatalogFailed: true },
+    { existing: true, target: 'cloud', role: 'primary', legacyProvider: true, retry: true },
+    {
+      existing: true,
+      target: 'cloud',
+      role: 'primary',
+      legacyProvider: true,
+      retry: true,
+      hideProcessing: true,
+    },
+    { existing: true, target: 'official', role: 'primary', providerFailure: true },
+    { existing: true, target: 'official', role: 'primary', providerPending: true },
+    { existing: true, target: 'cloud', role: 'primary', revertBeforeSend: true },
+    {
+      existing: true,
+      target: 'cloud',
+      role: 'primary',
+      providerPending: true,
+      changeTargetRoundtrip: true,
+    },
+  ])(
+    'sends the $role chat with a temporary $target model across providers (existing=$existing, removed=$oldModelRemoved, catalogFailed=$localCatalogFailed, outcome=$hideProcessing)',
+    async ({
+      existing,
+      target,
+      role,
+      threadRouting = false,
+      busy = false,
+      globalCatalogEmpty = false,
+      oldModelRemoved = false,
+      localCatalogFailed = false,
+      legacyProvider = false,
+      retry = false,
+      hideProcessing = false,
+      providerFailure = false,
+      providerPending = false,
+      revertBeforeSend = false,
+      changeTargetRoundtrip = false,
+    }) => {
+      mocks.realComposer = true
+      mocks.busy = busy
+      mocks.busySendError = busy
+      if (busy) {
+        mocks.sendRuntimePaneMessage.mockImplementation(async (_request, options) => {
+          options.onError('Runtime task is already running')
+          return false
+        })
+      }
+      const actual = await vi.importActual<typeof runtimeModelSelection>(
+        '@/features/workbench/runtimeModelSelection'
+      )
+      const selectionSpy = vi
+        .spyOn(runtimeModelSelection, 'selectedModelExecutionFields')
+        .mockImplementation(actual.selectedModelExecutionFields)
+      const official: UnifiedModel = {
+        name: oldModelRemoved ? 'gpt-5.5' : 'gpt-6.1-sol',
+        type: 'runtime',
+        provider: 'local',
+        config: { weworkModelKind: 'codex-official', codexProviderId: 'openai' },
+      }
+      const cloud: UnifiedModel = {
+        name: 'temporary-cloud',
+        modelId: 'cloud-upstream',
+        type: 'public',
+        provider: 'openai',
+        namespace: 'default',
+        resourceUserId: 7,
+        config: { protocol: 'openai-responses' },
+      }
+      const native = {
+        runtime: 'codex' as const,
+        provider: 'openai',
+        model_id: official.name,
+        label: 'ChatGPT Sol',
+        is_default: true,
+      }
+      const profile: WorkspaceStandInSettings = {
+        executionDeviceId: address.deviceId,
+        enabled: true,
+        prompt: '',
+        version: 1,
+        model: native,
+        modelOptions: { reasoning: 'high' },
+      }
+      const before = structuredClone(profile)
+      const services = {
+        standInApi: {
+          catalog: vi.fn(async () => {
+            if (localCatalogFailed) throw new Error('Local catalog unavailable')
+            return {
+              models: [
+                ...(oldModelRemoved ? [] : [native]),
+                {
+                  ...native,
+                  provider: 'company',
+                  model_id: 'company-codex',
+                  label: 'Company Codex',
+                  is_default: false,
+                },
+              ],
+            }
+          }),
+        },
+        modelApi: { listModels: vi.fn(async () => ({ data: [cloud] })) },
+      } as unknown as WorkbenchServices
+      const taskAddress = {
+        ...address,
+        taskId: `stand-in-chat-7-${role}`,
+        threadId: 'original-thread',
+        ...(threadRouting ? { runtimeHandle: { modelProviderRouting: 'thread' } } : {}),
+      }
+      mocks.runtimeModels = [
+        official,
+        cloud,
+        {
+          name: 'company-codex',
+          type: 'runtime',
+          provider: 'local',
+          config: { weworkModelKind: 'codex-provider', codexProviderId: 'company' },
+        },
+      ]
+      if (globalCatalogEmpty || localCatalogFailed) mocks.runtimeModels = []
+      if (oldModelRemoved) {
+        mocks.runtimeModels = mocks.runtimeModels.filter(model => model !== official)
+      }
+      mocks.activeModelSelection = {
+        modelName: official.name,
+        modelType: 'runtime',
+        options: localCatalogFailed
+          ? { runnerModelProvider: 'openai' }
+          : { codexProviderId: 'openai' },
+      }
+      if (legacyProvider) {
+        mocks.activeModelSelection = null
+        mocks.readTask.mockResolvedValue({
+          success: true,
+          task: {
+            ...taskAddress,
+            runtimeHandle: {
+              activeModelProvider: { threadId: taskAddress.threadId, provider: 'openai' },
+            },
+          },
+        })
+      }
+      if (providerFailure) {
+        mocks.activeModelSelection = null
+        mocks.readTask.mockRejectedValue(new Error('thread not found'))
+      }
+      let releaseProviderRead: (() => void) | undefined
+      const providerReads: Array<() => void> = []
+      if (providerPending) {
+        mocks.activeModelSelection = null
+        mocks.readTask.mockImplementation(
+          () =>
+            new Promise(resolve => {
+              let released = false
+              releaseProviderRead = () => {
+                if (released) return
+                released = true
+                resolve({
+                  success: true,
+                  task: {
+                    ...taskAddress,
+                    runtimeHandle: {
+                      activeModelProvider: {
+                        threadId: taskAddress.threadId,
+                        provider: changeTargetRoundtrip ? 'router' : 'openai',
+                      },
+                    },
+                  },
+                })
+              }
+              providerReads.push(releaseProviderRead)
+            })
+        )
+      }
+      if (retry && hideProcessing) {
+        mocks.conversationTurns = [
+          {
+            id: 'failed-turn',
+            status: 'failed',
+            error: 'Provider failed',
+            items: [
+              { id: 'ack', type: 'assistant_text', content: 'Received', createdAt: '' },
+              {
+                id: 'progress',
+                type: 'assistant_text',
+                content: 'Completed progress',
+                createdAt: '',
+              },
+            ],
+          },
+        ]
+        mocks.conversationMessages = projectRuntimeConversationTurns(mocks.conversationTurns)
+      } else if (retry)
+        mocks.conversationMessages = [
+          {
+            id: 'failed-turn',
+            role: 'assistant',
+            content: 'Provider failed',
+            status: 'failed',
+            createdAt: '2026-09-10T00:00:00Z',
+          },
+        ]
+      mocks.createTask.mockResolvedValue(taskAddress)
+      const i18n = createInstance()
+      await i18n.init({
+        lng: 'en',
+        resources: { en: { common: enCommon } },
+        defaultNS: 'common',
+        interpolation: { escapeValue: false },
+      })
+      function Conversation() {
+        const controls = useStandInConversationModel(services, profile)
+        return (
+          <I18nextProvider i18n={i18n}>
+            <TemporaryChatPanel
+              nativeConversation
+              hideProcessing={hideProcessing}
+              currentProject={null}
+              source={null}
+              instanceId={`switch-${role}-${existing}`}
+              initialAddress={existing ? taskAddress : null}
+              initialInput="Keep this stand-in draft"
+              createTask={mocks.createTask}
+              modelControls={controls}
+            />
+          </I18nextProvider>
+        )
+      }
+      try {
+        const view = render(<Conversation />)
+        await waitFor(() => expect(services.standInApi.catalog).toHaveBeenCalled())
+        if (oldModelRemoved || localCatalogFailed || providerFailure || providerPending) {
+          await waitFor(() => expect(screen.getByTestId('send-message-button')).toBeDisabled())
+          expect(screen.getByTestId('model-selector-button')).toBeEnabled()
+        } else {
+          await waitFor(() => expect(screen.getByTestId('send-message-button')).toBeEnabled())
+        }
+        await userEvent.click(screen.getByTestId('model-selector-button'))
+        const advanced = screen.queryByTestId('model-advanced-toggle')
+        if (advanced) await userEvent.click(advanced)
+        const modelName =
+          target === 'cloud' ? cloud.name : target === 'official' ? official.name : 'company-codex'
+        await userEvent.click(await screen.findByTestId(`model-option-${modelName}`))
+        if (existing) {
+          expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+            threadRouting
+              ? 'The new model will be used for the next message.'
+              : 'Your next message will start a new session here.'
+          )
+          if (
+            (target === 'cloud' || providerFailure || providerPending) &&
+            !busy &&
+            !oldModelRemoved &&
+            !localCatalogFailed
+          ) {
+            await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
+            expect(screen.getByTestId('model-selector-button')).toHaveTextContent('ChatGPT Sol')
+            expect(mocks.continueInNewConversation).not.toHaveBeenCalled()
+            if (providerFailure || providerPending)
+              expect(screen.getByTestId('send-message-button')).toBeDisabled()
+            await userEvent.click(screen.getByTestId('model-selector-button'))
+            const advanced = screen.queryByTestId('model-advanced-toggle')
+            if (advanced) await userEvent.click(advanced)
+            await userEvent.click(await screen.findByTestId(`model-option-${modelName}`))
+          }
+          if (providerPending && !changeTargetRoundtrip) {
+            expect(releaseProviderRead).toBeTypeOf('function')
+            expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+            await act(async () => releaseProviderRead?.())
+            expect(screen.getByTestId('send-message-button')).toBeEnabled()
+            expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+              'Your next message will start a new session here.'
+            )
+          }
+          await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+        }
+        if (changeTargetRoundtrip) {
+          expect(releaseProviderRead).toBeTypeOf('function')
+          await act(async () => releaseProviderRead?.())
+          for (const name of ['company-codex', cloud.name]) {
+            await userEvent.click(screen.getByTestId('model-selector-button'))
+            const advanced = screen.queryByTestId('model-advanced-toggle')
+            if (advanced) await userEvent.click(advanced)
+            await userEvent.click(await screen.findByTestId(`model-option-${name}`))
+            expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+            await userEvent.keyboard('{Escape}')
+          }
+        }
+        expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+        await waitFor(() => expect(screen.getByTestId('send-message-button')).toBeEnabled())
+        expect(screen.getByTestId('chat-message-input')).toHaveTextContent(
+          'Keep this stand-in draft'
+        )
+        if (revertBeforeSend) {
+          await userEvent.click(screen.getByTestId('model-selector-button'))
+          const advanced = screen.queryByTestId('model-advanced-toggle')
+          if (advanced) await userEvent.click(advanced)
+          await userEvent.click(await screen.findByTestId(`model-option-${official.name}`))
+          expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+        }
+        await userEvent.click(screen.getByTestId(retry ? 'mock-retry' : 'send-message-button'))
+        const executionTarget = revertBeforeSend ? 'official' : target
+        const execution = {
+          modelId: revertBeforeSend ? official.name : modelName,
+          modelType: executionTarget === 'cloud' ? 'public' : 'runtime',
+          modelOptions: expect.objectContaining(
+            executionTarget === 'cloud'
+              ? { weworkCloudModelResourceUserId: '7', weworkCloudModelNamespace: 'default' }
+              : { codexProviderId: executionTarget === 'official' ? 'openai' : 'company' }
+          ),
+        }
+        if (existing) {
+          await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+          expect(mocks.sendRuntimePaneMessage).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              address: taskAddress,
+              message: retry
+                ? expect.stringContaining(RUNTIME_RETRY_CONTINUATION_PROMPT)
+                : 'Keep this stand-in draft',
+              ...execution,
+              ...(!threadRouting && !revertBeforeSend && !changeTargetRoundtrip
+                ? { startNewSession: true, expectedThreadId: taskAddress.threadId }
+                : {}),
+            }),
+            expect.any(Object)
+          )
+          if (threadRouting || revertBeforeSend || changeTargetRoundtrip) {
+            expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
+              'startNewSession'
+            )
+            expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
+              'expectedThreadId'
+            )
+          }
+          if (retry) {
+            const message = mocks.sendRuntimePaneMessage.mock.lastCall?.[0].message
+            expect(message?.startsWith(`${RUNTIME_RETRY_CONTINUATION_PROMPT}\n\n`)).toBe(true)
+            expect(message).toContain('wework_stand_in read_task')
+            expect(message).toContain(
+              `read_task(${JSON.stringify({ taskId: taskAddress.taskId })})`
+            )
+            expect(message).toContain('beforeCursor')
+            expect(message).toContain('messageContentCursor')
+            expect(message).toContain('do not guess the request or bypass the denial')
+          }
+        } else {
+          await waitFor(() => expect(mocks.createTask).toHaveBeenCalledOnce())
+          expect(mocks.createTask).toHaveBeenCalledWith(
+            'Keep this stand-in draft',
+            expect.objectContaining({ executionModel: expect.objectContaining(execution) })
+          )
+          expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+        }
+        expect(mocks.continueInNewConversation).not.toHaveBeenCalled()
+        expect(mocks.setGlobalModel).not.toHaveBeenCalled()
+        expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
+        expect(profile).toEqual(before)
+        if (providerFailure || (providerPending && !changeTargetRoundtrip)) {
+          mocks.lifecycleSnapshot = {
+            task: {
+              threadId: 'recovered-thread',
+              modelSelection: {
+                modelName,
+                modelType: 'runtime',
+                options: { codexProviderId: 'openai' },
+              },
+            },
+            derived: { isRunning: false, isTurnActive: false },
+          }
+          view.rerender(<Conversation />)
+          await userEvent.type(
+            screen.getByTestId('chat-message-input'),
+            'Continue recovered session'
+          )
+          await userEvent.click(screen.getByTestId('send-message-button'))
+          await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+          expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
+            'startNewSession'
+          )
+        }
+        if (busy) {
+          expect(screen.getByTestId('chat-message-input')).toHaveTextContent(
+            'Keep this stand-in draft'
+          )
+        } else if (
+          existing &&
+          target === 'cloud' &&
+          !oldModelRemoved &&
+          !localCatalogFailed &&
+          !revertBeforeSend &&
+          !changeTargetRoundtrip &&
+          !retry
+        ) {
+          // Runtime owns the latest thread even while the parent's address is unchanged.
+          mocks.lifecycleSnapshot = {
+            task: {
+              threadId: threadRouting ? 'original-thread' : 'new-cloud-thread',
+              modelSelection: { modelName, modelType: 'public' },
+            },
+            derived: { isRunning: false, isTurnActive: false },
+          }
+          view.rerender(<Conversation />)
+          await userEvent.type(screen.getByTestId('chat-message-input'), 'Continue here')
+          await userEvent.click(screen.getByTestId('send-message-button'))
+          await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+          expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
+            'startNewSession'
+          )
+          await userEvent.click(screen.getByTestId('model-selector-button'))
+          const advanced = screen.queryByTestId('model-advanced-toggle')
+          if (advanced) await userEvent.click(advanced)
+          await userEvent.click(await screen.findByTestId(`model-option-${official.name}`))
+          await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+          await userEvent.type(screen.getByTestId('chat-message-input'), 'Use ChatGPT again')
+          await userEvent.click(screen.getByTestId('send-message-button'))
+          await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(3))
+          expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).toMatchObject({
+            modelId: official.name,
+            ...(threadRouting
+              ? {}
+              : { startNewSession: true, expectedThreadId: 'new-cloud-thread' }),
+          })
+          if (threadRouting) {
+            expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
+              'startNewSession'
+            )
+            expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
+              'expectedThreadId'
+            )
+            expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0].address.threadId).toBe(
+              'original-thread'
+            )
+          }
+          expect(profile).toEqual(before)
+          expect(mocks.continueInNewConversation).not.toHaveBeenCalled()
+          expect(mocks.setGlobalModel).not.toHaveBeenCalled()
+        }
+        view.unmount()
+      } finally {
+        await act(async () => providerReads.forEach(release => release()))
+        selectionSpy.mockRestore()
+      }
+    }
+  )
+
+  it.each([
+    ['loading', 'en'],
+    ['loading', 'zh-CN'],
+    ['unavailable', 'en'],
+    ['unsupported', 'en'],
+  ] as const)(
+    'blocks retry while the stand-in model is %s in %s and recovers with a ready model',
+    async (state, language) => {
+      const i18n = createInstance()
+      const common = language === 'en' ? enCommon : zhCommon
+      await i18n.init({
+        lng: language,
+        resources: { [language]: { common } },
+        defaultNS: 'common',
+        interpolation: { escapeValue: false },
+      })
+      mocks.conversationMessages = [
+        {
+          id: 'failed',
+          role: 'assistant',
+          content: '',
+          status: 'failed',
+          createdAt: '2026-09-10T00:00:00Z',
+        },
+      ]
+      const controls: ConversationModelControls = {
+        models: [],
+        selectedModel: { name: 'saved', type: 'runtime' },
+        selectedModelOptions: {},
+        loading: state === 'loading',
+        unavailable: state !== 'loading',
+        unavailableReason: state === 'unsupported' ? 'conversation_runtime_unsupported' : undefined,
+        setSelectedModel: vi.fn(),
+        setSelectedModelAndOptions: vi.fn(),
+        setSelectedModelOption: vi.fn(),
+      }
+      const panel = (modelControls: ConversationModelControls) => (
+        <I18nextProvider i18n={i18n}>
+          <TemporaryChatPanel
+            nativeConversation
+            currentProject={null}
+            source={null}
+            instanceId="retry-model-readiness"
+            initialAddress={address}
+            modelControls={modelControls}
+          />
+        </I18nextProvider>
+      )
+      const view = render(panel(controls))
+      await userEvent.click(screen.getByTestId('mock-retry'))
+      expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+      expect(screen.getByTestId('mock-model-selector')).toBeEnabled()
+      if (state === 'loading') {
+        expect(screen.getByTestId('mock-error')).toHaveTextContent(
+          common.standIn.errors.conversation_model_syncing
+        )
+      }
+      view.rerender(
+        panel({ ...controls, loading: false, unavailable: false, unavailableReason: undefined })
+      )
+      await userEvent.click(screen.getByTestId('mock-retry'))
+      expect(mocks.sendRuntimePaneMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ message: RUNTIME_RETRY_CONTINUATION_PROMPT }),
+        expect.any(Object)
+      )
+    }
+  )
+
+  it('uses inherited settings for the visible model and native follow-ups instead of the old task selection', async () => {
+    mocks.activeModelSelection = {
+      modelName: 'old-model',
+      modelType: 'runtime',
+      options: { reasoning: 'low' },
+    }
+    const controls: ConversationModelControls = {
+      models: [],
+      selectedModel: { name: 'saved-model', type: 'runtime' },
+      selectedModelOptions: { reasoning: 'high' },
+      loading: false,
+      setSelectedModel: vi.fn(),
+      setSelectedModelAndOptions: vi.fn(),
+      setSelectedModelOption: vi.fn(),
+    }
+    const pane = (modelControls: ConversationModelControls) => (
+      <TemporaryChatPanel
+        nativeConversation
+        currentProject={null}
+        source={null}
+        instanceId="inherited-conversation"
+        initialAddress={address}
+        modelControls={modelControls}
+      />
+    )
+    let finishSend!: (accepted: boolean) => void
+    const pending = new Promise<boolean>(resolve => {
+      finishSend = resolve
+    })
+    mocks.sendRuntimePaneMessage.mockImplementationOnce(() => pending)
+    const view = render(pane({ ...controls, loading: true }))
+    expect(screen.getByTestId('mock-send')).toBeDisabled()
+    view.rerender(pane(controls))
+    try {
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+        'data-selected-model',
+        'saved-model'
+      )
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-selected-reasoning', 'high')
+      await userEvent.click(screen.getByTestId('mock-send'))
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+      expect(mocks.sendRuntimePaneMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          address,
+          modelId: 'saved-model',
+          modelOptions: { reasoning: 'high' },
+        }),
+        expect.any(Object)
+      )
+      view.rerender(pane({ ...controls, selectedModelOptions: { reasoning: 'medium' } }))
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+        'data-selected-reasoning',
+        'medium'
+      )
+      expect(screen.getByTestId('mock-send')).toBeDisabled()
+      expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce()
+      await act(async () => finishSend(true))
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+        'data-selected-reasoning',
+        'medium'
+      )
+      await userEvent.click(screen.getByTestId('mock-send'))
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+      expect(mocks.sendRuntimePaneMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          address,
+          modelId: 'saved-model',
+          modelOptions: { reasoning: 'medium' },
+        }),
+        expect.any(Object)
+      )
+    } finally {
+      await act(async () => finishSend(true))
+    }
+  })
+
+  it.each([{ loading: true }, { loading: false, unavailable: true }])(
+    'keeps model recovery enabled while inherited selection is blocked by %j',
+    async pending => {
+      mocks.globalModelReady = false
+      const controls: ConversationModelControls = {
+        models: [],
+        selectedModel: { name: 'saved-model', type: 'runtime' },
+        selectedModelOptions: { reasoning: 'high' },
+        loading: true,
+        setSelectedModel: vi.fn(),
+        setSelectedModelAndOptions: vi.fn(),
+        setSelectedModelOption: vi.fn(),
+        onModelSelectorOpenChange: vi.fn(),
+      }
+      const pane = (readiness: { loading: boolean; unavailable?: boolean }) => (
+        <TemporaryChatPanel
+          nativeConversation
+          currentProject={null}
+          source={null}
+          instanceId="new-inherited-conversation"
+          createTask={mocks.createTask}
+          modelControls={{ ...controls, ...readiness }}
+        />
+      )
+      const view = render(pane(pending))
+      expect(screen.getByTestId('mock-send')).toBeDisabled()
+      expect(screen.getByTestId('mock-model-selector')).toBeEnabled()
+      await userEvent.click(screen.getByTestId('mock-model-selector'))
+      expect(controls.onModelSelectorOpenChange).toHaveBeenCalledWith(true)
+      await userEvent.click(screen.getByTestId('mock-interrupt'))
+      expect(mocks.createTask).not.toHaveBeenCalled()
+      view.rerender(pane({ loading: false, unavailable: false }))
+      await userEvent.click(screen.getByTestId('mock-send'))
+      await waitFor(() => expect(mocks.createTask).toHaveBeenCalledOnce())
+      expect(mocks.createTask).toHaveBeenCalledWith(
+        '发送附件',
+        expect.objectContaining({
+          executionModel: {
+            modelId: 'saved-model',
+            modelType: 'runtime',
+            modelOptions: { reasoning: 'high' },
+          },
+        })
+      )
+    }
+  )
+
+  it.each([
+    { locale: 'zh-CN', existing: false },
+    { locale: 'en', existing: true },
+  ])(
+    'shows Claude recovery before submitting a $locale conversation',
+    async ({ locale, existing }) => {
+      const actual = await vi.importActual<typeof runtimeModelSelection>(
+        '@/features/workbench/runtimeModelSelection'
+      )
+      const selectionSpy = vi
+        .spyOn(runtimeModelSelection, 'selectedModelExecutionFields')
+        .mockImplementation(actual.selectedModelExecutionFields)
+      try {
+        const i18n = createInstance()
+        await i18n.init({
+          lng: locale,
+          resources: { en: { common: enCommon }, 'zh-CN': { common: zhCommon } },
+          defaultNS: 'common',
+          interpolation: { escapeValue: false },
+        })
+        const replacement: UnifiedModel = {
+          name: 'selected-codex',
+          type: 'runtime',
+          modelId: 'selected-codex',
+          runtime: { family: 'codex', provider: 'selected-provider' },
+          config: { codexProviderId: 'selected-provider' },
+        }
+        const controls: ConversationModelControls = {
+          models: [replacement],
+          selectedModel: {
+            name: 'saved-claude',
+            type: 'runtime',
+            runtime: { family: 'claude_code', provider: 'claude' },
+          },
+          selectedModelOptions: {},
+          loading: true,
+          unavailable: true,
+          unavailableReason: 'conversation_runtime_unsupported',
+          setSelectedModel: vi.fn(),
+          setSelectedModelAndOptions: vi.fn(),
+          setSelectedModelOption: vi.fn(),
+        }
+        const pane = (current: ConversationModelControls) => (
+          <I18nextProvider i18n={i18n}>
+            <TemporaryChatPanel
+              nativeConversation
+              currentProject={null}
+              source={null}
+              instanceId="claude-recovery"
+              initialAddress={existing ? address : null}
+              initialInput="Keep this draft"
+              createTask={mocks.createTask}
+              modelControls={current}
+            />
+          </I18nextProvider>
+        )
+        const view = render(pane(controls))
+        expect(screen.getByTestId('mock-composer')).not.toHaveAttribute('data-active-model')
+        expect(screen.getByTestId('mock-error')).toHaveTextContent(
+          i18n.t('standIn.errors.conversation_runtime_unsupported')
+        )
+        expect(screen.getByTestId('mock-model-selector')).toBeEnabled()
+        expect(screen.getByTestId('mock-send')).toBeDisabled()
+        await userEvent.click(screen.getByTestId('mock-interrupt'))
+        expect(mocks.createTask).not.toHaveBeenCalled()
+        expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+        expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+          'data-draft-value',
+          'Keep this draft'
+        )
+        view.rerender(pane({ ...controls, loading: false }))
+        expect(screen.getByTestId('mock-send')).toBeDisabled()
+        expect(screen.getByTestId('mock-error')).toBeVisible()
+        view.rerender(
+          pane({
+            ...controls,
+            loading: false,
+            unavailable: false,
+            unavailableReason: undefined,
+            selectedModel: replacement,
+          })
+        )
+        expect(screen.queryByTestId('mock-error')).not.toBeInTheDocument()
+        expect(screen.getByTestId('mock-send')).toBeEnabled()
+        await userEvent.click(screen.getByTestId('mock-send'))
+        const selected = {
+          modelId: 'selected-codex',
+          modelType: 'runtime',
+          modelOptions: expect.objectContaining({ codexProviderId: 'selected-provider' }),
+        }
+        if (existing) {
+          await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+          expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ address, ...selected }),
+            expect.any(Object)
+          )
+        } else {
+          await waitFor(() => expect(mocks.createTask).toHaveBeenCalledOnce())
+          expect(mocks.createTask).toHaveBeenCalledWith(
+            '发送附件',
+            expect.objectContaining({ executionModel: expect.objectContaining(selected) })
+          )
+        }
+      } finally {
+        selectionSpy.mockRestore()
+      }
+    }
+  )
 
   it('continues an existing task with its immutable model instead of the global default', async () => {
     mocks.activeModelSelection = {

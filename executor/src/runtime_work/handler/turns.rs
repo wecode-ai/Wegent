@@ -402,18 +402,18 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn spawn_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, false, false).await
+        self.schedule_turn(turn, false, false).await.map(|_| ())
     }
 
     pub(super) async fn spawn_forced_turn(
         &self,
         turn: SpawnTurnRequest,
     ) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, true, false).await
+        self.schedule_turn(turn, true, false).await.map(|_| ())
     }
 
     pub(super) async fn queue_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, false, true).await
+        self.schedule_turn(turn, false, true).await.map(|_| ())
     }
 
     async fn schedule_turn(
@@ -421,13 +421,52 @@ impl RuntimeWorkRpcHandler {
         mut turn: SpawnTurnRequest,
         force_start: bool,
         queue_only: bool,
-    ) -> Result<(), AppIpcError> {
+    ) -> Result<bool, AppIpcError> {
         turn.bind_task_kind(&self.store);
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
         if self.existing_command(&turn)?.is_some() {
-            return Ok(());
+            return Ok(false);
+        }
+        let goal_resume =
+            turn.request.extra.get(RESUME_GOAL_ONLY_MARKER) == Some(&Value::Bool(true));
+        if goal_resume {
+            let needs_attention = self
+                .active_goal_turns
+                .lock()
+                .expect("active Goal turn map lock should not be poisoned")
+                .get(&local_task_id)
+                .is_some_and(|turn| {
+                    turn.request.extra.get(GOAL_NEEDS_ATTENTION_MARKER) == Some(&Value::Bool(true))
+                });
+            // Check under admission so concurrent activations cannot enqueue
+            // duplicate resumes behind an already owned native continuation.
+            if !needs_attention
+                && (self.is_active_local_task(&local_task_id)
+                    || self.native_task_holds_capacity(&local_task_id)
+                    || self.queued_local_task_position(&local_task_id).is_some())
+            {
+                return Ok(false);
+            }
+        }
+        // Existing threads retain their native model, even without a per-turn selection.
+        let resolved_default = is_codex_runtime(&turn.runtime)
+            && turn.direct_thread_id.is_none()
+            && turn.fork_thread_id.is_none()
+            && turn.resume_thread_id.is_none()
+            && (turn.request.new_session
+                || !self.local_task_link(&local_task_id).is_some_and(|link| {
+                    super::super::conversation_sessions::is_identity_conversation(&link)
+                }))
+            && self
+                .resolve_retired_codex_default(&mut turn.request)
+                .await?;
+        if resolved_default {
+            self.retain_runtime_model_config(&local_task_id, &turn.request.model_config);
+            self.store.update_task(&local_task_id, |link| {
+                store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
+            });
         }
         if turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true)) {
             let user = turn
@@ -466,26 +505,28 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let journaled_goal = self.turn_runs_active_goal(&turn);
-        if journaled_goal {
-            self.active_goal_turns
+        let previous_goal_status = self
+            .store
+            .read_task(&local_task_id, |link| link.goal_execution_status.clone())
+            .flatten();
+        let previous_goal = if journaled_goal {
+            let previous = self
+                .active_goal_turns
                 .lock()
                 .expect("active Goal turn map lock should not be poisoned")
                 .insert(local_task_id.clone(), turn.clone());
             self.set_goal_execution_status(
                 &local_task_id,
-                if turn
-                    .request
-                    .extra
-                    .get(RESUME_GOAL_ONLY_MARKER)
-                    .and_then(Value::as_bool)
-                    == Some(true)
-                {
+                if goal_resume {
                     Some("recovering")
                 } else {
                     Some("running")
                 },
             );
-        }
+            previous
+        } else {
+            None
+        };
         let (previous, turn_to_start, queued_turns) = {
             let mut scheduler = self
                 .turn_scheduler
@@ -517,10 +558,17 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned") = previous;
             if journaled_goal {
-                self.active_goal_turns
+                let mut goals = self
+                    .active_goal_turns
                     .lock()
-                    .expect("active Goal turn map lock should not be poisoned")
-                    .remove(&local_task_id);
+                    .expect("active Goal turn map lock should not be poisoned");
+                if let Some(previous) = previous_goal {
+                    goals.insert(local_task_id.clone(), previous);
+                } else {
+                    goals.remove(&local_task_id);
+                }
+                drop(goals);
+                self.set_goal_execution_status(&local_task_id, previous_goal_status.as_deref());
             }
             return Err(error);
         }
@@ -546,7 +594,7 @@ impl RuntimeWorkRpcHandler {
                 &[("local_task_id", local_task_id)],
             );
         }
-        Ok(())
+        Ok(true)
     }
 
     fn turn_runs_active_goal(&self, turn: &SpawnTurnRequest) -> bool {
@@ -604,13 +652,31 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         active_turn: Option<&ActiveCodexTurn>,
     ) {
-        let Some(request) = self
+        let request = self
             .active_local_executions
             .lock()
             .expect("active local execution map lock should not be poisoned")
             .get(local_task_id)
-            .and_then(|execution| execution.request.clone())
-        else {
+            .and_then(|execution| execution.request.clone());
+        let Some(request) = request.or_else(|| {
+            let link = self.local_task_link(local_task_id)?;
+            // A paused native Goal can be reactivated after its local send
+            // has finished. Reuse its saved execution profile, never replay
+            // the old user command or invent a profile for an unowned thread.
+            execution_request(&link.runtime_handle)?;
+            let mut request = runtime_event_request_from_link(&link);
+            if let Some(config) = self.runtime_model_config(local_task_id) {
+                request.model_config = config;
+            }
+            request.subtask_id = format!("{local_task_id}-goal-recovery");
+            request.prompt = Value::String(String::new());
+            request.extra.remove("runtime_command_id");
+            request.extra.remove("runtime_command_input");
+            request
+                .extra
+                .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
+            Some(request)
+        }) else {
             return;
         };
         let thread_id = active_turn.map(|turn| turn.thread_id.clone()).or_else(|| {
@@ -631,12 +697,18 @@ impl RuntimeWorkRpcHandler {
         };
         // Native metadata may arrive through a passive or compaction content route.
         // Only admission owns replacement of an existing recovery request.
+        let mut inserted = false;
         self.active_goal_turns
             .lock()
             .expect("active Goal turn map lock should not be poisoned")
             .entry(local_task_id.to_owned())
-            .or_insert(persisted_turn);
-        self.set_goal_execution_status(local_task_id, Some("running"));
+            .or_insert_with(|| {
+                inserted = true;
+                persisted_turn
+            });
+        if inserted {
+            self.set_goal_execution_status(local_task_id, Some("running"));
+        }
         let handler = self.clone();
         let local_task_id = local_task_id.to_owned();
         tokio::spawn(async move {
@@ -697,7 +769,7 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
-    pub(super) async fn resume_goal_needing_attention(
+    pub(super) async fn resume_active_goal(
         &self,
         local_task_id: &str,
     ) -> Result<bool, AppIpcError> {
@@ -709,15 +781,6 @@ impl RuntimeWorkRpcHandler {
             let Some(turn) = active_goal_turns.get(local_task_id) else {
                 return Ok(false);
             };
-            if turn
-                .request
-                .extra
-                .get(GOAL_NEEDS_ATTENTION_MARKER)
-                .and_then(Value::as_bool)
-                != Some(true)
-            {
-                return Ok(false);
-            }
             turn.clone()
         };
         let mut turn = turn;
@@ -725,11 +788,12 @@ impl RuntimeWorkRpcHandler {
         turn.request
             .extra
             .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
-        self.spawn_turn(turn).await?;
-        Ok(true)
+        // A native Goal mutation may update only disk state when its session
+        // has unloaded. Resume it through the existing owner and admission flow.
+        self.schedule_turn(turn, false, false).await
     }
 
-    async fn persist_current_turn_state(&self) -> Result<(), AppIpcError> {
+    pub(super) async fn persist_current_turn_state(&self) -> Result<(), AppIpcError> {
         let _operation = self.turn_queue_operation.lock().await;
         let queued_turns = self
             .turn_scheduler

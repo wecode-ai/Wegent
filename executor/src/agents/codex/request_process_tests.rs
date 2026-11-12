@@ -10,6 +10,165 @@ struct Fixture {
     _environment: LaunchEnvironment,
 }
 
+#[tokio::test]
+async fn process_catalog_survives_unrelated_runtime_profile_cleanup() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$(dirname "$0")/launch-args"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  printf '{"id":%s,"result":{}}\n' "$id"
+done
+"#,
+    );
+    let profile = wegent_runtime_config::paths::default_manifest_path()
+        .parent()
+        .unwrap()
+        .to_owned();
+    let executor_home = PathBuf::from(env::var("WEGENT_EXECUTOR_HOME").unwrap());
+    assert!(profile.starts_with(executor_home.parent().unwrap()));
+    assert!(!profile.starts_with(fixture._directory.path()));
+    fs::create_dir_all(&profile).unwrap();
+    fixture.client.ensure_started().await.unwrap();
+    let args = fs::read_to_string(fixture._directory.path().join("launch-args")).unwrap();
+    let path: String = serde_json::from_str(
+        args.lines()
+            .find_map(|line| line.strip_prefix("model_catalog_json="))
+            .unwrap(),
+    )
+    .unwrap();
+    fs::remove_dir_all(profile).unwrap();
+    let retained = fs::read(&path);
+    fixture.client.restart().await;
+    assert!(
+        retained.is_ok(),
+        "Unrelated profile cleanup removed a live Home's catalog: {retained:?}"
+    );
+    assert!(!Path::new(&path).exists());
+}
+
+#[tokio::test]
+async fn cold_goal_activation_can_admit_its_native_resume() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/goal/set"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$id"
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"cold-goal","goal":{"status":"active"}}}' ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id" ;;
+    *'"method":"thread/resume"'*)
+      printf '{"id":%s,"result":{"thread":{"id":"cold-goal","modelProvider":"~"}}}\n' "$id"
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"cold-goal","turn":{"id":"resumed"}}}'
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"cold-goal","goal":{"status":"complete"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"cold-goal","turn":{"id":"resumed","status":"completed"}}}' ;;
+    *'"method":"thread/goal/get"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"complete"}}}\n' "$id" ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    );
+    fixture
+        .client
+        .mutate_thread_goal(
+            "thread/goal/set",
+            json!({
+                "threadId":"cold-goal", "status":"active"
+            }),
+        )
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(5), fixture.client.run_turn_with_cancel(
+        ExecutionRequest {
+            task_id: "cold-goal-owner".into(),
+            bot: json!([{"shell_type":"Codex"}]),
+            model_config: json!({"model_id":"gpt-test","base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"}),
+            ..ExecutionRequest::default()
+        },
+        CodexAppServerTurnOptions {
+            resume_thread_id: Some("cold-goal".into()),
+            resume_goal_only: true,
+            ..CodexAppServerTurnOptions::default()
+        }
+    )).await;
+    fixture.client.restart().await;
+    assert!(
+        result.as_ref().is_ok_and(|result| result.is_ok()),
+        "Cold Goal recovery failed: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn recovered_goal_route_is_bound_before_native_resume_can_start_model_work() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/unsubscribe"'*)
+      printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id" ;;
+    *'"method":"thread/resume"'*)
+      touch "$(dirname "$0")/resume-entered"
+      while [ ! -f "$(dirname "$0")/resume-release" ]; do sleep 0.01; done
+      printf '{"id":%s,"result":{"thread":{"id":"recovered-goal-route","modelProvider":"~","turns":[]}}}\n' "$id"
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"recovered-goal-route","goal":{"status":"active"}}}'
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"recovered-goal-route","turn":{"id":"recovered-turn"}}}'
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"recovered-goal-route","goal":{"status":"complete"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"recovered-goal-route","turn":{"id":"recovered-turn","status":"completed"}}}' ;;
+    *'"method":"thread/goal/get"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"complete"}}}\n' "$id" ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    );
+    let request = ExecutionRequest {
+        task_id: "recovering-goal-owner".into(),
+        bot: json!([{"shell_type":"Codex"}]),
+        model_config: json!({"model_id":"gpt-test","base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"}),
+        ..ExecutionRequest::default()
+    };
+    let client = fixture.client.clone();
+    let running = tokio::spawn(async move {
+        client
+            .run_turn_with_cancel(
+                request,
+                CodexAppServerTurnOptions {
+                    resume_thread_id: Some("recovered-goal-route".into()),
+                    resume_goal_only: true,
+                    ..CodexAppServerTurnOptions::default()
+                },
+            )
+            .await
+    });
+    let entered = fixture._directory.path().join("resume-entered");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !entered.try_exists().unwrap() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("native resume must reach the observed pre-response checkpoint");
+    let bound_before_response = local_model_proxy::thread_has_bound_route("recovered-goal-route");
+    fs::write(fixture._directory.path().join("resume-release"), "").unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(5), running)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.client.restart().await;
+    assert!(result.is_ok(), "Goal recovery failed: {result:?}");
+    assert!(
+        bound_before_response,
+        "native resume can start Goal inference before returning its RPC response"
+    );
+}
+
 impl Fixture {
     fn new() -> Self {
         Self::with_script(
@@ -33,6 +192,7 @@ done
         let environment = LaunchEnvironment::new();
         let directory = tempfile::tempdir().unwrap();
         let binary = directory.path().join("codex");
+        let script = crate::test_env::with_codex_bundled_catalog(script);
         fs::write(&binary, script).unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
         let client = CodexAppServerClient::isolated_for_test(
@@ -319,6 +479,197 @@ async fn native_completion_wakes_a_resume_waiting_for_thread_admission() {
         .unwrap()
         .unwrap();
     drop(admitted);
+    client.finish_thread_activity("thread-1", false).await;
+    client.restart().await;
+}
+
+#[tokio::test]
+async fn an_active_goal_without_a_live_turn_does_not_block_resume_admission() {
+    let fixture = Fixture::new();
+    let client = &fixture.client;
+    client.ensure_started().await.unwrap();
+    let hub = client
+        .state
+        .lock()
+        .await
+        .process
+        .as_ref()
+        .unwrap()
+        .notifications
+        .clone();
+    // A loaded native Goal protects restarts; cold Goal metadata alone does not.
+    hub.send(json!({"method":"thread/started","params":{"thread":{"id":"thread-1"}}}))
+        .await;
+    hub.send(json!({"method":"thread/goal/updated","params":{
+        "threadId":"thread-1","turnId":null,"goal":{"status":"active"}
+    }}))
+    .await;
+    client
+        .state
+        .lock()
+        .await
+        .thread_context_configurations
+        .insert("thread-1".into(), Map::new());
+    assert_eq!(client.restart_if_idle().await, Err((1, 0)));
+
+    let plan = CodexThreadPlan {
+        start: CodexThreadStart::Request {
+            operation: "thread/resume",
+            params: json!({"threadId":"thread-1"}),
+        },
+        resume_requested: true,
+        fork_requested: false,
+    };
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    let admitted = timeout(
+        Duration::from_secs(1),
+        client.prepare_thread_admission(&plan, &request, &launch),
+    )
+    .await;
+    client.restart().await;
+    drop(
+        admitted
+            .expect("An active Goal must not wait for its own recovery to start")
+            .unwrap(),
+    );
+}
+
+#[tokio::test]
+async fn goal_resume_waits_for_local_and_native_turns_but_not_continuation_eligibility() {
+    let fixture = Fixture::new();
+    let client = &fixture.client;
+    client.ensure_started().await.unwrap();
+    let hub = client
+        .state
+        .lock()
+        .await
+        .process
+        .as_ref()
+        .unwrap()
+        .notifications
+        .clone();
+    // A loaded native Goal protects restarts; cold Goal metadata alone does not.
+    hub.send(json!({"method":"thread/started","params":{"thread":{"id":"thread-1"}}}))
+        .await;
+    let plan = CodexThreadPlan {
+        start: CodexThreadStart::Request {
+            operation: "thread/resume",
+            params: json!({"threadId":"thread-1"}),
+        },
+        resume_requested: true,
+        fork_requested: false,
+    };
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    for local_owner in [true, false] {
+        hub.send(json!({"method":"thread/goal/updated","params":{
+            "threadId":"thread-1","goal":{"status":"active"}
+        }}))
+        .await;
+        client
+            .state
+            .lock()
+            .await
+            .thread_context_configurations
+            .insert("thread-1".into(), Map::new());
+        if local_owner {
+            client.mark_thread_active("thread-1").await;
+        } else {
+            hub.send(json!({"method":"turn/started","params":{
+                "threadId":"thread-1","turn":{"id":"live","status":"inProgress"}
+            }}))
+            .await;
+        }
+        let mut admission = Box::pin(client.prepare_thread_admission(&plan, &request, &launch));
+        assert!(futures_util::poll!(&mut admission).is_pending());
+        if local_owner {
+            client.finish_thread_activity("thread-1", true).await;
+        } else {
+            hub.send(json!({"method":"turn/completed","params":{
+                "threadId":"thread-1","turn":{"id":"live","status":"completed"}
+            }}))
+            .await;
+        }
+        let admitted = timeout(Duration::from_secs(1), admission).await;
+        if admitted.is_err() {
+            client.restart().await;
+        }
+        drop(
+            admitted
+                .expect("Goal eligibility cannot retain a completed turn's admission")
+                .unwrap(),
+        );
+        client.finish_thread_activity("thread-1", true).await;
+        assert_eq!(client.restart_if_idle().await, Err((1, 0)));
+    }
+    client.restart().await;
+}
+
+#[tokio::test]
+async fn active_goal_resume_still_waits_for_configuration_teardown() {
+    let fixture = Fixture::new();
+    let client = &fixture.client;
+    client.ensure_started().await.unwrap();
+    let hub = client
+        .state
+        .lock()
+        .await
+        .process
+        .as_ref()
+        .unwrap()
+        .notifications
+        .clone();
+    // A loaded native Goal protects restarts; cold Goal metadata alone does not.
+    hub.send(json!({"method":"thread/started","params":{"thread":{"id":"thread-1"}}}))
+        .await;
+    hub.send(json!({"method":"thread/goal/updated","params":{
+        "threadId":"thread-1","goal":{"status":"active"}
+    }}))
+    .await;
+    let original_pid = pid(client).await;
+    let plan = CodexThreadPlan {
+        start: CodexThreadStart::Request {
+            operation: "thread/resume",
+            params: json!({"threadId":"thread-1","config":{
+                "mcp_servers.test.http_headers.context":"new-authority"
+            }}),
+        },
+        resume_requested: true,
+        fork_requested: false,
+    };
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    let mut admission = Box::pin(client.prepare_thread_admission(&plan, &request, &launch));
+    assert!(futures_util::poll!(&mut admission).is_pending());
+    // The single native response reader processes unsubscribe before this read.
+    client
+        .request("thread/read", json!({"threadId":"thread-1"}))
+        .await
+        .unwrap();
+    assert!(
+        futures_util::poll!(&mut admission).is_pending(),
+        "Goal recovery must not overtake native MCP teardown"
+    );
+    hub.send(json!({"method":"thread/closed","params":{"threadId":"thread-1"}}))
+        .await;
+    let admitted = timeout(Duration::from_secs(1), admission).await;
+    if admitted.is_err() {
+        client.restart().await;
+    }
+    drop(
+        admitted
+            .expect("Native close must admit Goal recovery without clearing its metadata")
+            .unwrap(),
+    );
+    assert_eq!(pid(client).await, original_pid);
+    assert_eq!(
+        client
+            .request("thread/goal/get", json!({"threadId":"thread-1"}))
+            .await
+            .unwrap()["goal"]["status"],
+        "active"
+    );
     client.finish_thread_activity("thread-1", false).await;
     client.restart().await;
 }

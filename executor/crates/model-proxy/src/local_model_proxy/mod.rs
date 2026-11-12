@@ -20,6 +20,7 @@ mod passthrough_stream;
 mod progressive_tools;
 mod request_policy;
 pub mod retry_notifications;
+mod sse;
 mod vision;
 
 use std::{
@@ -189,7 +190,7 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
 
 #[derive(Debug, Clone, Copy)]
 struct ResponsesToolCapabilities {
-    convert_custom_tools: bool,
+    custom_tools: chat::CustomToolConversion,
     native_tool_search: bool,
     native_namespace_tools: bool,
     function_tools_only: bool,
@@ -210,7 +211,7 @@ impl LocalModelProxyUpstream {
     fn responses_tool_capabilities(&self) -> ResponsesToolCapabilities {
         if self.codex_request_mode == CodexRequestMode::Standard {
             return ResponsesToolCapabilities {
-                convert_custom_tools: true,
+                custom_tools: chat::CustomToolConversion::All,
                 native_tool_search: false,
                 native_namespace_tools: false,
                 function_tools_only: true,
@@ -218,14 +219,32 @@ impl LocalModelProxyUpstream {
         }
         if self.codex_request_mode == CodexRequestMode::Passthrough {
             return ResponsesToolCapabilities {
-                convert_custom_tools: false,
+                custom_tools: chat::CustomToolConversion::None,
                 native_tool_search: true,
                 native_namespace_tools: true,
                 function_tools_only: false,
             };
         }
+        // DeepSeek documents custom apply_patch only; other custom names return HTTP 400.
+        // Match the actual endpoint, never a model-name substring or a failed-request guess.
+        let deepseek_responses = self.api_format == "openai-responses"
+            && url::Url::parse(&self.resolved_request_url())
+                .ok()
+                .is_some_and(|url| url.host_str() == Some("api.deepseek.com"));
+        if deepseek_responses {
+            return ResponsesToolCapabilities {
+                custom_tools: if self.convert_custom_tools {
+                    chat::CustomToolConversion::All
+                } else {
+                    chat::CustomToolConversion::ExceptApplyPatch
+                },
+                native_tool_search: false,
+                native_namespace_tools: false,
+                function_tools_only: false,
+            };
+        }
         ResponsesToolCapabilities {
-            convert_custom_tools: self.convert_custom_tools,
+            custom_tools: self.convert_custom_tools.into(),
             native_tool_search: self.native_tool_search,
             native_namespace_tools: self.native_namespace_tools,
             function_tools_only: false,
@@ -787,8 +806,6 @@ use request_preparation::prepare_request;
 use request_preparation::prepare_request_with_history;
 #[cfg(test)]
 use request_preparation::prepare_request_with_model_hint;
-pub(super) use responses_stream::append_stream_utf8;
-pub(super) use responses_stream::finish_stream_utf8;
 pub(super) use responses_stream::is_responses_terminal_event;
 use responses_stream::normalize_responses_event;
 use responses_stream::normalize_responses_stream;
@@ -799,7 +816,7 @@ use responses_stream::responses_event_values;
 pub(super) use responses_stream::responses_failed_event;
 #[cfg(test)]
 use responses_stream::rewrite_responses_event;
-pub(super) use responses_stream::take_sse_block;
+pub(super) use sse::{append_stream_utf8, finish_stream_utf8, take_sse_block};
 use upstream_transport::bearer_token;
 #[cfg(test)]
 use upstream_transport::build_upstream_request;

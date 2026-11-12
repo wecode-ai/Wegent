@@ -91,6 +91,17 @@ fn verify_refresh_request(
     body: &WeworkTokenRefreshRequest,
     now: i64,
 ) -> Result<serde_json::Value, FastApiError> {
+    verify_bound_native_request(auth, body, REFRESH_PATH, now)
+}
+
+/// Reuse desktop key possession for a native-only API without changing the
+/// refresh endpoint or accepting refresh credentials as ordinary user tokens.
+pub fn verify_bound_native_request(
+    auth: &AuthConfig,
+    body: &WeworkTokenRefreshRequest,
+    expected_path: &str,
+    now: i64,
+) -> Result<serde_json::Value, FastApiError> {
     let claims = decode_refresh_token_at(auth, &body.refresh_token, now)?;
     let Some(expected_thumbprint) = claims
         .get("cnf")
@@ -107,7 +118,7 @@ fn verify_refresh_request(
         &body.proof,
         &body.refresh_token,
         expected_thumbprint,
-        REFRESH_PATH,
+        expected_path,
         now,
     )?;
 

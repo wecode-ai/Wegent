@@ -601,6 +601,10 @@ const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
 const CLOUD_FOLLOW_UP_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP: confirm the cloud task remains available.'
 const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
+const CLOUD_HTML_LINK_PROMPT =
+  'WEWORK_DESKTOP_E2E_CLOUD_HTML_LINK: open the Cloud HTML preview and missing-file links.'
+const CLOUD_HTML_LINK_FILENAME = 'cloud-html-link-preview.html'
+const CLOUD_HTML_LINK_MISSING_FILENAME = 'cloud-html-link-missing.html'
 const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
 const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
@@ -1523,14 +1527,16 @@ async function createSingleRootLocalProject(
   const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
     ? '[data-testid="projects-empty-create-button"]'
     : '[data-testid="projects-create-button"]'
+  const createButtonText = await control.command('clickWhenEnabled', createButtonSelector, {
+    timeoutMs,
+  })
   if (createButtonSelector.includes('projects-empty-create-button')) {
     assert.match(
-      await control.command('getText', createButtonSelector),
+      createButtonText,
       /New project|新建项目/,
       'The empty project section did not expose a localized creation action'
     )
   }
-  await control.command('click', createButtonSelector)
   await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1984,6 +1990,9 @@ export {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+  CLOUD_HTML_LINK_PROMPT,
+  CLOUD_HTML_LINK_FILENAME,
+  CLOUD_HTML_LINK_MISSING_FILENAME,
   CLOUD_ARTIFACT_NAME,
   CLOUD_ARTIFACT_CONTENT,
   ACTIVE_WORKBENCH_SELECTOR,

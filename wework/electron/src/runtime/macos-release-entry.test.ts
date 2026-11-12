@@ -1,11 +1,51 @@
-import { join } from 'node:path'
+import { mkdtemp, rm, symlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { DesktopRelease, ReleaseStore } from './release-store.js'
-import { enterInstalledMacosRelease } from './macos-release-installation.js'
+import {
+  enterInstalledMacosRelease,
+  installedMacosReleaseResources,
+} from './macos-release-installation.js'
 
 afterEach(() => vi.restoreAllMocks())
 
 describe.runIf(process.platform === 'darwin')('legacy macOS release entry', () => {
+  test.each(['installed', 'payload'])(
+    'recognizes a filesystem alias of the selected %s executable',
+    async role => {
+      const root = await mkdtemp(join(tmpdir(), 'wework-native-entry-alias-'))
+      try {
+        const directory = join(root, 'entry')
+        await symlink(dirname(process.execPath), directory, 'dir')
+        const alias = join(directory, basename(process.execPath))
+        const execve = vi.spyOn(process, 'execve').mockImplementation(() => {
+          throw new Error('native alias handoff')
+        })
+        const resources = join(root, 'resources')
+        const release = {
+          id: 'target',
+          executable: role === 'installed' ? alias : join(root, 'missing-installed'),
+          resources,
+          macosInstallation: {
+            payloadExecutable: role === 'payload' ? alias : join(root, 'missing-payload'),
+          },
+        } as DesktopRelease
+        const result = enterInstalledMacosRelease({ root } as ReleaseStore, release, resources)
+        if (role === 'installed') {
+          await expect(result).resolves.toBeUndefined()
+          expect(installedMacosReleaseResources()).toBe(resources)
+          expect(execve).not.toHaveBeenCalled()
+        } else {
+          await expect(result).rejects.toThrow('native alias handoff')
+          expect(execve).toHaveBeenCalledOnce()
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   test('replaces the legacy child with a native relay instead of re-executing Electron', async () => {
     const execve = vi.spyOn(process, 'execve').mockImplementation(() => {
       throw new Error('native handoff')

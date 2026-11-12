@@ -7,6 +7,8 @@
 import hashlib
 import logging
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Sequence
@@ -21,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 PRIVATE_SESSION_MODE_PREFIX = "channel:private_session_mode:"
 PRIVATE_SESSION_KEY_PREFIX = "channel:private_session:"
+PRIVATE_SESSION_WRITE_LOCK_SECONDS = 30
 USER_PRIVATE_SESSIONS_PREFIX = "channel:user_private_sessions:"
 USER_GLOBAL_NOTIFICATION_PREFIX = "channel:user_global_notification:"
 USER_IM_NOTIFICATION_PRESENCE_PREFIX = "channel:user_im_notification_presence:"
@@ -56,6 +59,19 @@ class IMSessionService:
         identity = f"{channel_type}\0{channel_id}\0{conversation_id}\0{user_id}"
         return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
+    @asynccontextmanager
+    async def _session_write_lock(self, session_key: str) -> AsyncIterator[None]:
+        """Serialize session read-modify-write operations across workers."""
+
+        async with cache_manager._client_context() as client:
+            lock = client.lock(
+                f"{self._session_cache_key(session_key)}:write-lock",
+                timeout=PRIVATE_SESSION_WRITE_LOCK_SECONDS,
+                blocking_timeout=PRIVATE_SESSION_WRITE_LOCK_SECONDS,
+            )
+            async with lock:
+                yield
+
     async def get_or_create_private_session(
         self,
         db: Session | None,
@@ -75,30 +91,31 @@ class IMSessionService:
             channel_id=channel_id,
             conversation_id=conversation_id,
         )
-        session = await self.get_session(session_key)
-        if session is None:
-            session = IMPrivateSession(
-                session_key=session_key,
-                user_id=user_id,
-                channel_type=channel_type,
-                channel_id=channel_id,
-                conversation_id=conversation_id,
-                sender_id=sender_id,
-                proactive_recipient_id=proactive_recipient_id or "",
-                display_name=display_name,
-                last_seen_at=now,
-                created_at=now,
-                updated_at=now,
-            )
-        else:
-            session.sender_id = sender_id
-            if proactive_recipient_id:
-                session.proactive_recipient_id = proactive_recipient_id
-            session.display_name = display_name
-            session.last_seen_at = now
-            session.updated_at = now
+        async with self._session_write_lock(session_key):
+            session = await self.get_session(session_key)
+            if session is None:
+                session = IMPrivateSession(
+                    session_key=session_key,
+                    user_id=user_id,
+                    channel_type=channel_type,
+                    channel_id=channel_id,
+                    conversation_id=conversation_id,
+                    sender_id=sender_id,
+                    proactive_recipient_id=proactive_recipient_id or "",
+                    display_name=display_name,
+                    last_seen_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            else:
+                session.sender_id = sender_id
+                if proactive_recipient_id:
+                    session.proactive_recipient_id = proactive_recipient_id
+                session.display_name = display_name
+                session.last_seen_at = now
+                session.updated_at = now
 
-        await self.save_session(session)
+            await self.save_session(session)
         return session
 
     async def get_session(self, session_key: str) -> IMPrivateSession | None:
@@ -435,6 +452,89 @@ class IMSessionService:
                 detail="IM private session not found",
             )
         return [sessions_by_key[session_key] for session_key in ordered_keys]
+
+    async def remember_chat_task(
+        self,
+        *,
+        user_id: int,
+        channel_type: str,
+        channel_id: int,
+        conversation_id: str,
+        task_id: int,
+    ) -> None:
+        """Mirror the task a chat conversation continues for later recovery."""
+
+        session_key = self.build_session_key(
+            user_id=user_id,
+            channel_type=channel_type,
+            channel_id=channel_id,
+            conversation_id=conversation_id,
+        )
+        async with self._session_write_lock(session_key):
+            session = await self.get_session(session_key)
+            if session is None or session.chat_task_id == task_id:
+                return
+            session.chat_task_id = task_id
+            await self.save_session(session)
+
+    async def forget_chat_task(
+        self,
+        *,
+        user_id: int,
+        channel_type: str,
+        channel_id: int,
+        conversation_id: str,
+    ) -> None:
+        """Drop the chat task mirror so a new conversation cannot resume it."""
+
+        session_key = self.build_session_key(
+            user_id=user_id,
+            channel_type=channel_type,
+            channel_id=channel_id,
+            conversation_id=conversation_id,
+        )
+        async with self._session_write_lock(session_key):
+            session = await self.get_session(session_key)
+            if session is None or session.chat_task_id is None:
+                return
+            session.chat_task_id = None
+            await self.save_session(session)
+
+    async def set_proactive_recipient_id(
+        self, session: IMPrivateSession, recipient_id: str
+    ) -> None:
+        """Fill a missing recipient without replacing concurrent session updates."""
+
+        async with self._session_write_lock(session.session_key):
+            current = await self.get_session(session.session_key)
+            if current is None:
+                current = session
+            if not current.proactive_recipient_id:
+                current.proactive_recipient_id = recipient_id
+                await self.save_session(current)
+            session.proactive_recipient_id = current.proactive_recipient_id
+
+    async def get_chat_task(
+        self,
+        *,
+        user_id: int,
+        channel_type: str,
+        channel_id: int,
+        conversation_id: str,
+    ) -> int | None:
+        """Return the mirrored chat task for a private conversation."""
+
+        session = await self.get_session(
+            self.build_session_key(
+                user_id=user_id,
+                channel_type=channel_type,
+                channel_id=channel_id,
+                conversation_id=conversation_id,
+            )
+        )
+        if session is None:
+            return None
+        return session.chat_task_id
 
     def _session_cache_key(self, session_key: str) -> str:
         return f"{PRIVATE_SESSION_KEY_PREFIX}{session_key}"

@@ -9,6 +9,49 @@ use super::*;
 use crate::agents::codex::{spawn_codex_app_server, CodexLaunchConfig, CodexTurnProcess};
 use crate::agents::codex::{CodexAuthMode, EnvRestore};
 
+#[test]
+fn unknown_subscription_preference_preserves_credentials_and_refuses_access() {
+    let _lock = crate::test_env::lock();
+    let _preference = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("auth.json"), "synthetic-managed-account").unwrap();
+    fs::write(root.path().join(MANAGED_AUTH_MARKER), []).unwrap();
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "unavailable");
+    assert!(!codex_subscription_enabled());
+    assert!(sync_user_codex_auth(root.path(), false).is_err());
+    assert!(acquire_shared_auth(root.path(), Some(CodexAuthMode::WeworkRouter)).is_err());
+    assert!(acquire_shared_auth(root.path(), None).is_err());
+    assert_eq!(
+        fs::read_to_string(root.path().join("auth.json")).unwrap(),
+        "synthetic-managed-account"
+    );
+    assert!(root.path().join(MANAGED_AUTH_MARKER).is_file());
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
+    sync_user_codex_auth(root.path(), false).unwrap();
+    assert!(!root.path().join("auth.json").exists());
+}
+
+#[test]
+fn named_home_readers_share_ownership_without_migrating_live_writers_or_auth() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path();
+    fs::write(home.join("auth.json"), "synthetic-private-auth").unwrap();
+    let first = auth::acquire_named_home(home).unwrap();
+    let directory = home.join("thread-writer-locks");
+    let writer =
+        fs::File::create(directory.join("00000000-0000-4000-8000-000000000001.lock")).unwrap();
+    fs2::FileExt::try_lock_exclusive(&writer).unwrap();
+    let second = auth::acquire_named_home(home).unwrap();
+    assert!(auth::prepare_provider_migration(home, false).is_err());
+    assert_eq!(
+        fs::read_to_string(home.join("auth.json")).unwrap(),
+        "synthetic-private-auth"
+    );
+    assert!(!home.join("config.toml").exists());
+    drop((first, second, writer));
+    auth::prepare_provider_migration(home, false).unwrap();
+}
+
 #[tokio::test]
 #[cfg(unix)]
 #[allow(clippy::await_holding_lock)] // The fixture changes process-wide Home variables.

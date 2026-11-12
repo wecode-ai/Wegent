@@ -1,4 +1,5 @@
 use super::super::command_journal::{CommandState, RuntimeCommand};
+use super::super::tests::{install_native_history, ScalarEnv};
 use super::*;
 
 fn handler(root: &Path) -> RuntimeWorkRpcHandler {
@@ -15,6 +16,228 @@ fn handler(root: &Path) -> RuntimeWorkRpcHandler {
     handler.automation_store =
         crate::runtime_work::automations::AutomationStore::new(root.join("automations.json"));
     handler
+}
+
+fn memory_review_handler(root: &Path) -> (RuntimeWorkRpcHandler, ScalarEnv) {
+    let claude_home = ScalarEnv::set("WEGENT_CLAUDE_HOME", root.join("claude").to_str().unwrap());
+    let mut handler = handler(root);
+    install_native_history(&mut handler, root, Vec::new(), None);
+    for (name, response) in [
+        (
+            "config_read",
+            json!({"config":{"model":"review-default","model_provider":"openai"}}),
+        ),
+        (
+            "model_list",
+            json!({"data":[{"id":"review-default","model":"review-default","isDefault":true,
+                "defaultReasoningEffort":"low",
+                "supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Low"},{"reasoningEffort":"high","description":"High"}]}]}),
+        ),
+    ] {
+        fs::write(root.join(format!("{name}.json")), response.to_string()).unwrap();
+    }
+    (handler, claude_home)
+}
+
+fn queue_stand_in_turns(handler: &mut RuntimeWorkRpcHandler, root: &Path) {
+    handler.worktrees = WorktreeManager::new(root.join("worktrees.json"));
+    handler.turn_scheduler = Arc::new(Mutex::new(RuntimeTurnScheduler::new(
+        RuntimeSettings {
+            max_concurrent_tasks: 0,
+            max_concurrent_stand_in_tasks: 0,
+            max_concurrent_agent_tasks: 0,
+        },
+        VecDeque::new(),
+    )));
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // Isolate process-wide model discovery settings.
+async fn stand_in_reasoning_aliases_keep_resolved_provider_in_execution_and_persistence() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let (mut handler, _claude_home) = memory_review_handler(root.path());
+    queue_stand_in_turns(&mut handler, root.path());
+    fs::write(root.path().join("model_list.json"), json!({"data":[{
+        "id":"review-default","model":"review-default","isDefault":true,
+        "defaultReasoningEffort":"low",
+        "supportedReasoningEfforts":[{"reasoningEffort":"x-high","description":"Extra high"}, "max"]
+    }]}).to_string()).unwrap();
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    for (index, (key, value, expected)) in [
+        ("reasoning", "x-high", "xhigh"),
+        ("reasoningEffort", "extra high", "xhigh"),
+        ("reasoning", "maximum", "max"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let user = 7 + index as i64;
+        store.materialize_implicit_primary(user, "device").unwrap();
+        let mut settings = store.personal_stand_in(user, "device").unwrap();
+        settings["primary"]["enabled"] = json!(true);
+        settings["primary"]["model"] =
+            json!({"runtime":"codex","provider":"openai","model_id":"review-default"});
+        settings["primary"]["modelOptions"] = json!({"runnerModelProvider":"stale-provider"});
+        settings["primary"]["modelOptions"][key] = json!(value);
+        let saved = store
+            .save_personal_stand_in(user, "device", settings)
+            .unwrap();
+        let address = handler
+            .stand_in_conversation(json!({
+                "userId":user,"message":"Use the saved stand-in model",
+                "options":{"clientUserMessageId":format!("alias-{index}")}
+            }))
+            .await
+            .unwrap();
+        let task = address["taskId"].as_str().unwrap();
+        let persisted = RuntimeWorkStore::new(root.path().join("runtime.json"))
+            .get_task_summary(task)
+            .unwrap();
+        assert_eq!(
+            persisted.runtime_handle["modelSelection"]["modelName"],
+            "review-default"
+        );
+        assert_eq!(
+            persisted.runtime_handle["modelSelection"]["options"]["reasoning"],
+            expected
+        );
+        assert_eq!(
+            persisted.runtime_handle["modelSelection"]["options"]["runnerModelProvider"],
+            "openai"
+        );
+        assert!(persisted.runtime_handle["modelSelection"]["options"]
+            .get("reasoningEffort")
+            .is_none());
+        let turns =
+            super::turns::read_runtime_turn_queue(handler.turn_queue_path.as_ref()).unwrap();
+        let request = &turns
+            .iter()
+            .find(|turn| turn.local_task_id == task)
+            .unwrap()
+            .request;
+        assert_eq!(request.extra["origin"]["type"], "stand_in_identity");
+        assert_eq!(request.model_config["model_provider"], "openai");
+        assert_eq!(request.model_config["reasoning"]["effort"], expected);
+        assert_eq!(request.extra["reasoning_config"]["effort"], expected);
+        assert_eq!(store.personal_stand_in(user, "device").unwrap(), saved);
+    }
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // Isolate process-wide model discovery settings.
+async fn stand_in_activity_keeps_declared_none_default_with_empty_supported_efforts() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let (mut handler, _claude_home) = memory_review_handler(root.path());
+    queue_stand_in_turns(&mut handler, root.path());
+    fs::write(
+        root.path().join("config_read.json"),
+        json!({
+            "config":{"model":"gpt-6-luna","model_provider":"openai"}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("model_list.json"),
+        json!({"data":[{
+            "id":"gpt-6-luna","model":"gpt-6-luna","isDefault":true,
+            "defaultReasoningEffort":"none","supportedReasoningEfforts":[]
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store.materialize_implicit_primary(7, "device").unwrap();
+    let mut settings = store.personal_stand_in(7, "device").unwrap();
+    settings["primary"]["enabled"] = json!(true);
+    settings["primary"]["model"] =
+        json!({"runtime":"codex","provider":"openai","model_id":"gpt-6-luna"});
+    settings["primary"]
+        .as_object_mut()
+        .unwrap()
+        .remove("modelOptions");
+    let saved = store.save_personal_stand_in(7, "device", settings).unwrap();
+    assert!(saved["primary"].get("modelOptions").is_none());
+    let address = handler
+        .stand_in_conversation(json!({
+            "userId":7,"message":"Start the stand-in conversation",
+            "options":{"clientUserMessageId":"initial-none-default"}
+        }))
+        .await
+        .unwrap();
+    let task = address["taskId"].as_str().unwrap();
+    for index in 0..2 {
+        let delivered = handler
+            .deliver_primary_activity(
+                7,
+                &format!("background-{index}"),
+                "A delegated task finished",
+                "工作已结束",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(delivered["taskId"], task);
+        let persisted = RuntimeWorkStore::new(root.path().join("runtime.json"))
+            .get_task_summary(task)
+            .unwrap();
+        assert_eq!(
+            persisted.runtime_handle["modelSelection"]["modelName"],
+            "gpt-6-luna"
+        );
+        assert_eq!(
+            persisted.runtime_handle["modelSelection"]["options"]["reasoning"],
+            "none"
+        );
+        assert_eq!(
+            persisted.runtime_handle["modelSelection"]["options"]["runnerModelProvider"],
+            "openai"
+        );
+        let turns =
+            super::turns::read_runtime_turn_queue(handler.turn_queue_path.as_ref()).unwrap();
+        assert_eq!(turns.len(), index + 2);
+        let request = &turns.back().unwrap().request;
+        assert_eq!(request.model_config["model_id"], "gpt-6-luna");
+        assert_eq!(request.model_config["model_provider"], "openai");
+        assert_eq!(request.model_config["reasoning"]["effort"], "none");
+        assert_eq!(request.extra["reasoning_config"]["effort"], "none");
+        assert_eq!(store.personal_stand_in(7, "device").unwrap(), saved);
+    }
+    for effort in ["high", "max", "not-a-grade"] {
+        let mut unsupported = store.personal_stand_in(7, "device").unwrap();
+        unsupported["primary"]["modelOptions"] = json!({"reasoning":effort});
+        let saved = store
+            .save_personal_stand_in(7, "device", unsupported)
+            .unwrap();
+        let error = handler
+            .stand_in_conversation(json!({
+                "userId":7,"message":"Use this unsupported effort"
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "model_reasoning_unavailable");
+        assert_eq!(
+            super::turns::read_runtime_turn_queue(handler.turn_queue_path.as_ref())
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(store.personal_stand_in(7, "device").unwrap(), saved);
+    }
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
 }
 
 fn automation() -> Automation {
@@ -323,9 +546,11 @@ async fn manual_calendar_run_routes_immediately_and_reuses_its_original_receipt(
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // Isolate process-wide model discovery settings.
 async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
+    let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();
-    let handler = handler(root.path());
+    let (handler, _claude_home) = memory_review_handler(root.path());
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     store.materialize_implicit_primary(7, "device").unwrap();
     handler.ensure_memory_review_arrangements().unwrap();
@@ -338,22 +563,125 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
         .await
         .unwrap();
     assert_eq!(prepared["origin"]["memoryReview"], true);
+    assert_eq!(prepared["modelSelection"]["modelName"], "review-default");
+    let catalog = handler.runner_catalog().await.unwrap();
+    let model = &catalog["models"][0];
+    assert_eq!(model["default_reasoning_effort"], "low");
+    assert_eq!(model["supported_reasoning_efforts"], json!(["low", "high"]));
+    assert_eq!(prepared["modelSelection"]["options"]["reasoning"], "low");
+    assert_eq!(
+        prepared["executionRequest"]["model_config"]["reasoning"]["effort"],
+        "low"
+    );
+    assert_eq!(
+        prepared["executionRequest"]["model_config"]["model_provider"],
+        "openai"
+    );
     let request: ExecutionRequest =
         serde_json::from_value(prepared["executionRequest"].clone()).unwrap();
     handler
         .validate_stand_in_schedule_start(&request, "unused")
         .unwrap();
+    for effort_key in ["reasoning", "reasoningEffort"] {
+        let mut settings = store.personal_stand_in(7, "device").unwrap();
+        settings["primary"]["modelOptions"] = json!({
+            "speed":"fast", "permissionMode":"full-access", "runnerModelProvider":"stale-provider"
+        });
+        settings["primary"]["modelOptions"][effort_key] = json!("high");
+        store.save_personal_stand_in(7, "device", settings).unwrap();
+        let explicit = handler
+            .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap();
+        assert_eq!(explicit["modelSelection"]["options"]["reasoning"], "high");
+        assert_eq!(
+            explicit["modelSelection"]["options"]["runnerModelProvider"],
+            "openai"
+        );
+        assert_eq!(explicit["runnerRouting"]["model"]["provider"], "openai");
+        assert_eq!(
+            explicit["executionRequest"]["model_config"]["model_provider"],
+            "openai"
+        );
+        assert!(explicit["modelSelection"]["options"]
+            .get("reasoningEffort")
+            .is_none());
+        assert_eq!(
+            explicit["executionRequest"]["model_config"]["reasoning"]["effort"],
+            "high"
+        );
+        assert_eq!(
+            explicit["executionRequest"]["reasoning_config"]["effort"],
+            "high"
+        );
+        assert_eq!(
+            explicit["executionRequest"]["model_config"]["service_tier"],
+            "fast"
+        );
+        assert_eq!(
+            explicit["executionRequest"]["runtime_permission_profile"],
+            ":read-only"
+        );
+        let mut unsupported = store.personal_stand_in(7, "device").unwrap();
+        unsupported["primary"]["modelOptions"] = json!({});
+        unsupported["primary"]["modelOptions"][effort_key] = json!("max");
+        let saved = store
+            .save_personal_stand_in(7, "device", unsupported)
+            .unwrap();
+        let error = handler
+            .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "model_reasoning_unavailable");
+        assert!(saved["primary"]["model"].is_null());
+        let direct_error = handler
+            .prepare_stand_in_execution(json!({"message":"Direct work"}), &saved["primary"])
+            .await
+            .unwrap_err();
+        assert_eq!(direct_error.code, "model_reasoning_unavailable");
+        assert_eq!(store.personal_stand_in(7, "device").unwrap(), saved);
+    }
+    let mut model_list = json!({"data":[{
+        "id":"review-default","model":"review-default","isDefault":true,
+        "defaultReasoningEffort":"low","supportedReasoningEfforts":[]
+    }]});
+    fs::write(root.path().join("model_list.json"), model_list.to_string()).unwrap();
+    let no_supported_efforts = handler
+        .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+        .await
+        .unwrap_err();
+    assert_eq!(no_supported_efforts.code, "model_reasoning_unavailable");
+    model_list["data"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("supportedReasoningEfforts");
+    fs::write(root.path().join("model_list.json"), model_list.to_string()).unwrap();
+    let without_capabilities = handler
+        .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+        .await
+        .unwrap();
+    assert_eq!(
+        without_capabilities["executionRequest"]["model_config"]["reasoning"]["effort"],
+        "max"
+    );
     assert!(handler
         .prepare_stand_in_schedule(&automation(), json!({"message":"External work"}))
         .await
         .is_err());
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // Isolate process-wide model discovery settings.
 async fn memory_review_due_skips_empty_history_and_routes_changed_history_independently() {
+    let _lock = crate::test_env::lock();
     for changed_history in [false, true] {
         let root = tempfile::tempdir().unwrap();
-        let handler = handler(root.path());
+        let (handler, _claude_home) = memory_review_handler(root.path());
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
         store.materialize_implicit_primary(7, "device").unwrap();
         handler.ensure_memory_review_arrangements().unwrap();
@@ -430,6 +758,11 @@ async fn memory_review_due_skips_empty_history_and_routes_changed_history_indepe
         );
         handler.arrangement_contexts(&store).unwrap();
         assert!(store.stand_in_events(7).unwrap().is_empty());
+        handler
+            .codex_app_server
+            .request("test/stop", json!({}))
+            .await
+            .unwrap();
     }
 }
 

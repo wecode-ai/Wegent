@@ -134,7 +134,7 @@ List entries and detail headers show a timestamp: the request time for pending q
 
 When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. The reminder shows the question's creation time below the task name: hours and minutes for today, or a date for older questions. Hover over it for the complete date and time. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
 
-To leave an ordinary conversation question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally. Persistent Issue handoffs and ordinary project work do not offer this button: local archiving cannot replace an answer or a transfer.
+To dismiss an item, click the cross, **Dismiss item**, beside its left-list entry. Task questions, project handoff questions, ordinary project work and stand-in questions all offer this visible, keyboard-accessible action. Select **Dismiss all** above the left list to dismiss all currently loaded pending items. Controls are disabled while archiving; items that cannot be saved remain pending with an error so you can try again. Dismissed items move to **Handled** in the current account’s local storage. Dismissal does not send answers, approve operations, complete or transfer Issues. New questions and later project handoffs still appear normally.
 
 Select **Collapse** or press Esc on a business question card to keep your answers and return to the ordinary message composer. Select **Expand reply** to resume answering. Collapsing never cancels the task or submits an answer. The old card closes after a new message is successfully delivered in the original conversation; failed or queued messages leave the question available to reopen.
 
@@ -145,6 +145,8 @@ After discussing, select the text you want to use and choose **Fill answer** fro
 Async business-question replies use the destination task's model configuration and are not blocked by a model catalog still loading in the current view. Model resolution, device connectivity, and native runtime validation still apply. A question becomes handled only after its answer is accepted.
 
 Answering or cancelling a question in its original task or project view automatically synchronizes and archives it. Handled history retains the source groups. Both handled and dismissed records are stored locally for the current account and survive restarts. Already loaded questions remain available offline and synchronize when the device reconnects. Discovery of questions on a healthy local executor does not depend on its cloud device status.
+
+If a system-notification reply fails while the original question is handled in the task view, **Unsent replies** appears above the left list. Its text and question metadata must be durably saved for this account before the native reply queue releases its copy; failed writes leave the original reply queued. Recovery remains available across restarts and after the latest 100 handled-history entries evict an older question. Select and copy the text to continue in the original conversation; it is never automatically resent and does not reopen the question. Use **Discard this draft** when it is no longer needed. An explicitly accepted answer in the task conversation can also settle a cached native question when task discovery or history reads fail, without granting the cache reply permission. Issue handoff questions remain owned by their authoritative inbox.
 
 A queued Issue answer does not clear the wait. After confirmed acceptance, local history retains settlement identity scoped to the original project, Issue, Runtime and question. This prevents a stale native snapshot from reappearing after a failed read, device-route alias change or offline restart. The record only reconciles the same question: it grants no reply or device access permission and cannot clear another Issue's question.
 
@@ -216,7 +218,7 @@ The titlebar's **Open workspace location** and neighboring IDE dropdown open the
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
-Selecting a writable non-Markdown text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
+Selecting a writable plain text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown and HTML files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
 
 Local file and directory links in an AI response open in the Files tab. Document links with URL-encoded separators in an absolute Windows path are recognized as local references rather than external protocols. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
@@ -247,6 +249,10 @@ You can still collapse the left sidebar while the workspace is expanded, leaving
 While a task is running, the conversation shows the tools in use and the current progress. Completed tool calls collapse into summaries that can be expanded to inspect commands or changed files.
 
 After a parent agent starts a subagent, the subagent activity remains anchored at its original invocation position. Later status, progress, and result updates appear at that position even if the parent continues producing other output; the activity does not move to the end of the conversation or render a second time.
+
+If you send another message to the main conversation or start the next turn while a subagent is running, its later output still belongs to the original subagent activity and does not appear as the parent agent's prose. When history loads in pages, child content joins its owning activity after that activity loads.
+
+A subagent with its own thread finishes on its own completion event and can keep streaming after the parent reply ends. Later child output does not restart the completed parent reply; the panel loads its complete history after the child finishes.
 
 Click a subagent activity to view its execution in the right workspace. The panel shows model-provided reasoning summaries, progress messages, tool calls, and results in order. Content updates live while the subagent runs, and saved process content remains available after completion or reloading the task.
 

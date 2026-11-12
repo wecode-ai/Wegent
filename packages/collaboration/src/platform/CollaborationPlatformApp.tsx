@@ -1921,7 +1921,7 @@ function CollaborationPlatformAppContent({
       (candidate) => candidate.id === resourceId,
     );
     if (agent?.location === "local") {
-      if (host.projectAgentConfiguration?.renderLocalAgentEditor) {
+      if (host.projectAgentConfiguration?.renderProjectAgentEditor) {
         setRootAgentForm({
           mode: "edit",
           source: "local",
@@ -3078,8 +3078,8 @@ function CollaborationPlatformAppContent({
         : null}
       {rootAgentForm?.mode === "edit" &&
       rootAgentForm.source === "local" &&
-      host.projectAgentConfiguration?.renderLocalAgentEditor
-        ? host.projectAgentConfiguration.renderLocalAgentEditor({
+      host.projectAgentConfiguration?.renderProjectAgentEditor
+        ? host.projectAgentConfiguration.renderProjectAgentEditor({
             resourceId: rootAgentForm.resourceId ?? "",
             onClose: () => setRootAgentForm(null),
             onSaved: async () => {

@@ -6,6 +6,7 @@ import { verifyLocalExecutorUsesCloudSocketUrl } from '../modules/cloud-environm
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { waitForScenarioProgress } from '../modules/scenario-progress.mjs'
+import { createWorkbenchControlCollaboration } from '../modules/workbench-control-collaboration.mjs'
 import {
   findRuntimeWorkTask,
   waitForCompletedRuntimeTaskThread,
@@ -74,6 +75,11 @@ function callResult(body, callId) {
 }
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
+  const collaboration = createWorkbenchControlCollaboration({
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+    findValue,
+  })
   let active = false
   let localControl
   let sourceId
@@ -528,6 +534,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       environment.backendUrl = httpProxy.url
     },
     async handleHttp(request, response, url) {
+      if (await collaboration.handleHttp(request, response, url)) return true
       if (
         !active ||
         request.method !== 'POST' ||
@@ -619,6 +626,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
       const { workspacePath } = cloudEnvironment
       assert.ok(typeof workspacePath === 'string' && workspacePath.length > 0)
+      await collaboration.verify(control, workspacePath)
       active = true
       const issue = await request(`/api/v1/cloud-projects/${cloudProject.id}/loop-items`, {
         title: 'Scoped continuation',
@@ -778,6 +786,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
 
     diagnostics() {
       return {
+        collaboration: collaboration.diagnostics(),
         sourceTaskId,
         createdTaskId,
         cloudCreatedTaskId,

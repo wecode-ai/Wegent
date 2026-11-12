@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import {
   archiveInteraction,
-  readInteractionDrafts,
+  readInteractionDraftState,
   readInteractionHistory,
   saveInteractionState,
 } from './interactionStorage'
@@ -29,6 +29,15 @@ const resolution = {
   questionIdentity: JSON.stringify(['backend', 'project', 'ISSUE-1', 'review', 'question']),
   nativeInteractionId: JSON.stringify(['device', 'review', 'item:question']),
 }
+
+it('updates the durable dismissal scope when the same question is ignored after a new handoff', () => {
+  const first = { ...entry(1), dismissed: true as const, dismissedHandoff: 'first' }
+  const second = { ...entry(2), dismissed: true as const }
+  const repeated = { ...first, dismissedHandoff: 'second' }
+  const history = archiveInteraction([second, first], repeated)
+  expect(history).toEqual([second, repeated])
+  expect(archiveInteraction(history, repeated)).toBe(history)
+})
 
 it('persists only complete internally consistent canonical resolution identities', () => {
   const resolved = {
@@ -112,7 +121,7 @@ it('rejects malformed persisted history and drafts without breaking the inbox', 
   localStorage.setItem('history', JSON.stringify([entry(1), null, { id: 'invalid' }]))
   localStorage.setItem('drafts', JSON.stringify({ valid: 'keep this', invalid: {}, null: null }))
   expect(readInteractionHistory('history')).toEqual([entry(1)])
-  expect(readInteractionDrafts('drafts')).toEqual({ valid: 'keep this' })
+  expect(readInteractionDraftState('drafts', 'history')).toEqual({ valid: 'keep this' })
   localStorage.setItem('history', '{}')
   expect(readInteractionHistory('history')).toEqual([])
 })
@@ -125,6 +134,35 @@ it('keeps the newest 100 responses stable when old transcripts are repeatedly re
   expect(next).toHaveLength(100)
   expect(next[0].id).toBe('102')
   expect(next.at(-1)?.id).toBe('3')
+})
+
+it('restores recovery metadata independently of bounded history and upgrades existing string drafts', () => {
+  const interaction = entry(1)
+  const recovery = { text: 'Unsent text', interaction, nativeReplyIds: ['native-1'] }
+  saveInteractionState('drafts', { [interaction.id]: recovery, pending: 'Still editable' })
+  saveInteractionState(
+    'history',
+    Array.from({ length: 101 }, (_, i) => entry(i + 2))
+  )
+  expect(readInteractionHistory('history')).toHaveLength(100)
+  expect(readInteractionDraftState('drafts', 'history')).toEqual({
+    [interaction.id]: recovery,
+    pending: 'Still editable',
+  })
+  saveInteractionState('drafts', { [interaction.id]: 'Older draft' })
+  saveInteractionState('history', [interaction])
+  expect(readInteractionDraftState('drafts', 'history')).toEqual({
+    [interaction.id]: { text: 'Older draft', interaction, nativeReplyIds: [] },
+  })
+})
+
+it('rejects malformed recovery records and metadata for a different interaction', () => {
+  saveInteractionState('drafts', {
+    mismatched: { text: 'Wrong owner', interaction: entry(1), nativeReplyIds: [] },
+    invalid: { text: 'Missing metadata', nativeReplyIds: [] },
+    receipts: { text: 'Invalid receipts', interaction: entry(1), nativeReplyIds: [42] },
+  })
+  expect(readInteractionDraftState('drafts', 'history')).toEqual({})
 })
 
 it('keeps a storage quota failure from changing the accepted response outcome', () => {
@@ -145,4 +183,42 @@ it('keeps a storage quota failure from changing the accepted response outcome', 
 it('acknowledges a successful synchronous storage update', () => {
   expect(saveInteractionState('history', [entry(1)])).toBe(true)
   expect(readInteractionHistory('history')).toEqual([entry(1)])
+})
+
+it('adds local dismissal without losing authoritative resolution or changing history order', () => {
+  const resolved = {
+    ...entry(1),
+    id: resolution.nativeInteractionId,
+    resolvedIssueQuestion: resolution,
+  }
+  const dismissed = archiveInteraction([resolved], { ...resolved, dismissed: true, answeredAt: 9 })
+  expect(dismissed).toEqual([{ ...resolved, dismissed: true }])
+  expect(archiveInteraction(dismissed, resolved)).toBe(dismissed)
+  saveInteractionState('history', dismissed)
+  expect(readInteractionHistory('history')).toEqual(dismissed)
+})
+
+it('validates the exact Issue identity of a local dismissal without granting resolution authority', () => {
+  const dismissed = {
+    ...entry(1),
+    dismissed: true as const,
+    dismissedQuestionIdentity: JSON.stringify([
+      'backend',
+      'project',
+      'ISSUE-1',
+      'review',
+      'question',
+    ]),
+  }
+  saveInteractionState('history', [dismissed])
+  expect(readInteractionHistory('history')).toEqual([dismissed])
+  expect(readInteractionHistory('history')[0].resolvedIssueQuestion).toBeUndefined()
+  for (const invalid of [
+    'not-json',
+    JSON.stringify(['backend', 'project']),
+    JSON.stringify(['other', 'project', 'ISSUE-1', 'review', 'question']),
+  ]) {
+    saveInteractionState('history', [{ ...dismissed, dismissedQuestionIdentity: invalid }])
+    expect(readInteractionHistory('history')).toEqual([])
+  }
 })

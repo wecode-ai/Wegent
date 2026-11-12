@@ -4,6 +4,10 @@ sidebar_position: 34
 
 # E2E Automation
 
+Real macOS desktop tests allow windows larger than the display only when both `VITE_WEWORK_E2E=true` and `WEWORK_E2E_CONTROL_URL` are enabled. This prevents a work area shorter than 1200 from truncating fixed viewports. Native resize commands still wait for the requested actual content dimensions; existing assertions and deadlines remain enforced. The shared `tray-lifecycle` checkpoint verifies a native 1280×1200 resize and restoration in the existing macOS CI job, without another runner or app launch. Ordinary launches retain platform defaults.
+
+A reconnected controller after restart does not establish that the native startup splash has closed. Before asserting main-window focus, reuse `waitForClosedStartupSplash` to observe its actual closure. Activation during startup retains the product's existing splash routing; repeated activation or a longer focus timeout must not conceal this ordering requirement.
+
 Desktop E2E fixtures use `GPT 5.6 Luna`. Real runtime catalogs advertise both `GPT-5.6 Luna` and `GPT 5.6 Luna`, so default-model selection assertions accept these two display names while retaining model ID and provider checks. Task restoration assertions retain the fixture's original display name.
 
 Desktop checkpoint cleanup retains `backend-rs-logs/` so CI can upload Rust gateway startup logs. Settings follows the current global route while retaining the original tab's application route, allowing Back to restore the application.
@@ -362,6 +366,12 @@ for manual, assignment, and scheduler entry points; existing
 real desktop scenarios cover the complete execution flow.
 
 The plugin Python runtime checkpoints `python-runtime,plugin-development` reuse the existing Core 10 shard without adding a runner. Linux and Windows each retain ten Core shards, with every checkpoint and assertion preserved; `.github/scripts/classify-wework-desktop-e2e.sh --all` defines the actual grouping.
+
+The Python descriptor's 200ms deadline covers HTTP headers and body. Credential resolution and the
+final persisted Backend identity check run outside that HTTP deadline, so queued storage reads do not
+become network timeouts. Backend identity and address expiry are checked before use. Parent logs record
+safe failure categories under `parent-python-downloads-failed`, including descriptor timeouts,
+without credentials or download addresses.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
 Timeout diagnostics include the last snapshot. After upstream #4146 bounded isolated

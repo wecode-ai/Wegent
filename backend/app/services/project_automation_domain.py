@@ -18,6 +18,7 @@ from app.models.kind import Kind
 from app.services.execution.team_readiness import (
     validate_team_execution_readiness,
 )
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.project_event_sources import supported_event_type
 from app.services.share import team_share_service
 
@@ -118,6 +119,7 @@ def project_agent(
     )
 
 
+@execution_resource_scope()
 def wegent_team(
     db: Session,
     user_id: int,

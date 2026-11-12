@@ -44,7 +44,7 @@ import type {
   PointerEventHandler,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { ActionMenu } from '@/components/common/ActionMenu'
+import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu'
 import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
@@ -1233,6 +1233,14 @@ function getDeviceUnavailableActionTitle(
   )
 }
 
+function dshMenuItemIcon(name?: string): ActionMenuItem['icon'] {
+  if (!name) return undefined
+  const Icon = ({ className }: { className?: string }) => (
+    <DshIcon name={name} className={className} />
+  )
+  return Icon
+}
+
 function RuntimeTaskRow({
   workspace,
   devices,
@@ -1991,6 +1999,7 @@ function RuntimeTaskRow({
           moveTaskMenu,
           ...conversationMenuActions.map(action => ({
             label: action.title,
+            icon: dshMenuItemIcon(action.icon),
             testId: `runtime-local-task-menu-extension-${action.id}-${task.taskId}`,
             disabled: !workspace.available || !action.enabled,
             onSelect: async () => {
@@ -2330,7 +2339,7 @@ function ProjectItem({
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,
-    runtimeTaskVisibleLimit
+    visibleRuntimeTaskItems
   )
   const canCollapseRuntimeTasks = hasExpandedRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,
@@ -2850,7 +2859,7 @@ function ProjectItem({
                         aria-controls={`project-local-tasks-panel-${project.id}`}
                         className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
-                        {t('workbench.expand_display', '展开显示')}
+                        {t('workbench.show_more', '显示更多')}
                       </button>
                     )}
                     {canCollapseRuntimeTasks && (
@@ -2863,7 +2872,7 @@ function ProjectItem({
                         aria-controls={`project-local-tasks-panel-${project.id}`}
                         className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
-                        {t('workbench.collapse_display', '折叠显示')}
+                        {t('workbench.show_less', '收起')}
                       </button>
                     )}
                   </div>

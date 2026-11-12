@@ -41,6 +41,30 @@ pub(super) fn context(task: &str) -> ControlContext {
 }
 
 #[test]
+fn continuation_restores_selected_mode_from_legacy_execution_snapshot() {
+    let _guard = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+        let root = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::home(root.path().to_str().unwrap());
+        let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+        for (selection_key, option_key) in [("modelSelection", "collaborationMode"), ("model_selection", "collaboration_mode")] {
+            for mode in ["default", "plan"] {
+                let mut link = seed(&handler, "target");
+                link.runtime_handle = json!({"executionRequest":{"collaboration_model":"single"},
+                    selection_key:{"modelName":"test","modelType":"runtime","options":{option_key:mode}}});
+                let payload = handler.control_execution_payload(&link, "Continue original work", "message").await.unwrap();
+                let mut request = execution_request(&payload).unwrap();
+                apply_runtime_payload_metadata(&mut request, &payload);
+                assert_eq!(request.extra["collaborationMode"], mode);
+                assert_eq!(request.extra["collaboration_model"], "single");
+                assert_eq!(request.task_id, "target");
+                assert!(!request.new_session);
+            }
+        }
+    });
+}
+
+#[test]
 fn control_context_preserves_personal_authority_and_denies_all_dispatch_aliases() {
     let original = context("caller").request;
     for key in ["dispatchRole", "dispatch_role", "dispatchId", "dispatch_id"] {

@@ -1,5 +1,17 @@
 # Sourced by test-classify-ci-changes.sh; all assertions share its helpers.
 
+for path in \
+  wework/e2e/desktop/modules/harness-tool-result-order.mjs \
+  wework/e2e/desktop/modules/harness-tool-result-order.d.mts; do
+  assert_desktop_case "harness result order selects its real CLI checkpoint: $path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"local-harness"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$path"
+done
+
 assert_desktop_case "goal synchronization regression has CI coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

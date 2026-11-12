@@ -3,6 +3,7 @@ import {
   type ConnectionDependencyPluginApi,
 } from './standInConnectionDependencies'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getDeviceTimezone } from '@/lib/timezone'
 import type { StandInGeneratedEventMap } from '@/telemetry/generated/standInEvents'
 import type {
   SharedWorkspaceApi,
@@ -207,6 +208,7 @@ export type StandInTelemetryFact = {
 }[keyof StandInGeneratedEventMap]
 
 export interface StandInExecutorApi {
+  deviceIdentity(deviceId: string): Promise<{ deviceId: string; backendDeviceId: string }>
   gitConnection(deviceId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>
   onboarding(userId: number, deviceId: string, language: string): Promise<StandInOnboardingResult>
   completeOnboarding(
@@ -367,14 +369,15 @@ export interface StandInExecutorApi {
   ): Promise<PersonalStandInSettings>
   readTask(
     deviceId: string,
-    taskId: string
+    taskId: string,
+    options?: { resolveActiveProvider?: boolean }
   ): Promise<{ success: boolean; task?: RuntimeTaskSummary; code?: string; error?: string }>
   assignmentTasks(
     userId: number,
     deviceId: string,
     assignments: Array<{ projectId: string; itemId: string; humanAssignmentId: string }>
   ): Promise<{ items: RuntimeTaskSummary[] }>
-  catalog(deviceId: string): Promise<{ models: RunnerModel[] }>
+  catalog(deviceId: string): Promise<{ models: RunnerModel[]; errors?: string[] }>
   run(
     projectId: string,
     issueId: string,
@@ -408,7 +411,21 @@ export function createStandInExecutorApi(
   transport: Request,
   dependencyPlugins?: ConnectionDependencyPluginApi
 ): StandInExecutorApi {
+  const personalReads = new Map<string, Promise<PersonalStandInSettings>>()
   const request: Request = async (method, payload, deviceId) => {
+    const changesProfile = [
+      'runtime.stand_in.personal.save',
+      'runtime.stand_in.personal.lifecycle',
+      'runtime.stand_in.proposal.resolve',
+      'runtime.stand_in.onboarding.complete',
+    ].includes(method)
+    const invalidate = () => {
+      if (!changesProfile) return
+      // A profile may be addressed through more than one verified Runtime route.
+      const prefix = JSON.stringify([payload.userId]).slice(0, -1) + ','
+      for (const key of personalReads.keys()) if (key.startsWith(prefix)) personalReads.delete(key)
+    }
+    invalidate()
     try {
       return await transport(method, payload, deviceId)
     } catch (error) {
@@ -428,6 +445,9 @@ export function createStandInExecutorApi(
         error && typeof error === 'object' ? error : {},
         { message, cause: error }
       )
+    } finally {
+      // A write may commit even when its response fails. Recovery must read afresh.
+      invalidate()
     }
   }
   return {
@@ -451,11 +471,15 @@ export function createStandInExecutorApi(
       )
     },
     onboarding: (userId, deviceId, language) =>
-      request('runtime.stand_in.onboarding.get', { userId, language }, deviceId),
+      request(
+        'runtime.stand_in.onboarding.get',
+        { userId, language, timezone: getDeviceTimezone() },
+        deviceId
+      ),
     completeOnboarding: async (userId, deviceId, weeklyReview, time, language) => {
       const result = await request<StandInOnboardingResult>(
         'runtime.stand_in.onboarding.complete',
-        { userId, weeklyReview, time, language },
+        { userId, weeklyReview, time, language, timezone: getDeviceTimezone() },
         deviceId
       )
       if (result.settings) publishPersonalStandIn(result.settings)
@@ -593,8 +617,23 @@ export function createStandInExecutorApi(
         deviceId
       )
     },
-    personalGet: (userId, deviceId) =>
-      request('runtime.stand_in.personal.get', { userId }, deviceId),
+    deviceIdentity: deviceId => request('runtime.stand_in.device_identity', {}, deviceId),
+    personalGet: (userId, deviceId) => {
+      const key = JSON.stringify([userId, deviceId])
+      const pending = personalReads.get(key)
+      if (pending) return pending
+      const result = request<PersonalStandInSettings>(
+        'runtime.stand_in.personal.get',
+        { userId },
+        deviceId
+      )
+      personalReads.set(key, result)
+      const clear = () => {
+        if (personalReads.get(key) === result) personalReads.delete(key)
+      }
+      void result.then(clear, clear)
+      return result
+    },
     binding: (deviceId, operation = 'get', version, target) =>
       request('runtime.stand_in.binding', { operation, version, target }, deviceId),
     lifecycle: async (userId, deviceId, operation) => {
@@ -615,11 +654,11 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    readTask: async (deviceId, taskId) => {
+    readTask: async (deviceId, taskId, options) => {
       try {
         return await request<Awaited<ReturnType<StandInExecutorApi['readTask']>>>(
           'runtime.tasks.get',
-          { taskId },
+          { taskId, ...(options?.resolveActiveProvider ? { resolveActiveProvider: true } : {}) },
           deviceId
         )
       } catch (error) {
