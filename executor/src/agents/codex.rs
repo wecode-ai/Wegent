@@ -150,6 +150,7 @@ mod startup;
 #[path = "codex/turn_recovery.rs"]
 mod turn_recovery;
 use child::CodexAppServerChild;
+pub(crate) use turn_recovery::same_goal_configuration;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
 mod thread_resume;
@@ -2557,10 +2558,19 @@ async fn run_codex_app_server_turn_on_shared_client(
                 sync_goal_status_from_response(&mut state, &goal_response);
             }
         }
+        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
+        let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let mut restored_quota_goal = false;
         if let Some(goal) = quota_resume.as_ref().and_then(|recovery| recovery.goal.as_ref()) {
             ensure_codex_turn_not_cancelled(&mut cancellation)?;
-            let (response, restored) = turn_recovery::resume_goal(client, &thread_id, goal).await?;
+            let (response, restored) = startup::wait_for_shared_startup(
+                client,
+                &thread_id,
+                &mut startup_deadline,
+                startup_timeout_seconds,
+                &mut cancellation,
+                turn_recovery::resume_goal(client, &thread_id, goal),
+            ).await?;
             let runtime = client.existing_process().await?.notifications;
             turn_recovery::sync_goal_snapshot(
                 &mut state, Some(&runtime), notifications.as_ref(),
@@ -2576,8 +2586,6 @@ async fn run_codex_app_server_turn_on_shared_client(
         let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
-        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
-        let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let active_turn_id = if awaits_initial_goal_turn || resume_goal_only || restored_quota_goal {
             log_executor_event("codex shared goal turn awaiting", &turn_fields);
             None
@@ -2945,62 +2953,71 @@ async fn run_codex_app_server_turn_with_runtime(
         turn_fields.push(("input_items", turn_input.len().to_string()));
         log_executor_event("codex turn request started", &turn_fields);
         ensure_codex_turn_not_cancelled(&mut cancellation)?;
-        let (turn_method, turn_params) = if let Some(goal) = quota_resume
-            .as_ref()
-            .and_then(|recovery| recovery.goal.as_ref())
-        {
-            let current = rpc
-                .request(
+        // Cancellation owns the complete admission/read sequence, including
+        // the Goal snapshot and restoration requests before a turn exists.
+        let read_turn = async {
+            let (turn_method, turn_params) = if let Some(goal) = quota_resume
+                .as_ref()
+                .and_then(|recovery| recovery.goal.as_ref())
+            {
+                let current = with_rpc_timeout(
                     "thread/goal/get",
-                    json!({"threadId": thread_id}),
-                    &mut state,
+                    timeout_seconds,
+                    rpc.request(
+                        "thread/goal/get",
+                        json!({"threadId": thread_id}),
+                        &mut state,
+                    ),
                 )
                 .await?;
-            let params = turn_recovery::goal_resume_params(goal, &current)?
-                .ok_or("Quota recovery cancelled because the goal changed")?;
-            ("thread/goal/set", params)
-        } else if quota_resume.is_some() {
-            (
-                "turn/start",
-                turn_recovery::continuation_params(turn_start_params(
-                    &thread_id,
-                    request,
-                    &launch_config,
-                    Vec::new(),
-                )),
+                let params = turn_recovery::goal_resume_params(goal, &current)?
+                    .ok_or("Quota recovery cancelled because the goal changed")?;
+                ("thread/goal/set", params)
+            } else if quota_resume.is_some() {
+                (
+                    "turn/start",
+                    turn_recovery::continuation_params(turn_start_params(
+                        &thread_id,
+                        request,
+                        &launch_config,
+                        Vec::new(),
+                    )),
+                )
+            } else {
+                (
+                    "turn/start",
+                    turn_start_params(&thread_id, request, &launch_config, turn_input),
+                )
+            };
+            let turn_request_id = with_rpc_timeout(
+                turn_method,
+                timeout_seconds,
+                rpc.send_request(turn_method, turn_params),
             )
-        } else {
-            (
-                "turn/start",
-                turn_start_params(&thread_id, request, &launch_config, turn_input),
+            .await?;
+            rpc.read_turn(
+                turn_request_id,
+                &mut state,
+                json_rpc::TurnReadOptions {
+                    recover_usage_limits: recover_usage_limits
+                        && !request.uses_ephemeral_codex_thread(),
+                    wait_for_goal_continuation: turn_method == "thread/goal/set",
+                    active_turn_started,
+                    overload_turn_recovering,
+                    overload_continuation_params: turn_recovery::continuation_params(
+                        turn_start_params(&thread_id, request, &launch_config, Vec::new()),
+                    ),
+                    notifications,
+                    request_user_input_answers,
+                    auto_approve_mcp_tool_calls,
+                    defer_interactive_forms,
+                    stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(
+                        request,
+                    ),
+                },
             )
+            .await
         };
-        let turn_request_id = with_rpc_timeout(
-            turn_method,
-            timeout_seconds,
-            rpc.send_request(turn_method, turn_params),
-        )
-        .await?;
-        let read_turn = rpc.read_turn(
-            turn_request_id,
-            &mut state,
-            json_rpc::TurnReadOptions {
-                recover_usage_limits: recover_usage_limits
-                    && !request.uses_ephemeral_codex_thread(),
-                active_turn_started,
-                overload_turn_recovering,
-                overload_continuation_params: turn_recovery::continuation_params(
-                    turn_start_params(&thread_id, request, &launch_config, Vec::new()),
-                ),
-                notifications,
-                request_user_input_answers,
-                auto_approve_mcp_tool_calls,
-                defer_interactive_forms,
-                stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(
-                    request,
-                ),
-            },
-        );
         let outcome = if let Some(cancellation) = cancellation.as_mut() {
             tokio::select! {
                 biased;

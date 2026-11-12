@@ -214,13 +214,28 @@ impl Drop for TurnRecovery {
     }
 }
 
+pub(crate) fn same_goal_configuration(expected: Option<&Value>, current: Option<&Value>) -> bool {
+    fn configuration(goal: &Value) -> Value {
+        let mut goal = goal.clone();
+        if let Some(fields) = goal.as_object_mut() {
+            // Accounting advances independently of user edits. Preserve every
+            // other field, including budgets and the goal's creation identity.
+            for field in ["tokensUsed", "timeUsedSeconds", "updatedAt"] {
+                fields.remove(field);
+            }
+        }
+        goal
+    }
+    expected.map(configuration) == current.map(configuration)
+}
+
 pub(super) fn goal_resume_params(
     expected: &Value,
     response: &Value,
 ) -> Result<Option<Value>, String> {
     // Re-read after backoff: never resurrect a deleted, paused, replaced, or
     // otherwise edited goal. Preserve its objective, budget, and accounting.
-    if response.get("goal") != Some(expected) {
+    if !same_goal_configuration(Some(expected), response.get("goal")) {
         return Ok(None);
     }
     Ok(Some(json!({

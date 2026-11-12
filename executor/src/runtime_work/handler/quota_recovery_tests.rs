@@ -245,7 +245,15 @@ fn quota_wait_cancellation_is_durable_and_cannot_be_woken() {
             assert!(
                 handler.local_task_link("waiting").unwrap().runtime_handle["quotaWait"].is_object()
             );
+            // Replaying the saved failed turn after restart cannot complete a
+            // task whose continuation still belongs to the durable queue.
+            handler.store.update_task("waiting", |link| {
+                settle_native_execution(link, "failed");
+            });
             let public = handler.get_task(&json!({"taskId":"waiting"})).unwrap();
+            assert_eq!(public["task"]["status"], "queued");
+            assert_eq!(public["task"]["running"], false);
+            assert_eq!(public["task"]["executionState"]["phase"], "queued");
             assert!(public["task"]["runtimeHandle"]["quotaWait"]["resumeAt"].is_number());
             assert!(!public.to_string().contains("original@example.com"));
             assert!(

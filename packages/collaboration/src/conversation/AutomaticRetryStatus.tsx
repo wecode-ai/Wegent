@@ -12,11 +12,7 @@ export function AutomaticRetryStatus(props: AutomaticRetryStatusProps) {
   return <RetryCountdown key={props.retryAt ?? 'unknown'} {...props} />
 }
 
-function RetryCountdown({
-  reason,
-  retryAt,
-  translate,
-}: AutomaticRetryStatusProps) {
+function RetryCountdown({ reason, retryAt, translate }: AutomaticRetryStatusProps) {
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
     if (!retryAt) return
@@ -34,18 +30,19 @@ function RetryCountdown({
       : remaining > 0
         ? 'overload_retry_in'
         : 'overload_retrying'
+  const message = translate(`conversation.tool_activity.${key}`, undefined, {
+    remaining: formatDuration(Math.ceil(remaining / 1000) * 1000, translate.locale),
+  })
+  const waiting = remaining > 0
   return (
     <div
       className="min-w-0 py-1 text-sm text-text-muted"
       data-testid={`runtime-${reason}-wait-status`}
-      role="status"
     >
-      {translate(`conversation.tool_activity.${key}`, undefined, {
-        remaining: formatDuration(
-          Math.ceil(remaining / 1000) * 1000,
-          translate.locale,
-        ),
-      })}
+      <span role="status" className={waiting ? 'sr-only' : undefined}>
+        {waiting ? translate(`conversation.tool_activity.${reason}_waiting`) : message}
+      </span>
+      {waiting && <span>{message}</span>}
     </div>
   )
 }

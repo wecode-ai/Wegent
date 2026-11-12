@@ -210,7 +210,6 @@ fn overload_goal_resume_preserves_accounting_and_rejects_changes_during_backoff(
         ("status", json!("complete")),
         ("objective", json!("A different task")),
         ("tokenBudget", json!(20000)),
-        ("updatedAt", json!(3)),
         ("createdAt", json!(3)),
     ] {
         let mut current = expected.clone();
@@ -222,6 +221,13 @@ fn overload_goal_resume_preserves_accounting_and_rejects_changes_during_backoff(
     assert!(goal_resume_params(&expected, &json!({"goal": null}))
         .unwrap()
         .is_none());
+    let mut accounted = expected.clone();
+    accounted["tokensUsed"] = json!(1000);
+    accounted["timeUsedSeconds"] = json!(90);
+    accounted["updatedAt"] = json!(3);
+    assert!(goal_resume_params(&expected, &json!({"goal": accounted}))
+        .unwrap()
+        .is_some());
 }
 
 #[test]
@@ -478,6 +484,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
             &mut state,
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
+                wait_for_goal_continuation: false,
                 active_turn_started: Some(Box::new(move |thread_id, turn_id| {
                     active_tx.send((thread_id, turn_id)).unwrap();
                 })),
@@ -590,6 +597,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
             &mut state,
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
+                wait_for_goal_continuation: false,
                 active_turn_started: None,
                 overload_turn_recovering: None,
                 overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
@@ -667,6 +675,7 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
             &mut state,
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
+                wait_for_goal_continuation: false,
                 active_turn_started: None,
                 overload_turn_recovering: None,
                 overload_continuation_params: json!({"threadId": "root-thread", "input": []}),

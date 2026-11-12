@@ -56,7 +56,8 @@ pub(crate) use codex::{
     configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, normalize_reasoning_effort_alias,
     prepare_codex_runtime_notification, reload_skill_configuration, replace_config,
-    select_wework_codex_user_instructions, wework_codex_home, CodexAppToolError,
+    same_goal_configuration, select_wework_codex_user_instructions, wework_codex_home,
+    CodexAppToolError,
     CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
     CODEX_WORKSPACE_PERMISSION_PROFILE,
 };

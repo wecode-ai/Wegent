@@ -9,22 +9,28 @@ const RECOVERY_TIMEOUT_MS = 60_000
 
 export function createDesktopScenario({ workspacePath }) {
   let resetAt = 0
+  let holdQuota = false
   let restartDesktopApp
   const model = createCloudConfigModelService({
-    readUsage: () => ({
-      plan_type: 'enterprise',
-      rate_limit: {
-        allowed: Date.now() >= resetAt * 1000,
-        limit_reached: Date.now() < resetAt * 1000,
-        primary_window: {
-          used_percent: Date.now() < resetAt * 1000 ? 100 : 0,
-          reset_at: resetAt,
-          reset_after_seconds: Math.max(0, resetAt - Math.floor(Date.now() / 1000)),
-          limit_window_seconds: 18_000,
+    readUsage: () => {
+      if (holdQuota && Date.now() >= resetAt * 1000) {
+        resetAt = Math.floor(Date.now() / 1000) + 5
+      }
+      return {
+        plan_type: 'enterprise',
+        rate_limit: {
+          allowed: Date.now() >= resetAt * 1000,
+          limit_reached: Date.now() < resetAt * 1000,
+          primary_window: {
+            used_percent: Date.now() < resetAt * 1000 ? 100 : 0,
+            reset_at: resetAt,
+            reset_after_seconds: Math.max(0, resetAt - Math.floor(Date.now() / 1000)),
+            limit_window_seconds: 18_000,
+          },
+          secondary_window: null,
         },
-        secondary_window: null,
-      },
-    }),
+      }
+    },
   })
   return {
     prepareApp: model.prepareApp,
@@ -40,11 +46,12 @@ export function createDesktopScenario({ workspacePath }) {
       const rpc = (method, params) =>
         requestExecutor(control, method, params, DEFAULT_STEP_TIMEOUT_MS)
       const task = async taskId => (await rpc('runtime.tasks.get', { taskId })).task
-      const create = async (taskId, delaySeconds) => {
+      const create = async (taskId, delaySeconds, holdUntilRestored = false) => {
         const marker = `WEWORK_QUOTA_${taskId}`
         const plan = model.plan(marker, [
           {
             usageLimit: () => {
+              holdQuota = holdUntilRestored
               resetAt = Math.floor(Date.now() / 1000) + delaySeconds
               return resetAt
             },
@@ -92,7 +99,7 @@ export function createDesktopScenario({ workspacePath }) {
       }
 
       const taskId = 'quota-restart'
-      const { created, plan } = await create(taskId, 30)
+      const { created, plan } = await create(taskId, 30, true)
       const beforeRestart = await task(taskId)
       assert.equal(beforeRestart.status, 'queued')
       assert.equal(beforeRestart.running, false, 'Quota waiting occupied a native runner')
@@ -100,15 +107,26 @@ export function createDesktopScenario({ workspacePath }) {
       await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
       await control.command('waitFor', '[data-testid="runtime-quota-wait-status"]')
       await restartDesktopApp()
+      const restored = await waitForValue(
+        () => task(taskId),
+        value => value?.runtimeHandle?.quotaWait && value,
+        'The durable quota wait was not restored after desktop restart',
+        RECOVERY_TIMEOUT_MS
+      )
+      assert.equal(restored.status, 'queued')
+      assert.equal(restored.running, false)
+      assert.equal(restored.threadId, beforeRestart.threadId)
+      assert.equal(plan.count, 1, 'Recovery ran before the restored wait was observed')
+      holdQuota = false
       await waitForValue(
         () => task(taskId),
-        value => value?.status === 'done',
+        value => value?.status === 'done' && plan.count === 2,
         'The quota wait did not resume after a real desktop restart',
         RECOVERY_TIMEOUT_MS
       )
       const resumed = await task(taskId)
       assert.equal(resumed.threadId, beforeRestart.threadId)
-      assert.equal(plan.count, 2, 'Quota recovery repeated a completed request')
+      assert.equal(plan.count, 2, 'Quota recovery must issue exactly one continuation request')
       assert.equal(plan.calls[1].body.model, plan.calls[0].body.model)
       assert.ok(plan.calls[1].at >= resetAt * 1000, 'Recovery ran before the usage window reset')
       const transcript = await rpc('runtime.tasks.transcript', {
@@ -119,8 +137,13 @@ export function createDesktopScenario({ workspacePath }) {
         .flatMap(turn => turn.items ?? [])
         .filter(item => item.type === 'userMessage')
       assert.equal(userItems.length, 1, 'Recovery resubmitted the original user message')
+      assert.ok(
+        JSON.stringify(transcript.turns).includes(`WEWORK_QUOTA_${taskId}_RESUMED`),
+        'The resumed model reply was not saved in the original conversation'
+      )
 
-      const cancelled = await create('quota-cancel', 10)
+      const cancelled = await create('quota-cancel', 10, true)
+      await control.command('waitFor', '[data-testid="runtime-local-task-row-quota-cancel"]')
       await control.command('click', '[data-testid="runtime-local-task-row-quota-cancel"]')
       await control.command('waitFor', '[data-testid="cancel-quota-recovery"]')
       await control.command('click', '[data-testid="cancel-quota-recovery"]')
@@ -130,6 +153,7 @@ export function createDesktopScenario({ workspacePath }) {
         'Cancelling automatic recovery did not remove the durable wait',
         DEFAULT_STEP_TIMEOUT_MS
       )
+      holdQuota = false
       await waitForValue(
         async () => {
           assert.equal(

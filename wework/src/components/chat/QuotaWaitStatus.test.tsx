@@ -28,6 +28,20 @@ test('does not invent a countdown when the service has not supplied a reset time
   expect(screen.getByTestId('runtime-quota-wait-status')).toHaveTextContent('正在查询恢复时间')
 })
 
+test('announces recovery transitions while countdown ticks remain outside the live region', () => {
+  vi.useFakeTimers()
+  render(<QuotaWaitStatus wait={{ resumeAt: Date.now() + 3000 }} />)
+  const announcement = screen.getByRole('status')
+  const waiting = announcement.textContent
+  expect(announcement).toHaveTextContent('等待用原模型自动继续')
+  expect(announcement).not.toHaveTextContent('3秒')
+  act(() => vi.advanceTimersByTime(1000))
+  expect(screen.getByTestId('runtime-quota-wait-status')).toHaveTextContent('2秒')
+  expect(announcement.textContent).toBe(waiting)
+  act(() => vi.advanceTimersByTime(2000))
+  expect(screen.getByRole('status')).toHaveTextContent('正在检查额度恢复情况')
+})
+
 test('offers cancellation while quota waiting has no active model response', () => {
   const onCancel = vi.fn()
   render(<QuotaWaitStatus wait={{ resumeAt: null }} onCancel={onCancel} />)

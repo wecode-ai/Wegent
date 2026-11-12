@@ -136,7 +136,9 @@ impl RuntimeWorkRpcHandler {
             .iter()
             .filter(|turn| turn.local_task_id == task)
             .filter_map(wait)
-            .find(|wait| wait.recovery.goal.as_ref() != goal);
+            .find(|wait| {
+                !crate::agents::same_goal_configuration(wait.recovery.goal.as_ref(), goal)
+            });
         let Some(target) = target else { return };
         let handler = self.clone();
         let task = task.to_owned();
@@ -529,7 +531,10 @@ impl RuntimeWorkRpcHandler {
             )
             .await
             .map_err(quota_error)?;
-        if current.get("goal").filter(|goal| !goal.is_null()) != wait.recovery.goal.as_ref() {
+        if !crate::agents::same_goal_configuration(
+            wait.recovery.goal.as_ref(),
+            current.get("goal").filter(|goal| !goal.is_null()),
+        ) {
             return Err(AppIpcError::new(
                 "quota_recovery_cancelled",
                 "Quota recovery cancelled because the goal changed",
