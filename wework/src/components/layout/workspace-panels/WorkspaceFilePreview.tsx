@@ -811,7 +811,12 @@ export function WorkspaceFilePreview({
     )
   }
 
-  if (!editing && isHtmlFile(file.name) && previewMode === 'preview') {
+  if (
+    !editing &&
+    isHtmlFile(file.name) &&
+    previewMode === 'preview' &&
+    typeof targetLineStart !== 'number'
+  ) {
     return <WorkspaceHtmlPreview file={file} />
   }
 

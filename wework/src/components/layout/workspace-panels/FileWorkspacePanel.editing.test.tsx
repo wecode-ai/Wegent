@@ -77,6 +77,42 @@ test('renders HTML as a page by default and toggles source with an eye action', 
   await waitFor(() => expect(screen.getByTestId('workspace-html-file-preview')).toBeInTheDocument())
 })
 
+test('opens HTML source when a file link targets a specific line', async () => {
+  const htmlFile: WorkspaceTextFileResponse = {
+    ...initial,
+    path: '/repo/line-target.html',
+    name: 'line-target.html',
+    content: '<!doctype html>\n<h1>HTML_LINE_TARGET</h1>',
+    size: 43,
+  }
+  const api = {
+    listWorkspaceEntries: vi.fn(async () => ({
+      path: target.path,
+      entries: [
+        {
+          name: htmlFile.name,
+          path: htmlFile.path,
+          isDirectory: false,
+          size: htmlFile.size,
+        },
+      ],
+    })),
+    readWorkspaceTextFile: vi.fn().mockResolvedValue(htmlFile),
+    writeWorkspaceTextFile: vi.fn(),
+  }
+  render(
+    <FileWorkspacePanel
+      target={target}
+      workspaceFileApi={api}
+      openFileRequest={{ path: htmlFile.path, id: 1, lineStart: 2 }}
+    />
+  )
+
+  await waitFor(() => expect(getWorkspaceCodeText()).toContain('HTML_LINE_TARGET'))
+  expect(screen.queryByTestId('workspace-html-file-preview')).not.toBeInTheDocument()
+  expect(screen.getByTestId('workspace-file-markdown-mode-button')).toHaveTextContent('预览')
+})
+
 test('reopening the current file refreshes its document while retaining the file tab', async () => {
   const external = { ...initial, content: 'const external = 2', revision: 'external' }
   const onOpenFileTab = vi.fn()

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createCloudHtmlFileLinkPreview } from '../modules/markdown-file-preview.mjs'
 import { createWindowsMarkdownFileLinks } from '../modules/windows-markdown-file-links.mjs'
 import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import { createTextAttachmentPreview } from '../modules/text-attachment-preview.mjs'
@@ -94,12 +95,14 @@ async function waitForFileContent(filePath, expectedContent, timeoutMs) {
 }
 
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+  const cloudHtmlLinks = createCloudHtmlFileLinkPreview({ workspacePath, uiTimeoutMs })
   const windowsLinks = createWindowsMarkdownFileLinks({ workspacePath, uiTimeoutMs })
   const textAttachments = createTextAttachmentPreview({ workspacePath, captureScreenshot })
   return {
     async handleHttp(request, response, url) {
       return (
         (await textAttachments.handleHttp(request, response, url)) ||
+        (await cloudHtmlLinks.handleHttp(request, response, url)) ||
         windowsLinks.handleHttp(request, response, url)
       )
     },
@@ -441,6 +444,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         { timeoutMs: uiTimeoutMs }
       )
       await captureScreenshot(control, 'local-file-preview-03-dark-review.png', 'body')
+      await cloudHtmlLinks.verify(control)
       await windowsLinks.verify(control)
       await textAttachments.verify(control)
     },

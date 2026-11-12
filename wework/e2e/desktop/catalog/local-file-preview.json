@@ -10,6 +10,10 @@
     }
   },
   "paths": [
+    "packages/collaboration/src/markdown/*",
+    "wework/src/components/chat/*",
+    "wework/src/components/layout/workspace-panels/*",
+    "wework/e2e/desktop/modules/markdown-file-preview.mjs",
     "packages/collaboration/src/theme/*",
     "wework/src/features/appearance/*",
     "wework/src/styles/*",

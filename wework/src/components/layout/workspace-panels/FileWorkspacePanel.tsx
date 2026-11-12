@@ -345,7 +345,7 @@ export function FileWorkspacePanel({
           pendingNavigationRef.current = null
           setBinaryPreview(null)
           acceptRead(file, requestId)
-          setPreviewMode('preview')
+          setPreviewMode(options?.lineStart === undefined ? 'preview' : 'source')
           setEditing(
             Boolean(file.editable && writeWorkspaceTextFile && !isPreviewableTextFile(file.name))
           )
