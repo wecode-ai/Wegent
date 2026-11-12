@@ -139,7 +139,7 @@ export function createDesktopScenario({
     assert.ok(boundDeviceId, 'The task binding must expose its device identity')
     assert.equal(
       boundDeviceId,
-      currentApp.app_device_id ?? currentApp.device_id,
+      currentApp.execution_target_id,
       'Human AI assistance must run on the current computer, regardless of the project environment'
     )
     assert.equal(

@@ -157,6 +157,12 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         },
         'The notification-triggered task did not complete'
       )
+      const expectedRows = rows.map(row => ({ ...row, stand_in_pending: false }))
+      await until(
+        () => request(`/v1/loop-items/${matching.id}/tasks`),
+        actual => actual.length === 1 && actual[0].stand_in_pending === false,
+        'The completed task must no longer be a reservation'
+      )
       await until(
         () => countAssignments(matching),
         count => count > 0,
@@ -168,7 +174,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       assert.equal(await countAssignments(matching), 1, 'Inbox refresh repeated assignment queries')
       assert.equal(await countAssignments(unmatched), 0)
       assert.equal(modelRequests, 1, 'Inbox refresh duplicated stand-in execution')
-      assert.deepEqual(await request(`/v1/loop-items/${matching.id}/tasks`), rows)
+      assert.deepEqual(await request(`/v1/loop-items/${matching.id}/tasks`), expectedRows)
 
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await reloadMainWindow(control, 'Notification replay did not recover after reload')
@@ -180,7 +186,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       assert.equal(await countAssignments(matching), 1, 'Reload must reuse the existing task')
       assert.equal(await countAssignments(unmatched), 0)
       assert.equal(modelRequests, 1)
-      assert.deepEqual(await request(`/v1/loop-items/${matching.id}/tasks`), rows)
+      assert.deepEqual(await request(`/v1/loop-items/${matching.id}/tasks`), expectedRows)
       await verifyArchivedStandInNotification({
         control,
         request,

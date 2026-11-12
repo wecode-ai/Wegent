@@ -995,4 +995,5 @@ fn executor_home() -> PathBuf {
 mod tests;
 
 mod issue_conversations;
+mod task_materialization;
 use issue_conversations::snapshot_deleted_issue_wakeups;

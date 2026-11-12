@@ -959,11 +959,18 @@ export function WeworkSharedProject({
     async (issue: CollaborationIssue, address: RuntimeTaskAddress) => {
       const requestSequence = ++taskComposerSequenceRef.current
       try {
-        const latestBinding = (
-          await scopedApi.taskBindings?.list(issue.id, String(project.id))
-        )?.find(
-          binding => binding.deviceId === address.deviceId && binding.taskId === address.taskId
+        const bindings = (await scopedApi.taskBindings?.list(issue.id, String(project.id))) ?? []
+        const owned = bindings.filter(
+          binding =>
+            binding.taskId === address.taskId &&
+            String(binding.taskUserId) === String(taskOwnerUserId)
         )
+        if (!owned.length) throw new Error(t('todo.linked_task_unavailable'))
+        const backendDeviceId =
+          project.project_store === 'backend'
+            ? (await services.standInApi!.deviceIdentity(address.deviceId)).backendDeviceId
+            : address.deviceId
+        const latestBinding = owned.find(binding => binding.deviceId === backendDeviceId)
         const availableBinding = await requireIssueTaskAvailable(
           latestBinding,
           taskOwnerUserId,
@@ -972,7 +979,7 @@ export function WeworkSharedProject({
         )
         if (requestSequence !== taskComposerSequenceRef.current) return
         const resolvedAddress = workspaceExecutionAddress(
-          availableBinding,
+          { ...availableBinding, deviceId: backendDeviceId },
           runtimeWork,
           issue.id,
           project.project_store

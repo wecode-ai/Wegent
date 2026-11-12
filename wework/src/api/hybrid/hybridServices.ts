@@ -42,6 +42,7 @@ import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import { createCloudModelCatalog } from './cloudModelCatalog'
+import { canonicalCloudTaskPort } from './canonicalCloudTaskPort'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
@@ -1638,6 +1639,11 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    workspaceRuntimePort: cloudServices.workspaceRuntimePort
+      ? canonicalCloudTaskPort(cloudServices.workspaceRuntimePort, async deviceId =>
+          (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
+        )
+      : undefined,
     localParticipationIdentity: localServices.localParticipationIdentity,
     localIssueHumanRequestsApi: localServices.localIssueHumanRequestsApi,
     composerCatalogApi: {
