@@ -24,6 +24,12 @@ export async function verifyConnectorAccountSwitch({ control, backend, api, slug
     assert.equal(response.payload.ok, true, 'The real connector status RPC failed')
     return response.payload.result
   }
+  const switchAccount = async cloud => {
+    // The shared switch observes the workbench sidebar, not the settings sidebar.
+    await control.command('navigate', 'body', { value: '/' })
+    await switchPersonalPluginAccount(control, cloud)
+    await control.command('navigate', 'body', { value: '/settings/connections' })
+  }
   try {
     const login = await api('/api/auth/login', {
       method: 'POST',
@@ -89,7 +95,7 @@ export async function verifyConnectorAccountSwitch({ control, backend, api, slug
     assert.equal(held.heldCount, 1)
 
     switched = true
-    await switchPersonalPluginAccount(control, recipientCloud)
+    await switchAccount(recipientCloud)
     const next = await until(
       status,
       current =>
@@ -129,7 +135,7 @@ export async function verifyConnectorAccountSwitch({ control, backend, api, slug
     return { oldSyncCompleted: true, restrictedCatalogAbsent: true, restrictedSkillAbsent: true }
   } finally {
     await control.command('releaseLocalExecutorRequestHold', 'body')
-    if (switched) await switchPersonalPluginAccount(control, backend)
+    if (switched) await switchAccount(backend)
     if (restrictedId) await api(`/api/admin/connector-apps/${restrictedId}`, { method: 'DELETE' })
     await api(`/api/admin/users/${recipient.id}`, { method: 'DELETE' })
   }
