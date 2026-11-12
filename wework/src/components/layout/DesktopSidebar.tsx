@@ -2339,7 +2339,7 @@ function ProjectItem({
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,
-    runtimeTaskVisibleLimit
+    visibleRuntimeTaskItems
   )
   const canCollapseRuntimeTasks = hasExpandedRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,

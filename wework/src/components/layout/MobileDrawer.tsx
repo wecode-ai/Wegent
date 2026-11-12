@@ -650,7 +650,7 @@ export function MobileDrawer({
                           )
                           const hasHiddenTasks = hasHiddenRuntimeSidebarTaskItems(
                             taskItems,
-                            runtimeTaskVisibleLimit
+                            visibleTaskItems
                           )
                           const canCollapseTasks = hasExpandedRuntimeSidebarTaskItems(
                             taskItems,
