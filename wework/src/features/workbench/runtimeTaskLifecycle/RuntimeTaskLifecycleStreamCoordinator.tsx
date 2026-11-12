@@ -43,6 +43,8 @@ const RECOVERY_PAGE_SIZE = 5
 const RECOVERY_CONCURRENCY = 2
 const RECOVERY_RETRY_DELAY_MS = 1_000
 const RECOVERY_MAX_RETRY_DELAY_MS = 30_000
+// A missed terminal notification must not leave an active pane streaming forever.
+const ACTIVE_TURN_SETTLEMENT_CHECK_MS = 5_000
 
 interface LifecycleEventPayload {
   task?: import('@/types/api').RuntimeTaskSummary
@@ -432,16 +434,74 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       }
     }
 
+    const settlementChecks = new Map<string, ReturnType<typeof setTimeout>>()
+    const clearSettlementCheck = (address: RuntimeTaskAddress) => {
+      const key = runtimeConversationKey(address)
+      const timer = settlementChecks.get(key)
+      if (timer === undefined) return
+      clearTimeout(timer)
+      settlementChecks.delete(key)
+    }
+    const watchActiveTurnSettlement = (address: RuntimeTaskAddress) => {
+      if (disposed) return
+      const key = runtimeConversationKey(address)
+      if (settlementChecks.has(key)) return
+
+      const check = async () => {
+        settlementChecks.delete(key)
+        if (disposed) return
+        const expected = store.getTask(address)
+        if (!expected?.turn.active) return
+        const activeTurnId = expected.turn.id
+
+        const getTask = executorClient.runtime.getRuntimeTask
+        if (!getTask) return
+        try {
+          const task = await getTask(address, { signal: reads.signal })
+          if (disposed) return
+          if (task) store.syncRuntimeTask(address, task, expected)
+          const current = store.getTask(address)
+          if (current?.turn.active) {
+            watchActiveTurnSettlement(address)
+            return
+          }
+          const terminalTurnId = task?.executionState?.latestTurnId ?? activeTurnId
+          if (!terminalTurnId) return
+          const outcome = task?.executionState?.outcome ?? task?.executionState?.executionOutcome
+          if (outcome) {
+            await reconcileTerminalTranscript(address, outcome, terminalTurnId, true)
+          }
+        } catch (error) {
+          if (disposed) return
+          console.warn('[Wework] Runtime turn settlement check failed', {
+            deviceId: address.deviceId,
+            taskId: address.taskId,
+            error,
+          })
+          if (store.getTask(address)?.turn.active) watchActiveTurnSettlement(address)
+        }
+      }
+
+      settlementChecks.set(
+        key,
+        setTimeout(() => {
+          void check()
+        }, ACTIVE_TURN_SETTLEMENT_CHECK_MS)
+      )
+    }
+
     const unsubscribe = services.chatStream.subscribe({
       onRuntimeTurnUpdated: payload => {
         const address = matchingLifecycleAddress(store, payload)
         if (address && payload.task) store.syncRuntimeTask(address, payload.task)
+        if (address && payload.status === 'started') watchActiveTurnSettlement(address)
       },
       onChatStart: payload => {
         const address = matchingLifecycleAddress(store, payload)
         if (!address) return
         if (payload.task) store.syncRuntimeTask(address, payload.task)
         store.turnStarted(address, payload.subtaskId?.trim() || null)
+        watchActiveTurnSettlement(address)
       },
       onBlockCreated: payload => {
         const request = pendingRequestUserInputBlockPayload(payload)
@@ -454,6 +514,8 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         )
       },
       onChatDone: payload => {
+        const address = matchingLifecycleAddress(store, payload)
+        if (address) clearSettlementCheck(address)
         const match = settleMatchingTask(payload, 'succeeded')
         if (match) {
           void reconcileTerminalTranscript(
@@ -465,6 +527,8 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         }
       },
       onChatError: payload => {
+        const address = matchingLifecycleAddress(store, payload)
+        if (address) clearSettlementCheck(address)
         const match = settleMatchingTask(
           payload,
           isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed'
@@ -503,6 +567,8 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       }
       disposed = true
       if (retryTimer !== null) clearTimeout(retryTimer)
+      for (const timer of settlementChecks.values()) clearTimeout(timer)
+      settlementChecks.clear()
       reads.abort()
       unsubscribeSystemResume()
       unsubscribe()

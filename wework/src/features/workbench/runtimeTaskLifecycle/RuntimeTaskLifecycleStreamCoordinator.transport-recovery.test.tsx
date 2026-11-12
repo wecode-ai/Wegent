@@ -65,6 +65,12 @@ function setup() {
     services,
     resume: () => resume(),
     recover: () => handlers.onRuntimeEventLagged?.({ skipped: 0 }),
+    startTurn: () =>
+      handlers.onChatStart?.({
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        subtaskId: 'turn-1',
+      }),
     mount: () =>
       render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />),
   }
@@ -75,6 +81,51 @@ afterEach(() => {
   vi.restoreAllMocks()
   clearRuntimeConversationCacheForTests()
   delete window.weworkElectronLifecycle
+})
+
+test('reconciles a completed turn when its terminal stream event is lost', async () => {
+  vi.useFakeTimers()
+  const { store, runtime, mount, startTurn } = setup()
+  runtime.getRuntimeTask.mockResolvedValue(nativeTask(false, '2'))
+  mount()
+
+  await act(async () => startTurn())
+  expect(store.getTask(address)?.turn.phase).toBe('streaming')
+  expect(runtime.getRuntimeTask).not.toHaveBeenCalled()
+
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(runtime.getRuntimeTask).toHaveBeenCalledExactlyOnceWith(address, {
+    signal: expect.any(AbortSignal),
+  })
+  expect(runtime.getRuntimeTranscript).toHaveBeenCalledOnce()
+  expect(store.getTask(address)?.turn.phase).toBe('idle')
+  expect(getRuntimeConversationMessages(address).at(-1)?.content).toBe('已恢复的 AI 输出')
+
+  await act(() => vi.advanceTimersByTimeAsync(30_000))
+  expect(runtime.getRuntimeTask).toHaveBeenCalledOnce()
+})
+
+test('keeps checking an active turn without loading its transcript early', async () => {
+  vi.useFakeTimers()
+  const { store, runtime, mount, startTurn } = setup()
+  runtime.getRuntimeTask
+    .mockResolvedValueOnce(nativeTask(true, '2'))
+    .mockResolvedValueOnce(nativeTask(false, '3'))
+  mount()
+
+  await act(async () => startTurn())
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(runtime.getRuntimeTask).toHaveBeenCalledOnce()
+  expect(runtime.getRuntimeTranscript).not.toHaveBeenCalled()
+  expect(store.getTask(address)?.turn.phase).toBe('streaming')
+
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(runtime.getRuntimeTask).toHaveBeenCalledTimes(2)
+  expect(runtime.getRuntimeTranscript).toHaveBeenCalledOnce()
+  expect(store.getTask(address)?.turn.phase).toBe('idle')
 })
 
 test('refreshes the cloud owner state even while the local list and transcript are pending', async () => {
