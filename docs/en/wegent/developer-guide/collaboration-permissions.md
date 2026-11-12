@@ -146,9 +146,19 @@ context and an exact Bot name, namespace and owner match; it never grants source
 editing in another group. Team creation and member replacement check reference
 authority. Existing Skill, knowledge-base and routing references may be retained
 unchanged, while additions and replacements check the actual editor. Custom
-Models remain in the Bot owner's scope. `test_bot_kinds_permissions.py` covers
+Models remain in the Bot owner's scope. New predefined selections must resolve
+to the same model for the editor and the persisted owner-side reference; missing
+models and same-name private/public shadowing are rejected. Group model reads
+reuse current namespace membership and approved capability references.
+`test_bot_team_model_selection.py` protects selection identity, reload and
+independent group authority. `test_bot_kinds_permissions.py` covers
 real persistence and denial branches; CI Chromium's `team-share-scope.spec.ts`
-covers private Skill preservation, reload and cross-group denial. CP10, CP13 and
+covers private Skill preservation, model selection, reload and cross-group denial.
+Editors hydrate missing private Bot definitions through the authorized Team detail,
+not the group catalog, and block saves on incomplete or failed loading. Unchanged
+private model references retain their definition and Shell identity without
+granting new private model selections. `useTeamLeaderBot.test.tsx` protects
+hydration, denial, stale response isolation and exact private model retention. CP10, CP13 and
 all other invariants are unchanged.
 
 Desktop personal sessions and Issue-bound sessions both register `wework_space`; cloud links in the prompt no longer determine tool availability. Codex uses the same native deferred tool discovery as the built-in browser; Claude enables native tool search by default. Initialization supplies brief routing instructions without reading projects, Issues or comments; detailed workflows load with tool descriptions. Without a binding, `get_current_context` returns `bound: false`; `list_spaces` and explicit target arguments discover resources. Bindings supply defaults only. Unbound contexts reuse transport only when the backend, credentials and capability surface match exactly; bound grants always receive independent contexts. Follow-up turns reload threads only when MCP configuration or approval boundaries change, preserving background processes. Process restarts and thread unloads discard loaded configuration records. Tool calls still enforce resource permissions and dispatch scope. Human assignments retain personal execution identity; public stand-in Issue conversations use their validated owner and role identity independently of a human assignment. Dispatch IDs correlate workflow activity without granting agent roles. Explicit agent roles still enforce dispatch scope; invalid roles or missing project/Issue bindings reject startup. The `project-space-tool-discovery` desktop CI checkpoint covers deferred discovery, explicit reads and persisted comments from a personal session. MCP unit tests cover initialization without data reads, authorization denials and dispatch boundaries.

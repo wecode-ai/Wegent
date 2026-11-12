@@ -565,4 +565,208 @@ test.describe('Agent share scope', () => {
       }
     }
   })
+  test('group editor model selections persist in the creator scope without private shadowing', async ({
+    browser,
+    request,
+  }) => {
+    const prefix = `e2e-model-scope-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const fixture = await createShareScopeFixture(request, prefix)
+    const privateModels: Array<{ api: ApiClient; path: string }> = []
+    const publicModelIds: number[] = []
+    const botPath = `/api/bots/${fixture.groupTeamBotId}`
+    const ownerModelName = `${prefix}-owner-model`
+    const editorModelName = `${prefix}-editor-model`
+    const publicModelName = `${prefix}-public-model`
+    let page: Page | undefined
+
+    const readSelection = async () => {
+      const response = await fixture.ownerApi.get<{
+        agent_config: { bind_model: string; bind_model_type: string }
+        system_prompt: string
+      }>(botPath)
+      expect(response.status, JSON.stringify(response.data)).toBe(200)
+      return response.data!
+    }
+
+    try {
+      for (const [api, name] of [
+        [fixture.ownerApi, ownerModelName],
+        [fixture.developerApi, editorModelName],
+      ] as const) {
+        const path = '/api/v1/namespaces/default/models'
+        const created = await api.post(path, {
+          apiVersion: 'agent.wecode.io/v1',
+          kind: 'Model',
+          metadata: { name, namespace: 'default' },
+          spec: { modelConfig: { model_id: `${name}-provider` } },
+        })
+        expect(created.status, JSON.stringify(created.data)).toBe(201)
+        privateModels.push({ api, path: `${path}/${name}` })
+      }
+      for (const name of [ownerModelName, publicModelName]) {
+        const created = await fixture.ownerApi.adminCreatePublicModel({
+          name,
+          json: {
+            apiVersion: 'agent.wecode.io/v1',
+            kind: 'Model',
+            metadata: { name, namespace: 'default' },
+            spec: { modelConfig: { model_id: `${name}-public-provider` } },
+          },
+        })
+        expect([200, 201], JSON.stringify(created.data)).toContain(created.status)
+        publicModelIds.push((created.data as { id: number }).id)
+      }
+
+      const configured = await fixture.ownerApi.put(botPath, {
+        agent_config: { bind_model: ownerModelName, bind_model_type: 'user' },
+      })
+      expect(configured.status, JSON.stringify(configured.data)).toBe(200)
+
+      page = await openUserPage(browser, fixture.developerToken)
+      await page.goto('/resource-library?tab=mine&type=agent&source=group')
+      const card = page.getByTestId(`team-card-${fixture.groupTeamId}`)
+      await expect(card).toBeVisible({ timeout: 20000 })
+      await card.getByTestId(`edit-team-button-${fixture.groupTeamId}`).click()
+      const dialog = page.getByTestId('team-edit-dialog')
+      await expect(dialog.getByTestId('simple-model-select')).toHaveText(ownerModelName)
+      await dialog.getByTestId('simple-prompt-textarea').fill('Browser retains the private model.')
+      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).click()
+      await expect(dialog).toBeHidden({ timeout: 30000 })
+      const browserSaved = await readSelection()
+      expect(browserSaved.agent_config).toMatchObject({
+        bind_model: ownerModelName,
+        bind_model_type: 'user',
+      })
+      expect(browserSaved.system_prompt).toBe('Browser retains the private model.')
+
+      const retained = await fixture.developerApi.put(botPath, {
+        team_id: fixture.groupTeamId,
+        agent_config: { bind_model: ownerModelName, bind_model_type: 'user' },
+        system_prompt: 'Creator model remains bound after a group editor save.',
+      })
+      expect(retained.status, JSON.stringify(retained.data)).toBe(200)
+      const original = await readSelection()
+      expect(original.agent_config).toMatchObject({
+        bind_model: ownerModelName,
+        bind_model_type: 'user',
+      })
+      expect(original.system_prompt).toBe('Creator model remains bound after a group editor save.')
+
+      const restricted = await fixture.ownerApi.adminUpdatePublicModel(publicModelIds[1], {
+        json: {
+          apiVersion: 'agent.wecode.io/v1',
+          kind: 'Model',
+          metadata: { name: publicModelName, namespace: 'default' },
+          spec: {
+            modelConfig: { model_id: `${publicModelName}-public-provider` },
+            allowedUsersEnabled: true,
+            allowedUsers: [REGULAR_USER.username],
+          },
+        },
+      })
+      expect(restricted.status, JSON.stringify(restricted.data)).toBe(200)
+      const ownerDenied = await fixture.developerApi.put(botPath, {
+        team_id: fixture.groupTeamId,
+        agent_config: { bind_model: publicModelName, bind_model_type: 'public' },
+      })
+      expect(ownerDenied.status, JSON.stringify(ownerDenied.data)).toBe(403)
+      expect((await readSelection()).agent_config).toEqual(original.agent_config)
+      const unrestricted = await fixture.ownerApi.adminUpdatePublicModel(publicModelIds[1], {
+        json: {
+          apiVersion: 'agent.wecode.io/v1',
+          kind: 'Model',
+          metadata: { name: publicModelName, namespace: 'default' },
+          spec: { modelConfig: { model_id: `${publicModelName}-public-provider` } },
+        },
+      })
+      expect(unrestricted.status, JSON.stringify(unrestricted.data)).toBe(200)
+
+      for (const agentConfig of [
+        { bind_model: `${prefix}-missing-model` },
+        { bind_model: editorModelName },
+        { bind_model: ownerModelName, bind_model_type: 'public' },
+      ]) {
+        const rejected = await fixture.developerApi.put(botPath, {
+          team_id: fixture.groupTeamId,
+          agent_config: agentConfig,
+          system_prompt: 'An invalid selection must not change the prompt.',
+        })
+        expect(rejected.status, JSON.stringify(rejected.data)).toBe(403)
+        const unchanged = await readSelection()
+        expect(unchanged.agent_config).toEqual(original.agent_config)
+        expect(unchanged.system_prompt).toBe(original.system_prompt)
+      }
+
+      for (const agentConfig of [
+        { bind_model: publicModelName },
+        { bind_model: publicModelName, bind_model_type: 'public' },
+      ]) {
+        const selected = await fixture.developerApi.put(botPath, {
+          team_id: fixture.groupTeamId,
+          agent_config: agentConfig,
+        })
+        expect(selected.status, JSON.stringify(selected.data)).toBe(200)
+        expect((await readSelection()).agent_config).toMatchObject({
+          bind_model: publicModelName,
+          bind_model_type: 'public',
+        })
+      }
+
+      // A different name also must not install a public reference shadowed
+      // by a creator-private model when the creator subsequently reloads it.
+      const shadowed = await fixture.developerApi.put(botPath, {
+        team_id: fixture.groupTeamId,
+        agent_config: { bind_model: ownerModelName, bind_model_type: 'public' },
+      })
+      expect(shadowed.status, JSON.stringify(shadowed.data)).toBe(403)
+      expect((await readSelection()).agent_config).toMatchObject({
+        bind_model: publicModelName,
+        bind_model_type: 'public',
+      })
+
+      const groupModelName = `${prefix}-group-model`
+      const groupModelPath = `/api/v1/namespaces/${fixture.groupName}/models`
+      const groupModel = await fixture.developerApi.post(groupModelPath, {
+        apiVersion: 'agent.wecode.io/v1',
+        kind: 'Model',
+        metadata: { name: groupModelName, namespace: fixture.groupName },
+        spec: { modelConfig: { model_id: `${prefix}-group-provider` } },
+      })
+      expect(groupModel.status, JSON.stringify(groupModel.data)).toBe(201)
+      privateModels.push({
+        api: fixture.developerApi,
+        path: `${groupModelPath}/${groupModelName}`,
+      })
+      for (const agentConfig of [
+        { bind_model: groupModelName, bind_model_namespace: fixture.groupName },
+        {
+          bind_model: groupModelName,
+          bind_model_namespace: fixture.groupName,
+          bind_model_type: 'group',
+        },
+      ]) {
+        const selected = await fixture.developerApi.put(botPath, {
+          team_id: fixture.groupTeamId,
+          agent_config: agentConfig,
+        })
+        expect(selected.status, JSON.stringify(selected.data)).toBe(200)
+        expect((await readSelection()).agent_config).toMatchObject({
+          bind_model: groupModelName,
+          bind_model_namespace: fixture.groupName,
+          bind_model_type: 'group',
+        })
+      }
+    } finally {
+      await page?.context().close()
+      for (const { api, path } of privateModels) {
+        const removed = await api.delete(path)
+        expect([200, 204], JSON.stringify(removed.data)).toContain(removed.status)
+      }
+      for (const modelId of publicModelIds) {
+        const removed = await fixture.ownerApi.adminDeletePublicModel(modelId)
+        expect([200, 204], JSON.stringify(removed.data)).toContain(removed.status)
+      }
+      await fixture.cleanup()
+    }
+  })
 })

@@ -31,6 +31,7 @@ from app.services.adapters.shell_utils import (
 )
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
+from app.services.capability_lookup import ExecutionCapabilityLookup
 from app.services.group_permission import check_group_permission
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.skill_binding_service import skill_binding_service
@@ -365,8 +366,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             model_name: Model name
             namespace: Namespace
             owner_id: Owner user ID used for private model lookup
-            model_type: Optional model type ('public' or 'user').
-                       If None, tries user models first, then public.
+            model_type: Optional model type ('public', 'user' or 'group').
+                       Group namespaces resolve current direct or shared authority;
+                       default auto-detection tries private models before public.
             viewer_id: Requesting user ID used for public model whitelist
                        enforcement. Defaults to owner_id.
 
@@ -381,6 +383,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         import logging
 
         logger = logging.getLogger(__name__)
+
+        if namespace != "default" and model_type in (None, "group"):
+            lookup = ExecutionCapabilityLookup(db, owner_id)
+            if namespace not in lookup.groups:
+                return None
+            return lookup.group("Model", model_name, [namespace]) or lookup.referenced(
+                "Model", model_name, namespace
+            )
 
         if model_type == "user":
             # Only look in user's private models
@@ -510,6 +520,26 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             model_type=None,
             viewer_id=viewer_id,
         )
+
+    def _require_shared_model_reference(
+        self,
+        db: Session,
+        *,
+        name: str,
+        namespace: str,
+        owner_id: int,
+        editor_id: int,
+        model_type: Optional[str],
+    ) -> None:
+        """Require a new selection to reload as the same model for the Bot owner."""
+        selected = self._get_model_by_name_and_type(
+            db, name, namespace, editor_id, model_type
+        )
+        persisted = self._get_model_by_name(db, name, namespace, owner_id)
+        if not selected or not persisted or selected.id != persisted.id:
+            raise HTTPException(
+                403, "Model selection is unavailable in the Bot owner's scope"
+            )
 
     # Note: _get_shell_info_by_name has been moved to shell_utils.py
     # Use get_shell_info_by_name from shell_utils instead
@@ -1220,13 +1250,17 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     and existing_ref.name == model_name
                     and existing_ref.namespace == model_namespace
                 )
-                if (
-                    model_type == "user"
-                    and bot.user_id != user_id
-                    and new_model_reference
-                ):
-                    raise HTTPException(
-                        403, "Cannot bind another owner's private model"
+                if not new_model_reference and model_type and model:
+                    selected_model = self._get_model_by_name_and_type(
+                        db,
+                        model_name,
+                        model_namespace,
+                        bot.user_id,
+                        model_type,
+                        viewer_id=user_id,
+                    )
+                    new_model_reference = (
+                        selected_model is None or selected_model.id != model.id
                     )
                 if (
                     model_type == "group"
@@ -1236,6 +1270,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     )
                 ):
                     raise HTTPException(403, "Group model access denied")
+                if bot.user_id != user_id and new_model_reference and model_name:
+                    self._require_shared_model_reference(
+                        db,
+                        name=model_name,
+                        namespace=model_namespace,
+                        owner_id=bot.user_id,
+                        editor_id=user_id,
+                        model_type=model_type,
+                    )
                 logger.info(
                     f"[DEBUG] Predefined model detected, updating modelRef to: {model_name}, type: {model_type}, namespace: {model_namespace}"
                 )
@@ -1299,16 +1342,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     model_type,
                     viewer_id=user_id,
                 )
-                if (
-                    new_model_reference
-                    and bot.user_id != user_id
-                    and model is not None
-                    and model.user_id != 0
-                    and model.namespace == "default"
-                ):
-                    raise HTTPException(
-                        403, "Cannot bind another owner's private model"
-                    )
                 return_agent_config = new_agent_config
             else:
                 # For custom config, we need to check if we should update existing model or create new one
