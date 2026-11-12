@@ -57,7 +57,7 @@ class SharedTaskService:
         """Create and persist a new task share link."""
         share_token = self.generate_share_token(owner_user_id, task_id)
         share_link = ShareLink(
-            resource_type=ResourceType.TASK.value,
+            resource_type=ResourceType.TASK_SHARE.value,
             resource_id=task_id,
             share_token=share_token,
             token_hash=self._hash_share_token(share_token),
@@ -82,7 +82,14 @@ class SharedTaskService:
             db.query(ShareLink)
             .filter(
                 ShareLink.token_hash == self._hash_share_token(share_token),
-                ShareLink.resource_type == ResourceType.TASK.value,
+                (
+                    (ShareLink.resource_type == ResourceType.TASK_SHARE.value)
+                    & (ShareLink.token_version == ShareLink.OPAQUE_TOKEN_VERSION)
+                )
+                | (
+                    (ShareLink.resource_type == ResourceType.TASK.value)
+                    & (ShareLink.token_version == ShareLink.LEGACY_TOKEN_VERSION)
+                ),
                 ShareLink.is_active.is_(True),
             )
             .first()

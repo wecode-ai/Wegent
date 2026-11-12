@@ -36,6 +36,11 @@ class TaskShareService(UnifiedShareService):
     def __init__(self):
         super().__init__(ResourceType.TASK)
 
+    @property
+    def _revocable_resource_type_variants(self) -> list[str]:
+        """Revoking task sharing also revokes read-only links, never invitations."""
+        return [*self._resource_type_variants, ResourceType.TASK_SHARE.value]
+
     def _get_resource(
         self, db: Session, resource_id: int, user_id: int
     ) -> Optional[TaskResource]:

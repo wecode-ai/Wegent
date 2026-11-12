@@ -31,6 +31,7 @@ class ResourceType(str, PyEnum):
 
     TEAM = "Team"
     TASK = "Task"
+    TASK_SHARE = "TaskShare"
     TASK_INVITE = "TaskInvite"
     KNOWLEDGE_BASE = "KnowledgeBase"
     PLUGIN = "Plugin"
@@ -56,7 +57,7 @@ class ShareLink(Base):
 
     Stores share link configurations including:
     - Target resource (type + id)
-    - Encrypted share token
+    - Persisted share token
     - Approval requirements
     - Default permission level
     - Expiration settings

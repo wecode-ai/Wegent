@@ -152,20 +152,6 @@ struct TeamKindRow {
     kinds_json: Json<OpaqueJson>,
 }
 
-/// One active `share_links` row for a hashed task token.
-#[derive(Debug, FromMysqlRow)]
-struct TaskShareLinkRow {
-    share_links_resource_id: i64,
-    share_links_created_by_user_id: i64,
-    token_version: i32,
-}
-
-const TASK_SHARE_LINK_QUERY: &str = "SELECT share_links.resource_id AS \
-     share_links_resource_id, share_links.created_by_user_id AS \
-     share_links_created_by_user_id, share_links.token_version AS token_version FROM share_links WHERE \
-     share_links.token_hash = ? AND share_links.resource_type = 'Task' AND \
-     share_links.is_active = true AND share_links.expires_at > UTC_TIMESTAMP() LIMIT 1";
-
 /// GET /api/tasks/share/public: optional session for version-aware authorization.
 #[brz_http_server::get("/api/tasks/share/public", access = optional)]
 async fn get_public_shared_task(
@@ -190,17 +176,14 @@ async fn run(
     token: &str,
     viewer_id: Option<i64>,
 ) -> Result<PublicSharedTaskResponse, FastApiError> {
-    let digest = super::token::token_hash(token);
-    let share_link: Option<TaskShareLinkRow> = state
-        .mysql
-        .fetch_optional(TASK_SHARE_LINK_QUERY, (digest,))
+    let share_link = crate::share_access::find_task_share_link(state, token)
         .await
         .map_err(internal)?;
     let Some(info) = share_link else {
         return Err(bad_request(INVALID_SHARE_LINK));
     };
-    let user_id = info.share_links_created_by_user_id;
-    let task_id = info.share_links_resource_id;
+    let user_id = info.created_by_user_id;
+    let task_id = info.resource_id;
     crate::share_access::require_task_access(state, info.token_version, task_id, viewer_id).await?;
 
     // `task_store.get_task_by_states(states=is_active_query(), user_id=user_id)`.

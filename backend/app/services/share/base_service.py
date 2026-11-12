@@ -90,6 +90,11 @@ class UnifiedShareService(ABC):
         return [self.resource_type.value]
 
     @property
+    def _revocable_resource_type_variants(self) -> list[str]:
+        """Link types revoked together, independently of issuance and joining."""
+        return self._resource_type_variants
+
+    @property
     def _approved_status_variants(self) -> list[str]:
         """Return approved status values to query, handling legacy case formats."""
         return list(APPROVED_MEMBER_STATUS_VALUES)
@@ -311,7 +316,8 @@ class UnifiedShareService(ABC):
             )
         except Exception as e:
             logger.error(
-                f"[create_share_link] FAILED to commit share_link: {type(e).__name__}: {str(e)}"
+                "[create_share_link] FAILED to commit share_link: %s",
+                type(e).__name__,
             )
             logger.error(
                 "Share link details that failed: "
@@ -322,7 +328,10 @@ class UnifiedShareService(ABC):
                 token_hash[:12],
                 user_id,
             )
-            raise
+            db.rollback()
+            raise HTTPException(
+                status_code=500, detail="Internal server error"
+            ) from None
 
         db.refresh(share_link)
 
@@ -377,12 +386,10 @@ class UnifiedShareService(ABC):
             )
 
         # Note: Database may store resource_type in different formats
-        resource_type_variants = self._resource_type_variants
-
         share_links = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type.in_(resource_type_variants),
+                ShareLink.resource_type.in_(self._revocable_resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active.is_(True),
             )

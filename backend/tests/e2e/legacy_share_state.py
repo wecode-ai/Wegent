@@ -170,6 +170,8 @@ def main() -> None:
             .filter(
                 ShareLink.created_by_user_id == owner.id,
                 or_(
+                    (ShareLink.resource_type == "TaskShare")
+                    & (ShareLink.resource_id == task.id),
                     (ShareLink.resource_type == "TaskInvite")
                     & (ShareLink.resource_id == task.id),
                     *[

@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use brz_mysql::{FromMysqlRow, MysqlResult, MysqlRow};
+use brz_mysql::{MysqlResult, MysqlRow};
 
 use super::auth::UserRow;
 use super::context_store;
@@ -28,12 +28,6 @@ use crate::state::AppState;
 
 /// `ContextType.ATTACHMENT`.
 const CONTEXT_TYPE_ATTACHMENT: &str = "attachment";
-
-const TASK_SHARE_LINK_QUERY: &str = "SELECT share_links.resource_id AS resource_id, \
-     share_links.created_by_user_id AS created_by_user_id, \
-     share_links.token_version AS token_version FROM share_links \
-     WHERE share_links.token_hash = ? AND share_links.resource_type = 'Task' \
-     AND share_links.is_active = true AND share_links.expires_at > UTC_TIMESTAMP() LIMIT 1";
 
 /// `db.query(User).filter(User.id == user_id, User.is_active == True).first()`:
 /// every mapped column, aliased `users_<column>` like SQLAlchemy's labeled
@@ -55,13 +49,6 @@ const USER_BY_ID_QUERY: &str = "SELECT users.id AS users_id, \
 pub struct ShareInfo {
     pub user_id: i64,
     pub task_id: i64,
-}
-
-#[derive(Debug, FromMysqlRow)]
-struct ShareLinkRow {
-    resource_id: i64,
-    created_by_user_id: i64,
-    token_version: i32,
 }
 
 /// `_validate_share_token_access`: the same attachment access the source
@@ -140,9 +127,7 @@ async fn decode_share_token(
     share_token: &str,
     viewer_id: Option<i64>,
 ) -> Result<Option<ShareInfo>, FastApiError> {
-    let share_link: Option<ShareLinkRow> = state
-        .mysql
-        .fetch_optional(TASK_SHARE_LINK_QUERY, (token_hash(share_token),))
+    let share_link = crate::share_access::find_task_share_link(state, share_token)
         .await
         .map_err(|error| {
             tracing::error!(%error, "share-token link lookup failed");
@@ -185,11 +170,6 @@ async fn decode_share_token(
     Ok(Some(info))
 }
 
-/// SHA-256(token) as lowercase hex, matching `share_links.token_hash`.
-fn token_hash(token: &str) -> String {
-    crate::share_access::token_hash(token)
-}
-
 /// `subqueryload(Subtask.contexts)`: the contexts of one subtask, the source
 /// renders the subtask id as an inline literal inside a comma-separated list
 /// (as `ShardedSubtaskStore` does), ordered by `id`.
@@ -209,12 +189,10 @@ async fn load_subtask_contexts(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn hashes_the_raw_token_with_sha256() {
         assert_eq!(
-            token_hash("abc"),
+            crate::share_access::token_hash("abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
     }

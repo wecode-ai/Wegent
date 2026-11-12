@@ -121,6 +121,13 @@ test('legacy URLs require existing access while newly issued opaque shares stay 
     expect(
       (
         await anonymous.get(
+          `/api/attachments/${fixture.attachment_id}?share_token=${encodeURIComponent(taskShare.data!.share_token)}`
+        )
+      ).status
+    ).toBe(200)
+    expect(
+      (
+        await anonymous.get(
           `/api/attachments/${fixture.unlinked_attachment_id}?share_token=${encodeURIComponent(taskShare.data!.share_token)}`
         )
       ).status
@@ -150,6 +157,41 @@ test('legacy URLs require existing access while newly issued opaque shares stay 
     await page.goto(taskUrl)
     await expect(page.getByTestId('shared-task-access-action')).toBeVisible()
     await expect(page.getByText(fixture.body, { exact: true })).toHaveCount(0)
+    const unifiedTask = await owner.post<{ share_token: string }>(
+      `/api/share/Task/${fixture.task_id}/link`,
+      { config: { require_approval: true, default_role: 'Reporter' } }
+    )
+    expect(unifiedTask.status).toBe(200)
+    expect(unifiedTask.data!.share_token).not.toBe(taskShare.data!.share_token)
+    const unifiedToken = encodeURIComponent(unifiedTask.data!.share_token)
+    expect((await anonymous.get(`/api/tasks/share/public?token=${unifiedToken}`)).status).toBe(400)
+    expect(
+      (await anonymous.get(`/api/attachments/${fixture.attachment_id}?share_token=${unifiedToken}`))
+        .status
+    ).toBe(403)
+    expect(
+      (
+        await viewer.post('/api/tasks/share/join', {
+          share_token: unifiedTask.data!.share_token,
+          team_id: fixture.team_id,
+        })
+      ).status
+    ).toBe(400)
+    expect(
+      (await viewer.post('/api/share/join', { share_token: taskShare.data!.share_token })).status
+    ).toBe(400)
+    const pending = await viewer.post<{ status: string }>('/api/share/join', {
+      share_token: unifiedTask.data!.share_token,
+    })
+    expect(pending.status).toBe(200)
+    expect(pending.data?.status).toBe('pending')
+    expect(
+      (
+        await anonymous.get(
+          `/api/tasks/share/public?token=${encodeURIComponent(taskShare.data!.share_token)}`
+        )
+      ).status
+    ).toBe(200)
     state('expired')
     for (const url of reads) expect([400, 403, 404]).toContain((await owner.get(url)).status)
     state('revoked')

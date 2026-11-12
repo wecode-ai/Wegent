@@ -8,7 +8,7 @@
 //! `app/services/shared_task.py`).
 //!
 //! The route reads the caller's membership, then re-reads the task to reuse its
-//! owner for the encrypted share token. Every task read is the active-task
+//! owner for the persisted opaque share token. Every task read is the active-task
 //! projection (`id = ? AND kind = 'Task' AND is_active IN (1, 2)`): the access
 //! store's `_get_accessible_task` and the store's `get_task_by_states` render
 //! the same statement, so this handler reuses
@@ -43,7 +43,17 @@ const APPROVED_MEMBERSHIP_QUERY: &str = "SELECT resource_members.id AS resource_
 const INSERT_SHARE_LINK_QUERY: &str = "INSERT INTO share_links \
      (resource_type, resource_id, share_token, token_hash, token_version, require_approval, \
      default_role, expires_at, created_by_user_id, is_active, created_at, updated_at) \
-     VALUES ('Task', ?, ?, ?, 2, false, 'Reporter', ?, ?, true, NOW(6), NOW(6))";
+     VALUES ('TaskShare', ?, ?, ?, 2, false, 'Reporter', ?, ?, true, NOW(6), NOW(6))";
+
+#[cfg(test)]
+mod purpose_tests {
+    use super::INSERT_SHARE_LINK_QUERY;
+
+    #[test]
+    fn read_only_task_issuance_uses_a_separate_link_type() {
+        assert!(INSERT_SHARE_LINK_QUERY.contains("VALUES ('TaskShare'"));
+    }
+}
 
 /// `task_member_service.is_member` over `task_access_store.is_member`: the
 /// viewer owns the active task, or holds an approved membership in it.
@@ -85,7 +95,7 @@ pub(super) async fn validate_task_exists(
 }
 
 /// `SharedTaskService.share_task`: re-check membership, read the task to reuse
-/// its owner, then render the encrypted token and its share link.
+/// its owner, then persist the opaque token and render its share link.
 pub(super) async fn share_task(
     state: &AppState,
     task_id: i64,
