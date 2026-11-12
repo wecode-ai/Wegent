@@ -373,7 +373,7 @@ export function TodoEditor(props: TodoEditorProps) {
     canStartWork: false,
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,
-    onCreateTask: showPersonalTaskAction ? props.onCreateTask : undefined,
+    onCreateTask: props.onCreateTask,
     onAddAssigneeMember: props.onAddAssigneeMember,
     onAddAssigneeAgent: props.onAddAssigneeAgent,
     onOpenTaskConversation: props.onOpenTaskConversation

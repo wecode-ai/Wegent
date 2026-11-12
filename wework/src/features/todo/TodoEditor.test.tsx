@@ -48,10 +48,13 @@ const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
   beforeEach(() => {
-    vi.stubGlobal('IntersectionObserver', class {
-      observe = vi.fn()
-      disconnect = vi.fn()
-    })
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
   })
   afterEach(() => vi.unstubAllGlobals())
   it('clears a deleted draft milestone only after a successful catalog read', async () => {
@@ -417,15 +420,50 @@ describe('TodoEditor external item sync', () => {
     expect(onCreateTask).not.toHaveBeenCalled()
   })
 
+  it('preserves creating another personal task when the Issue has been reassigned', async () => {
+    const onCreateTask = vi.fn()
+    const reassigned = { ...baseItem, assignee_user_id: 42, assignee_agent_id: null }
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={reassigned}
+        project={project}
+        allItems={[reassigned]}
+        api={api}
+        currentUserId={1}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        initialTaskBindings={[
+          {
+            id: 1,
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'my-existing-task',
+            linked_at: '2026-10-08T08:00:00Z',
+          },
+        ]}
+      />
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(onCreateTask).toHaveBeenCalledOnce()
+  })
+
   it('shows only the linked-task create button until that section scrolls above the viewport', async () => {
     let onIntersection!: IntersectionObserverCallback
     const observe = vi.fn()
     const disconnect = vi.fn()
-    vi.stubGlobal('IntersectionObserver', class {
-      constructor(callback: IntersectionObserverCallback) { onIntersection = callback }
-      observe = observe
-      disconnect = disconnect
-    })
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          onIntersection = callback
+        }
+        observe = observe
+        disconnect = disconnect
+      }
+    )
     const onCreateTask = vi.fn()
     const assignedToCurrentUser = {
       ...baseItem,
@@ -461,11 +499,18 @@ describe('TodoEditor external item sync', () => {
     expect(onCreateTask).toHaveBeenCalledOnce()
     onCreateTask.mockClear()
 
-    const reportPosition = (bottom: number) => act(() => {
-      onIntersection([{
-        boundingClientRect: { bottom }, rootBounds: { top: 0 },
-      } as IntersectionObserverEntry], {} as IntersectionObserver)
-    })
+    const reportPosition = (bottom: number) =>
+      act(() => {
+        onIntersection(
+          [
+            {
+              boundingClientRect: { bottom },
+              rootBounds: { top: 0 },
+            } as IntersectionObserverEntry,
+          ],
+          {} as IntersectionObserver
+        )
+      })
     reportPosition(1000)
     expect(screen.queryByTestId('issue-persistent-task-action')).not.toBeInTheDocument()
     reportPosition(-1)

@@ -2,20 +2,36 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { WorkspaceTaskBinding } from '@wegent/collaboration'
 import { PersonalHomeIssueActivity } from './PersonalHomeIssueActivity'
-import { RuntimeTaskLifecycleProvider, RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import i18n from '@/i18n'
 
 afterEach(cleanup)
 const binding: WorkspaceTaskBinding = {
-  id: 'binding', projectId: 'project', issueId: 'issue', taskId: 'task',
-  deviceId: 'device', taskTitle: 'Implementation',
+  id: 'binding',
+  projectId: 'project',
+  issueId: 'issue',
+  taskId: 'task',
+  deviceId: 'device',
+  taskTitle: 'Implementation',
 }
-function mount(bindings: WorkspaceTaskBinding[] = [], assignment?: { body: string; created_by_user_name: string; created_at: string }) {
+function mount(
+  bindings: WorkspaceTaskBinding[] = [],
+  assignment?: { body: string; created_by_user_name: string; created_at: string }
+) {
   const store = new RuntimeTaskLifecycleStore()
   const onOpenTask = vi.fn()
   render(
     <RuntimeTaskLifecycleProvider store={store}>
-      <PersonalHomeIssueActivity issueId="issue" active bindings={bindings} assignment={assignment} onOpenTask={onOpenTask} />
+      <PersonalHomeIssueActivity
+        issueId="issue"
+        active
+        bindings={bindings}
+        assignment={assignment}
+        onOpenTask={onOpenTask}
+      />
     </RuntimeTaskLifecycleProvider>
   )
   return { store, onOpenTask }
@@ -23,7 +39,11 @@ function mount(bindings: WorkspaceTaskBinding[] = [], assignment?: { body: strin
 
 it('renders the page-provided assignment reason and author without fetching per Issue', async () => {
   await i18n.changeLanguage('en')
-  mount([], { body: 'Please verify the acceptance criteria', created_by_user_name: 'Alice', created_at: '2026-11-12' })
+  mount([], {
+    body: 'Please verify the acceptance criteria',
+    created_by_user_name: 'Alice',
+    created_at: '2026-11-12',
+  })
   expect(screen.getByText('Please verify the acceptance criteria')).toBeInTheDocument()
   expect(screen.getByText('Assignment comment · Alice')).toBeInTheDocument()
 })
@@ -54,4 +74,32 @@ it('summarizes multiple tasks in one row and opens the chosen binding from the p
   fireEvent.click(screen.getByTestId('personal-home-task-issue-second'))
   expect(onOpenTask).toHaveBeenCalledExactlyOnceWith(second)
   expect(screen.queryByTestId('personal-home-tasks-picker-issue')).not.toBeInTheDocument()
+})
+
+it('uses the same live state for a stored App address and its Runtime device alias', () => {
+  const { store } = mount([binding])
+  act(() => {
+    store.syncDevices([
+      {
+        id: 65,
+        device_id: 'runtime',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'app',
+        bind_shell: 'codex',
+        socket_device_id: binding.deviceId,
+        runtime_routes: [
+          {
+            kind: 'local-ipc',
+            device_id: binding.deviceId,
+            runtime_device_id: 'runtime',
+            status: 'online',
+          },
+        ],
+      },
+    ])
+    store.executorStarted({ ...binding, deviceId: 'runtime' })
+  })
+  expect(screen.getByTestId('personal-home-task-issue-binding')).toHaveTextContent('Running')
 })

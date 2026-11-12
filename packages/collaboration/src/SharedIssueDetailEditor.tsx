@@ -3510,7 +3510,11 @@ export function TodoEditor(props: TodoEditorProps) {
                         deviceNamesById={props.deviceNamesById}
                         selectedTaskId={props.selectedTaskId}
                         showCurrentTaskOnly={props.showCurrentTaskOnly}
-                        onCreateTask={props.onCreateTask}
+                        onCreateTask={
+                          canStartWork || personalTaskAction || executionTaskCount > 0
+                            ? props.onCreateTask
+                            : undefined
+                        }
                         onOpenTaskConversation={props.onOpenTaskConversation}
                         onOpenChildTask={props.onOpenChildTask}
                         translate={t}

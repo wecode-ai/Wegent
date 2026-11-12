@@ -3,15 +3,23 @@ import { ArrowUpRight, LoaderCircle, SquareTerminal } from 'lucide-react'
 import type { WorkspaceMyWorkItem, WorkspaceTaskBinding } from '@wegent/collaboration'
 import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
-import { getRuntimeTaskLifecycleKey, useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import { runtimeTaskSummaryTrackingExecutionStatus, runtimeTaskTrackingExecutionStatus } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import { useRuntimeTaskLifecycleResolver } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  runtimeTaskSummaryTrackingExecutionStatus,
+  runtimeTaskTrackingExecutionStatus,
+} from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { AnchorPopover } from './AnchorPopover'
 
 /** Consume the page's batched context; rendering an Issue must never request its own data. */
 export function PersonalHomeIssueActivity({
-  issueId, assignment, bindings = [], active, summary, onOpenTask,
+  issueId,
+  assignment,
+  bindings = [],
+  active,
+  summary,
+  onOpenTask,
 }: {
   issueId: string
   assignment?: WorkspaceMyWorkItem['assignment_context']
@@ -22,25 +30,66 @@ export function PersonalHomeIssueActivity({
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
-  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
+  const resolveLifecycle = useRuntimeTaskLifecycleResolver()
   const [taskAnchor, setTaskAnchor] = useState<HTMLButtonElement | null>(null)
   const tasks = bindings.map(binding => {
-    const reminder = workbench?.runtimeTaskReminders.items.find(item => item.address.deviceId === binding.deviceId && item.address.taskId === binding.taskId)
-    const lifecycle = lifecycleSnapshot.tasks.get(getRuntimeTaskLifecycleKey(binding)) ?? reminder?.lifecycle
-    const task = lifecycle?.task ?? reminder?.task ?? findRuntimeTask(workbench?.state?.runtimeWork, binding)
+    const reminder = workbench?.runtimeTaskReminders.items.find(
+      item => item.address.deviceId === binding.deviceId && item.address.taskId === binding.taskId
+    )
+    const lifecycle = resolveLifecycle(binding) ?? reminder?.lifecycle
+    const task =
+      lifecycle?.task ?? reminder?.task ?? findRuntimeTask(workbench?.state?.runtimeWork, binding)
     const interaction = lifecycle?.interactionStatus ?? task?.interactionStatus
-    const status = interaction === 'waitingForUserInput' || interaction === 'awaitingUserReply'
-      ? 'waiting'
-      : (lifecycle ? runtimeTaskTrackingExecutionStatus(lifecycle) : task ? runtimeTaskSummaryTrackingExecutionStatus(task) : null) ?? 'unknown'
-    return { binding, status, title: task?.title || binding.taskTitle || t('personalHome.viewTask') }
+    const status =
+      interaction === 'waitingForUserInput' || interaction === 'awaitingUserReply'
+        ? 'waiting'
+        : ((lifecycle
+            ? runtimeTaskTrackingExecutionStatus(lifecycle)
+            : task
+              ? runtimeTaskSummaryTrackingExecutionStatus(task)
+              : null) ?? 'unknown')
+    return {
+      binding,
+      status,
+      title: task?.title || binding.taskTitle || t('personalHome.viewTask'),
+    }
   })
-  const statusLabel = (status: string) => status === 'waiting' ? t('personalHome.taskStatusWaiting') : status === 'unknown' ? t('personalHome.taskStatusUnknown') : t(`todo.workflow_task_status_${status === 'queued' ? 'pending' : status}`)
-  const statusOrder = ['waiting', 'failed', 'running', 'queued', 'cancelled', 'succeeded', 'archived', 'unknown']
-  const counts = [...tasks.reduce((result, row) => result.set(row.status, (result.get(row.status) ?? 0) + 1), new Map<string, number>())]
-    .sort(([left], [right]) => statusOrder.indexOf(left) - statusOrder.indexOf(right))
-  const local = bindings.length > 0 && bindings.every(binding => findWorkbenchDevice(workbench?.state?.devices ?? [], binding.deviceId)?.device_type === 'local')
-  const countLabel = t(local ? 'personalHome.localTaskCount' : 'personalHome.linkedTaskCount', { count: tasks.length })
-  const names = tasks.slice(0, 2).map(task => task.title).join('、')
+  const statusLabel = (status: string) =>
+    status === 'waiting'
+      ? t('personalHome.taskStatusWaiting')
+      : status === 'unknown'
+        ? t('personalHome.taskStatusUnknown')
+        : t(`todo.workflow_task_status_${status === 'queued' ? 'pending' : status}`)
+  const statusOrder = [
+    'waiting',
+    'failed',
+    'running',
+    'queued',
+    'cancelled',
+    'succeeded',
+    'archived',
+    'unknown',
+  ]
+  const counts = [
+    ...tasks.reduce(
+      (result, row) => result.set(row.status, (result.get(row.status) ?? 0) + 1),
+      new Map<string, number>()
+    ),
+  ].sort(([left], [right]) => statusOrder.indexOf(left) - statusOrder.indexOf(right))
+  const local =
+    bindings.length > 0 &&
+    bindings.every(
+      binding =>
+        findWorkbenchDevice(workbench?.state?.devices ?? [], binding.deviceId)?.device_type ===
+        'local'
+    )
+  const countLabel = t(local ? 'personalHome.localTaskCount' : 'personalHome.linkedTaskCount', {
+    count: tasks.length,
+  })
+  const names = tasks
+    .slice(0, 2)
+    .map(task => task.title)
+    .join('、')
 
   return (
     <div data-testid={`personal-home-assignment-${issueId}`}>
@@ -48,7 +97,8 @@ export function PersonalHomeIssueActivity({
       {assignment?.body && (
         <blockquote className="mt-2 border-l border-border pl-3 text-sm text-text-secondary">
           <span className="mb-1 block text-xs text-text-muted">
-            {t('personalHome.assignmentReason')}{assignment.created_by_user_name ? ` · ${assignment.created_by_user_name}` : ''}
+            {t('personalHome.assignmentReason')}
+            {assignment.created_by_user_name ? ` · ${assignment.created_by_user_name}` : ''}
           </span>
           <span className="line-clamp-2 whitespace-pre-wrap">{assignment.body}</span>
         </blockquote>
@@ -56,7 +106,11 @@ export function PersonalHomeIssueActivity({
       {tasks.length > 0 && (
         <button
           type="button"
-          data-testid={tasks.length === 1 ? `personal-home-task-${issueId}-${tasks[0].binding.id}` : `personal-home-tasks-summary-${issueId}`}
+          data-testid={
+            tasks.length === 1
+              ? `personal-home-task-${issueId}-${tasks[0].binding.id}`
+              : `personal-home-tasks-summary-${issueId}`
+          }
           disabled={!onOpenTask}
           aria-haspopup={tasks.length > 1 ? 'dialog' : undefined}
           aria-expanded={tasks.length > 1 ? Boolean(taskAnchor) : undefined}
@@ -72,8 +126,18 @@ export function PersonalHomeIssueActivity({
           <span className="min-w-0 max-w-sm truncate">{names}</span>
           <span className="shrink-0">{countLabel}</span>
           {counts.slice(0, 2).map(([status, count]) => (
-            <span key={status} className={`inline-flex shrink-0 items-center gap-1 text-xs ${status === 'failed' ? 'text-error' : 'text-text-muted'}`}>
-              {status === 'running' ? <LoaderCircle aria-hidden="true" className="h-3 w-3 motion-safe:animate-spin" /> : <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${status === 'succeeded' ? 'bg-emerald-500' : 'bg-current'}`} />}
+            <span
+              key={status}
+              className={`inline-flex shrink-0 items-center gap-1 text-xs ${status === 'failed' ? 'text-error' : 'text-text-muted'}`}
+            >
+              {status === 'running' ? (
+                <LoaderCircle aria-hidden="true" className="h-3 w-3 motion-safe:animate-spin" />
+              ) : (
+                <span
+                  aria-hidden="true"
+                  className={`h-1.5 w-1.5 rounded-full ${status === 'succeeded' ? 'bg-emerald-500' : 'bg-current'}`}
+                />
+              )}
               {statusLabel(status)} {count}
             </span>
           ))}
@@ -81,14 +145,26 @@ export function PersonalHomeIssueActivity({
         </button>
       )}
       {taskAnchor && active && tasks.length > 1 && (
-        <AnchorPopover anchor={taskAnchor} title={t('personalHome.linkedTasks')} testId={`personal-home-tasks-picker-${issueId}`} onClose={() => { taskAnchor.focus(); setTaskAnchor(null) }}>
+        <AnchorPopover
+          anchor={taskAnchor}
+          title={t('personalHome.linkedTasks')}
+          testId={`personal-home-tasks-picker-${issueId}`}
+          onClose={() => {
+            taskAnchor.focus()
+            setTaskAnchor(null)
+          }}
+        >
           {tasks.map(task => (
             <button
               type="button"
               key={task.binding.id}
               data-testid={`personal-home-task-${issueId}-${task.binding.id}`}
               className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted md:min-h-8"
-              onClick={event => { event.stopPropagation(); setTaskAnchor(null); onOpenTask?.(task.binding) }}
+              onClick={event => {
+                event.stopPropagation()
+                setTaskAnchor(null)
+                onOpenTask?.(task.binding)
+              }}
             >
               <span className="min-w-0 flex-1 truncate">{task.title}</span>
               <span className="shrink-0 text-xs text-text-muted">{statusLabel(task.status)}</span>

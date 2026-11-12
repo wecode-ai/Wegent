@@ -128,5 +128,11 @@ export async function verifyPersonalHomeStartWork(control, { scoped, project, vi
     'waitFor',
     scoped('[data-testid="issue-conversation-drawers"][data-has-conversation="false"]')
   )
+  const linkedTask = scoped('[data-testid="cloud-todo-task-list"] [data-testid^="cloud-todo-open-task-conversation-"]')
+  await control.command('waitFor', linkedTask)
+  assert.equal(Number(await control.command('getElementCount', linkedTask)), 1,
+    'Starting work once must persist exactly one linked task')
+  assert.equal(await control.command('getValue', scoped('[data-testid="cloud-todo-detail-assignee"]')),
+    `user:${viewerId}`, 'Starting my task must assign the Issue to the current user')
   await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
 }
