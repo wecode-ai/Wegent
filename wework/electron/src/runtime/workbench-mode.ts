@@ -35,7 +35,11 @@ interface InitializeWorkbenchModeOptions {
   environment: NodeJS.ProcessEnv
   homeDirectory: string
   platform?: NodeJS.Platform
-  probeCommand?: (command: string, environment: NodeJS.ProcessEnv) => Promise<boolean>
+  probeCommand?: (
+    command: string,
+    environment: NodeJS.ProcessEnv,
+    signal?: AbortSignal
+  ) => Promise<boolean>
 }
 
 export function normalizeWorkbenchMode(value: unknown): WorkbenchMode {
@@ -59,10 +63,15 @@ export async function initializeWorkbenchModePreference(
   )
   const probeCommand =
     options.probeCommand ??
-    ((command, commandEnvironment) =>
-      probeDevelopmentCommand(command, commandEnvironment, platform))
+    ((command, commandEnvironment, signal) =>
+      probeDevelopmentCommand(command, commandEnvironment, platform, signal))
+  const controller = new AbortController()
   const results = await Promise.all(
-    DEVELOPMENT_COMMANDS.map(command => probeCommand(command, environment))
+    DEVELOPMENT_COMMANDS.map(async command => {
+      const found = await probeCommand(command, environment, controller.signal)
+      if (found) controller.abort()
+      return found
+    })
   )
   const mode: WorkbenchMode = results.some(Boolean) ? 'developer' : 'focus'
   try {
@@ -75,18 +84,18 @@ export async function initializeWorkbenchModePreference(
 
 export async function applyWorkbenchModeToCorePlugins(
   mode: WorkbenchMode,
-  plugins: Pick<CoreDshPluginManager, 'list' | 'setEnabled'>
+  plugins: Pick<CoreDshPluginManager, 'enabledStates' | 'setEnabled'>
 ): Promise<void> {
-  const inventory = await plugins.list()
   const desiredStates = new Map([
     [MODE_MANAGED_GIT_PLUGIN, mode === 'developer'],
     [MODE_MANAGED_FOCUS_HOME_PLUGIN, mode === 'focus'],
     [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, mode === 'developer'],
   ])
-  for (const plugin of inventory) {
-    const shouldEnable = desiredStates.get(plugin.name)
-    if (shouldEnable !== undefined && plugin.enabled !== shouldEnable) {
-      await plugins.setEnabled(plugin.name, shouldEnable)
+  const enabledStates = await plugins.enabledStates([...desiredStates.keys()])
+  for (const [name, shouldEnable] of desiredStates) {
+    const enabled = enabledStates.get(name)
+    if (enabled !== undefined && enabled !== shouldEnable) {
+      await plugins.setEnabled(name, shouldEnable)
     }
   }
 }
@@ -118,7 +127,8 @@ function developmentCommandEnvironment(
 export async function probeDevelopmentCommand(
   command: string,
   environment: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform
+  platform: NodeJS.Platform,
+  signal?: AbortSignal
 ): Promise<boolean> {
   const pathValue =
     environment.PATH ??
@@ -135,9 +145,11 @@ export async function probeDevelopmentCommand(
           .map(extension => extension.toLowerCase())
       : ['']
   for (const directory of pathValue.split(platform === 'win32' ? ';' : delimiter)) {
+    if (signal?.aborted) return false
     const unquotedDirectory = directory.trim().replace(/^"(.*)"$/, '$1')
     if (!unquotedDirectory) continue
     for (const extension of extensions) {
+      if (signal?.aborted) return false
       const candidate = normalize(join(unquotedDirectory, `${command}${extension}`))
       if (platform === 'darwin' && command === 'git' && candidate === '/usr/bin/git') {
         continue
