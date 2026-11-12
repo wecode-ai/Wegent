@@ -3,7 +3,13 @@ import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 
 export function desktopApplicationDataDirectory() {
-  if (process.platform === 'darwin') return join(homedir(), 'Library/Application Support')
+  if (process.platform === 'darwin') {
+    // Foundation honors CFFIXED_USER_HOME, whereas Node's homedir only honors
+    // HOME. Fixture placement must match the actual Electron application path.
+    const nativeHome = process.env.CFFIXED_USER_HOME || homedir()
+    if (!isAbsolute(nativeHome)) throw new Error('Native macOS Home must be absolute')
+    return join(nativeHome, 'Library/Application Support')
+  }
   if (process.platform === 'win32') {
     if (!process.env.APPDATA || !isAbsolute(process.env.APPDATA))
       throw new Error('Default-layout verification requires the system APPDATA directory')

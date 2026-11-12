@@ -18,7 +18,7 @@ import {
   upgradeSource,
 } from './lib/upgrade-evidence.mjs'
 
-function publishedCatalog(channel, versions) {
+function publishedCatalog(channel, versions, minSourceVersion = '0.5.0') {
   return {
     schemaVersion: 1,
     channel,
@@ -26,7 +26,7 @@ function publishedCatalog(channel, versions) {
     arch: 'x64',
     releases: versions.map(version => ({
       version,
-      minSourceVersion: '0.5.0',
+      minSourceVersion,
       sha256: 'a'.repeat(64),
       sourceSha: '1'.repeat(40),
       url: `https://example.com/${version}.tar.gz`,
@@ -41,16 +41,22 @@ function publishedCatalog(channel, versions) {
 
 const automaticTarget = { version: '0.6.1', minSourceVersion: '0.5.13-beta.5' }
 
-test('isolated security release candidates retain legacy sources and require exact-pair proof', async () => {
+test('next release candidates respect the current source floor and require exact-pair proof', async () => {
   const policy = JSON.parse(
     readFileSync(new URL('../upgrade-policy.json', import.meta.url), 'utf8')
   )
-  assert.equal(policy.minSourceVersion, '0.5.13-beta.5')
-  const target = { version: '0.6.8-beta.1', minSourceVersion: policy.minSourceVersion }
-  const legacy = publishedCatalog('stable', ['0.6.6'])
-  const plan = releaseUpgradePlan([legacy], target, 'beta')
-  assert.equal(plan.baseline, null)
-  assert.equal(plan.previous.version, '0.6.6')
+  const major = Number(policy.minSourceVersion.split('.')[0]) + 1
+  const target = { version: `${major}.0.0-beta.1`, minSourceVersion: policy.minSourceVersion }
+  const catalog = publishedCatalog('beta', ['0.0.0', policy.minSourceVersion], '0.0.0')
+  const plan = releaseUpgradePlan([catalog], target, 'beta')
+  assert.equal(plan.baselineVersion, policy.minSourceVersion)
+  assert.equal(plan.baseline.version, policy.minSourceVersion)
+  assert.equal(plan.previous.version, policy.minSourceVersion)
+  assert.throws(
+    () =>
+      releaseUpgradePlan([{ ...catalog, releases: catalog.releases.slice(0, 1) }], target, 'beta'),
+    /No eligible published upgrade source/
+  )
   await assert.rejects(
     verifyReleaseUpgradePlan(plan, async () => null),
     /publication blocked/

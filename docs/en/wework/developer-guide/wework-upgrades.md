@@ -4,6 +4,119 @@ sidebar_position: 61
 
 # Desktop upgrades, rollback, and E2E maintenance
 
+## Codex session provider migration
+
+Reserve stdout for the offline entry's single JSON completion response before migration starts;
+writer-lock contention and other diagnostics belong on stderr. Otherwise a successful migration
+can fail bridge JSON parsing and roll back unnecessarily. The real contention regression waits
+for the diagnostic before releasing the writer and verifies both the complete stdout protocol
+and the retained stderr diagnostic.
+
+Session conversion is separate from download-time environment preparation. The target's
+`DesktopRuntime.prepareExecutor` invokes its delivered executor's offline
+`--workbench-codex-providers-migrate` entry before constructing the managed executor and
+admitting queued work or Goal recovery. Never rewrite live sessions during
+`release-preparation-cli` prewarming. A Home relocation's `beforeMove` is insufficient:
+an already relocated Home does not move again on upgrade.
+
+Migration holds Home process ownership, agent execution and native thread writer coordination
+leases. It changes only rollout `session_meta.model_provider` and SQLite
+`threads.model_provider` to the logical Wework router, persisted as the single-byte ID `~`.
+Replace only the raw JSON provider value and pad unused bytes with JSON whitespace, preserving
+the header length and every subsequent byte offset used by paginated/fork history. Never
+re-serialize the entire header and shift those references. Older metadata without a saved
+provider remains byte-identical and uses native current-provider selection. A versioned Home-local journal
+retains original providers and index provenance. Conversation bodies, compression/history
+references, permissions, creator accounts, Goal state/budgets and recoverable user commands
+are not regenerated. Authentication files, repositories and cloud data are excluded.
+
+Journal v3 stores the original provider's exact JSON value and SHA-256 digests of both header
+states, not base instructions or complete header snapshots. Release each header buffer after
+processing it. Recovery reconstructs the original provider value and verifies its digest so
+permissions, accounts and all other fields cannot change. Validate existing v2 entries one at
+a time and atomically compact them to v3 without loading every session header simultaneously.
+Interruption before atomic v3 publication restarts conversion of the v2 entries from the beginning.
+Existing rollout/index migration progress remains durable; journal compaction itself has no
+persisted per-entry cursor.
+Leave empty rollouts without published metadata unchanged and retain native metadata-readiness
+recovery. A nonempty truncated header, or a missing header already recorded in the pending
+journal, still blocks completion. Auxiliary named-Home readers share native process lifetime
+leases rather than migrating while a writer is live; they never inherit another Home's auth.
+The offline command has no fixed kill deadline. Shutdown cancels it and waits for process exit
+before releasing writer ownership. This does not remove an older independent launcher's
+activation health budget. Verify the stopped-writer preparation phase and any required bridge
+release separately; recoverable migration alone does not certify arbitrary legacy upgrade edges.
+
+Persist intent before mutation; publish rollout files atomically and update indexes in
+transactions. Re-entering preparation after interruption must converge, not treat an exception
+as completion. Compatible older clients may rewrite the index provider or materialize compressed
+history before appending turns. Re-upgrade reconciles indexes against existing sessions without
+restoring stale history or discarding those turns. Writers must stop first. Failure cannot admit
+the new executor or Goal recovery; activation failure uses existing healthy-release rollback
+and startup recovery.
+
+A shared identity never implies shared credentials. API-key and native-account threads replace
+the complete provider definition independently. Unscoped account RPCs keep native Codex authentication.
+The local router serves the merged catalog using a non-secret catalog credential, never an account
+token or task API key. Threads must not inherit that credential or another route's bearer command.
+Runtimes with shared routing report `modelProviderRouting: "thread"` in public task and identity
+conversation address handles. The owning runtime generates this capability rather than trusting
+persisted or caller-supplied values. Composers can switch API and native-account models in the same
+thread instead of splitting by logical provider name. Older runtimes without this capability retain
+their existing provider-boundary confirmation. The executor still enforces permissions and credentials.
+Local catalog discovery has process-owned settings. Native threads retain an explicit Home
+`features.api_key_model_discovery` value; local discovery must not enable external API-key discovery.
+Before starting the shared process, acquire Home ownership and complete offline migration. Atomically
+write the complete merged catalog to a process-owned file inside that Home and load it through native
+`model_catalog_json`, avoiding the custom HTTP catalog's 1 MB limit without stripping native
+instructions or permission templates. Retain the file until the native process actually exits;
+cleanup of unrelated runtime profiles must not remove it.
+On Unix, a wrapper's exit does not prove its native descendants have stopped. Reserve the leader
+PID until its owned process group exits, then reap the leader and release the Home lease and catalog.
+An exit notification alone cannot admit migration. Windows retains its whole-tree termination flow.
+On Linux, a zombie main thread can leave workers holding the shared file table. Check the thread
+count in `/proc/<pid>/stat` before treating it as a resource-free, single-thread zombie.
+Diagnostics retain kernel lock records and the owner's state, process group and thread count;
+[`/proc/<pid>/fd` can disappear after the main thread exits](https://man7.org/linux/man-pages/man5/proc_pid_fd.5.html).
+A real multithreaded Linux regression exits the main thread while a worker holds a file lock,
+then verifies that retirement waits for the full thread group and the actual lock release.
+Catalog edits use the existing idle restart and active-work confirmation flow. Explicit native
+catalog configuration in the Home remains authoritative. Local discovery adds no resident process
+and does not serialize model requests from separate threads.
+Editing a persisted conversation must use the regular inference resume after `thread/revert`,
+restoring its provider, authentication and MCP before `turn/start`. A cold history control context
+cannot serve the replacement response directly. Native OpenAI threads retain native WebSocket and
+account authentication; public API threads use their HTTP provider. Fill omitted Agent Home identity
+from the original conversation without restoring old authentication tokens. Unsaved temporary
+threads retain direct execution.
+Context compaction also calls the model. After the shared app-server restarts, a cold thread must
+restore its complete inference context from the request's freshly resolved model configuration.
+A control-only resume must not inherit the process discovery profile's OpenAI compaction v2
+capability. Bind model routes and notification subscriptions before resume, retaining the route
+registration until native compaction completes. Native accounts retain their own compaction protocol.
+
+Server-created tasks must also retain one stable identity for the initial visible user message
+across provisional history, the execution request and native turn presentation bindings. Reconcile
+recovered history by identity, never by text: identical prompts can belong to distinct turns.
+Recovery acceptance counts answers within assistant messages; a turn-navigation preview is not
+another message.
+Paused Goals must remain paused across ordinary restarts. Reactivation uses the original task's
+persisted execution configuration and existing admission flow. Repeated activation cannot enqueue
+duplicate recovery or change queued recovery to running. Native `goal/set` on an unloaded thread
+only updates persisted metadata and emits a notification. Activity tracking must account for thread
+loading so that this notification cannot block the same thread's recovery. Loaded native Goal
+continuations retain their existing concurrency protection.
+
+Bind model routes and notification subscriptions before `thread/resume`, since native Goals can continue
+before that RPC returns. Never resubmit original user input or settle an active Goal from a
+previous turn's completed outcome.
+
+Acceptance requires delivered-package upgrade, legacy continuation, writes after rollback and
+re-upgrade. Cover ordinary/tool history, compressed/compacted history, forks/children, active
+Goals, interruption at durable publication boundaries and concurrent account/API-key isolation.
+Migration unit tests and native-binary protocol probes do not replace packaged Electron upgrade
+and rollback evidence.
+
 ## Repairs delivered with the update package
 
 Repairs run through the target package's `release-preparation-cli`, under the same integrity
@@ -195,6 +308,16 @@ Timing reports do not replace exact-package functional verification. When GitHub
 When upgrade tests quit an installed host, they first confirm command execution started and then require the actual host PID to exit. Quitting closes the renderer that sends control results, so a post-exit renderer acknowledgement is not required; an acknowledgement with a still-running host cannot pass either. Explicit command errors and exit timeouts still fail verification, and scenarios must not force-kill the host to satisfy the exit assertion.
 
 When diagnostics need new packages, `build_only=true` produces immutable inputs for a subsequent non-publishing `verification_run_id` replay. This mode cannot publish, start the upgrade matrix, or generate compatibility evidence. Ordinary releases and default dry runs still require the complete upgrade gate.
+
+`Wework App` accepts `verification_writer_wait_seconds`, an integer from 0 to 600, to observe
+an independently owned native writer during stopped preparation. The default is 0 and adds no
+ordinary CI wait. Setting 65 adds one 65-second observation to `app-rollback` for each package
+pair, without repeating it in the two recovery checkpoints. While the writer remains alive,
+the rollout header must stay unchanged and neither the migration receipt nor the trial health
+timer may admit activation. Releasing the writer must automatically complete upgrade, task
+continuation, and rollback. Nonzero values require a target declaring `afterStopPreparation=1`;
+they do not extend product health budgets or weaken assertions. Locally, run the same scenario
+with `WEWORK_E2E_UPGRADE_WRITER_WAIT_SECONDS=65`.
 
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 

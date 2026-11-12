@@ -77,6 +77,25 @@ export function upgradeTransportScript(origin, pauseArgument, inspectorPort = nu
       })
     }
     if (${Boolean(process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT)}) {
+      process.on?.('exit', code => console.log('[desktop-e2e-host-exit]', JSON.stringify({pid:process.pid, code})))
+      for (const method of ['exit', 'quit']) {
+        if (typeof app[method] !== 'function') continue
+        const original = app[method].bind(app)
+        app[method] = (...args) => {
+          console.log('[desktop-e2e-host-stop]', JSON.stringify({pid:process.pid, method, stack:new Error().stack}))
+          return original(...args)
+        }
+      }
+      if (typeof app.requestSingleInstanceLock === 'function') {
+        const requestLock = app.requestSingleInstanceLock.bind(app)
+        app.requestSingleInstanceLock = data => {
+          const acquired = requestLock(data)
+          console.log('[desktop-e2e-singleton]', JSON.stringify({
+            pid: process.pid, userData: app.getPath('userData'), acquired
+          }))
+          return acquired
+        }
+      }
       // Startup failures can occur before product logging is initialized. Keep
       // the native error dialog and retain its exact message in CI diagnostics.
       const showErrorBox = dialog.showErrorBox.bind(dialog)

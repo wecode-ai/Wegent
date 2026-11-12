@@ -190,7 +190,7 @@ import { migrateDesktopControlRegistry } from './runtime/workbench-desktop-data.
 import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-startup.js'
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
-import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import { desktopE2EWindowOptions, keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import {
   applyWorkbenchBackgroundPolicy,
   workbenchBackgroundThrottling,
@@ -1518,6 +1518,7 @@ async function createWindow(
       : (developmentDockIdentity?.displayName ?? 'Wework')
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
+    ...desktopE2EWindowOptions(process.env, process.platform),
     ...startupLayout.bounds,
     title: windowTitle,
     backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',

@@ -64,6 +64,11 @@ export function credentialRoundTripPassed(evidence) {
   )
 }
 
+/** Explicit immutable bridge pairs are diagnostics, never catalog promotion. */
+export function isUpgradeSourceDiagnostic(checkpoint) {
+  return checkpoint === UPGRADE_CHECKPOINT_GROUP || UPGRADE_SOURCE_DIAGNOSTICS.includes(checkpoint)
+}
+
 /** Windows certifies the core round trip; macOS also exercises fault recovery. */
 export function upgradeVerificationCheckpoint(platform) {
   return upgradeIncludesFaultRecovery(platform) ? UPGRADE_CHECKPOINT_GROUP : 'app-rollback'

@@ -1,4 +1,5 @@
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
+import { migrateCodexProviderState } from './codex-provider-upgrade.js'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import {
   createCoreDshLaunch,
@@ -105,6 +106,7 @@ export class DesktopRuntime {
   private startOperation: { generation: number; promise: Promise<void> } | null = null
   private restartOperation: { generation: number; promise: Promise<void> } | null = null
   private localModelSync: Promise<void> = Promise.resolve()
+  private providerMigration: { controller: AbortController; promise: Promise<void> } | null = null
 
   constructor(private readonly options: DesktopRuntimeOptions) {}
 
@@ -277,10 +279,18 @@ export class DesktopRuntime {
     this.started = false
     const coreDsh = this.coreDsh
     const executor = this.executor
+    const migration = this.providerMigration
+    this.providerMigration = null
+    migration?.controller.abort()
     this.coreDsh = null
     this.coreDshPlugins = null
     this.executor = null
-    await Promise.allSettled([this.workbench.stop(), coreDsh?.stop(), executor?.stop()])
+    await Promise.allSettled([
+      this.workbench.stop(),
+      coreDsh?.stop(),
+      executor?.stop(),
+      migration?.promise,
+    ])
   }
 
   private async prepareExecutor(): Promise<ManagedExecutorHandle | null> {
@@ -290,6 +300,23 @@ export class DesktopRuntime {
     // Device identity and managed auth preparation may write Homes. Gate both first.
     await assertExecutorWorkbenchCompatibility(this.options.environment)
     if (this.lifecycleGeneration !== generation) return null
+    this.startupStep('codex-session-upgrade', 'started')
+    const controller = new AbortController()
+    const migration = {
+      controller,
+      promise: migrateCodexProviderState(this.options, controller.signal),
+    }
+    this.providerMigration = migration
+    try {
+      await migration.promise
+    } catch (error) {
+      this.startupStep('codex-session-upgrade', 'failed')
+      throw error
+    } finally {
+      if (this.providerMigration === migration) this.providerMigration = null
+    }
+    if (this.lifecycleGeneration !== generation) return null
+    this.startupStep('codex-session-upgrade', 'completed')
     const deviceId = await this.resolveDesktopDeviceId()
     if (this.lifecycleGeneration !== generation) return null
     const deviceName = await resolveDesktopDeviceName({

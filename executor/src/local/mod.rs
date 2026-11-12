@@ -7,6 +7,7 @@ pub mod backend;
 pub use wegent_plugin_packages::local::bundled_plugins;
 pub use wegent_plugin_packages::local::capabilities;
 pub mod codex_home;
+pub mod codex_provider_migration;
 pub mod command;
 pub mod environment_prepare;
 mod event_stream;
