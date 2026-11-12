@@ -957,7 +957,7 @@ export function createHybridWorkbenchServices(
       }
       return cloudRuntimeIpc.request<DeviceCommandResponse>(
         'device.execute_command',
-        data,
+        { ...data },
         deviceId
       )
     },
@@ -1254,9 +1254,6 @@ export function createHybridWorkbenchServices(
     },
     restoreWorktree(data) {
       return runtimeApiForDevice(data.deviceId).then(api => api.restoreWorktree(data))
-    },
-    bindRuntimeTaskImSessions(data) {
-      return cloudServices.runtimeWorkApi!.bindRuntimeTaskImSessions(data)
     },
     getImNotificationSettings() {
       return cloudServices.runtimeWorkApi!.getImNotificationSettings()
@@ -1918,14 +1915,17 @@ export function createHybridWorkbenchServices(
           deviceId
         )
       },
+      async deviceIdentity(deviceId) {
+        return (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
+      },
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
       },
       async personalSave(userId, settings, deviceId) {
         return (await standInApiForDevice(deviceId)).personalSave(userId, settings, deviceId)
       },
-      async readTask(deviceId, taskId) {
-        return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId)
+      async readTask(deviceId, taskId, options) {
+        return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId, options)
       },
       async assignmentTasks(userId, deviceId, assignments) {
         return (await standInApiForDevice(deviceId)).assignmentTasks(userId, deviceId, assignments)

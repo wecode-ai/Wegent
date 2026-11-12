@@ -16,7 +16,7 @@
 //! closure through a sentinel error that is recognised here and never reaches
 //! the response.
 
-use brz_mysql::{Mysql, MysqlError};
+use brz_mysql::{Mysql, MysqlError, MysqlResult};
 
 use crate::http_compat::FastApiError;
 
@@ -77,6 +77,39 @@ where
     }
 }
 
+pub(crate) async fn run_mysql_with_deadlock_retry<M, T, F>(
+    mysql: &M,
+    operation: F,
+) -> MysqlResult<T>
+where
+    M: Mysql,
+    T: Send,
+    F: for<'a> AsyncFnOnce(&'a mut M::Transaction) -> MysqlResult<T> + Send + Copy,
+{
+    const MAX_ATTEMPTS: usize = 3;
+    for attempt in 0..MAX_ATTEMPTS {
+        match mysql.with_transaction(operation).await {
+            Ok(value) => return Ok(value),
+            Err(error) if error.database_code() == Some(1213) => {
+                if attempt + 1 == MAX_ATTEMPTS {
+                    tracing::error!(%error, "transaction failed after deadlock retries");
+                    return Err(error);
+                }
+                tracing::warn!(
+                    %error,
+                    attempt = attempt + 1,
+                    "restarting transaction after MySQL deadlock"
+                );
+            }
+            Err(error) => {
+                tracing::error!(%error, "transaction failed");
+                return Err(error);
+            }
+        }
+    }
+    unreachable!("deadlock retry loop always returns")
+}
+
 /// The error that ends the transaction without a commit. A failed rollback is
 /// reported as `MysqlError::TransactionRollback`, which is a real database
 /// failure and is mapped by the caller instead.
@@ -119,6 +152,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct RecordingMysql {
         endings: Arc<Mutex<Vec<&'static str>>>,
+        failures: Arc<Mutex<Vec<MysqlError>>>,
     }
 
     impl RecordingMysql {
@@ -196,6 +230,10 @@ mod tests {
             T: Send,
             F: for<'a> AsyncFnOnce(&'a mut Self::Transaction) -> MysqlResult<T> + Send,
         {
+            if let Some(error) = self.failures.lock().unwrap().pop() {
+                self.endings.lock().unwrap().push("rollback");
+                return Err(error);
+            }
             let result = operation(&mut RecordingTransaction).await;
             self.endings
                 .lock()
@@ -299,6 +337,49 @@ mod tests {
         .await
         .expect("rollback outcome");
         assert_eq!(value, 9);
+        assert_eq!(mysql.endings(), ["rollback"]);
+    }
+
+    #[tokio::test]
+    async fn a_deadlock_restarts_the_whole_transaction() {
+        let mysql = RecordingMysql::default();
+        mysql.failures.lock().unwrap().push(MysqlError::Database {
+            code: Some(1213),
+            sql_state: Some("40001".to_owned()),
+            message: "Deadlock found".to_owned(),
+        });
+        let value = run_mysql_with_deadlock_retry(&mysql, async |_transaction| Ok(7_u8))
+            .await
+            .expect("retry succeeds");
+        assert_eq!(value, 7);
+        assert_eq!(mysql.endings(), ["rollback", "commit"]);
+    }
+
+    #[tokio::test]
+    async fn deadlock_retries_are_bounded() {
+        let mysql = RecordingMysql::default();
+        for _ in 0..3 {
+            mysql.failures.lock().unwrap().push(MysqlError::Database {
+                code: Some(1213),
+                sql_state: Some("40001".to_owned()),
+                message: "Deadlock found".to_owned(),
+            });
+        }
+        let result = run_mysql_with_deadlock_retry(&mysql, async |_transaction| Ok(7_u8)).await;
+        assert!(result.is_err());
+        assert_eq!(mysql.endings(), ["rollback", "rollback", "rollback"]);
+    }
+
+    #[tokio::test]
+    async fn other_database_failures_do_not_retry() {
+        let mysql = RecordingMysql::default();
+        mysql.failures.lock().unwrap().push(MysqlError::Database {
+            code: Some(1146),
+            sql_state: Some("42S02".to_owned()),
+            message: "Table missing".to_owned(),
+        });
+        let result = run_mysql_with_deadlock_retry(&mysql, async |_transaction| Ok(7_u8)).await;
+        assert!(result.is_err());
         assert_eq!(mysql.endings(), ["rollback"]);
     }
 }

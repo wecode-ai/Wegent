@@ -1,10 +1,106 @@
 // @vitest-environment node
 
-import type { UnifiedModel } from '@/types/api'
+import type { ModelSelectionConfig, UnifiedModel } from '@/types/api'
 import { describe, expect, test } from 'vitest'
-import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
+import {
+  defaultNewChatModelSelection,
+  requiresNewConversationForModelSwitch,
+  selectedModelExecutionFields,
+} from './runtimeModelSelection'
 
 describe('runtimeModelSelection', () => {
+  test('uses native thread provider metadata even when the same-name catalog entry has changed', () => {
+    const replacement: UnifiedModel = {
+      name: 'same-model',
+      type: 'runtime',
+      provider: 'local',
+      config: { weworkModelKind: 'codex-provider', codexProviderId: 'company' },
+    }
+    expect(requiresNewConversationForModelSwitch(replacement, replacement, null, 'openai')).toBe(
+      true
+    )
+    expect(requiresNewConversationForModelSwitch(replacement, replacement, null, 'company')).toBe(
+      false
+    )
+  })
+  test.each<{
+    name: string
+    source: ModelSelectionConfig
+    target: 'official' | 'cloud'
+    newSession: boolean
+  }>([
+    {
+      name: 'retired official model',
+      source: {
+        modelName: 'gpt-5.5',
+        modelType: 'runtime',
+        options: { codexProviderId: 'openai' },
+      },
+      target: 'cloud',
+      newSession: true,
+    },
+    {
+      name: 'native runner provider metadata',
+      source: {
+        modelName: 'removed-model',
+        modelType: 'runtime',
+        options: { runnerModelProvider: 'openai', codexProviderId: 'company' },
+      },
+      target: 'cloud',
+      newSession: true,
+    },
+    {
+      name: 'removed custom provider continuing on the router',
+      source: {
+        modelName: 'removed-model',
+        modelType: 'runtime',
+        options: { runnerModelProvider: 'company' },
+      },
+      target: 'cloud',
+      newSession: false,
+    },
+    {
+      name: 'removed cloud model switching to the official provider',
+      source: { modelName: 'removed-model', modelType: 'public' },
+      target: 'official',
+      newSession: true,
+    },
+    {
+      name: 'retired official model continuing on the official provider',
+      source: {
+        modelName: 'gpt-5.5',
+        modelType: 'runtime',
+        options: { codexProviderId: 'openai' },
+      },
+      target: 'official',
+      newSession: false,
+    },
+  ])('uses the saved provider for $name', ({ source, target, newSession }) => {
+    const targetModel: UnifiedModel =
+      target === 'official'
+        ? {
+            name: 'gpt-6.1-sol',
+            type: 'runtime',
+            provider: 'local',
+            config: { weworkModelKind: 'codex-official' },
+          }
+        : { name: 'available-cloud', type: 'public', provider: 'openai' }
+    expect(requiresNewConversationForModelSwitch(null, targetModel, source)).toBe(newSession)
+    // A replacement with the same name cannot change the persisted session's provider.
+    expect(
+      requiresNewConversationForModelSwitch(
+        {
+          name: source.modelName,
+          type: 'runtime',
+          provider: 'local',
+          config: { weworkModelKind: 'codex-provider', codexProviderId: 'replacement' },
+        },
+        targetModel,
+        source
+      )
+    ).toBe(newSession)
+  })
+
   test.each(['standard', 'passthrough'] as const)(
     'propagates cloud reasoning defaults and %s request mode with selected overrides',
     mode => {
@@ -200,8 +296,8 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
-        weworkCloudModelNativeToolSearch: 'true',
-        weworkCloudModelNativeNamespaceTools: 'true',
+        weworkCloudModelNativeToolSearch: 'false',
+        weworkCloudModelNativeNamespaceTools: 'false',
         weworkCloudVisionSidecar:
           '{"modelName":"cloud-vision","modelType":"user","namespace":"default","resourceUserId":42,"apiFormat":"openai-responses"}',
       },
@@ -292,7 +388,7 @@ describe('runtimeModelSelection', () => {
     ['gpt-5.6-sol', null],
     ['gpt-6-astra', 'wework-gpt-6-astra'],
     ['custom-responses-model', null],
-  ])('enables native Codex tools by default for Responses cloud model %s', (modelId, catalogId) => {
+  ])('defaults to bridged tools for Responses cloud model %s', (modelId, catalogId) => {
     const cloudModel: UnifiedModel = {
       name: 'shared-gpt-model',
       modelId,
@@ -312,8 +408,8 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
-        weworkCloudModelNativeToolSearch: 'true',
-        weworkCloudModelNativeNamespaceTools: 'true',
+        weworkCloudModelNativeToolSearch: 'false',
+        weworkCloudModelNativeNamespaceTools: 'false',
         ...(catalogId ? { weworkCloudModelCodexCatalogModelId: catalogId } : {}),
       },
     })
@@ -321,18 +417,18 @@ describe('runtimeModelSelection', () => {
 
   test.each([
     {
-      override: { native_tool_search: false },
-      disabledOption: 'weworkCloudModelNativeToolSearch',
+      override: { native_tool_search: true },
+      enabledOption: 'weworkCloudModelNativeToolSearch',
       inferredOption: 'weworkCloudModelNativeNamespaceTools',
     },
     {
-      override: { nativeNamespaceTools: false },
-      disabledOption: 'weworkCloudModelNativeNamespaceTools',
+      override: { nativeNamespaceTools: true },
+      enabledOption: 'weworkCloudModelNativeNamespaceTools',
       inferredOption: 'weworkCloudModelNativeToolSearch',
     },
   ])(
-    'honors an explicit false override for $disabledOption independently',
-    ({ override, disabledOption, inferredOption }) => {
+    'honors an explicit native override for $enabledOption independently',
+    ({ override, enabledOption, inferredOption }) => {
       const cloudModel: UnifiedModel = {
         name: 'gpt-5.6-sol',
         type: 'user',
@@ -345,8 +441,8 @@ describe('runtimeModelSelection', () => {
 
       const modelOptions = selectedModelExecutionFields(cloudModel, {}).modelOptions
 
-      expect(modelOptions).toHaveProperty(disabledOption, 'false')
-      expect(modelOptions).toHaveProperty(inferredOption, 'true')
+      expect(modelOptions).toHaveProperty(enabledOption, 'true')
+      expect(modelOptions).toHaveProperty(inferredOption, 'false')
     }
   )
 
@@ -427,8 +523,8 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
-        weworkCloudModelNativeToolSearch: 'true',
-        weworkCloudModelNativeNamespaceTools: 'true',
+        weworkCloudModelNativeToolSearch: 'false',
+        weworkCloudModelNativeNamespaceTools: 'false',
         weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
       },
     })

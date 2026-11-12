@@ -223,6 +223,8 @@ class PluginAuthMigrationService:
         if row is None or row.json["spec"]["expires_at"] <= time.time():
             raise PluginAccountAuthError("plugin_auth_migration_expired", 403)
         spec = row.json["spec"]
+        if spec.get("localPrincipal") is not None:
+            raise PluginAccountAuthError("plugin_auth_migration_device_mismatch", 403)
         if spec.get("automatic"):
             from app.services.plugin_auth_automation import PluginAuthAutomationService
 

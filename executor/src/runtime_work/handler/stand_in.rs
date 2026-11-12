@@ -2,6 +2,7 @@
 use super::stand_in_agent::apply_stand_in_agent;
 use super::stand_in_workspace::apply_stand_in_workspace;
 use super::*;
+use crate::agents::normalize_reasoning_effort_alias;
 use crate::runtime_work::response::local_task_json;
 
 pub(super) fn stand_in_issue_identity(config: &Value, issue: &Value) -> String {
@@ -17,6 +18,23 @@ pub(super) fn stand_in_issue_identity(config: &Value, issue: &Value) -> String {
         "stand-in-issue-{:x}",
         Sha256::digest(identity.to_string().as_bytes())
     )
+}
+
+pub(super) fn stand_in_issue_receipt_binding(config: &Value, issue: &Value) -> Value {
+    if issue["assignee_user_id"] != config["userId"] {
+        return json!({});
+    }
+    if config["projectStore"] == "cloud" {
+        return issue
+            .get("human_task_binding")
+            .filter(|binding| binding.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+    }
+    let Some(history) = issue["metadata"]["assignment_history"].as_array() else {
+        return json!({});
+    };
+    json!({"humanAssignmentId":format!("{}-{}", issue["id"].as_str().unwrap_or_default(), history.len())})
 }
 
 impl RuntimeWorkRpcHandler {
@@ -168,24 +186,40 @@ impl RuntimeWorkRpcHandler {
             _ => return Err(AppIpcError::new("bad_request", "projectStore is required")),
         };
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let kind = if local { "local" } else { "cloud" };
+        let selected = if payload["standInId"].is_string() {
+            None
+        } else {
+            self.stand_in_project_configs(
+                &[store
+                    .personal_stand_in(user, &self.device_id)
+                    .map_err(settings_error)?],
+                &project,
+                kind,
+            )
+            .into_iter()
+            .next()
+        };
         let mut config = store
             .stand_in_settings(
                 &project,
                 user,
-                payload["standInId"].as_str().unwrap_or("default"),
+                payload["standInId"]
+                    .as_str()
+                    .or_else(|| selected.as_ref().and_then(|role| role["id"].as_str()))
+                    .unwrap_or("default"),
             )
             .map_err(settings_error)?;
         config["projectId"] = json!(project);
         config["projectStore"] = payload["projectStore"].clone();
         config["userId"] = json!(user);
-        config["executionDeviceId"] = json!(self.device_id);
         config["manual"] = json!(true);
         if !local {
             self.verify_runtime_user(&config).await?;
         }
         let gate = self.task_send_gate(&format!("stand-in-issue:{project}:{issue_id}"));
         let _guard = gate.lock().await;
-        let mut issue = if local {
+        let issue = if local {
             serde_json::to_value(
                 store
                     .get_task(&project, &issue_id)
@@ -200,54 +234,11 @@ impl RuntimeWorkRpcHandler {
             )
             .await?
         };
-        if issue["cloud_project_id"] == project
-            && issue["assignee_user_id"].is_null()
-            && issue["assignee_agent_id"].is_null()
-            && issue["assignee_group_id"].is_null()
-            && issue["assignee_team_id"].is_null()
-        {
-            issue = if local {
-                serde_json::to_value(
-                    store
-                        .update_task(
-                            &project,
-                            &issue_id,
-                            serde_json::from_value(
-                                json!({"version":issue["version"],"assignee_user_id":user}),
-                            )
-                            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?,
-                        )
-                        .map_err(settings_error)?,
-                )
-                .unwrap()
-            } else {
-                self.runtime_http(reqwest::Method::POST, &format!("/v1/cloud-projects/{project}/loop-items/{issue_id}/assign"), Some(&json!({"version":issue["version"],"assigneeType":"user","assigneeId":user.to_string(),"notifyAssignee":false}))).await?
-            };
-        }
-        if issue["cloud_project_id"] != project || issue["assignee_user_id"] != user {
+        if issue["cloud_project_id"] != project {
             return Err(AppIpcError::new(
-                "invalid_assignment",
-                "Choose an Issue assigned to yourself in this project",
+                "permission_denied",
+                "Issue does not belong to this project",
             ));
-        }
-        if payload["standInId"].as_str().is_none() {
-            config = self
-                .stand_in_project_configs(
-                    &[store
-                        .personal_stand_in(user, &self.device_id)
-                        .map_err(settings_error)?],
-                    &project,
-                    if local { "local" } else { "cloud" },
-                )
-                .into_iter()
-                .next()
-                .ok_or_else(|| {
-                    AppIpcError::new(
-                        "stand_in_unavailable",
-                        "Connect a stand-in to this project first",
-                    )
-                })?;
-            config["manual"] = json!(true);
         }
         self.log_stand_in_decision(
             &config,
@@ -258,33 +249,11 @@ impl RuntimeWorkRpcHandler {
             }),
         );
         if local {
-            let history = issue["metadata"]["assignment_history"]
-                .as_array()
-                .ok_or_else(|| {
-                    AppIpcError::new("invalid_assignment", "Issue assignment is unavailable")
-                })?;
-            let assignment = history.last().ok_or_else(|| {
-                AppIpcError::new("invalid_assignment", "Issue assignment is unavailable")
-            })?;
-            if assignment["to_type"] != "user"
-                || assignment["to_id"].as_str() != Some(&user.to_string())
-            {
-                return Err(AppIpcError::new(
-                    "invalid_assignment",
-                    "Issue is no longer assigned to yourself",
-                ));
-            }
-            let human = format!("{issue_id}-{}", history.len());
-            self.start_local_stand_in(&config, &issue, &json!({"humanAssignmentId":human}))
-                .await?;
+            self.start_manual_stand_in_attempt(&config, &issue).await?;
         } else {
-            issue["human_task_binding"]["humanAssignmentId"]
-                .as_str()
-                .ok_or_else(|| {
-                    AppIpcError::new("invalid_assignment", "Issue assignment is unavailable")
-                })?;
-            self.start_cloud_stand_in(&config, &issue).await?;
-        };
+            self.start_cloud_stand_in_with_roles(std::slice::from_ref(&config), &issue)
+                .await?;
+        }
         let task_id = self.stand_in_task_id(&config, &issue);
         let task = self
             .local_task_link(&task_id)
@@ -308,6 +277,49 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         Ok(json!({"deviceId":self.device_id,"taskId":task_id}))
+    }
+
+    pub(super) async fn start_manual_stand_in_attempt(
+        &self,
+        config: &Value,
+        issue: &Value,
+    ) -> Result<(), AppIpcError> {
+        let task_id = self.stand_in_task_id(config, issue);
+        if config["recoveringDispatch"] == true
+            && (self.local_task_link(&task_id).is_some()
+                || self.store.is_deleted_archived_task_id(&task_id))
+        {
+            return Ok(());
+        }
+        if config["projectStore"] != "local" {
+            let issue_id = issue["id"].as_str().unwrap_or_default();
+            let existing = self
+                .runtime_http(
+                    reqwest::Method::GET,
+                    &format!("/v1/loop-items/{issue_id}/tasks"),
+                    None,
+                )
+                .await?;
+            if !self.use_stand_in_issue_reservation(config, issue, &existing)? {
+                return Err(AppIpcError::new(
+                    "wrong_device",
+                    "Open the existing Issue conversation on its owning device",
+                ));
+            }
+        }
+        let task_id = self.stand_in_task_id(config, issue);
+        if self.local_task_link(&task_id).is_some_and(|task| {
+            !self.archived_link_is_deleted(&task)
+                && !matches!(task.status.as_str(), "failed" | "archived")
+        }) {
+            return Ok(());
+        }
+        self.execute_stand_in_task(
+            config,
+            issue,
+            &stand_in_issue_receipt_binding(config, issue),
+        )
+        .await
     }
 
     pub(super) async fn list_stand_in_settings(
@@ -390,10 +402,7 @@ impl RuntimeWorkRpcHandler {
         let settings = self.local_stand_in_projects()?;
         let mut projects = std::collections::HashMap::<(String, String, i64), Vec<Value>>::new();
         for config in settings {
-            if config["executionDeviceId"] != self.device_id
-                || config["enabled"] != true
-                || config["handlingPolicy"]["automatic"] == false
-            {
+            if config["enabled"] != true || config["handlingPolicy"]["automatic"] == false {
                 continue;
             }
             projects
@@ -445,7 +454,8 @@ impl RuntimeWorkRpcHandler {
             let eligible: Vec<Value> = configs
                 .iter()
                 .filter(|config| {
-                    assignment_after_enable(&json!({"created_at":assignment["at"]}), config)
+                    self.stand_in_issue_runs_here(config, &issue_value)
+                        && assignment_after_enable(&json!({"created_at":assignment["at"]}), config)
                 })
                 .cloned()
                 .collect();
@@ -488,23 +498,31 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    async fn start_cloud_stand_in(&self, config: &Value, issue: &Value) -> Result<(), AppIpcError> {
-        self.start_cloud_stand_in_with_roles(std::slice::from_ref(config), issue)
-            .await
-    }
-
     pub(super) async fn start_cloud_stand_in_with_roles(
         &self,
         configs: &[Value],
         issue: &Value,
     ) -> Result<(), AppIpcError> {
         let intents = self.queue_stand_in_dispatches(configs, issue)?;
-        let result = self.start_cloud_stand_in_attempt(configs, issue).await;
+        let result = if configs
+            .first()
+            .is_some_and(|config| config["manual"] == true)
+        {
+            let mut result = Ok(());
+            for config in configs {
+                if let Err(error) = self.start_manual_stand_in_attempt(config, issue).await {
+                    result = Err(error);
+                }
+            }
+            result
+        } else {
+            self.start_cloud_assignment_attempt(configs, issue).await
+        };
         self.settle_stand_in_dispatches(&intents, result.as_ref().err());
         result
     }
 
-    pub(super) async fn start_cloud_stand_in_attempt(
+    pub(super) async fn start_cloud_assignment_attempt(
         &self,
         configs: &[Value],
         issue: &Value,
@@ -515,11 +533,7 @@ impl RuntimeWorkRpcHandler {
             config["projectId"].as_str().unwrap_or_default(),
             issue["id"].as_str().unwrap_or_default()
         ));
-        let _guard = if config["manual"] == true {
-            None
-        } else {
-            Some(gate.lock().await)
-        };
+        let _guard = gate.lock().await;
         if issue["assignee_user_id"] != config["userId"] {
             self.log_stand_in_decision(
                 config,
@@ -547,19 +561,14 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
-        let matching = if config["manual"] == true {
-            configs.iter().collect()
-        } else {
-            super::personal_stand_in::matching_personal_roles(configs, issue)
-        };
+        let matching = super::personal_stand_in::matching_personal_roles(configs, issue);
         if matching.is_empty() {
             self.log_stand_in_decision(config, issue, "no_matching_role_tags", json!({}));
             return Ok(());
         }
         if matching.iter().all(|role| {
             self.stand_in_assignment_is_handled(role, &self.stand_in_task_id(role, issue), binding)
-        }) && config["manual"] != true
-        {
+        }) {
             self.log_stand_in_decision(config, issue, "local_tasks_already_exist", json!({}));
             return Ok(());
         }
@@ -593,9 +602,7 @@ impl RuntimeWorkRpcHandler {
         };
         let eligible: Vec<&Value> = matching
             .into_iter()
-            .filter(|config| {
-                config["manual"] == true || assignment_after_enable(assignment, config)
-            })
+            .filter(|config| assignment_after_enable(assignment, config))
             .collect();
         if eligible.is_empty() {
             self.log_stand_in_decision(config, issue, "assignment_before_role_enabled", json!({
@@ -710,7 +717,10 @@ impl RuntimeWorkRpcHandler {
                         })
                 })
             });
-        if bound.is_some_and(|row| row["device_id"] != self.device_id) {
+        let cloud_device = self.cloud_device_id()?;
+        if bound.is_some_and(|row| {
+            row["device_id"] != cloud_device && row["device_id"] != self.device_id
+        }) {
             let row = bound.unwrap();
             self.log_stand_in_decision(
                 config,
@@ -830,8 +840,11 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
     ) -> Result<Value, AppIpcError> {
         let agent = {
-            config["model"].is_object().then(|| json!({
-                "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"],
+            let has_reasoning = super::creation::normalized_model_options(&config["modelOptions"])
+                .get("reasoning")
+                .is_some_and(Value::is_string);
+            (config["model"].is_object() || has_reasoning).then(|| json!({
+                "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"].as_str().unwrap_or("codex"),
                 "execution_policy":{"mode":"fixed","environment_id":self.device_id},
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
@@ -846,6 +859,18 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         agent: Option<Value>,
     ) -> Result<Value, AppIpcError> {
+        let mut options = config
+            .get("modelOptions")
+            .map(super::creation::normalized_model_options)
+            .unwrap_or_default();
+        // Provider identity comes from runner routing, never from saved user options.
+        options.remove("runnerModelProvider");
+        if let Some(effort) = options
+            .get_mut("reasoning")
+            .filter(|value| value.is_string())
+        {
+            *effort = json!(normalize_reasoning_effort_alias(effort.as_str().unwrap()));
+        }
         if let Some(agent) = agent {
             let catalog = self.runner_catalog().await?;
             apply_stand_in_agent(
@@ -855,6 +880,35 @@ impl RuntimeWorkRpcHandler {
                 &self.device_id,
                 config.get("model").filter(|model| model.is_object()),
             )?;
+            if let Some(effort) = options.get("reasoning").and_then(Value::as_str) {
+                let selected = &payload["runnerRouting"]["model"];
+                let model = catalog["models"].as_array().and_then(|models| {
+                    models.iter().find(|model| {
+                        ["runtime", "provider", "model_id"]
+                            .iter()
+                            .all(|key| model.get(key) == selected.get(key))
+                    })
+                });
+                let is_default = model
+                    .and_then(|model| model["default_reasoning_effort"].as_str())
+                    .is_some_and(|value| normalize_reasoning_effort_alias(value) == effort);
+                let supported =
+                    model.and_then(|model| model["supported_reasoning_efforts"].as_array());
+                if !is_default
+                    && supported.is_some_and(|efforts| {
+                        !efforts.iter().any(|value| {
+                            value.as_str().is_some_and(|value| {
+                                normalize_reasoning_effort_alias(value) == effort
+                            })
+                        })
+                    })
+                {
+                    return Err(AppIpcError::new(
+                        "model_reasoning_unavailable",
+                        "The selected model does not support the saved reasoning effort; update the stand-in model settings",
+                    ));
+                }
+            }
             self.materialize_runner_cloud_models(&mut payload).await?;
         } else {
             let mut request = ExecutionRequest {
@@ -868,17 +922,27 @@ impl RuntimeWorkRpcHandler {
                 .insert("origin".into(), payload["origin"].clone());
             payload["executionRequest"] = json!(request);
         }
-        if let Some(options) = config["modelOptions"].as_object() {
+        if !options.is_empty() {
             let target = payload
                 .as_object_mut()
                 .unwrap()
                 .entry("modelOptions")
                 .or_insert_with(|| json!({}));
-            target.as_object_mut().unwrap().extend(options.clone());
+            target.as_object_mut().unwrap().extend(options);
+        }
+        if let Some(effort) = payload["modelOptions"]
+            .get_mut("reasoning")
+            .filter(|value| value.is_string())
+        {
+            *effort = json!(normalize_reasoning_effort_alias(effort.as_str().unwrap()));
         }
         if payload["modelId"].is_string() {
             payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});
         }
+        let mut request = execution_request(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "Invalid stand-in execution request"))?;
+        super::creation::apply_creation_options(&mut request, &payload)?;
+        payload["executionRequest"] = json!(request);
         // Stand-ins and direct Wework profiles do not execute as Backend Teams.
         payload["executionRequest"]["team_id"] = json!(0);
         payload["executionRequest"]["user_id"] = config["userId"].clone();

@@ -191,7 +191,7 @@ jobs:
       - name: Resolve Backend Rust E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           echo "image=$(.github/scripts/resolve-backend-rs-e2e-runtime.sh)" \
             >> "$GITHUB_OUTPUT"
@@ -853,6 +853,14 @@ jobs:
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/integration/device_registration_mysql.py
 
+      - name: Verify plugin local-sync MySQL transactions and recovery
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          PLUGIN_LOCAL_SYNC_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/integration/plugin_local_sync_mysql.py
+
       - name: Verify MySQL Runtime activity concurrency
         if: matrix.shardIndex == 1
         working-directory: ./backend
@@ -1231,6 +1239,8 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
           uv run --no-sync python tests/e2e/team_detail_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/team-detail.log"
+          uv run --no-sync python tests/e2e/public_model_write_auth.py \
+            2>&1 | tee "$E2E_REPORT_DIR/public-model-auth.log"
 
       - name: Upload Python gateway API E2E reports
         if: always() && matrix.shardIndex == 1
@@ -2056,6 +2066,7 @@ jobs:
           TASK_STALLED_SWEEP_INTERVAL_SECONDS: "1"
           TASK_STALLED_TIMEOUT_SECONDS: "4"
           TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS: "4"
+          BREEZE_LOG_DIR: ${{ github.workspace }}/backend/backend-stalled-rust
         run: |
           backend_pid=$(cat backend/backend.pid)
           kill -TERM "$backend_pid"
@@ -2111,6 +2122,7 @@ jobs:
             --env GITHUB_RUN_ATTEMPT \
             --env CI \
             --env E2E_STALLED_BACKEND_LOG="$container_workspace/backend/backend-stalled.log" \
+            --env E2E_STALLED_GATEWAY_LOG="$container_workspace/backend/backend-stalled-rust/info.log" \
             --env PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report-stalled \
             --env PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report-stalled \
             "$PLATFORM_E2E_IMAGE" \
@@ -2212,6 +2224,7 @@ jobs:
           path: |
             backend/backend.log
             backend/backend-stalled.log
+            backend/backend-stalled-rust/info.log
             backend/chat_shell.log
             frontend/next-dev.log
             frontend/mock-model-server.log

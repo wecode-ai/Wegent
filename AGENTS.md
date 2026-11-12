@@ -86,10 +86,13 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 ## Engineering rules
 
+- Respect diverse user workflows. Do not add restrictions based on implementation convenience, an assumed happy path, or guesses about how users should work. Every restriction must be justified by an explicit user requirement or a concrete security boundary; remove unjustified restrictions instead of making users follow a prescribed sequence.
+
 - Collaboration permission changes must follow [the permission contract](docs/en/wegent/developer-guide/collaboration-permissions.md) and preserve its CP invariants. Update the architecture transaction and contract tests together; changing an invariant requires explicit user authorization. Never weaken, skip, or delete security assertions to make an incompatible implementation pass.
 
 - Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
 - If repeated attempts fail to fix the same problem, promptly stop adding patches. Complete root-cause investigation and analysis, obtain concrete evidence of the cause, and only then resume fixing it.
+- Wework must remain openable when application-managed startup checks fail, including data corruption, missing credentials, and failed updates or migrations. Isolate the affected operation or capability; never use data or credential protection as a reason to prevent opening the entire application. Follow the [startup availability contract](wework/AGENTS.md#startup-availability-and-fault-isolation).
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.

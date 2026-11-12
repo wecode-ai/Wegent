@@ -1,3 +1,4 @@
+import { createStandInImConnectionsStory } from '../modules/stand-in-im-connections.mjs'
 import { verifyIssueAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
 import {
   openCollaborationNotifications,
@@ -19,6 +20,8 @@ import {
 import {
   assistantMessage,
   createSse,
+  handleEmptyReplyPrediction,
+  handleModelMaintenanceRequest,
   readRequestBody,
   responseCompleted,
   responseCreated,
@@ -55,13 +58,17 @@ export function createDesktopScenario({
   captureScreenshot,
   workspacePath,
 }) {
+  const imStory = createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot })
   const failureRegression = createStandInFailureRegression()
   const subscriptionRegression = createSubscriptionConfigRegression()
   let followUpResponse
   let userId
   return {
+    appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
     requiresCloudEnvironment: true,
-    async prepareCloud({ backendUrl, authToken }) {
+    async prepareCloud(environment) {
+      await imStory.prepareCloud(environment)
+      const { backendUrl, authToken } = environment
       const response = await fetch(`${backendUrl}/api/users/me`, {
         headers: { Authorization: `Bearer ${authToken}` },
       })
@@ -69,6 +76,9 @@ export function createDesktopScenario({
       const user = await response.json()
       assert.ok(Number.isInteger(user.id) && user.id > 0)
       userId = user.id
+    },
+    setCloudEnvironment(environment) {
+      imStory.setCloudEnvironment(environment)
     },
     prepareApp: subscriptionRegression.prepareApp,
     attachServer: subscriptionRegression.attachServer,
@@ -80,6 +90,8 @@ export function createDesktopScenario({
       )
         return false
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
+      if (handleModelMaintenanceRequest(body, response)) return true
       subscriptionRegression.acceptsModelRequest(request, url, body)
       if (failureRegression.handleHttp(body, response)) return true
       const id = `notification-${Date.now()}`
@@ -96,6 +108,7 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
+      await imStory.verify(control)
       assert.ok(userId, 'The scenario must use its authenticated backend identity')
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')

@@ -38,3 +38,17 @@ export async function requestExecutor(control, method, params, timeoutMs) {
   assert.equal(payload.ok, true, `${method} failed: ${payload.error?.message}`)
   return payload.result
 }
+
+export async function writeCodexModelConfig(control, { provider, model }, timeoutMs) {
+  for (const [keyPath, value] of [
+    ['model_provider', provider],
+    ['model', model],
+  ]) {
+    await requestExecutor(
+      control,
+      'runtime.codex.app_server.request',
+      { method: 'config/value/write', params: { keyPath, value, mergeStrategy: 'replace' } },
+      timeoutMs
+    )
+  }
+}

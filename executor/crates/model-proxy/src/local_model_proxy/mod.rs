@@ -20,6 +20,7 @@ mod passthrough_stream;
 mod progressive_tools;
 mod request_policy;
 pub mod retry_notifications;
+mod sse;
 mod vision;
 
 use std::{
@@ -263,7 +264,6 @@ pub fn upstream_from_model_config(
         .or_else(|| non_empty_string(model_config, "apiKey"))
         .or_else(|| non_empty_string(model_config, "auth_token"))
         .unwrap_or_default();
-    let native_by_default = api_format == "openai-responses";
     Ok(Some(LocalModelProxyUpstream {
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_string(model_config, "responses_url")
@@ -274,13 +274,13 @@ pub fn upstream_from_model_config(
         codex_request_mode,
         convert_custom_tools: non_empty_string(model_config, "tool_profile")
             .or_else(|| non_empty_string(model_config, "toolProfile"))
-            .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
+            .map_or(true, |profile| !profile.eq_ignore_ascii_case("custom")),
         native_tool_search: boolean_value(model_config, "native_tool_search")
             .or_else(|| boolean_value(model_config, "nativeToolSearch"))
-            .unwrap_or(native_by_default),
+            .unwrap_or(false),
         native_namespace_tools: boolean_value(model_config, "native_namespace_tools")
             .or_else(|| boolean_value(model_config, "nativeNamespaceTools"))
-            .unwrap_or(native_by_default),
+            .unwrap_or(false),
         api_key,
         default_headers: header_pairs(model_config.get("default_headers")),
         proxy_url: model_config
@@ -788,8 +788,6 @@ use request_preparation::prepare_request;
 use request_preparation::prepare_request_with_history;
 #[cfg(test)]
 use request_preparation::prepare_request_with_model_hint;
-pub(super) use responses_stream::append_stream_utf8;
-pub(super) use responses_stream::finish_stream_utf8;
 pub(super) use responses_stream::is_responses_terminal_event;
 use responses_stream::normalize_responses_event;
 use responses_stream::normalize_responses_stream;
@@ -800,7 +798,7 @@ use responses_stream::responses_event_values;
 pub(super) use responses_stream::responses_failed_event;
 #[cfg(test)]
 use responses_stream::rewrite_responses_event;
-pub(super) use responses_stream::take_sse_block;
+pub(super) use sse::{append_stream_utf8, finish_stream_utf8, take_sse_block};
 use upstream_transport::bearer_token;
 #[cfg(test)]
 use upstream_transport::build_upstream_request;

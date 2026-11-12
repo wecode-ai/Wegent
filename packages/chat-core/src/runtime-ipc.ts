@@ -101,12 +101,29 @@ export function createCloudRuntimeIpcClient(
       // The facade retains listeners across reconnects; registration must not
       // depend on the first handshake finishing within the RPC timeout.
       client.socket.on(RUNTIME_EVENT, runtimeHandler);
-      await client.connect();
-      return () => client.socket.off(RUNTIME_EVENT, runtimeHandler);
+      const unsubscribeReconnect = client.onReconnect(() => {
+        // The relay has no replay cursor: a new connection invalidates continuity.
+        handler({
+          event: "executor.event_lagged",
+          payload: { skipped: 0, reason: "transport_reconnected" },
+        });
+      });
+      const cleanup = () => {
+        client.socket.off(RUNTIME_EVENT, runtimeHandler);
+        unsubscribeReconnect();
+      };
+      try {
+        await client.connect();
+        return cleanup;
+      } catch (error) {
+        cleanup();
+        throw error;
+      }
     },
     async reconnect() {
       client.disconnect();
       await client.connect(undefined, true);
+      await client.ensureConnected();
     },
     dispose() {
       client.dispose();

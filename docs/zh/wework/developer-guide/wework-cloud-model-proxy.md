@@ -50,7 +50,7 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 | 值              | 行为                                                                                                                                                                |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto` 或未配置 | 保持现有按协议适配行为；Responses 的原生工具能力仍可用已有开关单独设置。                                                                                            |
+| `auto` 或未配置 | 默认将 custom、namespace 和 `tool_search` 转换为普通 function 工具；原生能力须通过已有开关显式开启，不根据厂商、模型名或 Responses 协议推断。                       |
 | `standard`      | 使用标准 function 工具格式，转换 `tool_search`、namespace 和 custom tools，并恢复返回给 Codex 的工具身份。适用于不支持 Codex 原生工具类型的 Kimi Responses 等服务。 |
 | `passthrough`   | 仅替换路由所需的模型 ID 和鉴权信息；其余请求业务字段原样保留，响应流也不做协议改写。仅适用于 OpenAI Responses 上游。                                                |
 
@@ -80,6 +80,20 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 透传响应保留上游正常数据块的原始字节。若发生读取错误或流在 Responses 终态之前结束，仅追加 `response.failed`；已有 `response.completed`、`response.failed` 或 `response.incomplete` 后不会重复追加。独立的 `[DONE]` 不能代替 Responses 终态。
 
 `standard` 模式只向上游提供客户端可执行的 function tools，不提供 `web_search`、`image_generation` 等服务端内置工具。若请求通过 `tool_choice` 强制选择服务端工具，代理返回 HTTP 400；`auto` 和 `passthrough` 继续保留这些工具。
+
+#### 通用 Responses 工具兼容
+
+所有模型流共用 executor 的 SSE 分帧和数据解析模块，包括 Responses 工具桥接、普通 Responses、透传检查、Chat Completions、Anthropic Messages、工具历史记录和 Harness 适配器。解析按流中的先后顺序处理 LF、CRLF 和 CR 边界，跨块 CRLF 仍作为一个换行；拼接同一事件的全部 `data:` 行，并在网络块之间保留未完整接收的 UTF-8 字符。Responses 的工具分发和终态识别以 JSON `type` 为准，不依赖可选的 SSE `event:` 字段；重写事件时替换全部旧数据行，同时保留事件元数据。透传检查和历史记录不会修改转发的数据块。
+
+`model-sse-parsing` 桌面 E2E 复用真实 Electron、executor 和 Codex，仅模拟模型服务，覆盖 Responses function 桥接、原生 Responses、Chat Completions 和 Anthropic Messages。场景发送多行 JSON、混合换行、跨块中文和误导性事件头，要求真实 Code Mode 工具写入文件、读取文件，并将成功结果传入下一轮模型历史。Responses 工具响应在收到真实工具结果前保持 HTTP 流开启，验证完整 CR 终止帧无需等待 EOF 就能触发工具执行。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
+
+本机模型接口、云端模型、分身和配置的 Codex provider 使用相同默认策略：`tool_profile: "function"`，原生 `tool_search` 和 namespace 默认关闭。没有 profile 或工具能力字段的已有配置同样生效，无需重建模型。显式 `tool_profile: "custom"` 保留原生 custom 工具；本机 `codex_tool_compatibility: "native"` 或云端单项能力开关开启原生 namespace 和工具搜索。云端 `codex_request_mode: "passthrough"` 保留完整原生请求，`standard` 始终转换为 function 工具。
+
+`tool_profile: "function"` 同样适用于原生 namespace 内的 custom 工具。开启 `native_namespace_tools` 时，代理保留 namespace 及其描述，将内部的 `exec` 等 custom 工具转换为带字符串 `input` 参数的 function 工具；历史调用、工具结果和强制工具选择使用同一协议。关闭原生 namespace 时，代理展开 namespace，并为其中的 custom 工具保留相同的输入包装。返回给 Codex 的 SSE 恢复原始工具名、namespace 和原始输入，避免同名工具串线。
+
+namespace 内的内置工具类型会返回请求校验错误，避免错误定义导致代理崩溃；省略类型的既有 function 定义仍按原有规则转换。
+
+`responses-tool-compatibility` 桌面 E2E 使用真实 Electron、Backend、executor 和 Codex，只模拟模型服务。模拟服务拒绝未转换的 custom `exec`，校验 function 参数，并要求本机和云端模型真实执行命令、重载后读取文件以及保留工具历史，同时验证显式原生配置。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
 
 #### Kimi K3 Chat Completions 兼容
 
@@ -162,7 +176,7 @@ Codex 向 OpenAI Responses API 发送工具时，可以使用 `type: "namespace"
 
 Wework 不应在新会话的第一次模型请求中注入所有 App 和浏览器子工具的完整 schema。Codex 启动配置只启用 Remote Apps 和 `tool_search`，由模型先搜索需要的 namespace，再把搜索结果中的子工具加入后续模型请求：
 
-- 原生支持 Codex `tool_search` 和 namespace tools 的 Responses 模型直接使用原协议，executor 不重复转换。
+- 显式启用原生 Codex `tool_search` 和 namespace tools 的 Responses 模型使用原协议，executor 不重复转换。
 - OpenAI Chat Completions、Anthropic Messages 等不支持 namespace tools 的模型由 executor 在协议边界展开本次 `tool_search` 已命中的 namespace。未命中的 App 工具不能出现在请求中。
 - executor 必须同时转换当前工具列表、历史 tool call、tool result 和显式 `tool_choice`，并在返回 Codex 前恢复原 namespace 身份。
 - 普通消息只携带精简的 `tool_search` 入口；新增 App 或浏览器工具时，不得让首次请求大小随全部工具 schema 线性增长。

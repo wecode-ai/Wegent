@@ -1,5 +1,13 @@
 use super::*;
 
+fn assert_binding_denied(error: AppIpcError, reason: &str) {
+    assert_eq!(error.code, "permission_denied");
+    assert_eq!(
+        error.message,
+        format!("The review run binding is no longer valid: {reason}")
+    );
+}
+
 #[test]
 fn evidence_filter_preserves_pagination_and_discloses_unknown_time_and_truncation() {
     let start = 1_780_000_000_000_i64;
@@ -45,7 +53,7 @@ async fn scheduled_review_uses_the_real_run_window_and_rejects_stale_versions() 
     let (handler, mut identity) = fixture(root.path());
     let review = handler
         .automation_store
-        .create(weekly_review(7, "mac", "09:00", "en").unwrap())
+        .create(weekly_review(7, "mac", "09:00", "UTC", "en").unwrap())
         .unwrap();
     let (_, run) = handler
         .automation_store
@@ -65,14 +73,45 @@ async fn scheduled_review_uses_the_real_run_window_and_rejects_stale_versions() 
         .unwrap();
     let end = chrono::DateTime::parse_from_rfc3339(page["windowEnd"].as_str().unwrap()).unwrap();
     assert_eq!(end.timestamp_millis(), run.scheduled_for.timestamp_millis());
+    let actor = handler.local_task_link(&identity.task_id).unwrap();
+    for (pointer, value, reason) in [
+        (
+            "/executionRequest/standInSchedule/id",
+            json!("missing"),
+            "automation_missing",
+        ),
+        ("/origin/weeklyReview", json!(false), "identity_mismatch"),
+        (
+            "/executionRequest/standInSchedule/runId",
+            json!("missing"),
+            "run_missing",
+        ),
+    ] {
+        let mut invalid = actor.clone();
+        *invalid.runtime_handle.pointer_mut(pointer).unwrap() = value;
+        assert_binding_denied(handler.review_run_end(&invalid, 7).unwrap_err(), reason);
+    }
+    let mut invalid = actor.clone();
+    invalid.local_task_id.push_str("-different");
+    assert_binding_denied(
+        handler.review_run_end(&invalid, 7).unwrap_err(),
+        "coordination_mismatch",
+    );
+    handler
+        .automation_store
+        .mark_failed(&run.id, "test failure".into())
+        .unwrap();
+    assert_binding_denied(
+        handler.review_run_end(&actor, 7).unwrap_err(),
+        "run_not_active",
+    );
     handler.automation_store.update(review).unwrap();
-    assert_eq!(
+    assert_binding_denied(
         handler
             .read_stand_in_conversations(&identity, "list_tasks", &json!({}))
             .await
-            .unwrap_err()
-            .code,
-        "permission_denied"
+            .unwrap_err(),
+        "automation_version_changed",
     );
 }
 
@@ -110,13 +149,12 @@ async fn memory_review_reads_older_history_and_revalidates_the_scheduled_run() {
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     assert!(store.stand_in_memories(7).unwrap().is_empty());
     handler.automation_store.update(review).unwrap();
-    assert_eq!(
+    assert_binding_denied(
         handler
             .read_stand_in_conversations(&identity, "list_tasks", &json!({}))
             .await
-            .unwrap_err()
-            .code,
-        "permission_denied"
+            .unwrap_err(),
+        "automation_version_changed",
     );
 }
 
@@ -157,14 +195,16 @@ async fn memory_review_traverses_long_history_saves_evidence_and_commits_only_co
     let root = tempfile::tempdir().unwrap();
     let (mut handler, mut identity) = fixture(root.path());
     handler.transcript_test_workers = Some(Arc::new(tokio::sync::Semaphore::new(2)));
-    let review = handler
-        .automation_store
-        .create(crate::runtime_work::automations::memory_review(7, "mac").unwrap())
-        .unwrap();
-    let (_, run) = handler
-        .automation_store
-        .start_manual_run(&review.id)
-        .unwrap();
+    let mut review = crate::runtime_work::automations::memory_review(7, "mac").unwrap();
+    review.schedule = crate::runtime_work::automations::AutomationSchedule::OneTime {
+        execute_at: chrono::Utc::now(),
+    };
+    let review = handler.automation_store.create(review).unwrap();
+    let due = handler.automation_store.due(chrono::Utc::now()).unwrap();
+    assert_eq!(due.len(), 1);
+    let (claimed, run) = due.into_iter().next().unwrap();
+    assert!(!claimed.enabled);
+    assert_eq!(claimed.version, review.version);
     identity.task_id = run.coordination.as_ref().unwrap().task_id.clone();
     identity.role = Some("@primary".into());
     identity.memory_review = true;
@@ -306,6 +346,28 @@ async fn memory_review_traverses_long_history_saves_evidence_and_commits_only_co
         .unwrap()
         .iter()
         .any(|item| item["taskId"] == "history"));
+    handler.automation_store.update(claimed).unwrap();
+    for error in [
+        handler
+            .read_stand_in_conversations(&identity, "list_tasks", &json!({}))
+            .await
+            .unwrap_err(),
+        handler
+            .remember_from_conversation(&identity, &input)
+            .await
+            .unwrap_err(),
+        handler
+            .memory_progress_operation(&identity, "complete_memory_source", &args)
+            .await
+            .unwrap_err(),
+    ] {
+        assert_binding_denied(error, "automation_version_changed");
+    }
+    assert!(store.stand_in_memories(7).unwrap().is_empty());
+    assert_eq!(
+        store.memory_review_progress(7, "history").unwrap()["completedThrough"],
+        run.scheduled_for.timestamp_millis()
+    );
 }
 
 #[tokio::test]
@@ -412,12 +474,21 @@ async fn onboarding_rpc_is_offline_and_repeated_completion_does_not_recreate_del
         .await
         .unwrap();
     assert_eq!(before["state"]["completed"], false);
+    assert_eq!(before["reviewTemplate"]["timezone"], "UTC");
     let completed = handler
         .stand_in_onboarding_rpc("runtime.stand_in.onboarding.complete", args.clone())
         .await
         .unwrap();
     assert_eq!(completed["state"]["completed"], true);
     assert_eq!(completed["settings"]["primary"]["enabled"], true);
+    assert_eq!(
+        handler
+            .automation_store
+            .get("stand-in-weekly-review-7")
+            .unwrap()
+            .timezone,
+        "UTC"
+    );
     handler
         .automation_store
         .delete("stand-in-weekly-review-7")
@@ -427,6 +498,66 @@ async fn onboarding_rpc_is_offline_and_repeated_completion_does_not_recreate_del
         .await
         .unwrap();
     assert!(handler.automation_store.list().is_empty());
+}
+
+#[tokio::test]
+async fn onboarding_rpc_uses_requested_timezone_without_rewriting_existing_review() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, _) = fixture(root.path());
+    let mut args =
+        json!({"userId":7,"weeklyReview":true,"time":"09:00","timezone":"America/New_York"});
+    let before = handler
+        .stand_in_onboarding_rpc("runtime.stand_in.onboarding.get", args.clone())
+        .await
+        .unwrap();
+    assert_eq!(before["reviewTemplate"]["timezone"], "America/New_York");
+    handler
+        .stand_in_onboarding_rpc("runtime.stand_in.onboarding.complete", args.clone())
+        .await
+        .unwrap();
+    let saved = handler
+        .automation_store
+        .get("stand-in-weekly-review-7")
+        .unwrap();
+    assert_eq!(saved.timezone, "America/New_York");
+    args["timezone"] = json!("Europe/London");
+    args["time"] = json!("11:30");
+    handler
+        .stand_in_onboarding_rpc("runtime.stand_in.onboarding.complete", args)
+        .await
+        .unwrap();
+    let unchanged = handler.automation_store.get(&saved.id).unwrap();
+    assert_eq!(unchanged.timezone, saved.timezone);
+    assert_eq!(json!(unchanged.schedule), json!(saved.schedule));
+    assert_eq!(unchanged.next_run_at, saved.next_run_at);
+    assert_eq!(unchanged.version, saved.version);
+}
+
+#[tokio::test]
+async fn onboarding_rpc_rejects_invalid_timezone_before_persisting() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, _) = fixture(root.path());
+    for method in [
+        "runtime.stand_in.onboarding.get",
+        "runtime.stand_in.onboarding.complete",
+    ] {
+        for timezone in [json!(""), json!("Not/A_Zone"), json!(42), Value::Null] {
+            let error = handler
+                .stand_in_onboarding_rpc(
+                    method,
+                    json!({"userId":7,"weeklyReview":true,"timezone":timezone}),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "bad_request");
+            assert!(error.message.contains("IANA timezone"));
+        }
+    }
+    assert!(handler.automation_store.list().is_empty());
+    assert_eq!(
+        handler.automation_store.stand_in_onboarding(7).unwrap()["completed"],
+        false
+    );
 }
 
 #[tokio::test]

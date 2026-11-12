@@ -15,7 +15,7 @@ import {
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const PREFIX = 'WEWORK_CLOUD_CONFIG_RECOVERY'
-const OFFICIAL_MODEL = 'gpt-5.5'
+const OFFICIAL_MODEL = 'gpt-6.1-sol'
 // Cold enterprise configuration retries and intentional desktop restarts are
 // slow operations; ordinary UI actions retain the shared ten-second timeout.
 const RECOVERY_TIMEOUT_MS = 60_000

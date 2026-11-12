@@ -44,14 +44,13 @@ import type {
   PointerEventHandler,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { ActionMenu } from '@/components/common/ActionMenu'
+import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu'
 import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Tooltip } from '@/components/ui/tooltip'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
-import { isGitCloneDeviceMissing } from '@/components/projects/gitCloneProjectRecovery'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
 import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
@@ -132,7 +131,6 @@ import {
 import type {
   CloneGitRepositoryInput,
   DeviceInfo,
-  GitCloneProjectOperation,
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
@@ -225,7 +223,6 @@ interface DesktopSidebarProps {
   runtimeWork?: RuntimeWorkListResponse | null
   runtimeWorkLoad?: RuntimeWorkLoadState
   onRetryRuntimeWork?: () => Promise<void>
-  gitCloneOperations?: GitCloneProjectOperation[]
   currentRuntimeTask?: RuntimeTaskAddress | null
   splitGroupMemberships?: Readonly<Record<string, WorkbenchSplitGroupMembership>>
   standaloneDeviceId?: string | null
@@ -315,10 +312,7 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onCloneGitRepository: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
-  onStartGitCloneProject?: (deviceId: string, input: CloneGitRepositoryInput) => void
-  onRetryGitCloneOperation?: (operation: GitCloneProjectOperation) => void
-  onDismissGitCloneOperation?: (operationId: string) => void
+  onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   projectDevicePluginApi?: (deviceId: string) => ProjectDevicePluginApi
   projectSpaceApis?: ProjectSpaceApi[]
   models?: UnifiedModel[]
@@ -1239,6 +1233,14 @@ function getDeviceUnavailableActionTitle(
   )
 }
 
+function dshMenuItemIcon(name?: string): ActionMenuItem['icon'] {
+  if (!name) return undefined
+  const Icon = ({ className }: { className?: string }) => (
+    <DshIcon name={name} className={className} />
+  )
+  return Icon
+}
+
 function RuntimeTaskRow({
   workspace,
   devices,
@@ -1997,6 +1999,7 @@ function RuntimeTaskRow({
           moveTaskMenu,
           ...conversationMenuActions.map(action => ({
             label: action.title,
+            icon: dshMenuItemIcon(action.icon),
             testId: `runtime-local-task-menu-extension-${action.id}-${task.taskId}`,
             disabled: !workspace.available || !action.enabled,
             onSelect: async () => {
@@ -2936,7 +2939,6 @@ export function DesktopSidebar({
   runtimeWork,
   runtimeWorkLoad,
   onRetryRuntimeWork,
-  gitCloneOperations = [],
   currentRuntimeTask,
   splitGroupMemberships = EMPTY_SPLIT_GROUP_MEMBERSHIPS,
   standaloneDeviceId,
@@ -2982,9 +2984,6 @@ export function DesktopSidebar({
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   onCloneGitRepository,
-  onStartGitCloneProject,
-  onRetryGitCloneOperation,
-  onDismissGitCloneOperation,
   projectSpaceApis,
   projectDevicePluginApi,
   models = [],
@@ -4459,7 +4458,7 @@ export function DesktopSidebar({
                     <DesktopSidebarSectionHeader
                       title={t('workbench.sidebar_project_spaces', '项目空间')}
                       expanded={displayedProjectsExpanded}
-                      hasContent={sidebarProjects.length > 0 || gitCloneOperations.length > 0}
+                      hasContent={sidebarProjects.length > 0}
                       toggleTestId="projects-section-toggle"
                       iconTestId="projects-section-chevron-right"
                       onToggle={() => setProjectsExpanded(expanded => !expanded)}
@@ -4614,94 +4613,13 @@ export function DesktopSidebar({
                     )}
                   {displayedProjectsExpanded && (
                     <>
-                      {showEmptyProjectCreateAction && gitCloneOperations.length === 0 && (
+                      {showEmptyProjectCreateAction && (
                         <DesktopSidebarNavItem
                           icon={Plus}
                           label={t('workbench.new_project', '新建项目')}
                           testId="projects-empty-create-button"
                           onClick={openProjectCreateDialog}
                         />
-                      )}
-                      {gitCloneOperations.length > 0 && (
-                        <div
-                          data-testid="git-clone-project-operations"
-                          className="mb-1 space-y-0.5"
-                        >
-                          {gitCloneOperations.map(operation => (
-                            <div
-                              key={operation.id}
-                              data-testid={`git-clone-project-operation-${operation.id}`}
-                              className="flex min-h-[30px] items-center gap-2 rounded-[10px] px-2.5 text-sm text-[rgb(var(--color-sidebar-text-primary))]"
-                              title={operation.error || operation.targetPath}
-                            >
-                              {operation.status !== 'failed' ? (
-                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                              ) : (
-                                <span className="h-2 w-2 shrink-0 rounded-full bg-destructive wework:bg-red-500" />
-                              )}
-                              <span className="min-w-0 flex-1 truncate">{operation.name}</span>
-                              <span className="shrink-0 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
-                                {operation.status === 'cloning'
-                                  ? t('workbench.remote_project_git_cloning', '克隆中')
-                                  : operation.status === 'opening'
-                                    ? t('workbench.remote_project_git_opening', '添加中')
-                                    : isGitCloneDeviceMissing(operation)
-                                      ? t(
-                                          'workbench.remote_project_device_unavailable',
-                                          '设备不可用'
-                                        )
-                                      : operation.failureReason === 'executor-offline'
-                                        ? t('workbench.remote_project_device_offline', '设备离线')
-                                        : operation.failureStage === 'open'
-                                          ? t(
-                                              'workbench.remote_project_git_open_failed',
-                                              '添加失败'
-                                            )
-                                          : t('workbench.remote_project_git_failed', '克隆失败')}
-                              </span>
-                              {operation.status === 'failed' && (
-                                <>
-                                  <Tooltip
-                                    label={
-                                      isGitCloneDeviceMissing(operation)
-                                        ? t('workbench.reselect_device', '重新选择设备')
-                                        : t('workbench.retry', '重试')
-                                    }
-                                    testId={`retry-git-clone-project-${operation.id}-tooltip`}
-                                  >
-                                    <button
-                                      type="button"
-                                      data-testid={`retry-git-clone-project-${operation.id}`}
-                                      onClick={() => onRetryGitCloneOperation?.(operation)}
-                                      className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
-                                      aria-label={
-                                        isGitCloneDeviceMissing(operation)
-                                          ? t('workbench.reselect_device', '重新选择设备')
-                                          : t('workbench.retry', '重试')
-                                      }
-                                    >
-                                      <RotateCw className="h-3.5 w-3.5" />
-                                    </button>
-                                  </Tooltip>
-                                  <Tooltip
-                                    label={t('workbench.remove', '移除')}
-                                    testId={`dismiss-git-clone-project-${operation.id}-tooltip`}
-                                  >
-                                    <button
-                                      type="button"
-                                      data-testid={`dismiss-git-clone-project-${operation.id}`}
-                                      onClick={() => onDismissGitCloneOperation?.(operation.id)}
-                                      className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
-                                      aria-label={t('workbench.remove', '移除')}
-                                    >
-                                      <X className="h-3.5 w-3.5" />
-                                    </button>
-                                  </Tooltip>
-                                </>
-                              )}
-                            </div>
-                          ))}
-                        </div>
                       )}
                       {sidebarProjects.length > 0 && (
                         <SidebarSortableList
@@ -4968,7 +4886,6 @@ export function DesktopSidebar({
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
             onCloneGitRepository={onCloneGitRepository}
-            onStartGitCloneProject={onStartGitCloneProject}
             onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
             onRefreshDevices={onRefreshDevices}
           />

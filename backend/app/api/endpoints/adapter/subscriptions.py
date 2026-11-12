@@ -110,6 +110,14 @@ def list_executions(
     include_silent: bool = Query(
         False, description="Include silent executions (COMPLETED_SILENT)"
     ),
+    preview_chars: Optional[int] = Query(
+        None,
+        ge=200,
+        le=20000,
+        description="Cut prompt and result_summary of the caller's own executions "
+        "to this many characters and set the truncated flags. Omit to return full "
+        "content.",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -121,6 +129,11 @@ def list_executions(
 
     By default, silent executions (COMPLETED_SILENT) are excluded. Set include_silent=True
     to include them in the results.
+
+    When preview_chars is set, prompt and result_summary of the caller's own
+    executions are cut to that many characters and the matching *_truncated flags
+    are set, so the timeline can load the full execution on demand. Executions of
+    followed or public subscriptions are returned whole.
     """
     skip = (page - 1) * limit
 
@@ -134,6 +147,7 @@ def list_executions(
         start_date=start_date,
         end_date=end_date,
         include_silent=include_silent,
+        preview_chars=preview_chars,
     )
 
     return BackgroundExecutionListResponse(total=total, items=items)

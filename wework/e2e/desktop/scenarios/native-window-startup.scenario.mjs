@@ -53,6 +53,13 @@ export async function createDesktopScenario({ resultDir }) {
     appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
 
     async prepareApp() {
+      // This checkpoint exercises first-launch geometry without a saved window state.
+      const preferencesPath = join(userDataDirectory, 'app-preferences.json')
+      const preferences = JSON.parse(await readFile(preferencesPath, 'utf8'))
+      delete preferences.mainWindowState
+      await writeFile(preferencesPath, `${JSON.stringify(preferences, null, 2)}\n`, {
+        mode: 0o600,
+      })
       lightThemeSeed = await seedStoppedStartupTheme({
         resultDir,
         userDataDirectory,
@@ -73,6 +80,12 @@ export async function createDesktopScenario({ resultDir }) {
       })
       const snapshot = await waitForClosedStartupSplash(control)
       await verifyStartupSplashHandoff({ snapshot, resultDir })
+      const initialWindow = JSON.parse(await control.command('getNativeWindowState', 'body'))
+      assert.equal(
+        initialWindow.maximized,
+        false,
+        'A fresh launch unexpectedly maximized the window'
+      )
       assert.ok(
         snapshot.theme === 'light' || snapshot.theme === 'dark',
         `The Electron startup splash did not resolve a valid theme: ${snapshot.theme}`
@@ -158,6 +171,13 @@ export async function createDesktopScenario({ resultDir }) {
         `${JSON.stringify(runtimeStartupEvents, null, 2)}\n`
       )
 
+      await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1000, height: 620 }),
+      })
+      const savedWindow = JSON.parse(await control.command('getNativeWindowState', 'body'))
+      assert.equal(savedWindow.maximized, false)
+      assert.equal(savedWindow.fullScreen, false)
+
       await verifyStartupSplashProgress({
         control,
         resultDir,
@@ -174,6 +194,14 @@ export async function createDesktopScenario({ resultDir }) {
       const darkSplashCapturePath = join(resultDir, 'startup-theme-dark-splash.png')
       await restartDesktopApp({
         afterStop: async () => {
+          const preferences = JSON.parse(
+            await readFile(join(userDataDirectory, 'app-preferences.json'), 'utf8')
+          )
+          assert.deepEqual(
+            preferences.mainWindowState,
+            { bounds: savedWindow.normalBounds, maximized: false },
+            'An interrupted startup overwrote the previously saved window size'
+          )
           darkThemeSeed = await seedStoppedStartupTheme({
             resultDir,
             userDataDirectory,
@@ -213,6 +241,17 @@ export async function createDesktopScenario({ resultDir }) {
       )
       const focusSnapshot = JSON.parse(await control.command('getComposerFocusSnapshot', 'body'))
       const nativeWindow = JSON.parse(await control.command('getNativeWindowState', 'body'))
+      assert.equal(nativeWindow.maximized, false, 'Restart unexpectedly maximized the workbench')
+      assert.deepEqual(
+        nativeWindow.bounds,
+        savedWindow.bounds,
+        'Restart lost the saved window size or position'
+      )
+      assert.deepEqual(
+        recoveredSplash.handoff.bounds.splash,
+        savedWindow.bounds,
+        'The startup splash did not use the saved main-window geometry'
+      )
       assert.equal(nativeWindow.visible, true, 'The workbench was hidden after the startup fade')
       assert.equal(nativeWindow.focused, true, 'The startup handoff did not focus the workbench')
       await writeFile(

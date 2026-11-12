@@ -58,6 +58,76 @@ fn codex_request() -> Value {
 }
 
 #[tokio::test]
+async fn unconfigured_responses_capabilities_default_to_portable_function_tools() {
+    let config = super::super::upstream_from_model_config(&json!({
+        "base_url": "https://custom.example/v1", "model_id": "any-model"
+    }))
+    .unwrap()
+    .unwrap();
+    assert!(config.convert_custom_tools);
+    assert!(!config.native_tool_search);
+    assert!(!config.native_namespace_tools);
+    let prepared = prepare(
+        &config,
+        &serde_json::to_vec(&codex_request()).unwrap(),
+        None,
+        &Default::default(),
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+    for tool in request["tools"].as_array().unwrap() {
+        assert!(!matches!(
+            tool["type"].as_str(),
+            Some("custom" | "namespace" | "tool_search")
+        ));
+    }
+    assert!(matches!(
+        prepared.conversion,
+        Some(Conversion::Responses(_))
+    ));
+    assert!(request["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["type"] == "web_search"));
+}
+
+#[tokio::test]
+async fn explicit_native_responses_capabilities_preserve_custom_tools() {
+    let config = super::super::upstream_from_model_config(&json!({
+        "base_url": "https://custom.example/v1", "model_id": "any-model",
+        "tool_profile": "custom", "native_tool_search": true, "native_namespace_tools": true
+    }))
+    .unwrap()
+    .unwrap();
+    let original = json!({"model":"any-model", "input":[], "tools":[
+        {"type":"custom","name":"exec","format":{"type":"text"}},
+        {"type":"tool_search","execution":"client"},
+        {"type":"namespace","name":"app","tools":[
+            {"type":"function","name":"read","parameters":{"type":"object"}}
+        ]}
+    ]});
+    let prepared = prepare(
+        &config,
+        &serde_json::to_vec(&original).unwrap(),
+        None,
+        &Default::default(),
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&prepared.body).unwrap(),
+        original
+    );
+    assert!(prepared.conversion.is_none());
+}
+
+#[tokio::test]
 async fn passthrough_preserves_every_field_except_the_routed_model() {
     let original = codex_request();
     let prepared = prepare(

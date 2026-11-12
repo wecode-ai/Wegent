@@ -1109,7 +1109,7 @@ async fn interaction_answer_router_rejects_waiters_after_channel_closes() {
 
 #[test]
 fn normalize_reasoning_effort_preserves_supported_codex_levels() {
-    for effort in ["low", "medium", "high", "xhigh", "max", "ultra"] {
+    for effort in ["none", "low", "medium", "high", "xhigh", "max", "ultra"] {
         assert_eq!(normalize_reasoning_effort(Some(effort)), effort);
     }
 }
@@ -2238,7 +2238,7 @@ fn custom_model_without_catalog_entry_uses_upstream_id() {
 }
 
 #[test]
-fn explicit_responses_upstream_preserves_native_app_tools_by_default() {
+fn explicit_responses_upstream_defaults_to_ordinary_function_tools() {
     let upstream = explicit_codex_upstream(
         &json!({
             "model_id": "gpt-5.6-sol",
@@ -2248,9 +2248,9 @@ fn explicit_responses_upstream_preserves_native_app_tools_by_default() {
         "secret",
     );
 
-    assert!(!upstream.convert_custom_tools);
-    assert!(upstream.native_tool_search);
-    assert!(upstream.native_namespace_tools);
+    assert!(upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
 }
 
 #[test]
@@ -2722,7 +2722,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
 }
 
 #[test]
-fn user_configured_responses_provider_preserves_native_app_tools_by_default() {
+fn user_configured_responses_provider_defaults_to_functions_and_honors_native_opt_in() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("configured-provider-native-responses");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
@@ -2745,9 +2745,19 @@ fn user_configured_responses_provider_preserves_native_app_tools_by_default() {
         Some("http://127.0.0.1:3456/v1/responses")
     );
     assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
-    assert!(!upstream.convert_custom_tools);
-    assert!(upstream.native_tool_search);
-    assert!(upstream.native_namespace_tools);
+    assert!(upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
+    let config_path = root.join("config.toml");
+    let config = fs::read_to_string(&config_path).expect("read test configuration");
+    fs::write(
+        &config_path,
+        format!("{config}tool_profile = \"custom\"\nnative_tool_search = true\nnative_namespace_tools = true\n"),
+    ).expect("enable native tool capabilities");
+    let native = configured_codex_provider("wework-e2e", None).expect("native provider");
+    assert!(!native.convert_custom_tools);
+    assert!(native.native_tool_search);
+    assert!(native.native_namespace_tools);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -4322,7 +4332,10 @@ fn stand_in_identity_uses_native_v2_without_changing_other_task_defaults() {
             .insert("origin".to_owned(), json!({"type": origin_type}));
         let overrides = codex_collaboration_config_overrides(&request);
         if origin_type == "stand_in_identity" {
-            assert_eq!(overrides, vec![CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]);
+            assert_eq!(
+                overrides,
+                vec!["agents.enabled=true", CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]
+            );
         } else {
             assert!(overrides.is_empty());
         }
@@ -4347,6 +4360,31 @@ fn single_stand_in_identity_still_disables_both_native_agent_families() {
             CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE
         ]
     );
+}
+
+#[test]
+fn explicit_native_modes_restore_subagents_after_a_disabled_resume() {
+    for mode in ["default", "plan"] {
+        let mut request = ExecutionRequest::default();
+        request.extra.extend(
+            json!({"collaborationMode":mode,"collaboration_model":"single"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        assert_eq!(
+            codex_collaboration_config_overrides(&request),
+            vec!["agents.enabled=true", CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]
+        );
+        let config = CodexLaunchConfig {
+            config_overrides: codex_collaboration_config_overrides(&request),
+            ..Default::default()
+        };
+        let params = thread_resume_params("existing-thread", &request, &config);
+        assert_eq!(params["threadId"], "existing-thread");
+        assert_eq!(params["config"]["agents.enabled"], true);
+        assert_eq!(params["config"]["features.multi_agent_v2"], true);
+    }
 }
 
 #[test]
@@ -5743,6 +5781,8 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
     let runtime_path = home.join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
     let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
     env::set_var("WEGENT_EXECUTOR_HOME", &home);
+    let process_environment_before_enable = codex_base_process_environment();
+    assert!(computer_use_mcp_config_overrides().is_empty());
     fs::create_dir_all(runtime_path.parent().expect("runtime parent should exist"))
         .expect("runtime directory should be created");
     fs::write(
@@ -5763,26 +5803,38 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
     );
     assert_eq!(
         config["mcp_servers.wework_computer.args"],
-        json!(["computer-use-mcp-server"])
+        json!(["computer-use-mcp-server", runtime_path])
     );
     assert_eq!(
         config["mcp_servers.wework_computer.default_tools_approval_mode"],
         "writes"
     );
+    assert!(!config.contains_key("mcp_servers.wework_computer.env_vars"));
+    for environment in [&launch_config.env, &codex_base_process_environment()] {
+        assert!(!environment.contains_key("WEWORK_COMPUTER_USE_BRIDGE_URL"));
+        assert!(!environment.contains_key("WEWORK_COMPUTER_USE_BRIDGE_TOKEN"));
+    }
+    assert!(!serde_json::to_string(config)
+        .unwrap()
+        .contains("computer-use-test-token"));
     assert_eq!(
-        config["mcp_servers.wework_computer.env_vars"],
-        json!([
-            "WEWORK_COMPUTER_USE_BRIDGE_URL",
-            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
-        ])
+        codex_base_process_environment(),
+        process_environment_before_enable
     );
+    for params in [
+        thread_resume_params("existing-thread", &request, &launch_config),
+        thread_fork_params("existing-thread", None, &request, &launch_config),
+    ] {
+        assert_eq!(
+            params["config"]["mcp_servers.wework_computer.args"],
+            json!(["computer-use-mcp-server", runtime_path])
+        );
+    }
+    fs::remove_file(&runtime_path).unwrap();
+    assert!(computer_use_mcp_config_overrides().is_empty());
     assert_eq!(
-        launch_config.env["WEWORK_COMPUTER_USE_BRIDGE_URL"],
-        "http://127.0.0.1:43128"
-    );
-    assert_eq!(
-        launch_config.env["WEWORK_COMPUTER_USE_BRIDGE_TOKEN"],
-        "computer-use-test-token"
+        codex_base_process_environment(),
+        process_environment_before_enable
     );
 
     let _ = fs::remove_dir_all(home);

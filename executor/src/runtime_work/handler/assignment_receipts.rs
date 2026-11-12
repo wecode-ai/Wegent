@@ -21,7 +21,11 @@ impl RuntimeWorkRpcHandler {
                 .backend_url
         };
         let mut binding = binding.clone();
-        binding["deviceId"] = json!(self.device_id);
+        binding["deviceId"] = json!(if local {
+            self.device_id.clone()
+        } else {
+            self.cloud_device_id()?
+        });
         binding["taskId"] = json!(self.stand_in_task_id(config, issue));
         binding["taskTitle"] = issue["title"].clone();
         binding["standInConversationId"] =
@@ -32,13 +36,11 @@ impl RuntimeWorkRpcHandler {
                 reqwest::Method::POST,
                 &format!("/v1/loop-items/{issue_id}/tasks"),
                 Some(&json!({
-                    "deviceId":self.device_id,"taskId":binding["taskId"],"taskTitle":issue["title"],"standInConversationId":binding["standInConversationId"]
+                    "deviceId":binding["deviceId"],"taskId":binding["taskId"],"taskTitle":issue["title"],"standInConversationId":binding["standInConversationId"]
                 })),
             )
             .await?;
-            return Ok(binding);
-        }
-        if local {
+        } else if local {
             LocalTaskStore::open(self.task_store_path.as_ref())
                 .map_err(settings_error)?
                 .bind_task(
@@ -57,6 +59,19 @@ impl RuntimeWorkRpcHandler {
                 Some(&binding),
             )
             .await?;
+        }
+        self.store
+            .bind_issue_conversation(
+                &super::stand_in::stand_in_issue_identity(config, issue),
+                binding["taskId"].as_str().unwrap(),
+            )
+            .map_err(|error| AppIpcError::new("stand_in_settings", error.to_string()))?;
+        if binding["triggerCommentId"].is_string()
+            || (config["manual"] == true
+                && (issue["assignee_user_id"] != config["userId"]
+                    || !binding["humanAssignmentId"].is_string()))
+        {
+            return Ok(binding);
         }
         // Receipt authority still comes from the recipient-owned binding. Model
         // preparation and execution are independent of accepting the assignment.
@@ -99,11 +114,15 @@ impl RuntimeWorkRpcHandler {
                 )
                 .map_err(settings_error);
         }
+        let device_id = match binding["deviceId"].as_str() {
+            Some(device) => device.to_owned(),
+            None => self.cloud_device_id()?,
+        };
         store
             .queue_assignment_receipt(&json!({
                 "projectId": project, "issueId": issue_id, "backendUrl": backend_url,
                 "assignmentId": super::stand_in::issue_assignment_event_id(binding)?, "userId": config["userId"],
-                "deviceId": self.device_id, "taskId": binding["taskId"],
+                "deviceId": device_id, "taskId": binding["taskId"],
             }))
             .map_err(settings_error)?;
         self.log_stand_in_decision(config, issue, "receipt_queued", json!({"taskId":binding["taskId"],"issueAssignmentId":super::stand_in::issue_assignment_event_id(binding)?}));
@@ -258,6 +277,50 @@ mod tests {
             "unknown"
         );
         assert_eq!(receipt_failure_reason(None), "unknown");
+    }
+
+    #[tokio::test]
+    async fn manual_stand_in_work_receipts_only_acknowledge_the_current_recipient() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Manual receipts"})).unwrap())
+            .unwrap();
+        let config = json!({"id":"review","projectId":project.id,"projectStore":"local","userId":7,"manual":true});
+        for assignee in [Value::Null, json!(8), json!(7)] {
+            let issue = store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value(json!({"title":"Review","assignee_user_id":assignee}))
+                        .unwrap(),
+                )
+                .unwrap();
+            let value = serde_json::to_value(&issue).unwrap();
+            let binding = super::super::stand_in::stand_in_issue_receipt_binding(&config, &value);
+            handler
+                .accept_stand_in_assignment(&config, &value, &binding)
+                .await
+                .unwrap();
+            assert_eq!(store.list_task_bindings(&issue.id).unwrap().len(), 1);
+            assert_eq!(
+                store
+                    .get_task(&project.id, &issue.id)
+                    .unwrap()
+                    .assignee_user_id,
+                issue.assignee_user_id
+            );
+            let receipts = store.assignment_receipts(&project.id, &issue.id).unwrap();
+            assert_eq!(
+                receipts
+                    .iter()
+                    .any(|row| row["stand_in_received_at"].is_string()),
+                assignee == 7
+            );
+            assert!(receipts.iter().all(|row| row["human_read_at"].is_null()));
+        }
     }
 
     #[tokio::test]

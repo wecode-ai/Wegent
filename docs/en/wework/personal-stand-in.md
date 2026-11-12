@@ -4,13 +4,19 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
+In the Chinese interface, the **My stand-in** entry is labeled **我的助理**.
+
 ## Ongoing Issue collaboration
 
 Assigning an Issue or mentioning a member wakes their enabled, project-connected stand-ins that match its tags and allow automatic handling.
 You can mention yourself: eligible stand-ins receive the event without a human self-reminder.
 The same stand-in reuses its conversation for the same Issue. Reassignment retains history but still requires fresh authorization.
+Reassignment, unassignment, deletion of the original mention or pausing automatic intake still allows continuing and retrying the conversation, including synchronizing public replies.
+Manually starting a stand-in does not require assigning the Issue to yourself and never changes its assignee. Automatic intake settings select new work without restricting explicit user actions. Current project and Issue access and execution permissions still apply.
 Acknowledgment and result appear as separate comments. You can keep writing and sending while subagents work; follow-up wakeups are handled in order.
 Reply directly to a stand-in comment without another mention to continue with that role. Private chats, reasoning and tool activity are not published.
+
+Stand-in replies on an Issue show the owning user followed by the role in parentheses, for example “Alex (Assistant)”, so participants can distinguish different users' stand-ins. A user ID appears while the member name is unavailable and updates to the name when member information loads.
 
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
@@ -18,6 +24,8 @@ Reply directly to a stand-in comment without another mention to continue with th
 <a id="stand-in-chat-and-desktop-notifications"></a>
 
 ## Stand-in chat and desktop notifications
+
+Keep sending requests when the previous reply ends or a background result starts another reply. Messages are delivered into the original conversation according to the current turn state.
 
 This presentation applies only to primary and role conversations on the **My Stand-in** page. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
 
@@ -29,10 +37,12 @@ The desktop prompt above the composer offers **Notification settings**, **Don't 
 
 The number beside **My Stand-in** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. Each new message triggers at most one desktop notification. Clicking opens the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
 
+<a id="role-execution-device"></a>
+
 ## Individual role-profile operations
 
 1. Open **My Stand-in** from the left sidebar, select the primary identity or a scenario role, click **Stand-in details** at the top right, then **Manage stand-in** at the bottom of the popover.
-2. Edit responsibilities and preferences. Expand **More settings (device, model, workspace)** to view the bound device and choose an available model and working directory. To use another device, follow “Instance binding and stopping” below before checking its model and source accounts.
+2. Edit responsibilities and preferences. Select **Execution device** directly in the scenario role settings, then expand **More settings (device, model, workspace)** to choose that device's model and working directory. Different roles can use different devices without changing the primary identity's binding.
 3. Install/authorize source apps, choose scope and handling mode, then save to enable changes. Calendar/scheduled delegation belongs to this role's connection page, not global cloud connection settings.
 4. **Recent activity** mixes work threads and schedules. Work opens as a read-only preview inside the same popover; Back restores the list position. Use **Open conversation in workspace** to reply, approve or use the full workspace. Human questions remain in **Needs your input** and the original work.
 5. To delete a scenario role, use its settings action and confirm the target. Deleting differs from pausing a source; adjust source reception if you want to keep the role but temporarily stop intake.
@@ -53,11 +63,13 @@ Saving a new role enables it. Explicitly adding or enabling a source starts inta
 
 If **My stand-in** encounters incompatible versions, it first shows an error with upgrade guidance without automatically navigating away. Select **View device status** beside the error to open **Cloud work**, inspect device status and versions, and follow the upgrade procedure supported by that device. For local issues, the desktop device section offers **View local version**, which opens About to check for updates even when there are no cloud devices. This action does not install or restart anything automatically. After resolving the issue, return to the stand-in page and select **Reload**. Other loading errors retain reload without this device guidance action.
 
-Each Wework instance binds one local or cloud stand-in at a time. Scenario roles belong to that stand-in, rather than being separate instance bindings. The page and settings have no direct execution-device switch. Reopening the page, device inventory changes, or changing accounts never replaces an existing binding.
+The primary stand-in retains one local or cloud instance binding. Scenario roles choose their execution device independently. Select **Execution device** in a role profile and save: new tasks use the selected device, while existing tasks, queued work and existing conversations for the same Issue remain on their original device. Changing a role does not rebind the primary identity. The role list follows saved device locations, and historical work opens at its original task address.
 
-To rebind, open **Stand-in details → Manage stand-in**, then select **Stop stand-in** at the bottom left of the settings panel and confirm. This stops intake for the entire stand-in and cancels its primary and role conversations, running work, and queued delegated tasks. Other accounts’ stand-ins and ordinary tasks are unaffected. Local and cloud binding choices appear only after stopping completes. Configuration, memories, and history remain; rebinding the original stand-in restores its previous intake switches.
+Reselect the model and working directory after changing a role's device, and check source accounts and projects on the target. Credentials, existing tasks and conversations are not moved. Offline devices cannot be newly selected. A failed target save preserves the draft. When target activation cannot be confirmed, refresh the target role; the original device is not simultaneously restored as a receiver for new tasks. Role device changes do not require the primary instance's stop-and-rebind flow below.
 
-An offline device, failed cancellation, or missing process-stop acknowledgement keeps the instance **Stopping**, with rebinding unavailable. Reconnect and use **Retry stopping**. Reopening the page does not unlock the binding. Primary and role settings keep only **Stop stand-in** at the bottom left, without a duplicate intake switch.
+To rebind the primary identity, select it and open **Stand-in details → Manage stand-in**, then select **Stop stand-in** at the bottom left of settings and confirm. This stops intake and cancels primary and role conversations, running work and queued delegated tasks on the currently bound device. Roles on other devices, other accounts' stand-ins and ordinary tasks are unaffected. Local and cloud binding choices appear only after stopping completes. Configuration, memories and history remain; rebinding the original profile restores its previous intake switches.
+
+An offline device, failed cancellation, or missing process-stop acknowledgement keeps the instance **Stopping**, with rebinding unavailable. Reconnect and use **Retry stopping**. Reopening the page does not unlock the binding. Settings on the currently bound device retain **Stop stand-in** at the bottom left; role settings on other devices do not show this entry. There is no duplicate intake switch.
 
 After stopping, you may migrate instead: choose **Profile to migrate** (the primary identity or a scenario role), choose the target device, select **Migrate and bind**, and confirm. Retain old profiles, memories and conversation history while appending portable responsibilities, model settings, tags and visible memories without overwriting target settings. The imported role stays paused until its device directory, project/source grants and arrangements are configured. Only successful copying changes this instance's binding; copying failures support retry while the source stays stopped. If target startup acknowledgement fails after rebinding, retain the target binding for stopping and recovery without automatically restarting the source. A stopped target permits only these disabled, grant-free imports; migration cannot edit existing settings or restore enablement.
 
@@ -68,6 +80,18 @@ If concurrent initialization causes a first-binding version conflict, the page r
 Click **Board** in the Tasks sidebar, or select **Board** from its task view menu, while viewing **My stand-in** to open your personal task board.
 
 The **My stand-in** button in collaboration project headers also carries a **Beta** badge. Both entries are available without enabling experimental features.
+
+<a id="im-conversations"></a>
+
+## Connect IM conversations
+
+Open **My stand-in** in the sidebar, select the primary identity or a scenario role, then click **Stand-in details** at the top right. Click **DingTalk, Telegram, Discord, or Weibo** directly in the details popover to open that channel’s connection dialog. It names the destination stand-in and execution device and lists only private conversations from that channel. When there are multiple conversations, select one, then choose **Connect to “stand-in name”**. After success, choose **Done** to return to the original popover. Connections take effect immediately without opening Manage stand-in or saving profile settings. Cloud sign-in is required to connect.
+
+If that channel has no registered private conversations, the dialog explains how to send **`/bind`** to your configured bot, then select **Refresh conversations**. This does not install a bot or authorize a platform account. Refresh to retry a failed list request, or use the connect action to retry a failed save. A failed refresh preserves conversations already loaded. An offline execution device has a separate notice; Connected means the routing configuration has been saved.
+
+Private IM conversations default to the existing **Wegent chat mode**, retaining its Agent, model, device and new-conversation commands. Send **`/standin`** (or **`/mode standin`**) to enter **Wework stand-in mode**; send **`/chat`** (or **`/mode chat`**) to return to Wegent. **`/mode`** shows the current mode. Without an explicit identity binding, stand-in mode uses the primary stand-in on your account’s default execution device. If no default is configured, the device is offline, or the selected role has been deleted, IM explains how to check the connection in the details popover. It never chooses another device or role automatically. To rebind a conversation, switch to the destination role, open the same channel in its details popover, select the private conversation, and confirm the connection.
+
+New messages enter the selected stand-in’s existing persistent conversation. Old task mode migrates to stand-in mode. Its task bindings are removed while tasks and their history are preserved; task titlebars no longer offer Continue in private chat. In stand-in mode, quoted task notifications and task-card follow-ups provide context to the current stand-in without changing its binding or model. Task notification subscriptions and notification channels remain separate settings.
 
 <a id="conversational-configuration"></a>
 
@@ -99,6 +123,8 @@ Memory search uses response-size-bounded pages. Oversized records are read in ch
 
 Pausing new-work intake for the stand-in or a role does not revoke saved source grants; those sources remain available for memory. Pause the memory consolidation arrangement to stop consolidation, or remove a source grant to revoke access. Automatic consolidation exposes only source- and run-validated memory reads, saves and progress tools, never Shell or external writes.
 
+Memory consolidation tasks are hidden from the left task sidebar, including running and finished records. Open **My stand-in → Settings → Connections → Calendar → 分身记忆整理** to view run history and open the original task. Hiding these tasks does not affect background consolidation or saved history.
+
 After the primary stand-in is enabled, its execution device provisions a **分身记忆整理** (memory consolidation) arrangement once, checking every six hours by default. Open **My stand-in → Settings → Connections → Calendar → 分身记忆整理** to inspect its schedule and run history, pause, edit or delete it. Background provisioning does not recreate a paused or deleted arrangement. Consolidation uses an independent conversation, leaving the current chat free; the execution device and model must be available. Open the original task from its run history to inspect the result. Consolidation does not automatically start a primary conversation with ordinary tool permissions just to report completion.
 
 Background consolidation preserves evidence and scope, following conversation pages and long-message continuations. Incomplete reads or failed saves must not advance a conversation's completion watermark. After correction or forgetting, consolidation does not reconstruct that memory from the same old evidence. Forgetting does not delete the original conversation. As selected by the user, minimal forgetting rules also retain the compact excluded fact and its scope, not original conversations, files or evidence excerpts. Rules are not active memories: stand-ins read them to avoid relearning the same meaning without excluding new facts about the same topic. Exact fingerprints are enforced by code; semantic comparison across paraphrases is model-mediated and does not guarantee recognition of every equivalent statement. Expand **Forgetting rules** below the memory list to inspect compact facts and scopes. Choose **Delete rule** and confirm to allow future learning; cancel makes no change. Deletion neither restores an active memory immediately nor changes other rules. Failed reads or deletion preserve existing data with a separate reload action. Native semantic behavior across paraphrases still requires verification.
@@ -120,7 +146,13 @@ Open **left sidebar → My Stand-in → Stand-in details → Manage stand-in →
 
 ## Model selection
 
-Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. The primary conversation and the concrete work it creates both use the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
+Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. Concrete work created by a stand-in uses the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
+
+Stand-in chats inherit the profile's saved model and reasoning effort by default, with temporary choices available inside each chat. When a later save actually changes the model or effort, existing chats inherit the new settings from the next message; the current turn is not restarted. Profile changes do not alter existing work tasks' working directories or sessions.
+
+To switch models temporarily, use the model selector in the primary or role chat composer. Before the first message, the selection applies directly. Switching providers in an existing chat requires confirmation; the next message starts a new session in that stand-in chat, while earlier messages and the draft remain available. Finish active work before sending across providers. Temporary selections do not change the saved profile or ordinary chats.
+
+Stand-in chats currently require the Codex runtime for operation approvals; the Claude Code runtime is not yet supported. Saved Claude Code models are retained without automatic replacement. To continue chatting, manually select an available Codex model using the chat composer's model selector. Claude Code behavior in ordinary work tasks remains unchanged.
 
 <a id="stand-in-source-session-policy"></a>
 
@@ -239,6 +271,8 @@ Enable **Settings → General → Experimental features**, then use **Talk to le
 Publication shares only the content you enter, not private chat or memories. If no commentable Issue is available, create/select an accessible Issue in the project. Pending permission checks/submission may disable controls; changing devices cannot bypass permissions.
 
 Record a matter and its trigger time in **My Stand-in → role profile → Connections → Calendar / scheduled delegation**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
+
+New recurring arrangements use the current device's time zone; existing arrangements retain their saved zone. To specify another zone, open **the gear beside Frequency (Frequency settings) → Time zone** in the editor, enter an IANA name such as `America/New_York`, and save. The task sidebar's **Scheduled → the task** uses the same control. **One time** execution times continue to use the current device's local time.
 
 For future execution requested in chat, the stand-in should inspect existing work evidence or immediately delegate a read-only investigation to verify the actual workflow, workspace, and required inputs. It should read available instructions and configuration instead of repeatedly asking you for those facts. Missing business choices require a question card; automatic execution must not be scheduled while they remain unresolved. Asking to use an existing automatic workflow does not prove that the workflow has been inspected, and postponing that investigation until the trigger time does not make the work ready.
 

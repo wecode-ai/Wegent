@@ -6,6 +6,51 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 
+it('shares only in-flight profile reads within one backend-scoped API instance', async () => {
+  let release!: (value: unknown) => void
+  const request = vi.fn().mockImplementation(
+    () =>
+      new Promise(resolve => {
+        release = resolve
+      })
+  )
+  const api = createStandInExecutorApi(request)
+  const first = api.personalGet(7, 'mac')
+  const second = api.personalGet(7, 'mac')
+  expect(first).toBe(second)
+  expect(request).toHaveBeenCalledTimes(1)
+  release({ userId: 7, executionDeviceId: 'mac', version: 0, roles: [] })
+  await first
+  const next = api.personalGet(7, 'mac')
+  expect(request).toHaveBeenCalledTimes(2)
+  release({ userId: 7, executionDeviceId: 'mac', version: 1, roles: [] })
+  await next
+})
+
+it('invalidates alias reads started during a write even when its response fails', async () => {
+  let rejectSave!: (error: Error) => void
+  const reads: Array<(value: unknown) => void> = []
+  const request = vi.fn((method: string) =>
+    method === 'runtime.stand_in.personal.save'
+      ? new Promise((_resolve, reject) => {
+          rejectSave = reject
+        })
+      : new Promise(resolve => reads.push(resolve))
+  )
+  const api = createStandInExecutorApi(request)
+  const failure = api
+    .personalSave(7, { userId: 7, executionDeviceId: 'mac', version: 0, roles: [] }, 'app-record-1')
+    .catch(error => error)
+  const stale = api.personalGet(7, 'mac')
+  rejectSave(new Error('Response lost'))
+  await failure
+  const fresh = api.personalGet(7, 'mac')
+  expect(fresh).not.toBe(stale)
+  const value = { userId: 7, executionDeviceId: 'mac', version: 1, roles: [] }
+  reads.forEach(resolve => resolve(value))
+  await Promise.all([stale, fresh])
+})
+
 it('routes forgetting-rule reads and versioned deletion to the selected owner device', async () => {
   const request = vi.fn().mockResolvedValue({ items: [] })
   const api = createStandInExecutorApi(request)
@@ -61,6 +106,19 @@ it('treats the cloud transport task_not_found as an empty first-conversation loo
   expect(request).toHaveBeenCalledWith('runtime.tasks.get', { taskId: 'new-conversation' }, 'cloud')
 })
 
+it('resolves a legacy session provider only when explicitly requested on its owner', async () => {
+  const request = vi.fn().mockResolvedValue({ success: true })
+  const api = createStandInExecutorApi(request)
+  await api.readTask('owner', 'conversation')
+  expect(request).toHaveBeenLastCalledWith('runtime.tasks.get', { taskId: 'conversation' }, 'owner')
+  await api.readTask('owner', 'conversation', { resolveActiveProvider: true })
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.tasks.get',
+    { taskId: 'conversation', resolveActiveProvider: true },
+    'owner'
+  )
+})
+
 it.each(['permission_denied', 'task_archived', 'cloud_unavailable'])(
   'preserves %s errors while looking up a conversation',
   async code => {
@@ -73,22 +131,30 @@ it.each(['permission_denied', 'task_archived', 'cloud_unavailable'])(
   }
 )
 
-it('routes onboarding reads and explicit feature choices to the selected Executor', async () => {
-  const request = vi.fn().mockResolvedValue({ state: { version: 1, completed: true } })
-  const api = createStandInExecutorApi(request)
-  await api.onboarding(7, 'selected-device', 'zh-CN')
-  expect(request).toHaveBeenLastCalledWith(
-    'runtime.stand_in.onboarding.get',
-    { userId: 7, language: 'zh-CN' },
-    'selected-device'
-  )
-  await api.completeOnboarding(7, 'selected-device', false, '10:30', 'zh-CN')
-  expect(request).toHaveBeenLastCalledWith(
-    'runtime.stand_in.onboarding.complete',
-    { userId: 7, weeklyReview: false, time: '10:30', language: 'zh-CN' },
-    'selected-device'
-  )
-})
+it.each(['America/New_York', 'Europe/London'])(
+  'routes onboarding with the client timezone %s to the selected Executor',
+  async timezone => {
+    const options = Intl.DateTimeFormat().resolvedOptions()
+    vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
+      ...options,
+      timeZone: timezone,
+    })
+    const request = vi.fn().mockResolvedValue({ state: { version: 1, completed: true } })
+    const api = createStandInExecutorApi(request)
+    await api.onboarding(7, 'selected-device', 'zh-CN')
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.stand_in.onboarding.get',
+      { userId: 7, language: 'zh-CN', timezone },
+      'selected-device'
+    )
+    await api.completeOnboarding(7, 'selected-device', false, '10:30', 'zh-CN')
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.stand_in.onboarding.complete',
+      { userId: 7, weeklyReview: false, time: '10:30', language: 'zh-CN', timezone },
+      'selected-device'
+    )
+  }
+)
 
 it('addresses project binding reads and explicit generation updates to the selected Executor', async () => {
   const state = { binding: null, canEnable: true, canStop: false }

@@ -52,7 +52,7 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 
 | Value             | Behavior                                                                                                                                                                                                                                  |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto` or omitted | Keep the existing protocol adaptation. Existing switches can still configure individual native Responses tool capabilities.                                                                                                               |
+| `auto` or omitted | Bridge custom tools, namespaces and `tool_search` to ordinary functions by default. Native capabilities require explicit configuration; provider IDs, model names and the Responses protocol do not imply support.                        |
 | `standard`        | Use ordinary function tools, bridging `tool_search`, namespace and custom tools, and restoring tool identities on the return path to Codex. Use this for Kimi Responses and other services that do not support Codex's native tool types. |
 | `passthrough`     | Replace only the model ID and authentication needed for routing. Preserve all other request business fields and stream responses without protocol rewriting. Requires an OpenAI Responses upstream.                                       |
 
@@ -82,6 +82,20 @@ The model catalog omits invalid `codex_request_mode` values while preserving oth
 Passthrough preserves the original bytes of normal upstream chunks. A read error or EOF before a Responses terminal event only appends `response.failed`; no additional failure is emitted after `response.completed`, `response.failed`, or `response.incomplete`. A standalone `[DONE]` marker does not replace a Responses terminal event.
 
 `standard` mode advertises only client-executable function tools. It omits provider-hosted tools such as `web_search` and `image_generation`. If `tool_choice` forces a hosted tool, the proxy returns HTTP 400. `auto` and `passthrough` continue to preserve these tools.
+
+#### Portable Responses Tools
+
+All model streams share the executor's SSE framing and payload parser, including Responses tool bridging, ordinary Responses, passthrough inspection, Chat Completions, Anthropic Messages, tool history, and Harness adapters. The parser consumes LF, CRLF, and CR boundaries in stream order, keeping a split CRLF pair as one line ending. It joins every `data:` line within an event and preserves incomplete UTF-8 characters between network chunks. Responses tool dispatch and terminal detection use the JSON `type`, independently of the optional SSE `event:` field. Rewriting replaces all previous data lines while preserving event metadata. Passthrough inspection and history recording do not modify forwarded chunks.
+
+The `model-sse-parsing` desktop E2E checkpoint runs real Electron, executor, and Codex components with only the model service simulated. It covers Responses function bridging, native Responses, Chat Completions, and Anthropic Messages using multiline JSON, mixed line endings, split Chinese characters, and misleading event headers. Real Code Mode tools must write and read a file, and the successful result must reach the next model request's history. Responses tool streams stay open until the real tool result arrives, proving that complete CR-terminated frames dispatch without waiting for EOF. This is model protocol regression coverage; compatibility with real provider services remains unverified.
+
+Local model interfaces, cloud models, stand-ins, and configured Codex providers default to `tool_profile: "function"`, with native `tool_search` and namespaces disabled. Existing configurations without profile or capability fields use the same defaults without recreating models. An explicit `tool_profile: "custom"` preserves native custom tools. Local `codex_tool_compatibility: "native"` or cloud capability switches enable native namespaces and tool search. Cloud `codex_request_mode: "passthrough"` preserves the complete native request; `standard` always bridges tools to functions. Defaults do not depend on provider IDs, model names, or a Responses endpoint claiming Codex-specific capabilities.
+
+`tool_profile: "function"` also applies to custom tools inside native namespaces. With `native_namespace_tools` enabled, the proxy preserves the namespace and its description while converting custom tools such as `exec` into function tools with a string `input` parameter. Historical calls, outputs, and forced tool choices use the same protocol. When native namespaces are disabled, the proxy flattens namespaces and keeps the same input wrapper for their custom tools. SSE responses restore the original tool name, namespace, and raw input so tools sharing a name remain distinct.
+
+Built-in tool types inside namespaces return a request validation error instead of crashing the proxy. Existing function definitions with an omitted type retain their previous conversion behavior.
+
+The `responses-tool-compatibility` desktop E2E checkpoint runs real Electron, Backend, executor, and Codex components with only the model service simulated. The simulator rejects unconverted custom `exec`, checks function arguments, and requires local and cloud models to execute real commands, read a file after reload, and preserve tool history. It also verifies explicit native configuration. This is model protocol regression coverage; compatibility with real provider services remains unverified.
 
 #### Kimi K3 Chat Completions Compatibility
 

@@ -546,6 +546,29 @@ export function WeworkSharedProject({
       project.project_store,
     ]
   )
+  const projectAgentConfiguration = useMemo(
+    () =>
+      createWeworkProjectAgentConfigurationHost(
+        services.agentResourceApi,
+        services.localProjectChatAgentApi,
+        project.project_store === 'local' ? detailServices?.modelApi : undefined,
+        services.pluginApi,
+        services.deviceApi,
+        project.project_store !== 'local' && detailServices
+          ? { agents: api.agents, modelApi: detailServices.modelApi, name: project.name }
+          : undefined
+      ),
+    [
+      services.agentResourceApi,
+      services.localProjectChatAgentApi,
+      project.project_store,
+      services.pluginApi,
+      services.deviceApi,
+      api.agents,
+      detailServices,
+      project.name,
+    ]
+  )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
       renderBoardToolbarAction: onOpenProjectConversation
@@ -652,13 +675,7 @@ export function WeworkSharedProject({
             },
           }
         : {}),
-      projectAgentConfiguration: createWeworkProjectAgentConfigurationHost(
-        services.agentResourceApi,
-        services.localProjectChatAgentApi,
-        project.project_store === 'local' ? detailServices?.modelApi : undefined,
-        services.pluginApi,
-        services.deviceApi
-      ),
+      projectAgentConfiguration,
     }),
     [
       focusedItemId,
@@ -673,8 +690,8 @@ export function WeworkSharedProject({
       onOpenRuntimeTask,
       onFocusedItemHandled,
       services,
+      projectAgentConfiguration,
       userId,
-      detailServices?.modelApi,
       location.issueId,
       location.projectSettingsSection,
       location.projectView,
@@ -1085,6 +1102,14 @@ export function WeworkSharedProject({
             project: projectRef,
             type: 'bound',
           })
+          // Finish UI-owned writes before the runtime can mutate the same Issue version.
+          const statusUpdateError = await updateIssueWhenPersonalTaskStarts(
+            scopedApi.issues,
+            taskComposer.issue.id
+          )
+          if (statusUpdateError !== null) {
+            notify(statusUpdateError || t('task_board_status_update_failed'), 'error')
+          }
           return async () => {
             await runtimePort.unbindTask(taskComposer.issue.id, sharedTask)
             publishProjectSpaceTaskBindingChanged({
@@ -1107,13 +1132,6 @@ export function WeworkSharedProject({
                 deviceWorkspaceId,
               }
             )
-          }
-          const statusUpdateError = await updateIssueWhenPersonalTaskStarts(
-            scopedApi.issues,
-            taskComposer.issue.id
-          )
-          if (statusUpdateError !== null) {
-            notify(statusUpdateError || t('task_board_status_update_failed'), 'error')
           }
           setTaskComposer(current =>
             current?.conversationKey === taskComposer.conversationKey

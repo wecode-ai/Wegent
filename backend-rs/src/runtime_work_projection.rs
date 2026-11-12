@@ -562,7 +562,7 @@ fn model_selection(task: &Map<String, Value>) -> Result<Option<RuntimeModelSelec
 }
 
 /// Validate the `modelSelection` value selected by the model validator.
-fn optional_model_selection(
+pub(crate) fn optional_model_selection(
     value: Option<&Value>,
 ) -> Result<Option<RuntimeModelSelection>, String> {
     match value {
@@ -735,7 +735,7 @@ struct TaskAddressRef {
 /// `RuntimeModelSelection`.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RuntimeModelSelection {
+pub(crate) struct RuntimeModelSelection {
     model_name: String,
     model_type: Option<String>,
     options: Map<String, Value>,

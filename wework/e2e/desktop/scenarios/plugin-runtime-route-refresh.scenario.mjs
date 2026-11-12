@@ -414,11 +414,14 @@ export async function createDesktopScenario({
         'clickWhenEnabled',
         testId(`plugin-marketplace-install-${pending.pluginId}`)
       )
-      await control.command('waitFor', testId('install-plugin-dialog-confirm'))
-      await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
       await control.command(
         'waitFor',
         `${testId('plugin-operation-notice')}[data-notice-kind="error"]`
+      )
+      const rejected = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        !rejected.testIds.includes('install-plugin-dialog-confirm'),
+        'A rejected Runtime preflight must not open the installation dialog'
       )
       const installs = restoredTransport.writes
         .slice(installOffset)

@@ -14,8 +14,11 @@
 //! streaming state up and publishes `TaskCompletedEvent`. [`completion`] owns
 //! that subsystem; the wrapped emitter's `chat:done` and `task:status` frames
 //! are emitted from here, in the source's order.
-mod channel;
+pub(crate) mod block_frames;
+pub(crate) mod channel;
 pub(crate) mod completion;
+pub(crate) mod dingtalk_card;
+pub(crate) mod dingtalk_stream;
 pub(crate) mod emitter;
 pub(crate) mod event;
 pub(crate) mod parser;
@@ -23,9 +26,12 @@ mod pipeline;
 pub(crate) use wegent_python_compat::py_json;
 pub(crate) mod session;
 mod socketio;
+pub(crate) mod status_frames;
 
 pub(crate) use session::is_cancelled;
-pub(crate) use socketio::publish_chat_start;
+pub(crate) use socketio::{
+    publish_chat_start, publish_emit_in_room, publish_emit_in_room_skipping, publish_task_created,
+};
 
 #[cfg(test)]
 mod tests;
@@ -169,9 +175,27 @@ pub(crate) async fn process_execution_event(
             .or_else(|| event.result.clone())
             .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
         event.result = Some(result.clone());
+        // `websocket.py:_load_context_briefs`: the DONE branch loads the
+        // completed subtask's committed briefs before `emit_chat_done`; the
+        // error/cancelled branches carry no `contexts` field.
+        let contexts = if terminal_status == Some("COMPLETED") {
+            match crate::responses::create::contexts::context_briefs(&state.mysql, event.subtask_id)
+                .await
+            {
+                Ok(briefs) => Some(briefs),
+                Err(error) => {
+                    tracing::warn!(%error, "chat:done context briefs load failed");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         // `WebSocketResultEmitter.emit`'s terminal branch: the event's frame
         // (`chat:done` / `chat:error` / `chat:cancelled`) then `task:status`.
-        if let Err(error) = emitter::emit_terminal_frames(redis, &event, user_id, &result).await {
+        if let Err(error) =
+            emitter::emit_terminal_frames(redis, &event, user_id, &result, contexts.as_ref()).await
+        {
             tracing::warn!(%error, "callback terminal frames failed");
         }
         if let Some(advance) = advance {

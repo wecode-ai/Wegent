@@ -21,7 +21,7 @@ function fixture(overrides: Partial<ComponentProps<typeof StandInDetailsPopover>
   const props = {
     anchor,
     userId: 7,
-    name: '我的分身',
+    name: '我的助理',
     enabled: true,
     conversation: address,
     device: {
@@ -159,6 +159,48 @@ it('mixes owned schedules and work by recency and opens the original schedule de
   expect(props.onOpenTask).not.toHaveBeenCalled()
 })
 
+it.each(['Asia/Shanghai', 'America/Los_Angeles'])(
+  'shows a one-time memory review in the device timezone %s',
+  async timezone => {
+    const DateTimeFormat = Intl.DateTimeFormat
+    const summary = new DateTimeFormat('zh-CN', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+      timeZone: timezone,
+    }).format(new Date('2026-11-11T04:41:00Z'))
+    const formatter = vi
+      .spyOn(Intl, 'DateTimeFormat')
+      .mockImplementation(function (locale, options) {
+        return new DateTimeFormat(locale, { timeZone: timezone, ...options })
+      })
+    try {
+      const schedule = {
+        id: 'memory-review',
+        name: '分身记忆整理',
+        enabled: true,
+        updatedAt: '2026-11-11T04:40:00Z',
+        timezone: 'UTC',
+        schedule: { type: 'one_time', executeAt: '2026-11-11T04:41:00Z' },
+        taskRequest: {
+          deviceId: 'local',
+          standInOwner: { userId: 7, roleId: '@primary' },
+          standInCalendar: { template: 'memory_review' },
+        },
+      } as Automation
+      fixture({
+        automationApi: {
+          listAutomations: vi.fn().mockResolvedValue({ items: [schedule] }),
+        } as unknown as AutomationApi,
+      })
+      expect(
+        await screen.findByTestId('stand-in-details-schedule-memory-review')
+      ).toHaveTextContent(summary)
+    } finally {
+      formatter.mockRestore()
+    }
+  }
+)
+
 it('retains the expanded identity height while the scrolled header becomes compact', async () => {
   fixture()
   const identity = await screen.findByTestId('stand-in-details-identity')
@@ -240,4 +282,29 @@ it('does not turn subagent children or execution blocks into separate activities
   expect(await screen.findByTestId('stand-in-details-task-task')).toBeVisible()
   expect(screen.queryByText('内部检索代理')).not.toBeInTheDocument()
   expect(screen.queryByText('内部分析代理')).not.toBeInTheDocument()
+})
+
+it('opens IM directly from the identity popover and returns there on Escape', async () => {
+  const user = userEvent.setup()
+  const props = fixture({
+    imConnections: {
+      services: {
+        imSessionApi: {
+          listPrivateSessions: vi.fn().mockResolvedValue({ items: [] }),
+          bindStandIn: vi.fn(),
+        },
+      } as unknown as import('@/features/workbench/workbenchServices').WorkbenchServices,
+      deviceId: 'local',
+    },
+  })
+  const trigger = await screen.findByTestId('stand-in-im-channel-telegram')
+  await user.click(trigger)
+  await screen.findByTestId('stand-in-im-dialog')
+  expect(screen.getByTestId('stand-in-details-popover')).toHaveAttribute('inert')
+  expect(props.onSettings).not.toHaveBeenCalled()
+  await user.keyboard('{Escape}')
+  expect(screen.queryByTestId('stand-in-im-dialog')).not.toBeInTheDocument()
+  expect(props.onClose).not.toHaveBeenCalled()
+  expect(screen.getByTestId('stand-in-details-popover')).not.toHaveAttribute('inert')
+  await vi.waitFor(() => expect(trigger).toHaveFocus())
 })

@@ -1722,6 +1722,59 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.codex.models.list', { includeHidden: true })
   })
 
+  test.each(['loaded', 'idle'])(
+    'reconciles a deferred catalog immediately when the runtime becomes %s',
+    async recovery => {
+      const catalogEntry = createDefaultLocalModelCatalogEntry({
+        id: 'busy-pending-model',
+        displayName: 'Busy pending model',
+        toolProfile: 'native',
+      })
+      saveLocalModelConfig({
+        id: 'busy-pending-model',
+        displayName: 'Busy pending model',
+        modelId: 'busy-pending-model',
+        baseUrl: 'http://localhost:11434/v1',
+        catalogEntry,
+        codexCatalogModelId: String(catalogEntry.slug),
+        catalogReady: false,
+      })
+      let recovered = false
+      const request = vi.fn().mockImplementation(async (method: string) => {
+        if (method === 'runtime.codex.app_server.restart') {
+          return { restarted: recovered && recovery === 'idle', activeTaskCount: 1 }
+        }
+        if (method === 'runtime.codex.models.list') {
+          return { data: recovered ? [{ id: catalogEntry.slug }] : [] }
+        }
+        return {}
+      })
+      const services = createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({
+          running: true,
+          ready: true,
+          deviceId: 'local-device',
+          runtimeInstanceId: 'runtime-1',
+        }),
+        request,
+        subscribe: vi.fn(),
+      })
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(1000)
+      try {
+        await services.deviceApi.listDevices()
+        expect(findLocalModelConfigByModelName(String(catalogEntry.slug))?.catalogReady).toBe(false)
+        recovered = true
+        await services.deviceApi.listDevices()
+        expect(findLocalModelConfigByModelName(String(catalogEntry.slug))?.catalogReady).toBe(true)
+        expect(
+          request.mock.calls.filter(([method]) => method === 'runtime.codex.app_server.restart')
+        ).toHaveLength(2)
+      } finally {
+        clock.mockRestore()
+      }
+    }
+  )
+
   test('retries an idle catalog restart after startup requests drain', async () => {
     const catalogEntry = createDefaultLocalModelCatalogEntry({
       id: 'startup-pending-model',
@@ -2379,6 +2432,8 @@ describe('createLocalAppServices', () => {
         ],
       }),
     })
+    const creation = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(creation.executionRequest).not.toHaveProperty('collaboration_model')
     expect(request).toHaveBeenCalledWith('device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'home_dir',
@@ -4229,7 +4284,7 @@ describe('createLocalAppServices', () => {
     ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
     ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
   ])(
-    'uses the native %s Responses profile with high reasoning',
+    'uses compatible %s Responses tools by default with high reasoning',
     async (modelId, catalogModelId) => {
       saveLocalModelConfig({
         id: modelId,
@@ -4238,7 +4293,6 @@ describe('createLocalAppServices', () => {
         modelId,
         baseUrl: 'https://api.deepseek.com',
         apiFormat: 'openai-responses',
-        toolProfile: 'custom',
         requestPath: '/responses',
         apiKey: 'deepseek-key',
         contextWindow: 1_048_576,
@@ -4270,8 +4324,8 @@ describe('createLocalAppServices', () => {
           upstream_api_format: 'openai-responses',
           tool_profile: 'function',
           codex_catalog_model_id: catalogModelId,
-          native_tool_search: true,
-          native_namespace_tools: true,
+          native_tool_search: false,
+          native_namespace_tools: false,
           model_context_window: 1_048_576,
           reasoning: { effort: 'high' },
         })
@@ -4462,6 +4516,44 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test.each([
+    undefined,
+    { startNewSession: true, expectedThreadId: 'previous-thread' },
+    { startNewSession: false, expectedThreadId: 'previous-thread' },
+  ])('preserves a session boundary in the final Runtime IPC payload: %j', async boundary => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi!.sendRuntimeMessage({
+      address: { deviceId: 'local-device', taskId: 'stand-in-chat-9-primary' },
+      message: 'Continue with the selected model',
+      modelId: 'gpt-6.1-sol',
+      modelType: 'runtime',
+      modelOptions: { codexProviderId: 'openai', codexProviderType: 'official' },
+      ...boundary,
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    expect(payload).toMatchObject({
+      taskId: 'stand-in-chat-9-primary',
+      modelSelection: { modelName: 'gpt-6.1-sol', modelType: 'runtime' },
+      executionRequest: {
+        prompt: 'Continue with the selected model',
+        model_config: { model_id: 'gpt-6.1-sol' },
+      },
+    })
+    if (boundary) {
+      expect(payload).toMatchObject(boundary)
+    } else {
+      expect(payload).not.toHaveProperty('startNewSession')
+      expect(payload).not.toHaveProperty('expectedThreadId')
+    }
+  })
+
   test('keeps official Codex classification when OpenAI provider metadata is present', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -4591,7 +4683,7 @@ describe('createLocalAppServices', () => {
         codex_request_mode: 'passthrough',
         reasoning: { effort: 'high', summary: 'detailed' },
         api_format: 'responses',
-        tool_profile: 'custom',
+        tool_profile: 'function',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',
@@ -4837,7 +4929,7 @@ describe('createLocalAppServices', () => {
         upstream_api_format: 'openai-chat-completions',
         native_tool_search: false,
         native_namespace_tools: false,
-        tool_profile: 'custom',
+        tool_profile: 'function',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',

@@ -201,11 +201,15 @@ pub(crate) async fn request_for_task(
         .await?
         .context("Managed project automation Team is unavailable")?;
     let user = load_user(&state.mysql, input.user_id).await?;
+    let resolvers = state.entity_resolvers.for_execution();
+    let directory = state
+        .entity_resolvers
+        .execution_directory(state.erp.as_ref());
     let cache = crate::task_skills::kinds::KindCacheStore {
         mysql: &state.mysql,
         redis: state.redis.as_ref(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
+        erp: Some(directory),
+        resolvers: Some(&resolvers),
     };
     let bots = resolution::resolve_team_bots(&cache, team.user_id, &team.json.0).await?;
     let bot = resolution::resolve_bot(
@@ -257,6 +261,8 @@ pub(crate) async fn request_for_task(
             new_session: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
+            web_runtime_guidance: false,
+            subtask_bot_resolved: false,
         },
     )
     .await
