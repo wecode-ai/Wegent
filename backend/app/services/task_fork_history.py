@@ -67,18 +67,23 @@ class TaskForkHistoryResolver:
         for node in lineage:
             if node.task.id is None:
                 continue
+            node_before_message_id = before_message_id
+            if node.inherited_cutoff is not None:
+                # Fork cutoffs are inclusive; store bounds are exclusive.
+                inherited_before = node.inherited_cutoff + 1
+                node_before_message_id = (
+                    inherited_before
+                    if node_before_message_id is None
+                    else min(node_before_message_id, inherited_before)
+                )
             subtasks = subtask_store.list_by_task_ordered(
                 db,
                 task_id=node.task.id,
                 owner_user_id=node.task.user_id,
-                recent_limit=(
-                    None
-                    if node.inherited_cutoff is not None
-                    or before_message_id is not None
-                    else limit
-                ),
+                recent_limit=limit,
                 statuses=statuses,
                 roles=roles,
+                before_message_id=node_before_message_id,
             )
             for subtask in subtasks:
                 if (

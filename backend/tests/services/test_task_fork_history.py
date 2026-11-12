@@ -76,7 +76,7 @@ def test_resolve_for_plain_task_returns_local_history(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        lambda db, task_id, owner_user_id=None, recent_limit=None, statuses=None, roles=None: (
+        lambda db, task_id, owner_user_id=None, recent_limit=None, **kwargs: (
             local if task_id == 1 else []
         ),
     )
@@ -113,6 +113,7 @@ def test_resolve_for_task_passes_recent_limit_to_store(monkeypatch):
         recent_limit=None,
         statuses=None,
         roles=None,
+        before_message_id=None,
     ):
         calls.append((task_id, owner_user_id, recent_limit, statuses, roles))
         return local if recent_limit is None else local[-recent_limit:]
@@ -133,7 +134,7 @@ def test_resolve_for_task_passes_recent_limit_to_store(monkeypatch):
     assert [item.subtask.id for item in items] == [1, 2]
 
 
-def test_resolve_for_fork_does_not_limit_parent_reads(monkeypatch):
+def test_resolve_for_fork_limits_parent_reads_after_cutoff(monkeypatch):
     root = _task(1, 7)
     fork = _task(
         2,
@@ -148,9 +149,15 @@ def test_resolve_for_fork_does_not_limit_parent_reads(monkeypatch):
     )
 
     def list_by_task_ordered(
-        _db, *, task_id, owner_user_id=None, recent_limit=None, **kwargs
+        _db,
+        *,
+        task_id,
+        owner_user_id=None,
+        recent_limit=None,
+        before_message_id=None,
+        **kwargs,
     ):
-        calls.append((task_id, recent_limit))
+        calls.append((task_id, recent_limit, before_message_id))
         return []
 
     monkeypatch.setattr(
@@ -165,7 +172,7 @@ def test_resolve_for_fork_does_not_limit_parent_reads(monkeypatch):
         limit=2,
     )
 
-    assert calls == [(1, None), (2, 2)]
+    assert calls == [(1, 2, 4), (2, 2, None)]
 
 
 @pytest.mark.parametrize("limit", [0, -1])
@@ -247,6 +254,95 @@ def test_resolve_for_fork_with_zero_limit_returns_no_history(monkeypatch):
             limit=0,
         )
         == []
+    )
+
+
+@pytest.mark.parametrize("before_message_id", [None, 7])
+def test_bounded_fork_memory_only_loads_eligible_window(
+    test_db, monkeypatch, before_message_id
+):
+    from app.services.task_fork_history import subtask_store
+
+    root = _task(1, 8)
+    fork = _task(2, 7, fork={"sourceTaskId": 1, "afterMessageId": 8, "rootTaskId": 1})
+    rows = [
+        _subtask(i, 1, 8, i, SubtaskRole.USER if i % 2 else SubtaskRole.ASSISTANT)
+        for i in range(1, 11)
+    ]
+    rows[7].status = SubtaskStatus.FAILED
+    current = _subtask(11, 2, 7, 9, SubtaskRole.USER)
+    current.status = SubtaskStatus.CANCELLED
+    test_db.add_all([root, fork, *rows, current])
+    test_db.flush()
+    loaded_ids = []
+    load_ordered = subtask_store._load_ordered
+
+    def record_load(db, subtask_ids):
+        loaded_ids.append(list(subtask_ids))
+        return load_ordered(db, subtask_ids)
+
+    monkeypatch.setattr(subtask_store, "_load_ordered", record_load)
+
+    items = task_fork_history_resolver.resolve_for_task(
+        test_db,
+        task_id=2,
+        user_id=7,
+        before_message_id=before_message_id,
+        limit=2,
+        statuses=(SubtaskStatus.COMPLETED,),
+        roles=(SubtaskRole.USER, SubtaskRole.ASSISTANT),
+    )
+
+    expected_ids = [5, 6] if before_message_id else [6, 7]
+    assert [item.subtask.id for item in items] == expected_ids
+    assert all(item.inherited for item in items)
+    assert loaded_ids == [expected_ids, []]
+
+
+@pytest.mark.parametrize(
+    ("before_message_id", "expected_bounds"),
+    [(None, [4, 8, None]), (6, [4, 6, 6]), (3, [3, 3, 3])],
+)
+def test_nested_fork_queries_keep_limit_and_strictest_message_bound(
+    monkeypatch, before_message_id, expected_bounds
+):
+    tasks = {
+        1: _task(1, 8),
+        2: _task(2, 7, fork={"sourceTaskId": 1, "afterMessageId": 3, "rootTaskId": 1}),
+        3: _task(3, 7, fork={"sourceTaskId": 2, "afterMessageId": 7, "rootTaskId": 1}),
+    }
+    calls = []
+    monkeypatch.setattr(
+        "app.services.task_fork_history.task_store.get_by_id",
+        lambda db, task_id, owner_user_id=None: tasks[task_id],
+    )
+
+    def list_by_task_ordered(db, **kwargs):
+        calls.append(kwargs)
+        return []
+
+    monkeypatch.setattr(
+        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
+        list_by_task_ordered,
+    )
+
+    task_fork_history_resolver.resolve_for_task(
+        None,
+        task_id=3,
+        user_id=7,
+        limit=2,
+        before_message_id=before_message_id,
+        statuses=(SubtaskStatus.COMPLETED,),
+        roles=(SubtaskRole.USER, SubtaskRole.ASSISTANT),
+    )
+
+    assert [call["task_id"] for call in calls] == [1, 2, 3]
+    assert [call["owner_user_id"] for call in calls] == [8, 7, 7]
+    assert [call["before_message_id"] for call in calls] == expected_bounds
+    assert all(call["recent_limit"] == 2 for call in calls)
+    assert all(call["statuses"] == (SubtaskStatus.COMPLETED,) for call in calls)
+    assert all(
+        call["roles"] == (SubtaskRole.USER, SubtaskRole.ASSISTANT) for call in calls
     )
 
 

@@ -520,6 +520,8 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
             execution = db.get(BackgroundExecution, first["id"])
             task_id = execution.task_id
             task = db.get(TaskResource, task_id)
+            task_owner_id = task.user_id
+            client_origin = task.client_origin
             self.created.append(("task", task_id))
             next_message_id = (
                 db.query(Subtask.message_id)
@@ -555,16 +557,47 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                 )
             db.commit()
 
-        for window in (20, 0):
-            with self.subTest(history_message_count=window):
+        fork_id = self._api(
+            "POST",
+            f"/api/tasks/{task_id}/fork",
+            params={"client_origin": client_origin},
+            json={"target": {"type": "managed"}},
+        ).json()["task_id"]
+        self.created.append(("task", fork_id))
+        with SessionLocal() as db:
+            workspace = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.kind == "Workspace",
+                    TaskResource.name == f"workspace-{fork_id}",
+                    TaskResource.namespace == "default",
+                    TaskResource.user_id == task_owner_id,
+                )
+                .one()
+            )
+            self.created.append(("task", workspace.id))
+
+        # Subsequent source turns must not replace eligible inherited history.
+        for target_task_id, window in ((task_id, 20), (task_id, 0), (fork_id, 20)):
+            with self.subTest(task_id=target_task_id, history_message_count=window):
                 self._api(
                     "PUT",
                     f"/api/subscriptions/{subscription_id}",
                     json={"history_message_count": window},
                 )
+                with SessionLocal() as db:
+                    subscription = db.get(Kind, subscription_id)
+                    subscription.json = {
+                        **subscription.json,
+                        "_internal": {
+                            **subscription.json.get("_internal", {}),
+                            "bound_task_id": target_task_id,
+                        },
+                    }
+                    db.commit()
                 with Redis.from_url(settings.REDIS_URL) as redis:
                     self.assertTrue(redis.ping())
-                    redis.delete(f"chat:history:{task_id}")
+                    redis.delete(f"chat:history:{target_task_id}")
                 before = self.client.get(f"{model_url}/captured-requests")
                 before.raise_for_status()
                 start_index = len(before.json())
@@ -575,7 +608,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                 self.assertEqual(state["status"], "COMPLETED", state)
                 with SessionLocal() as db:
                     execution = db.get(BackgroundExecution, triggered["id"])
-                    self.assertEqual(execution.task_id, task_id)
+                    self.assertEqual(execution.task_id, target_task_id)
                 captured = self.client.get(f"{model_url}/captured-requests")
                 captured.raise_for_status()
                 model_messages = [
@@ -596,7 +629,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                     ]
                     self.assertEqual(actual, expected)
                 with Redis.from_url(settings.REDIS_URL) as redis:
-                    raw = redis.get(f"chat:history:{task_id}")
+                    raw = redis.get(f"chat:history:{target_task_id}")
                     cache = json.loads(raw) if raw else []
                 cached_seed = [
                     message["content"]

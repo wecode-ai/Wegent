@@ -831,9 +831,12 @@ class SqlAlchemySubtaskStore:
         recent_limit: Optional[int] = None,
         statuses: Optional[Sequence[SubtaskStatus]] = None,
         roles: Optional[Sequence[SubtaskRole]] = None,
+        before_message_id: Optional[int] = None,
     ) -> list[Subtask]:
         query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        if before_message_id is not None:
+            query = query.filter(Subtask.message_id < before_message_id)
         if message_ids is not None:
             if not message_ids:
                 return []

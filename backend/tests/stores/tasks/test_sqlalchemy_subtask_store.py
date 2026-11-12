@@ -186,6 +186,48 @@ def test_list_by_task_ordered_recent_limit_uses_id_tie_breaker(
 
 
 @pytest.mark.parametrize(
+    ("recent_limit", "expected_ids"), [(None, [71, 72, 73]), (2, [72, 73])]
+)
+def test_history_message_bound_applies_before_loading_payloads(
+    test_db: Session, monkeypatch, recent_limit, expected_ids
+) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(7, owner_id=10))
+    test_db.add_all(
+        [
+            _subtask(subtask_id=70 + i, task_id=7, user_id=10, message_id=i)
+            for i in range(1, 8)
+        ]
+    )
+    test_db.flush()
+    load_ordered = store._load_ordered
+    loaded_ids = []
+
+    def record_load(db, subtask_ids):
+        loaded_ids.append(list(subtask_ids))
+        return load_ordered(db, subtask_ids)
+
+    monkeypatch.setattr(store, "_load_ordered", record_load)
+
+    result = store.list_by_task_ordered(
+        test_db,
+        task_id=7,
+        owner_user_id=10,
+        before_message_id=4,
+        recent_limit=recent_limit,
+    )
+
+    assert [row.id for row in result] == expected_ids
+    assert loaded_ids == [expected_ids]
+    assert (
+        store.list_by_task_ordered(
+            test_db, task_id=7, before_message_id=0, recent_limit=2
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
     ("order_by", "expected_ids"),
     [("id", [82, 83]), ("message_id", [83, 81]), ("created_at", [81, 82])],
 )
