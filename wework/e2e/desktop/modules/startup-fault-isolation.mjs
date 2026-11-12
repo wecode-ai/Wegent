@@ -156,10 +156,9 @@ function recoveryWindowAssertion(evidencePath) {
           return
         }
         clearInterval(timer)
-        companion.destroy()
-        companion = null
         fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state}))
-        app.exit(0)
+        // Let Chromium close both windows before shutting down the in-process compositor.
+        app.quit()
       } catch (error) {
         clearInterval(timer)
         fs.writeFileSync(output, JSON.stringify({error:error.stack}))
