@@ -227,6 +227,24 @@ async function callBridge(identity, payload, label = BROWSER_LABEL) {
   return body.data
 }
 
+async function waitForBridgeTextAfterNavigation(identity, text) {
+  let lastError = null
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await callBridge(identity, {
+        action: 'waitFor',
+        options: { condition: { textVisible: text } },
+        timeoutMs: 5_000,
+      })
+    } catch (error) {
+      lastError = error
+      if (!String(error).includes('Inspected target navigated or closed')) throw error
+      await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)))
+    }
+  }
+  throw lastError
+}
+
 async function callBridgeResponse(identity, payload, label = BROWSER_LABEL) {
   const response = await fetch(`${identity.baseUrl}/browser`, {
     method: 'POST',
@@ -1829,11 +1847,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
         timeoutMs: 5_000,
       })
       assert.equal(parentNavigation.ok, true, 'Clicking the parent directory link failed')
-      const parentDirectoryWait = await bridgeCall({
-        action: 'waitFor',
-        options: { condition: { textVisible: LOCAL_DIRECTORY_TEXT } },
-        timeoutMs: 5_000,
-      })
+      const parentDirectoryWait = await waitForBridgeTextAfterNavigation(
+        bridgeIdentity,
+        LOCAL_DIRECTORY_TEXT
+      )
       assert.equal(parentDirectoryWait.ok, true, 'Parent directory did not reopen')
       await waitForControlValue(
         control,
