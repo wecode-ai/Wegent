@@ -38,7 +38,7 @@ export class BrowserScriptEvaluator {
 
   async afterActions<T>(operation: () => Promise<T>): Promise<T> {
     // Host-driven navigation must not destroy an action's pending CDP response.
-    await Promise.all([...this.actions])
+    while (this.actions.size) await Promise.all([...this.actions])
     return operation()
   }
 }
