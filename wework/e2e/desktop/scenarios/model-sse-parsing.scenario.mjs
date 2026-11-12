@@ -104,6 +104,8 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       const declarations = wireDeclarations(body, model.protocol)
       const exec = declarations.filter(tool => ['exec', 'functions__exec'].includes(tool.name))
       assert.equal(exec.length, 1, 'The real Codex Code Mode entrypoint must remain available')
+      if (model.protocol === 'responses')
+        assert.equal(exec[0].type, model.native ? 'custom' : 'function')
       let succeeded = false
       if (observed.some(row => row.id === model.id)) {
         assertCodeModeOutput(body, model.protocol, call)

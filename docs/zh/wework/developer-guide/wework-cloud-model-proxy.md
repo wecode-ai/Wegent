@@ -83,7 +83,7 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 #### 通用 Responses 工具兼容
 
-所有模型流共用 executor 的 SSE 分帧和数据解析模块，包括 Responses 工具桥接、普通 Responses、透传检查、Chat Completions、Anthropic Messages、工具历史记录和 Harness 适配器。解析按流中的先后顺序处理 LF/CRLF 边界，拼接同一事件的全部 `data:` 行，并在网络块之间保留未完整接收的 UTF-8 字符。Responses 的工具分发和终态识别以 JSON `type` 为准，不依赖可选的 SSE `event:` 字段；重写事件时替换全部旧数据行，同时保留事件元数据。透传检查和历史记录不会修改转发的数据块。
+所有模型流共用 executor 的 SSE 分帧和数据解析模块，包括 Responses 工具桥接、普通 Responses、透传检查、Chat Completions、Anthropic Messages、工具历史记录和 Harness 适配器。解析按流中的先后顺序处理 LF、CRLF 和 CR 边界，跨块 CRLF 仍作为一个换行；拼接同一事件的全部 `data:` 行，并在网络块之间保留未完整接收的 UTF-8 字符。Responses 的工具分发和终态识别以 JSON `type` 为准，不依赖可选的 SSE `event:` 字段；重写事件时替换全部旧数据行，同时保留事件元数据。透传检查和历史记录不会修改转发的数据块。
 
 `model-sse-parsing` 桌面 E2E 复用真实 Electron、executor 和 Codex，仅模拟模型服务，覆盖 Responses function 桥接、原生 Responses、Chat Completions 和 Anthropic Messages。场景发送多行 JSON、混合换行、跨块中文和误导性事件头，要求真实 Code Mode 工具写入文件、读取文件，并将成功结果传入下一轮模型历史。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
 

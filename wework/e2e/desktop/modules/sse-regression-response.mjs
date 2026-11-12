@@ -24,7 +24,7 @@ export async function writeSseRegressionResponse(response, write, protocol) {
         .filter(line => line.startsWith('data:'))
         .map(line => line.slice(5).trimStart())
         .join('\n')
-      const ending = index % 2 === 0 ? '\n' : '\r\n'
+      const ending = ['\n', '\r\n', '\r'][index % 3]
       const header =
         protocol === 'responses' && index === 0
           ? `event: response.completed${ending}`

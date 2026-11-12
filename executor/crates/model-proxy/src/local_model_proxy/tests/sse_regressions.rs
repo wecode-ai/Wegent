@@ -12,6 +12,7 @@ fn multiline_frame(event: &Value, ending: &str) -> String {
 fn parsed_events(output: &str) -> Vec<Value> {
     output
         .replace("\r\n", "\n")
+        .replace('\r', "\n")
         .split("\n\n")
         .filter_map(|block| {
             let data = block
@@ -158,7 +159,7 @@ async fn assert_branch_handles_multiline_and_mixed_framing(branch: &str) {
                 "usage":{"input_tokens_details":{},"output_tokens_details":{}}}}),
         ],
     };
-    for endings in [["\n", "\r\n"], ["\r\n", "\n"]] {
+    for endings in [["\n", "\r\n"], ["\r\n", "\n"], ["\r", "\r"]] {
         let input = events
             .iter()
             .enumerate()
@@ -191,6 +192,22 @@ async fn assert_branch_handles_multiline_and_mixed_framing(branch: &str) {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn sse_regression_anthropic_flushes_a_final_cr_terminated_event() {
+    let events = [
+        json!({"type":"message_start","message":{"id":"msg_cr","model":"test"}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"中文"}}),
+    ];
+    let input = events
+        .iter()
+        .map(|event| multiline_frame(event, "\r"))
+        .collect::<String>();
+    let output = branch_output("anthropic", &input, 1).await;
+    assert!(parsed_events(&output)
+        .iter()
+        .any(|event| event["type"] == "response.output_text.delta" && event["delta"] == "中文"));
 }
 
 #[tokio::test]

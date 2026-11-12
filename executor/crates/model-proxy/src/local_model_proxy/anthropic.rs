@@ -337,7 +337,11 @@ where
                     if let Err(error) = super::finish_stream_utf8(&state.pending_utf8) {
                         return Some((Err(error), state));
                     }
-                    return None;
+                    if state.pending.trim().is_empty() {
+                        return None;
+                    }
+                    let trailing = std::mem::take(&mut state.pending);
+                    state.handle_block(&trailing);
                 }
             }
         }
