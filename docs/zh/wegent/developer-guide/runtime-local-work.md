@@ -349,7 +349,28 @@ Wework 不再显示“未映射工作区”。executor 返回的线程必须能�
 - 单个 IM 会话订阅某个运行时任务后，只接收该任务的更新。
 - executor 通过设备 WebSocket 发送 `runtime:event`；Backend 只把 `response.completed`、`response.failed`、`response.incomplete` 和 `error` 终态按任务绑定、任务订阅和全局通知设置投递到 IM。成功终态没有回复正文时不发送。
 - 通知身份使用 `deviceId + localTaskId`，不包含 `workspacePath`；IM 发起的回合不会再向同一 IM 回声通知。旧 executor 的 `runtime.tasks.updated` 接收端仅作为兼容路径保留。
-- Backend 按用户、设备任务、回合与终态、收件 IM 会话保存 Redis 投递回执，已成功发送的通知在桌面重启或设备重连后不会因事件重放再次发送。并发投递使用短期锁，成功回执不设置过期时间；失败会释放锁，部分失败仅重试未成功的收件会话。旧 watcher 使用 `updatedAt` 识别更新；缺少回合 ID 和更新时间的事件无法可靠去重，不能以正文相同为由丢弃新通知。
+- Executor 按后端账号和设备持久保存未确认的终态事件，收到 Backend 业务 ACK 后才删除；关闭桌面界面、普通流式历史溢出、断网重连和进程重启都不应丢弃这些事件。界面历史仍保持大小限制，终态通知保留完整数据。
+- Backend 在 MySQL 的 `runtime_notification_deliveries` 中按用户、设备任务、回合与终态、收件 IM 会话创建唯一投递记录，事务提交后才 ACK。工作进程独立领取记录，使用有期限的租约和 fencing token 防止旧进程覆盖新进程的结果；失败退避重试，成功记录保留去重身份并删除消息正文。Redis 只承担现有设置、会话、回复路由和旧回执识别，不是可靠投递的事实来源。
+- 钉钉返回成功后，先将响应持久保存到 MySQL，再保存可丢弃的回复路由。回复路由写入失败、Redis 缓存被淘汰或事件重放时，复用已保存的响应，不再次调用发送接口。不同回合即使正文相同，也分别通知；不能按正文删除通知。
+- 当前纯文字钉钉接口没有客户端幂等键。若钉钉已接收消息但 HTTP 响应丢失，或成功响应尚未持久化时进程崩溃，发送端无法判断外部结果；业务 ACK 与本地回执不能消除这个外部系统边界。协议集成测试使用真实 MySQL、Redis 和发送接口替身，未验证真实钉钉兼容性。
+
+```mermaid
+sequenceDiagram
+    participant E as Executor 终态日志
+    participant B as Backend
+    participant M as MySQL 投递记录
+    participant W as 通知工作进程
+    participant I as IM 服务
+    E->>B: 稳定轮次事件（失败保留并重放）
+    B->>M: 事务创建唯一收件人投递记录
+    M-->>B: 提交成功
+    B-->>E: 业务 ACK（删除本地记录）
+    W->>M: 领取带期限和 fencing token 的租约
+    W->>I: 发送通知
+    I-->>W: 发送结果
+    W->>M: 持久保存发送结果
+    Note over W,M: 回复缓存恢复复用结果，不重复发送
+```
 
 ## URL
 

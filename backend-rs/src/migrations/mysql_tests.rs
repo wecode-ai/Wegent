@@ -53,7 +53,12 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     upgrade(mysql).await?;
     check(mysql).await?;
     let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()", ()).await?;
-    assert_eq!(tables.len(), 50);
+    assert_eq!(tables.len(), 51);
+    assert!(
+        tables
+            .iter()
+            .any(|table| table.name == "runtime_notification_deliveries")
+    );
     assert!(
         !tables
             .iter()
@@ -65,6 +70,17 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
             .any(|table| table.name == "plugin_sync_outbox")
     );
     upgrade(mysql).await?;
+    downgrade(mysql, "f3a7c9e1b2d4").await?;
+    let removed: Vec<Name> = mysql
+        .fetch_all(
+            "SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES \
+         WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='runtime_notification_deliveries'",
+            (),
+        )
+        .await?;
+    assert!(removed.is_empty());
+    upgrade(mysql).await?;
+    check(mysql).await?;
     // Exercise JSON/permission, plugin-publication, merge, notification and transcript migrations.
     downgrade(mysql, "d47dd270f4b6").await?;
     upgrade(mysql).await?;

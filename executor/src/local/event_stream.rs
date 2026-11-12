@@ -18,6 +18,7 @@ use tokio::{
     time::{self, Duration, MissedTickBehavior},
 };
 
+use super::terminal_event_journal::{is_terminal, TerminalEventJournal};
 use super::RUNTIME_EVENT_BUFFER_CAPACITY;
 
 const EVENT_JOURNAL_MAX_EVENTS: usize = 4096;
@@ -31,8 +32,10 @@ const EVENT_METADATA_MAX_CHARS: usize = 256;
 pub(crate) struct ExecutorEventHub {
     raw_tx: broadcast::Sender<Value>,
     event_tx: broadcast::Sender<Value>,
+    backend_tx: broadcast::Sender<Value>,
     state: Arc<Mutex<EventJournal>>,
     started: Arc<AtomicBool>,
+    terminal_events: Arc<Mutex<TerminalEventJournal>>,
 }
 
 pub(crate) struct ExecutorEventSubscription {
@@ -57,11 +60,14 @@ struct EventJournal {
 impl ExecutorEventHub {
     pub fn new(raw_tx: broadcast::Sender<Value>) -> Self {
         let (event_tx, _) = broadcast::channel(RUNTIME_EVENT_BUFFER_CAPACITY);
+        let (backend_tx, _) = broadcast::channel(RUNTIME_EVENT_BUFFER_CAPACITY);
         Self {
             raw_tx,
             event_tx,
+            backend_tx,
             state: Arc::new(Mutex::new(EventJournal::new())),
             started: Arc::new(AtomicBool::new(false)),
+            terminal_events: Arc::new(Mutex::new(TerminalEventJournal::default())),
         }
     }
 
@@ -70,6 +76,52 @@ impl ExecutorEventHub {
         let hub = Self::new(raw_tx);
         hub.start(receiver);
         hub
+    }
+
+    pub fn enable_terminal_event_journal(&self, directory: std::path::PathBuf) {
+        self.terminal_events
+            .lock()
+            .expect("terminal event journal lock")
+            .enable(directory);
+    }
+
+    pub fn subscribe_backend(&self, after: u64) -> Result<ExecutorEventSubscription, String> {
+        let receiver = self.backend_tx.subscribe();
+        let mut subscription = self.subscribe_after(after);
+        subscription.receiver = receiver;
+        // Streaming history may be bounded, but unacknowledged completions
+        // must survive both that limit and a connection controller restart.
+        subscription.replay.retain(|event| !is_terminal(event));
+        subscription.replay.extend(
+            self.terminal_events
+                .lock()
+                .expect("terminal event journal lock")
+                .pending()?,
+        );
+        subscription.replay.sort_by_key(event_sequence);
+        Ok(subscription)
+    }
+
+    pub fn acknowledge_backend(&self, event: &Value) -> Result<(), String> {
+        self.terminal_events
+            .lock()
+            .expect("terminal event journal lock")
+            .acknowledge(event)
+    }
+
+    pub fn bind_backend_journal(&self, scope: String) {
+        let loaded = self
+            .terminal_events
+            .lock()
+            .expect("terminal event journal lock")
+            .bind(scope);
+        match loaded {
+            Ok(last) => {
+                let mut state = self.state.lock().expect("executor event journal lock");
+                state.next_sequence = state.next_sequence.max(last.saturating_add(1));
+            }
+            Err(error) => crate::logging::write_executor_error_line(&error),
+        }
     }
 
     pub fn ensure_started(&self) {
@@ -195,6 +247,7 @@ impl ExecutorEventHub {
     }
 
     fn publish(&self, raw: Value) {
+        let terminal = is_terminal(&raw).then(|| raw.clone());
         let event = {
             let mut state = self
                 .state
@@ -202,7 +255,21 @@ impl ExecutorEventHub {
                 .expect("executor event journal should not be poisoned");
             state.append(raw)
         };
+        // UI history remains bounded; durable terminal delivery retains the full payload.
+        let backend_event = terminal.map_or_else(
+            || event.clone(),
+            |raw| event_envelope(raw, event_sequence(&event).expect("event sequence")),
+        );
+        if let Err(error) = self
+            .terminal_events
+            .lock()
+            .expect("terminal event journal lock")
+            .retain(&backend_event)
+        {
+            crate::logging::write_executor_error_line(&error);
+        }
         let _ = self.event_tx.send(event);
+        let _ = self.backend_tx.send(backend_event);
     }
 
     fn flush_pending(&self, pending: &mut VecDeque<(String, Value)>, task_id: Option<&str>) {
@@ -482,6 +549,55 @@ mod tests {
     fn event_hub() -> ExecutorEventHub {
         let (raw_tx, _) = broadcast::channel(8);
         ExecutorEventHub::new(raw_tx)
+    }
+
+    #[test]
+    fn oversized_completions_remain_deliverable_without_expanding_ui_history() {
+        let hub = event_hub();
+        let mut backend = hub.subscribe_backend(0).unwrap();
+        let content = "x".repeat(EVENT_ENVELOPE_MAX_BYTES + 1);
+        hub.publish(json!({"event":"response.completed","payload":{"taskId":"a","data":{"turnId":"turn-a","value":content}}}));
+        let live = backend.receiver.try_recv().unwrap();
+        assert_eq!(live["event"], "response.completed");
+        assert_eq!(live["payload"]["data"]["value"], content);
+        assert_eq!(
+            hub.subscribe_after(0).replay[0]["event"],
+            "executor.event_lagged"
+        );
+        let replay = hub.subscribe_backend(0).unwrap().replay;
+        assert!(replay.contains(&live));
+        hub.acknowledge_backend(&live).unwrap();
+        assert!(hub
+            .subscribe_backend(0)
+            .unwrap()
+            .replay
+            .iter()
+            .all(|event| event["event"] != "response.completed"));
+    }
+
+    #[test]
+    fn backend_completions_survive_history_overflow_and_runner_replacement() {
+        let hub = event_hub();
+        hub.publish(json!({"event":"response.completed","payload":{"taskId":"task-1","subtaskId":"turn-1"}}));
+        let terminal = hub.subscribe_backend(0).unwrap().replay.remove(0);
+        let sequence = event_sequence(&terminal).unwrap();
+        for _ in 0..EVENT_JOURNAL_MAX_EVENTS + 1 {
+            hub.publish(json!({"event":"response.output_text.delta","payload":{"delta":"x"}}));
+        }
+        assert!(hub
+            .subscribe_after(sequence)
+            .replay
+            .iter()
+            .all(|event| event["event"] != "response.completed"));
+        let replay = hub.subscribe_backend(sequence).unwrap().replay;
+        assert!(replay.contains(&terminal));
+        hub.acknowledge_backend(&terminal).unwrap();
+        assert!(hub
+            .subscribe_backend(0)
+            .unwrap()
+            .replay
+            .iter()
+            .all(|event| event["event"] != "response.completed"));
     }
 
     #[test]

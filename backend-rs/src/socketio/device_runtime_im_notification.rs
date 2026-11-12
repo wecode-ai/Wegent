@@ -15,7 +15,7 @@ use crate::runtime_work_im_notification_sessions::{
 use crate::runtime_work_im_notifications::PrivateSession;
 use crate::state::AppState;
 
-pub(super) async fn deliver(
+pub(super) async fn enqueue(
     state: &AppState,
     user_id: i64,
     device_id: &str,
@@ -35,14 +35,14 @@ pub(super) async fn deliver(
     if sessions.is_empty() {
         return Ok(());
     }
-    let redis = state.redis.as_ref().context("Redis is unavailable")?;
     let task_key = runtime_task_notification_key(&address).context("Invalid Runtime address")?;
     let status = if plan.waiting_for_user_input {
         "waiting_user_input"
     } else {
         plan.status
     };
-    let notification = notification_id(payload, status);
+    let notification = notification_id(payload, status)
+        .context("Runtime notification requires a stable turn or event identity")?;
     let title = [
         payload.get("taskTitle"),
         payload.get("task_title"),
@@ -59,50 +59,78 @@ pub(super) async fn deliver(
         title.trim()
     };
     let message = message(title, status, &plan.content);
-    let mut sent = 0;
+    let mut deliveries = Vec::with_capacity(sessions.len());
     for session in sessions {
-        let receipt = notification
-            .as_deref()
-            .map(|id| receipt_key(user_id, &task_key, &session.session_key, id));
-        match send_session(
-            state,
-            redis,
-            &session,
-            &address,
-            &message,
-            receipt.as_deref(),
-        )
-        .await
-        {
-            Ok(true) => sent += 1,
-            Ok(false) => {}
-            Err(error) => {
-                tracing::warn!(%error, user_id, channel_id = session.channel_id, "Runtime event IM session delivery failed")
+        let id = receipt_key(user_id, &task_key, &session.session_key, &notification);
+        deliveries.push((
+            id,
+            super::super::runtime_notification_outbox::Delivery {
+                session,
+                address: address.clone(),
+                message: message.clone(),
+            },
+        ));
+    }
+    super::super::runtime_notification_outbox::enqueue(&state.mysql, deliveries).await?;
+    Ok(())
+}
+
+pub(crate) async fn run_worker(state: std::sync::Arc<AppState>) {
+    use super::super::runtime_notification_outbox as outbox;
+    use std::time::Duration;
+
+    let Some(redis) = state.redis.as_ref() else {
+        return;
+    };
+    loop {
+        match outbox::claim(&state.mysql).await {
+            Ok(Some(claimed)) => {
+                let result = tokio::time::timeout(
+                    Duration::from_secs(60),
+                    send_session(&state, redis, &claimed),
+                )
+                .await;
+                let sent = matches!(&result, Ok(Ok(_)));
+                if !sent {
+                    tracing::warn!(
+                        delivery_id = claimed.id,
+                        ?result,
+                        "Runtime notification will retry"
+                    );
+                }
+                if let Err(error) = outbox::settle(&state.mysql, &claimed, sent).await {
+                    tracing::warn!(%error, delivery_id = claimed.id, "Runtime notification settlement failed");
+                }
+            }
+            result => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "Runtime notification outbox read failed");
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
             }
         }
     }
-    tracing::info!(
-        user_id,
-        device_id,
-        local_task_id = plan.local_task_id,
-        sent,
-        "Runtime event dispatched"
-    );
-    Ok(())
 }
 
 async fn send_session(
     state: &AppState,
     redis: &impl Redis,
-    session: &PrivateSession,
-    address: &Value,
-    message: &str,
-    receipt: Option<&str>,
+    claimed: &super::super::runtime_notification_outbox::ClaimedDelivery,
 ) -> Result<bool> {
-    let Some(receipt) = receipt else {
-        return send_and_save_reply(state, redis, session, address, message, None).await;
-    };
-    let key = format!("{receipt}:lock");
+    let session_value = serde_json::to_value(&claimed.delivery.session)?;
+    deliver_session(&state.mysql, redis, claimed, |message| async move {
+        send_text(state, &session_value, &message).await
+    })
+    .await
+}
+
+async fn deliver_session<F: std::future::Future<Output = Result<Value>>>(
+    mysql: &brz_mysql::MysqlService,
+    redis: &impl Redis,
+    claimed: &super::super::runtime_notification_outbox::ClaimedDelivery,
+    send: impl FnOnce(String) -> F,
+) -> Result<bool> {
+    let key = format!("{}:lock", claimed.id);
     let token = crate::device_identity_lock::lock_token();
     let options = SetOptions::default()
         .with_expiration(SetExpiration::Seconds(120))
@@ -111,24 +139,9 @@ async fn send_session(
         .set_with(key.as_str(), token.as_str(), options)
         .await?
     {
-        return Ok(false);
+        anyhow::bail!("Runtime notification is being delivered by another worker");
     }
-    let result = async {
-        // A receipt written by the previous lock owner must be read on the
-        // writer even when the deployment routes ordinary GETs to replicas.
-        let exists: i64 = redis
-            .eval(
-                "return redis.call('exists', KEYS[1])",
-                [receipt],
-                [] as [&str; 0],
-            )
-            .await?;
-        if exists != 0 {
-            return Ok(false);
-        }
-        send_and_save_reply(state, redis, session, address, message, Some(receipt)).await
-    }
-    .await;
+    let result = deliver_locked(mysql, redis, claimed, send).await;
     let release: Result<i64, _> = redis.eval(
         "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
         [key.as_str()], [token.as_str()],
@@ -139,24 +152,57 @@ async fn send_session(
     result
 }
 
-async fn send_and_save_reply(
-    state: &AppState,
+async fn deliver_locked<F: std::future::Future<Output = Result<Value>>>(
+    mysql: &brz_mysql::MysqlService,
+    redis: &impl Redis,
+    claimed: &super::super::runtime_notification_outbox::ClaimedDelivery,
+    send: impl FnOnce(String) -> F,
+) -> Result<bool> {
+    use super::super::runtime_notification_outbox as outbox;
+
+    let delivery = &claimed.delivery;
+    let mut newly_sent = false;
+    let result = if let Some(result) = &claimed.provider_result {
+        result.clone()
+    } else {
+        // Honor receipts from before the durable outbox was introduced.
+        let previous: Option<String> = redis
+            .eval(
+                "return redis.call('GET', KEYS[1])",
+                [claimed.id.as_str()],
+                [] as [&str; 0],
+            )
+            .await?;
+        let result = if let Some(previous) = previous {
+            if previous == "sent" {
+                json!({"legacyReceipt":true})
+            } else {
+                serde_json::from_str(&previous)?
+            }
+        } else {
+            let message = if delivery.session.channel_type == "dingtalk" {
+                format!("{}\n\n引用本通知回复，即可继续该任务。", delivery.message)
+            } else {
+                delivery.message.clone()
+            };
+            newly_sent = true;
+            send(message).await?
+        };
+        outbox::record_result(mysql, claimed, &result).await?;
+        result
+    };
+    redis.set(claimed.id.as_str(), result.to_string()).await?;
+    save_reply(redis, &delivery.session, &delivery.address, &result).await?;
+    Ok(newly_sent)
+}
+
+async fn save_reply(
     redis: &impl Redis,
     session: &PrivateSession,
     address: &Value,
-    message: &str,
-    receipt: Option<&str>,
-) -> Result<bool> {
-    let message = if session.channel_type == "dingtalk" {
-        format!("{message}\n\n引用本通知回复，即可继续该任务。")
-    } else {
-        message.to_owned()
-    };
-    let sent = send_text(state, &serde_json::to_value(session)?, &message).await?;
-    if let Some(receipt) = receipt {
-        redis.set(receipt, "sent").await?;
-    }
-    if let Some(reference) = reply_reference(&sent) {
+    sent: &Value,
+) -> Result<()> {
+    if let Some(reference) = reply_reference(sent) {
         let key = format!(
             "channel:runtime_task_reply_target:{}:{reference}",
             session.session_key
@@ -169,7 +215,7 @@ async fn send_and_save_reply(
             )
             .await?;
     }
-    Ok(true)
+    Ok(())
 }
 
 fn reply_reference(result: &Value) -> Option<String> {
@@ -221,7 +267,13 @@ fn notification_id(payload: &Map<String, Value>, status: &str) -> Option<String>
         .find(|value| crate::json_compat::python_truthy(value));
     let (kind, identity) = turn
         .map(|value| ("turn", value))
-        .or_else(|| updated.map(|value| ("updated", value)))?;
+        .or_else(|| updated.map(|value| ("updated", value)))
+        .or_else(|| {
+            payload
+                .get("eventSeq")
+                .filter(|value| value.as_u64().is_some_and(|id| id > 0))
+                .map(|value| ("event", value))
+        })?;
     Some(format!(
         "{kind}:{}:{}",
         crate::json_compat::python_str(identity),
@@ -294,3 +346,7 @@ mod tests {
         assert_eq!(reply_reference(&json!({"message_id":0})), None);
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_notification_delivery_tests.rs"]
+mod delivery_tests;

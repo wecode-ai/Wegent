@@ -62,6 +62,7 @@ pub mod runner_catalog;
 pub mod runtime;
 pub mod runtime_event_order;
 pub mod runtime_features;
+mod runtime_notification_outbox;
 pub mod runtime_projection;
 pub mod runtime_request;
 pub mod runtime_rpc;

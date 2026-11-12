@@ -11,9 +11,9 @@
 //! `app/services/wework_api/events.py::publish_runtime_event` and
 //! `LocalTaskResponsesHandler.forward_runtime_event_to_channels`.
 //!
-//! A native Runtime event has no callback: the executor sends the envelope and
-//! the relay answers nothing. Everything observable happens through the
-//! database writes and the Redis publishes.
+//! Terminal events are acknowledged only after their notification intents are
+//! durable. Provider delivery is owned by the outbox workers, independently of
+//! the executor connection and Wework's foreground state.
 
 use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
@@ -174,7 +174,7 @@ pub async fn forward(
     .await;
     publish_live(state, user_id, device_id, &envelope).await;
     forward_channel_event(state, logical_device_id, &envelope).await;
-    notify_runtime_event(state, user_id, logical_device_id, &envelope).await;
+    notify_runtime_event(state, user_id, logical_device_id, &envelope).await?;
     log_terminal_relay(&envelope, user_id, device_id, "forwarded");
     Ok(accepted())
 }
@@ -308,24 +308,24 @@ async fn forward_channel_event(state: &AppState, device_id: &str, envelope: &Val
     forward_local_task_callbacks(state, device_id, &task_id, source, &event).await;
 }
 
-/// Best-effort notification for terminal events from non-IM Runtime turns.
-async fn notify_runtime_event(state: &AppState, user_id: i64, device_id: &str, envelope: &Value) {
+/// Persist terminal notification intents before acknowledging the event.
+async fn notify_runtime_event(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+    envelope: &Value,
+) -> anyhow::Result<()> {
     let Some(payload) = envelope.get("payload").and_then(Value::as_object) else {
-        return;
+        return Ok(());
     };
     let Some(plan) = notification_plan(user_id, device_id, payload) else {
-        return;
+        return Ok(());
     };
-    if let Err(error) =
-        runtime_im_notification::deliver(state, user_id, device_id, payload, &plan).await
-    {
-        tracing::warn!(%error, user_id, device_id, local_task_id = plan.local_task_id,
-            event_type = plan.event_type, "Runtime event IM delivery failed");
-    }
+    runtime_im_notification::enqueue(state, user_id, device_id, payload, &plan).await
 }
 
 #[path = "device_runtime_im_notification.rs"]
-mod runtime_im_notification;
+pub(crate) mod runtime_im_notification;
 
 /// `RUNTIME_VALUE_ORIGINS`: the `valueOrigin` values the runtime terminal event
 /// keeps.

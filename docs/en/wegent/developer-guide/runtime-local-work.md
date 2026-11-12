@@ -355,7 +355,28 @@ Runtime tasks can send notifications to IM sessions, but notification state is k
 - A single IM session can subscribe to one runtime task and receive only that task's updates.
 - The executor sends `runtime:event` over the device WebSocket. Backend delivers only `response.completed`, `response.failed`, `response.incomplete`, and `error` terminal updates according to active task bindings, task subscriptions, and global notification settings. Successful terminal events without reply content are not sent.
 - Notification identity uses `deviceId + localTaskId` and excludes `workspacePath`. IM-originated turns do not echo another notification to the same IM, while the legacy `runtime.tasks.updated` receiver remains only for older executors.
-- Backend stores Redis delivery receipts by user, device task, turn and terminal status, and recipient IM session. Successfully delivered notifications are suppressed when events replay after desktop restarts or device reconnects. Concurrent delivery uses a short-lived lock; successful receipts do not expire. Failures release the lock, and partial failures retry only recipients without a successful receipt. Legacy watcher updates use `updatedAt`; events without a turn ID or update timestamp cannot be reliably deduplicated because distinct turns may return identical content.
+- Executor persists unacknowledged terminal events per Backend account and device, deleting them only after a Backend business ACK. Closing the desktop UI, streaming history overflow, reconnects, and process restarts must not discard these events. UI history remains bounded while terminal notification delivery retains the complete payload.
+- Backend creates unique delivery intents in MySQL's `runtime_notification_deliveries`, scoped by user, device task, turn and terminal status, and recipient IM session. It ACKs only after the transaction commits. Independent workers claim expiring leases with fencing tokens, retry failures with backoff, and keep successful identities while removing message bodies. Redis still holds settings, sessions, reply routing, and recognized legacy receipts; it is not the authoritative delivery store.
+- After DingTalk returns success, workers persist its response in MySQL before writing disposable reply routing. Reply-cache failures, Redis eviction, and event replay reuse the saved response without another provider send. Different turns with identical text still receive separate notifications; message content is never the deduplication identity.
+- The current plain-text DingTalk API has no client idempotency key. If DingTalk accepts a message but its HTTP response is lost, or the process crashes before persisting that response, the sender cannot determine the external outcome. Business ACKs and local receipts cannot remove that external-system boundary. Protocol integration tests use real MySQL and Redis with a provider test double; real DingTalk compatibility remains unverified.
+
+```mermaid
+sequenceDiagram
+    participant E as Executor terminal journal
+    participant B as Backend
+    participant M as MySQL delivery records
+    participant W as Notification worker
+    participant I as IM provider
+    E->>B: Stable turn event (retained and replayed on failure)
+    B->>M: Commit unique recipient delivery intents
+    M-->>B: Transaction committed
+    B-->>E: Business ACK (remove local record)
+    W->>M: Claim an expiring fenced lease
+    W->>I: Send notification
+    I-->>W: Provider result
+    W->>M: Persist provider result
+    Note over W,M: Restore reply cache from result without another send
+```
 
 ## URL
 

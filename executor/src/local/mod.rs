@@ -15,6 +15,7 @@ pub(crate) mod git_access;
 pub mod git_commands;
 pub mod harnesses;
 mod linked_change_requests;
+mod terminal_event_journal;
 pub use wegent_plugin_packages::local::local_skills;
 pub(crate) use wegent_plugin_packages::local::personal_marketplace_lock;
 pub(crate) use wegent_plugin_packages::local::plugin_cache;
