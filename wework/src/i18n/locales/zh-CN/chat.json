@@ -11,6 +11,11 @@
     "load_failed": "会话历史加载失败",
     "retry": "重试"
   },
+  "visualization": {
+    "loading": "正在加载可视化…",
+    "load_failed": "可视化加载失败",
+    "retry": "重试"
+  },
   "table": {
     "expand": "展开表格",
     "close": "收起表格",
@@ -211,7 +216,7 @@
     "view_changes": "查看更改",
     "show_more": "再显示 {{count}} 个文件",
     "show_less": "收起文件",
-    "review": "审核",
+    "review": "审查",
     "review_title": "本轮文件变更",
     "preview_file_label": "预览 {{path}} 的文件变更",
     "copy_code": "复制代码",
@@ -235,7 +240,6 @@
     "previous_turn_label": "上轮对话",
     "branch_label": "分支",
     "branch_unknown": "当前工作区",
-    "large_diff_single_file_notice": "此差异较大，每次仅显示一个文件",
     "file_list_label": "变更文件",
     "file_search_placeholder": "筛选文件...",
     "file_search_empty": "没有匹配的文件",
@@ -262,7 +266,7 @@
     },
     "review_failed": "加载文件变更失败",
     "revert_failed": "撤销文件变更失败",
-    "device_offline": "设备离线，无法审核或撤销",
+    "device_offline": "设备离线，无法审查或撤销",
     "reverted": "已撤销",
     "conflicted": "存在后续冲突，未修改工作区",
     "artifact_missing": "变更文件已不存在",

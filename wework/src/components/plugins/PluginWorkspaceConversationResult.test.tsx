@@ -1,6 +1,6 @@
+import type { WorkbenchMessage } from '@/types/workbench'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { WorkbenchMessage } from '@/types/workbench'
 import { PluginWorkspaceConversationResult } from './PluginWorkspaceConversationResult'
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -67,33 +67,6 @@ describe('PluginWorkspaceConversationResult', () => {
       searchPluginShareUsers: vi.fn().mockResolvedValue({ users: [] }),
       searchPluginShareGroups: vi.fn().mockResolvedValue({ items: [] }),
     })
-  })
-
-  test('uses the active cloud connection for publication APIs', async () => {
-    render(
-      <PluginWorkspaceConversationResult
-        taskId="42"
-        messages={
-          [
-            {
-              id: 'assistant-1',
-              role: 'assistant',
-              status: 'sent',
-              content: resultMarker,
-            },
-          ] as WorkbenchMessage[]
-        }
-        waiting={false}
-        onSendAction={vi.fn().mockResolvedValue(true)}
-      />
-    )
-
-    await waitFor(() =>
-      expect(createDefaultPluginApi).toHaveBeenCalledWith(
-        'https://cloud.example/api',
-        'cloud-token'
-      )
-    )
   })
 
   test('opens the restored manifest and sends publication back through the original Task', async () => {

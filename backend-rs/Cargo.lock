@@ -254,6 +254,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "block-buffer"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
+dependencies = [
+ "hybrid-array",
+]
+
+[[package]]
 name = "block-padding"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -305,6 +314,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "brz-engineioxide"
+version = "0.17.7-brz.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8326a1f3f4d5f671e5bdd79e744c49f78bb2b6579240fb2830ccbb220a0fed2"
+dependencies = [
+ "bytes",
+ "engineioxide-core",
+ "futures-core",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "pin-project-lite",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+]
+
+[[package]]
 name = "brz-http"
 version = "0.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -329,9 +366,9 @@ dependencies = [
 
 [[package]]
 name = "brz-http-gateway"
-version = "0.2.14"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cead5e402e336f15e7481a4f6a97331a2183c717dd67e464740b998a2687f31d"
+checksum = "86288fbacb0dcad789567adcc0d7c4dc0d6d61443e22dd595f9f0ac4d3e2d0c1"
 dependencies = [
  "brz-http-cors",
  "brz-http-router",
@@ -467,9 +504,9 @@ dependencies = [
 
 [[package]]
 name = "brz-mysql"
-version = "0.0.25"
+version = "0.0.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bce082c3604defd953d3ac5d8ddcea154d2ec0fe85a0889770da9313fa430b4"
+checksum = "1a0a88afd4d05fa949b168a17ef2bf17eeb937ac07371140c8fc48dafcf84ceb"
 dependencies = [
  "async-stream",
  "brz-metrics",
@@ -488,9 +525,9 @@ dependencies = [
 
 [[package]]
 name = "brz-mysql-derive"
-version = "0.0.25"
+version = "0.0.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e26e6235164bc04e1972b3a1f1be371837423bbfd61400abd3cb6aa49a69b984"
+checksum = "a11a4293123d420f47e385dbdb0d1dd225d7f7238d062359a84ecc08c4c0f796"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -514,13 +551,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "brz-net"
+version = "0.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8b8b9eed63aff8293189dc925715f973d09115b48292751a6e851f2e0b247d0"
+dependencies = [
+ "arc-swap",
+ "atomic-waker",
+ "brz-ds",
+ "bytes",
+ "parking_lot",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "brz-redis"
 version = "0.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3544b7a6a388c1c49ffc9d4223c57390f3951e4265b44d2a12d4a80ab63e3390"
 dependencies = [
  "arc-swap",
- "brz-net",
+ "brz-net 0.0.7",
  "bytes",
  "enum_dispatch",
  "futures-util",
@@ -536,13 +589,13 @@ dependencies = [
 
 [[package]]
 name = "brz-redis"
-version = "0.0.17"
+version = "0.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "346768e29efbfa0ecfaa9858e286ad71fa44201f5452283ad512853cb5f7694f"
+checksum = "ee464c4a6ea6dcf4cfb973ff5687af4c626202e89cea30487ce05af413d57482"
 dependencies = [
  "arc-swap",
  "brz-metrics",
- "brz-net",
+ "brz-net 0.0.8",
  "bytes",
  "enum_dispatch",
  "futures-util",
@@ -588,6 +641,63 @@ dependencies = [
 ]
 
 [[package]]
+name = "brz-socket-io"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "730e25cfb37ec033fa1054e607eef62044726535abb50e3e9694f177c7b140e4"
+dependencies = [
+ "brz-engineioxide",
+ "brz-http-server",
+ "brz-metrics",
+ "brz-socket-io-macros",
+ "brz-socketioxide",
+ "http",
+ "inventory",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "brz-socket-io-macros"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90fe64eaeb843e3e03eefc2df6ef7b6242c44d0f36f4c973aade3c4ae0d48da9"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "brz-socketioxide"
+version = "0.18.7-brz.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3627944df4a00d6d36030a0360cd34a726ea654eae0ba48af0c7effe5ce620"
+dependencies = [
+ "brz-engineioxide",
+ "bytes",
+ "futures-core",
+ "futures-util",
+ "http",
+ "http-body",
+ "hyper",
+ "matchit",
+ "pin-project-lite",
+ "serde",
+ "socketioxide-core",
+ "socketioxide-parser-common",
+ "state",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -604,6 +714,9 @@ name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "cbc"
@@ -735,6 +848,12 @@ name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
+
+[[package]]
+name = "const-oid"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "core-foundation-sys"
@@ -908,12 +1027,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-encoding"
+version = "2.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
- "const-oid",
+ "const-oid 0.9.6",
  "pem-rfc7468",
  "zeroize",
 ]
@@ -972,10 +1097,21 @@ version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
- "block-buffer",
- "const-oid",
+ "block-buffer 0.10.4",
+ "const-oid 0.9.6",
  "crypto-common 0.1.7",
  "subtle",
+]
+
+[[package]]
+name = "digest"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
+dependencies = [
+ "block-buffer 0.12.1",
+ "const-oid 0.10.2",
+ "crypto-common 0.2.2",
 ]
 
 [[package]]
@@ -1044,6 +1180,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "engineioxide-core"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06c5f98b2d2338ec0713bc222c753bfd18746bd76cbb115afa18aa07c6096553"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "pin-project-lite",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
 name = "enum_dispatch"
 version = "0.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1079,7 +1235,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1249,6 +1405,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d758ba1b47b00caf47f24925c0074ecb20d6dfcffe7f6d53395c0465674841a"
 
 [[package]]
+name = "generator"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cc16584ff22b460a382b7feec54b23d2908d858152e5739a120b949293bd74e"
+dependencies = [
+ "cc",
+ "libc",
+ "log",
+ "rustversion",
+ "windows",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1388,7 +1557,7 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
- "digest",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -1895,6 +2064,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "loom"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff50ecb28bb86013e935fb6683ab1f6d3a20016f123c76fd4c27470076ac30f5"
+dependencies = [
+ "cfg-if",
+ "generator",
+ "scoped-tls",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "lru-slab"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1933,13 +2117,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "matchit"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8863b587001c1b9a8a4e36008cebc6b3612cb1226fe2de94858e06092687b608"
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
 dependencies = [
  "cfg-if",
- "digest",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -2446,7 +2636,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2638,8 +2828,8 @@ version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8573f03f5883dcaebdfcf4725caa1ecb9c15b2ef50c43a07b816e06799bb12d"
 dependencies = [
- "const-oid",
- "digest",
+ "const-oid 0.9.6",
+ "digest 0.10.7",
  "num-bigint-dig",
  "num-integer",
  "num-traits",
@@ -2770,6 +2960,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "scoped-tls"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2881,7 +3077,18 @@ checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
- "digest",
+ "digest 0.10.7",
+]
+
+[[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -2892,7 +3099,7 @@ checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
- "digest",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -2926,7 +3133,7 @@ version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
- "digest",
+ "digest 0.10.7",
  "rand_core 0.6.4",
 ]
 
@@ -2971,6 +3178,34 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "socketioxide-core"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35b1fd1f6de17dab074b59b59bda5e816afb2bc61406588bb1add8273b334800"
+dependencies = [
+ "arbitrary",
+ "bytes",
+ "engineioxide-core",
+ "futures-core",
+ "serde",
+ "smallvec",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "socketioxide-parser-common"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a312f6f7686f60e83c1fc9d813c667866db1d345bfd91dda23db4c685112f996"
+dependencies = [
+ "bytes",
+ "itoa",
+ "serde",
+ "serde_json",
+ "socketioxide-core",
 ]
 
 [[package]]
@@ -3095,7 +3330,7 @@ dependencies = [
  "bytes",
  "chrono",
  "crc",
- "digest",
+ "digest 0.10.7",
  "dotenvy",
  "either",
  "futures-channel",
@@ -3115,7 +3350,7 @@ dependencies = [
  "rand 0.8.8",
  "rsa",
  "serde",
- "sha1",
+ "sha1 0.10.7",
  "sha2",
  "smallvec",
  "sqlx-core",
@@ -3195,6 +3430,15 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "state"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b8c4a4445d81357df8b1a650d0d0d6fbbbfe99d064aa5e02f3e4022061476d8"
+dependencies = [
+ "loom",
+]
 
 [[package]]
 name = "static_assertions"
@@ -3464,6 +3708,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3695,6 +3951,22 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.10.3",
+ "sha1 0.11.0",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "turbojpeg"
@@ -4050,6 +4322,71 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-access"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-directory",
+]
+
+[[package]]
+name = "wegent-authentication"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "anyhow",
+ "base64 0.23.1",
+ "bcrypt",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "cbc",
+ "chrono",
+ "erased-serde",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+]
+
+[[package]]
+name = "wegent-backend-config"
+version = "0.1.0"
+dependencies = [
+ "url",
+]
+
+[[package]]
+name = "wegent-backend-persistence"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-mysql",
+ "chrono",
+ "tokio",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+]
+
+[[package]]
 name = "wegent-backend-rs"
 version = "0.1.0"
 dependencies = [
@@ -4067,9 +4404,10 @@ dependencies = [
  "brz-logs",
  "brz-metrics",
  "brz-mysql",
- "brz-redis 0.0.17",
+ "brz-redis 0.0.18",
  "brz-schedule",
  "brz-schedule-redis",
+ "brz-socket-io",
  "bytes",
  "cbc",
  "chardetng",
@@ -4097,7 +4435,7 @@ dependencies = [
  "rustpython-parser",
  "serde",
  "serde_json",
- "sha1",
+ "sha1 0.10.7",
  "sha2",
  "tokio",
  "tokio-util",
@@ -4106,9 +4444,486 @@ dependencies = [
  "turbojpeg",
  "unicode-normalization",
  "url",
+ "wegent-access",
+ "wegent-authentication",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-backend-users",
+ "wegent-capabilities",
+ "wegent-celery",
+ "wegent-crypto",
+ "wegent-directory",
+ "wegent-executor-manager",
+ "wegent-git-repositories",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-job-runtime",
+ "wegent-media",
+ "wegent-models",
+ "wegent-network-policy",
+ "wegent-oidc",
+ "wegent-onboarding",
+ "wegent-protocol",
+ "wegent-python-compat",
+ "wegent-remote-workspace",
+ "wegent-resource-store",
+ "wegent-runtime-check",
+ "wegent-sites",
+ "wegent-socket-events",
+ "wegent-storage",
+ "wegent-task-store",
  "yaml-rust2",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "wegent-backend-test-support"
+version = "0.1.0"
+dependencies = [
+ "brz-metrics",
+ "brz-mysql",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "wegent-backend-users"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bcrypt",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "cbc",
+ "chrono",
+ "erased-serde",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-crypto",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
+]
+
+[[package]]
+name = "wegent-capabilities"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-directory",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-celery"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "brz-redis 0.0.18",
+ "chrono",
+ "getrandom 0.2.17",
+ "md-5",
+ "serde_json",
+ "tracing",
+ "wegent-python-compat",
+]
+
+[[package]]
+name = "wegent-crypto"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "cbc",
+]
+
+[[package]]
+name = "wegent-directory"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "serde",
+ "wegent-backend-persistence",
+]
+
+[[package]]
+name = "wegent-executor-manager"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-http",
+ "brz-json",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "wegent-git-repositories"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-redis 0.0.18",
+ "md-5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-network-policy",
+]
+
+[[package]]
+name = "wegent-http-compat"
+version = "0.1.0"
+dependencies = [
+ "brz-http-server",
+ "brz-json",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "wegent-identity"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-crypto",
+ "wegent-http-compat",
+]
+
+[[package]]
+name = "wegent-job-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-schedule",
+ "brz-schedule-redis",
+ "chrono",
+ "getrandom 0.2.17",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+]
+
+[[package]]
+name = "wegent-media"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-http",
+ "brz-json",
+]
+
+[[package]]
+name = "wegent-models"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-resource-store",
+]
+
+[[package]]
+name = "wegent-network-policy"
+version = "0.1.0"
+dependencies = [
+ "brz-http",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "wegent-oidc"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bcrypt",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "cbc",
+ "chrono",
+ "erased-serde",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-network-policy",
+ "wegent-onboarding",
+ "wegent-python-compat",
+]
+
+[[package]]
+name = "wegent-onboarding"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "wegent-python-compat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-json",
+ "chrono",
+ "regex",
+ "serde",
+ "serde_json",
+ "yaml-rust2",
+]
+
+[[package]]
+name = "wegent-remote-workspace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-access",
+ "wegent-backend-test-support",
+ "wegent-capabilities",
+ "wegent-directory",
+ "wegent-executor-manager",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-media",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-resource-store"
+version = "0.1.0"
+dependencies = [
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+]
+
+[[package]]
+name = "wegent-runtime-check"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-http-server",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-task-store",
+]
+
+[[package]]
+name = "wegent-sites"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-config",
+ "wegent-http-compat",
+ "wegent-identity",
+]
+
+[[package]]
+name = "wegent-socket-events"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-redis 0.0.18",
+ "bytes",
+ "getrandom 0.2.17",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-backend-config",
+ "wegent-python-compat",
+]
+
+[[package]]
+name = "wegent-storage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brz-http",
+ "brz-metrics",
+ "chrono",
+ "hmac",
+ "sha2",
+ "tokio",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-network-policy",
+]
+
+[[package]]
+name = "wegent-task-store"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brz-json",
+ "brz-mysql",
+ "chrono",
+ "getrandom 0.2.17",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-python-compat",
+ "wegent-resource-store",
 ]
 
 [[package]]
@@ -4119,6 +4934,15 @@ checksum = "5d4a4db5077702ca3015d3d02d74974948aba2ad9e12ab7df718ee64ccd7e97d"
 dependencies = [
  "libredox",
  "wasite",
+]
+
+[[package]]
+name = "windows"
+version = "0.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e686886bc078bc1b0b600cac0147aadb815089b6e4da64016cbd754b6342700f"
+dependencies = [
+ "windows-targets 0.48.5",
 ]
 
 [[package]]

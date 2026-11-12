@@ -32,6 +32,7 @@ export interface RunnerModel extends RunnerModelIdentity {
 export interface RunnerEnvironment {
   id: string
   device_key: string
+  app_device_id?: string
   name: string
   owner_type: 'user' | 'workspace'
   owner_id: string
@@ -40,6 +41,15 @@ export interface RunnerEnvironment {
   catalog_error?: string | null
   models: RunnerModel[]
   runtimes?: RunnerModelIdentity['runtime'][]
+}
+
+/** Native model references can be validated without connecting to a cloud catalog. */
+export function requiresCloudModelCatalog(
+  policy?: AgentModelPolicy,
+  selection?: RunnerSelection
+): boolean {
+  const model = policy?.mode === 'fixed' ? policy.model : selection?.model
+  return !model || model.source === 'cloud'
 }
 
 export function runnerModelKey(model: RunnerModelIdentity): string {

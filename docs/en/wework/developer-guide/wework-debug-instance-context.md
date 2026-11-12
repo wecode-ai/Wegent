@@ -41,6 +41,8 @@ These values are written only when the Terminal session is created. Existing Ter
 - `WEWORK_APP_IDENTIFIER`: the generated Electron application identity. It is derived from the current worktree path and isolates the single-instance lock, application data, and macOS menu bar icon position. The launcher intentionally ignores an identity inherited from its parent App; use `WEWORK_DEV_APP_IDENTIFIER` only when an identity must explicitly be reused.
 - `WEWORK_USER_DATA_DIR`: the generated Electron user data directory. The launcher intentionally ignores a directory inherited from its parent App; use `WEWORK_DEV_USER_DATA_DIR` for an explicit override.
 
+Development startup clears inherited `WEWORK_RELEASE_ROOT`, `WEWORK_RELEASE_SUPERVISED`, `WEWORK_ACTIVE_RELEASE_ID`, and `WEWORK_COMPONENT_DATA_DIRECTORY` so its isolated directory cannot use an installed release’s activation state or component data.
+
 The macOS development launcher prepares a copy-on-write Electron App Bundle for
 each display name. Task shells use their injected title directly; terminals
 started from an existing runtime worktree can recover the title from the local

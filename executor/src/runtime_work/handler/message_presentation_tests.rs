@@ -1,5 +1,227 @@
 use super::*;
 
+#[test]
+fn explicit_activity_presentation_restores_the_exact_native_turn_without_changing_execution() {
+    let internal = "Wework delegated task result: taskId=private-task. Read this exact task";
+    let mut payload = json!({
+        "message":internal,"clientUserMessageId":"activity-1",
+        "executionRequest":{"prompt":internal,"origin":{"type":"stand_in_identity","userId":7}},
+        "userMessagePresentation":{"content":"每日简报已完成","source":{"type":"stand_in_activity"}}
+    });
+    let execution = payload["executionRequest"].clone();
+    normalize_user_message_presentation(&mut payload).unwrap();
+    assert_eq!(payload["executionRequest"], execution);
+    assert!(payload.get("userMessagePresentation").is_none());
+    let request = ExecutionRequest::default();
+    assert_eq!(
+        cached_user_message("chat", &request, &payload).unwrap()["content"],
+        "每日简报已完成"
+    );
+    let mut handle = json!({});
+    append_runtime_handle_user_message_presentation(
+        &mut handle,
+        user_message_presentation(&payload).unwrap(),
+    );
+    bind_runtime_handle_user_message_presentation_to_turn(
+        &mut handle,
+        "activity-1",
+        "turn-activity",
+    );
+    let mut link = RuntimeTaskLink::new_pending("chat".into(), "/work".into(), "Chat".into());
+    link.runtime_handle = handle;
+    let presentations = user_message_presentations(&link);
+    let mut messages = vec![
+        json!({"id":"old","role":"user","turnId":"turn-original","content":"请整理简报"}),
+        json!({"id":"native","role":"user","turnId":"turn-activity","content":internal}),
+        json!({"id":"answer","role":"assistant","turnId":"turn-activity","content":"今天最重要的三件事……"}),
+    ];
+    bind_native_user_presentations(&mut messages, &presentations);
+    attach_user_message_presentations(&mut messages, presentations);
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0]["content"], "请整理简报");
+    assert_eq!(messages[1]["clientUserMessageId"], "activity-1");
+    assert_eq!(messages[1]["content"], "每日简报已完成");
+    assert_eq!(messages[1]["source"]["type"], "stand_in_activity");
+    assert_eq!(messages[2]["content"], "今天最重要的三件事……");
+    assert!(!serde_json::to_string(&messages).unwrap().contains(internal));
+}
+
+#[test]
+fn explicit_activity_presentation_preserves_transport_attribution_and_plain_requests() {
+    let mut ordinary = json!({"message":"Hello","executionRequest":{"prompt":"Hello"}});
+    let original = ordinary.clone();
+    normalize_user_message_presentation(&mut ordinary).unwrap();
+    assert_eq!(ordinary, original);
+    let mut payload = json!({"clientUserMessageId":" ","client_user_message_id":"stable-id",
+        "source":{"type":"connection_work","connectionId":"authorized"},
+        "executionRequest":{"prompt":"internal","origin":{"connectionId":"authorized"}},
+        "userMessagePresentation":{"content":"处理完成","source":{"connectionId":"different"}}});
+    let execution = payload["executionRequest"].clone();
+    normalize_user_message_presentation(&mut payload).unwrap();
+    assert_eq!(payload["source"]["connectionId"], "authorized");
+    assert_eq!(payload["executionRequest"], execution);
+    assert_eq!(payload["clientUserMessageId"], "stable-id");
+}
+
+#[test]
+fn explicit_activity_presentation_rejects_unbound_or_empty_overrides() {
+    for mut payload in [
+        json!({"clientUserMessageId":"id","userMessagePresentation":null}),
+        json!({"clientUserMessageId":"id","userMessagePresentation":{"content":" "}}),
+        json!({"userMessagePresentation":{"content":"Visible preview"}}),
+    ] {
+        let error = normalize_user_message_presentation(&mut payload).unwrap_err();
+        assert_eq!(error.code, "bad_request");
+    }
+}
+
+#[tokio::test]
+async fn explicit_activity_presentation_is_validated_by_create_and_continue() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    let payload = json!({"taskId":"activity-chat","userMessagePresentation":{"content":"完成"}});
+    assert_eq!(
+        handler.create_task(payload.clone()).await.unwrap_err().code,
+        "bad_request"
+    );
+    assert_eq!(
+        handler.send_message(payload).await.unwrap_err().code,
+        "bad_request"
+    );
+    assert!(handler.local_task_link("activity-chat").is_none());
+}
+
+#[test]
+fn explicit_activity_presentation_continuation_persists_and_binds_preview() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    let mut link = RuntimeTaskLink::new_pending("chat".into(), "/work".into(), "Chat".into());
+    link.thread_id = Some("thread".into());
+    handler.upsert_local_task(link);
+    let mut payload = json!({"message":"internal continuation","clientUserMessageId":"activity-next",
+        "userMessagePresentation":{"content":"任务完成，开始汇总结果"}});
+    normalize_user_message_presentation(&mut payload).unwrap();
+    handler.mark_task_running_for_send(
+        "chat",
+        "thread",
+        "/work",
+        &ExecutionRequest::default(),
+        &payload,
+    );
+    handler.record_runtime_turn_id("chat", "next", "turn-next", Some("activity-next"));
+    let persisted = handler.local_task_link("chat").unwrap();
+    let presentations = user_message_presentations(&persisted);
+    assert_eq!(presentations.len(), 1);
+    assert_eq!(presentations[0]["content"], "任务完成，开始汇总结果");
+    assert_eq!(presentations[0]["turnId"], "turn-next");
+    assert_eq!(presentations[0]["restoreContent"], true);
+}
+
+#[test]
+fn assistant_phase_resets_at_the_root_turn_boundary_only() {
+    let (event_tx, mut event_rx) = broadcast::channel(16);
+    let mut mapper = CodexNotificationEventMapper::default();
+    mapper.observe_root_thread_id("root-thread");
+    let request = ExecutionRequest::default();
+    for (method, params) in [
+        (
+            "turn/started",
+            json!({"threadId":"root-thread", "turn":{"id":"first"}}),
+        ),
+        (
+            "item/started",
+            json!({"threadId":"root-thread", "item":{
+                "id":"answer", "type":"agentMessage", "phase":"final_answer", "text":""
+            }}),
+        ),
+        (
+            "turn/started",
+            json!({"threadId":"child-thread", "turn":{"id":"child"}}),
+        ),
+        (
+            "item/agentMessage/delta",
+            json!({"threadId":"root-thread", "itemId":"answer", "delta":"First"}),
+        ),
+        (
+            "turn/started",
+            json!({"threadId":"root-thread", "turn":{"id":"second"}}),
+        ),
+        (
+            "item/agentMessage/delta",
+            json!({"threadId":"root-thread", "itemId":"answer", "delta":"Second"}),
+        ),
+    ] {
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device",
+            "task",
+            &request,
+            json!({"method":method, "params":params}),
+        );
+    }
+    let mut events = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        events.push(event);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["event"] == "response.output_text.delta")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["event"] == "response.block.created")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn turn_start_response_preserves_an_already_started_assistant_phase() {
+    let (mut handler, root) = isolated_runtime_work_handler("late-turn-start-response-phase");
+    let (event_tx, mut event_rx) = broadcast::channel(32);
+    handler.event_tx = Some(event_tx);
+    let mut link =
+        RuntimeTaskLink::new_pending("task-1".into(), "/tmp/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+    let request = ExecutionRequest {
+        task_id: "task-1".into(),
+        subtask_id: "turn-1".into(),
+        ..ExecutionRequest::default()
+    };
+    handler.register_thread_event_route("thread-1", "task-1".into(), request.clone(), false);
+    handler.route_codex_notification(json!({"method":"turn/started", "params":{
+        "threadId":"thread-1", "turn":{"id":"turn-1", "status":"inProgress"}
+    }}));
+    handler.route_codex_notification(json!({"method":"item/started", "params":{
+        "threadId":"thread-1", "turnId":"turn-1",
+        "item":{"id":"answer-1", "type":"agentMessage", "phase":"final_answer", "text":""}
+    }}));
+    // The native reader may deliver item/started before turn/start returns.
+    handler.register_thread_event_route("thread-1", "task-1".into(), request, true);
+    handler.route_codex_notification(json!({"method":"item/agentMessage/delta", "params":{
+        "threadId":"thread-1", "turnId":"turn-1", "itemId":"answer-1", "delta":"Live answer"
+    }}));
+    let mut output = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        output.push(event);
+    }
+    assert!(
+        output
+            .iter()
+            .any(|event| event["event"] == "response.output_text.delta"),
+        "{output:?}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn stopped_active_goal_does_not_emit_a_terminal_result_or_discard_its_status() {
     for error in [

@@ -307,6 +307,23 @@ export interface WorkbenchData {
   originalPrompt: string
   file_changes: FileChange[]
   git_info: GitInfoWorkbench
+  git_type?: 'github' | 'gitlab'
+  git_domain?: string
+}
+
+/** Net Git changes from a task's saved baseline to its current workspace. */
+export interface TaskFileChanges {
+  status: 'active' | 'error'
+  files: {
+    path: string
+    old_path?: string | null
+    change_type: 'created' | 'modified' | 'deleted' | 'renamed'
+    additions: number
+    deletions: number
+    binary: boolean
+  }[]
+  diff: string
+  diff_truncated?: boolean
 }
 
 export interface OpenLinks {
@@ -922,7 +939,7 @@ export interface Project {
   color: string | null
   sort_order: number
   is_expanded: boolean
-  task_count: number
+  task_count: number | null
   config?: ProjectConfig | null
   created_at: string
   updated_at: string
@@ -941,7 +958,7 @@ export interface ProjectListResponse {
 
 /** Paginated tasks in a project */
 export interface ProjectTaskListResponse {
-  total: number
+  total: number | null
   items: ProjectTask[]
   has_more: boolean
   next_cursor: string | null

@@ -156,6 +156,9 @@ class RuntimeTranscriptRequest(RuntimeSessionReadRequest):
     )
     refresh: Optional[bool] = None
     navigation_only: Optional[bool] = Field(default=None, alias="navigationOnly")
+    reconcile_client_user_message_ids: Optional[list[str]] = Field(
+        default=None, alias="reconcileClientUserMessageIds"
+    )
     transcript_protocol_version: Optional[int] = Field(
         default=None, alias="transcriptProtocolVersion", strict=True, ge=1, le=2
     )
@@ -559,6 +562,11 @@ class RuntimeTranscriptResponse(BaseModel):
     )
     running: Optional[bool] = None
     origin: Optional[dict[str, Any]] = None
+    accepted_client_user_message_ids: Optional[list[str]] = Field(
+        default=None,
+        alias="acceptedClientUserMessageIds",
+        exclude_if=lambda value: value is None,
+    )
     history_unavailable: bool = Field(default=False, alias="historyUnavailable")
     turn_navigation: list[dict[str, Any]] = Field(
         default_factory=list, alias="turnNavigation"
@@ -627,6 +635,7 @@ class RuntimeSendRequest(BaseModel):
 
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
+    queue_if_busy: bool = Field(default=False, alias="queueIfBusy")
     client_user_message_id: Optional[str] = Field(
         default=None,
         alias="clientUserMessageId",
@@ -777,30 +786,6 @@ class RuntimeWorkspaceSearchResponse(BaseModel):
     files: list[RuntimeWorkspaceSearchItem] = Field(default_factory=list)
 
 
-class BindRuntimeTaskIMSessionsRequest(BaseModel):
-    """Bind private IM sessions to a device-local runtime task."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    address: RuntimeTaskAddress
-    task_title: str = Field(..., alias="taskTitle", min_length=1, max_length=255)
-    session_keys: list[str] = Field(..., alias="sessionKeys", min_length=1)
-    model_selection: Optional[RuntimeModelSelection] = Field(
-        default=None,
-        alias="modelSelection",
-    )
-
-
-class BindRuntimeTaskIMSessionsResponse(BaseModel):
-    """Acknowledgement for binding private IM sessions to a runtime task."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    address: RuntimeTaskAddress
-    bound_session_keys: list[str] = Field(..., alias="boundSessionKeys")
-    notified_count: int = Field(..., alias="notifiedCount")
-
-
 class RuntimeIMNotificationSession(BaseModel):
     """Private IM session metadata used for notification target selection."""
 
@@ -924,6 +909,7 @@ class RuntimeTaskCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     schema_version: Literal[1, 2, 3] = Field(default=1, alias="schemaVersion")
+    compile_on_device: bool = Field(default=False, alias="compileOnDevice")
     force_start: Optional[bool] = Field(default=None, alias="forceStart")
     wegent_team_id: Optional[int] = Field(
         default=None,
@@ -1050,11 +1036,15 @@ class RuntimeTaskCreateRequest(BaseModel):
             )
         if self.wegent_team_id is not None and self.schema_version < 3:
             raise ValueError("wegentTeamId requires RuntimeTaskCreateRequest V3")
+        if self.compile_on_device and (
+            self.schema_version != 2 or self.wegent_team_id is not None
+        ):
+            raise ValueError("compileOnDevice requires a direct V2 runtime intent")
         return self
 
 
 class RuntimeTaskMaterializeRequest(RuntimeTaskCreateRequest):
-    """Team intent compiled for direct local Executor dispatch."""
+    """Native or Team intent compiled for direct local Executor dispatch."""
 
     new_session: bool = Field(default=True, alias="newSession")
 

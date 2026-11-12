@@ -1,10 +1,13 @@
 {
   "brand": "Wegent Collaboration",
-  "title": "Open task in Wework",
-  "description": "Choose the button below to open Wework at this task.",
+  "title": "Open in Wework",
+  "description": "Choose the button below to open Wework at the destination in this link.",
   "open_wework": "Open in Wework",
   "view_task": "View task",
-  "browser_hint": "If no prompt to open Wework appears, open this page in your system browser and try again. You can also view the task on the web.",
+  "browser_hint": "If no prompt to open Wework appears, open this page in your system browser and try again.",
+  "not_installed_title": "Wework did not open?",
+  "not_installed_description": "Wework may not be installed, or the browser may not allow custom protocols. Install it, then choose the button above again.",
+  "download_wework": "Download Wework",
   "invalid_title": "Invalid link",
-  "invalid_description": "This link does not identify a task. Return to the notification and open it again."
+  "invalid_description": "This link is not a recognized Wework destination. Return to the source page and open it again."
 }

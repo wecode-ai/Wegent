@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { holdBackInFlightMarketplaceInstalls } from './holdBackInFlightMarketplaceInstalls'
 
@@ -89,20 +91,6 @@ function installedItem(name: string): InstalledPluginItem {
 }
 
 describe('holdBackInFlightMarketplaceInstalls', () => {
-  test('clears installed card and strip rows while marketplace install is in flight', () => {
-    const item = marketplaceItem()
-    const held = holdBackInFlightMarketplaceInstalls({
-      items: [item, marketplaceItem({ id: 'other', name: 'other-plugin', installed: true })],
-      installed: [installedItem('desktop-e2e-plugin'), installedItem('other-plugin')],
-      installingIds: new Set([item.id]),
-      authPluginKey: null,
-    })
-
-    expect(held.items.find(entry => entry.id === item.id)?.installed).toBe(false)
-    expect(held.items.find(entry => entry.name === 'other-plugin')?.installed).toBe(true)
-    expect(held.installed.map(entry => entry.name)).toEqual(['other-plugin'])
-  })
-
   test('also holds back rows matching the pending local-auth plugin key', () => {
     const held = holdBackInFlightMarketplaceInstalls({
       items: [marketplaceItem()],

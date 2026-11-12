@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { createProjectSpacePickerRegression } from '../e2e/desktop/modules/project-space-picker.mjs'

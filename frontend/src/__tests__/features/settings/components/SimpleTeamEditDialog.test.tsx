@@ -3,13 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
 import { botApis } from '@/apis/bots'
+import { listGroups } from '@/apis/groups'
 import { modelApis } from '@/apis/models'
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
-import { shellApis } from '@/apis/shells'
+import { shellApis, type UnifiedShell } from '@/apis/shells'
 import { fetchUnifiedSkillsList } from '@/apis/skills'
 import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
 import { createTeam, updateTeam } from '@/features/settings/services/teams'
@@ -150,6 +152,10 @@ jest.mock('@/apis/bots', () => {
   }
 })
 
+jest.mock('@/apis/groups', () => ({
+  listGroups: jest.fn(),
+}))
+
 jest.mock('@/apis/models', () => ({
   modelApis: {
     getUnifiedModels: jest.fn(),
@@ -198,14 +204,6 @@ jest.mock('@/components/ui/dialog', () => ({
   DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
-}))
-
-jest.mock('@/components/ui/select', () => ({
-  Select: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectContent: ({ children }: { children: ReactNode }) => <>{children}</>,
-  SelectItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
-  SelectValue: ({ placeholder }: { placeholder?: string }) => <span>{placeholder}</span>,
 }))
 
 jest.mock('@/components/ui/switch', () => ({
@@ -307,6 +305,12 @@ const mockedGetMarketplaceTags = resourceLibraryApi.getMarketplaceTags as jest.M
 const mockedGetPublication = resourceLibraryApi.getPublication as jest.Mock
 const mockedSyncAgentBindings = resourceLibraryApi.syncAgentBindings as jest.Mock
 
+const publicShells: UnifiedShell[] = [
+  { name: 'Chat', type: 'public', displayName: 'Chat', shellType: 'Chat' },
+  { name: 'Codex', type: 'public', displayName: 'Codex', shellType: 'Codex' },
+  { name: 'ClaudeCode', type: 'public', displayName: 'Claude Code', shellType: 'ClaudeCode' },
+]
+
 function makeBot(overrides: Partial<Bot> = {}): Bot {
   return {
     id: 10,
@@ -349,21 +353,7 @@ describe('Simple TeamEditDialog', () => {
     jest.clearAllMocks()
     mockInvalidateTeams.mockReturnValue(undefined)
     mockedGetUnifiedShells.mockResolvedValue({
-      data: [
-        { name: 'Chat', type: 'public', displayName: 'Chat', shellType: 'Chat' },
-        {
-          name: 'Codex',
-          type: 'public',
-          displayName: 'Codex',
-          shellType: 'Codex',
-        },
-        {
-          name: 'ClaudeCode',
-          type: 'public',
-          displayName: 'Claude Code',
-          shellType: 'ClaudeCode',
-        },
-      ],
+      data: publicShells,
     })
     mockedGetUnifiedModels.mockResolvedValue({
       data: [{ name: 'gpt-4.1', type: 'public', displayName: 'GPT 4.1', namespace: 'default' }],
@@ -469,6 +459,180 @@ describe('Simple TeamEditDialog', () => {
     expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
       'Custom entry points · Chat'
     )
+  })
+
+  it.each([
+    { scenario: 'creating', editing: false },
+    { scenario: 'editing', editing: true },
+  ])('selects and saves a custom executor when $scenario an agent', async ({ editing }) => {
+    const user = userEvent.setup()
+    const shell = {
+      name: 'specialized-runtime',
+      displayName: 'Specialized Runner',
+      type: 'user',
+      shellType: 'ClaudeCode',
+    } satisfies UnifiedShell
+    const team = makeTeam()
+    const bot = makeBot({ shell_name: shell.name, shell_type: shell.shellType })
+    mockedGetUnifiedShells.mockResolvedValue({ data: [...publicShells, shell] })
+    mockedCreateBot.mockResolvedValue({ ...bot, id: 42 })
+    mockedUpdateBot.mockResolvedValue(bot)
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={editing ? [team] : []}
+        setTeams={jest.fn()}
+        editingTeamId={editing ? team.id : 0}
+        bots={editing ? [bot] : []}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    const useCases = screen.getByRole('radiogroup', { name: 'Executor' })
+    const engines = screen.getByRole('radiogroup', { name: 'Execution engine' })
+    expect(within(useCases).getAllByRole('radio')).toHaveLength(2)
+    expect(within(useCases).queryByRole('radio', { name: 'Custom' })).not.toBeInTheDocument()
+    expect(within(engines).getAllByRole('radio')).toHaveLength(3)
+    expect(within(useCases).getByRole('radio', { name: 'Complex' })).toBeChecked()
+
+    if (!editing) {
+      expect(screen.queryByTestId('simple-custom-shell-select')).not.toBeInTheDocument()
+    } else {
+      expect(await screen.findByRole('radio', { name: 'Custom' })).toBeChecked()
+      await waitFor(() => {
+        expect(screen.getByTestId('simple-custom-shell-select')).toHaveTextContent(
+          shell.displayName
+        )
+      })
+    }
+    await user.click(await screen.findByTestId('simple-executor-custom-card'))
+    await user.click(screen.getByTestId('simple-custom-shell-select'))
+    await user.click(await screen.findByRole('option', { name: shell.displayName }))
+
+    for (const runtime of ['codex', 'claude_code']) {
+      const runtimeRadio = within(engines).getByRole('radio', {
+        name: runtime === 'codex' ? 'Codex' : 'Claude Code',
+      })
+      await user.click(runtimeRadio)
+      expect(runtimeRadio).toBeChecked()
+      expect(within(useCases).getByRole('radio', { name: 'Complex' })).toBeChecked()
+      expect(screen.queryByTestId('simple-custom-shell-select')).not.toBeInTheDocument()
+      const customRadio = within(engines).getByRole('radio', { name: 'Custom' })
+      await user.click(customRadio)
+      expect(customRadio).toBeChecked()
+      expect(screen.getByTestId('simple-custom-shell-select')).toHaveTextContent(shell.displayName)
+    }
+    fireEvent.change(screen.getByTestId('team-display-name-input'), {
+      target: { value: 'Custom agent' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      const request = expect.objectContaining({ shell_name: shell.name })
+      if (editing) {
+        expect(mockedUpdateBot).toHaveBeenCalledWith(bot.id, request)
+        expect(mockedUpdateTeam).toHaveBeenCalledWith(
+          team.id,
+          expect.objectContaining({
+            bind_mode: ['chat'],
+            bots: [expect.objectContaining({ bot_id: bot.id, role: 'leader' })],
+          })
+        )
+      } else {
+        expect(mockedCreateBot).toHaveBeenCalledWith(request)
+        expect(mockedCreateTeam).toHaveBeenCalledWith(
+          expect.objectContaining({
+            bind_mode: ['chat', 'code', 'task'],
+            bots: [expect.objectContaining({ bot_id: 42, role: 'leader' })],
+          })
+        )
+      }
+    })
+  })
+
+  it('preserves a custom executor when the bot and shell catalogs arrive together', async () => {
+    const user = userEvent.setup()
+    const shell = {
+      name: 'specialized-runtime',
+      displayName: 'Specialized Runner',
+      type: 'user',
+      shellType: 'ClaudeCode',
+    } satisfies UnifiedShell
+    const bot = makeBot({ shell_name: shell.name, shell_type: shell.shellType })
+    const team = makeTeam({ bind_mode: ['chat', 'code', 'task'] })
+    let resolveShells!: (response: { data: UnifiedShell[] }) => void
+    mockedGetUnifiedShells.mockReturnValueOnce(
+      new Promise<{ data: UnifiedShell[] }>(resolve => {
+        resolveShells = resolve
+      })
+    )
+    mockedUpdateBot.mockResolvedValue(bot)
+    const props = {
+      open: true,
+      onClose: jest.fn(),
+      teams: [team],
+      setTeams: jest.fn(),
+      editingTeamId: team.id,
+      setBots: jest.fn(),
+      toast: jest.fn(),
+    }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+    expect(screen.getByRole('radio', { name: 'Simple' })).toBeChecked()
+
+    await act(async () => {
+      resolveShells({ data: [...publicShells, shell] })
+      rerender(<TeamEditDialog {...props} bots={[bot]} />)
+    })
+
+    expect(screen.getByRole('radio', { name: 'Custom' })).toBeChecked()
+    expect(screen.getByTestId('simple-custom-shell-select')).toHaveTextContent(shell.displayName)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        bot.id,
+        expect.objectContaining({ shell_name: shell.name })
+      )
+      expect(mockedUpdateTeam).toHaveBeenCalledWith(
+        team.id,
+        expect.objectContaining({ bind_mode: ['chat', 'code', 'task'] })
+      )
+    })
+  })
+
+  it('keeps custom available without custom shells and requires a selection before saving', async () => {
+    const user = userEvent.setup()
+    const toast = jest.fn()
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={toast}
+      />
+    )
+
+    await user.click(await screen.findByTestId('simple-executor-custom-card'))
+    expect(screen.getByTestId('simple-custom-shell-select')).toHaveTextContent(
+      'No custom executors available'
+    )
+    expect(
+      screen.getByText('Manage custom executors in Resource Library - Executors.')
+    ).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('team-display-name-input'), {
+      target: { value: 'Custom agent' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(toast).toHaveBeenCalledWith({ variant: 'destructive', title: 'Choose executor' })
+    expect(mockedCreateBot).not.toHaveBeenCalled()
+    expect(mockedCreateTeam).not.toHaveBeenCalled()
   })
 
   it('shows example conversations when a new agent is first published to marketplace', async () => {
@@ -1085,6 +1249,258 @@ describe('Simple TeamEditDialog', () => {
       expect(mockedSyncAgentBindings).toHaveBeenCalledWith(1, {
         group_names: ['engineering'],
       })
+    })
+  })
+
+  it('loads writable groups when no group list is provided', async () => {
+    const team = makeTeam()
+    ;(listGroups as jest.Mock).mockResolvedValueOnce({
+      total: 2,
+      items: [
+        {
+          id: 7,
+          name: 'engineering',
+          display_name: 'Engineering',
+          my_role: 'Developer',
+        },
+        {
+          id: 8,
+          name: 'readers',
+          display_name: 'Readers',
+          my_role: 'Reporter',
+        },
+      ],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('capability-scope-team'))
+    expect(await screen.findByTestId('capability-scope-group-engineering')).toBeInTheDocument()
+    expect(screen.queryByTestId('capability-scope-group-readers')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('capability-scope-group-engineering'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        10,
+        expect.objectContaining({
+          target_group_names: ['engineering'],
+        })
+      )
+    })
+  })
+
+  it('keeps a selected creation group without a parent callback', async () => {
+    const writableGroups = [
+      {
+        id: 7,
+        name: 'engineering',
+        display_name: 'Engineering',
+        my_role: 'Developer',
+      } as Group,
+    ]
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        writableGroups={writableGroups}
+      />
+    )
+
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'New group agent' },
+    })
+    fireEvent.click(screen.getByTestId('capability-scope-team'))
+    fireEvent.click(screen.getByTestId('capability-scope-group-engineering'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateBot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target_group_names: ['engineering'],
+        })
+      )
+    })
+  })
+
+  it('blocks a team save when the group list failed to refresh', async () => {
+    ;(listGroups as jest.Mock)
+      .mockResolvedValueOnce({
+        total: 1,
+        items: [{ id: 7, name: 'engineering', display_name: 'Engineering', my_role: 'Developer' }],
+      })
+      .mockRejectedValueOnce(new Error('group load failed'))
+
+    const toast = jest.fn()
+    const renderDialog = (open: boolean) => (
+      <TeamEditDialog
+        open={open}
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={toast}
+      />
+    )
+
+    const { rerender } = render(renderDialog(true))
+    await waitFor(() => {
+      expect(listGroups).toHaveBeenCalledTimes(1)
+    })
+
+    rerender(renderDialog(false))
+    rerender(renderDialog(true))
+
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Blocked agent' },
+    })
+    fireEvent.click(screen.getByTestId('capability-scope-team'))
+
+    expect(await screen.findByTestId('capability-scope-groups-error')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(toast).toHaveBeenCalledWith({
+        variant: 'destructive',
+        title: 'resource-library:messages.groups_load_failed',
+      })
+    })
+    expect(mockedCreateBot).not.toHaveBeenCalled()
+  })
+
+  it('keeps editing an existing team saveable when the group list fails', async () => {
+    const team = makeTeam()
+    ;(listGroups as jest.Mock).mockRejectedValueOnce(new Error('group load failed'))
+    mockedGetAgentBindings.mockResolvedValueOnce({
+      agent_id: team.id,
+      personal: true,
+      group_names: ['engineering'],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('capability-scope-team')).toHaveAttribute('aria-pressed', 'true')
+    })
+    expect(await screen.findByTestId('capability-scope-groups-error')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalled()
+    })
+  })
+
+  it('skips writable group loading when the create target is fixed', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        fixedCreateTargetLabel="Engineering"
+      />
+    )
+
+    expect(await screen.findByTestId('team-fixed-create-target')).toBeInTheDocument()
+    expect(listGroups).not.toHaveBeenCalled()
+  })
+
+  it('resets a stale creation group when the dialog reopens for another target', async () => {
+    const writableGroups = [
+      {
+        id: 7,
+        name: 'engineering',
+        display_name: 'Engineering',
+        my_role: 'Developer',
+      } as Group,
+      {
+        id: 8,
+        name: 'research',
+        display_name: 'Research',
+        my_role: 'Developer',
+      } as Group,
+    ]
+
+    const renderDialog = (open: boolean, createTarget?: { scope: 'group'; groupName: string }) => (
+      <TeamEditDialog
+        open={open}
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        writableGroups={writableGroups}
+        createTarget={
+          createTarget
+            ? {
+                scope: 'group',
+                groupName: createTarget.groupName,
+                groupNames: [createTarget.groupName],
+              }
+            : undefined
+        }
+      />
+    )
+
+    const { rerender } = render(renderDialog(true))
+
+    fireEvent.click(await screen.findByTestId('capability-scope-team'))
+    fireEvent.click(screen.getByTestId('capability-scope-group-engineering'))
+
+    rerender(renderDialog(false))
+    rerender(renderDialog(true, { scope: 'group', groupName: 'research' }))
+
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Reopened agent' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateBot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target_group_names: ['research'],
+        })
+      )
     })
   })
 

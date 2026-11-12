@@ -24,6 +24,11 @@ pub struct ResponseCreateInput {
     pub stream: bool,
     #[serde(default, deserialize_with = "brz_json::adapters::legacy_boolean")]
     pub background: bool,
+    /// `omit_mcp_binary_output`: the Source persists it as a Task CRD label
+    /// (`task_manager.py:create_new_task`) and uses it to strip binary MCP
+    /// tool output.
+    #[serde(default, deserialize_with = "brz_json::adapters::legacy_boolean")]
+    pub omit_mcp_binary_output: bool,
     #[serde(default)]
     pub previous_response_id: Option<String>,
     /// The Wegent tool declarations (`parse_wegent_tools`). Only the
@@ -514,5 +519,28 @@ mod tests {
             serde_json::from_value::<ResponseCreateInput>(json!({"model": "m", "stream": "maybe"}))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn parses_omit_mcp_binary_output() {
+        // Recorded `bcec9abf`: the body carries `"omit_mcp_binary_output": true`
+        // and the Source persists `omitMcpBinaryOutput: "true"` as a Task label.
+        let body: ResponseCreateInput = serde_json::from_value(json!({
+            "model": "m",
+            "omit_mcp_binary_output": true,
+        }))
+        .expect("parse");
+        assert!(body.omit_mcp_binary_output);
+
+        let coerced: ResponseCreateInput = serde_json::from_value(json!({
+            "model": "m",
+            "omit_mcp_binary_output": "true",
+        }))
+        .expect("parse");
+        assert!(coerced.omit_mcp_binary_output);
+
+        let default: ResponseCreateInput =
+            serde_json::from_value(json!({"model": "m"})).expect("parse");
+        assert!(!default.omit_mcp_binary_output);
     }
 }

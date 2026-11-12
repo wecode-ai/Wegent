@@ -1,7 +1,14 @@
 /** @jest-environment node */
 
 import { once } from 'node:events'
-import { Agent, get, type Server, type ServerResponse } from 'node:http'
+import {
+  Agent,
+  get,
+  request,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 describe('mock model controls', () => {
@@ -76,6 +83,61 @@ describe('mock model controls', () => {
     return response.json()
   }
 
+  it('preserves UTF-8 split across HTTP chunks through rules and model output', async () => {
+    const matchText = 'fragmented-utf8'
+    const responseContent = 'before中 between😀 after'
+    const rule = { matchText, responseContent, chunkDelayMs: 0 }
+    const body = Buffer.from(JSON.stringify(rule))
+    const splitAt = [body.indexOf(Buffer.from('中')) + 1, body.indexOf(Buffer.from('😀')) + 2]
+    const chunks = [
+      body.subarray(0, splitAt[0]),
+      body.subarray(splitAt[0], splitAt[1]),
+      body.subarray(splitAt[1]),
+    ]
+    const received = new Promise<IncomingMessage>(resolve => {
+      server.once('request', incoming => resolve(incoming))
+    })
+    const client = request(`${url}/stream-rules`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    const response = new Promise<{ status?: number; body: string }>((resolve, reject) => {
+      client.on('error', reject)
+      client.on('response', incoming => {
+        let text = ''
+        incoming.setEncoding('utf8')
+        incoming.on('data', chunk => (text += chunk))
+        incoming.on('error', reject)
+        incoming.on('end', () => resolve({ status: incoming.statusCode, body: text }))
+      })
+    })
+    try {
+      client.flushHeaders()
+      const incoming = await received
+      for (const chunk of chunks) {
+        const observed = once(incoming, 'data')
+        client.write(chunk)
+        await observed
+      }
+      client.end()
+      const saved = await response
+      expect(saved.status).toBe(200)
+      expect(JSON.parse(saved.body).rule).toEqual(rule)
+
+      const stream = await modelRequest(matchText).result
+      const output = stream
+        .split('\n')
+        .filter(line => line.startsWith('data: '))
+        .map(line => JSON.parse(line.slice(6)))
+        .filter(event => event.type === 'content_block_delta')
+        .map(event => event.delta.text)
+        .join('')
+      expect(output).toBe(responseContent)
+    } finally {
+      client.destroy()
+    }
+  })
+
   async function hold(matchText: string) {
     await post('/stream-rules', {
       matchText,
@@ -83,6 +145,13 @@ describe('mock model controls', () => {
       chunkDelayMs: 0,
       holdResponse: true,
     })
+  }
+
+  async function pendingResponses(matchText: string) {
+    const response = await fetch(`${url}/stream-rules`)
+    expect(response.status).toBe(200)
+    const rules = (await response.json()) as Array<{ matchText: string; pendingResponses: number }>
+    return rules.find(rule => rule.matchText === matchText)?.pendingResponses
   }
 
   function modelRequest(matchText: string, path = '/v1/messages') {
@@ -121,8 +190,10 @@ describe('mock model controls', () => {
       const pending = modelRequest(matchText, path)
       await pending.received
       expect(pending.finished()).toBe(false)
+      expect(await pendingResponses(matchText)).toBe(1)
 
       expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 1 })
+      expect(await pendingResponses(matchText)).toBe(0)
       expect(await pending.result).toContain(`ANSWER_${matchText}`)
       expect(await modelRequest(matchText, path).result).toContain(`ANSWER_${matchText}`)
       expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 0 })
@@ -141,11 +212,13 @@ describe('mock model controls', () => {
     await hold(matchText)
     const pending = modelRequest(matchText)
     const response = await pending.received
+    expect(await pendingResponses(matchText)).toBe(1)
     const closed = once(response, 'close')
     const rejected = expect(pending.result).rejects.toMatchObject({ name: 'AbortError' })
     pending.controller.abort()
     await rejected
     await closed
+    expect(await pendingResponses(matchText)).toBe(0)
     expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 0 })
   })
 
@@ -177,4 +250,74 @@ describe('mock model controls', () => {
       }
     }
   )
+
+  it('isolates identical model rules, gates, scenario counters and request records across workers', async () => {
+    const a = '/e2e/worker-a'
+    const b = '/e2e/worker-b'
+    let pending: ReturnType<typeof modelRequest> | undefined
+    try {
+      await post(`${a}/stream-rules`, {
+        matchText: 'same-prompt',
+        responseContent: 'WORKER_A',
+        chunkDelayMs: 0,
+      })
+      await post(`${b}/stream-rules`, {
+        matchText: 'same-prompt',
+        responseContent: 'WORKER_B',
+        chunkDelayMs: 0,
+        holdResponse: true,
+      })
+      pending = modelRequest('same-prompt', `${b}/v1/messages`)
+      await pending.received
+      expect(await modelRequest('same-prompt', `${a}/v1/messages`).result).toContain('WORKER_A')
+      await (await fetch(`${url}${a}/stream-rules`, { method: 'DELETE' })).json()
+      await post(`${a}/clear-requests`, {})
+      expect(pending.finished()).toBe(false)
+      const records = await (await fetch(`${url}${b}/captured-requests`)).json()
+      expect(
+        records.filter((record: { url: string }) => record.url === '/v1/messages')
+      ).toHaveLength(1)
+      expect(await post(`${b}/stream-rules/release`, { matchText: 'same-prompt' })).toEqual({
+        released: 1,
+      })
+      expect(await pending.result).toContain('WORKER_B')
+      for (const [scope, answer] of [
+        [a, 'SCENARIO_A'],
+        [b, 'SCENARIO_B'],
+      ]) {
+        await post(`${scope}/tool-scenarios`, {
+          matchText: 'same-scenario',
+          steps: [{ responseContent: answer }],
+        })
+      }
+      expect(await modelRequest('same-scenario', `${a}/v1/messages`).result).toContain('SCENARIO_A')
+      const untouched = await (
+        await fetch(`${url}${b}/tool-scenarios?matchText=same-scenario`)
+      ).json()
+      expect(untouched.nextStep).toBe(0)
+      expect(untouched.capturedRequests).toEqual([])
+      expect(await modelRequest('same-scenario', `${b}/v1/messages`).result).toContain('SCENARIO_B')
+      await post(`${a}/claude-background-scenarios`, { model: 'same-model', mode: 'stop' })
+      await post(`${b}/claude-background-scenarios`, { model: 'same-model', mode: 'complete' })
+      await (
+        await fetch(`${url}${a}/claude-background-scenarios?model=same-model`, { method: 'DELETE' })
+      ).json()
+      const background = await (
+        await fetch(`${url}${b}/claude-background-scenarios?model=same-model`)
+      ).json()
+      expect(background.mode).toBe('complete')
+    } finally {
+      for (const scope of [a, b]) {
+        await (await fetch(`${url}${scope}/stream-rules`, { method: 'DELETE' })).json()
+        await (await fetch(`${url}${scope}/tool-scenarios`, { method: 'DELETE' })).json()
+        await post(`${scope}/clear-requests`, {})
+        await (
+          await fetch(`${url}${scope}/claude-background-scenarios?model=same-model`, {
+            method: 'DELETE',
+          })
+        ).json()
+      }
+      await pending?.result
+    }
+  })
 })

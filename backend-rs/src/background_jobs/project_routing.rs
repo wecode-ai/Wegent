@@ -8,6 +8,7 @@ use super::{
     authority,
     store::{self, COLUMNS, LIVE, Node},
 };
+use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
 use anyhow::{Context, Result, bail};
 use brz_mysql::FromMysqlRow;
@@ -31,9 +32,17 @@ pub(crate) async fn allowed_devices(
     project_id: &str,
     agent_id: &str,
 ) -> Result<BTreeSet<i64>> {
-    let workspace = authority::parent(state, project_id).await?;
-    let workspace_grants:Vec<Grant>=state.mysql.fetch_all("SELECT resource_id,status,role FROM resource_members WHERE resource_type='Device' AND entity_type='workspace' AND entity_id=?",(workspace.to_string(),)).await?;
-    let project_grants:Vec<Grant>=state.mysql.fetch_all("SELECT resource_id,status,role FROM resource_members WHERE resource_type='Device' AND entity_type='project' AND entity_id=?",(project_id,)).await?;
+    allowed_devices_on(&mut &state.mysql, project_id, agent_id).await
+}
+
+pub(crate) async fn allowed_devices_on(
+    query: &mut impl PluginQuery,
+    project_id: &str,
+    agent_id: &str,
+) -> Result<BTreeSet<i64>> {
+    let workspace = authority::parent_on(query, project_id).await?;
+    let workspace_grants:Vec<Grant>=query.fetch_all("SELECT resource_id,status,role FROM resource_members WHERE resource_type='Device' AND entity_type='workspace' AND entity_id=?",(workspace.to_string(),)).await?;
+    let project_grants:Vec<Grant>=query.fetch_all("SELECT resource_id,status,role FROM resource_members WHERE resource_type='Device' AND entity_type='project' AND entity_id=?",(project_id,)).await?;
     let approved = |grant: &Grant| {
         grant.status == "approved"
             && matches!(grant.role.as_str(), "Owner" | "Maintainer" | "Developer")
@@ -51,10 +60,10 @@ pub(crate) async fn allowed_devices(
     if agent_id.is_empty() {
         return Ok(ids);
     }
-    let project = store::get(&state.mysql, "project", project_id)
+    let project = store::get_on(query, "project", project_id)
         .await?
         .context("Project unavailable")?;
-    let agents:Vec<Node>=state.mysql.fetch_all(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='chat_agent' AND id=? AND cloud_project_id=? AND status='active' AND {LIVE}"),(agent_id,project_id)).await?;
+    let agents:Vec<Node>=query.fetch_all(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='chat_agent' AND id=? AND cloud_project_id=? AND status='active' AND {LIVE}"),(agent_id,project_id)).await?;
     for agent in agents {
         if authority::truthy(&agent.metadata.0["authorization_version"])
             || agent.device_id.is_empty()
@@ -62,8 +71,8 @@ pub(crate) async fn allowed_devices(
         {
             continue;
         }
-        if let Some(device) = crate::device_identity::resolve_owned_device_alias(
-            &state.mysql,
+        if let Some(device) = crate::device_identity::resolve_owned_device_alias_on(
+            query,
             agent.created_by_user_id,
             &agent.device_id,
         )
@@ -176,7 +185,7 @@ pub(crate) async fn resolve(
     let model_policy = &config["model_policy"];
     let selected = &selection["model"];
     let mut model = if model_policy["mode"] == "fixed" {
-        if selected.is_object() && selected != &model_policy["model"] {
+        if selected.is_object() && identity(selected) != identity(&model_policy["model"]) {
             bail!("RUNNER_MODEL_FIXED: The agent's model is fixed")
         }
         model_policy["model"].clone()
@@ -234,8 +243,17 @@ pub(crate) async fn candidates_for_snapshot(
     agent: &str,
     snapshot: &Value,
 ) -> Result<BTreeSet<i64>> {
-    let allowed = allowed_devices(state, project, agent).await?;
-    let devices:Vec<Device>=state.mysql.fetch_all("SELECT id,json FROM kinds WHERE kind='Device' AND namespace='default' AND is_active=true",()).await?;
+    candidates_for_snapshot_on(&mut &state.mysql, project, agent, snapshot).await
+}
+
+pub(crate) async fn candidates_for_snapshot_on(
+    query: &mut impl PluginQuery,
+    project: &str,
+    agent: &str,
+    snapshot: &Value,
+) -> Result<BTreeSet<i64>> {
+    let allowed = allowed_devices_on(query, project, agent).await?;
+    let devices:Vec<Device>=query.fetch_all("SELECT id,json FROM kinds WHERE kind='Device' AND namespace='default' AND is_active=true",()).await?;
     let fixed = authority::integer(&snapshot["execution_policy"]["environment_id"]);
     Ok(devices
         .into_iter()
@@ -278,6 +296,45 @@ pub(crate) async fn require_cloud_model(
     user_id: i64,
     model: &Value,
 ) -> Result<()> {
+    cloud_model_selection(state, user_id, model).await?;
+    Ok(())
+}
+
+/// Resolve the stable model identity for a claimed runner. Cloud credentials
+/// stay behind the gateway, and local credentials stay on the device.
+pub(crate) async fn runner_model_selection(
+    state: &AppState,
+    user_id: i64,
+    device: &Value,
+    model: &Value,
+) -> Result<Option<Value>> {
+    if model["source"] == "cloud" {
+        return cloud_model_selection(state, user_id, model).await.map(Some);
+    }
+    Ok(native_model_selection(device, model))
+}
+
+fn native_model_selection(device: &Value, model: &Value) -> Option<Value> {
+    let native = device["spec"]["runnerCatalog"]["models"]
+        .as_array()?
+        .iter()
+        .find(|entry| same_model(entry, model))?;
+    let id = native["local_model_id"]
+        .as_str()
+        .filter(|value| !value.is_empty())?;
+    let provider = native["provider"]
+        .as_str()
+        .filter(|value| !value.is_empty())?;
+    Some(json!({
+        "model": id,
+        "model_type": "runtime",
+        "model_options": {"runnerModelProvider": provider},
+        "account_label": native["account_label"].as_str().unwrap_or_default(),
+    }))
+}
+
+async fn cloud_model_selection(state: &AppState, user_id: i64, model: &Value) -> Result<Value> {
+    use crate::llm_proxy::model_config::Protocol;
     let reference = &model["cloud_model"];
     let name = reference["name"]
         .as_str()
@@ -300,13 +357,35 @@ pub(crate) async fn require_cloud_model(
             .map_err(|error| {
                 anyhow::anyhow!("RUNNER_MODEL_UNAVAILABLE: Cloud model is unavailable: {error:?}")
             })?;
-    crate::llm_proxy::model_config::resolve_llm_proxy_protocol(name, &config).map_err(|error| {
-        anyhow::anyhow!("RUNNER_MODEL_UNAVAILABLE: Cloud model protocol is invalid: {error:?}")
-    })?;
-    Ok(())
+    let protocol = crate::llm_proxy::model_config::resolve_llm_proxy_protocol(name, &config)
+        .map_err(|error| {
+            anyhow::anyhow!("RUNNER_MODEL_UNAVAILABLE: Cloud model protocol is invalid: {error:?}")
+        })?;
+    let protocol = match protocol {
+        Protocol::OpenAiResponses => "openai-responses",
+        Protocol::OpenAiChatCompletions => "openai-chat-completions",
+        Protocol::AnthropicMessages => "anthropic-messages",
+    };
+    Ok(json!({
+        "model": name,
+        "model_type": model_type,
+        "model_options": {
+            "weworkCloudModelNamespace": namespace,
+            "weworkCloudModelResourceUserId": owner.to_string(),
+            "weworkCloudModelUpstreamApiFormat": protocol,
+        },
+        "account_label": format!("cloud_gateway:user:{user_id}"),
+    }))
 }
 
 pub(crate) async fn issue_binding(state: &AppState, issue: &Node) -> Result<Option<String>> {
+    issue_binding_on(&mut &state.mysql, issue).await
+}
+
+pub(crate) async fn issue_binding_on(
+    query: &mut impl PluginQuery,
+    issue: &Node,
+) -> Result<Option<String>> {
     let metadata = &issue.metadata.0;
     if authority::truthy(&metadata["runner_binding_conflict"]) {
         bail!(
@@ -324,11 +403,11 @@ pub(crate) async fn issue_binding(state: &AppState, issue: &Node) -> Result<Opti
         owner_id: i64,
         alias: String,
     }
-    let history:Vec<History>=state.mysql.fetch_all("SELECT DISTINCT executor_owner_user_id AS owner_id,runtime_device_id AS alias FROM loop_item_executions WHERE loop_item_id=? AND runtime_device_id<>'' UNION SELECT DISTINCT task_user_id AS owner_id,device_id AS alias FROM loop_items WHERE resource_type='execution' AND loop_item_id=? AND device_id IS NOT NULL AND device_id<>''",(issue.id.as_str(),issue.id.as_str())).await?;
+    let history:Vec<History>=query.fetch_all("SELECT DISTINCT executor_owner_user_id AS owner_id,runtime_device_id AS alias FROM loop_item_executions WHERE loop_item_id=? AND runtime_device_id<>'' UNION SELECT DISTINCT task_user_id AS owner_id,device_id AS alias FROM loop_items WHERE resource_type='execution' AND loop_item_id=? AND device_id IS NOT NULL AND device_id<>''",(issue.id.as_str(),issue.id.as_str())).await?;
     let mut ids = BTreeSet::new();
     for value in history {
-        let id = crate::device_identity::resolve_owned_device_alias(
-            &state.mysql,
+        let id = crate::device_identity::resolve_owned_device_alias_on(
+            query,
             value.owner_id,
             &value.alias,
         )
@@ -351,6 +430,37 @@ pub(crate) async fn issue_binding(state: &AppState, issue: &Node) -> Result<Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runner_identity_accepts_absent_optional_fields_from_socket_clients() {
+        let selected = json!({"runtime":"codex","provider":"openai","model_id":"model"});
+        let mut stored = selected.clone();
+        stored["source"] = Value::Null;
+        stored["cloud_model"] = Value::Null;
+        assert_eq!(identity(&selected), identity(&stored));
+        stored["model_id"] = json!("different-model");
+        assert_ne!(identity(&selected), identity(&stored));
+    }
+
+    #[test]
+    fn native_selection_uses_the_local_id_without_persisting_credentials() {
+        let catalog = json!({"spec": {"runnerCatalog": {"models": [{
+            "runtime": "codex", "provider": "openai", "model_id": "catalog-1",
+            "local_model_id": "local-1", "account_label": "work", "api_key": "ignored",
+        }]}}});
+        let model = json!({"runtime": "codex", "provider": "openai", "model_id": "catalog-1"});
+        assert_eq!(
+            native_model_selection(&catalog, &model),
+            Some(json!({
+                "model": "local-1", "model_type": "runtime",
+                "model_options": {"runnerModelProvider": "openai"}, "account_label": "work",
+            }))
+        );
+        let wrong_runtime =
+            json!({"runtime": "claude_code", "provider": "openai", "model_id": "catalog-1"});
+        assert!(native_model_selection(&catalog, &wrong_runtime).is_none());
+    }
+
     #[test]
     fn native_models_match_full_identity_while_cloud_uses_runtime_support() {
         let device = json!({"spec":{"runnerCatalog":{"models":[{"runtime":"codex","provider":"a","model_id":"m"}],"runtimes":["claude_code"]}}});

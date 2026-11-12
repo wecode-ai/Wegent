@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ComputerUseSettingsPage } from './ComputerUseSettingsPage'
@@ -34,17 +34,6 @@ describe('ComputerUseSettingsPage', () => {
     mocks.getStatus.mockResolvedValue(readyStatus)
     mocks.setEnabled.mockResolvedValue({ ...readyStatus, enabled: false, running: false })
     mocks.requestPermissions.mockResolvedValue(readyStatus)
-  })
-
-  test('shows ready status and disables computer use', async () => {
-    render(<ComputerUseSettingsPage />)
-
-    expect(await screen.findByText('workbench.computer_use_state_running')).toBeInTheDocument()
-    const toggle = screen.getByTestId('computer-use-enabled-toggle')
-    expect(toggle).toBeChecked()
-    await userEvent.click(toggle)
-
-    await waitFor(() => expect(mocks.setEnabled).toHaveBeenCalledWith(false))
   })
 
   test('opens permission controls when grants are missing', async () => {

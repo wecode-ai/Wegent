@@ -106,16 +106,10 @@ class GitRepoProvider(ABC):
         """Log API request details including authentication info."""
         auth_source = auth.auth_source if auth else "none"
         has_token = bool(auth and auth.password)
-        token_preview = (
-            f"{auth.password[:8]}..."
-            if has_token and len(auth.password) > 8
-            else ("***" if has_token else "none")
-        )
         logger.info(
             f"{self.name} API request: GET {url}, "
             f"auth_source={auth_source}, "
             f"has_token={has_token}, "
-            f"token_preview={token_preview}, "
             f"headers={list(headers.keys())}"
         )
 

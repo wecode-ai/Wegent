@@ -5,15 +5,23 @@ mod activity;
 #[path = "robot_admission.rs"]
 mod admission;
 #[path = "robot_authority.rs"]
-mod authority;
+pub(crate) mod authority;
 #[path = "robot_model.rs"]
-mod model;
+pub(crate) mod model;
 #[path = "robot_projection.rs"]
 mod projection;
 #[path = "robot_state.rs"]
 mod state;
 #[path = "robot_wake.rs"]
 mod wake;
+
+#[cfg(test)]
+pub(crate) use activity::tests::verify_issue_activity_projection;
+
+pub(crate) use activity::{
+    finish as finish_runtime_activity, project_runtime_completion, start_runtime_activity,
+};
+pub(crate) use state::fail_preparation;
 
 use super::{BackgroundJobRegistry, JobContext, with_lock_watchdog};
 use crate::AppState;
@@ -30,8 +38,42 @@ use std::{
 
 const JOB: &str = "app.tasks.robot_queue_tasks.scan_robot_queue";
 
-pub(crate) async fn prepare_and_wake(app: &AppState) -> Result<()> {
+/// Validate a recorded coordinator command without granting or dispatching work.
+pub(crate) async fn coordination_context(
+    app: &AppState,
+    project: &str,
+    scope: &str,
+    actor: i64,
+) -> Result<Option<Value>> {
+    let row: Option<model::Execution> = app
+        .mysql
+        .fetch_optional(
+            // Retries preserve the command scope after Runtime confirms the preceding attempt ended.
+            format!("SELECT {} FROM loop_item_executions WHERE cloud_project_id=? AND execution_scope=? ORDER BY id DESC LIMIT 1", model::COLUMNS),
+            (project, scope),
+        )
+        .await?;
+    let Some(row) = row else { return Ok(None) };
+    if row.assigner_user_id != actor
+        || matches!(
+            row.status.as_str(),
+            "cancel_requested" | "cancelled" | "failed"
+        )
+        || !authority::authorized(app, &row).await?
+    {
+        return Ok(None);
+    }
+    Ok(row.context().get("project_coordination").cloned())
+}
+
+/// Resolve pending queue assignments before selecting a runnable execution.
+pub(crate) async fn prepare_queued_assignments(app: &AppState) -> Result<()> {
     admission::prepare(app).await?;
+    Ok(())
+}
+
+pub(crate) async fn prepare_and_wake(app: &AppState) -> Result<()> {
+    prepare_queued_assignments(app).await?;
     wake::notify(app).await?;
     Ok(())
 }

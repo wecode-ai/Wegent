@@ -1,6 +1,9 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import {
   createSse,
+  delegatedTaskResultEvents,
   cors,
   customToolCall,
   functionCall,
@@ -12,7 +15,77 @@ import {
   selectMcpTool,
   selectMcpToolRequest,
   selectProgrammaticExec,
+  selectTool,
+  toolOutputText,
 } from '../e2e/desktop/modules/response-protocol.mjs'
+
+describe('native function selection', () => {
+  test.each([
+    [{ type: 'function', name: 'request_user_input' }, 'request_user_input', undefined],
+    [
+      {
+        type: 'namespace',
+        name: 'functions',
+        tools: [{ type: 'function', name: 'request_user_input' }],
+      },
+      'request_user_input',
+      'functions',
+    ],
+    [
+      { type: 'function', name: 'functions__request_user_input' },
+      'functions__request_user_input',
+      undefined,
+    ],
+  ])(
+    'selects the advertised native question tool before Code Mode: %j',
+    (tool, name, namespace) => {
+      const request = {
+        tools: [
+          {
+            type: 'function',
+            name: 'functions__exec',
+            parameters: { properties: { input: { type: 'string' } } },
+          },
+          tool,
+        ],
+      }
+      const args = { questions: [{ id: 'direction', question: 'Which direction?' }] }
+      expect(selectTool(request, 'request_user_input', args)).toEqual({
+        name,
+        arguments: args,
+        ...(namespace ? { namespace } : {}),
+      })
+    }
+  )
+
+  test('rejects ambiguous native function declarations', () => {
+    expect(() =>
+      selectTool(
+        {
+          tools: [
+            { type: 'function', name: 'request_user_input' },
+            { type: 'function', name: 'functions__request_user_input' },
+          ],
+        },
+        'request_user_input',
+        {}
+      )
+    ).toThrow(/exactly one/)
+  })
+
+  test('selects the flattened asynchronous question tool directly', () => {
+    const body = {
+      tools: [
+        { type: 'custom', name: 'exec' },
+        { type: 'function', name: 'functions__request_user_input_async' },
+      ],
+    }
+    expect(selectTool(body, 'request_user_input_async', { questions: [] })).toEqual({
+      name: 'functions__request_user_input_async',
+      arguments: { questions: [] },
+    })
+  })
+})
 import {
   longCodeStreamingEvents,
   textDeltaEvents,
@@ -113,6 +186,29 @@ describe('cors', () => {
 })
 
 describe('programmatic exec', () => {
+  test.each(['function_call_output', 'custom_tool_call_output'])(
+    'reads bound-Issue results from %s envelopes',
+    type => {
+      const request = {
+        input: [
+          { type, call_id: 'unrelated', output: 'unrelated result' },
+          { type, call_id: 'manual-read', output: 'BOARD_READ_OK' },
+        ],
+      }
+      expect(toolOutputText(request, 'manual-read')).toBe('BOARD_READ_OK')
+      expect(toolOutputText({ input: [{ content: request.input }] }, 'manual-read')).toBe(
+        'BOARD_READ_OK'
+      )
+    }
+  )
+  test('recognizes the native exec declaration before additional tools are injected', () => {
+    const request = { tools: [{ type: 'custom', name: 'exec' }], input: [] }
+    expect(requestAdvertisesProgrammaticExec(request)).toBe(true)
+    expect(selectProgrammaticExec(request, 'text("ok")')).toEqual({
+      name: 'exec',
+      input: 'text("ok")',
+    })
+  })
   const request = {
     input: [
       {
@@ -136,6 +232,7 @@ describe('programmatic exec', () => {
     expect(selectProgrammaticExec(request, 'text("ok")')).toEqual({
       name: 'exec',
       input: 'text("ok")',
+      namespace: 'functions',
     })
   })
 
@@ -145,7 +242,15 @@ describe('programmatic exec', () => {
       'Real Codex did not advertise exactly one programmatic exec tool: 0'
     )
 
-    const duplicateExecRequest = { input: [request.input[0], request.input[0]] }
+    const duplicateExecRequest = {
+      input: [
+        request.input[0],
+        {
+          ...request.input[0],
+          tools: request.input[0].tools.map(tool => ({ ...tool, name: 'other_functions' })),
+        },
+      ],
+    }
     expect(requestAdvertisesProgrammaticExec(duplicateExecRequest)).toBe(true)
     expect(() => selectProgrammaticExec(duplicateExecRequest, 'text("ok")')).toThrow(
       'Real Codex did not advertise exactly one programmatic exec tool: 2'
@@ -223,6 +328,54 @@ describe('selectMcpTool', () => {
 })
 
 describe('selectMcpToolRequest', () => {
+  test('does not select a same-named tool from another MCP server', () => {
+    expect(() =>
+      selectMcpToolRequest(
+        { tools: [functionTool('another_server__list_tasks')] },
+        'list_tasks',
+        {},
+        'mcp__wework_stand_in__list_tasks'
+      )
+    ).toThrow('Real Codex did not advertise exactly one deferred tool search')
+  })
+
+  test('rejects ambiguous advertised direct MCP identities', () => {
+    expect(() =>
+      selectMcpToolRequest(
+        {
+          tools: [
+            functionTool('wework_stand_in__list_tasks'),
+            functionTool('mcp__wework_stand_in__list_tasks'),
+          ],
+        },
+        'list_tasks',
+        {},
+        'mcp__wework_stand_in__list_tasks'
+      )
+    ).toThrow('Ambiguous direct MCP tool')
+  })
+
+  test.each(['wework_stand_in__list_tasks', 'mcp__wework_stand_in__list_tasks'])(
+    'calls the exact advertised direct MCP name %s without inventing tool search',
+    name => {
+      const response = mcpToolRequestEvents(
+        { tools: [functionTool(name)] },
+        {
+          toolName: 'list_tasks',
+          directToolName: 'mcp__wework_stand_in__list_tasks',
+          argumentsValue: { limit: 50 },
+          searchCallId: 'search-tasks',
+          toolCallId: 'list-tasks',
+        }
+      )
+      const call = response.events.find(event => event.type === 'response.output_item.done').item
+      expect(response.mode).toBe('direct')
+      expect(call.name).toBe(name)
+      expect(JSON.parse(call.arguments)).toEqual({ limit: 50 })
+      expect(call.call_id).toBe('list-tasks')
+    }
+  )
+
   test('uses direct Chat Shell calls throughout the manager state machine', () => {
     const request = {
       tools: [
@@ -309,5 +462,82 @@ describe('selectMcpToolRequest', () => {
     expect(() => selectMcpToolRequest(request, 'get_board_item', {})).toThrow(
       'Real Codex did not advertise exactly one deferred tool search'
     )
+  })
+})
+
+describe('delegated task completion model routing', () => {
+  const callback = command => ({
+    tools: [{ type: 'function', name: 'mcp__wework_stand_in__read_task' }],
+    input: [
+      {
+        role: 'user',
+        content: `Wework delegated task result: resultId=${command}, taskId=child-1, status=done, requestCommandId=${command}. Read this exact task with read_task.`,
+      },
+    ],
+  })
+  const toolCall = events =>
+    events.find(
+      event => event.type === 'response.output_item.done' && event.item?.type === 'function_call'
+    ).item
+  const output = (callId, history) => ({
+    type: 'function_call_output',
+    call_id: callId,
+    output: [{ type: 'input_text', text: JSON.stringify(history) }],
+  })
+
+  test('reads the exact real child task before reporting its actual answer', () => {
+    const body = callback('first')
+    const call = toolCall(delegatedTaskResultEvents(body))
+    expect(call.name).toBe('mcp__wework_stand_in__read_task')
+    expect(JSON.parse(call.arguments)).toEqual({ taskId: 'child-1' })
+    body.input.push(
+      output(call.call_id, {
+        taskId: 'child-1',
+        messages: [{ role: 'assistant', content: 'THE_ACTUAL_CHILD_RESULT' }],
+      })
+    )
+    expect(JSON.stringify(delegatedTaskResultEvents(body))).toContain('THE_ACTUAL_CHILD_RESULT')
+    expect(JSON.stringify(delegatedTaskResultEvents(body))).toContain('child-1')
+  })
+
+  test('a later completion command cannot reuse an earlier result read', () => {
+    const first = callback('first')
+    const previousCall = toolCall(delegatedTaskResultEvents(first))
+    const next = callback('next')
+    next.input.push(
+      output(previousCall.call_id, {
+        taskId: 'child-1',
+        messages: [{ role: 'assistant', content: 'OLD_RESULT' }],
+      })
+    )
+    const nextCall = toolCall(delegatedTaskResultEvents(next))
+    expect(nextCall.call_id).not.toBe(previousCall.call_id)
+    expect(JSON.parse(nextCall.arguments)).toEqual({ taskId: 'child-1' })
+  })
+
+  test('rejects an incorrect child transcript or a completed task without an answer', () => {
+    for (const history of [
+      { taskId: 'other-child', messages: [] },
+      { taskId: 'child-1', messages: [] },
+    ]) {
+      const body = callback('first')
+      const call = toolCall(delegatedTaskResultEvents(body))
+      body.input.push(output(call.call_id, history))
+      expect(() => delegatedTaskResultEvents(body)).toThrow()
+    }
+  })
+
+  test('quoted callback text in tool evidence does not become a new callback', () => {
+    const body = {
+      input: [
+        { role: 'user', content: 'Continue ordinary work' },
+        {
+          type: 'function_call_output',
+          call_id: 'evidence',
+          output: JSON.stringify(callback('first')),
+        },
+      ],
+    }
+    expect(delegatedTaskResultEvents(body)).toBeNull()
   })
 })

@@ -27,7 +27,8 @@ NC='\033[0m' # No Color
 # Find the project root directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-ALEMBIC_VERSIONS_DIR="$PROJECT_ROOT/backend/alembic/versions"
+node "$PROJECT_ROOT/backend-rs/scripts/check-migrations.mjs" || exit 1
+ALEMBIC_VERSIONS_DIR="$PROJECT_ROOT/backend-rs/migrations/reference/versions"
 
 # =============================================================================
 # Functions
@@ -244,7 +245,7 @@ else
     echo -e "   ${GREEN}alembic upgrade head${NC}"
     echo ""
     echo -e "${BOLD}Step 4: Commit the merge migration${NC}"
-    echo -e "   ${GREEN}git add backend/alembic/versions/\n   git commit -m \"chore: merge alembic heads\"${NC}"
+    echo -e "   ${GREEN}git add backend-rs/migrations/reference/versions/\n   git commit -m \"chore: merge alembic heads\"${NC}"
     echo ""
     echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
     echo -e "${YELLOW}💡 Prevention Tips:${NC}"

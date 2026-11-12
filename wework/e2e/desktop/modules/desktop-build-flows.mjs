@@ -1,9 +1,23 @@
+import {
+  assertMatrixReports,
+  recordMatrixFailure,
+  writeMatrixReport,
+} from './model-matrix-audit.mjs'
+import {
+  MATRIX_SKILL_CANARY,
+  MATRIX_UNUSED_SKILL_CANARY,
+  MATRIX_SKILL_DESCRIPTION,
+  matrixHiCompletion,
+  matrixDeferredPrompt,
+  matrixDeferredCompletion,
+  matrixSkillPath,
+} from './model-progressive-contract.mjs'
 import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
+import { packagedComponentRoots } from './packaged-component-resources.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { basename } from 'node:path'
-
 import { resolveDesktopPackageTargets } from '../../../scripts/lib/desktop-package-target.mjs'
+import { extractRuntimeArchive } from '../../../scripts/lib/extract-runtime-archive.mjs'
 
 import {
   closeBottomWorkspacePanel,
@@ -383,6 +397,28 @@ function mcpElicitationConfigToml(evidencePath) {
   ].join('\n')
 }
 
+async function setMatrixUpstreamProtocol(codexHome, protocol) {
+  assert.ok(
+    ['responses', 'chat', 'anthropic'].includes(protocol),
+    'Unknown matrix protocol: ' + protocol
+  )
+  const configPath = join(codexHome, 'config.toml')
+  const config = await readFile(configPath, 'utf8')
+  const pattern = /^upstream_api_format\s*=.*$/gm
+  assert.equal(
+    [...config.matchAll(pattern)].length,
+    1,
+    'The matrix requires exactly one upstream format setting'
+  )
+  const next = config.replace(
+    pattern,
+    'upstream_api_format = ' + JSON.stringify(codexUpstreamApiFormat(protocol))
+  )
+  const temporaryPath = configPath + '.' + randomUUID() + '.tmp'
+  await writeFile(temporaryPath, next)
+  await rename(temporaryPath, configPath)
+}
+
 function codexUpstreamApiFormat(protocol) {
   return protocol === 'responses'
     ? 'openai-responses'
@@ -420,8 +456,8 @@ export function codexTargetFor(platform, arch) {
   return resolveDesktopPackageTargets({}, { platform, arch }).codexTarget
 }
 
-async function resolveDesktopCodexBinary() {
-  const configured = process.env.WEWORK_E2E_CODEX_BIN
+async function resolveDesktopCodexBinary(environment = process.env) {
+  const configured = environment.WEWORK_E2E_CODEX_BIN
   if (configured) {
     return resolveExecutable(configured, 'codex', 'Configured Wework E2E Codex')
   }
@@ -469,7 +505,7 @@ function codexCacheRoot() {
   )
 }
 
-async function prepareHarnessRuntimeRoots(appBinary) {
+async function prepareHarnessRuntimeRoots(appBinary, destinationRoot = resultDir) {
   const packagedResourcesRoot = join(
     dirname(appBinary),
     ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
@@ -477,7 +513,7 @@ async function prepareHarnessRuntimeRoots(appBinary) {
   const packagedResources = join(packagedResourcesRoot, 'harness-runtime')
   const catalogPath = join(packagedResources, 'runtimes.json')
   const catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
-  const runtimeRoot = join(resultDir, 'harness-runtime')
+  const runtimeRoot = join(destinationRoot, 'harness-runtime')
   await rm(runtimeRoot, { recursive: true, force: true })
   await mkdir(runtimeRoot, { recursive: true })
   const runtimes = new Map(catalog.runtimes.map(runtime => [runtime.sourceFingerprint, runtime]))
@@ -485,16 +521,23 @@ async function prepareHarnessRuntimeRoots(appBinary) {
     const archivePath = join(packagedResources, runtime.assetName)
     const extracted = join(runtimeRoot, runtime.sourceFingerprint)
     await mkdir(extracted, { recursive: true })
-    // GNU tar treats a Windows drive letter in the archive operand as a remote host.
-    await runChecked('tar', ['-xzf', `./${basename(archivePath)}`, '-C', extracted], {
-      cwd: dirname(archivePath),
-    })
+    // Keep native Windows paths out of tar arguments; stream the archive via stdin.
+    await extractRuntimeArchive(archivePath, extracted)
     const dshEntry = join(extracted, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
     await readFile(dshEntry)
   }
 
+  const components = JSON.parse(
+    await readFile(join(packagedResourcesRoot, 'components.json'), 'utf8')
+  )
+  const componentRoots = await packagedComponentRoots({
+    appBinary,
+    resourcesRoot: packagedResourcesRoot,
+    components: components.components,
+    resultDir: destinationRoot,
+  })
   return {
-    corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins'),
+    corePluginsRoot: componentRoots.weworkCorePlugins,
     harnessRuntimeRoot: runtimeRoot,
   }
 }
@@ -541,6 +584,7 @@ async function verifyConnectedModelsOnLocalExecution({
   cloudEnvironment,
   setCodexUpstreamProtocol,
   workspacePath,
+  collectFailures = false,
 }) {
   const composerSelector = ACTIVE_COMPOSER_SELECTOR
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
@@ -588,6 +632,7 @@ async function verifyConnectedModelsOnLocalExecution({
     setCodexUpstreamProtocol,
     startIndex: LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.length,
     workspacePath,
+    collectFailures,
   })
 
   const currentProjectSnapshot = await waitForSnapshot(
@@ -633,7 +678,10 @@ async function verifyCloudVisionFlows(control, composerSelector) {
 export async function verifyRemoteDockerCommandFlow(
   control,
   cloudEnvironment,
-  { interactiveSessions = null } = {}
+  {
+    interactiveSessions = null,
+    projectEntry = SELECTED_DESKTOP_SEGMENT === 'remote-device-onboarding',
+  } = {}
 ) {
   await control.command('navigate', 'body', { value: '/settings/connections?addDevice=1' })
   await control.command('waitFor', '[data-testid="add-cloud-device-dialog"]', {
@@ -647,6 +695,86 @@ export async function verifyRemoteDockerCommandFlow(
     false,
     'The remote Docker setup still exposed a manual IDE URL input'
   )
+  assert.equal(
+    setupSnapshot.testIds.includes('add-device-panel'),
+    true,
+    'Connections did not render the shared device panel'
+  )
+  assert.equal(
+    setupSnapshot.testIds.includes('remote-docker-command'),
+    false,
+    'Opening device setup generated a command before the user requested one'
+  )
+  if (projectEntry) {
+    await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
+    await control.command('waitFor', '[data-testid="remote-docker-command"]', {
+      text: remoteDeviceE2EExtension.commandMarker,
+    })
+    const settingsCommand = JSON.parse(
+      await control.command('snapshot', '[data-testid="remote-docker-command"]')
+    )
+    remoteDeviceE2EExtension.assertCommand({
+      assert,
+      command: settingsCommand.text,
+      backendUrl: cloudEnvironment.backendUrl,
+      socketUrl: cloudEnvironment.socketUrl,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="copy-remote-docker-command"]')
+    await control.command('waitFor', '[data-testid="copy-remote-docker-command"]', {
+      text: '已复制',
+    })
+    assert.equal(
+      await control.command('getClipboardText', ''),
+      settingsCommand.text,
+      'Connections did not copy its complete Docker command'
+    )
+    await control.command('clickWhenEnabled', '[data-testid="add-cloud-device-cancel"]')
+    await control.command('navigate', 'body', { value: '/' })
+    await control.command('clickWhenEnabled', '[data-testid="projects-create-button"]')
+    await control.command('clickWhenEnabled', '[data-testid="project-create-remote-option"]')
+    await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]')
+    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+      value: REMOTE_DOCKER_DEVICE_ID,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="remote-project-source-git"]')
+    const existingHome = join(resultDir, 'remote-docker-executor-home')
+    await waitForControlValue(
+      control,
+      '[data-testid="remote-project-git-parent-input"]',
+      existingHome,
+      'The Git form did not load the original device home'
+    )
+    await control.command('fill', '[data-testid="remote-project-git-parent-input"]', {
+      value: join(existingHome, 'projects'),
+    })
+    await control.command('clickWhenEnabled', '[data-testid="remote-project-add-device"]')
+    await control.command('waitFor', '[data-testid="standalone-folder-no-device"]')
+    const projectSetup = JSON.parse(
+      await control.command('snapshot', '[data-testid="standalone-folder-project-dialog"]')
+    )
+    assert.ok(
+      projectSetup.testIds.includes('add-device-panel'),
+      'Remote projects did not render the shared device panel'
+    )
+    assert.ok(
+      projectSetup.testIds.includes('add-cloud-device-confirm'),
+      'Remote projects omitted managed cloud creation'
+    )
+    assert.ok(
+      projectSetup.testIds.includes('add-remote-docker-button'),
+      'Remote projects omitted Docker command generation'
+    )
+    assert.equal(
+      projectSetup.testIds.includes('remote-docker-command'),
+      false,
+      'Remote projects generated a command automatically'
+    )
+    assert.doesNotMatch(
+      projectSetup.text,
+      /宿主机启动|local_executor_install\.sh/,
+      'Remote projects still exposed the obsolete host installer'
+    )
+  }
   await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
   await control.command('waitFor', '[data-testid="remote-docker-command"]', {
     text: remoteDeviceE2EExtension.commandMarker,
@@ -711,6 +839,57 @@ export async function verifyRemoteDockerCommandFlow(
     connectedDevice?.runtime_instance_id,
     'The generated remote Executor did not expose a Runtime identity'
   )
+  if (projectEntry) {
+    await waitForControlValue(
+      control,
+      '[data-testid="remote-project-git-parent-input"]',
+      generatedDevice.home,
+      'The Git form kept the previous device directory after onboarding'
+    )
+    await control.command('clickWhenEnabled', '[data-testid="remote-project-source-back"]')
+    await control.command('waitFor', '[data-testid="remote-project-source-existing"]')
+    assert.equal(
+      await control.command('getValue', '[data-testid="standalone-remote-device-select"]'),
+      generatedDeviceId,
+      'The project flow did not select its generated device'
+    )
+    const readySnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="standalone-folder-project-dialog"]')
+    )
+    assert.equal(
+      readySnapshot.testIds.includes('add-device-panel'),
+      false,
+      'Device setup did not advance to project creation'
+    )
+    const existingOption = `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`
+    assert.equal(
+      Number(await control.command('getElementCount', `${existingOption}:not(:disabled)`)),
+      1,
+      'The existing remote device was not selectable before disconnecting'
+    )
+    await cloudEnvironment.stopRemoteDockerExecutorAndWaitOffline()
+    await waitForWorkbenchDeviceStatus(
+      control,
+      REMOTE_DOCKER_DEVICE_ID,
+      'offline',
+      'The workbench catalog did not publish the disconnected remote device'
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', `${existingOption}:disabled`)),
+      1,
+      'The open project picker kept the disconnected device selectable'
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="standalone-remote-device-select"]'),
+      generatedDeviceId,
+      'Refreshing the catalog changed the selected online device'
+    )
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="close-standalone-folder-project-dialog"]'
+    )
+    await control.command('navigate', 'body', { value: '/settings/connections' })
+  }
   await waitForSnapshot(
     control,
     snapshot =>
@@ -907,11 +1086,16 @@ export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnviro
   await control.command('navigate', 'body', { value: '/settings/connections' })
 
   const appDevice = await cloudEnvironment.waitForConnectedAppDevice()
-  assert.match(
+  const local = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.ok(local.deviceId, 'The real Executor must expose its hardware/application identity')
+  assert.ok(local.runtimeInstanceId, 'The real Executor must expose its stable Runtime identity')
+  assert.equal(
     appDevice.device_id,
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-    'A fresh Wework installation must register its persisted UUID'
+    `device-${local.deviceId}`,
+    'Cloud registration must use the hardware/application identity of the real Executor'
   )
+  assert.equal(appDevice.app_device_id, local.deviceId)
+  assert.equal(appDevice.runtime_instance_id, local.runtimeInstanceId)
   assert.equal(appDevice.execution_target_id, `app-record-${appDevice.id}`)
   assert.ok(appDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
   assert.ok(appDevice.app_device_id, 'The app device did not expose its physical app identity')
@@ -1582,106 +1766,150 @@ async function verifyModelProtocolMatrix({
   setCodexUpstreamProtocol,
   startIndex = 0,
   workspacePath,
+  collectFailures = false,
 }) {
+  await mkdir(join(workspacePath, '.agents', 'skills', 'model-matrix'), { recursive: true })
+  await writeFile(
+    matrixSkillPath(workspacePath),
+    `---\nname: model-matrix\ndescription: ${MATRIX_SKILL_DESCRIPTION}\n---\n\n${MATRIX_SKILL_CANARY}\n`
+  )
+  const unusedSkillDirectory = join(workspacePath, '.agents', 'skills', 'model-matrix-unused')
+  await mkdir(unusedSkillDirectory, { recursive: true })
+  await writeFile(
+    join(unusedSkillDirectory, 'SKILL.md'),
+    `---\nname: model-matrix-unused\ndescription: An unrelated matrix fixture skill.\n---\n\n${MATRIX_UNUSED_SKILL_CANARY}\n`
+  )
   let hasConfirmedCatalogSync = false
+  const focusedCases = process.env.WEWORK_E2E_MODEL_MATRIX_CASES?.split(',')
   for (const [caseIndex, model] of cases.entries()) {
+    if (focusedCases && !focusedCases.includes(matrixCaseId(model))) continue
     const matrixIndex = startIndex + caseIndex
     console.log(
       `Model protocol matrix ${matrixIndex + 1}/${MODEL_PROTOCOL_MATRIX_TOTAL} started: ${matrixCaseId(model)}`
     )
-    if (model.source === 'codex') {
-      assert.ok(
-        setCodexUpstreamProtocol,
-        `${matrixCaseId(model)} requires a Codex upstream protocol setter`
-      )
-      await setCodexUpstreamProtocol(model.protocol)
-    }
     control.setMatrixCase(model)
-    await control.command('clickWhenEnabled', newConversationSelector)
-    await control.command('waitFor', composerSelector, {
-      stableMs: COMPOSER_READY_STABILITY_MS,
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await selectE2EModel(control, model.optionIds, model.labels)
-
-    const confirmCloudModelCatalogSync =
-      !hasConfirmedCatalogSync && model.execution === 'cloud' && model.source === 'local'
-    await sendPromptWithButton(
-      control,
-      composerSelector,
-      matrixTextPrompt(model),
-      MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
-      {
-        confirmCloudModelCatalogSync,
-      }
-    )
-    if (confirmCloudModelCatalogSync) {
-      hasConfirmedCatalogSync = true
-    }
-    await waitForMatrixStage(control, model, 'tool')
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: matrixTextCompletion(model),
-      timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
-    })
-
-    await sendPromptWithButton(control, composerSelector, matrixToolPrompt(model))
-    await waitForMatrixStage(control, model, 'awaiting_tool_output', 'complete')
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: matrixToolCompletion(model),
-      timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
-    })
-    assert.equal(
-      (await readFile(join(workspacePath, matrixArtifact(model)), 'utf8')).trim(),
-      matrixArtifactContent(model),
-      `${matrixCaseId(model)} apply_patch did not create the expected artifact`
-    )
-    assert.equal(
-      control.matrixState?.stage,
-      'complete',
-      `${matrixCaseId(model)} did not complete text and tool turns`
-    )
-    assert.ok(
-      control.matrixState.requests.length >= 3,
-      `${matrixCaseId(model)} did not send the text/tool/tool-output request sequence`
-    )
     try {
-      await prepareCompletedTurnScreenshot(control)
-    } catch (error) {
-      try {
-        const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-        const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
-        const task = taskId && readRuntimeTask ? await readRuntimeTask(taskId) : null
-        const execution = task
-          ? Object.fromEntries(
-              [
-                'taskId',
-                'status',
-                'running',
-                'threadStatus',
-                'turnStatus',
-                'completedAt',
-                'updatedAt',
-              ].map(key => [key, task[key] ?? null])
-            )
-          : null
-        control.matrixState.executionDiagnostics = execution
-        console.error('Model protocol matrix terminal state mismatch', {
-          caseId: matrixCaseId(model),
-          taskId,
-          execution,
-          lifecycle: snapshot.workbench?.activeLifecycle ?? null,
-        })
-      } catch {
-        console.error('Model protocol matrix terminal state diagnostics could not be collected')
+      if (model.source === 'codex') {
+        assert.ok(
+          setCodexUpstreamProtocol,
+          `${matrixCaseId(model)} requires a Codex upstream protocol setter`
+        )
+        await setCodexUpstreamProtocol(model.protocol)
       }
-      throw error
+      await control.command('clickWhenEnabled', newConversationSelector)
+      await control.command('waitFor', composerSelector, {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, model.optionIds, model.labels)
+
+      const confirmCloudModelCatalogSync =
+        !hasConfirmedCatalogSync && model.execution === 'cloud' && model.source === 'local'
+      await sendPromptWithButton(
+        control,
+        composerSelector,
+        'hi',
+        MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+        {
+          confirmCloudModelCatalogSync,
+        }
+      )
+      if (confirmCloudModelCatalogSync) {
+        hasConfirmedCatalogSync = true
+      }
+      await waitForMatrixStage(control, model, 'text')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: matrixHiCompletion(model),
+        timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+      })
+      await sendPromptWithButton(control, composerSelector, matrixDeferredPrompt(model))
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: matrixDeferredCompletion(model),
+        timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+      })
+      if (control.matrixState.progressive !== 'complete') {
+        recordMatrixFailure(
+          control,
+          'defer',
+          new Error('Discovery, MCP invocation or skill loading failed')
+        )
+      }
+      await sendPromptWithButton(control, composerSelector, matrixTextPrompt(model))
+      await waitForMatrixStage(control, model, 'tool')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: matrixTextCompletion(model),
+        timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+      })
+
+      await sendPromptWithButton(control, composerSelector, matrixToolPrompt(model))
+      await waitForMatrixStage(control, model, 'awaiting_tool_output', 'complete')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: matrixToolCompletion(model),
+        timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+      })
+      assert.equal(
+        (await readFile(join(workspacePath, matrixArtifact(model)), 'utf8')).trim(),
+        matrixArtifactContent(model),
+        `${matrixCaseId(model)} apply_patch did not create the expected artifact`
+      )
+      assert.equal(
+        control.matrixState?.stage,
+        'complete',
+        `${matrixCaseId(model)} did not complete text and tool turns`
+      )
+      assert.ok(
+        control.matrixState.requests.length >= 3,
+        `${matrixCaseId(model)} did not send the text/tool/tool-output request sequence`
+      )
+      try {
+        await prepareCompletedTurnScreenshot(control)
+      } catch (error) {
+        try {
+          const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+          const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
+          const task = taskId && readRuntimeTask ? await readRuntimeTask(taskId) : null
+          const execution = task
+            ? Object.fromEntries(
+                [
+                  'taskId',
+                  'status',
+                  'running',
+                  'threadStatus',
+                  'turnStatus',
+                  'completedAt',
+                  'updatedAt',
+                ].map(key => [key, task[key] ?? null])
+              )
+            : null
+          control.matrixState.executionDiagnostics = execution
+          console.error('Model protocol matrix terminal state mismatch', {
+            caseId: matrixCaseId(model),
+            taskId,
+            execution,
+            lifecycle: snapshot.workbench?.activeLifecycle ?? null,
+          })
+        } catch {
+          console.error('Model protocol matrix terminal state diagnostics could not be collected')
+        }
+        throw error
+      }
+      await captureVerificationScreenshot(
+        control,
+        `${screenshotPrefix}-${String(matrixIndex + 1).padStart(2, '0')}-${matrixCaseId(model)}.png`
+      )
+    } catch (error) {
+      recordMatrixFailure(control, 'case', error)
+    } finally {
+      const report = writeMatrixReport(control, model)
+      console.log(
+        'Model protocol matrix finished: ' +
+          matrixCaseId(model) +
+          ' ' +
+          (report.passed ? 'PASS' : 'FAIL')
+      )
     }
-    await captureVerificationScreenshot(
-      control,
-      `${screenshotPrefix}-${String(matrixIndex + 1).padStart(2, '0')}-${matrixCaseId(model)}.png`
-    )
-    console.log(`Model protocol matrix passed: ${matrixCaseId(model)}`)
   }
+  if (!collectFailures) assertMatrixReports(control)
 }
 
 async function waitForMatrixStage(control, model, ...expectedStages) {
@@ -1700,6 +1928,7 @@ export {
   writeCodexConfig,
   toolDetailsMcpConfigToml,
   mcpElicitationConfigToml,
+  setMatrixUpstreamProtocol,
   codexUpstreamApiFormat,
   buildExecutor,
   hostCodexTarget,

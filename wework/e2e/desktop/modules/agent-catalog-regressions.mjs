@@ -148,6 +148,9 @@ export async function verifyCloudSaveDuringNativeFaults(
       assertNativeCatalogRequests(proxy.requests.slice(start))
     } finally {
       proxy.rule = () => null
+      for (const request of proxy.requests.filter(request => request.committedResponseHeld)) {
+        await request.release()
+      }
     }
   }
 }

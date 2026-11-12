@@ -1475,8 +1475,31 @@
 .collaboration-resource-catalog-list[data-kind="devices"]
   > :is(.collaboration-resource-catalog-list-header, article) {
   grid-template-columns:
-    36px minmax(180px, 1fr) 100px minmax(150px, 0.8fr)
-    minmax(120px, 0.65fr) 88px;
+    36px minmax(160px, 1fr) 80px 100px minmax(120px, 0.8fr)
+    minmax(110px, 0.65fr) 176px;
+}
+
+.collaboration-device-last-seen {
+  color: rgb(var(--color-text-secondary));
+  white-space: nowrap;
+}
+
+.collaboration-device-identifier {
+  color: rgb(var(--color-text-secondary));
+  overflow-wrap: anywhere;
+}
+
+.collaboration-delete-device-details {
+  display: grid;
+  gap: 8px;
+  padding: 16px 20px 0;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.collaboration-delete-device-details > p {
+  margin: 0;
 }
 
 .collaboration-resource-catalog-list-header {
@@ -4334,6 +4357,7 @@
 
 .collaboration-issue-table-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
@@ -4345,6 +4369,8 @@
   width: min(320px, 35vw);
   height: 32px;
   flex: 0 1 320px;
+  min-width: min(220px, 100%);
+  max-width: 100%;
   align-items: center;
   gap: 8px;
   border: 1px solid rgb(var(--color-border));
@@ -4372,21 +4398,29 @@
 
 .collaboration-issue-table-toolbar > .collaboration-primary-button {
   margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .collaboration-issue-table-batch {
   display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
 .collaboration-issue-table-batch strong {
+  flex-shrink: 0;
+  white-space: nowrap;
   color: rgb(var(--color-text-primary));
   font-size: 12px;
 }
 
 .collaboration-issue-table-batch select,
 .collaboration-issue-table-batch button {
+  flex-shrink: 0;
+  white-space: nowrap;
   height: 32px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
@@ -4395,6 +4429,13 @@
   background: rgb(var(--color-bg-base));
   font: inherit;
   font-size: 12px;
+}
+
+.collaboration-issue-table-batch-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .collaboration-issue-table-batch button:not(:disabled) {
@@ -4755,6 +4796,17 @@
     border-bottom: 0;
   }
 
+  .collaboration-platform-sidebar-full {
+    max-height: min(25dvh, 160px);
+    align-items: stretch;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .collaboration-platform-sidebar-full > * {
+    flex-shrink: 0;
+  }
+
   .collaboration-platform-brand {
     display: none;
   }
@@ -4885,6 +4937,12 @@
     grid-template-columns: 36px minmax(0, 1fr) auto auto;
   }
 
+  .collaboration-resource-catalog-list[data-kind="devices"]
+    .collaboration-device-last-seen {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
   .collaboration-resource-row-detail,
   .collaboration-resource-row-ownership,
   .collaboration-resource-row-members,
@@ -4893,6 +4951,12 @@
   }
 
   .collaboration-resource-bind-button {
+    min-height: 44px;
+  }
+
+  .collaboration-delete-device-dialog
+    .collaboration-resource-form-actions
+    > button {
     min-height: 44px;
   }
 

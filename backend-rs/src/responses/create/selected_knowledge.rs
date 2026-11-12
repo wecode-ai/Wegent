@@ -535,7 +535,7 @@ async fn knowledge_base_specs_by_ids<M: brz_mysql::Mysql>(
 ///
 /// No recorded create case restricts a scope, so this path is unexercised; the
 /// source's folder/document reads are ported for completeness.
-async fn load_wegent_resources<M: brz_mysql::Mysql>(
+pub(super) async fn load_wegent_resources<M: brz_mysql::Mysql>(
     mysql: &M,
     kb_id: i64,
     folder_ids: &[i64],

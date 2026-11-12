@@ -1,3 +1,7 @@
+import {
+  installStandInConnectionDependencies,
+  type ConnectionDependencyPluginApi,
+} from './standInConnectionDependencies'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { StandInGeneratedEventMap } from '@/telemetry/generated/standInEvents'
 import type {
@@ -7,16 +11,52 @@ import type {
   RunnerModel,
 } from '@wegent/collaboration'
 import type { RuntimeTaskSummary } from '@/types/api'
+import type { Automation } from '@/types/automation'
+import { createRuntimeTaskCommandsApi, type RuntimeTaskCommandsApi } from './runtimeTaskCommands'
+
+export interface StandInOnboardingResult {
+  settings?: PersonalStandInSettings | null
+  state: { version: number; completed: boolean; weeklyReview?: boolean }
+  reviewTemplate: Omit<Automation, 'source'>
+}
+
+export interface StandInBindingTarget {
+  userId: number
+  deviceId: string
+  backendUrl?: string
+}
+
+export interface StandInInstanceBinding {
+  version: number
+  status: 'unbound' | 'active' | 'stopping' | 'stopped'
+  target: StandInBindingTarget | null
+}
 
 export interface ConnectionProviderDescriptor {
   id: string
   displayName: string
   resourceKinds: string[]
+  allResourceLabel?: string
+  allResourceKinds?: string[]
+  allResourceLabels?: Record<string, string>
   resourceLabels?: Record<string, string>
-  locales?: Record<string, { displayName?: string; resourceLabels?: Record<string, string> }>
+  locales?: Record<
+    string,
+    {
+      displayName?: string
+      resourceLabels?: Record<string, string>
+      allResourceLabels?: Record<string, string>
+      allResourceLabel?: string
+    }
+  >
   authTarget?: { pluginKey: string; connectorSlug: string }
   availability: { status: string; code?: string }
-  dependencies: Array<{ alias: string; status: string }>
+  dependencies: Array<{
+    alias: string
+    status: string
+    source?: { marketplaceId: string; pluginId: string }
+    version?: string
+  }>
 }
 
 export interface StandInInboxMessage {
@@ -46,9 +86,25 @@ export interface StandInSourceError {
   source: StandInSourceConnection
   error: { code: string; message: string }
 }
+
+export interface StandInProcessingStatus {
+  awaitingUser?: boolean
+  taskId?: string
+  pendingCount: number
+  running: boolean
+  nextCheckAt?: string
+  lastCheckAt?: string
+  error?: { code: string; message: string; taskId?: string; commandId?: string } | null
+  actions: Array<{
+    id: string
+    kind: string
+    status: string
+    createdAt: string
+    error?: { code: string; message: string } | null
+  }>
+}
 import {
   publishPersonalStandIn,
-  type PersonalStandInAgent,
   type PersonalStandInSettings,
   type StandInSourceConnection,
 } from './personalStandIn'
@@ -65,6 +121,7 @@ export type StandInMemoryScope =
   | { kind: 'personal' }
   | { kind: 'role'; roleId: string }
   | { kind: 'project'; id: string; store: 'local' | 'cloud' }
+  | { kind: 'project_coordinator'; id: string; store: 'local' | 'cloud' }
   | { kind: 'dingtalk'; id: string; profile: string; conversationKind: 'group' | 'direct' }
   | { kind: 'connection'; providerId: string; id: string; profile: string; resourceKind: string }
 
@@ -76,10 +133,65 @@ export interface StandInMemory {
   createdAt: string
   updatedAt: string
   sourceTaskId?: string | null
+  evidence?: {
+    taskId?: string
+    messageId?: string
+    role?: string | null
+    excerpt?: string
+    observedAt?: string | number | null
+    readAt?: string
+  } | null
 }
+
+export type StandInMemoryRule =
+  | (Pick<StandInMemory, 'id' | 'content' | 'scope' | 'version' | 'createdAt' | 'updatedAt'> & {
+      kind: 'forgetting_rule'
+    })
+  | {
+      kind: 'legacy_fingerprint'
+      id: string
+      version: number
+      updatedAt: string
+    }
 
 type Request = <T>(method: string, payload: Record<string, unknown>, deviceId: string) => Promise<T>
 type ProjectStore = 'local' | 'cloud'
+
+export interface ProjectCoordinatorTarget {
+  projectId: string
+  projectStore: ProjectStore
+  groupId: string
+}
+
+export interface ProjectCoordinationBinding {
+  enabled: boolean
+  userId: number
+  deviceId: string
+  generation: string
+  sourceCutoff: string
+  updatedBy: number
+  updatedAt: string
+}
+
+export interface ProjectCoordinationUpdate {
+  enabled: boolean
+  expectedGeneration: string | null
+  takeover?: boolean
+}
+
+export interface ProjectCoordinationState {
+  binding: ProjectCoordinationBinding | null
+  canEnable: boolean
+  canStop: boolean
+}
+export interface ProjectCoordinationProcessing {
+  contextId: string
+  lastCheckAt: string | null
+  nextCheckAt: string | null
+  running: boolean
+  questions: Record<string, { issueId: string; question: string; batchId: string }>
+  error: string | null
+}
 export type StandInProjectSettings = WorkspaceStandInSettings & {
   projectId: string
   projectStore: ProjectStore
@@ -95,6 +207,42 @@ export type StandInTelemetryFact = {
 }[keyof StandInGeneratedEventMap]
 
 export interface StandInExecutorApi {
+  deviceIdentity(deviceId: string): Promise<{ deviceId: string; backendDeviceId: string }>
+  gitConnection(deviceId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>
+  onboarding(userId: number, deviceId: string, language: string): Promise<StandInOnboardingResult>
+  completeOnboarding(
+    userId: number,
+    deviceId: string,
+    weeklyReview: boolean,
+    time: string,
+    language: string
+  ): Promise<StandInOnboardingResult>
+  projectProcessing(
+    userId: number,
+    deviceId: string,
+    target: ProjectCoordinatorTarget,
+    check?: boolean
+  ): Promise<ProjectCoordinationProcessing>
+  projectCoordination(
+    userId: number,
+    deviceId: string,
+    target: ProjectCoordinatorTarget,
+    update?: ProjectCoordinationUpdate
+  ): Promise<ProjectCoordinationState>
+  processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
+  binding(
+    deviceId: string,
+    operation?: 'get' | 'bind' | 'beginStop' | 'completeStop',
+    version?: number,
+    target?: StandInBindingTarget
+  ): Promise<StandInInstanceBinding>
+  lifecycle(
+    userId: number,
+    deviceId: string,
+    operation: 'start' | 'stop'
+  ): Promise<PersonalStandInSettings>
+  taskCommands: RuntimeTaskCommandsApi
+  checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
     userId: number,
     deviceId: string,
@@ -118,6 +266,14 @@ export interface StandInExecutorApi {
     telemetryAction?: 'split' | 'merge' | 'move' | 'undo'
   ): Promise<StandInInboxWork>
   memories(userId: number, deviceId: string): Promise<StandInMemory[]>
+  memoryRules(userId: number, deviceId: string): Promise<StandInMemoryRule[]>
+  deleteMemoryRule(
+    userId: number,
+    deviceId: string,
+    id: string,
+    version: number,
+    expectedUpdatedAt?: string
+  ): Promise<void>
   saveMemory(
     userId: number,
     deviceId: string,
@@ -133,7 +289,12 @@ export interface StandInExecutorApi {
     deviceId: string,
     workId: string
   ): Promise<{ messages: StandInInboxMessage[] }>
-  runWork(userId: number, deviceId: string, workId: string): Promise<WorkspaceRuntimeTaskAddress>
+  runWork(
+    userId: number,
+    deviceId: string,
+    workId: string,
+    options?: { confirmThisRun?: boolean }
+  ): Promise<WorkspaceRuntimeTaskAddress>
   adjustMessage(
     userId: number,
     deviceId: string,
@@ -147,11 +308,27 @@ export interface StandInExecutorApi {
     providerId: string,
     kind: string,
     query: string,
-    cursor?: string
+    cursor?: string,
+    scope?: 'all'
   ): Promise<{
-    items: Pick<StandInSourceConnection, 'id' | 'name' | 'kind' | 'profile' | 'providerId'>[]
+    items: Pick<
+      StandInSourceConnection,
+      | 'id'
+      | 'name'
+      | 'kind'
+      | 'profile'
+      | 'providerId'
+      | 'scope'
+      | 'collectionKey'
+      | 'configurationSummary'
+    >[]
     hasMore?: boolean
     nextCursor?: string
+    availability?: {
+      status: string
+      code?: string
+      authTarget?: import('./local/localConnectorAuth').LocalConnectorAuthTarget
+    }
   }>
   conversation(
     userId: number,
@@ -160,6 +337,15 @@ export interface StandInExecutorApi {
     roleId?: string,
     options?: Record<string, unknown>
   ): Promise<WorkspaceRuntimeTaskAddress>
+  projectConversation(
+    userId: number,
+    deviceId: string,
+    projectId: string,
+    projectStore: ProjectStore,
+    groupId: string,
+    message?: string,
+    options?: Record<string, unknown>
+  ): Promise<{ taskId: string; address: WorkspaceRuntimeTaskAddress | null }>
   proposal(userId: number, deviceId: string, roleId?: string): Promise<StandInProposal | null>
   resolveProposal(
     userId: number,
@@ -174,7 +360,6 @@ export interface StandInExecutorApi {
     userId: number,
     deviceId: string
   ): Promise<void>
-  personalAgents(userId: number, deviceId: string): Promise<PersonalStandInAgent[]>
   personalGet(userId: number, deviceId: string): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
@@ -185,6 +370,11 @@ export interface StandInExecutorApi {
     deviceId: string,
     taskId: string
   ): Promise<{ success: boolean; task?: RuntimeTaskSummary; code?: string; error?: string }>
+  assignmentTasks(
+    userId: number,
+    deviceId: string,
+    assignments: Array<{ projectId: string; itemId: string; humanAssignmentId: string }>
+  ): Promise<{ items: RuntimeTaskSummary[] }>
   catalog(deviceId: string): Promise<{ models: RunnerModel[] }>
   run(
     projectId: string,
@@ -215,8 +405,25 @@ export interface StandInExecutorApi {
   ): Promise<WorkspaceStandInSettings>
 }
 
-export function createStandInExecutorApi(transport: Request): StandInExecutorApi {
+export function createStandInExecutorApi(
+  transport: Request,
+  dependencyPlugins?: ConnectionDependencyPluginApi
+): StandInExecutorApi {
+  const personalReads = new Map<string, Promise<PersonalStandInSettings>>()
   const request: Request = async (method, payload, deviceId) => {
+    const changesProfile = [
+      'runtime.stand_in.personal.save',
+      'runtime.stand_in.personal.lifecycle',
+      'runtime.stand_in.proposal.resolve',
+      'runtime.stand_in.onboarding.complete',
+    ].includes(method)
+    const invalidate = () => {
+      if (!changesProfile) return
+      // A profile may be addressed through more than one verified Runtime route.
+      const prefix = JSON.stringify([payload.userId]).slice(0, -1) + ','
+      for (const key of personalReads.keys()) if (key.startsWith(prefix)) personalReads.delete(key)
+    }
+    invalidate()
     try {
       return await transport(method, payload, deviceId)
     } catch (error) {
@@ -236,9 +443,46 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
         error && typeof error === 'object' ? error : {},
         { message, cause: error }
       )
+    } finally {
+      // A write may commit even when its response fails. Recovery must read afresh.
+      invalidate()
     }
   }
   return {
+    taskCommands: createRuntimeTaskCommandsApi(request),
+    gitConnection: (deviceId, input) => {
+      const { channel, ...payload } = input
+      if (channel === 'auth') {
+        const { authOperation, ...target } = payload
+        if (!['start', 'poll', 'cancel'].includes(String(authOperation)))
+          throw new Error('Invalid authorization operation')
+        return request(`runtime.local_connector_auth.${String(authOperation)}`, target, deviceId)
+      }
+      return request(
+        channel === 'webhooks'
+          ? 'runtime.connections.git.webhooks'
+          : channel === 'authTarget'
+            ? 'runtime.connections.git.authTarget'
+            : 'runtime.connections.git.read',
+        payload,
+        deviceId
+      )
+    },
+    onboarding: (userId, deviceId, language) =>
+      request('runtime.stand_in.onboarding.get', { userId, language }, deviceId),
+    completeOnboarding: async (userId, deviceId, weeklyReview, time, language) => {
+      const result = await request<StandInOnboardingResult>(
+        'runtime.stand_in.onboarding.complete',
+        { userId, weeklyReview, time, language },
+        deviceId
+      )
+      if (result.settings) publishPersonalStandIn(result.settings)
+      return result
+    },
+    processingStatus: (userId, deviceId) =>
+      request('runtime.stand_in.processing.status', { userId }, deviceId),
+    checkProcessing: (userId, deviceId) =>
+      request('runtime.stand_in.processing.check', { userId }, deviceId),
     configureTelemetry: async (userId, deviceId, enabled, enabledSince) => {
       await request(
         'runtime.stand_in.telemetry.configure',
@@ -253,7 +497,19 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
     },
     connectionProviders: deviceId => request('runtime.connections.catalog', {}, deviceId),
     installConnectionDependencies: (deviceId, providerId, aliases) =>
-      request('runtime.connections.dependencies.install', { providerId, aliases }, deviceId),
+      installStandInConnectionDependencies({
+        deviceId,
+        providerId,
+        aliases,
+        plugins: dependencyPlugins,
+        catalog: () => request('runtime.connections.catalog', {}, deviceId),
+        installNative: selected =>
+          request(
+            'runtime.connections.dependencies.install',
+            { providerId, aliases: selected },
+            deviceId
+          ),
+      }),
     memories: async (userId, deviceId) =>
       (
         await request<{ items: StandInMemory[] }>(
@@ -264,14 +520,29 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
       ).items,
     saveMemory: (userId, deviceId, memory) =>
       request('runtime.stand_in.memory.save', { userId, memory }, deviceId),
+    memoryRules: async (userId, deviceId) =>
+      (
+        await request<{ items: StandInMemoryRule[] }>(
+          'runtime.stand_in.memory.rules.list',
+          { userId },
+          deviceId
+        )
+      ).items,
+    deleteMemoryRule: async (userId, deviceId, id, version, expectedUpdatedAt) => {
+      await request(
+        'runtime.stand_in.memory.rules.delete',
+        { userId, id, version, ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}) },
+        deviceId
+      )
+    },
     deleteMemory: async (userId, deviceId, id, version) => {
       await request('runtime.stand_in.memory.delete', { userId, id, version }, deviceId)
     },
     inbox: (userId, deviceId) => request('runtime.stand_in.work.list', { userId }, deviceId),
     workMessages: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
-    runWork: (userId, deviceId, workId) =>
-      request('runtime.stand_in.work.run', { userId, workId }, deviceId),
+    runWork: (userId, deviceId, workId, options) =>
+      request('runtime.stand_in.work.run', { userId, workId, ...options }, deviceId),
     organizeWork: (userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) =>
       request(
         'runtime.stand_in.work.organize',
@@ -292,10 +563,36 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
       ),
     retrySource: (userId, deviceId, source) =>
       request('runtime.stand_in.source.retry', { userId, source }, deviceId),
-    searchConnectionResources: (deviceId, providerId, kind, query, cursor) =>
-      request('runtime.connections.resources', { providerId, kind, query, cursor }, deviceId),
+    searchConnectionResources: (deviceId, providerId, kind, query, cursor, scope) =>
+      request(
+        'runtime.connections.resources',
+        { providerId, kind, query, cursor, ...(scope ? { scope } : {}) },
+        deviceId
+      ),
     conversation: (userId, deviceId, message, roleId, options) =>
       request('runtime.stand_in.conversation', { userId, message, roleId, options }, deviceId),
+    projectProcessing: (userId, deviceId, target, check = false) =>
+      request(
+        check
+          ? 'runtime.project_coordinator.processing.check'
+          : 'runtime.project_coordinator.processing.get',
+        { userId, ...target },
+        deviceId
+      ),
+    projectCoordination: (userId, deviceId, target, update) =>
+      request(
+        update === undefined
+          ? 'runtime.project_coordinator.binding.get'
+          : 'runtime.project_coordinator.binding.save',
+        { userId, ...target, ...(update === undefined ? {} : { binding: update }) },
+        deviceId
+      ),
+    projectConversation: (userId, deviceId, projectId, projectStore, groupId, message, options) =>
+      request(
+        'runtime.project_coordinator.conversation',
+        { userId, projectId, projectStore, groupId, message, options },
+        deviceId
+      ),
     proposal: (userId, deviceId, roleId) =>
       request('runtime.stand_in.proposal.get', { userId, roleId }, deviceId),
     resolveProposal: async (userId, deviceId, proposalId, accept) => {
@@ -314,16 +611,34 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
         deviceId
       )
     },
-    personalAgents: async (userId, deviceId) =>
-      (
-        await request<{ items: PersonalStandInAgent[] }>(
-          'runtime.stand_in.personal.agents',
-          { userId },
-          deviceId
-        )
-      ).items,
-    personalGet: (userId, deviceId) =>
-      request('runtime.stand_in.personal.get', { userId }, deviceId),
+    deviceIdentity: deviceId => request('runtime.stand_in.device_identity', {}, deviceId),
+    personalGet: (userId, deviceId) => {
+      const key = JSON.stringify([userId, deviceId])
+      const pending = personalReads.get(key)
+      if (pending) return pending
+      const result = request<PersonalStandInSettings>(
+        'runtime.stand_in.personal.get',
+        { userId },
+        deviceId
+      )
+      personalReads.set(key, result)
+      const clear = () => {
+        if (personalReads.get(key) === result) personalReads.delete(key)
+      }
+      void result.then(clear, clear)
+      return result
+    },
+    binding: (deviceId, operation = 'get', version, target) =>
+      request('runtime.stand_in.binding', { operation, version, target }, deviceId),
+    lifecycle: async (userId, deviceId, operation) => {
+      const saved = await request<PersonalStandInSettings>(
+        'runtime.stand_in.personal.lifecycle',
+        { userId, operation },
+        deviceId
+      )
+      publishPersonalStandIn(saved)
+      return saved
+    },
     personalSave: async (userId, settings, deviceId) => {
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
@@ -333,7 +648,27 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
       publishPersonalStandIn(saved)
       return saved
     },
-    readTask: (deviceId, taskId) => request('runtime.tasks.get', { taskId }, deviceId),
+    readTask: async (deviceId, taskId) => {
+      try {
+        return await request<Awaited<ReturnType<StandInExecutorApi['readTask']>>>(
+          'runtime.tasks.get',
+          { taskId },
+          deviceId
+        )
+      } catch (error) {
+        // A missing first conversation is an empty lookup on both transports.
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'task_not_found'
+        )
+          return { success: false, code: 'task_not_found' }
+        throw error
+      }
+    },
+    assignmentTasks: (userId, deviceId, assignments) =>
+      request('runtime.stand_in.assignment_tasks', { userId, assignments }, deviceId),
     catalog: deviceId => request('runtime.runner.catalog', {}, deviceId),
     run: (projectId, issueId, userId, projectStore, deviceId, standInId) =>
       request(

@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 use super::py_order::PyStrSetOrder;
 use super::{
-    APPROVED_STATUSES, CountRow, IdRow, KB_RESOURCE_TYPES, KIND_COLUMNS, KindRow, MEMBER_COLUMNS,
+    APPROVED_STATUSES, CountRow, KB_RESOURCE_TYPES, KIND_COLUMNS, KindRow, MEMBER_COLUMNS,
     MemberRow, NAMESPACE_COLUMNS, NamespaceIdRow, NamespaceNameRow, NamespaceRow, UserNameRow,
     has_permission, quote_literal,
 };
@@ -149,116 +149,6 @@ where
         )
         .await?;
     Ok(rows.into_iter().map(|row| row.namespace_id).collect())
-}
-
-/// `iter_user_groups_with_roles` step 1: direct user memberships
-/// (`db.query(ResourceMember)` full projection).
-pub(super) async fn direct_namespace_memberships<M>(
-    mysql: &M,
-    user_id: i64,
-) -> MysqlResult<Vec<MemberRow>>
-where
-    M: Mysql,
-{
-    mysql
-        .fetch_all(
-            &format!(
-                "SELECT {MEMBER_COLUMNS} \nFROM resource_members \n\
-                 WHERE resource_members.resource_type = 'Namespace' \
-                 AND resource_members.entity_type = 'user' \
-                 AND resource_members.entity_id = '{user_id}' \
-                 AND resource_members.status = 'approved'"
-            ),
-            (),
-        )
-        .await
-}
-
-/// `Namespace.id.in_(ids), is_active` (`namespaces_by_ids`).
-pub(super) async fn namespaces_by_ids<M>(mysql: &M, ids: &[i64]) -> MysqlResult<Vec<NamespaceRow>>
-where
-    M: Mysql,
-{
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let joined = ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    mysql
-        .fetch_all(
-            &format!(
-                "SELECT {NAMESPACE_COLUMNS} \nFROM namespace \n\
-                 WHERE namespace.id IN ({joined}) AND namespace.is_active = 1"
-            ),
-            (),
-        )
-        .await
-}
-
-/// `NamespaceEntityResolver` step 1: direct ns resource ids.
-pub(super) async fn direct_namespace_resource_ids<M>(
-    mysql: &M,
-    user_id: i64,
-) -> MysqlResult<Vec<i64>>
-where
-    M: Mysql,
-{
-    let rows: Vec<IdRow> = mysql
-        .fetch_all(
-            &format!(
-                "SELECT resource_members.resource_id AS resource_members_resource_id \n\
-                 FROM resource_members \n\
-                 WHERE resource_members.resource_type = 'Namespace' \
-                 AND resource_members.entity_type = 'user' \
-                 AND resource_members.entity_id = '{user_id}' \
-                 AND resource_members.status = 'approved'"
-            ),
-            (),
-        )
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| row.resource_members_resource_id)
-        .collect())
-}
-
-/// `NamespaceEntityResolver` tail: namespace-entity grants over the
-/// combined ns ids.
-pub(super) async fn namespace_entity_resource_ids<M>(
-    mysql: &M,
-    ns_ids: &[i64],
-) -> MysqlResult<Vec<i64>>
-where
-    M: Mysql,
-{
-    if ns_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let quoted = ns_ids
-        .iter()
-        .map(|id| format!("'{id}'"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let rows: Vec<IdRow> = mysql
-        .fetch_all(
-            &format!(
-                "SELECT resource_members.resource_id AS resource_members_resource_id \n\
-                 FROM resource_members \n\
-                 WHERE resource_members.resource_type IN ('Namespace') \
-                 AND resource_members.entity_type = 'namespace' \
-                 AND resource_members.entity_id IN ({quoted}) \
-                 AND resource_members.status = 'approved'"
-            ),
-            (),
-        )
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| row.resource_members_resource_id)
-        .collect())
 }
 
 /// SQLAlchemy rendering of the `Namespace.is_active` filter: `== True`
@@ -430,6 +320,18 @@ fn acl_deny_group_clause(
     }
 }
 
+/// `exclude_hidden_replicas`' MySQL branch
+/// (`app/services/knowledge/replica_policy.py:17-27`, called by
+/// `apply_acl_deny_filter`): a KB without a `spec.ksReplica` marker, or one
+/// whose `nativeHidden` is the JSON boolean `false`, stays visible; every
+/// other replica is hidden. Shared by every direct-access predicate the
+/// knowledge visibility builders render.
+pub(crate) fn hidden_replica_filter() -> &'static str {
+    "json_contains_path(kinds.json, 'one', '$.spec.ksReplica') = 0 \
+     OR json_type(json_extract(kinds.json, '$.spec.ksReplica.nativeHidden')) = 'BOOLEAN' \
+     AND json_unquote(json_extract(kinds.json, '$.spec.ksReplica.nativeHidden')) = 'false'"
+}
+
 /// `apply_direct_access_filter` plus its trailing `apply_acl_deny_filter`:
 /// the rendered `kinds.id` predicate.
 ///
@@ -525,13 +427,15 @@ fn direct_access_filter_sql(
         "SELECT kinds.id AS kinds_id \nFROM kinds \n\
          WHERE kinds.id IN ({ids}) AND ({requirement} = '' OR {requirement} = 'read' \
          OR {requirement} = 'edit' AND ({edit_or})) \
+         AND ({hidden_replica}) \
          AND NOT (EXISTS (SELECT 1 \nFROM resource_members \n\
          WHERE resource_members.resource_type IN {KB_RESOURCE_TYPES} \
          AND resource_members.resource_id = kinds.id \
          AND resource_members.status IN {APPROVED_STATUSES} \
          AND resource_members.entity_type = 'user' \
          AND resource_members.entity_id = '{user_id}' \
-         AND resource_members.`role` = 'RestrictedAnalyst')){acl_deny_clause}"
+         AND resource_members.`role` = 'RestrictedAnalyst')){acl_deny_clause}",
+        hidden_replica = hidden_replica_filter(),
     )
 }
 
@@ -841,8 +745,15 @@ mod tests {
         let sql =
             direct_access_filter_sql("178044", 2807, &[178044], &[], &order, &roles, &[], "user");
         let sql = rendered(&sql);
+        // `apply_acl_deny_filter` applies `exclude_hidden_replicas` between
+        // the direct-access disjunction and the RestrictedAnalyst deny.
         assert!(
-            sql.contains("OR kinds.namespace IN ('hr-group'))) AND NOT (EXISTS"),
+            sql.contains(
+                "OR kinds.namespace IN ('hr-group'))) AND \
+                 (json_contains_path(kinds.json, 'one', '$.spec.ksReplica') = 0 OR \
+                 json_type(json_extract(kinds.json, '$.spec.ksReplica.nativeHidden')) = 'BOOLEAN' AND \
+                 json_unquote(json_extract(kinds.json, '$.spec.ksReplica.nativeHidden')) = 'false') AND NOT (EXISTS"
+            ),
             "{sql}"
         );
         assert!(

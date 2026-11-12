@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { toWegentStoreInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
 import {

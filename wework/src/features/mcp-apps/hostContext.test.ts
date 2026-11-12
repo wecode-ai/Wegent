@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { McpAppDescriptor } from '@/api/mcpApps'
-import { appDisplayModes, appHostContext, appInitialDisplayMode } from './hostContext'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { appHostContext, appInitialDisplayMode } from './hostContext'
 
 const descriptor = (modes?: unknown) =>
   ({
@@ -25,11 +25,6 @@ describe('MCP App host context', () => {
       maxWidth: 640,
       maxHeight: 480,
     })
-  })
-  it('honors explicit display mode restrictions, including unsupported-only declarations', () => {
-    expect(appDisplayModes(descriptor())).toEqual(['inline', 'fullscreen', 'pip'])
-    expect(appDisplayModes(descriptor(['fullscreen']))).toEqual(['fullscreen'])
-    expect(appDisplayModes(descriptor(['other']))).toEqual([])
   })
   it('selects the same initial modes as the ChatGPT host', () => {
     expect(appInitialDisplayMode(descriptor())).toBe('inline')

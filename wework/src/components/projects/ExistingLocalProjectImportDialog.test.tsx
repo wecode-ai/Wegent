@@ -1,8 +1,8 @@
+import '@/i18n'
+import type { ProjectWithTasks } from '@/types/api'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
-import '@/i18n'
-import type { ProjectWithTasks } from '@/types/api'
 import { ExistingLocalProjectImportDialog } from './ExistingLocalProjectImportDialog'
 
 const projects: ProjectWithTasks[] = [

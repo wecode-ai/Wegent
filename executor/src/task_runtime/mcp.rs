@@ -34,12 +34,18 @@ use super::{
 };
 
 mod comments;
+pub(crate) mod connection_context;
 mod context;
+pub(crate) mod git_connections;
+mod human_requests;
+mod parent_issue;
 mod stand_in;
+pub(crate) mod stand_in_tasks;
 #[cfg(test)]
 use context::role_categories;
 use context::space_context_grant;
 pub(crate) use stand_in::stand_in_mcp_client_config;
+pub(crate) use stand_in::StandInMcpIdentity;
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 pub const NOTIFICATIONS_MCP_SERVER_NAME: &str = "wework_notifications";
@@ -126,6 +132,7 @@ pub(crate) struct SpaceMcpRequestContext {
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
     stand_in: Option<stand_in::StandInMcpIdentity>,
+    control: Option<crate::workbench_control::ControlContext>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -134,6 +141,7 @@ pub(crate) enum WeworkMcpSurface {
     ProjectSpace,
     Notifications,
     StandIn,
+    Control,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,12 +153,26 @@ pub(crate) struct SpaceMcpClientConfig {
 
 impl SpaceMcpRequestContext {
     pub(super) fn shares_unbound_authority(&self, other: &Self) -> bool {
-        self.surface != WeworkMcpSurface::StandIn
-            && self.surface == other.surface
+        matches!(
+            self.surface,
+            WeworkMcpSurface::ProjectSpace | WeworkMcpSurface::Notifications
+        ) && self.surface == other.surface
             && self.grant.is_none()
             && other.grant.is_none()
             && self.backend_url == other.backend_url
             && self.auth_token == other.auth_token
+    }
+
+    pub(super) fn shares_control_conversation(&self, other: &Self) -> bool {
+        let (Some(current), Some(next)) = (&self.control, &other.control) else {
+            return false;
+        };
+        current.device_id == next.device_id
+            && current.task_id == next.task_id
+            && current.request.backend_url == next.request.backend_url
+            && current.request.auth_token == next.request.auth_token
+            && current.request.runtime_auth_token == next.request.runtime_auth_token
+            && current.request.extra.get("origin") == next.request.extra.get("origin")
     }
 
     pub(crate) fn new(
@@ -166,6 +188,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            control: None,
         }
     }
 
@@ -178,6 +201,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            control: None,
         }
     }
 
@@ -187,6 +211,14 @@ impl SpaceMcpRequestContext {
             non_empty_env("WEWORK_SPACE_BACKEND_URL"),
             non_empty_env("WEWORK_SPACE_AUTH_TOKEN"),
         )
+    }
+
+    pub(crate) fn control(context: crate::workbench_control::ControlContext) -> Self {
+        Self {
+            surface: WeworkMcpSurface::Control,
+            control: Some(context),
+            ..Self::default()
+        }
     }
 
     fn grant(&self) -> Option<&SpaceContextGrant> {
@@ -202,6 +234,7 @@ impl SpaceMcpRequestContext {
             WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
             WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
             WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
+            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
         }
     }
 
@@ -218,6 +251,11 @@ impl SpaceMcpRequestContext {
     ) {
         self.event_sender = sender;
     }
+}
+
+pub(crate) fn has_bound_issue_context(request: &ExecutionRequest) -> Result<bool, String> {
+    space_context_grant(request)
+        .map(|grant| grant.is_some_and(|grant| grant.space_id.is_some() && grant.item_id.is_some()))
 }
 
 pub(crate) fn space_mcp_client_config(
@@ -296,6 +334,30 @@ pub(crate) fn notifications_mcp_client_config(
 
 pub fn is_space_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("space-mcp-server")
+}
+
+pub(crate) fn control_mcp_client_config(
+    request: &ExecutionRequest,
+) -> Result<Option<SpaceMcpClientConfig>, String> {
+    let Some(context) = crate::workbench_control::ControlContext::from_request(request) else {
+        return Ok(None);
+    };
+    if !crate::workbench_control::available(&context) {
+        return Ok(None);
+    }
+    let registered = super::mcp_http::register_control_mcp_context(context)?;
+    let base_url = registered.endpoint.url.trim_end_matches("/mcp");
+    Ok(Some(SpaceMcpClientConfig {
+        url: format!("{base_url}/control/mcp"),
+        headers: BTreeMap::from([
+            (
+                "Authorization".to_owned(),
+                format!("Bearer {}", registered.endpoint.token),
+            ),
+            ("X-Wework-Mcp-Context".to_owned(), registered.context_handle),
+        ]),
+        auto_approve: true,
+    }))
 }
 
 pub async fn run() -> Result<(), String> {
@@ -410,6 +472,16 @@ pub(crate) async fn handle_request_with_context(
                 tools.len(),
                 names,
             ));
+            if context
+                .stand_in
+                .as_ref()
+                .is_some_and(|identity| identity.coordinator_batch.is_some())
+            {
+                write_space_mcp_log(&format!(
+                    "[wework-space-mcp] stage=coordinator_tool_contracts contracts={}",
+                    stand_in::tool_contract_diagnostics(&tools),
+                ));
+            }
             result_response(id, json!({"tools": tools}))
         }),
         "tools/call" => {
@@ -427,6 +499,12 @@ pub(crate) async fn handle_request_with_context(
                 "[wework-space-mcp] stage=tool_call tool={} argument_keys={}",
                 name, argument_keys,
             ));
+            if let Some(control) = context.control.as_ref() {
+                return Some(result_response(
+                    id,
+                    crate::workbench_control::call(control, name, arguments).await,
+                ));
+            }
             Some(result_response(
                 id,
                 call_tool_with_context(runtime, name, arguments, context).await,
@@ -822,7 +900,11 @@ async fn call_tool_with_runtime_context(
         .as_ref()
         .and_then(|grant| context_scope_error(grant, &arguments))
     {
-        return text_result(error, true);
+        match parent_issue::authorize_read(runtime, name, &arguments, context).await {
+            Ok(true) => {}
+            Ok(false) => return text_result(error, true),
+            Err(error) => return text_result(error, true),
+        }
     }
     let default_project_id = grant
         .as_ref()
@@ -1159,6 +1241,65 @@ async fn call_tool_with_runtime_context(
             }
         }
         "list_board_item_comments" => comments::list(runtime, &arguments).await,
+        "list_human_requests" => {
+            match (
+                string_argument(&arguments, "space_id"),
+                string_argument(&arguments, "item_id"),
+            ) {
+                (Ok(project), Ok(issue)) => runtime
+                    .stand_in_store()
+                    .list_issue_human_requests(project, issue)
+                    .map(|items| json!({"items":items})),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            }
+        }
+        "set_human_request_blocking" => (|| {
+            let project = string_argument(&arguments, "space_id")?;
+            let issue = string_argument(&arguments, "item_id")?;
+            let request = string_argument(&arguments, "request_id")?;
+            let device = string_argument(&arguments, "runtime_device_id")?;
+            let task =
+                human_request_runtime_task_id(grant).map_err(super::TaskRuntimeError::Invalid)?;
+            let blocks = arguments["blocks_progress"].as_bool().ok_or_else(|| {
+                super::TaskRuntimeError::Invalid("blocks_progress must be boolean".into())
+            })?;
+            runtime.stand_in_store().set_issue_human_request_blocking(
+                crate::task_runtime::IssueHumanRequestScope {
+                    project_id: project,
+                    issue_id: issue,
+                },
+                request,
+                arguments["version"].as_i64().unwrap_or(0),
+                device,
+                task,
+                blocks,
+            )
+        })(),
+        "assign_human_request" => {
+            match (
+                string_argument(&arguments, "space_id"),
+                string_argument(&arguments, "item_id"),
+                string_argument(&arguments, "request_id"),
+                string_argument(&arguments, "recipient_name"),
+            ) {
+                (Ok(project), Ok(issue), Ok(request), Ok(name)) => {
+                    runtime.stand_in_store().assign_issue_human_request(
+                        crate::task_runtime::IssueHumanRequestScope {
+                            project_id: project,
+                            issue_id: issue,
+                        },
+                        request,
+                        arguments["version"].as_i64().unwrap_or(0),
+                        arguments["recipient_user_id"].as_i64().unwrap_or(0),
+                        name,
+                        arguments["blocks_progress"].as_bool(),
+                    )
+                }
+                _ => Err(super::TaskRuntimeError::Invalid(
+                    "Missing question assignment fields".into(),
+                )),
+            }
+        }
         "add_board_item_comment" => comments::add_local(runtime, &arguments).await,
         "list_item_attachments" => {
             let project_id = string_argument(&arguments, "space_id");
@@ -1419,6 +1560,7 @@ async fn call_tool_with_runtime_context(
                                     .and_then(Value::as_array)
                                     .cloned()
                                     .unwrap_or_default(),
+                                runtime_origin: Some(address.clone()),
                             };
                             runtime
                                 .finalize_delivery(item_id, delivery_id, input)
@@ -1731,6 +1873,13 @@ fn manager_runtime_task_id(grant: Option<&SpaceContextGrant>) -> Result<&str, St
         .map(|grant| grant.task_id.as_str())
         .filter(|task_id| !task_id.trim().is_empty())
         .ok_or_else(|| "Collaboration manager Runtime task identity is missing".to_owned())
+}
+
+fn human_request_runtime_task_id(grant: Option<&SpaceContextGrant>) -> Result<&str, String> {
+    grant
+        .map(|grant| grant.task_id.as_str())
+        .filter(|task_id| !task_id.trim().is_empty())
+        .ok_or_else(|| "Question reporting Runtime task identity is missing".to_owned())
 }
 
 fn normalize_issue_status_decision(
@@ -2109,6 +2258,9 @@ async fn call_backend_tool(
         "update_board_item" => client
             .patch(format!("{base}/loop-items/{}", encode_segment(task_id()?)))
             .json(arguments.get("item").unwrap_or(arguments)),
+        "list_human_requests" => client.get(format!("{base}/loop-items/{}/human-requests",encode_segment(task_id()?))),
+        "set_human_request_blocking" => client.put(format!("{base}/loop-items/{}/human-requests/{}",encode_segment(task_id()?),encode_segment(arguments["request_id"].as_str().ok_or("request_id is required")?))).json(&json!({"operation":"set_blocking","version":arguments["version"],"blocks_progress":arguments["blocks_progress"],"runtime_device_id":arguments["runtime_device_id"],"runtime_task_id":human_request_runtime_task_id(grant)?})),
+        "assign_human_request" => client.put(format!("{base}/loop-items/{}/human-requests/{}",encode_segment(task_id()?),encode_segment(arguments["request_id"].as_str().ok_or("request_id is required")?))).json(&json!({"version":arguments["version"],"recipient_user_id":arguments["recipient_user_id"],"blocks_progress":arguments["blocks_progress"]})),
         "list_board_item_comments" => client
             .get(format!(
                 "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
@@ -2798,6 +2950,9 @@ fn delivery_fulfillments_schema() -> Value {
 
 fn tools() -> Vec<Value> {
     vec![
+        human_requests::list_tool(),
+        human_requests::assign_tool(),
+        human_requests::blocking_tool(),
         tool(
             "submit_workflow_plan",
             "For a manager-bound Issue, first read get_board_item and get_assignment_candidates, then submit exactly one concurrent batch. Assign each item to a non-leader group agent or human member; the leader only coordinates and cannot execute an item. Use this tool instead of Codex subagents or doing member work yourself. For an agent with multiple models, choose one allowed model_id. Agent items start independent Executor runs; human items wait for delivery. End the manager turn after submitting. The Executor starts a fresh manager run after the batch finishes.",
@@ -2965,7 +3120,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "get_board_item",
-            "Get one board item in a project space",
+            "Get one board item in a project space. An Executor-bound agent may explicitly read its Issue's direct parent_id in the same project, subject to existing parent visibility. Use that parent item_id with list_board_item_comments, list_deliveries, read_delivery and download_delivery_asset to read requirements, comments and handoffs. Parent access is read-only; get_current_context and Delivery writes remain bound to the child Issue. Ancestors, siblings and unrelated Issues are outside this exception.",
             json!({
                 "type": "object",
                 "properties": {
@@ -3379,6 +3534,9 @@ fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec
     if context.surface == WeworkMcpSurface::StandIn {
         return stand_in::tools(context);
     }
+    if context.surface == WeworkMcpSurface::Control {
+        return crate::workbench_control::tools();
+    }
     if context.surface == WeworkMcpSurface::Notifications {
         return tools()
             .into_iter()
@@ -3432,6 +3590,12 @@ fn grant_allows(grant: Option<&SpaceContextGrant>, category: BoardToolCategory) 
 }
 
 fn board_tool_category(name: &str) -> Option<BoardToolCategory> {
+    if matches!(
+        name,
+        "list_human_requests" | "assign_human_request" | "set_human_request_blocking"
+    ) {
+        return Some(BoardToolCategory::Execution);
+    }
     match name {
         "create_space"
         | "update_space"
@@ -3626,6 +3790,29 @@ mod tests {
             categories: role_categories(role).iter().copied().collect(),
             ..SpaceContextGrant::default()
         }
+    }
+
+    #[test]
+    fn human_request_blocking_uses_the_bound_execution_without_manager_authority() {
+        assert!(human_request_runtime_task_id(None).is_err());
+        assert!(human_request_runtime_task_id(Some(&SpaceContextGrant::default())).is_err());
+        let grant = SpaceContextGrant {
+            task_id: "original-execution".into(),
+            ..role_grant(SpaceContextRole::Executor)
+        };
+        assert_eq!(
+            human_request_runtime_task_id(Some(&grant)).unwrap(),
+            "original-execution"
+        );
+        assert!(manager_runtime_task_id(Some(&grant)).is_err());
+        assert_eq!(
+            board_tool_category("set_human_request_blocking"),
+            Some(BoardToolCategory::Execution)
+        );
+        let schema = human_requests::blocking_tool();
+        assert!(schema["inputSchema"]["properties"]
+            .get("recipient_user_id")
+            .is_none());
     }
 
     #[test]
@@ -4698,6 +4885,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Investigate load".to_owned(),
                     description: String::new(),
                     status: "in_progress".to_owned(),
@@ -4880,6 +5068,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Fix OAuth callback".to_owned(),
                     description: "Login fails after redirect".to_owned(),
                     status: "in_progress".to_owned(),
@@ -4897,6 +5086,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Write deployment guide".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -4960,6 +5150,7 @@ mod tests {
                 .create_task(
                     project_id,
                     TaskCreate {
+                        milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
                         status: "inbox".to_owned(),
@@ -5006,6 +5197,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Inspect attachment".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),

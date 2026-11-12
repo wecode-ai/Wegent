@@ -35,6 +35,8 @@ interface RuntimeIpcAck<T> {
   error?: {
     code?: string;
     message?: string;
+    retryable?: boolean;
+    details?: Record<string, unknown>;
   };
 }
 
@@ -93,16 +95,35 @@ export function createCloudRuntimeIpcClient(
     async subscribe(
       handler: (event: RuntimeEvent) => void,
     ): Promise<() => void> {
-      await client.ensureConnected();
       const runtimeHandler = (event: RuntimeEvent) => {
         handler(event);
       };
+      // The facade retains listeners across reconnects; registration must not
+      // depend on the first handshake finishing within the RPC timeout.
       client.socket.on(RUNTIME_EVENT, runtimeHandler);
-      return () => client.socket.off(RUNTIME_EVENT, runtimeHandler);
+      const unsubscribeReconnect = client.onReconnect(() => {
+        // The relay has no replay cursor: a new connection invalidates continuity.
+        handler({
+          event: "executor.event_lagged",
+          payload: { skipped: 0, reason: "transport_reconnected" },
+        });
+      });
+      const cleanup = () => {
+        client.socket.off(RUNTIME_EVENT, runtimeHandler);
+        unsubscribeReconnect();
+      };
+      try {
+        await client.connect();
+        return cleanup;
+      } catch (error) {
+        cleanup();
+        throw error;
+      }
     },
     async reconnect() {
       client.disconnect();
       await client.connect(undefined, true);
+      await client.ensureConnected();
     },
     dispose() {
       client.dispose();
@@ -152,9 +173,27 @@ async function emitRuntimeRequest<T>(
 
   return new Promise<T>((resolve, reject) => {
     let settled = false;
+    const cleanup = () => {
+      globalThis.clearTimeout(timeout);
+      client.socket.off("disconnect", onDisconnect);
+    };
+    const onDisconnect = (reason: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      console.warn("[Wework] Cloud runtime RPC connection closed", {
+        request_id: requestId,
+        method,
+        device_id: targetDeviceId,
+        elapsed_ms: Date.now() - startedAt,
+        reason,
+      });
+      reject(new Error(`${method} connection closed`));
+    };
     const timeout = globalThis.setTimeout(() => {
       if (settled) return;
       settled = true;
+      cleanup();
       console.warn("[Wework] Cloud runtime RPC request timed out", {
         request_id: requestId,
         method,
@@ -164,6 +203,11 @@ async function emitRuntimeRequest<T>(
       reject(new Error(`${method} timed out`));
     }, acknowledgementTimeoutMs);
 
+    client.socket.on("disconnect", onDisconnect);
+    if (!client.socket.connected) {
+      onDisconnect("connection closed before request");
+      return;
+    }
     client.socket.emit(
       REQUEST_EVENT,
       {
@@ -188,7 +232,7 @@ async function emitRuntimeRequest<T>(
           return;
         }
         settled = true;
-        globalThis.clearTimeout(timeout);
+        cleanup();
         if (!ack) {
           console.warn(
             "[Wework] Cloud runtime RPC returned an empty acknowledgement",
@@ -210,7 +254,13 @@ async function emitRuntimeRequest<T>(
             elapsed_ms: Date.now() - startedAt,
             code: ack.error?.code,
           });
-          reject(new Error(formatRuntimeIpcError(ack)));
+          reject(
+            Object.assign(new Error(formatRuntimeIpcError(ack)), {
+              code: ack.error?.code,
+              retryable: ack.error?.retryable,
+              details: ack.error?.details,
+            }),
+          );
           return;
         }
         void decodeRuntimeIpcResult<T>(ack.result ?? null).then(

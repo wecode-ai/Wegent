@@ -1,17 +1,22 @@
-import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import * as tar from 'tar'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { SmartAppManager, type SmartAppRuntimeHost } from './smart-app-manager.js'
+import type { SmartAppRuntimeHost } from './smart-app-manager.js'
 import * as workbenchDshRuntime from '../runtime/workbench-dsh-runtime.js'
 import { WorkbenchRuntimeManager } from '../runtime/workbench-runtime.js'
+import { testNodeRuntime } from '../runtime/test-helpers.js'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
-import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
+import {
+  createManager,
+  createSmartAppArchive,
+  createSmartAppReleaseArchive,
+  validManifest,
+  verificationReport,
+} from './smart-app-manager.test-helpers.js'
 
 // The manager reaches the cloud through Chromium's network stack; unit tests exercise the HTTP
 // protocol against loopback fixtures with Node's implementation instead.
@@ -20,11 +25,13 @@ vi.mock('electron', () => ({
 }))
 
 const roots: string[] = []
+const runtimeManagers: WorkbenchRuntimeManager[] = []
 
 const DECISION_ROUTE_TOKEN = `decision-${'a'.repeat(64)}`
 const DECISION_ROUTE_URL = `http://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}`
 
 afterEach(async () => {
+  await Promise.all(runtimeManagers.splice(0).map(runtime => runtime.stop()))
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -33,19 +40,22 @@ describe('SmartAppManager', () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-dynamic-port-'))
     roots.push(root)
     const runtimes = new WorkbenchRuntimeManager()
+    runtimeManagers.push(runtimes)
+    const node = await testNodeRuntime(root)
     const launch = vi
       .spyOn(workbenchDshRuntime, 'prepareWorkbenchDshLaunch')
       .mockImplementation(async options => ({
-        command: process.execPath,
+        command: node.command,
         entry: 'fixture',
         args: [
+          ...node.argsPrefix,
           '-e',
           `const server = require('node:http').createServer((_, response) => response.end('ready'))
            server.listen(0, '127.0.0.1', () => console.log('dsh web: http://127.0.0.1:' + server.address().port))`,
         ],
         cwd: root,
         dshHome: root,
-        environment: {},
+        environment: node.environment,
         profile: options.manifest.entry.profile,
         url: `http://127.0.0.1:${options.port}/`,
         version: '0.1.0-rc.8',
@@ -919,141 +929,3 @@ describe('SmartAppManager', () => {
     await expect(stat(archivePath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
-
-function createManager(
-  root: string,
-  verificationService?: {
-    verify(path: string): Promise<SmartAppVerificationReport>
-    inspect(path: string): Promise<SmartAppVerificationReport | null>
-    pack(
-      path: string,
-      output: string
-    ): Promise<{
-      archivePath: string
-      sha256: string
-      sizeBytes: number
-      manifest: WorkbenchAppManifest
-      report: SmartAppVerificationReport
-    }>
-  },
-  environment: NodeJS.ProcessEnv = {},
-  runtimeHost: SmartAppRuntimeHost = {
-    open: vi.fn(),
-    close: vi.fn(),
-    runningTabIds: () => new Set(),
-  }
-): SmartAppManager {
-  return new SmartAppManager({
-    dataDirectory: join(root, 'data'),
-    documentsDirectory: () => join(root, 'Documents'),
-    downloadsDirectory: () => join(root, 'downloads'),
-    logDirectory: join(root, 'logs'),
-    runtimeRoot: join(root, 'runtime'),
-    environment,
-    runtimeHost: () => runtimeHost,
-    verificationService,
-  })
-}
-
-function verificationReport(): SmartAppVerificationReport {
-  return {
-    schemaVersion: 1,
-    status: 'passed',
-    projectRoot: '/project',
-    inputFingerprint: 'input',
-    deliverableFingerprint: 'deliverable',
-    startedAt: '2026-09-04T00:00:00.000Z',
-    finishedAt: '2026-09-04T00:00:01.000Z',
-    stages: [],
-    issues: [],
-  }
-}
-
-function validManifest(): WorkbenchAppManifest {
-  return {
-    name: 'fixture-app',
-    displayName: 'Fixture App',
-    version: '1.0.0',
-    type: 'deepseek-harness-plugin-bundle',
-    description: 'Smart app fixture',
-    packages: [
-      {
-        name: 'fixture-plugin',
-        role: 'profile-bundle',
-        path: 'app',
-      },
-    ],
-    entry: {
-      installPackage: 'app',
-      profile: 'fixture',
-    },
-    requirements: {
-      dsh: '0.1.0-rc.8',
-      node: '>=24',
-    },
-  }
-}
-
-async function createSmartAppArchive(
-  root: string,
-  manifest: WorkbenchAppManifest
-): Promise<string> {
-  const source = join(root, `source-${Math.random().toString(16).slice(2)}`)
-  await mkdir(join(source, 'app'), { recursive: true })
-  await writeFile(join(source, 'plugin-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-  await writeFile(
-    join(source, 'app', 'package.json'),
-    `${JSON.stringify({ name: 'fixture-plugin', version: '1.0.0' })}\n`
-  )
-  const archivePath = `${source}.zip`
-  await new Promise<void>((resolvePromise, reject) => {
-    const output = createWriteStream(archivePath)
-    const archive = new ZipArchive({ zlib: { level: 9 } })
-    output.once('close', resolvePromise)
-    output.once('error', reject)
-    archive.once('error', reject)
-    archive.pipe(output)
-    archive.directory(source, false)
-    void archive.finalize()
-  })
-  return archivePath
-}
-
-async function createSmartAppReleaseArchive(
-  root: string,
-  manifest: WorkbenchAppManifest,
-  omittedPackageName?: string
-): Promise<string> {
-  const source = join(root, `release-${Math.random().toString(16).slice(2)}`)
-  await mkdir(source)
-  await writeFile(join(source, 'plugin-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-  for (const descriptor of manifest.packages ?? []) {
-    if (descriptor.name === omittedPackageName) continue
-    const packageRoot = join(root, `npm-${descriptor.name.replaceAll('/', '-')}`)
-    await mkdir(join(packageRoot, 'package'), { recursive: true })
-    await writeFile(
-      join(packageRoot, 'package', 'package.json'),
-      `${JSON.stringify({ name: descriptor.name, version: '1.0.0' })}\n`
-    )
-    await tar.c(
-      {
-        cwd: packageRoot,
-        file: join(source, `${descriptor.name.replaceAll('/', '-')}.tgz`),
-        gzip: true,
-      },
-      ['package']
-    )
-  }
-  const archivePath = `${source}.zip`
-  await new Promise<void>((resolvePromise, reject) => {
-    const output = createWriteStream(archivePath)
-    const archive = new ZipArchive({ zlib: { level: 9 } })
-    output.once('close', resolvePromise)
-    output.once('error', reject)
-    archive.once('error', reject)
-    archive.pipe(output)
-    archive.directory(source, 'fixture-release')
-    void archive.finalize()
-  })
-  return archivePath
-}

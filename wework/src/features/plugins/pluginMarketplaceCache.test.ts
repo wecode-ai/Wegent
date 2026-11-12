@@ -4,6 +4,7 @@ import type { InstalledPluginItem } from '@/components/plugins/PluginManagementR
 import { CODEX_INSTALLATION_RECEIPT_TTL_MS } from '@/api/local/codexPluginInstallation'
 import {
   clearPluginMarketplaceCache,
+  capturePluginMarketplaceScope,
   flushPluginMarketplaceCachePersist,
   getPluginMarketplaceCache,
   marketplaceItemsSignature,
@@ -105,6 +106,26 @@ describe('pluginMarketplaceCache', () => {
     vi.restoreAllMocks()
     clearPluginMarketplaceCache()
   })
+
+  test.each(['account', 'device', 'clear'] as const)(
+    'expires a settings scope after %s changes even when the original scope returns',
+    change => {
+      publishGithub([acceptedGithub()])
+      const isCurrent = capturePluginMarketplaceScope('receipt-account', 'receipt-device')
+      publishGithub([acceptedGithub()])
+      expect(isCurrent()).toBe(true)
+      if (change === 'clear') clearPluginMarketplaceCache()
+      else
+        publishGithub(
+          [],
+          change === 'account' ? 'other-account' : 'receipt-account',
+          change === 'device' ? 'other-device' : 'receipt-device'
+        )
+      expect(isCurrent()).toBe(false)
+      publishGithub([acceptedGithub()])
+      expect(isCurrent()).toBe(false)
+    }
+  )
 
   function acceptedGithub() {
     const plugin = installedItem(
@@ -602,6 +623,77 @@ describe('pluginMarketplaceCache', () => {
     ])
   })
 
+  test.each(['different-name', 'same-name'])(
+    'keeps account install IDs separate from catalog IDs during uninstall: %s',
+    naming => {
+      const key = 'identity-domains'
+      const target = installedItem('75', 'wegent', 'target')
+      target.raw.spec.pluginId = 2
+      const otherName = naming === 'same-name' ? 'target' : 'other'
+      const other = installedItem('88', 'wegent', otherName)
+      other.raw.spec.pluginId = 75
+      setPluginMarketplaceCache({
+        cacheKey: key,
+        marketplaceItems: [
+          item({ id: 2, name: 'target', installed: true, installedPluginId: 75 }),
+          item({ id: 75, name: otherName, installed: true, installedPluginId: 88 }),
+        ],
+        installedPlugins: [target.raw, other.raw],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        deviceId: 'device-1',
+        fetchedAt: Date.now(),
+      })
+
+      const next = removePluginMarketplaceInstallation(key, {
+        installedIds: [75],
+        marketplaceItemIds: [2],
+        pluginKeys: ['target'],
+        marketplaceId: 'wegent',
+      })
+
+      expect(next?.installedPlugins).toEqual([other.raw])
+      expect(next?.marketplaceItems).toEqual([
+        expect.objectContaining({ id: 2, installed: false, installedPluginId: null }),
+        expect.objectContaining({ id: 75, installed: true, installedPluginId: 88 }),
+      ])
+    }
+  )
+
+  test('clears remote catalog aliases without confusing their installation IDs', () => {
+    const key = 'remote-identity-domains'
+    const target = installedItem('local-receipt', 'remote-market', 'target')
+    target.raw.spec.sourcePayload = { remotePluginId: 'remote-catalog-id' }
+    setPluginMarketplaceCache({
+      cacheKey: key,
+      marketplaceItems: [
+        item({
+          id: 'catalog-row',
+          remotePluginId: 'remote-catalog-id',
+          name: 'target',
+          installed: true,
+          installedPluginId: 'local-receipt',
+        }),
+      ],
+      installedPlugins: [target.raw],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      fetchedAt: Date.now(),
+    })
+
+    const next = removePluginMarketplaceInstallation(key, {
+      installedIds: [],
+      marketplaceItemIds: ['remote-catalog-id'],
+      pluginKeys: [],
+    })
+    expect(next?.installedPlugins).toEqual([])
+    expect(next?.marketplaceItems[0]).toMatchObject({
+      installed: false,
+      installedPluginId: null,
+    })
+  })
+
   test('preserves case-distinct marketplace IDs when uninstalling by plugin key', () => {
     const key = pluginMarketplaceCacheKey('http://api', 'token-marketplace-case')
     const first = installedItem('59', 'market-a', 'shared-name')
@@ -651,6 +743,8 @@ describe('pluginMarketplaceCache', () => {
     expect(sameMarketplaceItems(left, left)).toBe(true)
     expect(sameMarketplaceItems(left, right)).toBe(false)
     expect(marketplaceItemsSignature(left)).not.toBe(marketplaceItemsSignature(right))
+    const changedSharedVersion = [{ ...left[0], sharedVersion: '0.9.0' }]
+    expect(sameMarketplaceItems(left, changedSharedVersion)).toBe(false)
   })
 
   test('detects installedPluginId and display name changes via signature', () => {
@@ -675,6 +769,37 @@ describe('pluginMarketplaceCache', () => {
     ]
 
     expect(sameMarketplaceItems(left, right)).toBe(false)
+  })
+
+  test('retains installed plugin device transitions even when package metadata is unchanged', () => {
+    const ready = installedItem('101', 'wegent', 'documents')
+    ready.raw.status.devices = [
+      {
+        deviceId: 'current-device',
+        state: 'installed',
+        desiredReleaseId: 1001,
+        actualReleaseId: 1001,
+        attemptCount: 0,
+      },
+    ]
+    const removing = {
+      ...ready,
+      raw: {
+        ...ready.raw,
+        status: {
+          ...ready.raw.status,
+          devices: [
+            {
+              ...ready.raw.status.devices[0]!,
+              state: 'uninstalling' as const,
+            },
+          ],
+        },
+      },
+    }
+    expect(sameInstalledPlugins([ready], [removing])).toBe(false)
+    expect(sameInstalledPlugins([removing], [ready])).toBe(false)
+    expect(sameInstalledPlugins([ready], [structuredClone(ready)])).toBe(true)
   })
 
   test('detects device installation state changes via signature', () => {
@@ -718,6 +843,18 @@ describe('pluginMarketplaceCache', () => {
       }),
     ]
     expect(sameMarketplaceItems(available, locked)).toBe(false)
+  })
+
+  test.each([
+    ['manual', 'auto'],
+    ['auto', 'manual'],
+  ] as const)('detects a refreshed update policy changing from %s to %s', (before, after) => {
+    const previous = installedItem('83', 'wegent', 'auto-update')
+    previous.raw.spec.updatePolicy = before
+    const refreshed = structuredClone(previous)
+    refreshed.raw.spec.updatePolicy = after
+
+    expect(sameInstalledPlugins([previous], [refreshed])).toBe(false)
   })
 
   test('detects installed plugin name and distribution changes via signature', () => {
@@ -862,6 +999,71 @@ describe('pluginMarketplaceCache', () => {
     expect(getPluginMarketplaceCache(key)?.marketplaceItems[0]?.components.skills).toEqual([
       { name: 'review', description: 'Review code', path: 'skills/review' },
     ])
+  })
+
+  test('persists source ownership changes even when canonical records are unchanged', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-sources')
+    const plugin = installedItem('tool@market', 'market', 'tool').raw
+    const identity = 'market:tool'
+    const snapshot = {
+      cacheKey: key,
+      deviceId: 'device',
+      fetchedAt: Date.now(),
+      marketplaceItems: [],
+      installedPlugins: [plugin],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+    }
+    setPluginMarketplaceCache(
+      {
+        ...snapshot,
+        localInstalledSources: { codex: [identity], store: [] },
+        localInstalledSourceStatus: { codex: 'fulfilled', store: 'fulfilled' },
+      },
+      { persistImmediately: true }
+    )
+    setPluginMarketplaceCache(
+      {
+        ...snapshot,
+        localInstalledSources: { codex: [], store: [identity] },
+        localInstalledSourceStatus: { codex: 'rejected', store: 'fulfilled' },
+      },
+      { persistImmediately: true }
+    )
+
+    resetPluginMarketplaceCacheMemory()
+    const restored = getPluginMarketplaceCache(key)!
+    expect(restored.installedPlugins).toHaveLength(1)
+    expect(restored.localInstalledSources).toEqual({ codex: [], store: [identity] })
+    expect(restored.localInstalledSourceStatus).toEqual({ codex: 'rejected', store: 'fulfilled' })
+  })
+
+  test('remaps native ownership when a cloud response projects a new canonical identity', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-project-source')
+    const raw = installedItem('tool@market', 'market', 'tool').raw
+    raw.spec.sourcePayload = { cloudPluginId: 42, managedByWegent: true }
+    const base = {
+      cacheKey: key,
+      deviceId: 'device',
+      fetchedAt: Date.now(),
+      marketplaceItems: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+    }
+    setPluginMarketplaceCache(
+      { ...base, installedPlugins: [raw], localInstalledSources: { store: ['market:tool'] } },
+      { persistImmediately: true }
+    )
+    const cloud = { ...raw, spec: { ...raw.spec, pluginId: 42 } }
+    setPluginMarketplaceCache({ ...base, installedPlugins: [cloud] }, { persistImmediately: true })
+    resetPluginMarketplaceCacheMemory()
+    expect(getPluginMarketplaceCache(key)?.localInstalledSources?.store).toEqual(['cloud:42'])
+    removePluginMarketplaceInstallation(key, {
+      installedIds: ['tool@market'],
+      pluginKeys: ['tool'],
+      marketplaceItemIds: [],
+    })
+    expect(getPluginMarketplaceCache(key)?.localInstalledSources?.store).toEqual([])
   })
 
   test('flushPluginMarketplaceCachePersist writes the pending snapshot immediately', () => {

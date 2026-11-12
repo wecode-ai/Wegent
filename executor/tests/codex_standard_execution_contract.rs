@@ -43,6 +43,13 @@ mod streaming;
 #[path = "codex_standard_execution_contract/mcp_forms.rs"]
 mod mcp_forms;
 
+#[path = "codex_standard_execution_contract/file_changes.rs"]
+mod file_changes;
+
+#[path = "codex_standard_execution_contract/process_exit.rs"]
+mod process_exit;
+use process_exit::{wait_for_process_exit, wait_for_tool_child_exit, ProcessCleanup};
+
 #[derive(Clone)]
 struct ChannelSink(mpsc::UnboundedSender<EventEnvelope>);
 
@@ -433,6 +440,8 @@ async fn codex_cancelling_a_pending_form_cleans_up_the_process_and_rejects_stale
 #[tokio::test]
 async fn codex_cancelling_a_pending_form_terminates_its_tool_child_process() {
     let _lock = env_lock().await;
+    #[cfg(target_os = "linux")]
+    let _subreaper = process_exit::ChildSubreaper::install();
     let fixture = Fixture::new("question-with-child");
     let engine = fixture.engine();
     let request = fixture.request("first");
@@ -450,7 +459,7 @@ async fn codex_cancelling_a_pending_form_terminates_its_tool_child_process() {
     assert!(engine.cancel_pending(&request.task_id, None).is_some());
 
     wait_for_process_exit(parent_pid).await;
-    wait_for_process_exit(child_pid).await;
+    wait_for_tool_child_exit(child_pid).await;
     cleanup.0.clear();
 }
 
@@ -733,30 +742,6 @@ fn assert_single_turn(messages: &[Value]) {
             1,
             "unexpected {method} restart"
         );
-    }
-}
-
-async fn wait_for_process_exit(pid: i32) {
-    tokio::time::timeout(TIMEOUT, async {
-        // Signal zero only checks process existence.
-        while unsafe { libc::kill(pid, 0) } == 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("suspended Codex process must be reaped after cancellation or sink failure");
-}
-
-struct ProcessCleanup(Vec<i32>);
-
-impl Drop for ProcessCleanup {
-    fn drop(&mut self) {
-        // Clean up test-owned processes even if an assertion fails.
-        for pid in &self.0 {
-            unsafe {
-                libc::kill(*pid, libc::SIGKILL);
-            }
-        }
     }
 }
 

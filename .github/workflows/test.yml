@@ -19,11 +19,12 @@ on:
       - checks_requested
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ci:all' && github.run_id || 'code' }}
   cancel-in-progress: true
 
 jobs:
   changes:
+    if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all'
     name: Detect CI Changes
     runs-on: ubuntu-latest
     outputs:
@@ -68,6 +69,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    env:
+      BACKEND_GUARD_TESTS: >-
+        tests/test_collaboration_permission_guard.py
+        tests/api/test_collaboration_permission_contract.py
+        tests/api/test_collaboration_permission_resources.py
+        tests/api/test_loop_item_reorder_permissions.py
+        tests/api/test_workspace_shared_agents.py
+        tests/models/test_collaboration_permission_compatibility.py
+        tests/test_startup_migration_failure.py
+        tests/services/test_runner_routing.py
 
     steps:
       - name: Checkout code
@@ -91,19 +102,33 @@ jobs:
         working-directory: ./backend
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests/test_collaboration_permission_guard.py tests/api/test_collaboration_permission_contract.py tests/api/test_collaboration_permission_resources.py tests/api/test_loop_item_reorder_permissions.py tests/api/test_workspace_shared_agents.py tests/models/test_collaboration_permission_compatibility.py tests/test_startup_migration_failure.py tests/services/test_runner_routing.py -n 0
+        run: |
+          set -euo pipefail
+          mkdir -p ../.ci-artifacts/backend-tests
+          read -r -a guard_tests <<< "$BACKEND_GUARD_TESTS"
+          uv run pytest "${guard_tests[@]}" -n 0 --cov=app --cov-report= --durations=40 \
+            --junitxml=../.ci-artifacts/backend-tests/guard-results.xml
+          git rev-parse HEAD > ../.ci-artifacts/backend-tests/guard.sha.txt
 
       - name: Run backend tests
         working-directory: ./backend
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          set -o pipefail
+          set -euo pipefail
+          test -f .coverage
+          test "$(cat ../.ci-artifacts/backend-tests/guard.sha.txt)" = "$(git rev-parse HEAD)"
+          read -r -a guard_tests <<< "$BACKEND_GUARD_TESTS"
+          ignore_guards=("${guard_tests[@]/#/--ignore=}")
           mkdir -p ../.ci-artifacts/backend-tests
           git rev-parse HEAD > ../.ci-artifacts/backend-tests/sha.txt
-          echo 'uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v --junitxml=../.ci-artifacts/backend-tests/results.xml' > ../.ci-artifacts/backend-tests/command.txt
-          uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v \
-            --junitxml=../.ci-artifacts/backend-tests/results.xml \
+          # These read-only schema assertions share one worker's production OpenAPI cache.
+          command=(uv run pytest tests/ "${ignore_guards[@]}" --dist=loadgroup --cov=app --cov-append --durations=40 \
+            --cov-report=xml --cov-report=term-missing -v \
+            --junitxml=../.ci-artifacts/backend-tests/results.xml)
+          printf '%q ' "${command[@]}" > ../.ci-artifacts/backend-tests/command.txt
+          printf '\n' >> ../.ci-artifacts/backend-tests/command.txt
+          "${command[@]}" \
             2>&1 | tee ../.ci-artifacts/backend-tests/pytest.log
 
       - name: Upload backend test evidence
@@ -131,11 +156,23 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       WEGENT_TEST_MYSQL_ADDRESS: 127.0.0.1:3306
+      WEGENT_TEST_REDIS_ADDRESS: 127.0.0.1:6379
+      WEGENT_TEST_REDIS_REPLICA_ADDRESS: 127.0.0.1:6380
+      WEGENT_TEST_REDIS_REPLICA_PRIMARY: redis:6379
     services:
       redis:
         image: redis:7-alpine
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      redis-replica:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
         options: >-
           --health-cmd="redis-cli ping"
           --health-interval=5s
@@ -158,9 +195,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Configure backend Rust target directory
-        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/backend-rs-target" >> "$GITHUB_ENV"
-
       - name: Set up Python and uv for gateway tests
         uses: ./.github/actions/setup-python-uv-cache
         with:
@@ -169,20 +203,24 @@ jobs:
       - name: Prepare stdlib-only Python environment for gateway tests
         run: uv venv --python 3.11 backend/.venv
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
         with:
+          manifest-path: backend-rs/Cargo.toml
           components: rustfmt, clippy
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
 
       - name: Check Rust backend formatting
         working-directory: backend-rs
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Record signal runtime for gateway tests
         run: /bin/kill --version
+
+      - name: Check shared Rust library formatting and tests
+        run: |
+          cargo fmt --manifest-path shared/rust/Cargo.toml --all --check
+          cargo test --manifest-path shared/rust/Cargo.toml --locked
+          cargo clippy --manifest-path shared/rust/Cargo.toml --all-targets --locked -- -D warnings
 
       - name: Run Rust backend tests
         working-directory: backend-rs
@@ -192,6 +230,73 @@ jobs:
           git rev-parse HEAD > ../.ci-artifacts/backend-rs-tests/sha.txt
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
+
+      - name: Verify Socket.IO device heartbeat with Redis
+        working-directory: backend-rs
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+          WEGENT_BACKEND_RS_ENV_FILE: /dev/null
+          SECRET_KEY: heartbeat-e2e-signing-key
+        run: |
+          set -o pipefail
+          cargo test --locked --test device_heartbeat_redis -- --ignored --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/device-heartbeat-redis.log
+
+      - name: Verify streaming activity recovery with Redis
+        working-directory: backend-rs
+        env:
+          WEGENT_TEST_REDIS_ADDRESS: 127.0.0.1:6379
+          RUNNER_RESOURCE_LOG_PATH: ../.ci-artifacts/backend-rs-tests/streaming-activity-resources.jsonl
+          RUNNER_PROCESS_DIAGNOSTICS: "1"
+          RUNNER_RESOURCE_SAMPLE_INTERVAL_MS: "100"
+          REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
+        run: |
+          set -o pipefail
+          bash ../.github/scripts/run-with-redis-monitor.sh "$REDIS_CONTAINER_ID" \
+            ../.ci-artifacts/backend-rs-tests/streaming-activity-redis-arrivals.log \
+            node ../.github/scripts/run-with-resource-logging.mjs \
+            cargo test --locked --lib streaming_activity_redis_tests -- --ignored --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/streaming-activity-redis.log
+
+      - name: Test Git connection inbox against real Redis
+        working-directory: backend-rs
+        env:
+          GIT_INBOX_TEST_REDIS_ENDPOINT: 127.0.0.1:6379
+        run: |
+          set -o pipefail
+          cargo test --locked --lib git_connection_inbox::store::redis_tests -- --ignored --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/git-inbox-redis.log
+
+      - name: Verify native MySQL schema lifecycle and initialization
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
+
+      - name: Verify account HTTP plugin snapshots without Device registration
+        working-directory: backend-rs
+        env:
+          PLUGIN_LOCAL_SYNC_ENABLED: "true"
+          WEWORK_PLUGIN_CREDENTIAL_KEYS: '{"native-test":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+          WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: native-test
+          SECRET_KEY: plugin-local-contract-test
+          DATABASE_URL: mysql://root@127.0.0.1:3306/mysql
+          REDIS_URL: redis://127.0.0.1:6379/0
+          WEGENT_BACKEND_RS_ENV_FILE: /dev/null
+          EXECUTOR_MANAGER_URL: http://127.0.0.1:1
+        run: |
+          set -o pipefail
+          cargo test --locked --lib plugins_installed::local_sync::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-local-sync-mysql.log
+          cargo test --locked --lib plugin_account_auth::local_http::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-native-auth-mysql.log
+
+      - name: Verify plugin write leases with real Redis replication and MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib plugins_installed::auto_update::auto_update_mysql_tests -- --ignored --nocapture --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-write-replica-mysql.log
 
       - name: Verify attachment API key authentication with MySQL
         working-directory: backend-rs
@@ -213,6 +318,8 @@ jobs:
           set -o pipefail
           cargo test --locked --lib loop_tasks::assignment_index::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-index-mysql.log
+          cargo test --locked --lib loop_tasks::human_requests::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/human-requests-mysql.log
 
       - name: Verify batched project roster permission compatibility with MySQL
         working-directory: backend-rs
@@ -220,6 +327,13 @@ jobs:
           set -o pipefail
           cargo test --locked --lib cloud_projects::members::roster_mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-roster-mysql.log
+
+      - name: Verify project coordination binding ownership and revocation with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib project_coordination::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-coordination-mysql.log
 
       - name: Verify Responses HTTP E2E with large JSON and long conversations
         working-directory: backend-rs
@@ -344,34 +458,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure executor target directory
-        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/executor-target" >> "$GITHUB_ENV"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
         with:
+          manifest-path: executor/Cargo.toml
           components: rustfmt, clippy
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
 
       - name: Install executor Rust system dependencies
         run: .github/scripts/install-executor-rust-system-dependencies.sh
 
-      - name: Restore shared executor Cargo sources
-        id: executor-cargo-sources-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-${{ hashFiles('executor/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-
-
       - name: Run executor Rust format check
         working-directory: ./executor
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Run executor Rust tests
         working-directory: ./executor
@@ -435,21 +533,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - name: Verify Windows executor installer release selection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .github/scripts/test-local-executor-installer.ps1
 
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
-      - name: Restore shared executor Cargo sources
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-${{ hashFiles('executor/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-
+          manifest-path: executor/Cargo.toml
 
       - name: Run local connector auth platform tests
         working-directory: ./executor
@@ -457,13 +549,24 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib runtime_work::local_connector_auth::tests
 
-      - name: Run native index platform regressions
+      - name: Run native file platform regressions
         if: ${{ !cancelled() }}
         shell: bash
         working-directory: ./executor
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
-        run: cargo test --all-features --lib runtime_work::store::tests::atomic_write
+        run: |
+          cargo test --all-features --lib runtime_work::store::tests::atomic_write
+          cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::marketplace_sources::tests
+          cargo test --all-features --lib claude_execution_home_publishes_runtime_selection_beyond_windows_max_path
+          cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem --lib json_file::tests
+          cargo test --all-features --lib effective_instructions_tests
+          cargo test -p wegent-executor --all-features --lib side_source
+          cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem atomic_file::tests
+          cargo test -p wegent-workspace --lib workspace_files::tests
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            cargo test -p wegent-workspace --lib turn_file_changes::git_capture::capture_tests
+          fi
 
       - name: Run native worktree platform regressions
         if: ${{ !cancelled() }}
@@ -474,6 +577,8 @@ jobs:
         run: |
           cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
           cargo test --all-features --lib deferred_worktree_rebases_project_roots_using_path_identity
+          cargo test -p wegent-executor --all-features --lib cleanup_waits_for_owned_git_on_exit_timeout_and_cancellation -- --nocapture
+          cargo test -p wegent-workspace --all-features --lib pipe_lifetime_tests
 
       - name: Run native clone platform regressions
         if: ${{ !cancelled() }}
@@ -493,6 +598,9 @@ jobs:
           cargo test --all-features --lib local::plugin_import::hash_tests
           cargo test --all-features --lib runtime_rpc_dispatch_fits_a_bounded_worker_stack
           cargo test --all-features --lib agents::codex::tests::stopping_
+          cargo test --all-features --lib codex_app_server_starts_beyond_windows_max_path
+          cargo test --all-features --lib agents::codex::home::auth_tests
+          cargo test --all-features --lib agents::codex::auth_mode::tests
           cargo test --all-features --lib closed_notification_stream
           cargo test --all-features --lib stopped_active_goal_does_not_emit_a_terminal_result_or_discard_its_status
 
@@ -630,14 +738,14 @@ jobs:
           name: frontend-coverage
 
   test-wework:
-    name: Test Wework (${{ matrix.shard }}/2)
+    name: Test Wework (${{ matrix.shard }}/4)
     needs: changes
     if: needs.changes.outputs.wework == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout code
@@ -646,8 +754,21 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
+      - name: Restore verified Electron installer cache
+        if: matrix.shard == 1
+        uses: ./.github/actions/prepare-electron-installer-cache
+
       - name: Prepare Wework Electron dependencies
+        if: matrix.shard == 1
+        env:
+          WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: pnpm --filter wework prepare:electron
+
+      - name: Install Wework host modules for renderer fixtures
+        if: matrix.shard != 1
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Run process explorer package tests
         if: matrix.shard == 1
@@ -655,18 +776,55 @@ jobs:
           pnpm --filter @wegent/process-explorer typecheck
           pnpm --filter @wegent/process-explorer test
 
+      - name: Run Wework DSH Node tests
+        if: matrix.shard == 1
+        working-directory: ./wework
+        run: |
+          mapfile -d '' -t tests < <(find dsh -name '*.test.mjs' -print0)
+          if ((${#tests[@]} == 0)); then
+            echo 'No DSH tests found' >&2
+            exit 1
+          fi
+          node --test "${tests[@]}"
+
+      - name: Verify immutable upgrade artifact consumption
+        if: matrix.shard == 1
+        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs
+
+      - name: Verify startup theme evidence
+        if: matrix.shard == 1
+        run: node --test wework/scripts/startup-theme-evidence.test.mjs
+
+      - name: Verify isolated Electron update transport
+        if: matrix.shard == 1
+        run: |
+          sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
+          sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
+          dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
+
+      - name: Verify measured Wework test sharding
+        if: matrix.shard == 1
+        run: node --test wework/scripts/ci-test-sequencer.test.mjs
+
+      - name: Verify delegated work command and history contracts
+        if: matrix.shard == 1
+        run: node --test wework/scripts/dots-command-result.test.mjs wework/scripts/dots-history-navigation.test.mjs
+
       - name: Run Wework tests
         env:
           TZ: Asia/Shanghai
+          WEWORK_CI_BALANCED_SHARDS: "true"
+          WEWORK_TEST_TIMING_FILE: ${{ runner.temp }}/wework-unit-timings.json
         run: |
+          WEWORK_TEST_REPORT_FILE=../.ci-artifacts/wework-tests/renderer.xml \
           pnpm --filter wework exec vitest run \
-            --coverage \
             --passWithNoTests \
-            --shard=${{ matrix.shard }}/2 &
+            --shard=${{ matrix.shard }}/4 &
           vitest_pid=$!
 
           electron_pid=
           if [[ "${{ matrix.shard }}" == "1" ]]; then
+            WEWORK_TEST_REPORT_FILE=../../.ci-artifacts/wework-tests/electron.xml \
             pnpm --dir wework/electron test &
             electron_pid=$!
           fi
@@ -678,12 +836,22 @@ jobs:
           fi
           exit "$status"
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+      - name: Upload Wework unit timing evidence
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          files: ./wework/coverage/coverage-final.json
-          flags: wework
-          name: wework-coverage-${{ matrix.shard }}
+          name: wework-unit-timings-${{ matrix.shard }}
+          path: ${{ runner.temp }}/wework-unit-timings.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Wework test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-test-evidence-${{ matrix.shard }}
+          path: .ci-artifacts/wework-tests/
+          retention-days: 7
 
   test-wegent-cli:
     name: Test wegent CLI
@@ -840,7 +1008,7 @@ jobs:
         test-wegent-cli,
         test-wegent-cli-integration,
       ]
-    if: always() && !cancelled()
+    if: always() && !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
 
     steps:
       - name: Check test results

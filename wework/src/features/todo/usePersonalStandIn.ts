@@ -1,26 +1,21 @@
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { dequal } from 'dequal'
-import type {
-  PersonalStandInAgent,
-  PersonalStandInSettings,
-  StandInRole,
-} from '@/api/personalStandIn'
+import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
+/** Load and save account settings on the selected Executor while preserving dirty drafts and conflicts. */
 export function usePersonalStandIn(
   services: WorkbenchServices,
   userId: number,
   initialDeviceId?: string,
-  loadAgents = true
+  localDeviceId?: string
 ) {
   const [saved, setSaved] = useState<PersonalStandInSettings | null>(null)
   const [draft, setDraft] = useState<PersonalStandInSettings | null>(null)
   const [currentDeviceId, setCurrentDeviceId] = useState('')
   const [deviceId, setDeviceId] = useState(initialDeviceId ?? '')
-  const [agents, setAgents] = useState<PersonalStandInAgent[]>([])
-  const [agentError, setAgentError] = useState<string | null>(null)
-  const [agentReload, setAgentReload] = useState(0)
+  const [loadedDeviceId, setLoadedDeviceId] = useState(initialDeviceId)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -34,7 +29,9 @@ export function usePersonalStandIn(
   useEffect(() => {
     let active = true
     void (async () => {
-      const identity = await services.getLocalRuntimeSidebarIdentity?.()
+      const identity = localDeviceId
+        ? { deviceId: localDeviceId }
+        : await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity) throw new Error('Executor identity is unavailable')
       const target = deviceId || identity.deviceId
       const settings = await services.standInApi!.personalGet(userId, target)
@@ -42,6 +39,7 @@ export function usePersonalStandIn(
       const key = JSON.stringify([userId, target, reload])
       const previous = loaded.current
       loaded.current = { key, deviceId: target, settings }
+      setLoadedDeviceId(target)
       setCurrentDeviceId(identity.deviceId)
       setSaved(settings)
       setDraft(current =>
@@ -50,7 +48,10 @@ export function usePersonalStandIn(
       setError(null)
     })()
       .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
+        if (active) {
+          reportStandInError('load_settings', cause, deviceId)
+          setError(getStandInErrorMessage(cause, 'load_settings_failed'))
+        }
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -58,29 +59,7 @@ export function usePersonalStandIn(
     return () => {
       active = false
     }
-  }, [services, userId, deviceId, reload])
-
-  useEffect(() => {
-    if (!loadAgents) return
-    let active = true
-    void (async () => {
-      const identity = await services.getLocalRuntimeSidebarIdentity?.()
-      if (!identity) throw new Error('Executor identity is unavailable')
-      return services.standInApi!.personalAgents(userId, deviceId || identity.deviceId)
-    })()
-      .then(rows => {
-        if (active) {
-          setAgents(rows)
-          setAgentError(null)
-        }
-      })
-      .catch(cause => {
-        if (active) setAgentError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [services, userId, deviceId, agentReload, loadAgents])
+  }, [services, userId, deviceId, reload, localDeviceId])
 
   const updateRole = useCallback((id: string, update: (role: StandInRole) => StandInRole) => {
     setDraft(
@@ -103,7 +82,8 @@ export function usePersonalStandIn(
       setDraft(result)
       return result
     } catch (cause) {
-      setError(getStandInErrorMessage(cause))
+      reportStandInError('save_settings', cause, loaded.current?.deviceId)
+      setError(getStandInErrorMessage(cause, 'save_settings_failed'))
       return null
     } finally {
       setSaving(false)
@@ -114,15 +94,13 @@ export function usePersonalStandIn(
     draft,
     setDraft,
     updateRole,
-    agents: loadAgents ? agents : [],
-    agentError: loadAgents ? agentError : null,
-    reloadAgents: () => setAgentReload(value => value + 1),
     error,
     setError,
     loading,
     saving,
     save,
     currentDeviceId,
+    loadedDeviceId,
     setDeviceId: (value: string) => {
       setLoading(true)
       setDeviceId(value)

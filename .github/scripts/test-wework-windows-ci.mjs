@@ -88,6 +88,11 @@ assert.match(
   /if: contains\(matrix.segments, 'plugin-write-coordination'\)[^\n]*\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
   "Cloud plugin write coordination must use real object storage for sync recovery",
 );
+assert.doesNotMatch(
+  cloudBlock,
+  /'plugin-(?:catalog|operation)-boundaries'/,
+  "Plugin resilience must reuse the existing cloud checkpoint resources",
+);
 for (const job of [
   "wework-desktop-core-e2e",
   "wework-desktop-windows-core-e2e",

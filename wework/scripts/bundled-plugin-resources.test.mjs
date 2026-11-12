@@ -1,6 +1,9 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+// @vitest-environment node
+
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, test } from 'vitest'
 
 import { materializeBundledPluginResources } from './lib/bundled-plugin-resources.mjs'
@@ -13,6 +16,30 @@ afterEach(async () => {
 })
 
 describe('bundled plugin resources', () => {
+  test('ships specialized runtime skills without a replacement for native coding guidance', async () => {
+    const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
+    const runtimeRoot = join(
+      repositoryRoot,
+      'wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime'
+    )
+    const skills = await readdir(join(runtimeRoot, 'skills'))
+    expect(skills).not.toContain('coding')
+    expect(skills).toEqual(
+      expect.arrayContaining([
+        'artifacts',
+        'browser',
+        'computer',
+        'connector-auth',
+        'conversations',
+        'github',
+        'visualize',
+      ])
+    )
+    await expect(
+      readFile(join(repositoryRoot, 'shared/assets/codexProgressiveInstructions.md'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   test('projects a nested official Codex plugin from its outer Wework package', async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), 'wework-bundled-plugin-resources-'))
     const weworkRoot = join(fixtureRoot, 'wework')

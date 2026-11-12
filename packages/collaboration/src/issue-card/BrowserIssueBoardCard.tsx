@@ -3,6 +3,7 @@ import { useRuntimeDeviceAccess } from '../conversation/useRuntimeDeviceAccess'
 import { useBoardRuntimeGoals } from './useBoardRuntimeGoals'
 import type { RuntimeGoal } from '@wegent/chat-core/runtime-stream-types'
 import { useMemo } from 'react'
+import { standInProcessingActor } from '../issueParticipation'
 import type { RuntimeWorkListResponse } from '@wegent/chat-core/runtime-task-api-types'
 import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
 import { IssueBoardCard, type IssueBoardCardProps } from './IssueBoardCard'
@@ -45,7 +46,10 @@ export function BrowserIssueBoardCard({
     task_id: binding.taskId,
     task_title: binding.taskTitle,
     running: Boolean(
-      findRuntimeTask(work, { deviceId: binding.deviceId, taskId: binding.taskId })?.running
+      findRuntimeTask(work, {
+        deviceId: binding.deviceId,
+        taskId: binding.taskId,
+      })?.running
     ),
   }))
   const active = isLoopItemExecutionActive(item, isExecutionActive)
@@ -64,7 +68,10 @@ export function BrowserIssueBoardCard({
     runtime.work,
     progress
       .filter(binding => access.get(binding.deviceId) === 'allowed')
-      .map(binding => ({ deviceId: binding.deviceId, taskId: binding.taskId })),
+      .map(binding => ({
+        deviceId: binding.deviceId,
+        taskId: binding.taskId,
+      })),
     props.translate('todo.current_conversation_goal_load_failed')
   )
   const goal = current
@@ -73,7 +80,20 @@ export function BrowserIssueBoardCard({
   return (
     <IssueBoardCard
       {...props}
-      item={item}
+      item={{
+        ...item,
+        execution_state: running.length ? 'running' : item.execution_state,
+        processing_actor:
+          standInProcessingActor(
+            current
+              ? findRuntimeTask(work, {
+                  deviceId: current.deviceId,
+                  taskId: current.taskId,
+                })?.runtimeHandle
+              : undefined,
+            current?.running === true
+          ) ?? item.processing_actor,
+      }}
       goal={current && goal ? { bindingId: current.id, objective: goal.objective } : null}
       progressTaskBindings={progress}
       renderTaskSummary={(binding, compact) =>
@@ -91,7 +111,10 @@ export function BrowserIssueBoardCard({
             item={item}
             binding={binding}
             compact={compact}
-            goal={goals.get({ deviceId: binding.deviceId, taskId: binding.taskId })}
+            goal={goals.get({
+              deviceId: binding.deviceId,
+              taskId: binding.taskId,
+            })}
             onRetryGoal={goals.retry}
             active={binding.running || (binding.id === bindings[0]?.id && active)}
             focused={focused}

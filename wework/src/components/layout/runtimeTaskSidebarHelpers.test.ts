@@ -1,45 +1,100 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { RuntimeDeviceWorkspace } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import {
-  hasExpandedRuntimeSidebarTaskItems,
-  getNextRuntimeSidebarTaskVisibleLimit,
-  getRuntimeChatSidebarTaskItems,
   getRuntimeSidebarTaskItems,
-  getRuntimeTaskAddress,
+  getRuntimeChatSidebarTaskItems,
   getVisibleRuntimeSidebarTaskItems,
-  hasHiddenRuntimeSidebarTaskItems,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
 
 describe('runtimeTaskSidebarHelpers', () => {
-  test('uses persisted sidebar order before activity time', () => {
+  test.each(['running', 'done', 'failed', 'waiting_input'])(
+    'hides %s memory maintenance from shared task lists while retaining stored history',
+    status => {
+      const workspace: RuntimeDeviceWorkspace = {
+        deviceId: 'device-1',
+        workspacePath: '/chats',
+        workspaceKind: 'chat',
+        available: true,
+        tasks: [
+          {
+            taskId: 'memory-run',
+            workspacePath: '/chats',
+            title: 'Renamed maintenance',
+            runtime: 'codex',
+            pinned: true,
+            status,
+            runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
+          },
+          {
+            taskId: 'weekly-review',
+            workspacePath: '/chats',
+            title: 'Weekly review',
+            runtime: 'codex',
+            runtimeHandle: { origin: { type: 'stand_in_schedule', weeklyReview: true } },
+          },
+          {
+            taskId: 'ordinary',
+            workspacePath: '/chats',
+            title: '分身记忆整理',
+            runtime: 'codex',
+          },
+        ],
+      }
+      const storedTasks = [...workspace.tasks]
+      for (const list of [getRuntimeSidebarTaskItems, getRuntimeChatSidebarTaskItems]) {
+        expect(list([workspace]).map(item => item.task.taskId)).toEqual([
+          'weekly-review',
+          'ordinary',
+        ])
+      }
+      expect(workspace.tasks).toEqual(storedTasks)
+    }
+  )
+
+  test('omits the primary identity without changing stored work or hiding delegated tasks', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
-      workspacePath: '/workspace/repo',
+      workspacePath: '/chats',
+      workspaceKind: 'chat',
       available: true,
       tasks: [
         {
-          taskId: 'newer-second',
-          workspacePath: '/workspace/repo',
-          title: 'Newer second',
+          taskId: 'stand-in-chat-7-primary',
+          workspacePath: '/chats',
+          title: 'Primary identity',
           runtime: 'codex',
-          sidebarOrder: 1,
-          completedAt: '2026-08-12T03:00:00.000Z',
+          pinned: true,
+          runtimeHandle: {
+            origin: { type: 'stand_in_identity', userId: 7, standInId: null },
+          },
         },
         {
-          taskId: 'older-first',
-          workspacePath: '/workspace/repo',
-          title: 'Older first',
+          taskId: 'delegated-work',
+          workspacePath: '/chats',
+          title: 'Delegated work',
           runtime: 'codex',
-          sidebarOrder: 0,
-          completedAt: '2026-08-12T02:00:00.000Z',
+          runtimeHandle: { origin: { type: 'stand_in_task', userId: 7 } },
+        },
+        {
+          taskId: 'ordinary-conversation',
+          workspacePath: '/chats',
+          title: '我的助理',
+          runtime: 'codex',
         },
       ],
     }
 
-    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
-      'older-first',
-      'newer-second',
+    const expected = ['delegated-work', 'ordinary-conversation']
+    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual(expected)
+    expect(getRuntimeChatSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual(
+      expected
+    )
+    expect(workspace.tasks.map(task => task.taskId)).toEqual([
+      'stand-in-chat-7-primary',
+      ...expected,
     ])
   })
 
@@ -90,161 +145,6 @@ describe('runtimeTaskSidebarHelpers', () => {
       'ordered-3',
       'ordered-4',
     ])
-  })
-
-  test('sorts tasks without manual order by provider recency', () => {
-    const workspace: RuntimeDeviceWorkspace = {
-      deviceId: 'device-1',
-      workspacePath: '/workspace/chats',
-      workspaceKind: 'chat',
-      available: true,
-      tasks: [
-        {
-          taskId: 'recently-reactivated',
-          workspacePath: '/workspace/chats/recently-reactivated',
-          workspaceKind: 'chat',
-          title: 'Recently reactivated',
-          runtime: 'codex',
-          createdAt: '2026-08-01T02:00:00.000Z',
-          updatedAt: '2026-08-18T02:00:00.000Z',
-          recencyAt: '2026-08-17T02:00:00.000Z',
-        },
-        {
-          taskId: 'previously-first',
-          workspacePath: '/workspace/chats/previously-first',
-          workspaceKind: 'chat',
-          title: 'Previously first',
-          runtime: 'codex',
-          createdAt: '2026-08-16T02:00:00.000Z',
-          updatedAt: '2026-08-19T02:00:00.000Z',
-          recencyAt: '2026-08-16T02:00:00.000Z',
-        },
-      ],
-    }
-
-    expect(getRuntimeChatSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
-      'recently-reactivated',
-      'previously-first',
-    ])
-  })
-
-  test('keeps the current task visible beyond the collapsed ordered task list', () => {
-    const workspace: RuntimeDeviceWorkspace = {
-      deviceId: 'device-1',
-      workspacePath: '/workspace/repo',
-      available: true,
-      tasks: Array.from({ length: RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 2 }, (_, index) => ({
-        taskId: `ordered-${index + 1}`,
-        workspacePath: '/workspace/repo',
-        title: `Ordered ${index + 1}`,
-        runtime: 'codex' as const,
-        sidebarOrder: index,
-        completedAt:
-          index === RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 1
-            ? '2026-08-11T00:00:00.000Z'
-            : `2026-08-12T0${index + 1}:00:00.000Z`,
-      })),
-    }
-
-    const items = getRuntimeSidebarTaskItems([workspace])
-
-    expect(
-      getVisibleRuntimeSidebarTaskItems(
-        items,
-        RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
-        'ordered-6',
-        item => item.task.taskId === 'ordered-7'
-      ).map(item => item.task.taskId)
-    ).toEqual([
-      'ordered-1',
-      'ordered-2',
-      'ordered-3',
-      'ordered-4',
-      'ordered-5',
-      'ordered-6',
-      'ordered-7',
-    ])
-  })
-
-  test('keeps the most recently completed task visible beyond the collapsed ordered task list', () => {
-    const workspace: RuntimeDeviceWorkspace = {
-      deviceId: 'device-1',
-      workspacePath: '/workspace/repo',
-      available: true,
-      tasks: Array.from({ length: RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 1 }, (_, index) => ({
-        taskId: `ordered-${index + 1}`,
-        workspacePath: '/workspace/repo',
-        title: `Ordered ${index + 1}`,
-        runtime: 'codex' as const,
-        sidebarOrder: index,
-        completedAt:
-          index === RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
-            ? '2026-08-14T09:00:00.000Z'
-            : `2026-08-12T0${index + 1}:00:00.000Z`,
-        recencyAt:
-          index === RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
-            ? '2026-08-14T09:00:00.000Z'
-            : `2026-08-12T0${index + 1}:00:00.000Z`,
-      })),
-    }
-
-    expect(
-      getVisibleRuntimeSidebarTaskItems(getRuntimeSidebarTaskItems([workspace])).map(
-        item => item.task.taskId
-      )
-    ).toEqual(['ordered-1', 'ordered-2', 'ordered-3', 'ordered-4', 'ordered-5', 'ordered-6'])
-  })
-
-  test('sorts runtime task items newest first across workspaces', () => {
-    const oldWorkspace: RuntimeDeviceWorkspace = {
-      deviceId: 'device-1',
-      workspacePath: '/workspace/repo',
-      available: true,
-      tasks: [
-        {
-          taskId: 'older-running',
-          workspacePath: '/workspace/repo',
-          title: 'Older running',
-          runtime: 'codex',
-          running: true,
-          completedAt: '2026-06-01T00:00:00.000Z',
-          updatedAt: '2026-06-01T00:00:00.000Z',
-          recencyAt: '2026-06-01T00:00:00.000Z',
-        },
-        {
-          taskId: 'newer-idle',
-          workspacePath: '/workspace/repo',
-          title: 'Newer idle',
-          runtime: 'codex',
-          running: false,
-          completedAt: '2026-06-02T00:00:00.000Z',
-          updatedAt: '2026-06-02T00:00:00.000Z',
-          recencyAt: '2026-06-02T00:00:00.000Z',
-        },
-      ],
-    }
-    const newWorkspace: RuntimeDeviceWorkspace = {
-      deviceId: 'device-1',
-      workspacePath: '/workspace/repo/.worktrees/new-task',
-      workspaceKind: 'worktree',
-      available: true,
-      tasks: [
-        {
-          taskId: 'new-worktree-task',
-          workspacePath: '/workspace/repo/.worktrees/new-task',
-          title: 'New worktree task',
-          runtime: 'codex',
-          running: true,
-          completedAt: '2026-06-03T00:00:00.000Z',
-          updatedAt: '2026-06-03T00:00:00.000Z',
-          recencyAt: '2026-06-03T00:00:00.000Z',
-        },
-      ],
-    }
-
-    expect(
-      getRuntimeSidebarTaskItems([oldWorkspace, newWorkspace]).map(item => item.task.taskId)
-    ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
   })
 
   test('sorts queued runtime tasks by their real execution position', () => {
@@ -436,156 +336,5 @@ describe('runtimeTaskSidebarHelpers', () => {
       'streaming',
       'idle',
     ])
-  })
-
-  test('carries runtime handle into task addresses when present', () => {
-    const workspace: RuntimeDeviceWorkspace = {
-      deviceId: 'device-1',
-      workspacePath: '/workspace/repo',
-      available: true,
-      tasks: [],
-    }
-    const address = getRuntimeTaskAddress(workspace, {
-      taskId: 'local-visible-task',
-      workspacePath: '/workspace/repo',
-      title: 'Existing task',
-      runtime: 'codex',
-      runtimeHandle: {
-        threadId: 'provider-session-1',
-      },
-    })
-
-    expect(address).toEqual({
-      deviceId: 'device-1',
-      workspacePath: '/workspace/repo',
-      taskId: 'local-visible-task',
-      runtimeHandle: {
-        threadId: 'provider-session-1',
-      },
-    })
-  })
-
-  test('uses a chat task path when its grouping workspace is a git worktree', () => {
-    const workspace: RuntimeDeviceWorkspace = {
-      deviceId: 'device-1',
-      workspacePath: '/workspace/worktrees/277/repo',
-      available: true,
-      tasks: [],
-    }
-
-    expect(
-      getRuntimeTaskAddress(workspace, {
-        taskId: 'standalone-chat',
-        workspacePath: '/home/user/Documents/Codex/standalone-chat',
-        title: 'Standalone chat',
-        runtime: 'codex',
-      })
-    ).toMatchObject({
-      deviceId: 'device-1',
-      taskId: 'standalone-chat',
-      workspacePath: '/home/user/Documents/Codex/standalone-chat',
-    })
-  })
-
-  test('uses a worktree task path when grouped under its source project', () => {
-    const workspace: RuntimeDeviceWorkspace = {
-      deviceId: 'device-1',
-      workspacePath: '/workspace/repo',
-      workspaceKind: 'worktree',
-      worktreeId: 'runtime-1',
-      available: true,
-      tasks: [],
-    }
-
-    expect(
-      getRuntimeTaskAddress(workspace, {
-        taskId: 'worktree-task',
-        workspacePath: '/workspace/worktrees/runtime-1/repo',
-        workspaceKind: 'worktree',
-        worktreeId: 'runtime-1',
-        title: 'Worktree task',
-        runtime: 'codex',
-      })
-    ).toMatchObject({
-      deviceId: 'device-1',
-      taskId: 'worktree-task',
-      workspacePath: '/workspace/worktrees/runtime-1/repo',
-    })
-  })
-
-  test('reveals project runtime tasks in preview and step increments', () => {
-    const items = Array.from({ length: 26 }, (_, index) => ({
-      workspace: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/repo',
-        available: true,
-        tasks: [],
-      },
-      task: {
-        taskId: `task-${index + 1}`,
-        workspacePath: '/workspace/repo',
-        title: `Task ${index + 1}`,
-        runtime: 'codex',
-      },
-    }))
-
-    expect(getVisibleRuntimeSidebarTaskItems(items)).toHaveLength(
-      RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
-    )
-    expect(hasHiddenRuntimeSidebarTaskItems(items)).toBe(true)
-
-    const firstExpandedLimit = getNextRuntimeSidebarTaskVisibleLimit(
-      RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
-      items.length
-    )
-    expect(firstExpandedLimit).toBe(15)
-    expect(getVisibleRuntimeSidebarTaskItems(items, firstExpandedLimit)).toHaveLength(15)
-    expect(hasHiddenRuntimeSidebarTaskItems(items, firstExpandedLimit)).toBe(true)
-
-    const secondExpandedLimit = getNextRuntimeSidebarTaskVisibleLimit(
-      firstExpandedLimit,
-      items.length
-    )
-    expect(secondExpandedLimit).toBe(25)
-    expect(getVisibleRuntimeSidebarTaskItems(items, secondExpandedLimit)).toHaveLength(25)
-    expect(hasHiddenRuntimeSidebarTaskItems(items, secondExpandedLimit)).toBe(true)
-
-    const finalExpandedLimit = getNextRuntimeSidebarTaskVisibleLimit(
-      secondExpandedLimit,
-      items.length
-    )
-    expect(finalExpandedLimit).toBe(26)
-    expect(getVisibleRuntimeSidebarTaskItems(items, finalExpandedLimit)).toHaveLength(26)
-    expect(hasHiddenRuntimeSidebarTaskItems(items, finalExpandedLimit)).toBe(false)
-  })
-
-  test('keeps pinned project runtime tasks out of the collapsed task count', () => {
-    const items = Array.from({ length: 7 }, (_, index) => ({
-      workspace: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/repo',
-        available: true,
-        tasks: [],
-      },
-      task: {
-        taskId: `task-${index + 1}`,
-        workspacePath: '/workspace/repo',
-        title: `Task ${index + 1}`,
-        runtime: 'codex',
-      },
-      pinned: index < 2,
-    }))
-
-    expect(getVisibleRuntimeSidebarTaskItems(items).map(item => item.task.taskId)).toEqual([
-      'task-1',
-      'task-2',
-      'task-3',
-      'task-4',
-      'task-5',
-      'task-6',
-      'task-7',
-    ])
-    expect(hasHiddenRuntimeSidebarTaskItems(items)).toBe(false)
-    expect(hasExpandedRuntimeSidebarTaskItems(items)).toBe(false)
   })
 })

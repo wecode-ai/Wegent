@@ -2,6 +2,47 @@ use super::*;
 use sha2::{Digest, Sha256};
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn replace_local_runner_models(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let models = payload["models"]
+            .as_array()
+            .ok_or_else(|| AppIpcError::new("bad_request", "Local runner models are required"))?;
+        let mut identities = std::collections::HashSet::new();
+        for model in models {
+            let id = model["model_id"].as_str().unwrap_or_default();
+            let provider = model["provider"].as_str().unwrap_or_default();
+            if model["runtime"] != "codex"
+                || !id.starts_with("local-model:")
+                || !provider.starts_with("local-")
+                || model["local_model_id"] != id
+                || !model["modelConfig"].is_object()
+                || model["modelConfig"]["model_provider"] != provider
+                || !identities.insert((id.to_owned(), provider.to_owned()))
+            {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "Invalid local runner model identity",
+                ));
+            }
+        }
+        let mut models = models.clone();
+        for model in &mut models {
+            let local_model_id = model["model_id"].clone();
+            let config = &mut model["modelConfig"];
+            config["wework_local_model_id"] = local_model_id;
+            if config["codex_catalog_model_id"].is_null() {
+                config["codex_catalog_model_id"] = json!(config["model_id"]
+                    .as_str()
+                    .and_then(crate::server::codex_model_catalog::catalog_model_id_for_upstream)
+                    .unwrap_or_else(|| "wework-gpt-6.1-sol".into()));
+            }
+        }
+        *self
+            .local_runner_models
+            .lock()
+            .expect("local runner models lock") = models;
+        Ok(json!({"updated":true}))
+    }
+
     pub(super) async fn runner_catalog(&self) -> Result<Value, AppIpcError> {
         let mut models = Vec::new();
         let mut runtimes = Vec::new();
@@ -61,8 +102,144 @@ impl RuntimeWorkRpcHandler {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => errors.push("claude_catalog_unreadable"),
         }
+        models.extend(self.public_local_runner_models());
+        if models.iter().any(|model| model["runtime"] == "codex") && !runtimes.contains(&"codex") {
+            runtimes.push("codex");
+        }
         Ok(json!({"models": models, "runtimes": runtimes, "errors": errors}))
     }
+
+    fn public_local_runner_models(&self) -> Vec<Value> {
+        self.local_runner_models
+            .lock()
+            .expect("local runner models lock")
+            .iter()
+            .map(|model| {
+                json!({"runtime":model["runtime"],"provider":model["provider"],
+                "model_id":model["model_id"],"local_model_id":model["local_model_id"],
+                "label":model["label"],"account_label":model["account_label"],"is_default":false})
+            })
+            .collect()
+    }
+
+    pub(super) fn materialize_local_runner_models(
+        &self,
+        payload: &mut Value,
+    ) -> Result<(), AppIpcError> {
+        if let Some(model) = payload.pointer("/runnerRouting/model") {
+            if model["source"] != "cloud"
+                && model["model_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("local-model:"))
+            {
+                let config = self
+                    .local_runner_models
+                    .lock()
+                    .expect("local runner models lock")
+                    .iter()
+                    .find(|candidate| {
+                        ["runtime", "provider", "model_id"]
+                            .iter()
+                            .all(|key| candidate[*key] == model[*key])
+                    })
+                    .map(|candidate| candidate["modelConfig"].clone())
+                    .ok_or_else(|| {
+                        AppIpcError::new(
+                            "RUNNER_MODEL_UNAVAILABLE",
+                            "The selected local model is unavailable on this device",
+                        )
+                    })?;
+                payload["modelConfig"] = with_request_reasoning(&config, &payload["modelConfig"]);
+                for key in ["executionRequest", "execution_request"] {
+                    if let Some(request) = payload.get_mut(key).filter(|value| value.is_object()) {
+                        request["model_config"] =
+                            with_request_reasoning(&config, &request["model_config"]);
+                    }
+                }
+            }
+        }
+        if let Some(profiles) = payload["memberRuntimeProfiles"].as_array_mut() {
+            for profile in profiles {
+                self.materialize_local_runner_models(&mut profile["runtimePayload"])?;
+                if let Some(variants) = profile["modelRuntimeProfiles"].as_array_mut() {
+                    for variant in variants {
+                        self.materialize_local_runner_models(&mut variant["runtimePayload"])?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn resolve_local_model_reference(
+        &self,
+        request: &mut ExecutionRequest,
+        local_task_id: &str,
+    ) -> Result<(), AppIpcError> {
+        if self.resolve_submitted_interface(request, local_task_id)? {
+            return Ok(());
+        }
+        let config = &request.model_config;
+        let identity = config
+            .get("wework_local_model_id")
+            .unwrap_or(&config["model_id"]);
+        let saved_selection = (config["wework_model_kind"] == "model-interface")
+            .then(|| self.store.get_task(local_task_id))
+            .flatten()
+            .map(|link| link.runtime_handle["modelSelection"].clone())
+            .filter(|selection| {
+                selection["modelType"] == "runtime"
+                    && selection["options"]["runnerModelProvider"] == config["model_provider"]
+            });
+        let identity = saved_selection
+            .as_ref()
+            .map(|selection| &selection["modelName"])
+            .filter(|_| {
+                !identity
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("local-model:"))
+            })
+            .unwrap_or(identity);
+        if !identity
+            .as_str()
+            .is_some_and(|id| id.starts_with("local-model:"))
+        {
+            if config["wework_model_kind"] == "model-interface" {
+                return Err(AppIpcError::new(
+                    "RUNNER_MODEL_UNAVAILABLE",
+                    "The saved local model reference is missing; select the model again",
+                ));
+            }
+            return Ok(());
+        }
+        let resolved = self
+            .local_runner_models
+            .lock()
+            .expect("local runner models lock")
+            .iter()
+            .find(|model| {
+                model["model_id"] == *identity && model["provider"] == config["model_provider"]
+            })
+            .map(|model| model["modelConfig"].clone())
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "RUNNER_MODEL_UNAVAILABLE",
+                    "The selected local model is unavailable on this device",
+                )
+            })?;
+        request.model_config = with_request_reasoning(&resolved, &request.model_config);
+        Ok(())
+    }
+}
+
+fn with_request_reasoning(authoritative: &Value, requested: &Value) -> Value {
+    let mut config = authoritative.clone();
+    // Credentials, endpoints and model identity remain device-owned. Reasoning
+    // is a per-turn user option, normalized by the runtime before execution.
+    if let Some(reasoning) = requested.get("reasoning").filter(|value| !value.is_null()) {
+        config["reasoning"] = reasoning.clone();
+    }
+    config
 }
 
 fn claude_runner_models(settings: &Value) -> Result<Vec<Value>, AppIpcError> {
@@ -141,6 +318,254 @@ fn claude_endpoint_provider(env: &Value) -> Result<String, AppIpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn local_model(secret: &str) -> Value {
+        json!({"runtime":"codex","provider":"local-company","model_id":"local-model:company",
+            "local_model_id":"local-model:company","label":"Company","account_label":"Company","is_default":false,
+            "modelConfig":{"model_id":"upstream","wework_model_kind":"model-interface","model_provider":"local-company","api_key":secret,
+                "responses_url":"https://model.example/v1/messages","upstream_api_format":"anthropic-messages",
+                "codex_catalog_model_id":"wework-custom-company","runtime_config":{"codex":{"use_user_config":false}}}})
+    }
+
+    #[test]
+    fn local_interface_preserves_per_turn_reasoning_without_accepting_configuration_overrides() {
+        let handler = RuntimeWorkRpcHandler::new("device", "unused");
+        let mut model = local_model("current-secret");
+        model["modelConfig"]["reasoning"] = json!({"effort":"medium"});
+        handler
+            .replace_local_runner_models(json!({"models":[model]}))
+            .unwrap();
+        for effort in ["low", "high"] {
+            let mut request = ExecutionRequest {
+                model_config: json!({"model_id":"local-model:company","model_provider":"local-company",
+                    "reasoning":{"effort":effort,"summary":"concise"},
+                    "api_key":"untrusted-secret","responses_url":"https://untrusted.example"}),
+                ..Default::default()
+            };
+            handler
+                .resolve_local_model_reference(&mut request, "work")
+                .unwrap();
+            assert_eq!(
+                request.model_config["reasoning"],
+                json!({"effort":effort,"summary":"concise"})
+            );
+            assert_eq!(request.model_config["api_key"], "current-secret");
+            assert_eq!(
+                request.model_config["responses_url"],
+                "https://model.example/v1/messages"
+            );
+            assert_eq!(request.model_config["model_id"], "upstream");
+        }
+    }
+
+    #[test]
+    fn local_interface_materialization_preserves_explicit_reasoning_and_device_defaults() {
+        let handler = RuntimeWorkRpcHandler::new("device", "unused");
+        let mut model = local_model("current-secret");
+        model["modelConfig"]["reasoning"] = json!({"effort":"medium"});
+        handler
+            .replace_local_runner_models(json!({"models":[model]}))
+            .unwrap();
+        let mut payload = json!({"runnerRouting":{"model":{"runtime":"codex","provider":"local-company","model_id":"local-model:company"}},
+            "modelConfig":{"reasoning":{"effort":"low"},"api_key":"old"},
+            "executionRequest":{"model_config":{"reasoning":{"effort":"high"},"responses_url":"https://untrusted.example"}},
+            "execution_request":{"model_config":{"reasoning":null}}});
+        handler
+            .materialize_local_runner_models(&mut payload)
+            .unwrap();
+        assert_eq!(payload["modelConfig"]["reasoning"]["effort"], "low");
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["reasoning"]["effort"],
+            "high"
+        );
+        assert_eq!(
+            payload["execution_request"]["model_config"]["reasoning"]["effort"],
+            "medium"
+        );
+        assert_eq!(payload["modelConfig"]["api_key"], "current-secret");
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["responses_url"],
+            "https://model.example/v1/messages"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_interface_catalog_and_background_execution_share_current_device_configuration() {
+        let handler = RuntimeWorkRpcHandler::new("device", "unused");
+        handler
+            .replace_local_runner_models(json!({"models":[local_model("private-one")]}))
+            .unwrap();
+        let catalog = json!({"models":handler.public_local_runner_models(),"runtimes":["codex"]});
+        assert!(!catalog.to_string().contains("private-one"));
+        assert!(!catalog.to_string().contains("modelConfig"));
+        assert!(!catalog.to_string().contains("model.example"));
+        let identity =
+            json!({"runtime":"codex","provider":"local-company","model_id":"local-model:company"});
+        let agent = json!({"id":"stand-in","runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"device"},"model_policy":{"mode":"user_select"}});
+        let mut payload = json!({"message":"Prepare a report"});
+        super::super::stand_in_agent::apply_stand_in_agent(
+            &mut payload,
+            &agent,
+            &catalog,
+            "device",
+            Some(&identity),
+        )
+        .unwrap();
+        handler
+            .materialize_runner_cloud_models(&mut payload)
+            .await
+            .unwrap();
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["model_id"],
+            "upstream"
+        );
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["api_key"],
+            "private-one"
+        );
+        assert_eq!(
+            payload["modelSelection"]["modelName"],
+            "local-model:company"
+        );
+        handler
+            .replace_local_runner_models(json!({"models":[local_model("private-two")]}))
+            .unwrap();
+        handler
+            .materialize_runner_cloud_models(&mut payload)
+            .await
+            .unwrap();
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["api_key"],
+            "private-two"
+        );
+        let mut followup = ExecutionRequest {
+            model_config: json!({"model_id":"local-model:company","model_provider":"local-company"}),
+            ..Default::default()
+        };
+        handler
+            .resolve_local_model_reference(&mut followup, "background-work")
+            .unwrap();
+        assert_eq!(followup.model_config["api_key"], "private-two");
+        handler
+            .replace_local_runner_models(json!({"models":[]}))
+            .unwrap();
+        assert!(handler.public_local_runner_models().is_empty());
+        assert_eq!(
+            handler
+                .materialize_runner_cloud_models(&mut payload)
+                .await
+                .unwrap_err()
+                .code,
+            "RUNNER_MODEL_UNAVAILABLE"
+        );
+    }
+
+    #[test]
+    fn local_interface_restores_selected_model_credentials_after_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("work.json");
+        let mut original = RuntimeWorkRpcHandler::new("device", "unused");
+        original.store = RuntimeWorkStore::new(path.clone());
+        original
+            .replace_local_runner_models(json!({"models":[local_model("old-secret")]}))
+            .unwrap();
+        let mut request = ExecutionRequest {
+            task_id: "background-work".into(),
+            model_config: json!({"model_id":"local-model:company","model_provider":"local-company"}),
+            ..Default::default()
+        };
+        original
+            .resolve_local_model_reference(&mut request, "background-work")
+            .unwrap();
+        let mut link = RuntimeTaskLink::new_pending(
+            "background-work".into(),
+            "workspace".into(),
+            "Report".into(),
+        );
+        store_runtime_execution_request(&mut link.runtime_handle, &request);
+        link.runtime_handle["modelSelection"] = json!({"modelName":"local-model:company","modelType":"runtime","options":{"runnerModelProvider":"local-company"}});
+        original.store.upsert_task(link);
+        let persisted = fs::read_to_string(&path).unwrap();
+        assert!(!persisted.contains("old-secret"));
+        let mut restored = RuntimeWorkRpcHandler::new("device", "unused");
+        restored.store = RuntimeWorkStore::new(path);
+        restored
+            .replace_local_runner_models(json!({"models":[local_model("rotated-secret")]}))
+            .unwrap();
+        let saved = restored.store.get_task("background-work").unwrap();
+        let mut resumed: ExecutionRequest =
+            serde_json::from_value(saved.runtime_handle["executionRequest"].clone()).unwrap();
+        resumed.task_id = "background-work".into();
+        restored
+            .resolve_local_model_reference(&mut resumed, "background-work")
+            .unwrap();
+        assert_eq!(resumed.model_config["api_key"], "rotated-secret");
+        assert_eq!(resumed.model_config["model_provider"], "local-company");
+        assert_eq!(resumed.model_config["model_id"], "upstream");
+        // Existing saved tasks identify their model through the persisted selection.
+        resumed
+            .model_config
+            .as_object_mut()
+            .unwrap()
+            .remove("wework_local_model_id");
+        resumed
+            .model_config
+            .as_object_mut()
+            .unwrap()
+            .remove("api_key");
+        resumed.task_id.clear();
+        assert_eq!(
+            restored
+                .resolve_local_model_reference(&mut resumed, "unrelated-work")
+                .unwrap_err()
+                .code,
+            "RUNNER_MODEL_UNAVAILABLE"
+        );
+        restored
+            .resolve_local_model_reference(&mut resumed, "background-work")
+            .unwrap();
+        assert_eq!(resumed.model_config["api_key"], "rotated-secret");
+        restored
+            .replace_local_runner_models(json!({"models":[]}))
+            .unwrap();
+        assert_eq!(
+            restored
+                .resolve_local_model_reference(&mut resumed, "background-work")
+                .unwrap_err()
+                .code,
+            "RUNNER_MODEL_UNAVAILABLE"
+        );
+    }
+
+    #[test]
+    fn local_interface_replacement_rejects_duplicates_and_foreign_provider_without_changing_state()
+    {
+        let handler = RuntimeWorkRpcHandler::new("device", "unused");
+        let model = local_model("private");
+        handler
+            .replace_local_runner_models(json!({"models":[model]}))
+            .unwrap();
+        assert!(handler
+            .replace_local_runner_models(json!({"models":[model,model]}))
+            .is_err());
+        let mut wrong = model.clone();
+        wrong["provider"] = json!("openai");
+        assert!(handler
+            .replace_local_runner_models(json!({"models":[wrong]}))
+            .is_err());
+        assert_eq!(handler.public_local_runner_models().len(), 1);
+        let mut followup = ExecutionRequest {
+            model_config: json!({"model_id":"local-model:company","model_provider":"local-other"}),
+            ..Default::default()
+        };
+        assert_eq!(
+            handler
+                .resolve_local_model_reference(&mut followup, "background-work")
+                .unwrap_err()
+                .code,
+            "RUNNER_MODEL_UNAVAILABLE"
+        );
+    }
 
     #[test]
     fn claude_catalog_exposes_only_model_metadata() {

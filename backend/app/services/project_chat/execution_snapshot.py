@@ -4,13 +4,18 @@ Reports contain identities and outcomes only, never conversation contents.
 They repair execution state without replaying business workflow callbacks.
 """
 
+import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.timezone import database_datetime_timezone
-from app.models.delivery import LoopItem, loop_datetime_is_unset
+from app.models.delivery import (
+    LoopItem,
+    loop_datetime_is_unset,
+    loop_datetime_value_is_unset,
+)
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
@@ -22,9 +27,11 @@ from app.services.device.identity import (
     device_identity_ids,
     resolve_owned_device_alias,
 )
+from app.services.loop_item_executions.runtime_identity import execution_runtime_turn_id
 from app.services.project_chat.service import project_chat_service
 
 TERMINAL_STATUSES = {"done": "completed", "failed": "failed", "cancelled": "cancelled"}
+logger = logging.getLogger(__name__)
 
 
 def completed_activity_for_turn(
@@ -33,22 +40,72 @@ def completed_activity_for_turn(
     device_ids: list[str],
     task_id: str,
     turn_id: object,
+    client_user_message_id: str | None = None,
+    lock: bool = True,
+    completed_only: bool = True,
 ) -> ProjectChatMessage | None:
-    """Match final content to an outcome-only reconciliation of the same turn."""
+    """Find a completion identity; discovery may precede its terminal commit."""
     if not isinstance(turn_id, str) or not turn_id:
         return None
-    return (
-        db.query(ProjectChatMessage)
-        .filter(
-            ProjectChatMessage.runtime_device_id.in_(device_ids),
-            ProjectChatMessage.runtime_task_id == task_id,
-            ProjectChatMessage.sender_type == "agent",
-            ProjectChatMessage.status == "completed",
-            ProjectChatMessage.metadata_json["runtime_turn_id"].as_string() == turn_id,
-            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+    query = db.query(ProjectChatMessage).filter(
+        ProjectChatMessage.runtime_device_id.in_(device_ids),
+        ProjectChatMessage.runtime_task_id == task_id,
+        ProjectChatMessage.sender_type == "agent",
+        loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+    )
+    if completed_only:
+        query = query.filter(ProjectChatMessage.status == "completed")
+    if lock:
+        query = query.populate_existing().with_for_update()
+    bound = query.filter(
+        ProjectChatMessage.metadata_json["runtime_turn_id"].as_string() == turn_id
+    ).one_or_none()
+    if bound is not None or not client_user_message_id:
+        return bound
+    candidates = query.filter(
+        ProjectChatMessage.trigger_message_id == client_user_message_id
+    ).all()
+    matches = [
+        row
+        for row in candidates
+        if not completed_only
+        or _matches_completion_identity(row, turn_id, client_user_message_id)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def runtime_event_client_message_id(payload: dict) -> str | None:
+    value = payload.get("clientUserMessageId") or payload.get("client_user_message_id")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _matches_completion_identity(
+    row: ProjectChatMessage,
+    turn_id: object,
+    client_user_message_id: str | None,
+    request_turn_id: str | None = None,
+) -> bool:
+    if (
+        row.status != "completed"
+        or not loop_datetime_value_is_unset(row.deleted_at)
+        or not isinstance(turn_id, str)
+        or not turn_id
+    ):
+        return False
+    metadata = row.metadata_json or {}
+    binding = metadata.get("runtime_turn_id")
+    return binding == turn_id or (
+        binding in (None, "")
+        and (
+            request_turn_id == turn_id
+            or (
+                bool(client_user_message_id)
+                and row.trigger_message_id == client_user_message_id
+                and metadata.get("execution_id") is not None
+                and "runtime_completed_at" in metadata
+                and metadata.get("kind") != "task_ai_subagent"
+            )
         )
-        .with_for_update()
-        .one_or_none()
     )
 
 
@@ -81,20 +138,61 @@ def can_restore_reconciled_completion(
     # Keep the aggregate -> activity lock order and read the concurrent winner.
     db.refresh(execution, with_for_update=True)
     if execution.status != "completed" or sequence <= execution.last_event_seq:
+        logger.info(
+            "[ExecutionSnapshot] Late completion repair rejected execution=%s "
+            "status=%s incoming_sequence=%s last_sequence=%s",
+            execution.id,
+            execution.status,
+            sequence,
+            execution.last_event_seq,
+        )
         return False
+    # Retries reuse the comment identity; they still need a bound native turn
+    # or the deterministic request turn to distinguish their attempts.
+    client_message_id = (
+        runtime_event_client_message_id(payload) if execution.attempt_no == 1 else None
+    )
     if activity is None:
         activity = completed_activity_for_turn(
             db,
             device_ids=[execution.runtime_device_id],
             task_id=execution.runtime_task_id,
             turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+            client_user_message_id=client_message_id,
         )
-    return activity is not None and (
-        str((activity.metadata_json or {}).get("execution_id")) == str(execution.id)
+    else:
+        db.refresh(activity, with_for_update=True)
+    allowed = activity is not None and (
+        _matches_completion_identity(
+            activity,
+            payload.get("subtaskId") or payload.get("subtask_id"),
+            client_message_id,
+            execution_runtime_turn_id(execution),
+        )
+        and str((activity.metadata_json or {}).get("execution_id")) == str(execution.id)
         and "runtime_completed_at" in (activity.metadata_json or {})
         and activity.project_id == execution.cloud_project_id
         and activity.task_id == execution.loop_item_id
     )
+    logger.info(
+        "[ExecutionSnapshot] Late completion repair decision execution=%s "
+        "message=%s allowed=%s bound_turn=%s incoming_turn=%s "
+        "history_completed=%s incoming_sequence=%s last_sequence=%s",
+        execution.id,
+        activity.message_id if activity is not None else None,
+        allowed,
+        (
+            (activity.metadata_json or {}).get("runtime_turn_id")
+            if activity is not None
+            else None
+        ),
+        payload.get("subtaskId") or payload.get("subtask_id"),
+        activity is not None
+        and "runtime_completed_at" in (activity.metadata_json or {}),
+        sequence,
+        execution.last_event_seq,
+    )
+    return allowed
 
 
 def _match_turn(
@@ -185,6 +283,18 @@ def reconcile_execution_snapshot(
         turn = _match_turn(row, snapshot, single_execution=len(rows) == 1)
         if turn is None or turn.status not in TERMINAL_STATUSES:
             continue
+        logger.info(
+            "[ExecutionSnapshot] Matched terminal activity=%s execution=%s "
+            "turn=%s turn_status=%s completed_at=%s running=%s device=%s task=%s",
+            row.id,
+            (row.metadata_json or {}).get("execution_id"),
+            turn.id,
+            turn.status,
+            turn.completed_at,
+            snapshot.running,
+            snapshot.device_id,
+            snapshot.task_id,
+        )
         project_chat_service._require_scope(
             db,
             user_id=user_id,
@@ -259,6 +369,15 @@ def _persist_outcome(
     if execution is not None:
         if execution.status != status and execution.status not in CAPACITY_STATUSES:
             return False
+        logger.info(
+            "[ExecutionSnapshot] Matched terminal turn execution=%s activity=%s "
+            "bound_turn=%s snapshot_turn=%s status=%s",
+            execution.id,
+            row.message_id,
+            metadata.get("runtime_turn_id"),
+            turn.id,
+            execution.status,
+        )
         # Reconciliation commits the terminal root and activity. Persist their
         # turn binding in that same commit so a final event can recover text
         # even when it arrives before this outcome-only report returns.
@@ -271,7 +390,11 @@ def _persist_outcome(
         # Managed runs have their own aggregate root. Never update a different
         # attempt merely because it reused the same Runtime conversation.
         execution = loop_item_execution_service.reconcile_runtime_snapshot(
-            db, execution_id=execution.id, runtime_status=status, running=False
+            db,
+            execution_id=execution.id,
+            runtime_status=status,
+            running=False,
+            source="history",
         )
         if execution is None or execution.status != status:
             return False

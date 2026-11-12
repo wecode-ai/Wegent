@@ -1,0 +1,16 @@
+{
+  "order": 42000,
+  "scenario": "./scenarios/stand-in-identities.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/e2e/desktop/modules/stand-in-proposal-regression.mjs",
+    "wework/e2e/desktop/modules/stand-in-local-device-recovery.mjs"
+  ],
+  "ci": {
+    "core": {
+      "order": 31000,
+      "shard": 3,
+      "position": 2000
+    }
+  }
+}

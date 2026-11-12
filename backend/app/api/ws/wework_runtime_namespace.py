@@ -33,6 +33,7 @@ from app.services.device.command_registry import (
 )
 from app.services.device.command_service import (
     DeviceCommandError,
+    is_builtin_native_git_command,
     local_device_command_service,
 )
 from app.services.device.remote_control_policy import (
@@ -540,15 +541,20 @@ async def relay_ipc_request(
             ) from exc
 
     if method == "device.execute_command":
+        command_key = str(params.get("command_key") or "")
+        configured_commands = settings.LOCAL_DEVICE_COMMANDS
         try:
             command = resolve_local_device_command(
-                str(params.get("command_key") or ""),
-                settings.LOCAL_DEVICE_COMMANDS,
+                command_key,
+                configured_commands,
             )
         except CommandRegistryError as exc:
             raise DeviceCommandError(str(exc)) from exc
         if command is None:
             raise DeviceCommandError("Device command key is not configured")
+        uses_native_git_command = is_builtin_native_git_command(
+            command_key, configured_commands
+        )
         try:
             route = await runtime_route_resolver.resolve(
                 user_id=user_id,
@@ -572,6 +578,7 @@ async def relay_ipc_request(
             user_id=user_id,
             device_id=route.runtime_device_id,
             command=command.command,
+            command_key=command_key if uses_native_git_command else None,
             path=params.get("path") if isinstance(params.get("path"), str) else None,
             cwd=params.get("cwd") if isinstance(params.get("cwd"), str) else None,
             args=params.get("args") if isinstance(params.get("args"), list) else [],

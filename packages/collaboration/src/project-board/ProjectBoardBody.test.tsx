@@ -4,12 +4,14 @@
 
 // @vitest-environment jsdom
 
-import { act, Children, type ReactElement, type ReactNode } from 'react'
+import { act, Children, useState, type ReactElement, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
+import { ProjectBoardGroupPicker } from './ProjectBoardGroupPicker'
 import { createProjectBoardSortLabels } from './projectBoardSorting'
 import { ProjectBoardCardContext } from './projectBoardCardContext'
+import { createCollaborationTranslator } from '../i18n'
 import { KanbanBoard } from '../kanban/KanbanBoard'
 import {
   ProjectBoardBody,
@@ -91,6 +93,7 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
     renderSkeleton: () => null,
     rootLabel: 'Issue',
     rootUnitLabel: '个 Issue',
+    translate: createCollaborationTranslator('zh-CN'),
     saveGlobalDisabled: false,
     saveGlobalLabel: '应用到全局',
     searchPlaceholder: '搜索 Issue',
@@ -101,6 +104,239 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 }
 
 describe('ProjectBoardBody', () => {
+  it.each([false, true])('localizes group filters on English boards (external: %s)', external => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const options = props()
+    const translate = createCollaborationTranslator('en')
+    options.translate = translate
+    options.isExternalBoard = external
+    options.externalGroupLabel = 'Status'
+    options.groupFields = [{ id: 'status', name: 'Status' }]
+    options.columns = [
+      { ...options.columns[0], label: 'Inbox' },
+      {
+        dotClass: 'bg-zinc-400',
+        groupValue: 'in_progress',
+        key: 'in_progress',
+        label: 'In progress',
+        status: 'in_progress',
+      },
+    ]
+    options.focusLabels = {
+      enter: translate('todo.focus_view_description'),
+      exit: translate('todo.exit_focus_view_description'),
+      title: translate('todo.focus_view'),
+    }
+    options.rootUnitLabel = translate('todo.board_issue_unit')
+    try {
+      act(() => root.render(<ProjectBoardBody {...options} />))
+      const filter = container.querySelector<HTMLSelectElement>(
+        external
+          ? '[data-testid="dingtalk-board-assignee-filter"]'
+          : '[data-testid="cloud-board-group-filter"]'
+      )!
+      expect(filter.options[0].textContent).toBe('All')
+      expect(filter.closest('span, label')?.textContent).toContain('All Status')
+      expect(filter.getAttribute('aria-label')).toBe('Filter group values')
+      if (!external) {
+        expect(
+          container.querySelector('[data-testid="cloud-board-focus-running"]')?.textContent
+        ).toBe('Focus view')
+      }
+      act(() => {
+        filter.value = external ? '' : 'inbox'
+        filter.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      expect(
+        external ? options.state.setExternalGroupFilter : options.state.setGroupFilter
+      ).toHaveBeenCalledWith(external ? '' : 'inbox')
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
+  it.each(['', 'removed-lane'])(
+    'keeps filter names and icons independent from collapsible text (%s)',
+    groupFilter => {
+      Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      const onChange = vi.fn()
+      const options = props()
+      options.state.groupFilter = groupFilter
+      try {
+        act(() =>
+          root.render(
+            <ProjectBoardBody
+              {...options}
+              renderGroupPicker={() => (
+                <ProjectBoardGroupPicker
+                  fields={[{ id: 'status', name: '状态' }]}
+                  value="status"
+                  onChange={onChange}
+                  testIdPrefix="cloud-board-group"
+                />
+              )}
+            />
+          )
+        )
+        const group = container.querySelector('[data-testid="cloud-board-group-by"]')!
+        expect(group.getAttribute('aria-label')).toBe('状态')
+        expect(group.querySelector('.project-board-action-icon')).not.toBeNull()
+        expect(group.querySelector('.project-board-action-label')?.textContent).toBe('状态')
+        const filter = container.querySelector<HTMLSelectElement>(
+          '[data-testid="cloud-board-group-filter"]'
+        )!
+        expect(filter.getAttribute('aria-label')).toBe('分组值筛选')
+        expect(filter.value).toBe(groupFilter)
+        expect(filter.closest('label')?.querySelector('.project-board-action-icon')).not.toBeNull()
+        expect(
+          filter.closest('label')?.querySelector('.project-board-action-label')?.textContent
+        ).toBe(groupFilter || '全部状态')
+        if (groupFilter) {
+          act(() => {
+            filter.value = ''
+            filter.dispatchEvent(new Event('change', { bubbles: true }))
+          })
+          expect(options.state.setGroupFilter).toHaveBeenCalledWith('')
+        }
+        act(() => {
+          filter.value = 'inbox'
+          filter.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        expect(options.state.setGroupFilter).toHaveBeenCalledWith('inbox')
+      } finally {
+        act(() => root.unmount())
+      }
+    }
+  )
+
+  it('keeps fixed actions outside scrolling while sharing toolbar typography', () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      act(() =>
+        root.render(
+          <ProjectBoardBody
+            {...props()}
+            toolbarAction={<button data-testid="fixed-action">Chat</button>}
+          />
+        )
+      )
+      const scrolling = container.querySelector('[data-testid="cloud-board-toolbar"]')!
+      const action = container.querySelector('[data-testid="fixed-action"]')!
+      expect(scrolling.contains(action)).toBe(false)
+      expect(action.closest('.project-board-toolbar')).toBe(
+        scrolling.closest('.project-board-toolbar')
+      )
+      expect(action.closest('.project-board-toolbar')).not.toBeNull()
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
+  it('distinguishes parents from standalone issues instead of calling every row an Issue', () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div'),
+      root = createRoot(container)
+    const options = props()
+    options.parentRows = {
+      rows: [
+        {
+          key: 'p',
+          parentId: 'p',
+          parent: { id: 'p' },
+          items: new Map([['inbox', [{ id: 'child' }]]]),
+          total: 1,
+          completed: 0,
+          running: 0,
+        },
+        {
+          key: 'root',
+          parentId: null,
+          parent: null,
+          items: new Map([['inbox', [{ id: 'standalone' }]]]),
+          total: 1,
+          completed: 0,
+          running: 0,
+        },
+      ],
+      translate: createCollaborationTranslator('zh-CN'),
+      getParentKey: item => item.id,
+      getParentTitle: item => item.id,
+      onOpenParent: vi.fn(),
+      onEnterParent: vi.fn(),
+    }
+    try {
+      act(() => root.render(<ProjectBoardBody {...options} />))
+      expect(container.textContent).toContain('1 个父事项 · 1 个独立事项')
+      options.currentParentId = 'ancestor'
+      options.currentParent = { id: 'ancestor', title: 'Ancestor' }
+      options.parentRows.rows[1].parentId = 'ancestor'
+      act(() => root.render(<ProjectBoardBody {...options} />))
+      expect(container.textContent).toContain('1 个父事项 · 1 个直属子事项')
+      expect(container.textContent).not.toContain('独立事项')
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+  it('opens column quick create and retains the create-first action in parent layout', () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const options = props()
+    const createFirst = vi.fn()
+    options.parentRows = {
+      rows: [],
+      translate: createCollaborationTranslator('zh-CN'),
+      getParentKey: item => item.id,
+      getParentTitle: item => item.id,
+      onOpenParent: vi.fn(),
+      onEnterParent: vi.fn(),
+    }
+    options.getColumnEmptyState = () => ({
+      hint: 'Empty',
+      action: {
+        label: 'Create first',
+        ariaLabel: 'Create first',
+        onClick: createFirst,
+      },
+    })
+    options.renderColumnHeaderActions = (_column, _items, state) => (
+      <button data-testid="quick-add" onClick={() => state.setQuickCreateStatus('inbox')}>
+        +
+      </button>
+    )
+    options.renderColumnFooter = (_column, _items, state) =>
+      state.quickCreateStatus === 'inbox' ? <input data-testid="quick-create-input" /> : null
+    function Harness() {
+      const [quickCreateStatus, setQuickCreateStatus] = useState<string | null>(null)
+      return (
+        <ProjectBoardBody
+          {...options}
+          state={{ ...options.state, quickCreateStatus, setQuickCreateStatus }}
+        />
+      )
+    }
+    try {
+      act(() => root.render(<Harness />))
+      act(() =>
+        container
+          .querySelector<HTMLButtonElement>('[data-testid="cloud-todo-column-empty-add-inbox"]')!
+          .click()
+      )
+      expect(createFirst).toHaveBeenCalledOnce()
+      expect(container.querySelector('[data-testid="quick-create-input"]')).toBeNull()
+      act(() => container.querySelector<HTMLButtonElement>('[data-testid="quick-add"]')!.click())
+      expect(container.querySelector('[data-testid="quick-create-input"]')).not.toBeNull()
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
   it('keeps card nodes mounted when successful drop feedback moves or clears', () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const container = document.createElement('div')
@@ -217,4 +453,26 @@ describe('ProjectBoardBody', () => {
       nodes.find(node => node.props['data-testid'] === 'cloud-board-scroll')?.props.className
     ).not.toContain('[&>div]')
   })
+})
+
+it('keeps project filters beside group filtering and before search and view actions', () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  try {
+    act(() =>
+      root.render(
+        <ProjectBoardBody {...props()} filterAction={<select data-testid="milestone-filter" />} />
+      )
+    )
+    const group = container.querySelector('[data-testid="cloud-board-group-filter"]')!
+    const milestone = container.querySelector('[data-testid="milestone-filter"]')!
+    const search = container.querySelector('[data-testid="cloud-board-search"]')!
+    expect(group.compareDocumentPosition(milestone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      milestone.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  } finally {
+    act(() => root.unmount())
+  }
 })

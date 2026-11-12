@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
 import { requestJson } from '../e2e/desktop/scenarios/collaboration-remote-agent-dispatch.scenario.mjs'

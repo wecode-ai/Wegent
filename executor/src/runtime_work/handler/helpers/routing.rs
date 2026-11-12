@@ -78,11 +78,7 @@ fn apply_local_execution_state(
         {
             link.turn_status = Some("completed".to_owned());
         }
-        let mut runtime_handle = link
-            .runtime_handle
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
+        let mut runtime_handle = link.runtime_handle.as_object().cloned().unwrap_or_default();
         runtime_handle.insert("queuePosition".to_owned(), json!(queue_position + 1));
         link.runtime_handle = Value::Object(runtime_handle);
         return;
@@ -198,26 +194,26 @@ fn log_runtime_project_filter_item(link: &RuntimeTaskLink, details: RuntimeProje
     );
 }
 
+/// Record the resolved task link and its allowlisted model identity for read and archive events.
 fn log_runtime_archive_link(event: &str, link: &RuntimeTaskLink, archived_query: bool) {
-    log_executor_event(
-        event,
-        &[
-            ("archived_query", archived_query.to_string()),
-            ("local_task_id", link.local_task_id.clone()),
-            (
-                "thread_id",
-                link.thread_id.as_deref().unwrap_or("none").to_owned(),
-            ),
-            ("workspace_path", link.workspace_path.clone()),
-            ("runtime", link.runtime.clone()),
-            ("status", link.status.clone()),
-            ("running", link.running.to_string()),
-            (
-                "session_id",
-                runtime_session_id_from_link(link).unwrap_or_else(|| "none".to_owned()),
-            ),
-        ],
-    );
+    let mut fields = vec![
+        ("archived_query", archived_query.to_string()),
+        ("local_task_id", link.local_task_id.clone()),
+        (
+            "thread_id",
+            link.thread_id.as_deref().unwrap_or("none").to_owned(),
+        ),
+        ("workspace_path", link.workspace_path.clone()),
+        ("runtime", link.runtime.clone()),
+        ("status", link.status.clone()),
+        ("running", link.running.to_string()),
+        (
+            "session_id",
+            runtime_session_id_from_link(link).unwrap_or_else(|| "none".to_owned()),
+        ),
+    ];
+    fields.extend(model_selection_log_fields(&link.runtime_handle));
+    log_executor_event(event, &fields);
 }
 
 fn log_runtime_transcript_finished(details: RuntimeTranscriptLog<'_>) {
@@ -320,8 +316,7 @@ fn codex_notification_turn_id(message: &Value) -> Option<String> {
         return None;
     }
     let turn = notification.params.get("turn");
-    turn
-        .and_then(|turn| string_field(turn, "id"))
+    turn.and_then(|turn| string_field(turn, "id"))
         .or_else(|| string_field(notification.params, "turnId"))
         .or_else(|| string_field(notification.params, "turn_id"))
 }
@@ -452,6 +447,8 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "additionalSkills"
                 | "cloudProjectId"
                 | "cloud_project_id"
+                | "client_user_message_id"
+                | "collaborationMode"
                 | "collaboration_mode"
                 | "collaboration_model"
                 | "modelSelection"
@@ -464,8 +461,15 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "projectPluginIds"
                 | "runtime_permission_profile"
                 | "runtimePermissionProfile"
+                | "runtime_command_id"
+                | "submittedModelBinding"
                 | "skill_names"
                 | "standaloneChatWorkspace"
+                | "standInDelegation"
+                | "standInOwnerRequest"
+                | "standInReportTo"
+                | "standInSchedule"
+                | "standInSourceBindings"
                 | "team_id"
                 | "team_name"
                 | "team_owner"
@@ -484,6 +488,77 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
             "executionRequest".to_owned(),
             serde_json::to_value(persisted).unwrap_or_else(|_| json!({})),
         );
+    }
+}
+
+#[cfg(test)]
+mod stand_in_request_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn native_collaboration_mode_survives_saved_execution_round_trip() {
+        for mode in ["default", "plan", "single"] {
+            let mut request = ExecutionRequest::default();
+            request.extra.extend(json!({"collaborationMode":mode,"collaboration_model":"single"})
+                .as_object().unwrap().clone());
+            let mut handle = json!({});
+            store_runtime_execution_request(&mut handle, &request);
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("index.json");
+            RuntimeWorkStore::new(path.clone()).upsert_task(RuntimeTaskLink {
+                local_task_id: "native-mode".into(), runtime_handle: handle, ..Default::default()
+            });
+            let restored = RuntimeWorkStore::new(path).get_task_summary("native-mode").unwrap();
+            let request = runtime_event_request_from_link(&restored);
+            assert_eq!(request.extra["collaborationMode"], mode);
+            assert_eq!(request.extra["collaboration_model"], "single");
+        }
+    }
+
+    #[test]
+    fn stand_in_bindings_and_request_identity_survive_snapshots_without_one_time_permission() {
+        let mut request = ExecutionRequest {
+            task_id: "work".into(),
+            subtask_id: "transient-subtask".into(),
+            auth_token: Some("SYNTHETIC_SECRET".into()),
+            model_config: json!({"model_id":"model","api_key":"SYNTHETIC_SECRET"}),
+            ..Default::default()
+        };
+        let fields = json!({"user_id":7,"runtime_command_id":"command-1", "client_user_message_id":"message-1",
+            "standInReportTo":{"userId":7,"taskId":"stand-in-chat-7-primary"},
+            "standInSourceBindings":[{"recordId":"record","source":{"id":"group","profile":"corp","kind":"group"}}]});
+        request.extra.extend(fields.as_object().unwrap().clone());
+        request
+            .extra
+            .insert("standInManualConfirmation".into(), json!(true));
+        request.extra.insert(
+            "runtime_command_input".into(),
+            json!({"message":"Do not retain command payload"}),
+        );
+        let mut handle = json!({});
+        store_runtime_execution_request(&mut handle, &request);
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime.json");
+        RuntimeWorkStore::new(path.clone()).upsert_task(RuntimeTaskLink {
+            local_task_id: "work".into(),
+            runtime_handle: handle,
+            ..Default::default()
+        });
+        let saved = RuntimeWorkStore::new(path)
+            .get_task_summary("work")
+            .unwrap()
+            .runtime_handle;
+        for (key, expected) in fields.as_object().unwrap() {
+            assert_eq!(
+                &saved["executionRequest"][key], expected,
+                "Missing persisted host field {key}"
+            );
+        }
+        let execution = &saved["executionRequest"];
+        assert!(execution.get("standInManualConfirmation").is_none());
+        assert!(execution.get("runtime_command_input").is_none());
+        assert_eq!(execution["subtask_id"], "");
+        assert!(!saved.to_string().contains("SYNTHETIC_SECRET"));
     }
 }
 

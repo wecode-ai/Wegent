@@ -2,6 +2,7 @@ import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { waitForRestoredTranscript } from '../modules/transcript-restoration.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -118,7 +119,13 @@ async function waitForSettled(control, timeoutMs) {
   throw new Error('The recovered executor stream remained in a running state')
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+  workspacePath,
+  resultDir,
+}) {
   let active = false
   let requestStartedResolve
   let releaseCompletionResolve
@@ -130,6 +137,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   })
 
   return {
+    appEnvironment: {
+      WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
+      WEWORK_E2E_RENDERER_CPU_PROFILE_INTERVAL_MS: '5000',
+    },
     async handleHttp(request, response, url) {
       if (!active || request.method !== 'POST') return false
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
@@ -173,6 +184,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
       })
 
+      const beforeReload = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      const taskId = beforeReload.workbench?.currentRuntimeTask?.taskId
+      assert.ok(taskId, 'The streaming conversation must retain its Runtime task')
       const readyCountBeforeReload = control.readyCount
       await control.command('reloadMainWindow', 'body')
       releaseCompletionResolve()
@@ -185,6 +199,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           )
         ),
       ])
+      await waitForRestoredTranscript(control, taskId, workbenchReadyTimeoutMs)
 
       await control.command('waitFor', ASSISTANT_SELECTOR, {
         text: COMPLETION_TEXT,

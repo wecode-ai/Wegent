@@ -5,6 +5,9 @@ packages:
   - wework/wecode/dsh/*
   - packages/*
 confirmModulesPurge: false
+overrides:
+  # Keep Office 2.x with the drawing fix and a self-contained XML parse Worker.
+  "@file-viewer/renderer-word@2.1.27>@file-viewer/docx": 0.3.34
 allowBuilds:
   core-js: true
   dingtalk-workspace-cli: false
@@ -14,6 +17,10 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 packageExtensions:
+  # Streamdown's public declarations import HAST 3 types directly.
+  "streamdown@2.5.0":
+    dependencies:
+      "@types/hast": 3.0.5
   # Match JSDOM's parser instead of a hoisted legacy cssstyle version.
   "@acemir/cssom@0.9.31":
     dependencies:

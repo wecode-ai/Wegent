@@ -19,6 +19,7 @@ Tools are declared using @mcp_tool decorator which provides:
 - Parameter filtering (token_info is hidden from MCP schema)
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -29,6 +30,12 @@ from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
+from app.services.knowledge.dingtalk_auto_sync import is_copy_sync_enabled
+from app.services.knowledge.dingtalk_import import dingtalk_document_import_service
+from app.services.knowledge.external_document_providers import (
+    ExternalDocumentFetchError,
+    ExternalDocumentImportError,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
@@ -37,7 +44,7 @@ from app.services.knowledge.orchestrator import (
     knowledge_orchestrator,
 )
 from shared.models import SearchHints
-from shared.telemetry.decorators import trace_async
+from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -544,6 +551,59 @@ def create_document(
 
     finally:
         db.close()
+
+
+@mcp_tool(
+    name="wegent_kb_import_dingtalk_document",
+    description=(
+        "Import or refresh a DingTalk node in a knowledge base without directory sync. "
+        "Returns the current asynchronous indexing state. "
+        "Existing copies retain their folder and original importer's credentials. "
+        "Does not change the knowledge base's automatic sync setting."
+    ),
+    server="knowledge",
+    param_descriptions={
+        "knowledge_base_id": "Target knowledge base ID",
+        "node_id": "DingTalk node ID, not the document URL",
+        "folder_id": "Folder for a new document (0 for root); existing copies stay put",
+    },
+)
+@trace_sync(tracer_name="knowledge.mcp")
+def import_dingtalk_document(
+    token_info: TaskTokenInfo,
+    knowledge_base_id: int,
+    node_id: str,
+    folder_id: int = 0,
+) -> Dict[str, Any]:
+    """Import a live node through the shared external document lifecycle."""
+    try:
+        with SessionLocal() as db:
+            user = _get_user_from_token(db, token_info)
+            if user is None:
+                return {"error": "User not found"}
+            result = asyncio.run(
+                dingtalk_document_import_service.import_node(
+                    db, user, knowledge_base_id, node_id, folder_id
+                )
+            )
+            document = (result.created or result.updated or result.processing)[0]
+            kb, _ = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user.id)
+            return {
+                "id": document.id,
+                "name": document.name,
+                "index_status": document.index_status.value,
+                "dingtalk_auto_sync_enabled": bool(kb and is_copy_sync_enabled(kb)),
+                "action": (
+                    "created"
+                    if result.created
+                    else "refreshed" if result.updated else "processing"
+                ),
+            }
+    except (ExternalDocumentImportError, ExternalDocumentFetchError, ValueError) as exc:
+        return {"error": str(exc)}
+    except Exception as exc:
+        logger.error("[MCP] DingTalk import failed type=%s", type(exc).__name__)
+        return {"error": "DingTalk import failed; please retry later"}
 
 
 @mcp_tool(

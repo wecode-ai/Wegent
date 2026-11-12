@@ -15,18 +15,24 @@ describe('Electron startup shell', () => {
 
   test('renders initialization and failure states and retries the runtime', async () => {
     const elements = new Map(
-      ['#runtime-status', '#details', '#reload-dsh', '#runtime-overlay', '.runtime-card'].map(
-        selector => [
-          selector,
-          {
-            dataset: {} as Record<string, string>,
-            disabled: false,
-            hidden: false,
-            textContent: '',
-            addEventListener: vi.fn(),
-          },
-        ]
-      )
+      [
+        '#runtime-status',
+        '#details',
+        '#reload-dsh',
+        '#runtime-overlay',
+        '.runtime-card',
+        '#copy-diagnostics',
+        '#open-logs',
+      ].map(selector => [
+        selector,
+        {
+          dataset: {} as Record<string, string>,
+          disabled: false,
+          hidden: false,
+          textContent: '',
+          addEventListener: vi.fn(),
+        },
+      ])
     )
     const state = {
       phase: 'initializing',
@@ -37,10 +43,13 @@ describe('Electron startup shell', () => {
     const reloadDsh = vi.fn().mockResolvedValue(undefined)
     const source = await readFile(resolve(import.meta.dirname, 'shell.js'), 'utf8')
     const context = vm.createContext({
+      URLSearchParams,
+      navigator: { language: 'zh-CN' },
       document: {
         querySelector: (selector: string) => elements.get(selector),
       },
       window: {
+        location: { search: '' },
         weworkElectron: {
           getRuntimeState: () => Promise.resolve({ ...state }),
           onRuntimeChanged: (listener: () => void) => listeners.push(listener),
@@ -62,7 +71,7 @@ describe('Electron startup shell', () => {
     listeners[0]?.()
     await vi.waitFor(() => {
       expect(elements.get('#runtime-status')?.textContent).toBe(
-        '运行时启动失败：dsh-core startup timed out'
+        '运行时暂不可用: dsh-core startup timed out'
       )
       expect(elements.get('#reload-dsh')?.textContent).toBe('重试启动')
       expect(elements.get('#runtime-overlay')?.dataset.phase).toBe('failed')

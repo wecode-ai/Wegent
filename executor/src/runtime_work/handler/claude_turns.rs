@@ -223,6 +223,7 @@ impl RuntimeWorkRpcHandler {
         force_start: bool,
     ) -> Result<(), AppIpcError> {
         let turn = SpawnTurnRequest {
+            task_kind: None,
             local_task_id,
             runtime: "claude_code".to_owned(),
             request,
@@ -246,6 +247,7 @@ impl RuntimeWorkRpcHandler {
         request: ExecutionRequest,
     ) -> Result<(), AppIpcError> {
         self.queue_turn(SpawnTurnRequest {
+            task_kind: None,
             local_task_id,
             runtime: "claude_code".to_owned(),
             request,
@@ -265,6 +267,7 @@ impl RuntimeWorkRpcHandler {
         mut request: ExecutionRequest,
         restore_startup: Option<Arc<RestoreStartupGate>>,
     ) {
+        request.agent_home_runtime_task_id = Some(local_task_id.clone());
         let backend_connection = match self.backend_connection_snapshot() {
             Ok(connection) => connection,
             Err(error) => {
@@ -319,8 +322,16 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         tokio::spawn(async move {
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
-            let _scheduled_turn_guard =
-                ScheduledTurnGuard::new(handler.clone(), local_task_id.clone());
+            let mut scheduled_turn_guard = ScheduledTurnGuard::new(
+                handler.clone(),
+                local_task_id.clone(),
+                execution_id,
+                request
+                    .extra
+                    .get("runtime_command_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            );
             let model = string_field(&request.model_config, "model_id").unwrap_or_default();
             let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
             let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
@@ -353,7 +364,18 @@ impl RuntimeWorkRpcHandler {
                 .send(builder.response_created(Some("ClaudeCode")))
                 .await;
 
-            let outcome = tokio::select! {
+            let authorization = if request
+                .extra
+                .get("origin")
+                .is_some_and(|origin| origin["type"] == "project_assessment")
+            {
+                Err("Read-only project assessments require the Codex text-only runtime".into())
+            } else {
+                handler.validate_project_coordinator_request(&request).await
+            };
+            let outcome = match authorization {
+                Err(message) => ExecutionOutcome::Failed { message },
+                Ok(()) => tokio::select! {
                 _ = cancel_rx => ExecutionOutcome::Cancelled {
                     message: "cancelled".to_owned(),
                 },
@@ -362,8 +384,11 @@ impl RuntimeWorkRpcHandler {
                     sink.clone(),
                     builder.clone(),
                 ) => outcome,
+                },
             };
 
+            scheduled_turn_guard.command_outcome =
+                Some(command_journal::CommandState::from_execution(&outcome));
             if let Some(session) = crate::agent_session::saved_executor_session(&request) {
                 handler.store.update_task(&local_task_id, |link| {
                     link.runtime_handle["executorSession"] = session;

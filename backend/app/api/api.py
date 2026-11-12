@@ -59,7 +59,6 @@ from app.api.endpoints import (
     token_issuers,
     user_mcp_oauth,
     users,
-    utils,
     web_scraper,
     wework_api,
     wework_auth,
@@ -255,9 +254,6 @@ api_router.include_router(
     subscription_market.router, prefix="/market", tags=["subscription-market"]
 )
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
-api_router.include_router(
-    im_sessions.tasks_router, prefix="/tasks", tags=["im-sessions"]
-)
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
 api_router.include_router(
@@ -385,7 +381,6 @@ api_router.include_router(
     tags=["wework-transcripts"],
 )
 
-api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(
     web_scraper.router, prefix="/web-scraper", tags=["web-scraper"]
 )

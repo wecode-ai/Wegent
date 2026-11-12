@@ -1,0 +1,12 @@
+{
+  "order": 59000,
+  "scenario": "./scenarios/collaboration-remote-group-coordinate.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 52000,
+      "shard": 1,
+      "position": 3000
+    }
+  }
+}

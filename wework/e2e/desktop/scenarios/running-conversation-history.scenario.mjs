@@ -1,17 +1,33 @@
 import {
+  LONG_HISTORY_ITEM_COUNT,
+  PAGED_ITEM_COUNT,
+  PAGED_ASSISTANT_ITEM,
+  PAGED_ASSISTANT_BODY,
+  appendLongRunningHistory,
+  seedPaginatedTurnHistory,
+  assertLargeHistoryTransfer,
+  findRolloutPath,
+} from '../modules/running-history-fixtures.mjs'
+import {
+  restoreCompleteRunningHistory,
+  verifyHistoryReadResponsiveness,
+  verifyTerminalHistoryRefresh,
+} from '../modules/running-history-responsiveness.mjs'
+
+import {
   waitForTranscriptState,
   waitForRestoredTranscript,
 } from '../modules/transcript-restoration.mjs'
 import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { gunzipSync } from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
+import { verifyOlderHistoryReadCancellation } from '../modules/history-read-cancellation.mjs'
+import { verifyRuntimeReceiptRecovery } from '../modules/runtime-receipt-recovery.mjs'
 import {
   LEGACY_PROMPT,
   LEGACY_ATTACHMENT_PREVIEW,
@@ -49,21 +65,12 @@ const SWITCH_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH'
 const SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH_COMPLETE'
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
+const RECOVERY_PROMPT = 'WEWORK_DESKTOP_E2E_HISTORY_RECEIPT_RECOVERY'
+const RECOVERY_COMPLETION = 'WEWORK_DESKTOP_E2E_HISTORY_RECEIPT_RECOVERED'
 const PAGED_PROMPT = 'WEWORK-DESKTOP-E2E-RUNNING-HISTORY-PAGED'
 const PAGED_SEARCH_TERM = 'foo bar & baz'
 const PAGED_REQUEST = `${PAGED_PROMPT} foo **bar** &amp; baz`
 const PAGED_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED_COMPLETE'
-const PAGED_ITEM_COUNT = 1_250
-const PAGED_ASSISTANT_ITEM = 'paged-history-assistant'
-const PAGED_ASSISTANT_BODY = 'WEWORK_E2E_PAGED_ANCHOR_BODY'
-const LONG_HISTORY_ITEM_COUNT = 1_200
-// High-entropy output forces several transport chunks even after compression.
-const LARGE_TOOL_OUTPUT = Array.from(
-  { length: 28_000 },
-  (_, index) => `${createHash('sha256').update(String(index)).digest('hex')}中文🙂\n`
-).join('')
-const HYDRATION_RESPONSE_TIMEOUT_MS = 3_000
-
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
 }
@@ -111,107 +118,6 @@ async function waitForNewTaskRow(control, knownRows, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error('Timed out waiting for the running-history task row')
-}
-
-function appendLongRunningHistory(rollout, threadId) {
-  const records = rollout
-    .split('\n')
-    .filter(Boolean)
-    .map(line => JSON.parse(line))
-  const turnId = records.findLast(
-    record => record.type === 'event_msg' && record.payload?.type === 'task_started'
-  )?.payload?.turn_id
-  assert.ok(turnId, 'The running-history rollout did not contain an active turn')
-  const firstOrdinal = Math.max(0, ...records.map(record => Number(record.ordinal) || 0)) + 1
-  return Array.from({ length: LONG_HISTORY_ITEM_COUNT }, (_, index) =>
-    JSON.stringify({
-      timestamp: '2026-09-13T13:23:16.000Z',
-      ordinal: firstOrdinal + index,
-      type: 'event_msg',
-      payload: {
-        type: 'item_completed',
-        thread_id: threadId,
-        turn_id: turnId,
-        item: {
-          id: `long-history-command-${index}`,
-          type: 'CommandExecution',
-          command: ['printf', String(index)],
-          status: 'completed',
-          aggregatedOutput: index === 0 ? LARGE_TOOL_OUTPUT : String(index),
-        },
-      },
-    })
-  ).join('\n')
-}
-
-async function seedPaginatedTurnHistory(sqliteHome, threadId, cwd, timeoutMs) {
-  const database = new DatabaseSync(join(sqliteHome, 'thread_history_1.sqlite'))
-  try {
-    database.exec('PRAGMA busy_timeout = 10000')
-    const readTurn = database.prepare(
-      'SELECT turn_id FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 1'
-    )
-    const deadline = Date.now() + timeoutMs
-    let turn = readTurn.get(threadId)
-    while (!turn && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 100))
-      turn = readTurn.get(threadId)
-    }
-    assert.ok(turn, 'The native running turn was not persisted')
-    database.exec('BEGIN IMMEDIATE')
-    const ordinal = database
-      .prepare(
-        'SELECT COALESCE(MAX(rollout_ordinal), 0) AS value FROM thread_items WHERE thread_id = ?'
-      )
-      .get(threadId).value
-    const insert = database.prepare(`INSERT INTO thread_items
-      (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    // Put the search target before the tool history, outside the initial item budget.
-    insert.run(
-      threadId,
-      turn.turn_id,
-      PAGED_ASSISTANT_ITEM,
-      ordinal + 1,
-      Date.now(),
-      JSON.stringify({
-        type: 'agentMessage',
-        id: PAGED_ASSISTANT_ITEM,
-        text: PAGED_ASSISTANT_BODY,
-        phase: 'final_answer',
-      }),
-      'agentMessage'
-    )
-    for (let index = 0; index < PAGED_ITEM_COUNT; index += 1) {
-      const id = `paged-history-command-${index}`
-      insert.run(
-        threadId,
-        turn.turn_id,
-        id,
-        ordinal + index + 2,
-        Date.now(),
-        JSON.stringify({
-          type: 'commandExecution',
-          id,
-          command: `printf ${index}`,
-          cwd,
-          pluginId: null,
-          scriptPath: null,
-          processId: null,
-          source: 'agent',
-          status: 'completed',
-          commandActions: [],
-          aggregatedOutput: String(index),
-          exitCode: 0,
-          durationMs: 0,
-        }),
-        'commandExecution'
-      )
-    }
-    database.exec('COMMIT')
-  } finally {
-    database.close()
-  }
 }
 
 async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
@@ -291,60 +197,6 @@ async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
       },
     ],
   })
-}
-
-async function assertLargeHistoryTransfer(executorHome, taskId, threadId) {
-  const scope = createHash('sha256')
-    .update(JSON.stringify([taskId, threadId]))
-    .digest('hex')
-  const directory = join(executorHome, 'runtime-work', 'transcript-transfers', scope)
-  const snapshots = (await readdir(directory)).filter(name => name.endsWith('.gz'))
-  assert.ok(snapshots.length > 0, 'The large history never used a persistent transfer snapshot')
-  for (const name of snapshots) {
-    const bytes = await readFile(join(directory, name))
-    const packed = JSON.parse(gunzipSync(bytes).toString('utf8'))
-    if (packed.strings?.some(text => text.includes(LARGE_TOOL_OUTPUT))) {
-      assert.ok(bytes.length > 360 * 1024, 'The fixture did not exercise multiple transfer chunks')
-      return
-    }
-  }
-  assert.fail('The history transfer truncated or omitted the large tool output')
-}
-
-async function findRolloutPath(directory, threadId) {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const path = join(directory, entry.name)
-    if (entry.isDirectory()) {
-      const nested = await findRolloutPath(path, threadId)
-      if (nested) return nested
-    } else if (entry.name.endsWith(`${threadId}.jsonl`)) {
-      return path
-    }
-  }
-  return null
-}
-
-async function waitForLongHistoryHydration(control, timeoutMs) {
-  const startedAt = Date.now()
-  let displayItemCount = 0
-  let latestSnapshot = null
-  while (Date.now() - startedAt < timeoutMs) {
-    const snapshot = JSON.parse(
-      await control.command('performanceSnapshot', 'body', {
-        value: JSON.stringify({ collectMemory: false }),
-        timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
-      })
-    )
-    latestSnapshot = snapshot
-    displayItemCount = snapshot.runtimeAssistantDisplayItemCount
-    if (displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
-      return snapshot
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error(
-    `Timed out waiting for the long running transcript to hydrate: expected=${LONG_HISTORY_ITEM_COUNT}, observed=${displayItemCount}, elapsedMs=${Date.now() - startedAt}, snapshot=${JSON.stringify(latestSnapshot)}`
-  )
 }
 
 function transcriptRaceRecorder(resultDir) {
@@ -495,6 +347,17 @@ export function createDesktopScenario({
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
 
+      if (body.includes(RECOVERY_PROMPT)) {
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(responseId, RECOVERY_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+
       if (body.includes(PAGED_PROMPT)) {
         response.flushHeaders()
         response.write(sse([responseCreated(responseId)]))
@@ -557,6 +420,14 @@ export function createDesktopScenario({
 
       await control.command('fill', COMPOSER_SELECTOR, { value: FIRST_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.activeTask?.title === FIRST_PROMPT &&
+          Boolean(snapshot.workbench.activeLifecycle?.turn.latestId),
+        'The first native history turn did not start',
+        WORKBENCH_READY_TIMEOUT_MS
+      )
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FIRST_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -620,6 +491,13 @@ export function createDesktopScenario({
             transcript: snapshot.pane?.transcript ?? null,
           })
       )
+      // Hold a completed successful read before switching. Switching earlier now
+      // correctly cancels the read and cannot prove that a late success is ignored.
+      const heldSourceTranscript = await gates.wait(
+        'source-task-transcript',
+        undefined,
+        uiTimeoutMs
+      )
       await recordTranscriptRace('cached-task-click-before')
       const cachedClickStartedAt = performance.now()
       await control.command('click', switchTaskRow)
@@ -639,11 +517,6 @@ export function createDesktopScenario({
             taskId: snapshot.workbench?.currentRuntimeTask?.taskId ?? null,
             transcript: snapshot.pane?.transcript ?? null,
           })
-      )
-      const heldSourceTranscript = await gates.wait(
-        'source-task-transcript',
-        undefined,
-        uiTimeoutMs
       )
       assert.equal(
         heldSourceTranscript.value.params.taskId,
@@ -724,35 +597,53 @@ export function createDesktopScenario({
         await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
       })
       await control.command('waitFor', switchTaskRow, { timeoutMs: uiTimeoutMs })
+      await gates.arm({
+        id: 'cancellation-initial-history',
+        kind: 'response',
+        name: 'runtime.tasks.transcript',
+        where: [{ path: 'params.taskId', equals: switchTaskId }],
+      })
       await control.command('clickWhenEnabled', switchTaskRow, { timeoutMs: uiTimeoutMs })
-      await verifyNativeTerminalHistorySearch(
-        control,
-        await waitForTaskAddress(control, switchTaskId, uiTimeoutMs),
-        uiTimeoutMs
-      )
-      await restartDesktopApp(async () => {
-        const indexPath = join(executorHome, 'runtime-work', 'index.json')
-        const index = JSON.parse(await readFile(indexPath, 'utf8'))
-        const task = Object.values(index.tasks ?? {}).find(
-          candidate => candidate.local_task_id === taskId
-        )
-        assert.ok(task, 'The running-history task was missing from the persisted runtime index')
-        delete task.runtime_handle?.completedTranscriptMessages
-        delete task.runtime_handle?.completedTranscriptThreadId
-        const threadId = task.thread_id
-        assert.equal(typeof threadId, 'string', 'The running-history task has no Codex thread')
-        const threadPath = await findRolloutPath(join(executorHome, 'codex', 'sessions'), threadId)
-        assert.ok(threadPath, 'The running-history Codex rollout was not found')
-        const rollout = await readFile(threadPath, 'utf8')
-        const longHistory = appendLongRunningHistory(rollout, threadId)
-        await appendFile(threadPath, `${longHistory}\n`, 'utf8')
-        task.runtime_handle.cloudTranscript ??= {}
-        const legacyTask = Object.values(index.tasks ?? {}).find(
-          candidate => candidate.local_task_id === switchTaskId
-        )
-        assert.ok(legacyTask, 'The legacy search task was missing from the runtime index')
-        await seedLegacySearchHistory(executorHome, codexSqliteHome, legacyTask)
-        await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
+      await gates.wait('cancellation-initial-history', undefined, uiTimeoutMs)
+      const nativeSearchAddress = await waitForTaskAddress(control, switchTaskId, uiTimeoutMs)
+      await verifyOlderHistoryReadCancellation(control, {
+        address: nativeSearchAddress,
+        otherTaskId: taskId,
+        resultDir,
+        timeoutMs: uiTimeoutMs,
+      })
+      await verifyNativeTerminalHistorySearch(control, nativeSearchAddress, uiTimeoutMs)
+      await restartDesktopApp({
+        // The physical in-flight cancellation has been verified. All remaining
+        // races use transport gates, so paging need not repeat the artificial delay.
+        appEnvironmentOverrides: { WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS: '0' },
+        afterStop: async () => {
+          const indexPath = join(executorHome, 'runtime-work', 'index.json')
+          const index = JSON.parse(await readFile(indexPath, 'utf8'))
+          const task = Object.values(index.tasks ?? {}).find(
+            candidate => candidate.local_task_id === taskId
+          )
+          assert.ok(task, 'The running-history task was missing from the persisted runtime index')
+          delete task.runtime_handle?.completedTranscriptMessages
+          delete task.runtime_handle?.completedTranscriptThreadId
+          const threadId = task.thread_id
+          assert.equal(typeof threadId, 'string', 'The running-history task has no Codex thread')
+          const threadPath = await findRolloutPath(
+            join(executorHome, 'codex', 'sessions'),
+            threadId
+          )
+          assert.ok(threadPath, 'The running-history Codex rollout was not found')
+          const rollout = await readFile(threadPath, 'utf8')
+          const longHistory = appendLongRunningHistory(rollout, threadId)
+          await appendFile(threadPath, `${longHistory}\n`, 'utf8')
+          task.runtime_handle.cloudTranscript ??= {}
+          const legacyTask = Object.values(index.tasks ?? {}).find(
+            candidate => candidate.local_task_id === switchTaskId
+          )
+          assert.ok(legacyTask, 'The legacy search task was missing from the runtime index')
+          await seedLegacySearchHistory(executorHome, codexSqliteHome, legacyTask)
+          await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
+        },
       })
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
@@ -761,20 +652,16 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
-      const hydrationStartedAt = Date.now()
-      await control.command('getWorkbenchDebugSnapshot', 'body', {
-        timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
-      })
-      assert.ok(
-        Date.now() - hydrationStartedAt < HYDRATION_RESPONSE_TIMEOUT_MS,
-        'Hydrating a long running transcript blocked the renderer'
-      )
-      // Restart recovery transfers the complete large history asynchronously.
-      // Each renderer response still has the separate three-second responsiveness limit.
-      const hydratedSnapshot = await waitForLongHistoryHydration(
+      await verifyHistoryReadResponsiveness(
         control,
-        WORKBENCH_READY_TIMEOUT_MS
+        moved.address,
+        resultDir,
+        uiTimeoutMs,
+        executorHome
       )
+      // The 177s/233s incident showed that automatic full hydration bypassed the
+      // normal page budget. Browse the actual UI pages and retain the complete-history assertions.
+      const hydratedSnapshot = await restoreCompleteRunningHistory(control, taskId, uiTimeoutMs)
       assert.ok(
         hydratedSnapshot.runtimeConversationCache?.messageEntries >= 1,
         'The long running transcript was not restored into the conversation cache'
@@ -789,8 +676,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
-      await control.command('click', switchTaskRow)
-      await verifyLegacySearch(control, uiTimeoutMs)
+      await verifyLegacySearch(control, switchTaskId, uiTimeoutMs)
       await control.command(
         'clickWhenEnabled',
         `[data-testid="runtime-local-task-row-${cachedTaskId}"]`,
@@ -949,6 +835,18 @@ export function createDesktopScenario({
         WORKBENCH_READY_TIMEOUT_MS
       )
       const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
+      const paginatedPane = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      ).pane
+      assert.ok(
+        paginatedPane.messageSummary.activeAssistantMessage,
+        'The running turn disappeared after native history pagination'
+      )
+      assert.equal(
+        paginatedPane.messageSummary.lastMessage?.id,
+        paginatedPane.messageSummary.activeAssistantMessage.id,
+        'History pagination placed an older reply after the live assistant'
+      )
       const nativeSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
       assert.ok(
         nativeSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
@@ -1085,10 +983,12 @@ export function createDesktopScenario({
       // Restoration need not cross the prefetch threshold. Remove the guard
       // whether or not an automatic read reached it during the assertions.
       await gates.reset()
-      releasePagedResponseResolve()
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: PAGED_COMPLETION,
+      await verifyTerminalHistoryRefresh(control, {
+        taskId: pagedTaskId,
+        completion: PAGED_COMPLETION,
+        release: releasePagedResponseResolve,
         timeoutMs: uiTimeoutMs,
+        resultDir,
       })
       await control.command('click', taskRow)
 
@@ -1101,6 +1001,8 @@ export function createDesktopScenario({
         text: SECOND_PROMPT,
         timeoutMs: uiTimeoutMs,
       })
+      // Reload restores a bounded tail; the first reply precedes the seeded tools.
+      await restoreCompleteRunningHistory(control, taskId, uiTimeoutMs)
       await captureScreenshot(
         control,
         'running-conversation-history-01-reloaded-while-running.png',
@@ -1119,12 +1021,21 @@ export function createDesktopScenario({
         'Reloading a running conversation lost the previous assistant response'
       )
 
-      releaseSecondResponseResolve()
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: SECOND_COMPLETION,
+      await verifyRuntimeReceiptRecovery(control, {
+        address: moved.address,
+        prompt: RECOVERY_PROMPT,
+        completion: RECOVERY_COMPLETION,
+        releaseActiveResponse: async () => {
+          releaseSecondResponseResolve()
+          await control.command('waitFor', '[data-testid="message-assistant"]', {
+            text: SECOND_COMPLETION,
+            timeoutMs: uiTimeoutMs,
+          })
+          await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
+        },
+        resultDir,
         timeoutMs: uiTimeoutMs,
       })
-      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       active = false
     },
 

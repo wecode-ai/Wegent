@@ -7,26 +7,32 @@ import {
   createOfficialSource,
   requestJson,
   RECIPIENT_NAME,
+  SMART_APP_ICON_DATA_URL,
   STRANGER_NAME,
   USER_PASSWORD,
 } from '../modules/harness-app-fixture.mjs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import { verifyDefaultOnlyDshPackage } from '../modules/dsh-runtime-cache.mjs'
+import { fetchGithubReleaseAsset } from '../modules/github-release-asset.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
 import assert from 'node:assert/strict'
-import { copyFile, readFile, readdir } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { prepareHarnessAppUi } from '../modules/harness-app-bootstrap.mjs'
 import { verifyHarnessDevelopment } from '../modules/harness-app-development.mjs'
 import { verifyHarnessLifecycle } from '../modules/harness-app-lifecycle.mjs'
 import { verifyHarnessAppModels } from '../modules/harness-app-models.mjs'
+import {
+  createSmartAppArchiveRegression,
+  verifySmartAppArchiveRegression,
+} from '../modules/smart-app-archive-regression.mjs'
 
 export async function createDesktopScenario({
   checkpoint,
   captureScreenshot,
   electronUserDataDirectory,
   resultDir,
+  releaseAssetToken,
   uiTimeoutMs,
 }) {
   const packagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2')
@@ -45,23 +51,83 @@ export async function createDesktopScenario({
     archiveName: 'dsh-e2e-shared-0.0.9',
     version: '0.0.9',
   })
+  const smartAppLifecyclePackages =
+    checkpoint === 'harness-app-lifecycle'
+      ? {
+          seedAssets: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.0.10',
+            version: '0.0.10',
+          }),
+          replaceIcon: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.2.1',
+            version: '0.2.1',
+          }),
+          replaceScreenshots: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.2.2',
+            version: '0.2.2',
+          }),
+          cancel: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.2.3',
+            version: '0.2.3',
+          }),
+          fail: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.2.4',
+            version: '0.2.4',
+          }),
+          clearScreenshots: await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
+            archiveName: 'dsh-e2e-smoke-0.2.5',
+            version: '0.2.5',
+          }),
+        }
+      : null
   const officialSource = await createOfficialSource(resultDir, packagePath)
-  // Electron falls back to HOME on Linux when XDG user directories are unavailable.
-  const downloadsPath =
-    process.platform === 'linux' ? join(resultDir, 'home') : join(homedir(), 'Downloads')
+  const archiveRegression =
+    checkpoint === 'harness-app-lifecycle' ? await createSmartAppArchiveRegression(resultDir) : null
+  let publishUpdatedRelease
+  const downloadsPath = join(resultDir, 'downloads')
+  await mkdir(downloadsPath, { recursive: true })
   let sharedSmartAppId = null
   let ownerRequest
+  let smartAppBackendUrl = ''
+  let smartAppAuthToken = ''
   return {
     requiresCloudEnvironment: true,
-    async prepareApp({ appBinary }) {
-      await verifyDefaultOnlyDshPackage(
+    // Reproduce a workbench launched from a DSH-backed terminal. Legacy apps must
+    // ignore the parent's authentication state while Core DSH keeps its own auth.
+    appEnvironment: {
+      WEWORK_E2E_DOWNLOADS_DIR: downloadsPath,
+      WEWORK_DSH_BROWSER_AUTH: '1',
+      WEWORK_DSH_BROWSER_AUTH_FD: '99',
+    },
+    async prepareApp({ appBinary, appEnvironment }) {
+      const legacy = await verifyDefaultOnlyDshPackage(
         join(packagedResourcesRoot(appBinary), 'harness-runtime'),
         join(resultDir, 'harness-runtime')
       )
+      if (releaseAssetToken) {
+        const response = await fetchGithubReleaseAsset({
+          repository: 'wecode-ai/Wegent',
+          tag: 'wework-updater',
+          name: legacy.assetName,
+          redirect: 'manual',
+          token: releaseAssetToken,
+        })
+        assert.equal(response.status, 302, 'Expected an official GitHub release CDN redirect')
+        appEnvironment.WEWORK_E2E_DSH_RELEASE_REDIRECT = JSON.stringify({
+          source: legacy.downloadUrl,
+          target: response.headers.get('location'),
+        })
+      }
     },
 
     async prepareCloud({ authToken, backendUrl, publishOfficialSmartApp }) {
+      smartAppBackendUrl = backendUrl
+      smartAppAuthToken = authToken
       await publishOfficialSmartApp(officialSource)
+      if (archiveRegression) {
+        await publishOfficialSmartApp(archiveRegression.sources[0])
+        publishUpdatedRelease = publishOfficialSmartApp
+      }
       ownerRequest = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
       const ownerCatalog = await ownerRequest('/api/smart-apps/marketplace')
       const officialItem = ownerCatalog.items.find(
@@ -116,8 +182,7 @@ export async function createDesktopScenario({
           summary: 'Shared desktop E2E Smart app',
           descriptionMd: '# Shared desktop E2E Smart app',
           tags: ['data_analysis'],
-          iconDataUrl:
-            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          iconDataUrl: SMART_APP_ICON_DATA_URL,
           screenshotDataUrls: [],
           releaseNotes: 'Initial shared E2E release',
           extensions: {
@@ -260,6 +325,17 @@ export async function createDesktopScenario({
           }
         }
       } else if (checkpoint === 'harness-app-lifecycle') {
+        assert.ok(
+          archiveRegression && publishUpdatedRelease,
+          'Archive regression fixtures were not prepared'
+        )
+        await verifySmartAppArchiveRegression(control, {
+          fixture: archiveRegression,
+          ownerRequest,
+          publishUpdatedRelease,
+          electronUserDataDirectory,
+          uiTimeoutMs,
+        })
         await verifyHarnessLifecycle(control, {
           packagePath,
           uiTimeoutMs,
@@ -267,6 +343,9 @@ export async function createDesktopScenario({
           importedPackagePath,
           sharedSmartAppId,
           ownerRequest,
+          backendUrl: smartAppBackendUrl,
+          authToken: smartAppAuthToken,
+          smartAppLifecyclePackages,
           downloadsPath,
           resultDir,
           legacyRuntimeCache,

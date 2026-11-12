@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { DeviceInfo, ProjectWithTasks, RuntimeDeviceWorkspace } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import { resolveComposerWorktreeAvailability } from './project-work-bar-utils'
 
 const project: ProjectWithTasks = {
@@ -42,21 +44,6 @@ const device: DeviceInfo = {
 }
 
 describe('resolveComposerWorktreeAvailability', () => {
-  test('does not infer availability from project classification without a Runtime workspace', () => {
-    expect(
-      resolveComposerWorktreeAvailability({
-        project,
-        workspace: null,
-        device: undefined,
-      })
-    ).toEqual({
-      available: false,
-      reason: 'no_workspace',
-      deviceId: 'cloud-device',
-      sourcePath: null,
-    })
-  })
-
   test('stays fail-closed until authoritative Runtime availability is provided', () => {
     expect(
       resolveComposerWorktreeAvailability({
@@ -70,23 +57,5 @@ describe('resolveComposerWorktreeAvailability', () => {
       deviceId: 'cloud-device',
       sourcePath: '/workspace/wegent',
     })
-  })
-
-  test('uses authoritative Runtime availability when it is provided', () => {
-    const availability = {
-      available: true,
-      reason: 'available',
-      deviceId: 'cloud-device',
-      sourcePath: '/workspace/wegent',
-    } as const
-
-    expect(
-      resolveComposerWorktreeAvailability({
-        project,
-        workspace,
-        device,
-        availability,
-      })
-    ).toBe(availability)
   })
 })

@@ -21,32 +21,39 @@ import { SubagentActivityGroup } from "./SubagentBlockItem";
 import { type ToolActivityLabels } from "./processingDisplayTypes";
 import { getProcessingDetailStateKey } from "./processingExpansionState";
 import {
-  countProcessingActivityKinds,
+  useProcessingSummaryDuration,
+  type ProcessingSummaryTiming,
+} from './useProcessingSummaryDuration'
+import type { countProcessingActivityKinds } from './ProcessingActivity'
+import {
   ToolActivityGroup,
   ContextCompactionIndicator,
 } from "./ProcessingActivity";
 
 export function ProcessingSummaryHeader({
   canToggle,
-  duration,
+  timing,
   expanded,
   isRunning,
   rows,
+  stats,
   onToggle,
   title,
   announceTitle = false,
   labels,
 }: {
   canToggle: boolean;
-  duration: string;
+  timing?: ProcessingSummaryTiming
   expanded: boolean;
   isRunning: boolean;
   rows: ProcessingDisplayRow[];
+  stats: ReturnType<typeof countProcessingActivityKinds>
   onToggle: () => void;
   title: string;
   announceTitle?: boolean;
   labels: ToolActivityLabels;
 }) {
+  const duration = useProcessingSummaryDuration(timing)
   const titleContent = (
     <>
       {rows.length > 0 ? (
@@ -91,7 +98,7 @@ export function ProcessingSummaryHeader({
           {titleContent}
         </span>
       )}
-      <ToolActivityStats rows={rows} labels={labels} />
+      <ToolActivityStats stats={stats} labels={labels} />
       {isRunning || duration ? (
         <span className="ml-auto inline-flex shrink-0 items-center gap-1">
           {isRunning ? (
@@ -108,13 +115,12 @@ export function ProcessingSummaryHeader({
 }
 
 function ToolActivityStats({
-  rows,
+  stats,
   labels,
 }: {
-  rows: ProcessingDisplayRow[];
+  stats: ReturnType<typeof countProcessingActivityKinds>
   labels: ToolActivityLabels;
 }) {
-  const stats = countProcessingActivityKinds(rows);
   const items = [
     {
       key: "command",

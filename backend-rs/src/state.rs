@@ -34,6 +34,8 @@ pub struct AppState {
     /// application whose deployment keeps placeholder Git credentials registers
     /// its own implementation before route construction.
     pub user_git_info_mask: Arc<dyn crate::user_profile::UserGitInfoMasker>,
+    /// Deployment patch applied to the execution request's `user` object.
+    pub user_info_extension: Arc<dyn crate::user_profile::UserInfoExtension>,
     pub media_policy: Arc<dyn crate::media_policy::MediaPolicy>,
     /// `_stream_external_attachment`: the registered external media playback
     /// resolvers and their relay. The public default resolves nothing.
@@ -61,6 +63,13 @@ pub struct AppState {
     pub jwt_algorithm: String,
     pub mysql: brz_mysql::MysqlService,
     pub redis: Option<brz_redis::RedisService>,
+    /// `session_manager.subscribe_callback_channel`
+    /// (`app/services/chat/storage/session.py:613-660`): the provider that
+    /// opens the dedicated Redis Pub/Sub subscription the HTTP+Callback
+    /// streaming branch reads (`callback:channel:{subtask_id}`).
+    pub(crate) callback_subscriptions: Option<
+        std::sync::Arc<dyn crate::responses::create::callback_source::CallbackSubscriptions>,
+    >,
     /// Process-lifetime Celery publisher for work the source detaches from a
     /// request (`index_document_task.delay(...)`). Its subscriber keeps the
     /// result-backend lane off the shared Redis writer session.
@@ -69,7 +78,7 @@ pub struct AppState {
     /// handlers that perform an interactive `sio.call` round trip.
     pub socketio_rpc: Option<std::sync::Arc<crate::socketio_rpc::SocketIoRpc>>,
     pub oidc_config: OidcConfig,
-    pub oidc: OidcService,
+    pub oidc: Arc<OidcService>,
     /// Callback selected by the application before route construction.
     pub oidc_callback: std::sync::Arc<dyn OidcCallbackHandler + Send + Sync>,
     pub(crate) shutdown: std::sync::Arc<ShutdownState>,
@@ -121,7 +130,7 @@ pub struct AppState {
     /// Retained Sites project-API client for `GET /api/sites`. Built once at
     /// startup from `SITES_API_BASE_URL` / `SITES_API_TOKEN`; a missing base
     /// URL is rendered per request as the `503 sites_not_available` body.
-    pub sites: crate::sites::SitesClient,
+    pub sites: Arc<crate::sites::SitesClient>,
     /// Provider credential resolution shared by the LLM and decision gateways.
     /// The public default returns the processed Model CRD value; an application
     /// whose Model CRDs carry user-scoped
@@ -133,7 +142,7 @@ pub struct AppState {
     pub repository_tokens: Arc<dyn crate::repository_tokens::RepositoryTokenResolver>,
     /// `GET /api/git/repositories` aggregation: the retained provider HTTP
     /// client, the domain cache adapter, and the background full-fetch worker.
-    pub git_repositories: crate::git_repositories::GitRepositoriesService,
+    pub git_repositories: Arc<crate::git_repositories::GitRepositoriesService>,
     /// `create_response`'s background execution dispatch: one process-owned
     /// worker built at startup so the fire-and-forget executor/chat-shell
     /// dispatch is initialization-owned rather than a request-owned task.
@@ -150,4 +159,18 @@ pub struct AppState {
     /// employee header.
     pub external_knowledge_auth:
         Arc<dyn crate::mcp::knowledge_external::auth::ExternalKnowledgeAuth>,
+}
+
+impl AppState {
+    /// Build identity dependencies after all deployment-owned services have been injected.
+    pub fn authentication_services(&self) -> Arc<wegent_identity::AuthServices> {
+        Arc::new(wegent_identity::AuthServices {
+            auth: self.auth.clone(),
+            mysql: self.mysql.clone(),
+            jwt_secret_keys: self.jwt_secret_keys.clone(),
+            jwt_algorithm: self.jwt_algorithm.clone(),
+            internal_chat: self.internal_chat.clone(),
+            user_reader: Arc::clone(&self.user_reader),
+        })
+    }
 }

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { createServer } from 'node:net'
 import { expect, test, vi } from 'vitest'
 import { LocalNevisSandboxService } from '../../e2e/desktop/modules/cloud-environment.mjs'

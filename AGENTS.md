@@ -86,10 +86,13 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 ## Engineering rules
 
+- Respect diverse user workflows. Do not add restrictions based on implementation convenience, an assumed happy path, or guesses about how users should work. Every restriction must be justified by an explicit user requirement or a concrete security boundary; remove unjustified restrictions instead of making users follow a prescribed sequence.
+
 - Collaboration permission changes must follow [the permission contract](docs/en/wegent/developer-guide/collaboration-permissions.md) and preserve its CP invariants. Update the architecture transaction and contract tests together; changing an invariant requires explicit user authorization. Never weaken, skip, or delete security assertions to make an incompatible implementation pass.
 
 - Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
 - If repeated attempts fail to fix the same problem, promptly stop adding patches. Complete root-cause investigation and analysis, obtain concrete evidence of the cause, and only then resume fixing it.
+- Wework must remain openable when application-managed startup checks fail, including data corruption, missing credentials, and failed updates or migrations. Isolate the affected operation or capability; never use data or credential protection as a reason to prevent opening the entire application. Follow the [startup availability contract](wework/AGENTS.md#startup-availability-and-fault-isolation).
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.
@@ -121,10 +124,13 @@ Run focused tests before committing; run broader tests when risk warrants it. E2
 Use focused unit/component tests for local presentation or component state changes. Add or extend real E2E coverage for new cross-boundary features or changes to core flows, permissions, persistence, or critical state; the local E2E execution policy above still applies.
 Modify existing E2E tests only when a complete chain of log evidence proves the original test logic is wrong.
 Reuse unified E2E suites, runners, services, and build artifacts. Do not introduce increased total resource usage or substantial execution-time regressions without explicit user acceptance.
+Any change expected to significantly increase CI runtime requires explicit human confirmation before implementation. Explain the cause and estimated runtime impact when requesting confirmation.
 Treat intermittent test failures as defects: investigate and fix them immediately before proceeding; never use reruns or retries to obtain a passing result or hide the underlying problem.
 Every E2E scenario must be invoked by GitHub CI. Focused local E2E commands may exist for debugging, but they must also be included by a CI-covered suite; do not add dead E2E coverage that CI never runs.
 Long desktop E2E flows must expose registered checkpoints through the shared runner. A checkpoint must establish its own minimal prerequisites so both one-checkpoint and from-checkpoint runs are valid; do not depend on state created only by an earlier skipped checkpoint.
 DingTalk group chats and message delivery do not require real external E2E tests. Cover these behaviors with protocol-level integration tests and test doubles; do not require production or test-tenant group IDs, staff IDs, robot credentials, or real message delivery for this coverage.
+
+DingTalk document testing exception: CI may simulate external OAuth, MCP, and file downloads for document import and refresh without real accounts. Keep Wegent internals real except model services, and reuse existing suites and CI jobs. Reports and PR descriptions must label these as protocol integration tests and state that real DingTalk compatibility remains unverified.
 
 ```bash
 cd backend && uv run pytest

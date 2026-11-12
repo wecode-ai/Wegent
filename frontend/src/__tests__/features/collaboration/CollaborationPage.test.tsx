@@ -9,16 +9,37 @@ import type {
   CollaborationPlatformLocation,
 } from '@wegent/collaboration'
 
+import { CollaborationTemplateStore, templateIdentity } from '@wegent/collaboration/templates'
+
 import { CollaborationPage } from '@/features/collaboration/CollaborationPage'
 import { collaborationLocationPath } from '@/features/collaboration/routes'
+import { apiClient } from '@/apis/client'
 
 const mockPush = jest.fn()
 const mockReplace = jest.fn()
 let mockPathname = '/collaboration'
 let mockSearchParams = new URLSearchParams()
 let capturedHost: CollaborationPlatformHostAdapter | null = null
+let capturedApi: unknown
+let mockAccountScope = 'backend:auth-generation-1'
+let mockUser: { id: number; user_name: string } | null = { id: 7, user_name: 'current-user' }
 const mockGetProject = jest.fn()
 const mockListGroups = jest.fn()
+const mockCreateProjectChatClient = jest.fn(() => ({ dispose: jest.fn() }))
+const mockCreateCloudRuntimeIpcClient = jest.fn(() => ({}))
+const mockCreateRuntimeConversationClient = jest.fn(() => ({ dispose: jest.fn() }))
+jest.spyOn(apiClient, 'getCacheScope').mockImplementation(() => mockAccountScope)
+jest.mock('@wegent/chat-core', () => ({
+  ...jest.requireActual('@wegent/chat-core'),
+  createProjectChatClient: () => mockCreateProjectChatClient(),
+  createCloudRuntimeIpcClient: () => mockCreateCloudRuntimeIpcClient(),
+  createRuntimeConversationClient: () => mockCreateRuntimeConversationClient(),
+}))
+let mockTemplateStore: CollaborationTemplateStore | null = null
+let mockUserLoading = false
+jest.mock('@/features/resource-library/useCollaborationTemplates', () => ({
+  useCollaborationTemplates: () => mockTemplateStore,
+}))
 
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
@@ -28,12 +49,15 @@ jest.mock('next/navigation', () => ({
 
 jest.mock('@wegent/collaboration', () => ({
   CollaborationPlatformApp: ({
+    api,
     host,
     renderShell,
   }: {
+    api: unknown
     host: CollaborationPlatformHostAdapter
     renderShell?: (shell: { main: React.ReactNode; sidebar: React.ReactNode }) => React.ReactNode
   }) => {
+    capturedApi = api
     capturedHost = host
     return renderShell?.({
       main: <div data-testid="shared-collaboration-main" />,
@@ -56,10 +80,8 @@ jest.mock('@/features/layout/components/UserFloatingMenu', () => ({
 
 jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({
-    user: {
-      id: 7,
-      user_name: 'current-user',
-    },
+    isLoading: mockUserLoading,
+    user: mockUser,
   }),
 }))
 
@@ -88,11 +110,19 @@ jest.mock('sonner', () => ({
 
 describe('CollaborationPage platform routing', () => {
   beforeEach(() => {
+    mockUserLoading = false
+    mockAccountScope = 'backend:auth-generation-1'
+    mockUser = { id: 7, user_name: 'current-user' }
+    mockCreateProjectChatClient.mockClear()
+    mockCreateCloudRuntimeIpcClient.mockClear()
+    mockCreateRuntimeConversationClient.mockClear()
+    mockTemplateStore = null
     mockPush.mockReset()
     mockReplace.mockReset()
     mockPathname = '/collaboration'
     mockSearchParams = new URLSearchParams()
     capturedHost = null
+    capturedApi = null
     mockGetProject.mockReset()
     mockGetProject.mockResolvedValue({
       id: 'project 1',
@@ -103,9 +133,26 @@ describe('CollaborationPage platform routing', () => {
     localStorage.clear()
   })
 
+  it('waits for the authenticated owner before mounting the scoped workbench', () => {
+    mockUserLoading = true
+    mockUser = null
+    const view = render(<CollaborationPage />)
+    expect(screen.queryByTestId('shared-collaboration-main')).not.toBeInTheDocument()
+    expect(capturedHost).toBeNull()
+    expect(screen.getByTestId('top-navigation')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-back-to-workbench'))
+    expect(mockPush).toHaveBeenCalledWith('/chat')
+    mockUserLoading = false
+    mockUser = { id: 7, user_name: 'current-user' }
+    view.rerender(<CollaborationPage />)
+    expect(screen.getByTestId('shared-collaboration-main')).toBeInTheDocument()
+    expect(capturedHost?.currentUser?.id).toBe(7)
+  })
+
   it('renders the platform spaces root through the thin host shell', () => {
     render(<CollaborationPage />)
 
+    expect(capturedHost?.accountScope).toBe(mockAccountScope)
     expect(capturedHost?.location).toEqual({
       platformView: 'spaces',
       rootView: 'home',
@@ -143,6 +190,64 @@ describe('CollaborationPage platform routing', () => {
       screen.getByTestId('shared-collaboration-sidebar')
     )
   })
+
+  it('keeps the account scope and API clients stable when the user profile arrives or refreshes', () => {
+    mockUser = null
+    mockUserLoading = true
+    const { rerender } = render(<CollaborationPage />)
+    const originalActivity = mockCreateProjectChatClient.mock.results[0].value
+    const originalRuntime = mockCreateRuntimeConversationClient.mock.results[0].value
+    expect(capturedHost).toBeNull()
+
+    mockUserLoading = false
+    mockUser = { id: 7, user_name: 'current-user' }
+    rerender(<CollaborationPage />)
+    const originalApi = capturedApi
+    expect(capturedHost?.accountScope).toBe(mockAccountScope)
+    expect(capturedHost?.currentUser).toEqual({ id: 7, name: 'current-user' })
+
+    for (const user_name of ['current-user', 'updated profile']) {
+      mockUser = { id: 7, user_name }
+      rerender(<CollaborationPage />)
+      expect(capturedHost?.accountScope).toBe(mockAccountScope)
+      expect(capturedHost?.currentUser).toEqual({ id: 7, name: user_name })
+      expect(capturedApi).toBe(originalApi)
+    }
+
+    expect(mockCreateProjectChatClient).toHaveBeenCalledTimes(1)
+    expect(mockCreateCloudRuntimeIpcClient).toHaveBeenCalledTimes(1)
+    expect(mockCreateRuntimeConversationClient).toHaveBeenCalledTimes(1)
+    expect(originalActivity.dispose).not.toHaveBeenCalled()
+    expect(originalRuntime.dispose).not.toHaveBeenCalled()
+  })
+
+  it.each(['backend:auth-generation-2', 'other-backend:auth-generation-1'])(
+    'replaces and disposes API clients when the account scope changes to %s',
+    nextScope => {
+      const { rerender, unmount } = render(<CollaborationPage />)
+      const originalApi = capturedApi
+      const originalActivity = mockCreateProjectChatClient.mock.results[0].value
+      const originalRuntime = mockCreateRuntimeConversationClient.mock.results[0].value
+
+      mockAccountScope = nextScope
+      rerender(<CollaborationPage />)
+      expect(capturedHost?.accountScope).toBe(nextScope)
+      expect(capturedApi).not.toBe(originalApi)
+      expect(mockCreateProjectChatClient).toHaveBeenCalledTimes(2)
+      expect(mockCreateCloudRuntimeIpcClient).toHaveBeenCalledTimes(2)
+      expect(mockCreateRuntimeConversationClient).toHaveBeenCalledTimes(2)
+      expect(originalActivity.dispose).toHaveBeenCalledTimes(1)
+      expect(originalRuntime.dispose).toHaveBeenCalledTimes(1)
+
+      const currentActivity = mockCreateProjectChatClient.mock.results[1].value
+      const currentRuntime = mockCreateRuntimeConversationClient.mock.results[1].value
+      expect(currentActivity.dispose).not.toHaveBeenCalled()
+      expect(currentRuntime.dispose).not.toHaveBeenCalled()
+      unmount()
+      expect(currentActivity.dispose).toHaveBeenCalledTimes(1)
+      expect(currentRuntime.dispose).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('opens the selected execution environment in device management', () => {
     render(<CollaborationPage />)
@@ -396,4 +501,36 @@ describe('CollaborationPage platform routing', () => {
       expect(capturedHost?.location.platformView).toBe('spaces')
     }
   )
+  it('resolves the marketplace template in the current account and consumes its URL request', async () => {
+    mockTemplateStore = new CollaborationTemplateStore({
+      scope: 'web-7',
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    })
+    const record = mockTemplateStore.getSnapshot().records[0]
+    mockSearchParams = new URLSearchParams({ template: templateIdentity(record) })
+    render(<CollaborationPage />)
+    await waitFor(() =>
+      expect(capturedHost?.projectTemplateRequest?.document).toEqual(record.document)
+    )
+    capturedHost!.projectTemplateRequest!.onHandled()
+    expect(mockReplace).toHaveBeenCalledWith('/collaboration', { scroll: false })
+  })
+
+  it('allows retry when the selected template cannot be loaded', async () => {
+    mockTemplateStore = new CollaborationTemplateStore({
+      scope: 'web-7',
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    })
+    const record = mockTemplateStore.getSnapshot().records[0]
+    jest.spyOn(mockTemplateStore, 'load').mockRejectedValueOnce(new Error('storage failure'))
+    mockSearchParams = new URLSearchParams({ template: templateIdentity(record) })
+    render(<CollaborationPage />)
+    fireEvent.click(await screen.findByTestId('template-request-retry'))
+    await waitFor(() =>
+      expect(capturedHost?.projectTemplateRequest?.document).toEqual(record.document)
+    )
+    expect(screen.queryByTestId('template-request-retry')).not.toBeInTheDocument()
+  })
 })

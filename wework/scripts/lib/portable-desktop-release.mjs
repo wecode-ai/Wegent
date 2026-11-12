@@ -4,7 +4,6 @@ import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promi
 import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pipeline } from 'node:stream/promises'
-import { create } from 'tar'
 
 export async function portableDesktopRelease({
   appRoot,
@@ -15,6 +14,7 @@ export async function portableDesktopRelease({
   output,
   fixture = false,
 }) {
+  const { create } = await import('tar')
   const stage = await mkdtemp(join(tmpdir(), 'wework-portable-release-'))
   try {
     const directory = platform === 'macos' ? basename(appRoot) : 'application'

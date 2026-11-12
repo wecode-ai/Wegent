@@ -50,6 +50,9 @@ function reader() {
   const state: ConversationFrameProbeState = {
     anchor: {
       messageId: 'private-message',
+      itemId: null,
+      chunkIndex: null,
+      text: element.textContent ?? '',
       element,
       anchorIndex: 3,
       textOffset: null,

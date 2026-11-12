@@ -13,7 +13,6 @@
 // infer production ownership for the local test servers spawned below.
 #![cfg(test)]
 
-use std::future::pending;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -61,12 +60,13 @@ fn executor_manager() -> ExecutorManager {
     ExecutorManager::new("http://127.0.0.1:1").expect("client")
 }
 
-/// Holds the first `fetch_optional` forever and signals that it was reached, so
-/// a test can stop the terminal persistence mid-step without a timer.
+/// Holds the first `fetch_optional` until released and signals that it was
+/// reached, so a test can stop persistence mid-step without a timer.
 #[derive(Default)]
 struct Gate {
     first_call: AtomicBool,
     reached: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    release: tokio::sync::Notify,
 }
 
 impl Gate {
@@ -75,6 +75,7 @@ impl Gate {
         let gate = Arc::new(Self {
             first_call: AtomicBool::new(true),
             reached: Mutex::new(Some(sender)),
+            release: tokio::sync::Notify::new(),
         });
         (gate, receiver)
     }
@@ -86,7 +87,11 @@ impl Gate {
         if let Some(sender) = self.reached.lock().unwrap().take() {
             let _ = sender.send(());
         }
-        pending::<()>().await;
+        self.release.notified().await;
+    }
+
+    fn release(&self) {
+        self.release.notify_one();
     }
 }
 
@@ -329,6 +334,16 @@ impl RecordingRedis {
             .count()
     }
 
+    fn cancel_get_after(&self, marker: &str) -> bool {
+        let calls = self.calls();
+        let Some(index) = calls.iter().position(|call| call == marker) else {
+            return false;
+        };
+        calls[index + 1..]
+            .iter()
+            .any(|call| call.starts_with("GET chat:cancel:"))
+    }
+
     fn mark_cancelled(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
     }
@@ -449,12 +464,16 @@ impl brz_redis::Redis for RecordingRedis {
         Ok(())
     }
 
-    async fn publish<C, M>(&self, channel: C, _: M) -> RedisResult<i64>
+    async fn publish<C, M>(&self, channel: C, message: M) -> RedisResult<i64>
     where
         C: EncodeRedisArg + Send,
         M: EncodeRedisArg + Send,
     {
-        self.record(format!("PUBLISH {}", Self::key(&channel)));
+        let payload = message
+            .as_encoded_bytes()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default();
+        self.record(format!("PUBLISH {} {payload}", Self::key(&channel)));
         Ok(1)
     }
 
@@ -547,40 +566,6 @@ async fn spawn_stream_server(frames: Vec<&'static str>) -> String {
     format!("http://{addr}")
 }
 
-/// As [`spawn_stream_server`], but signals after the frames were flushed and
-/// keeps the connection open, so a test can act while the terminal drain is
-/// still reading the delayed EOF.
-async fn spawn_stream_server_holding(
-    frames: Vec<&'static str>,
-) -> (String, tokio::sync::oneshot::Receiver<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let (flushed, flushed_receiver) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let Ok((mut stream, _)) = listener.accept().await else {
-            return;
-        };
-        if !read_http_request(&mut stream).await {
-            return;
-        }
-        let _ = stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
-            )
-            .await;
-        for frame in frames {
-            let _ = stream
-                .write_all(format!("data: {frame}\n\n").as_bytes())
-                .await;
-        }
-        let _ = stream.flush().await;
-        let _ = flushed.send(());
-        let mut byte = [0_u8; 1];
-        let _ = stream.read(&mut byte).await;
-    });
-    (format!("http://{addr}"), flushed_receiver)
-}
-
 async fn read_http_request(stream: &mut TcpStream) -> bool {
     let mut buffer = Vec::new();
     loop {
@@ -622,11 +607,16 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
         executor_manager: &executor,
         app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
     };
 
     let collected = tokio::time::timeout(
@@ -652,6 +642,23 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
     );
 }
 
+/// The client's read timeout bounds inactivity, not total stream lifetime.
+/// Reintroducing `RequestBuilder::timeout(STREAM_TIMEOUT)` would make this
+/// assertion fail and reproduce the 300-second truncation regression.
+#[test]
+fn chat_shell_stream_request_has_no_total_timeout() {
+    let client = HttpClient::builder().build().expect("HTTP client");
+    let request = stream_request(
+        &client,
+        "http://127.0.0.1:1/v1/responses",
+        &json!({"stream": true}),
+        "req-test",
+    )
+    .expect("request builds");
+
+    assert!(request.timeout().is_none());
+}
+
 /// A cross-worker cancel is acted on while `.send()` still awaits the HTTP
 /// response headers; the previous implementation could only poll between
 /// chunks, so it stayed suspended for the whole header wait.
@@ -663,11 +670,16 @@ async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
         executor_manager: &executor,
         app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
     };
 
     let dispatch = collect(&ctx, &url, &request, "req-test", Some(2));
@@ -710,11 +722,16 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
     let mysql = RecordingMysql::gated(gate);
     let executor = executor_manager();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
         executor_manager: &executor,
         app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
     };
 
     let request = execution_request();
@@ -764,29 +781,68 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
 /// GETs through the drain.
 #[tokio::test]
 async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
-    let (url, frames_flushed) = spawn_stream_server_holding(vec![CREATED, DELTA, COMPLETED]).await;
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let (gate, persistence_started) = Gate::new();
     let redis = RecordingRedis::default();
-    let mysql = RecordingMysql::default();
+    let mysql = RecordingMysql::gated(gate.clone());
     let executor = executor_manager();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
         executor_manager: &executor,
         app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
     };
 
     let request = execution_request();
     let dispatch = collect(&ctx, &url, &request, "req-test", Some(2));
     tokio::pin!(dispatch);
     tokio::select! {
-        flushed = frames_flushed => flushed.expect("the terminal frames were flushed"),
+        started = persistence_started => started.expect("the terminal persistence was reached"),
         result = &mut dispatch => panic!("the dispatch ended before the terminal: {result:?}"),
     }
 
+    // Separate the one-second poll and drain deadlines without changing either
+    // budget. Persistence keeps the drain from starting while the poll is aged.
+    tokio::time::pause();
+    let (poll_started, release_poll) = redis.arm_cancel_gate();
+    tokio::time::advance(CANCEL_POLL_INTERVAL).await;
+    tokio::select! {
+        started = poll_started => started.expect("the existing cancellation poll is admitted"),
+        result = &mut dispatch => panic!("the dispatch ended during persistence: {result:?}"),
+    }
+    release_poll.send(()).unwrap();
+    assert!(poll_once(dispatch.as_mut()).await.is_none());
+    let polls_before_drain = redis.count("GET chat:cancel:");
+    tokio::time::advance(CANCEL_POLL_INTERVAL / 2).await;
+    gate.release();
+    assert!(poll_once(dispatch.as_mut()).await.is_none());
+
     // The terminal already won; arm the cross-worker flag while the drain is
     // still reading the held-open tail.
+    let (drain_poll_started, release_drain_poll) = redis.arm_cancel_gate();
     redis.mark_cancelled();
+    // Observe the GET itself instead of assuming a clock advance has already
+    // delivered its timer wake to the consumer.
+    tokio::select! {
+        started = drain_poll_started => started.expect("a cancellation GET runs during the drain"),
+        result = &mut dispatch => panic!("the drain ended before the next poll: {result:?}"),
+    }
+    assert!(
+        redis.count("GET chat:cancel:") > polls_before_drain,
+        "a new cancellation GET must run after the terminal enters its drain: {:?}",
+        redis.calls()
+    );
+    release_drain_poll.send(()).unwrap();
+    assert!(
+        poll_once(dispatch.as_mut()).await.is_none(),
+        "the in-drain cancel must not end the held-open tail"
+    );
     let collected = tokio::time::timeout(Duration::from_secs(5), &mut dispatch)
         .await
         .expect("the bounded drain completes")
@@ -797,8 +853,8 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
         "the completed result survives the in-drain cancellation"
     );
     assert!(
-        redis.count("GET chat:cancel:") >= 2,
-        "the same poll keeps issuing GETs through the drain: {:?}",
+        redis.cancel_get_after("GET chat:task_streaming:424242"),
+        "the cancellation poll must issue a GET after terminal persistence starts: {:?}",
         redis.calls()
     );
     let subtask_reads = mysql
@@ -904,11 +960,16 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
         executor_manager: &executor,
         app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
     };
 
     let mut collect_fut = Box::pin(collect(&ctx, &url, &request, "req-test", Some(2)));
@@ -948,5 +1009,77 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
     assert!(
         get_end < unregister,
         "unregister DEL must follow the admitted GET: {calls:?}"
+    );
+}
+
+/// Forwarding mode publishes the dispatcher START pair, the streamed chunks
+/// and the terminal frames (`chat:done`, `task:status`) like
+/// `WebSocketResultEmitter`.
+#[tokio::test]
+async fn a_forwarded_dispatch_publishes_the_chat_frames() {
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::default();
+    let executor = executor_manager();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: true,
+        start_data: serde_json::json!({"shell_type": "Chat", "bot_name": "wegent-chat"}),
+        created_task: Some(crate::internal_callback::emitter::CreatedTask {
+            user_id: 6501,
+            team_id: 110_467,
+            team_name: "wegent-chat".into(),
+            title: "title".into(),
+            is_group_chat: false,
+            project_id: 0,
+        }),
+        owner_user_id: Some(6501),
+    };
+    let request = execution_request();
+    collect(&ctx, &url, &request, "req-test", Some(2))
+        .await
+        .expect("the forwarded dispatch completes");
+    let published = redis
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("PUBLISH socketio "))
+        .collect::<Vec<_>>();
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"chat:start\"")
+                && message.contains("\"bot_name\": \"wegent-chat\"")),
+        "the dispatcher START frame is published: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"task:created\"")
+                && message.contains("\"room\": \"user:6501\"")),
+        "the START branch also publishes task:created: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"chat:chunk\"")),
+        "streamed chunks are forwarded: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"chat:done\"")),
+        "the terminal publishes chat:done: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"task:status\"")
+                && message.contains("\"room\": \"user:6501\"")),
+        "the terminal publishes task:status to the owner room: {published:?}"
     );
 }

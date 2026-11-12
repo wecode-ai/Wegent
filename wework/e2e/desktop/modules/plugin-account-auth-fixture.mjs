@@ -3,8 +3,26 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { createNativeAccountFixture } from './native-account-runtime-isolation.mjs'
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const run = promisify(execFile)
+
+export async function seedHistoricalAccountAuth(cloud, mode, id) {
+  const { stdout } = await run(
+    'uv',
+    [
+      'run',
+      'python',
+      join(repository, 'wework/e2e/desktop/fixtures/historical-account-auth.py'),
+      mode,
+      String(id),
+    ],
+    { cwd: join(repository, 'backend'), env: cloud.backendEnv }
+  )
+  const result = JSON.parse(stdout.trim())
+  if (!(result.removed > 0)) throw new Error('Historical account-auth fixture was not seeded')
+}
+
 export async function createAccountAuthFixture({
   resultDir,
   homePath,
@@ -13,9 +31,11 @@ export async function createAccountAuthFixture({
   secret,
   oauthSecret,
   transferSecret,
+  recordPythonRuntime = false,
 }) {
   await mkdir(join(fixtureRoot, '.codex-plugin'), { recursive: true })
   await mkdir(join(fixtureRoot, 'scripts'), { recursive: true })
+  if (recordPythonRuntime) await createNativeAccountFixture(resultDir, fixtureRoot)
   await writeFile(
     join(fixtureRoot, 'scripts/legacy-auth.py'),
     `import json, os, sys
@@ -43,6 +63,8 @@ action = sys.argv[1]
 with (Path.home() / "conversation-qr-events.jsonl").open("a") as log:
     log.write(json.dumps({"action": action, "revision": sys.argv[2] if len(sys.argv) > 2 else "original"}) + "\\n")
 if action == "health":
+    if (Path.home() / "conversation-qr-health-fail").exists() and (Path.home() / "conversation-qr-health-fail").read_text() == "throw":
+        raise RuntimeError("E2E_QR_HEALTH_FAILED")
     result = {"status": "error", "hint": "E2E_QR_HEALTH_FAILED"} if (Path.home() / "conversation-qr-health-fail").exists() else {"status": "ok" if approval.exists() else "need_login"}
 elif action == "logout":
     approval.unlink(missing_ok=True)
@@ -69,6 +91,21 @@ print(json.dumps(result))
         shortDescription: 'Synthetic provider',
       },
       connectors: [
+        ...(recordPythonRuntime
+          ? [
+              {
+                slug: 'native',
+                displayName: 'Native runtime isolation E2E',
+                authPolicy: 'optional',
+                accountAuth: {
+                  protocolVersion: 1,
+                  credentialType: 'oauth2',
+                  adapter: 'scripts/native-auth.mjs',
+                  oauth2: ['revoke'],
+                },
+              },
+            ]
+          : []),
         {
           slug: 'conversation-qr',
           displayName: 'Conversation QR E2E',
@@ -158,9 +195,10 @@ print(json.dumps(result))
   await writeFile(
     join(fixtureRoot, 'scripts/provider.py'),
     `
-import json, time
+import json, sys, time
 from pathlib import Path
 def export():
+    ${recordPythonRuntime ? `(Path.home() / "account-auth-python-runtime.json").write_text(json.dumps({"executable": sys.executable, "prefix": sys.base_prefix, "version": sys.version.split()[0]}))` : 'pass'}
     (Path.home() / "account-auth-export-attempted").write_text("attempted")
     credential = json.loads((Path.home() / "account-auth-synthetic.json").read_text())
     gate = Path.home() / "account-auth-export-held"
@@ -299,6 +337,18 @@ from wegent_plugin_auth import delegate_cloud_command
 import provider
 delegated = delegate_cloud_command(Path(__file__).resolve().parents[1], "mail", sys.argv[1:])
 raise SystemExit(delegated if delegated is not None else provider.execute(provider.export(), sys.argv[1:]))
+`
+  )
+  await writeFile(
+    join(fixtureRoot, 'scripts/native-cli.py'),
+    `
+import os, sys
+from pathlib import Path
+from wegent_plugin_auth import delegate_cloud_command
+assert os.environ.get("WEGENT_PLUGIN_AUTH_MODE") == "local", "Expected a real local conversation"
+result = delegate_cloud_command(Path(__file__).resolve().parents[1], "mail", sys.argv[1:], account_id="alice@example.test")
+assert result is not None
+raise SystemExit(result)
 `
   )
   await run(

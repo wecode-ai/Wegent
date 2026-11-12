@@ -27,6 +27,7 @@
 use brz_mysql::{MysqlResult, MysqlService};
 use brz_redis::Redis;
 
+use super::kind_reload::{KindEntityRow, kind_entity_by_id_statement};
 use super::knowledge::{APPROVED_STATUSES, KB_RESOURCE_TYPES};
 use super::resolution::{KIND_COLUMNS, KindRow};
 use crate::is_organization_namespace;
@@ -85,6 +86,38 @@ pub fn knowledge_base_candidates_statement(id_count: usize) -> String {
          AND kinds.is_active IS true",
         placeholders(id_count)
     )
+}
+
+/// `replica_policy.is_hidden_replica` (`knowledge/replica_policy.py:9-19`): a
+/// `spec.ksReplica` marker hides the knowledge base unless the marker is an
+/// object whose `nativeHidden` is the JSON boolean `false`. A damaged
+/// (non-object) marker stays hidden; a document without the marker is visible.
+fn is_hidden_replica(json: &serde_json::Value) -> bool {
+    let Some(spec) = json.get("spec").and_then(serde_json::Value::as_object) else {
+        return false;
+    };
+    match spec.get("ksReplica") {
+        Some(serde_json::Value::Object(marker)) => {
+            marker.get("nativeHidden") != Some(&serde_json::Value::Bool(false))
+        }
+        Some(_) => true,
+        None => false,
+    }
+}
+
+/// `entry_permission(db, kb_id, user_id, "read")` for a create request: the
+/// request session carries no signed `KnowledgeEntry` (`db.info` is
+/// request-local and the create API never authorizes one), so the Source reads
+/// the Kind and denies only a hidden replica. `Some(true)` is reserved for a
+/// signed read grant, which this request path cannot produce.
+async fn entry_permission_read(mysql: &MysqlService, kb_id: i64) -> MysqlResult<Option<bool>> {
+    let row: Option<KindEntityRow> = mysql
+        .fetch_optional(kind_entity_by_id_statement(), (kb_id,))
+        .await?;
+    match row {
+        Some(row) if is_hidden_replica(&row.json.0) => Ok(Some(false)),
+        _ => Ok(None),
+    }
 }
 
 /// `db.query(ResourceMember.resource_id).filter(...).first()`: the caller's
@@ -171,6 +204,22 @@ pub async fn get_knowledge_base_tool_access_mode_by_ids<R: Redis>(
     knowledge_base_ids: &[i64],
 ) -> MysqlResult<KbToolAccessMode> {
     if knowledge_base_ids.is_empty() {
+        return Ok(KbToolAccessMode::full());
+    }
+
+    // `if knowledge_base_ids and all(entry_permission(db, kb_id, user_id,
+    // "read") is True for kb_id in knowledge_base_ids): return FULL`
+    // (`knowledge_access_policy.py:181-190`). `all` short-circuits on the first
+    // non-`True`, and without a signed entry each check issues `db.get(Kind,
+    // kb_id)` (`ks/entry.py:36-44`), so this reads only the first id.
+    let mut all_granted = true;
+    for kb_id in knowledge_base_ids {
+        if entry_permission_read(mysql, *kb_id).await? != Some(true) {
+            all_granted = false;
+            break;
+        }
+    }
+    if all_granted {
         return Ok(KbToolAccessMode::full());
     }
 
@@ -318,5 +367,77 @@ mod tests {
                 BindingArg::Str("5831".to_string()),
             ]
         );
+    }
+
+    /// `replica_policy.is_hidden_replica` (`replica_policy.py:9-19`): only an
+    /// object marker with JSON `nativeHidden == false` opens the replica; a
+    /// damaged marker stays hidden and a missing marker is visible.
+    #[test]
+    fn hidden_replicas_follow_the_source_marker_contract() {
+        let kb = |spec: serde_json::Value| serde_json::json!({"spec": spec});
+        assert!(!is_hidden_replica(&kb(serde_json::json!({}))));
+        assert!(!is_hidden_replica(&kb(
+            serde_json::json!({"ksReplica": {"nativeHidden": false}})
+        )));
+        assert!(!is_hidden_replica(
+            &serde_json::json!({"kind": "KnowledgeBase"})
+        ));
+        assert!(!is_hidden_replica(&serde_json::json!("not-an-object")));
+        for spec in [
+            serde_json::json!({"ksReplica": {"nativeHidden": true}}),
+            serde_json::json!({"ksReplica": {"nativeHidden": "false"}}),
+            serde_json::json!({"ksReplica": {}}),
+            serde_json::json!({"ksReplica": "damaged"}),
+            serde_json::json!({"ksReplica": null}),
+        ] {
+            assert!(is_hidden_replica(&kb(spec.clone())), "{spec}");
+        }
+    }
+
+    /// `get_knowledge_base_tool_access_mode_by_ids` starts with
+    /// `entry_permission` (`knowledge_access_policy.py:181-190` →
+    /// `ks/entry.py:36-44`), whose unsigned branch reads the Kind by id before
+    /// the candidate list read. Recorded b27a96c6 seq198.
+    #[tokio::test]
+    async fn the_access_mode_reads_the_kind_entry_before_the_candidate_list() {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mysql = crate::connect_mysql(&format!(
+                "mysql://test:test@{}/test?ssl-mode=disabled",
+                listener.local_addr().unwrap()
+            ))
+            .unwrap();
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(
+                crate::sql_test_support::mysql_pool_server::capture_queries_until(
+                    listener, stopped,
+                ),
+            );
+            let resolvers = EntityResolvers::public(lazy_mysql());
+            let result = get_knowledge_base_tool_access_mode_by_ids(
+                &mysql,
+                &resolvers,
+                None::<&brz_redis::RedisService>,
+                5831,
+                &[263_078],
+            )
+            .await;
+            assert!(
+                result.is_err(),
+                "the fake server answers with a parse error"
+            );
+            stop.send(()).unwrap();
+            let queries = server.await.unwrap();
+            assert_eq!(queries.len(), 1, "{queries:?}");
+            assert_eq!(
+                queries[0].split_whitespace().collect::<Vec<_>>().join(" "),
+                kind_entity_by_id_statement()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        })
+        .await
+        .unwrap();
     }
 }

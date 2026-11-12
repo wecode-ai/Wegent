@@ -151,7 +151,7 @@ fn decrypt_model_api_key(raw: &str) -> Result<String, FastApiError> {
     if resolved.contains("${") {
         return Ok(resolved);
     }
-    crate::git_repositories::crypto::decrypt_git_token(&resolved)
+    wegent_identity::repository_credentials::decrypt_git_token(&resolved)
         .map_err(|_| credentials_unavailable())
 }
 
@@ -573,16 +573,17 @@ pub(super) async fn validate_model_access(
 
 /// `get_user_groups` for the group-model access check.
 async fn user_groups(state: &AppState, user: &UserRow) -> Result<Vec<String>, FastApiError> {
-    let erp = crate::teams::group_membership::ErpContext {
-        erp: state.erp.as_ref(),
-        redis: state.redis.as_ref(),
-    };
-    crate::skills::skills_unified::get_user_groups(&state.mysql, &erp, user.id)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "LLM proxy group membership resolution failed");
-            FastApiError::unhandled()
-        })
+    crate::permissions::user_groups(
+        &state.mysql,
+        &state.entity_resolvers.for_execution(),
+        state.redis.as_ref(),
+        i64::from(user.id),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "LLM proxy group membership resolution failed");
+        FastApiError::unhandled()
+    })
 }
 
 /// `str(env.get("api_key") or "")`: an absent or `null` key renders empty.

@@ -1,6 +1,12 @@
+import { readNativeToolCallId } from './native-tool-call-id.mjs'
 import { readFile, readdir } from 'node:fs/promises'
 import { waitForElementTop, waitForElementWidth } from './layout-metrics.mjs'
 import { verifyConversationDiagrams } from './conversation-diagrams.mjs'
+import {
+  verifyComposerFadeAfterSubmit,
+  verifyComposerFadeBeforeSubmit,
+} from './composer-scroll-fade.mjs'
+import { verifyComposerMarkdownDraftAcknowledgement } from './composer-markdown-draft.mjs'
 
 import { sendPrompt } from './conversation-navigation.mjs'
 import { verifyShortConversationTopAlignment } from './conversation-short-layout.mjs'
@@ -70,16 +76,17 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await sendPrompt(
-    control,
-    composerSelector,
-    `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
-  )
+  const followUpPrompt = `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
+  // Prime scrolling while preserving the existing follow-up submission path.
+  await verifyComposerFadeBeforeSubmit(control, composerSelector, followUpPrompt)
+  await sendPrompt(control, composerSelector, followUpPrompt)
   await waitForScenarioRequestCount(control, 'fresh_chat', 2)
   await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyComposerFadeAfterSubmit(control, composerSelector)
+  await verifyComposerMarkdownDraftAcknowledgement(control, composerSelector)
   await verifyShortConversationTopAlignment(control, 'The initial four-message conversation')
   await verifyConversationPanelLayout(control)
   const shortConversationTaskRowTestId = await waitForNewTaskRow(
@@ -133,15 +140,14 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     4,
     'The unified virtual list did not mount every short-conversation turn'
   )
-  assert.equal(
-    await control.command(
-      'getStyle',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"] [data-index]`,
-      { value: 'position' }
-    ),
-    'absolute',
-    'Short conversations did not use the unified virtual row layout'
-  )
+  for (const [index, row] of virtualRows.entries()) {
+    assert.ok(row.height > 0, `Short-conversation virtual row ${index} has no layout height`)
+    if (index > 0)
+      assert.ok(
+        row.top >= virtualRows[index - 1].bottom - 1,
+        `Short-conversation virtual rows overlap: ${JSON.stringify({ previous: virtualRows[index - 1], row })}`
+      )
+  }
   const conversationSnapshot = JSON.parse(
     await control.command(
       'snapshot',
@@ -305,12 +311,12 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await verifyShortConversationTopAlignment(control, 'The four-message conversation after restart')
   await waitForComposerFocus(
     control,
     DEFAULT_STEP_TIMEOUT_MS,
     'Opening an existing conversation after app startup did not focus the composer'
   )
+  await verifyShortConversationTopAlignment(control, 'The four-message conversation after restart')
   await verifyConversationShortcuts(control, composerSelector, FRESH_CHAT_PROMPT)
   await control.command(
     'hover',
@@ -718,20 +724,41 @@ async function waitForElementInsideScroller(
   elementSelector,
   scrollerSelector,
   description,
-  timeoutMs = 3_000
+  timeoutMs = 3_000,
+  { occluderSelector, clipToViewport = false } = {}
 ) {
   const startedAt = Date.now()
   let element
   let scroller
+  let occluder
   while (Date.now() - startedAt < timeoutMs) {
     scroller = await getSingleElementMetrics(control, scrollerSelector, description)
     element = (await getElementMetrics(control, elementSelector)).at(-1)
-    if (element && element.top >= scroller.top - 2 && element.bottom <= scroller.bottom + 2) {
-      return { element, scroller }
+    occluder = occluderSelector
+      ? (await getElementMetrics(control, occluderSelector)).at(-1)
+      : undefined
+    const bottom = Math.min(
+      scroller.bottom,
+      occluder?.height > 0 ? occluder.top : scroller.bottom,
+      clipToViewport ? scroller.viewportHeight : Infinity
+    )
+    if (
+      element &&
+      (!occluderSelector || occluder?.height > 0) &&
+      element.height > 0 &&
+      element.top >= Math.max(scroller.top, clipToViewport ? 0 : -Infinity) - 2 &&
+      element.bottom <= bottom + 2 &&
+      (!clipToViewport ||
+        (element.left >= Math.max(scroller.left, 0) - 2 &&
+          element.right <= Math.min(scroller.right, scroller.viewportWidth) + 2))
+    ) {
+      return { element, scroller, ...(occluder ? { occluder } : {}) }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
-  throw new Error(`${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller })}`)
+  throw new Error(
+    `${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller, occluder })}`
+  )
 }
 
 async function waitForTopMetrics(control, selector, description, timeoutMs = 3_000) {
@@ -815,7 +842,16 @@ async function waitForProcessingBlock(
 }
 
 async function verifyViewImageProcessingBlock(control) {
-  const viewImageBlockSelector = '[data-processing-block-id="wework-e2e-view-image"]'
+  const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+    .currentRuntimeTask
+  const callId = await readNativeToolCallId(
+    control,
+    address,
+    block => block.toolName === 'view_image',
+    'view_image',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const viewImageBlockSelector = `[data-processing-block-id="${callId}"]`
   await waitForProcessingBlock(control, viewImageBlockSelector, 'The view_image processing block')
   const generatedImageGalleryCount = Number(
     await control.command('getElementCount', '[data-testid="generated-image-gallery"]')
@@ -828,7 +864,7 @@ async function verifyViewImageProcessingBlock(control) {
   await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
   await control.command(
     'waitFor',
-    '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="false"]',
+    viewImageBlockSelector + ' [data-tool-detail-toggle][aria-expanded="false"]',
     { visible: true, stableMs: 300, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
@@ -837,17 +873,14 @@ async function verifyViewImageProcessingBlock(control) {
     '03-view-image-collapsed.png',
     '[data-testid="processing-live-preview"]'
   )
-  await control.command(
-    'click',
-    '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle]'
-  )
+  await control.command('click', viewImageBlockSelector + ' [data-tool-detail-toggle]')
   await control.command('waitFor', '[data-testid="image-view-preview"]', {
     stableMs: 500,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command(
     'waitFor',
-    '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="true"]',
+    viewImageBlockSelector + ' [data-tool-detail-toggle][aria-expanded="true"]',
     { stableMs: 500, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')

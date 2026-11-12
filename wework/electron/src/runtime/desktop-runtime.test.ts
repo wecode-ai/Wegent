@@ -11,6 +11,7 @@ import type { DshRuntimeOptions } from './dsh-runtime.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { resolveDesktopDeviceId } from './desktop-device-id.js'
 import { CoreDshPluginManager } from './core-dsh-plugin-manager.js'
+import type { ModelConfigurationStore } from '../host/model-configuration-store.js'
 
 vi.mock('./workbench-executor-schema.js', () => ({
   assertExecutorWorkbenchCompatibility: vi.fn(),
@@ -112,14 +113,20 @@ vi.mock('./desktop-device-id.js', async importOriginal => {
   const original = await importOriginal<typeof import('./desktop-device-id.js')>()
   return {
     ...original,
-    resolveDesktopDeviceId: vi.fn((options: { environment: NodeJS.ProcessEnv }) => {
-      if (!deviceIdentityState.pending) return original.resolveDesktopDeviceId(options)
-      return new Promise<string>(resolve => {
-        deviceIdentityState.resolve = resolve
-      })
-    }),
+    resolveDesktopDeviceId: vi.fn(
+      (options: Parameters<typeof original.resolveDesktopDeviceId>[0]) => {
+        if (!deviceIdentityState.pending) return original.resolveDesktopDeviceId(options)
+        return new Promise<string>(resolve => {
+          deviceIdentityState.resolve = resolve
+        })
+      }
+    ),
   }
 })
+
+vi.mock('systeminformation', () => ({
+  system: vi.fn(async () => ({ uuid: '12345678-1234-5678-9abc-123456789abc' })),
+}))
 
 const created: FakeCoreDsh[] = []
 const createdOptions: DshRuntimeOptions[] = []
@@ -139,6 +146,7 @@ function createRuntime(
   overrides: Partial<DesktopRuntimeOptions> = {}
 ): DesktopRuntime {
   return new DesktopRuntime({
+    applicationId: 'io.wecode.wework',
     environment,
     dataDirectory: '/tmp/wework-desktop-runtime-test/data',
     logDirectory: '/tmp/wework-desktop-runtime-test/logs',
@@ -168,6 +176,130 @@ describe('DesktopRuntime lifecycle generation', () => {
 
   afterEach(async () => {
     prepareState.resolveLaunch = null
+  })
+
+  test.each(['pending', 'failed'])(
+    'opens Core while initial local model synchronization is %s',
+    async state => {
+      const executor = new FakeExecutor()
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const read =
+        state === 'pending'
+          ? vi.fn(() => new Promise(() => {}))
+          : vi.fn().mockRejectedValue(new Error('Model store unavailable'))
+      const runtime = createRuntime(
+        { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+        {
+          createExecutor: () => executor,
+          modelConfiguration: { read } as unknown as ModelConfigurationStore,
+        }
+      )
+      try {
+        await runtime.start()
+        expect(runtime.state().ready).toBe(true)
+        expect(created[0].startCalls).toBe(1)
+        if (state === 'failed') await vi.waitFor(() => expect(warning).toHaveBeenCalled())
+      } finally {
+        await runtime.stop()
+        warning.mockRestore()
+      }
+    }
+  )
+
+  test('a pending model read cannot stall or write into a restarted executor', async () => {
+    const oldRead = deferred<{ providers: unknown[] }>()
+    const configuration = {
+      read: vi
+        .fn()
+        .mockImplementationOnce(() => oldRead.promise)
+        .mockResolvedValue({ providers: [] }),
+      runtime: vi.fn().mockResolvedValue({ models: [] }),
+    }
+    const executors = [new FakeExecutor(), new FakeExecutor()]
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      {
+        createExecutor: () => executors[created.length],
+        modelConfiguration: configuration as unknown as ModelConfigurationStore,
+      }
+    )
+    try {
+      await runtime.start()
+      const queuedOldSync = runtime.syncLocalModels()
+      await runtime.stop()
+      await runtime.start()
+      await vi.waitFor(() =>
+        expect(executors[1].requests).toEqual(['runtime.runner.local_models.replace'])
+      )
+      oldRead.resolve({ providers: [] })
+      await queuedOldSync
+      expect(executors[0].requests).toEqual([])
+      expect(executors[1].requests).toEqual(['runtime.runner.local_models.replace'])
+      expect(configuration.runtime).toHaveBeenCalledOnce()
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  test('publishes device model interfaces during Core startup and removes disabled entries', async () => {
+    const executor = new FakeExecutor()
+    const request = vi.spyOn(executor, 'request')
+    const configuration = {
+      read: vi.fn().mockResolvedValue({ providers: [] }),
+      runtime: vi.fn().mockResolvedValue({
+        models: [
+          {
+            provider: {
+              id: 'company',
+              name: 'Company',
+              base_url: 'https://model.example/v1',
+              api_format: 'openai-responses',
+              api_key: 'private',
+            },
+            model: { id: 'assistant', model_id: 'model', catalog_entry: { slug: 'custom' } },
+          },
+        ],
+      }),
+    }
+    const runtime = createRuntime(
+      {
+        ...EXTERNAL_DSH,
+        WEWORK_EXECUTOR_PATH: '/executor',
+        WEGENT_APP_IPC_DEVICE_ID: 'test-device',
+      },
+      {
+        createExecutor: () => executor,
+        modelConfiguration: configuration as unknown as ModelConfigurationStore,
+        createCoreDsh: options => {
+          expect(executor.requests).toContain('runtime.runner.local_models.replace')
+          return createCoreDsh(options)
+        },
+      }
+    )
+    try {
+      await runtime.start()
+      expect(request).toHaveBeenCalledWith('runtime.runner.local_models.replace', {
+        models: [
+          expect.objectContaining({
+            provider: 'local-assistant',
+            model_id: 'local-model:assistant',
+            modelConfig: expect.objectContaining({ api_key: 'private' }),
+          }),
+        ],
+      })
+      configuration.runtime.mockResolvedValueOnce({ models: [] })
+      await runtime.syncLocalModels()
+      expect(request).toHaveBeenLastCalledWith('runtime.runner.local_models.replace', {
+        models: [],
+      })
+      configuration.read.mockResolvedValueOnce({ providers: [], error: 'Invalid configuration' })
+      await runtime.syncLocalModels()
+      expect(request).toHaveBeenLastCalledWith('runtime.runner.local_models.replace', {
+        models: [],
+      })
+    } finally {
+      await runtime.stop()
+    }
   })
 
   test('reapplies development configuration after each profile preparation', async () => {
@@ -269,16 +401,32 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(runtime.state().ready).toBe(true)
   })
 
-  test('passes the stable desktop device identity to Core DSH', async () => {
-    const runtime = createRuntime({
-      ...EXTERNAL_DSH,
-      WEGENT_APP_IPC_DEVICE_ID: 'stable-desktop-device',
-    })
+  test('passes the explicit verification identity to Core DSH and its managed executor', async () => {
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    const runtime = createRuntime(
+      {
+        ...EXTERNAL_DSH,
+        DEVICE_ID: 'stable-desktop-device',
+        WEGENT_APP_IPC_DEVICE_ID: 'stable-desktop-device',
+        WEGENT_EXECUTOR_HOME: '/tmp/explicit-verification-home',
+        WEWORK_EXECUTOR_PATH: '/executor',
+      },
+      { createExecutor }
+    )
 
     await runtime.start()
 
     expect(createdOptions).toHaveLength(1)
     expect(createdOptions[0].env?.WEGENT_APP_IPC_DEVICE_ID).toBe('stable-desktop-device')
+    expect(createExecutor).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        deviceId: 'stable-desktop-device',
+        environment: expect.objectContaining({
+          WEGENT_EXECUTOR_HOME: '/tmp/explicit-verification-home',
+          WEGENT_APP_IPC_DEVICE_ID: 'stable-desktop-device',
+        }),
+      })
+    )
   })
 
   test('an old-generation start cannot clear a new-generation start', async () => {
@@ -529,6 +677,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
       .mockReturnValueOnce({ hostPipe: firstPipe, principal: '@wegent/dsh-workbench' })
       .mockReturnValueOnce({ hostPipe: secondPipe, principal: '@wegent/dsh-workbench' })
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',
@@ -555,11 +704,13 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
       tabId: 'tab-1',
       url: 'http://127.0.0.1:4401',
       command: '/runtime/dsh',
+      environment: { WEWORK_DSH_BROWSER_AUTH: '1' },
     })
     await runtime.openWorkbenchRuntime({
       tabId: 'tab-2',
       url: 'http://127.0.0.1:4402',
       command: '/runtime/dsh',
+      environment: { WEWORK_DSH_BROWSER_AUTH: '1' },
     })
 
     expect(snapshot).toEqual({
@@ -583,6 +734,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
     const options: unknown[] = []
     const hostPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'core' }) }
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',
@@ -617,12 +769,43 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
     expect(options[0]).not.toHaveProperty('hostPrincipal')
   })
 
+  test('never provisions a host pipe for an unauthenticated legacy launch', async () => {
+    const createWorkbenchHostPipe = vi.fn()
+    const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
+      environment: {},
+      dataDirectory: '/data',
+      logDirectory: '/logs',
+      hostPipe: {} as never,
+      createWorkbenchHostPipe,
+    })
+    const open = vi.fn(async (launch: { tabId: string; url: string }) => ({
+      tabId: launch.tabId,
+      url: launch.url,
+      pid: 404,
+    }))
+    // @ts-expect-error – inject a fake workbench factory for testing
+    runtime.workbench = { get: () => null, open }
+    // @ts-expect-error – bypass the ready check
+    runtime.started = true
+    await runtime.openWorkbenchRuntime({
+      tabId: 'legacy',
+      url: 'http://127.0.0.1:4404',
+      command: '/runtime/dsh',
+      environment: { WEWORK_DSH_BROWSER_AUTH: 'legacy' },
+    })
+    expect(createWorkbenchHostPipe).not.toHaveBeenCalled()
+    expect(open.mock.calls[0][0]).not.toHaveProperty('hostPipe')
+    expect(open.mock.calls[0][0]).not.toHaveProperty('hostPrincipal')
+  })
+
   test('preserves explicit host pipe from the launch', async () => {
     const options: unknown[] = []
     const corePipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'core' }) }
     const scopedPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'scoped' }) }
     const explicitPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'explicit' }) }
     const runtime = new DesktopRuntime({
+      applicationId: 'io.wecode.wework',
       environment: {},
       dataDirectory: '/data',
       logDirectory: '/logs',

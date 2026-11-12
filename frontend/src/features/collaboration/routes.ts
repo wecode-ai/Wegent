@@ -9,6 +9,7 @@ import type {
 } from '@wegent/collaboration'
 
 const ROOT_PATHS: Record<CollaborationPlatformRootView, string> = {
+  templates: '/resource-library?type=template',
   home: '/collaboration',
   agents: '/collaboration/agents',
   teams: '/collaboration/teams',

@@ -89,12 +89,14 @@ export function useProjectTaskPages(
         publish({
           nextCursor: previous?.nextCursor ?? null,
           loaded: previous?.loaded ?? false,
-          hasMore: previous?.hasMore ?? project.task_count > 0,
+          hasMore: previous?.hasMore ?? project.task_count !== 0,
           loading: true,
         })
 
         try {
-          const response = await projectApis.getProjectTasks(projectId, 50, cursor)
+          const response = await projectApis.getProjectTasks(projectId, 50, cursor, {
+            includeTotal: false,
+          })
           if (!isCurrent()) return
           updateProjects(projects =>
             projects.map(item => {
@@ -117,7 +119,7 @@ export function useProjectTaskPages(
           publish({
             nextCursor: previous?.nextCursor ?? null,
             loaded: previous?.loaded ?? false,
-            hasMore: previous?.hasMore ?? project.task_count > 0,
+            hasMore: previous?.hasMore ?? project.task_count !== 0,
             loading: false,
             error: err instanceof Error ? err.message : 'Failed to load project tasks',
           })
@@ -169,7 +171,9 @@ export function useProjectTaskPages(
         accountRef.current === account &&
         headRequestsRef.current.get(projectId) === request
       try {
-        const response = await projectApis.getProjectTasks(projectId, 50)
+        const response = await projectApis.getProjectTasks(projectId, 50, undefined, {
+          includeTotal: false,
+        })
         if (!isCurrent()) return
         updateProjects(projects =>
           projects.map(project => {

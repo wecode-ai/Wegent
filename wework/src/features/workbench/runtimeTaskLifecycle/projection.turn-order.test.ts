@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, test } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
 import { shouldReplaceRuntimeTaskProjection } from './projection'

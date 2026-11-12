@@ -1,14 +1,271 @@
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { execFile, spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { createRequire } from 'node:module'
+import { cp, lstat, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { dirname, join, relative, sep } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
+import { PassThrough } from 'node:stream'
+import { create as createTar } from 'tar'
 import { describe, expect, test, vi } from 'vitest'
 import {
   CoreDshPluginManager,
   parseBlockedBuildMatcher,
   validateCoreDshDevelopmentPlugin,
 } from './core-dsh-plugin-manager.js'
-import { temporaryDirectory } from './test-helpers.js'
+import { temporaryDirectory, testNodeEnvironment } from './test-helpers.js'
+import { prepareElectronNodeRuntime } from './electron-node-runtime.js'
+
+vi.mock('node:child_process', { spy: true })
 
 describe('CoreDshPluginManager', () => {
+  test.runIf(process.platform === 'win32')(
+    'validates a profile and supervised process from Electron beyond MAX_PATH',
+    async () => {
+      const fixture = await createFixture()
+      try {
+        const require = createRequire(import.meta.url)
+        const compiled = join(fixture.root, 'compiled')
+        await promisify(execFile)(
+          process.execPath,
+          [
+            require.resolve('typescript/bin/tsc'),
+            '-p',
+            fileURLToPath(new URL('../../tsconfig.json', import.meta.url)),
+            '--outDir',
+            compiled,
+          ],
+          { timeout: 30000 }
+        )
+        await writeJson(join(compiled, 'package.json'), { type: 'module' })
+        let runtimeRoot = fixture.runtimeRoot
+        while (runtimeRoot.length < 320)
+          runtimeRoot = join(runtimeRoot, 'versioned-runtime-directory')
+        await mkdir(runtimeRoot, { recursive: true })
+        const observed = join(fixture.root, 'observed.json')
+        const dshEntry = join(runtimeRoot, 'dsh.cjs')
+        await writeFile(
+          dshEntry,
+          `require('node:fs').writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ cwd: process.cwd() }))`
+        )
+        const pnpmEntry = process.env.npm_execpath
+        expect(pnpmEntry).toBeTruthy()
+        const patchedPnpm = join(fixture.root, 'pnpm')
+        await cp(dirname(dirname(pnpmEntry!)), patchedPnpm, {
+          recursive: true,
+          dereference: true,
+        })
+        expect((await lstat(patchedPnpm)).isSymbolicLink()).toBe(false)
+        await promisify(execFile)(
+          'git',
+          [
+            'apply',
+            fileURLToPath(
+              new URL('../../../harness-runtime/patches/pnpm@11.7.0.patch', import.meta.url)
+            ),
+          ],
+          { cwd: patchedPnpm }
+        )
+        // Writable profiles remain outside the versioned runtime in production.
+        let packageHome = join(fixture.root, 'plugin-home')
+        while (packageHome.length < 175) packageHome = join(packageHome, 'nested-profile-directory')
+        const packageProfile = join(packageHome, 'profiles', 'wework-core')
+        const dependencyRoot = join(fixture.root, 'dependency', 'package')
+        await mkdir(dependencyRoot, { recursive: true })
+        await writeJson(join(dependencyRoot, 'package.json'), {
+          name: 'deep-import-dependency',
+          version: '1.0.0',
+          main: 'index.js',
+          scripts: { postinstall: 'node postinstall.cjs' },
+        })
+        await writeFile(join(dependencyRoot, 'index.js'), 'module.exports = 42\n')
+        await writeFile(
+          join(dependencyRoot, 'postinstall.cjs'),
+          "require('node:fs').writeFileSync('built.txt', 'ready')\n"
+        )
+        const dependencyArchive = join(fixture.root, 'dependency.tgz')
+        const dependencySpec = `file:${relative(packageProfile, dependencyArchive).split(sep).join('/')}`
+        await createTar(
+          { cwd: join(fixture.root, 'dependency'), file: dependencyArchive, gzip: true },
+          ['package']
+        )
+        await mkdir(packageProfile, { recursive: true })
+        await writeJson(join(packageProfile, 'package.json'), {
+          name: 'deep-runtime-profile',
+          private: true,
+          dependencies: { 'deep-import-dependency': dependencySpec },
+          dsh: { profile: { bundles: [] } },
+        })
+        await writeFile(
+          join(packageProfile, 'pnpm-workspace.yaml'),
+          `packages:\n  - .\nnodeLinker: hoisted\nautoInstallPeers: false\nallowBuilds:\n  ${JSON.stringify(`deep-import-dependency@${dependencySpec}`)}: true\n`
+        )
+        const pluginRoot = join(fixture.root, 'local-bundle')
+        await mkdir(pluginRoot)
+        await writeJson(join(pluginRoot, 'package.json'), {
+          name: 'deep-runtime-plugin',
+          version: '1.0.0',
+          dsh: { bundle: { patch: './cordis.patch.yml' } },
+        })
+        await writeFile(join(pluginRoot, 'cordis.patch.yml'), '[]\n')
+        const packageEntry = join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+        await mkdir(join(runtimeRoot, 'node_modules', 'pnpm', 'bin'), { recursive: true })
+        await writeFile(
+          packageEntry,
+          `import(${JSON.stringify(pathToFileURL(join(patchedPnpm, 'bin', 'pnpm.cjs')).href)})`
+        )
+        const electron = require('electron') as string
+        const runtime = await prepareElectronNodeRuntime({
+          dataDirectory: fixture.root,
+          environment: {
+            PATH: process.env.PATH,
+            SystemRoot: process.env.SystemRoot,
+            WINDIR: process.env.WINDIR,
+          },
+          helperExecPath: electron,
+          nodeVersion: 'test',
+          platform: process.platform,
+        })
+        const harness = join(fixture.root, 'parent.mjs')
+        await writeFile(
+          harness,
+          `
+import { CoreDshPluginManager } from ${JSON.stringify(pathToFileURL(join(compiled, 'runtime/core-dsh-plugin-manager.js')).href)}
+import { RuntimeSupervisor } from ${JSON.stringify(pathToFileURL(join(compiled, 'runtime/runtime-supervisor.js')).href)}
+import { stopProcess } from ${JSON.stringify(new URL('../../../e2e/desktop/process-lifecycle.mjs', import.meta.url).href)}
+import { once } from 'node:events'
+import { spawn } from 'node:child_process'
+import { readFile, rename } from 'node:fs/promises'
+const manager = new CoreDshPluginManager(${JSON.stringify({
+            dshHome: join(fixture.root, 'home'),
+            runtimeRoot,
+            dshEntry,
+            nodeCommand: runtime.environment.WEWORK_NODE_PATH,
+            environment: runtime.environment,
+          })})
+await manager.setEnabled('dsh-alpha', false)
+await rename(${JSON.stringify(observed)}, ${JSON.stringify(join(fixture.root, 'manager-observed.json'))})
+const supervisor = new RuntimeSupervisor(${JSON.stringify({
+            command: runtime.environment.WEWORK_NODE_PATH,
+            args: [dshEntry],
+            cwd: runtimeRoot,
+            env: runtime.environment,
+            name: 'deep-runtime',
+          })})
+try {
+  const child = await supervisor.start()
+  await once(child, 'close')
+} finally {
+  await supervisor.stop()
+}
+await rename(${JSON.stringify(observed)}, ${JSON.stringify(join(fixture.root, 'supervisor-observed.json'))})
+const packageManager = new CoreDshPluginManager(${JSON.stringify({
+            dshHome: packageHome,
+            runtimeRoot,
+            dshEntry,
+            nodeCommand: runtime.environment.WEWORK_NODE_PATH,
+            environment: runtime.environment,
+          })})
+const installed = await packageManager.install(${JSON.stringify(pluginRoot)})
+if (!installed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin was not installed')
+const dependency = await readFile(${JSON.stringify(join(packageProfile, 'node_modules', 'deep-import-dependency', 'index.js'))}, 'utf8')
+if (dependency !== ${JSON.stringify('module.exports = 42\n')}) throw new Error('Archive dependency was not imported')
+const built = await readFile(${JSON.stringify(join(packageProfile, 'node_modules', 'deep-import-dependency', 'built.txt'))}, 'utf8')
+if (built !== 'ready') throw new Error('Archive dependency build did not complete')
+const removed = await packageManager.uninstall('deep-runtime-plugin')
+if (removed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin remained installed')
+const nativeChild = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); process.stdin.resume()'], { env: process.env })
+const childClosed = once(nativeChild, 'close')
+await once(nativeChild.stdout, 'data')
+const originalKill = process.kill
+process.kill = function(pid, signal) {
+  if (pid === nativeChild.pid && signal === 0) throw Object.assign(new Error('PID is no longer visible'), { code: 'ESRCH' })
+  return originalKill.call(process, pid, signal)
+}
+try {
+  await stopProcess(nativeChild)
+  if (nativeChild.exitCode === null && nativeChild.signalCode === null) throw new Error('Shutdown returned before the native exit event')
+} finally {
+  process.kill = originalKill
+  if (nativeChild.exitCode === null && nativeChild.signalCode === null) nativeChild.kill('SIGKILL')
+  await childClosed
+}
+`
+        )
+        await promisify(execFile)(electron, [harness], {
+          env: { ...runtime.environment, ELECTRON_RUN_AS_NODE: '1' },
+          timeout: 10000,
+        })
+        const result = JSON.parse(
+          await readFile(join(fixture.root, 'supervisor-observed.json'), 'utf8')
+        ) as { cwd: string }
+        expect(await realpath(result.cwd)).toBe(await realpath(runtimeRoot))
+        const managerResult = JSON.parse(
+          await readFile(join(fixture.root, 'manager-observed.json'), 'utf8')
+        ) as { cwd: string }
+        expect(await realpath(managerResult.cwd)).toBe(await realpath(runtimeRoot))
+      } finally {
+        await fixture.remove()
+      }
+    },
+    45000
+  )
+
+  test.each(['stdout', 'stderr'] as const)(
+    'retains the spawn error when its disconnected %s pipe also fails',
+    async stream => {
+      const fixture = await createFixture({ realCommands: true })
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: vi.fn(),
+        pid: undefined,
+      })
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => {
+          child[stream].emit(
+            'error',
+            Object.assign(new Error('read ENOTCONN'), { code: 'ENOTCONN' })
+          )
+          child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }))
+        })
+        return child as unknown as ReturnType<typeof spawn>
+      })
+      try {
+        await expect(fixture.manager().setEnabled('dsh-alpha', false)).rejects.toThrow(
+          'spawn ENOENT'
+        )
+      } finally {
+        await fixture.remove()
+      }
+    }
+  )
+
+  test('rejects a pipe failure even when the process exited successfully before stdio closed', async () => {
+    const fixture = await createFixture({ realCommands: true })
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(),
+      pid: 123,
+      exitCode: 0,
+      signalCode: null,
+    })
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.emit('exit', 0)
+        child.stderr.emit('error', new Error('read EIO'))
+        child.emit('close', 0)
+      })
+      return child as unknown as ReturnType<typeof spawn>
+    })
+    try {
+      await expect(fixture.manager().setEnabled('dsh-alpha', false)).rejects.toThrow('read EIO')
+    } finally {
+      await fixture.remove()
+    }
+  })
+
   test.each([undefined, { '.': './index.js' }])(
     'preserves installation-owned bundles with exports %j while toggling a workspace plugin',
     async exports => {
@@ -132,6 +389,7 @@ describe('CoreDshPluginManager', () => {
     const pnpmCalls = runCommand.mock.calls.filter(([, args]) => args.includes('update'))
     expect(pnpmCalls).toHaveLength(1)
     expect(pnpmCalls[0]?.[2]?.cwd).toBe(fixture.profileRoot)
+    expect(pnpmCalls[0]?.[1]).toEqual(expect.arrayContaining(['--dir', fixture.profileRoot]))
     expect(pnpmCalls[0]?.[1]).toEqual(
       expect.arrayContaining(['--store-dir', join(fixture.profileRoot, '..', '..', 'pnpm-store')])
     )
@@ -359,7 +617,7 @@ async function createFixture(
         runtimeRoot,
         dshEntry: join(runtimeRoot, 'dsh.js'),
         nodeCommand: process.execPath,
-        environment: options.environment ?? {},
+        environment: testNodeEnvironment(options.environment),
         runCommand: options.realCommands
           ? undefined
           : (options.runCommand ??

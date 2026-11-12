@@ -9,6 +9,7 @@ import { FileText, Film, ImageIcon, Play, Presentation, ShieldCheck } from 'luci
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
+import { DocumentProtectionBoundary } from './DocumentProtectionBoundary'
 import {
   loadBoundedRemoteFile,
   prepareRemotePdf,
@@ -45,6 +46,9 @@ interface DocumentLinkResourceProps {
   children?: ReactNode
   onOpen: (resource: Resource) => void
   inline?: boolean
+  knowledgeBaseId: number
+  coveredByDocumentWatermark: boolean
+  watermarkText: string
 }
 
 export function DocumentLinkResource({
@@ -52,12 +56,24 @@ export function DocumentLinkResource({
   children,
   onOpen,
   inline = false,
+  knowledgeBaseId,
+  coveredByDocumentWatermark,
+  watermarkText,
 }: DocumentLinkResourceProps) {
   const { t } = useTranslation('knowledge')
   const Icon = icons[resource.kindHint]
 
   if (!inline && resource.kindHint !== 'unknown') {
-    return <DocumentLinkCover key={resource.key} resource={resource} onOpen={onOpen} />
+    return (
+      <DocumentLinkCover
+        key={resource.key}
+        resource={resource}
+        onOpen={onOpen}
+        knowledgeBaseId={knowledgeBaseId}
+        coveredByDocumentWatermark={coveredByDocumentWatermark}
+        watermarkText={watermarkText}
+      />
+    )
   }
 
   return (
@@ -90,7 +106,13 @@ type CoverState =
       text?: string
     }
 
-function DocumentLinkCover({ resource, onOpen }: Omit<DocumentLinkResourceProps, 'children'>) {
+function DocumentLinkCover({
+  resource,
+  onOpen,
+  knowledgeBaseId,
+  coveredByDocumentWatermark,
+  watermarkText,
+}: Omit<DocumentLinkResourceProps, 'children' | 'inline'>) {
   const { t } = useTranslation('knowledge')
   const containerRef = useRef<HTMLDivElement>(null)
   const startedRef = useRef(false)
@@ -191,95 +213,105 @@ function DocumentLinkCover({ resource, onOpen }: Omit<DocumentLinkResourceProps,
       </div>
 
       <div className="relative">
-        <div
-          className={`relative overflow-hidden bg-gray-100 ${
-            resource.kindHint === 'video' ? 'aspect-[3/4]' : 'h-72 sm:h-96'
-          }`}
+        <DocumentProtectionBoundary
+          enabled={false}
+          showWatermark={!coveredByDocumentWatermark}
+          knowledgeBaseId={knowledgeBaseId}
+          watermarkText={watermarkText}
         >
-          {coverState.status === 'ready' && resource.kindHint === 'pdf' && (
-            <div className="pointer-events-none h-full select-none" aria-hidden="true">
-              <FlyfishOfficePreview
-                blob={coverState.blob}
-                url={coverState.remoteUrl}
-                validatedRemotePdf={!!coverState.remoteUrl}
-                filename={resource.filename}
-                restricted
-                coverOnly
-                onError={() => setCoverState({ status: 'error' })}
-              />
-            </div>
-          )}
-          {coverState.status === 'ready' && resource.kindHint === 'office' && (
-            <div className="pointer-events-none h-full select-none" aria-hidden="true">
-              <FlyfishOfficePreview
-                blob={coverState.blob}
-                filename={resource.filename}
-                restricted
-                coverOnly
-                onError={() => setCoverState({ status: 'error' })}
-              />
-            </div>
-          )}
-          {coverState.status === 'ready' &&
-            resource.kindHint === 'image' &&
-            coverState.objectUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={coverState.objectUrl}
-                alt=""
-                draggable={false}
-                className="h-full w-full select-none object-contain"
+          <div
+            className={`relative h-full overflow-hidden bg-gray-100 ${
+              resource.kindHint === 'video' ? 'aspect-[3/4]' : 'h-72 sm:h-96'
+            }`}
+          >
+            {coverState.status === 'ready' && resource.kindHint === 'pdf' && (
+              <div className="pointer-events-none h-full select-none" aria-hidden="true">
+                <FlyfishOfficePreview
+                  blob={coverState.blob}
+                  url={coverState.remoteUrl}
+                  validatedRemotePdf={!!coverState.remoteUrl}
+                  filename={resource.filename}
+                  restricted
+                  coverOnly
+                  onError={() => setCoverState({ status: 'error' })}
+                />
+              </div>
+            )}
+            {coverState.status === 'ready' && resource.kindHint === 'office' && (
+              <div className="pointer-events-none h-full select-none" aria-hidden="true">
+                <FlyfishOfficePreview
+                  blob={coverState.blob}
+                  filename={resource.filename}
+                  restricted
+                  coverOnly
+                  onError={() => setCoverState({ status: 'error' })}
+                />
+              </div>
+            )}
+            {coverState.status === 'ready' &&
+              resource.kindHint === 'image' &&
+              coverState.objectUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={coverState.objectUrl}
+                  alt=""
+                  draggable={false}
+                  className="h-full w-full select-none object-contain"
+                  onContextMenu={event => event.preventDefault()}
+                  onError={() => setCoverState({ status: 'error' })}
+                  data-testid="document-link-image-cover"
+                />
+              )}
+            {coverState.status === 'ready' &&
+              resource.kindHint === 'text' &&
+              coverState.text !== undefined && (
+                <pre className="h-full overflow-hidden whitespace-pre-wrap break-words p-6 text-left font-mono text-xs leading-5 text-text-secondary">
+                  {coverState.text}
+                </pre>
+              )}
+            {coverState.status === 'ready' && resource.kindHint === 'video' && (
+              <video
+                src={resource.url}
+                preload="metadata"
+                muted
+                playsInline
+                disablePictureInPicture
+                controlsList="nodownload noremoteplayback"
+                className="h-full w-full object-cover"
                 onContextMenu={event => event.preventDefault()}
                 onError={() => setCoverState({ status: 'error' })}
-                data-testid="document-link-image-cover"
+                aria-hidden="true"
+                data-testid="document-link-video-cover"
               />
             )}
-          {coverState.status === 'ready' &&
-            resource.kindHint === 'text' &&
-            coverState.text !== undefined && (
-              <pre className="h-full overflow-hidden whitespace-pre-wrap break-words p-6 text-left font-mono text-xs leading-5 text-text-secondary">
-                {coverState.text}
-              </pre>
-            )}
-          {coverState.status === 'ready' && resource.kindHint === 'video' && (
-            <video
-              src={resource.url}
-              preload="metadata"
-              muted
-              playsInline
-              disablePictureInPicture
-              controlsList="nodownload noremoteplayback"
-              className="h-full w-full object-cover"
-              onContextMenu={event => event.preventDefault()}
-              onError={() => setCoverState({ status: 'error' })}
-              aria-hidden="true"
-              data-testid="document-link-video-cover"
-            />
-          )}
-          {coverState.status === 'ready' && resource.kindHint === 'video' && (
-            <span className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
-              <span className="flex h-16 w-16 items-center justify-center rounded-full bg-black/60 text-white shadow-lg">
-                <Play className="ml-1 h-8 w-8 fill-current" />
+            {coverState.status === 'ready' && resource.kindHint === 'video' && (
+              <span
+                className="absolute inset-0 flex items-center justify-center"
+                aria-hidden="true"
+              >
+                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-black/60 text-white shadow-lg">
+                  <Play className="ml-1 h-8 w-8 fill-current" />
+                </span>
               </span>
-            </span>
-          )}
-          {coverState.status === 'idle' && (
-            <div className="flex h-full items-center justify-center text-text-muted">
-              <Icon className="h-8 w-8" aria-hidden="true" />
-            </div>
-          )}
-          {coverState.status === 'loading' && (
-            <div className="flex h-full items-center justify-center">
-              <Spinner text={t('document.document.detail.linkPreview.loading')} />
-            </div>
-          )}
-          {coverState.status === 'error' && (
-            <div className="flex h-full items-center justify-center gap-2 text-sm text-text-muted">
-              <Icon className="h-8 w-8" aria-hidden="true" />
-              {t('document.document.detail.linkPreview.coverUnavailable')}
-            </div>
-          )}
-        </div>
+            )}
+            {coverState.status === 'idle' && (
+              <div className="flex h-full items-center justify-center text-text-muted">
+                <Icon className="h-8 w-8" aria-hidden="true" />
+              </div>
+            )}
+            {coverState.status === 'loading' && (
+              <div className="flex h-full items-center justify-center">
+                <Spinner text={t('document.document.detail.linkPreview.loading')} />
+              </div>
+            )}
+            {coverState.status === 'error' && (
+              <div className="flex h-full items-center justify-center gap-2 text-sm text-text-muted">
+                <Icon className="h-8 w-8" aria-hidden="true" />
+                {t('document.document.detail.linkPreview.coverUnavailable')}
+              </div>
+            )}
+          </div>
+        </DocumentProtectionBoundary>
         <div className="flex min-h-14 items-center justify-center bg-white px-4 py-3 text-sm font-medium text-text-primary">
           {t('document.document.detail.linkPreview.viewOnline')}
         </div>

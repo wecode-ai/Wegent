@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { SEARCH_CONTRACT_CASES, SEARCH_CONTRACT_QUERIES } from './conversation-search-contract.mjs'
+import { waitForTranscriptState } from './transcript-restoration.mjs'
 import {
   getSingleElementMetrics,
   SCROLLER_SELECTOR,
@@ -308,8 +309,28 @@ export async function verifyCachedHistorySearch(
     { timeoutMs }
   )
   await control.command('waitFor', ANSWERS, { text: LAST_ANSWER, timeoutMs })
+  // The cached tail can render before its initial automatic pagination settles.
+  await waitForTranscriptState(
+    control,
+    snapshot =>
+      snapshot.pane?.transcript?.loading === false &&
+      snapshot.pane.transcript.loadingMoreBefore === false,
+    'The cached history did not finish its initial pagination',
+    timeoutMs
+  )
   await waitForBottom(control, 'The initial cached conversation', timeoutMs)
-  const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+  // Settling the bottom can trigger another automatic page. Capture the exact
+  // settled sample rather than a later snapshot of an in-flight request.
+  const original = (
+    await waitForTranscriptState(
+      control,
+      snapshot =>
+        snapshot.pane?.transcript?.loading === false &&
+        snapshot.pane.transcript.loadingMoreBefore === false,
+      'The cached history baseline still has pending pagination',
+      timeoutMs
+    )
+  ).pane
   assert.doesNotMatch(await control.command('getText', ANSWERS), /interrupted|WEWORK_E2E_CACHED_/)
   const originalText = await control.command('getText', HISTORY_TRANSCRIPT_CONTENT_SELECTOR)
   for (const marker of OLD_VISIBLE_MARKERS) {
@@ -443,7 +464,14 @@ export async function verifyCachedHistorySearch(
   await waitForBottom(control, 'The restored cached conversation', timeoutMs)
   const restored = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
   for (const field of ['loading', 'hasMoreBefore', 'loadingMoreBefore', 'loadedRanges']) {
-    assert.deepEqual(restored.transcript[field], original.transcript[field])
+    assert.deepEqual(
+      restored.transcript[field],
+      original.transcript[field],
+      `Cached history restoration changed ${field}: ${JSON.stringify({
+        original: original.transcript,
+        restored: restored.transcript,
+      })}`
+    )
   }
   assert.deepEqual(restored.messageSummary, original.messageSummary)
   assert.equal(Number(await control.command('getElementCount', NEWER)), 0)

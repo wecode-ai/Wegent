@@ -1,4 +1,7 @@
-import { copyDshBrowserAuthentication } from '../runtime/dsh-browser-auth.js'
+import {
+  copyDshBrowserAuthentication,
+  dshBrowserRequestHeaders,
+} from '../runtime/dsh-browser-auth.js'
 import {
   app,
   BrowserWindow,
@@ -19,7 +22,13 @@ import {
   type BrowserHistoryEntry,
   type BrowserHistorySearch,
 } from './browser-history-store.js'
-import { prepareLocalFileNavigation } from './local-file-preview.js'
+import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
+import { isGeneratedLocalFilePreview, prepareLocalFileNavigation } from './local-file-preview.js'
+import { withDebuggerSession } from './debugger-session.js'
+import {
+  BrowserDeviceMetricsController,
+  type BrowserDeviceMetrics,
+} from './browser-device-metrics.js'
 import {
   captureWebContentsDataUrl,
   type WebContentsCaptureOptions,
@@ -57,11 +66,12 @@ interface BrowserEntry {
   requestedUrl: string | null
   previewDisplayUrl: string | null
   previewSourceUrl: string | null
-  ownsDeviceMetricsDebugger: boolean
+  deviceMetrics: BrowserDeviceMetricsController
   navigationError: BrowserPageState['navigationError']
   historyId: string | null
   historyGeneration: number
   initialNavigation: boolean
+  navigationCompletion: Promise<void>
 }
 
 interface BrowserOpenInput {
@@ -85,20 +95,6 @@ export interface BrowserHostEvent {
     | 'popup'
     | 'annotation-request'
   payload: Record<string, unknown>
-}
-
-interface BrowserAgentApproval {
-  label: string
-  signature: string
-  approved: boolean
-  payload: {
-    approvalId: string
-    risk: string
-    actionKind: string
-    reason: string
-    target: unknown
-    expiresAtUnixMs: number
-  }
 }
 
 interface BrowserAgentCursorState {
@@ -169,7 +165,9 @@ export class EmbeddedBrowserManager {
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly agentControlPaused = new Set<string>()
   private readonly agentActive = new Set<string>()
-  private readonly agentApprovals = new Map<string, BrowserAgentApproval>()
+  private readonly agentApprovals = new BrowserAgentApprovals(label =>
+    this.emitAgentState(label, 'idle')
+  )
   private readonly agentCursorStates = new Map<string, BrowserAgentCursorState>()
   private readonly agentCursorArrivals = new Map<string, number>()
   private readonly agentCursorArrivalWaiters = new Map<
@@ -194,7 +192,10 @@ export class EmbeddedBrowserManager {
 
   constructor(
     dataDirectory: string,
-    private readonly onEvent: (event: BrowserHostEvent) => void = () => {}
+    private readonly onEvent: (event: BrowserHostEvent) => void = () => {},
+    private readonly openWeworkScheme: (url: string) => void = url => {
+      void shell.openExternal(url)
+    }
   ) {
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
     const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
@@ -207,6 +208,46 @@ export class EmbeddedBrowserManager {
     browserSession.webRequest.onBeforeSendHeaders((details, callback) => {
       callback({ requestHeaders: this.requestHeaders(details.url, details.requestHeaders) })
     })
+  }
+
+  private interceptWeworkNavigation(contents: WebContents): void {
+    const handleNavigation = (event: Electron.Event, url: string) => {
+      if (!url.startsWith('wework://')) return
+      event.preventDefault()
+      this.openWeworkScheme(url)
+    }
+    contents.on('will-navigate', handleNavigation)
+    contents.on('will-redirect', handleNavigation)
+  }
+
+  private interceptLocalFileNavigation(entry: BrowserEntry): void {
+    const handleNavigation = (
+      event: Electron.Event,
+      url: string,
+      _isInPlace?: boolean,
+      isMainFrame?: boolean
+    ) => {
+      // Directory previews are generated local HTML pages; only their file links need re-routing.
+      // Remote pages must never turn a redirect into a host-driven local file load.
+      const currentUrl = entry.contents.getURL()
+      if (isMainFrame === false || !url.startsWith('file:') || !currentUrl.startsWith('file:')) {
+        return
+      }
+      if (url === entry.previewDisplayUrl || isGeneratedLocalFilePreview(url)) {
+        return
+      }
+      event.preventDefault()
+      void this.navigate(entry.label, url).catch(error => {
+        this.recordNavigationFailure(
+          entry,
+          -2,
+          error instanceof Error ? error.message : String(error),
+          url
+        )
+      })
+    }
+    entry.contents.on('will-navigate', handleNavigation)
+    entry.contents.on('will-redirect', handleNavigation)
   }
 
   setRequestHeaderRule(rule: BrowserRequestHeaderRule): void {
@@ -241,9 +282,11 @@ export class EmbeddedBrowserManager {
     }
     this.backgroundPages.set(normalizedId, entry)
     view.webContents.setWindowOpenHandler(({ url }) => {
-      if (isBrowserUrl(url)) void shell.openExternal(url)
+      if (url.startsWith('wework://')) this.openWeworkScheme(url)
+      else if (isBrowserUrl(url)) void shell.openExternal(url)
       return { action: 'deny' }
     })
+    this.interceptWeworkNavigation(view.webContents)
     view.webContents.on(
       'did-fail-load',
       (_event, code: number, message: string, url: string, isMainFrame: boolean) => {
@@ -326,7 +369,7 @@ export class EmbeddedBrowserManager {
         next = { ...next, ...rule.headers }
       }
     }
-    return next
+    return dshBrowserRequestHeaders(rawUrl, next)
   }
 
   private requiredBackgroundPage(id: string) {
@@ -364,6 +407,7 @@ export class EmbeddedBrowserManager {
       }
       for (const [entryLabel, entry] of this.entries) {
         if (entry.contents.id !== contents.id) continue
+        entry.deviceMetrics.dispose()
         this.entries.delete(entryLabel)
         removedLabels.add(entryLabel)
       }
@@ -378,7 +422,8 @@ export class EmbeddedBrowserManager {
   requestPopupTab(parentLabel: string, url: string): void {
     const entry = this.entries.get(parentLabel)
     if (!entry || !isBrowserUrl(url)) {
-      if (isBrowserUrl(url)) void shell.openExternal(url)
+      if (url.startsWith('wework://')) this.openWeworkScheme(url)
+      else if (isBrowserUrl(url)) void shell.openExternal(url)
       return
     }
     this.emit('popup', {
@@ -411,11 +456,12 @@ export class EmbeddedBrowserManager {
       requestedUrl: validBrowserUrl(input.url),
       previewDisplayUrl: null,
       previewSourceUrl: null,
-      ownsDeviceMetricsDebugger: false,
+      deviceMetrics: new BrowserDeviceMetricsController(contents),
       navigationError: null,
       historyId: null,
       historyGeneration: this.historyGeneration,
       initialNavigation: true,
+      navigationCompletion: Promise.resolve(),
     }
     contents.on('before-input-event', (event, input) => {
       const isBareF12 =
@@ -436,7 +482,9 @@ export class EmbeddedBrowserManager {
       this.showContextMenu(entry, params)
     })
     contents.setWindowOpenHandler(({ url }) => {
-      if (isBrowserUrl(url)) {
+      if (url.startsWith('wework://')) {
+        this.openWeworkScheme(url)
+      } else if (isBrowserUrl(url)) {
         this.emit('popup', {
           popupId: randomUUID(),
           parentLabel: entry.label,
@@ -454,6 +502,8 @@ export class EmbeddedBrowserManager {
       }
       return { action: 'deny' }
     })
+    this.interceptWeworkNavigation(contents)
+    this.interceptLocalFileNavigation(entry)
     const emitPageState = () => this.emitPageState(entry)
     contents.on('did-start-loading', emitPageState)
     contents.on('did-stop-loading', emitPageState)
@@ -496,6 +546,7 @@ export class EmbeddedBrowserManager {
     })
     contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
       if (isMainFrame) {
+        this.agentApprovals.cancelLabel(entry.label)
         entry.navigationError = null
         entry.historyId = null
         entry.historyGeneration = this.historyGeneration
@@ -505,8 +556,8 @@ export class EmbeddedBrowserManager {
       void this.recordHistoryVisit(entry)
     })
     this.entries.set(label, entry)
-    // Registration, not navigation completion, is the browser host readiness boundary.
-    // The requested URL is already authoritative in state() while Chromium finishes loading.
+    // Register the host before loading so renderer attachment can complete independently.
+    // Agent open requests must await waitForNavigation before inspecting this document.
     await this.load(entry, entry.requestedUrl as string)
     return this.state(label)
   }
@@ -542,6 +593,31 @@ export class EmbeddedBrowserManager {
     this.emitPageState(entry)
   }
 
+  async waitForNavigation(label: string, timeoutMs = 10_000): Promise<void> {
+    const entry = this.required(label)
+    let completion: Promise<void>
+    do {
+      completion = entry.navigationCompletion
+      await completion
+    } while (completion !== entry.navigationCompletion)
+    await waitForState(
+      () => {
+        if (entry.contents.isDestroyed()) throw new Error('Browser closed during navigation')
+        if (entry.navigationError) throw new Error(entry.navigationError.message)
+        return (
+          !entry.contents.isLoadingMainFrame() &&
+          this.currentVisibleUrl(entry) === entry.requestedUrl
+        )
+      },
+      timeoutMs,
+      'Timed out waiting for the requested browser document'
+    )
+  }
+
+  backgroundThrottling(label: string): boolean {
+    return this.required(label).contents.getBackgroundThrottling()
+  }
+
   reload(label: string): void {
     this.required(label).contents.reload()
   }
@@ -563,44 +639,29 @@ export class EmbeddedBrowserManager {
     this.required(label).contents.setZoomFactor(scaleFactor)
   }
 
-  async setDeviceMetrics(
-    label: string,
-    metrics: { width: number; height: number; scale: number } | null
-  ): Promise<void> {
-    const contents = this.required(label).contents
-    const target = contents.debugger
-    const entry = this.required(label)
-    if (metrics && !target.isAttached()) {
-      target.attach('1.3')
-      entry.ownsDeviceMetricsDebugger = true
-    }
-    try {
-      if (metrics) {
-        if (!Number.isFinite(metrics.scale) || metrics.scale <= 0 || metrics.scale > 5) {
-          throw new Error('Browser device scale is invalid')
-        }
-        await target.sendCommand('Emulation.setDeviceMetricsOverride', {
-          width: Math.max(1, Math.round(metrics.width)),
-          height: Math.max(1, Math.round(metrics.height)),
-          deviceScaleFactor: 1,
-          mobile: false,
-          scale: metrics.scale,
-        })
-      } else {
-        if (target.isAttached()) {
-          await target.sendCommand('Emulation.clearDeviceMetricsOverride')
-        }
-      }
-    } finally {
-      if (!metrics && entry.ownsDeviceMetricsDebugger && target.isAttached()) {
-        target.detach()
-        entry.ownsDeviceMetricsDebugger = false
-      }
-    }
+  async setDeviceMetrics(label: string, metrics: BrowserDeviceMetrics | null): Promise<void> {
+    await this.required(label).deviceMetrics.set(metrics)
   }
 
-  async evaluate(label: string, expression: string): Promise<unknown> {
-    return this.required(label).contents.executeJavaScript(expression, true)
+  async evaluate(
+    label: string,
+    expression: string,
+    options: { awaitPromise?: boolean } = {}
+  ): Promise<unknown> {
+    // Hidden guests can execute Electron's script while leaving its isolated-world
+    // reply Promise pending. Return the main-world result through Chromium instead.
+    return withDebuggerSession(this.required(label).contents, async target => {
+      const { result, exceptionDetails } = await target.sendCommand('Runtime.evaluate', {
+        expression,
+        returnByValue: true,
+        awaitPromise: options.awaitPromise ?? true,
+        userGesture: true,
+      })
+      if (exceptionDetails) {
+        throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text)
+      }
+      return result.value
+    })
   }
 
   async uploadFiles(
@@ -609,10 +670,7 @@ export class EmbeddedBrowserManager {
     files: string[]
   ): Promise<{ selector: string }> {
     const contents = this.required(label).contents
-    const target = contents.debugger
-    const ownsAttach = !target.isAttached()
-    if (ownsAttach) target.attach('1.3')
-    try {
+    return withDebuggerSession(contents, async target => {
       const effectiveSelector = selector?.trim() || 'input[type="file"]'
       const { root } = (await target.sendCommand('DOM.getDocument', { depth: 1 })) as {
         root: { nodeId: number }
@@ -628,9 +686,7 @@ export class EmbeddedBrowserManager {
       }
       await target.sendCommand('DOM.setFileInputFiles', { files, nodeId })
       return { selector: effectiveSelector }
-    } finally {
-      if (ownsAttach && target.isAttached()) target.detach()
-    }
+    })
   }
 
   clickAt(label: string, x: number, y: number): void {
@@ -700,9 +756,7 @@ export class EmbeddedBrowserManager {
       if (activeLabel === entry.label) this.activeTabs.set(baseLabel, target)
     }
     if (this.agentControlPaused.delete(entry.label)) this.agentControlPaused.add(target)
-    for (const approval of this.agentApprovals.values()) {
-      if (approval.label === entry.label) approval.label = target
-    }
+    this.agentApprovals.cancelLabel(entry.label)
     for (const download of this.downloads.values()) {
       if (download.label === entry.label) download.label = target
     }
@@ -762,75 +816,20 @@ export class EmbeddedBrowserManager {
     this.emitAgentState(normalizedLabel, paused ? 'paused' : 'idle')
   }
 
-  consumeApprovedAgentRisk(label: string, signature: string): boolean {
-    const normalizedLabel = requiredLabel(label)
-    const approval = [...this.agentApprovals.values()].find(
-      candidate =>
-        candidate.label === normalizedLabel &&
-        candidate.signature === signature &&
-        candidate.approved &&
-        candidate.payload.expiresAtUnixMs > Date.now()
-    )
-    if (!approval) return false
-    this.agentApprovals.delete(approval.payload.approvalId)
-    return true
+  registerAgentApproval(label: string, action: string, result: Record<string, unknown>) {
+    return this.agentApprovals.register(requiredLabel(label), action, result)
   }
 
-  registerAgentApproval(
+  waitForAgentApproval(
     label: string,
-    signature: string,
-    action: string,
-    result: Record<string, unknown>
-  ): BrowserAgentApproval['payload'] | null {
-    const error = result.error as { code?: unknown } | undefined
-    if (error?.code !== 'approval_required') return null
-    const source = (result.approval ?? {}) as Record<string, unknown>
-    const payload = {
-      approvalId: `browser-approval-${randomUUID()}`,
-      risk: typeof source.risk === 'string' ? source.risk : 'high',
-      actionKind: typeof source.actionKind === 'string' ? source.actionKind : action,
-      reason:
-        typeof source.reason === 'string'
-          ? source.reason
-          : 'This browser action may change data on the page.',
-      target: source.target ?? null,
-      expiresAtUnixMs: Date.now() + 60_000,
-    }
-    result.approval = payload
-    this.agentApprovals.set(payload.approvalId, {
-      label: requiredLabel(label),
-      signature,
-      approved: false,
-      payload,
-    })
-    return payload
+    approvalId: string,
+    signal: AbortSignal
+  ): Promise<BrowserApprovalDecision> {
+    return this.agentApprovals.wait(requiredLabel(label), approvalId, signal)
   }
 
   resolveAgentApproval(label: string, approvalId: string, approved: boolean): void {
-    const normalizedLabel = requiredLabel(label)
-    const approval = this.agentApprovals.get(approvalId)
-    if (!approval) throw new Error('Browser approval request not found')
-    if (approval.label !== normalizedLabel) {
-      throw new Error('Browser approval request belongs to a different label')
-    }
-    if (approval.payload.expiresAtUnixMs <= Date.now()) {
-      this.agentApprovals.delete(approvalId)
-      throw new Error('Browser approval request expired')
-    }
-    if (approved) {
-      approval.approved = true
-      this.emitAgentState(normalizedLabel, 'idle', {
-        action: approval.payload.actionKind,
-        message: 'Browser action approved. The agent can retry it now.',
-      })
-      return
-    }
-    this.agentApprovals.delete(approvalId)
-    this.emitAgentState(normalizedLabel, 'error', {
-      action: approval.payload.actionKind,
-      message: 'Browser action was rejected by the user.',
-      errorCode: 'approval_rejected',
-    })
+    this.agentApprovals.resolve(requiredLabel(label), approvalId, approved)
   }
 
   emitAgentState(
@@ -841,10 +840,14 @@ export class EmbeddedBrowserManager {
       target?: string | null
       message?: string | null
       errorCode?: string | null
-      approval?: BrowserAgentApproval['payload'] | null
     } = {}
   ): void {
     const normalizedLabel = requiredLabel(label)
+    if (this.agentControlPaused.has(normalizedLabel)) status = 'paused'
+    const approval = status === 'paused' ? null : this.agentApprovals.latest(normalizedLabel)
+    const awaitingApproval =
+      approval &&
+      (status === 'idle' || status === 'running' || detail.errorCode === 'approval_required')
     if (status === 'running') {
       this.agentActive.add(normalizedLabel)
       this.clearAgentCursorHide(normalizedLabel)
@@ -855,12 +858,12 @@ export class EmbeddedBrowserManager {
     }
     this.emit('agent-state', {
       label: normalizedLabel,
-      status,
-      action: detail.action ?? null,
-      target: detail.target ?? null,
-      message: detail.message ?? null,
-      errorCode: detail.errorCode ?? null,
-      approval: detail.approval ?? null,
+      status: awaitingApproval ? 'needs_user' : status,
+      action: awaitingApproval ? approval.actionKind : (detail.action ?? null),
+      target: awaitingApproval ? null : (detail.target ?? null),
+      message: awaitingApproval ? approval.reason : (detail.message ?? null),
+      errorCode: awaitingApproval ? 'approval_required' : (detail.errorCode ?? null),
+      approval: approval ?? null,
       createdAtUnixMs: Date.now(),
     })
   }
@@ -964,6 +967,7 @@ export class EmbeddedBrowserManager {
     const entry = this.entries.get(label)
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
+    entry.deviceMetrics.dispose()
     this.entries.delete(label)
     this.clearActiveTabReferences(label)
     this.clearLabelScopedState(label)
@@ -983,9 +987,7 @@ export class EmbeddedBrowserManager {
     this.agentCursorStates.delete(label)
     this.agentCursorArrivals.delete(label)
     this.cancelAgentCursorArrivalWaiters(label)
-    for (const [approvalId, approval] of this.agentApprovals) {
-      if (approval.label === label) this.agentApprovals.delete(approvalId)
-    }
+    this.agentApprovals.cancelLabel(label)
     this.attachedContents.delete(label)
     this.rejectAttachmentWaiters(
       label,
@@ -1237,7 +1239,12 @@ export class EmbeddedBrowserManager {
     this.emit('page-state', this.state(entry.label) as unknown as Record<string, unknown>)
   }
 
-  private async load(entry: BrowserEntry, url: string): Promise<void> {
+  private load(entry: BrowserEntry, url: string): Promise<void> {
+    entry.navigationCompletion = this.loadPage(entry, url)
+    return entry.navigationCompletion
+  }
+
+  private async loadPage(entry: BrowserEntry, url: string): Promise<void> {
     try {
       const navigation = await prepareLocalFileNavigation(url)
       if (navigation.kind === 'blocked') {

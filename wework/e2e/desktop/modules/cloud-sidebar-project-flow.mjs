@@ -2,6 +2,9 @@ import { basename } from 'node:path'
 import {
   assert,
   CLOUD_DEVICE_ID,
+  REMOTE_DOCKER_DEVICE_ID,
+  commandOutput,
+  fetchJson,
   join,
   mkdir,
   runChecked,
@@ -42,7 +45,7 @@ export async function verifyCloudSidebarGitClone(control, workspacePath, homePat
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
   await control.command('waitFor', '[data-testid="remote-project-git-error"]', {
-    text: 'invalid..branch',
+    text: '仓库访问检查通过，但克隆失败',
   })
   assert.equal(
     await control.command('getValue', '[data-testid="remote-project-git-url-input"]'),
@@ -67,4 +70,126 @@ export async function verifyCloudSidebarGitClone(control, workspacePath, homePat
   })
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="projects-create-button"]')
+}
+
+export async function verifyGitCloneDeviceRecovery(control, workspacePath, cloud) {
+  assert.equal(new URL(cloud.backendUrl).hostname, '127.0.0.1')
+  const oldParent = join(cloud.remoteExecutorEnv.HOME, 'removed-device-clone')
+  const newParent = join(cloud.remoteDockerExecutorEnv.HOME, 'recovered-device-clone')
+  const expectedPath = join(newParent, basename(workspacePath))
+  const branch = commandOutput('git', ['branch', '--show-current'], { cwd: workspacePath })
+  assert.ok(branch, 'The recovery fixture must have a named Git branch')
+  const oldDevice = await cloud.device(CLOUD_DEVICE_ID)
+  assert.ok(oldDevice, 'The original clone device must be registered')
+  const user = await fetchJson(`${cloud.backendUrl}/api/users/me`, {
+    headers: { Authorization: `Bearer ${cloud.authToken}` },
+  })
+  const identity = [user.id, 'default', CLOUD_DEVICE_ID]
+  const rows = await cloud.queryDatabase(
+    "SELECT id FROM kinds WHERE user_id=%s AND kind='Device' AND namespace=%s AND name=%s AND is_active=1",
+    identity
+  )
+  assert.equal(rows.length, 1, 'The fixture must select exactly one owned device')
+
+  await control.command('clickWhenEnabled', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-remote-option"]')
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: CLOUD_DEVICE_ID,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-git"]')
+  await control.command('fill', '[data-testid="remote-project-git-parent-input"]', {
+    value: oldParent,
+  })
+  await control.command('fill', '[data-testid="remote-project-git-url-input"]', {
+    value: workspacePath,
+  })
+  await control.command('click', '[data-testid="remote-project-git-advanced-toggle"]')
+  await control.command('fill', '[data-testid="remote-project-git-branch-input"]', {
+    value: 'invalid..branch',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
+  await control.command('waitFor', '[data-testid="remote-project-git-error"]', {
+    text: '仓库访问检查通过，但克隆失败',
+  })
+
+  // Remove the real device from discovery without spawning another Executor.
+  // The existing second Executor is the explicit recovery destination.
+  await cloud.executeDatabase(
+    "UPDATE kinds SET is_active=0 WHERE user_id=%s AND kind='Device' AND namespace=%s AND name=%s",
+    identity
+  )
+  try {
+    assert.equal(await cloud.device(CLOUD_DEVICE_ID), null)
+    await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
+    await control.command('waitFor', '[data-testid="remote-project-git-error"]', {
+      text: 'executor-not-found',
+    })
+    await control.command('click', '[data-testid="remote-project-git-reselect-device"]')
+    await control.command(
+      'waitFor',
+      `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`
+    )
+    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+      value: REMOTE_DOCKER_DEVICE_ID,
+    })
+    await waitForControlValue(
+      control,
+      '[data-testid="standalone-remote-device-select"]',
+      REMOTE_DOCKER_DEVICE_ID,
+      'The refreshed device picker retained the removed Executor'
+    )
+    assert.equal(
+      await control.command(
+        'getElementCount',
+        `[data-testid="standalone-remote-device-option-${CLOUD_DEVICE_ID}"]`
+      ),
+      '0'
+    )
+    await waitForControlValue(
+      control,
+      '[data-testid="remote-project-git-url-input"]',
+      workspacePath,
+      'Device recovery lost the original repository URL'
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="remote-project-git-parent-input"]'),
+      oldParent
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="remote-project-git-branch-input"]'),
+      'invalid..branch'
+    )
+    assert.equal(
+      await control.command('getElementCount', '[data-testid="standalone-folder-project-dialog"]'),
+      '1'
+    )
+    await control.command('fill', '[data-testid="remote-project-git-parent-input"]', {
+      value: newParent,
+    })
+    await control.command('fill', '[data-testid="remote-project-git-branch-input"]', {
+      value: branch,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
+    await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
+      visible: false,
+    })
+    await runChecked('git', ['rev-parse', '--is-inside-work-tree'], { cwd: expectedPath })
+    const response = await cloud.runtimeWork()
+    const workspaces = [
+      ...response.projects.flatMap(project => project.deviceWorkspaces),
+      ...response.chats,
+    ]
+    assert.ok(
+      workspaces.some(
+        workspace =>
+          workspace.deviceId === REMOTE_DOCKER_DEVICE_ID && workspace.workspacePath === expectedPath
+      ),
+      'The cloned project was not registered on the selected replacement device'
+    )
+  } finally {
+    await cloud.executeDatabase(
+      "UPDATE kinds SET is_active=1 WHERE user_id=%s AND kind='Device' AND namespace=%s AND name=%s",
+      identity
+    )
+  }
 }

@@ -1,0 +1,12 @@
+{
+  "order": 21000,
+  "scenario": "./scenarios/collaboration-app-queue-identity.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 14000,
+      "shard": 7,
+      "position": 15000
+    }
+  }
+}

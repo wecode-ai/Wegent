@@ -1,4 +1,5 @@
 import { createStandInExecutorApi } from '@/api/standIn'
+import { createIssueHumanRequestsApi } from '@/api/issueHumanRequests'
 import {
   createRemoteProjectDevicePluginApi,
   type ProjectDevicePluginApi,
@@ -76,7 +77,8 @@ export function createBackendWorkbenchServices(
   })
   const deviceApi = createDeviceApi(client)
   const projectApi = createProjectApi(client)
-  const runtimeWorkApi = createRuntimeWorkApi(client)
+  const runtimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> =
+    createRuntimeWorkApi(client)
   const taskApi = createTaskApi(client)
   const deliveryApi = createDeliveryApi(client)
   const socketClient = createSocketClient({
@@ -152,6 +154,8 @@ export function createBackendWorkbenchServices(
     return api
   }
   const listAllRuntimeWork = runtimeWorkApi.listRuntimeWork
+  runtimeWorkApi.getRuntimeTask = (address, requestOptions) =>
+    ownerRuntimeApi(address.deviceId).getRuntimeTask(address, requestOptions)
   runtimeWorkApi.listRuntimeWork = options =>
     options?.deviceId
       ? ownerRuntimeApi(options.deviceId).listRuntimeWork(options)
@@ -179,6 +183,7 @@ export function createBackendWorkbenchServices(
 
   return {
     agentResourceApi,
+    issueHumanRequestsApi: createIssueHumanRequestsApi(client),
     teamApi,
     modelApi,
     skillApi: createSkillApi(client),
@@ -210,8 +215,9 @@ export function createBackendWorkbenchServices(
     },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
-    standInApi: createStandInExecutorApi((method, payload, deviceId) =>
-      composerRuntimeIpc.request(method, payload, deviceId)
+    standInApi: createStandInExecutorApi(
+      (method, payload, deviceId) => composerRuntimeIpc.request(method, payload, deviceId),
+      cloudPluginApi
     ),
     composerCatalogApi: createRuntimeComposerApi(composerRuntimeIpc, deviceId =>
       cloudPluginApi.listInstalledPlugins(deviceId).then(response => response.items)

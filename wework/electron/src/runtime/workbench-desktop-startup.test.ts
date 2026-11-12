@@ -356,3 +356,59 @@ test.each(['empty', 'nonempty'])(
     expect(input.singletonHeld()).toBe(false)
   }
 )
+
+test.each(['journal', 'missing-journal', 'relative-link'])(
+  'creates missing user data with %s without modifying displaced data',
+  async state => {
+    const input = fixture('darwin')
+    fs.mkdirSync(input.source, { recursive: true })
+    fs.writeFileSync(join(input.source, 'preferences.json'), 'original-preferences')
+    const initial = await initializeWorkbenchDesktopData(input.options)
+    input.app.releaseSingleInstanceLock()
+    const journalPath = join(input.desktop, 'migrations/desktop-user-data-v1.json')
+    const retained = initial!.userData + '.retained'
+    fs.renameSync(initial!.userData, retained)
+    if (state === 'missing-journal') fs.unlinkSync(journalPath)
+    if (state === 'relative-link') {
+      fs.unlinkSync(input.source)
+      fs.symlinkSync('../workbench/wework/app/user-data', input.source, 'junction')
+    }
+
+    const result = await initializeWorkbenchDesktopData(input.options)
+
+    expect(result).toEqual(initial)
+    expect(fs.realpathSync(input.source)).toBe(result!.userData)
+    expect(fs.readFileSync(join(retained, 'preferences.json'), 'utf8')).toBe('original-preferences')
+    expect(fs.existsSync(join(result!.userData, 'preferences.json'))).toBe(false)
+    const journal = fs.readFileSync(journalPath, 'utf8')
+    input.app.releaseSingleInstanceLock()
+    expect(await initializeWorkbenchDesktopData(input.options)).toEqual(result)
+    expect(fs.readFileSync(journalPath, 'utf8')).toBe(journal)
+    expect(fs.readdirSync(join(input.desktop, 'migrations'))).toEqual(['desktop-user-data-v1.json'])
+  }
+)
+
+test.each(['unrelated-link', 'invalid-journal', 'dangling-target'])(
+  'does not replace ambiguous missing data with %s',
+  async state => {
+    const input = fixture('darwin')
+    const initial = await initializeWorkbenchDesktopData(input.options)
+    input.app.releaseSingleInstanceLock()
+    const journalPath = join(input.desktop, 'migrations/desktop-user-data-v1.json')
+    fs.renameSync(initial!.userData, initial!.userData + '.retained')
+    if (state === 'unrelated-link') {
+      fs.unlinkSync(input.source)
+      fs.symlinkSync(join(root, 'unrelated-missing'), input.source, 'junction')
+    } else if (state === 'invalid-journal') fs.writeFileSync(journalPath, 'invalid JSON')
+    else fs.symlinkSync(join(root, 'unrelated-missing'), initial!.userData, 'junction')
+    const journal = fs.readFileSync(journalPath, 'utf8')
+    const link = fs.readlinkSync(input.source)
+
+    await expect(initializeWorkbenchDesktopData(input.options)).rejects.toThrow()
+
+    expect(fs.readlinkSync(input.source)).toBe(link)
+    expect(fs.readFileSync(journalPath, 'utf8')).toBe(journal)
+    expect(fs.readdirSync(join(input.desktop, 'migrations'))).toEqual(['desktop-user-data-v1.json'])
+    expect(fs.statSync(initial!.userData + '.retained').isDirectory()).toBe(true)
+  }
+)

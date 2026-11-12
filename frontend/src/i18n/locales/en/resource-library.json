@@ -21,12 +21,14 @@
     "shell": "Executor",
     "skill": "Skill",
     "retriever": "Retriever",
-    "mcp": "MCP"
+    "mcp": "MCP",
+    "template": "Collaboration templates"
   },
   "market_filters": {
     "agent": "Agent Marketplace",
     "skill": "Skill Marketplace",
-    "mcp": "MCP Marketplace"
+    "mcp": "MCP Marketplace",
+    "template": "Collaboration templates"
   },
   "mcp_market": {
     "unknown_error": "Unknown MCP marketplace error",
@@ -297,7 +299,7 @@
     "remove_added_agent_confirm": "Remove “{{agent}}” from your capabilities? This only removes your reference; the source Agent will not be deleted.",
     "remove_added_skill_success": "Skill removed from your capabilities",
     "remove_added_skill_failed": "Failed to remove Skill",
-    "remove_added_skill_confirm": "Remove \u201c{{skill}}\u201d from your capabilities? The source Skill will not be deleted.",
+    "remove_added_skill_confirm": "Remove “{{skill}}” from your capabilities? The source Skill will not be deleted.",
     "remove_from_team_success": "Skill removed from team",
     "remove_from_team_failed": "Failed to remove Skill from team",
     "remove_from_team_confirm": "Remove “{{skill}}” from “{{group}}”? The source Skill will not be deleted.",
@@ -344,5 +346,6 @@
       "published": "Publicly listed for users to add",
       "team": "Shared with group members"
     }
-  }
+  },
+  "template_description": "Discover and share project roles, workflows and acceptance criteria."
 }

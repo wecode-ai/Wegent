@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 let diagnostics: typeof import('./model-loading-diagnostics')

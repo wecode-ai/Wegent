@@ -24,7 +24,6 @@ from app.schemas.wework_transcript import (
     TranscriptAppendResponse,
     TranscriptArchiveRequest,
     TranscriptArchiveResponse,
-    TranscriptLeaseReleaseRequest,
     TranscriptLeaseRequest,
     TranscriptLeaseResponse,
     TranscriptResponse,
@@ -87,25 +86,6 @@ def renew_lease_endpoint(
         )
     )
     return _lease_response(transcript)
-
-
-# MIGRATION-CANDIDATE(api="POST /api/wework-transcripts/*/lease/release"): remove after final confirmation.
-# @router.post("/{transcript_id}/lease/release")
-def release_lease_endpoint(
-    transcript_id: str,
-    request: TranscriptLeaseReleaseRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    _translate(
-        lambda: wework_transcript_service.release_lease(
-            db,
-            user_id=current_user.id,
-            transcript_id=transcript_id,
-            request=request,
-        )
-    )
-    return {"released": True}
 
 
 @router.post(

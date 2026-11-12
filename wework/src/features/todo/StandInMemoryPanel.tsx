@@ -1,6 +1,8 @@
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
-import { Brain, Plus, X } from 'lucide-react'
+import { Plus } from 'lucide-react'
+import { StandInSettingsHeader } from './StandInSettingsLayout'
 import { dequal } from 'dequal'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInExecutorApi, StandInMemory, StandInMemoryScope } from '@/api/standIn'
@@ -9,18 +11,28 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { StandInMemoryEvidence } from './StandInMemoryEvidence'
+import { StandInMemoryRules } from './StandInMemoryRules'
 
 export function StandInMemoryPanel({
   api,
   settings,
   projects,
+  fixedScope,
+  scopeLabel,
   onClose,
+  onBack,
+  parentLabel,
   ref,
 }: {
   api: StandInExecutorApi
   settings: PersonalStandInSettings
   projects: CollaborationProject[]
+  fixedScope?: StandInMemoryScope
+  scopeLabel?: string
   onClose(): void
+  onBack?: () => void
+  parentLabel?: string
   ref?: Ref<StandInSettingsHandle>
 }) {
   const { t } = useTranslation('common')
@@ -31,16 +43,19 @@ export function StandInMemoryPanel({
   const [deleting, setDeleting] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [discard, setDiscard] = useState<'close' | 'cancel' | null>(null)
-  const scopes: { scope: StandInMemoryScope; label: string }[] = [
-    { scope: { kind: 'personal' }, label: t('standIn.memory.personal') },
-    ...settings.roles.map((role, index) => ({
-      scope: { kind: 'role' as const, roleId: role.id },
-      label: t('standIn.memory.role', {
-        name: standInRoleName(role, index, t('standIn.personal.default_role')),
-      }),
-    })),
-  ]
-  for (const identity of [settings.primary, ...settings.roles]) {
+  const scopeKey = fixedScope ? JSON.stringify(fixedScope) : undefined
+  const scopes: { scope: StandInMemoryScope; label: string }[] = fixedScope
+    ? [{ scope: fixedScope, label: scopeLabel ?? t('standIn.memory.project') }]
+    : [
+        { scope: fixedScope ?? { kind: 'personal' }, label: t('standIn.memory.personal') },
+        ...settings.roles.map((role, index) => ({
+          scope: { kind: 'role' as const, roleId: role.id },
+          label: t('standIn.memory.role', {
+            name: standInRoleName(role, index, t('standIn.personal.default_role')),
+          }),
+        })),
+      ]
+  for (const identity of fixedScope ? [] : [settings.primary, ...settings.roles]) {
     for (const source of identity?.connections ?? []) {
       const scope: StandInMemoryScope =
         source.providerId === '@wegent/dsh-connection-dingtalk/dingtalk' &&
@@ -80,7 +95,13 @@ export function StandInMemoryPanel({
       .memories(settings.userId, settings.executionDeviceId)
       .then(rows => {
         if (active) {
-          setItems(rows)
+          setItems(
+            rows.filter(row =>
+              scopeKey
+                ? dequal(row.scope, JSON.parse(scopeKey))
+                : row.scope.kind !== 'project_coordinator'
+            )
+          )
           setError(null)
         }
       })
@@ -90,20 +111,20 @@ export function StandInMemoryPanel({
     return () => {
       active = false
     }
-  }, [api, settings.userId, settings.executionDeviceId, retry])
+  }, [api, settings.userId, settings.executionDeviceId, retry, scopeKey])
   const dirty =
     editing !== null &&
     !dequal(
       editing,
-      items?.find(row => row.id === editing.id) ?? { content: '', scope: { kind: 'personal' } }
+      items?.find(row => row.id === editing.id) ?? {
+        content: '',
+        scope: fixedScope ?? { kind: 'personal' },
+      }
     )
-  const close = () => {
-    if (busy) return
-    if (dirty) setDiscard('close')
-    else onClose()
-  }
+  const navigation = useStandInPanelNavigation(dirty, busy, () => setDiscard('close'))
+  const close = () => navigation.requestLeave(onClose)
   const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
-  useImperativeHandle(ref, () => ({ requestClose: close }))
+  useImperativeHandle(ref, () => ({ requestClose: close, requestLeave: navigation.requestLeave }))
   const mutate = async (action: () => Promise<void>) => {
     setBusy(true)
     setError(null)
@@ -121,20 +142,28 @@ export function StandInMemoryPanel({
       className="flex min-h-full flex-col px-5"
       data-testid="stand-in-memory-panel"
     >
-      <header className="sticky top-0 z-10 mb-5 flex items-center gap-2 border-b border-border bg-background py-4">
-        <Brain className="h-4 w-4" />
-        <h2 className="heading-sm flex-1">{t('standIn.memory.title')}</h2>
-        <button
-          type="button"
-          data-testid="stand-in-memory-close"
-          aria-label={t('standIn.close')}
-          onClick={close}
-          disabled={busy}
-          className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </header>
+      <StandInSettingsHeader
+        title={t('standIn.memory.title')}
+        disabled={busy}
+        back={
+          onBack
+            ? { testId: 'stand-in-memory-back', onClick: () => navigation.requestLeave(onBack) }
+            : undefined
+        }
+        close={{ testId: 'stand-in-memory-close', onClick: close }}
+        path={
+          onBack
+            ? [
+                {
+                  label: parentLabel ?? t('standIn.workspace.primary_profile'),
+                  testId: 'stand-in-memory-path-settings',
+                  onClick: () => navigation.requestLeave(onBack),
+                },
+                { label: t('standIn.memory.title'), testId: 'stand-in-memory-path-current' },
+              ]
+            : undefined
+        }
+      />
       <p className="mb-5 text-sm text-text-muted">{t('standIn.memory.help')}</p>
       {error && (
         <div role="alert" className="mb-4 text-sm text-error">
@@ -157,7 +186,8 @@ export function StandInMemoryPanel({
             <button
               type="button"
               data-testid="stand-in-memory-add"
-              onClick={() => setEditing({ content: '', scope: { kind: 'personal' } })}
+              disabled={busy}
+              onClick={() => setEditing({ content: '', scope: fixedScope ?? { kind: 'personal' } })}
               className="mb-4 inline-flex min-h-8 items-center gap-2 self-start rounded-md border border-border px-3 text-sm hover:bg-muted"
             >
               <Plus className="h-4 w-4" />
@@ -174,7 +204,7 @@ export function StandInMemoryPanel({
                   const row = await api.saveMemory(settings.userId, settings.executionDeviceId, {
                     ...editing,
                     content: editing.content ?? '',
-                    scope: editing.scope ?? { kind: 'personal' },
+                    scope: editing.scope ?? fixedScope ?? { kind: 'personal' },
                   })
                   setItems(current => [row, ...(current ?? []).filter(item => item.id !== row.id)])
                   setEditing(null)
@@ -255,7 +285,8 @@ export function StandInMemoryPanel({
                 <p className="mt-2 text-xs text-text-muted">
                   {label(row.scope)} · {new Date(row.updatedAt).toLocaleDateString()}
                 </p>
-                <div className="mt-2 flex gap-2">
+                <StandInMemoryEvidence memory={row} />
+                <div className="mt-2 flex flex-wrap gap-2">
                   <button
                     type="button"
                     data-testid="stand-in-memory-edit"
@@ -276,6 +307,9 @@ export function StandInMemoryPanel({
                   </button>
                   {deleting === row.id && (
                     <>
+                      <p className="basis-full text-sm text-text-muted">
+                        {t('standIn.memory.forget_retention')}
+                      </p>
                       <button
                         type="button"
                         data-testid="stand-in-memory-delete-confirm"
@@ -313,6 +347,16 @@ export function StandInMemoryPanel({
           </ul>
         </>
       )}
+      <StandInMemoryRules
+        api={api}
+        userId={settings.userId}
+        deviceId={settings.executionDeviceId}
+        fixedScope={fixedScope}
+        label={label}
+        refreshKey={items}
+        disabled={busy || editing !== null || deleting !== null}
+        onBusyChange={setBusy}
+      />
       <ConfirmDialog
         open={discard !== null}
         destructive
@@ -322,11 +366,16 @@ export function StandInMemoryPanel({
         confirmLabel={t('standIn.memory.discard')}
         confirmTestId="stand-in-memory-discard"
         cancelTestId="stand-in-memory-keep"
-        onClose={() => setDiscard(null)}
+        onClose={() => {
+          navigation.cancelLeave()
+          setDiscard(null)
+        }}
         onConfirm={() => {
           setEditing(null)
           setDiscard(null)
-          if (discard === 'close') onClose()
+          navigation.confirmLeave(() => {
+            if (discard === 'close') onClose()
+          })
         }}
       />
     </div>

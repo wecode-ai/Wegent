@@ -14,6 +14,8 @@ import type {
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
 import { type MessageListProps } from './MessageList'
 import type { ConversationSearchTarget } from './useConversationSearchTarget'
+import type { ConversationMessageTarget } from './turnNavigationTypes'
+import type { ConversationViewportAnchor } from './conversationViewportCache'
 
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
@@ -31,19 +33,16 @@ export interface RuntimeTranscriptRange {
   end: number
 }
 
-export interface UserViewportAnchor {
-  messageId: string
-  item?: { id: string; chunkIndex: string | null; anchorIndex: number; text: string }
+export interface UserViewportAnchor extends ConversationViewportAnchor {
   element: HTMLElement
-  anchorIndex: number
-  offsetFromScrollerTop: number
-  textOffset: number | null
   scrollTopPx: number
 }
 
 export interface ScrollableMessageAreaProps extends Pick<
   MessageListProps,
   | 'userMessageServices'
+  | 'assistantMessageStyle'
+  | 'showProcessingStatus'
   | 'virtualize'
   | 'useContentVisibility'
   | 'onVirtualMeasurement'
@@ -56,6 +55,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   historyError?: ReactNode
   isWaitingForAssistant?: boolean
   hasMoreBefore?: boolean
+  beforeCursor?: string | null
   loadingMoreBefore?: boolean
   historyLoadingMode?: 'automatic' | 'manual'
   turnNavigation?: RuntimeTurnNavigationItem[]
@@ -109,8 +109,10 @@ export interface ScrollableMessageAreaProps extends Pick<
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
+  onFillSelectionToAnswer?: (text: string) => void
   autoScrollSuspended?: boolean
   searchTarget?: ConversationSearchTarget | null
+  messageTarget?: ConversationMessageTarget
   searchNavigationPaused?: boolean
   onSearchNavigationFailure?: (target: ConversationSearchTarget) => void
   onLoadMoreBefore?: () => Promise<void> | void

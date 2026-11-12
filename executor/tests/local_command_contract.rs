@@ -16,6 +16,145 @@ use std::{
 };
 use wegent_executor::local::command::{build_env, CommandHandler, CommandRequest};
 
+#[tokio::test]
+#[cfg(unix)]
+async fn directory_commands_do_not_require_child_programs() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("visible")).unwrap();
+    fs::create_dir(root.path().join(".hidden")).unwrap();
+    fs::write(root.path().join("file.txt"), "content").unwrap();
+    std::os::unix::fs::symlink(root.path().join("visible"), root.path().join("link")).unwrap();
+    for (key, argv, expected) in [
+        (
+            "home_dir",
+            vec!["printenv", "HOME"],
+            format!("{}\n", root.path().display()),
+        ),
+        (
+            "ls_dirs",
+            vec!["ls", "-a", "-p"],
+            "../\n./\n.hidden/\nfile.txt\nlink\nvisible/\n".to_owned(),
+        ),
+    ] {
+        let result = CommandHandler
+            .execute(CommandRequest::from_value(serde_json::json!({
+                "command_key": key, "command": argv.join(" "), "argv": argv,
+                "cwd": root.path(), "env": { "PATH": root.path(), "HOME": root.path() }
+            })))
+            .await;
+        assert!(result.success, "{key}: {result:?}");
+        assert_eq!(result.stdout, expected, "{key}");
+    }
+}
+
+#[tokio::test]
+async fn native_directory_commands_preserve_limits_and_invalid_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let request = serde_json::json!({
+        "command_key": "ls_dirs", "command": "ls -a -p", "argv": ["ls", "-a", "-p"],
+        "cwd": root.path(), "max_output_bytes": 2
+    });
+    let result = CommandHandler
+        .execute(CommandRequest::from_value(request.clone()))
+        .await;
+    assert!(result.success);
+    assert!(result.stdout_truncated);
+    assert_eq!(result.stdout.as_str().unwrap().len(), 2);
+    let mut missing = request;
+    missing["cwd"] = serde_json::json!(root.path().join("missing"));
+    let result = CommandHandler
+        .execute(CommandRequest::from_value(missing))
+        .await;
+    assert!(!result.success);
+    assert!(result
+        .error
+        .unwrap()
+        .contains("Working directory does not exist"));
+}
+
+#[tokio::test]
+#[cfg(not(windows))]
+async fn native_directory_queries_do_not_override_custom_commands() {
+    let result = CommandHandler
+        .execute(CommandRequest::from_value(serde_json::json!({
+            "command_key": "home_dir", "command": "custom-home-command",
+            "argv": ["missing-custom-home-command"]
+        })))
+        .await;
+    assert!(
+        !result.success,
+        "The explicit command must not become a native HOME lookup"
+    );
+}
+
+#[tokio::test]
+async fn forwarded_git_branch_queries_use_portable_commands() {
+    let root = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let mut command = std::process::Command::new("git");
+        wegent_executor::local::native_git::clear_local_git_env(&mut command);
+        let output = command
+            .args(args)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init"]);
+    git(&["symbolic-ref", "HEAD", "refs/heads/feature/portable"]);
+    let execute = |key: &'static str, command: &'static str, argv: Vec<&'static str>| {
+        let path = root.path();
+        async move {
+            CommandHandler
+                .execute(CommandRequest::from_value(serde_json::json!({
+                    "command_key": key, "command": command, "argv": argv, "cwd": path
+                })))
+                .await
+        }
+    };
+    let current = execute(
+        "git_branch",
+        "git branch --show-current",
+        vec!["git", "branch", "--show-current"],
+    )
+    .await;
+    assert!(current.success, "{current:?}");
+    assert_eq!(current.stdout, "feature/portable\n");
+    git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "seed",
+    ]);
+    for argv in [vec![], vec!["git", "branch", "--format=%(refname:short)"]] {
+        let branches = execute(
+            "git_branch_list",
+            "git branch --format=%(refname:short)",
+            argv,
+        )
+        .await;
+        assert!(branches.success, "{branches:?}");
+        assert_eq!(branches.stdout, "feature/portable\n");
+    }
+    git(&["checkout", "--detach"]);
+    let detached = execute("git_branch", "git branch --show-current", vec![]).await;
+    assert!(detached.success, "{detached:?}");
+    assert_eq!(detached.stdout, "");
+    let custom = execute("git_branch", "git --version", vec!["git", "--version"]).await;
+    assert!(custom.success, "{custom:?}");
+    assert!(custom.stdout.as_str().unwrap().starts_with("git version "));
+}
+
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()

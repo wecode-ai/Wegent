@@ -55,14 +55,20 @@ Before registering a local device, ensure you have:
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.ps1 | iex
 ```
+
+The installer selects a stable `vX.Y.Z` Wegent platform release independently of the Wework desktop release channel. Explicit version overrides remain supported. GitHub metadata failures or a missing artifact in the newest platform release stop installation with an error.
+
+The executor's built-in GitHub update checker uses the platform release channel too and matches the asset for the current operating system, including the `.exe` extension on Windows. It does not install an older release when the newest platform release lacks that asset.
+
+Server-side device version hints use the platform channel as well. Remote-process startup commands and the root installation script use the installer entry point above.
 
 The installation script will:
 
@@ -237,7 +243,7 @@ curl -fsSL https://github.com/wecode-ai/Wegent/releases/download/v1.0.0/local_ex
 **Windows (PowerShell):**
 
 ```powershell
-$env:WEGENT_VERSION='v1.0.0'; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+$env:WEGENT_VERSION='v1.0.0'; irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.ps1 | iex
 ```
 
 #### Manual Installation (Development)
@@ -423,6 +429,12 @@ Each device shows:
 > **Note**: Deleting a local device only removes the registration. If the device reconnects, it will automatically re-register. Deleting a cloud device from the Connections settings page releases the corresponding cloud resources.
 
 ### Offline Device Handling
+
+<a id="offline-device-cleanup"></a>
+
+In **Collaboration → Devices**, use **Last online** to identify historical registrations. Online devices show **Online now**; offline devices show a relative time with the full timestamp on hover. Legacy devices without an observation show **No record**. Registration numbers distinguish devices with identical names.
+
+You can delete an owned, offline registration with no running tasks. The current device and registrations that could belong to it while its local identity is unavailable have no delete action. The confirmation shows the registration number and affected spaces. Deleting the record removes it from workspace device selectors while retaining files on the device and existing execution history. A reconnecting device may register again. If it comes online during confirmation, the server rejects deletion and prompts a status refresh.
 
 When a device goes offline:
 

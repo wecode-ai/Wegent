@@ -108,10 +108,10 @@ Backend 将 `deviceId + localTaskId` 转发给对应设备的 `runtime.tasks.tra
 Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打开、刷新各自实现一套 transcript 逻辑：
 
 1. 列表通过常驻 Codex app-server 调用 `thread/list`，使用 `recency_at` 降序、`archived` 过滤和 `useStateDbOnly` 参数读取 thread metadata，不扫描 JSONL transcript。executor 对短时间内的重复列表请求做小窗口缓存，线程管理操作或本地任务状态变化后会失效缓存，然后合并设备侧 LocalTask 索引。
-2. 打开或刷新先调用 `thread/read(includeTurns=false)` 获取 thread metadata，再调用 `thread/turns/list(itemsView=notLoaded, sortDirection=desc)` 获取一页回合。executor 不读取或解析 rollout JSONL，也不调用 `thread/read(includeTurns=true)`。
-3. 每个返回的回合都必须通过 `thread/items/list(sortDirection=asc)` 加载完整 item。executor 按 provider item ID 去重和更新运行中快照，再统一生成 message、tool block、thinking block 和文件变更。
-4. `nextCursor` 和 `backwardsCursor` 是 Codex 生成的不透明游标。普通打开只读取请求页；向前或向后翻页时原样传回对应游标。搜索、Supervisor、fork 等需要完整历史的消费者沿 `nextCursor` 读取到末尾。
-5. executor 不保留旧的本地 offset 分页或 `itemsView=full` 兼容路径。Codex app-server 不支持 `thread/turns/list` 或 `thread/items/list` 时，请求直接失败，不能回退到 rollout 文件或 `thread/read(includeTurns=true)`。
+2. 打开或刷新先调用 `thread/read(includeTurns=false)` 获取 thread metadata，并按明确的 `historyMode` 选择对应读取方式。`paginated` 会话通过轻量 turn metadata 和 `thread/timeline/list` 读取原生页面；正常 v2 读取同时限制条目数与页面字节，不必为长回合加载全部 item。
+3. 明确标为 `legacy` 的会话不支持 `thread/items/list`。正常 v2 读取直接从其规范 rollout 复用 legacy 投影与上下文窗口，在共享工作池中逐记录检查取消，保留 synthetic ID、回滚和终态。每页正文最多 100 条、2 MiB，单个不可分割的大条目可独占一页。该路径仍需扫描元数据至文件末尾，不积累全部历史正文。
+4. 原生页面与 legacy 页面分别返回所属读取方式的不透明游标；前端只原样回传，不推导全局消息位置。executor 按 item 身份合并运行中快照，再统一生成 message、tool block、thinking block 和文件变更。全文导出保持显式读取。
+5. 不通过捕获“不支持”错误切换读取方式。已选择的原生 API 或 legacy rollout 读取失败时直接返回错误，不回退到缓存正文或 `thread/read(includeTurns=true)`。
 
 列表、读取和线程管理共享同一个常驻 Codex app-server 连接，避免每次 RPC 都重新启动子进程。新建 thread 显式设置 `historyMode=paginated`；Wework 随包 Codex 版本必须支持 `thread/turns/list` 和 `thread/items/list`，否则属于不受支持的运行时版本。
 
@@ -127,13 +127,17 @@ POST /api/runtime-work/send
 
 Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque runtime handle 继续运行时会话。Codex 任务使用保存的 `threadId` 调用 app-server `thread/resume`，再通过 `turn/start` 发送本轮输入；消息和状态以 Codex 自己的 thread transcript 为准，executor JSON 索引只保存任务链接元数据。流式 Responses 事件携带当前 LocalTask 的 `local_task_id`、本轮 `task_id` 和 `subtask_id`；Wework 入口层把本地任务映射成统一的 task 身份，把 `subtask_id` 当作本轮 turn 身份，后续消息 reducer 不再使用单独的 `message_id`。这些事件不携带 `workspacePath`。
 
-编辑最后一条已完成的用户消息沿用 replacement turn 语义。Wework 必须生成新的 `clientUserMessageId`，并把原消息的 provider turn ID 作为 `retrySourceTurnId` 发送。executor 不调用已废弃的 `thread/rollback`，因为分页 thread 不支持该操作；它先通过 `thread/resume` 恢复事件订阅，再通过 `turn/start` 发送编辑后的内容，并把旧 turn 记录到 `runtimeHandle.supersededTranscriptTurnIds`。实时 UI 会立即替换旧轮次，后续分页 transcript 也会过滤旧 turn，因此刷新或重开任务不会恢复旧问题和旧回复。
+编辑最后一条已完成的用户消息使用 provider 原生回退语义。Wework 必须生成新的 `clientUserMessageId`，并把原消息的 provider turn ID 作为 `retrySourceTurnId` 发送。executor 必须遵循已保存的 `persist_runtime_thread` 标记，使原生历史已持久化的可见临时任务也走同一套历史替换路径；同时按任务所属 Agent Home 选择 Codex app-server 客户端，在该客户端读取 history mode，并在调用 `thread/revert` 前先 resume 分页 thread，因为 Codex 要求 thread 已加载。回退时把该 turn 作为 `beforeTurnId`，从当前 thread 的持久化历史中移除它及其之后的所有 turn，同时保持 thread identity、设置和 goal 不变；随后更新 `threadPath`、`lastTurnId` 以及 transcript snapshot/pagination，再通过 `turn/start` 发送编辑后的内容。实时 UI 会立即替换旧轮次，刷新或重开任务也不会恢复旧问题和旧回复。`thread/revert` 只改变对话历史，不回退文件改动。非分页或真正临时的 thread 不支持该操作，继续使用 replacement-turn 语义并记录 superseded turn。
+
+消息编辑与普通发送、排队发送、interrupt-and-send 共用任务发送锁。用 provider thread ID 指向任务的请求会在忙碌检查、排队、调度和持久化前统一归一为本地任务 ID。空闲检查、历史回退、状态更新和替换轮次准入必须在同一个临界区内完成；并发消息要么排在已准入的替换轮次之后，要么以忙碌状态被拒绝，并发编辑也不能对同一段历史再次执行回退。
 
 executor 在 `turn/start` 前启动首个有效进展的看门狗，避免 Codex 卡在 MCP 初始化等启动阶段时让 Wework 永久显示“正在思考”。默认超时为 180 秒，可以通过 `WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS` 调整。用户输入回显、声明仍会重试的错误和子 agent 事件不算有效进展；首个 assistant、reasoning 或 tool item 到达后立即关闭这个启动看门狗，因此已经开始执行的长工具调用不会被误杀。启动超时后，executor 会结束卡住的共享 app-server、让当前 turn 以明确错误结束，并在用户重试或发送下一条消息时启动新进程。Wework 必须保留原用户消息和失败卡片，重试时发送与失败 turn 绑定的同一条用户输入，不能留下空白 assistant 消息或误发更早的消息。
 
 排查“回复文本已经完整，但侧栏和 composer 仍显示运行中”时，应按同一组 `deviceId + taskId + subtaskId` 串联正式版日志。 Electron 先记录收到并转发 `response.completed`、`response.failed` 或 `response.incomplete`；本地 chat stream 随后记录终止事件命中的订阅数量；pane 层记录终止事件是被接受，还是因为 task/device 不匹配而被丢弃；最后 Workbench Provider 记录 `runtime_task_settled` 已分发。日志只记录运行时身份、事件类型和 block 数量，不记录回复正文或凭据。缺少哪一段日志，就表示终止状态停在对应边界之前。
 
 ### 前端生命周期投影
+
+侧栏任务列表同样以 `deviceId + taskId` 标识唯一条目。创建期间从项目根目录切换到托管 worktree 时，临时条目必须迁移，不能在两个工作区各留一条。如果执行器列表先于创建响应返回，后到的临时投影必须保留执行器已经确认的分组和状态。`e2e:desktop --segment sidebar-task-identity` 通过延迟真实创建响应覆盖这一时序，并验证发送完成和后续刷新后均只有一条侧栏记录。
 
 Wework 对同一个 `deviceId + taskId` 只维护一份共享的 runtime task lifecycle 状态。可见 pane 拥有 stream 事件的写权限；为了保留布局和快速切换而挂载的隐藏 Provider 可以继续订阅和读取，但不能写入 `turnStarted`、`turnSettled`、goal 状态或 executor snapshot。侧栏、composer 和任务执行遮罩都从同一个不可变 store snapshot 读取，不能再从 Provider 私有 state 或缓存 work list 生成第二份运行状态。
 
@@ -235,6 +239,8 @@ flowchart LR
 ```
 
 图片进入附件区时直接使用浏览器对象 URL 显示预览，直到附件发送、删除或输入框重置时释放。图片附件会保留 `local_preview_url`，发送后的消息可以通过 desktop local-file capability 预览，Codex 收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
+
+在 Electron app 中，发送前后的文本附件点击后均在应用内的只读附件预览面板中打开，读取完整原始文件，不受工作区或全局外部应用打开偏好影响；读取失败时可在面板中重试。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 the desktop local-file URL converter 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 

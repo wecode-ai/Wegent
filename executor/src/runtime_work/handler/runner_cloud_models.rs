@@ -6,6 +6,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: &mut Value,
     ) -> Result<(), AppIpcError> {
+        self.materialize_local_runner_models(payload)?;
         if !has_cloud_routing(payload) {
             return Ok(());
         }
@@ -15,10 +16,13 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| cloud_error("Connect to the cloud before using a cloud model"))?;
         let response = crate::agents::backend_url::backend_http_client()
             .map_err(|_| cloud_error("Cannot configure the backend connection"))?
-            .get(format!(
-                "{}/api/models/unified",
-                connection.backend_url.trim_end_matches('/')
-            ))
+            .get(
+                crate::agents::runtime_capabilities::api_url(
+                    &connection.backend_url,
+                    "/api/models/unified",
+                )
+                .map_err(|_| cloud_error("Invalid backend API URL"))?,
+            )
             .query(&[
                 ("scope", "all"),
                 ("include_config", "false"),
@@ -181,10 +185,11 @@ fn materialize_cloud_payload(
         let protocol = cloud_protocol(model)
             .ok_or_else(|| cloud_error("The cloud model protocol is unavailable"))?;
         let claude = identity["runtime"] == "claude_code";
-        let base_url = format!(
-            "{}/api/runtime-work/llm-responses-proxy",
-            backend_url.trim_end_matches('/')
-        );
+        let base_url = crate::agents::runtime_capabilities::api_url(
+            backend_url,
+            "/api/runtime-work/llm-responses-proxy",
+        )
+        .map_err(|_| cloud_error("Invalid backend gateway URL"))?;
         let headers = json!({
             "X-Wegent-Model-Type": reference["type"],
             "X-Wegent-Model-Namespace": reference["namespace"],
@@ -199,9 +204,9 @@ fn materialize_cloud_payload(
             config.as_object_mut().expect("config is an object").extend(
                 json!({
                     "codex_catalog_model_id":cloud_catalog_model_id(model),
-                    "codex_responses_compat_proxy":true,"tool_profile":"custom",
-                    "native_tool_search":model.pointer("/config/native_tool_search").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
-                    "native_namespace_tools":model.pointer("/config/native_namespace_tools").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
+                    "codex_responses_compat_proxy":true,"tool_profile":"function",
+                    "native_tool_search":model.pointer("/config/native_tool_search").and_then(Value::as_bool).unwrap_or(false),
+                    "native_namespace_tools":model.pointer("/config/native_namespace_tools").and_then(Value::as_bool).unwrap_or(false),
                     "runtime_config":{"codex":{"use_user_config":false,"configured":true}}
                 }).as_object().expect("Codex config is an object").clone()
             );
@@ -254,6 +259,45 @@ fn materialize_cloud_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cloud_catalog_and_execution_use_the_connected_users_token() {
+        use axum::{http::HeaderMap, routing::get, Json, Router};
+
+        let router = Router::new().route(
+            "/api/models/unified",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(headers["authorization"], "Bearer synthetic-session-token");
+                Json(json!({"data":[model("openai-responses")]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let handler = RuntimeWorkRpcHandler::new("mac", "unused").with_backend_connection(
+            Arc::new(Mutex::new(Some(ConnectionConfig {
+                backend_url: url.clone(),
+                auth_token: "synthetic-session-token".into(),
+                runtime_auth_token: "synthetic-device-token".into(),
+                ..Default::default()
+            }))),
+        );
+        let mut payload = cloud_payload("codex");
+        handler
+            .materialize_runner_cloud_models(&mut payload)
+            .await
+            .unwrap();
+        server.abort();
+        let config = &payload["executionRequest"]["model_config"];
+        assert_eq!(config["api_key"], "synthetic-session-token");
+        assert_eq!(
+            config["base_url"],
+            format!("{url}/api/runtime-work/llm-responses-proxy")
+        );
+        assert_eq!(config["runtime_config"]["codex"]["use_user_config"], false);
+        assert_eq!(config["default_headers"]["X-Wegent-Model-User-Id"], "0");
+        assert_eq!(payload["modelConfig"], *config);
+    }
 
     fn cloud_payload(runtime: &str) -> Value {
         json!({

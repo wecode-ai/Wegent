@@ -56,7 +56,7 @@ def api(test_db, test_user, monkeypatch):
     app = FastAPI()
     app.include_router(wework_api.router, prefix="/api")
     app.include_router(openapi_responses.router, prefix=f"{PREFIX}/responses")
-    # Exercise the retained Python reference after production cutover to Rust.
+    # Exercise the retained reference after production ownership moves to Rust.
     app.add_api_route(
         f"{PREFIX}/responses", openapi_responses.create_response, methods=["POST"]
     )
@@ -351,7 +351,7 @@ def test_unsupported_or_invalid_input_fails_before_dispatch(api, fields):
     api.create.assert_not_awaited()
 
 
-def test_python_backend_only_registers_unmigrated_public_routes(test_app):
+def test_python_backend_keeps_conversations_after_responses_cutover(test_app):
     paths = {route.path for route in test_app.routes if hasattr(route, "path")}
     assert f"{PREFIX}/responses" not in paths
     assert f"{PREFIX}/conversations" in paths

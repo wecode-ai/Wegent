@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { applyWorkspaceTemplate } from '../templates/workspaceConfiguration'
+import { readTemplateAgents } from '../templates/agents'
+import { templateMessages } from '../templates/messages'
+
 import { useCallback, useMemo } from 'react'
 import type { CollaborationTranslate } from '../i18n'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
@@ -21,6 +25,7 @@ export function WorkspaceMembersPanel({
   translate,
 }: {
   api: SharedWorkspaceApi
+  agentConfiguration?: import('../project-agent-config/types').ProjectAgentConfigurationHost
   workspace: CollaborationWorkspace
   commands: WorkspaceResourceCommands
   locale: 'zh-CN' | 'en'
@@ -70,6 +75,7 @@ export function WorkspaceMembersPanel({
 }
 
 export function WorkspaceGroupsPanel({
+  agentConfiguration,
   api,
   workspace,
   commands,
@@ -80,6 +86,7 @@ export function WorkspaceGroupsPanel({
   onCreateOpenChange,
 }: {
   api: SharedWorkspaceApi
+  agentConfiguration?: import('../project-agent-config/types').ProjectAgentConfigurationHost
   workspace: CollaborationWorkspace
   commands: WorkspaceResourceCommands
   locale: 'zh-CN' | 'en'
@@ -104,6 +111,25 @@ export function WorkspaceGroupsPanel({
   const groupCommands = useMemo<WorkspaceResourceCommands>(
     () => ({
       ...commands,
+      loadTemplateAgents: async group =>
+        readTemplateAgents(
+          await api.workspaces!.listAgents(workspace.id, { forceRefresh: true }),
+          [group],
+          agentConfiguration?.readTemplateAgent
+        ),
+      createTemplateGroups: (document, drafts, resolveRouting) =>
+        applyWorkspaceTemplate(
+          api,
+          workspace,
+          document,
+          drafts,
+          agentConfiguration,
+          templateMessages[locale].partial,
+          group => setData(data => data && [...data, group]),
+          templateMessages[locale].unsupportedPolicy,
+          locale,
+          resolveRouting
+        ),
       createCollaborationGroup: async input => {
         const group = await commands.createCollaborationGroup(input)
         setData(data => data && [...data, group])
@@ -121,13 +147,14 @@ export function WorkspaceGroupsPanel({
         setData(data => data?.filter(row => row.id !== id))
       },
     }),
-    [commands, setData]
+    [commands, setData, api, workspace, agentConfiguration, locale]
   )
   return (
     <>
       <PanelFeedback state={state} translate={translate} testId="workspace-groups" />
       {state.data && (
         <WorkspaceCollaborationGroupsConfiguration
+          agentConfiguration={agentConfiguration}
           workspace={workspace}
           groups={state.data}
           members={[]}

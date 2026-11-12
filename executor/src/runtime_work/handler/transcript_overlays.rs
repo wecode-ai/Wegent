@@ -83,7 +83,7 @@ fn runtime_transcript_overlay_messages(
         .collect()
 }
 
-fn is_running_runtime_command(item: &Value) -> bool {
+pub(super) fn is_running_runtime_command(item: &Value) -> bool {
     item["type"] == "block"
         && item
             .pointer("/block/render_payload/kind")
@@ -99,7 +99,7 @@ fn is_running_runtime_command(item: &Value) -> bool {
         )
 }
 
-fn is_runtime_user_interaction(item: &Value, turn_id: &str) -> bool {
+pub(super) fn is_runtime_user_interaction(item: &Value, turn_id: &str) -> bool {
     let payload = &item["block"]["render_payload"];
     item["type"] == "block"
         && payload["kind"] == "request_user_input"

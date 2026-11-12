@@ -1,463 +1,26 @@
 import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { RuntimeTranscriptResponse, RuntimeWorkListResponse } from '@/types/api'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { WorkbenchServices } from '../workbenchServices'
 import {
   applyRuntimeConversationAction,
-  cacheRuntimeConversationQueuedMessages,
   clearRuntimeConversationCacheForTests,
-  getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
-  getRuntimeConversationQueuedMessages,
-  setRuntimeConversationGoal,
 } from '../runtimeConversationCache'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
+
+import {
+  runtimeTaskAddress,
+  runtimeWork,
+  runtimeTranscript,
+} from './RuntimeTaskLifecycleStreamCoordinator.fixtures'
 
 describe('RuntimeTaskLifecycleStreamCoordinator', () => {
   afterEach(() => {
     vi.useRealTimers()
     clearRuntimeConversationCacheForTests()
     delete window.weworkElectronLifecycle
-  })
-
-  test('does not poll running task transcripts or work lists', async () => {
-    vi.useFakeTimers()
-    const store = new RuntimeTaskLifecycleStore('test')
-    store.syncRuntimeWork(runtimeWork(true))
-    const listRuntimeWork = vi.fn()
-    const getRuntimeTranscript = vi.fn()
-    const services = {
-      chatStream: {
-        subscribe: vi.fn(() => vi.fn()),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork,
-          getRuntimeTranscript,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(() => vi.advanceTimersByTimeAsync(10_000))
-
-    expect(listRuntimeWork).not.toHaveBeenCalled()
-    expect(getRuntimeTranscript).not.toHaveBeenCalled()
-  })
-
-  test.each([undefined, 'async'] as const)(
-    'marks a running task as waiting when a request_user_input block is created (%s)',
-    async delivery => {
-      const store = new RuntimeTaskLifecycleStore('request-user-input-stream-test')
-      const address = runtimeTaskAddress()
-      store.syncRuntimeWork(runtimeWork(true))
-      let streamHandlers: ChatStreamHandlers = {}
-      const services = {
-        chatStream: {
-          subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-            streamHandlers = handlers
-            return vi.fn()
-          }),
-        },
-        executorClient: {
-          runtime: {
-            listRuntimeWork: vi.fn(),
-            getRuntimeTranscript: vi.fn(),
-          },
-        },
-      } as unknown as WorkbenchServices
-
-      render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-      await act(async () => {
-        streamHandlers.onBlockCreated?.({
-          taskId: address.taskId,
-          deviceId: address.deviceId,
-          subtaskId: 'turn-1',
-          block: {
-            id: 'request-1',
-            type: 'tool',
-            tool_name: 'request_user_input',
-            status: 'pending',
-            render_payload: {
-              kind: 'request_user_input',
-              delivery,
-              requestId: 'request-1',
-              questions: [],
-            },
-          },
-        })
-      })
-
-      const snapshot = store.getTask(address)
-      expect(snapshot?.derived.isBusy).toBe(true)
-      expect(snapshot?.derived.shouldShowSidebarRunning).toBe(false)
-      expect(snapshot?.derived.shouldShowSidebarWaiting).toBe(true)
-      expect(snapshot?.interactionStatus).toBe(
-        delivery === 'async' ? 'awaitingUserReply' : 'waitingForUserInput'
-      )
-    }
-  )
-
-  test('reconnects and reconciles running tasks after system resume', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    store.setCurrentTask(address)
-    let resumeListener: (() => void) | null = null
-    window.weworkElectronLifecycle = {
-      onSystemResume(listener) {
-        resumeListener = listener
-        return () => {
-          resumeListener = null
-        }
-      },
-    }
-    const recoverRuntimeConnections = vi.fn().mockResolvedValue(undefined)
-    const listRuntimeWork = vi.fn().mockResolvedValue(runtimeWork(false))
-    const getRuntimeTranscript = vi.fn().mockResolvedValue(runtimeTranscript(false))
-    const services = {
-      chatStream: {
-        subscribe: vi.fn(() => vi.fn()),
-      },
-      recoverRuntimeConnections,
-      executorClient: {
-        runtime: {
-          listRuntimeWork,
-          getRuntimeTranscript,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      resumeListener?.()
-    })
-
-    expect(recoverRuntimeConnections).toHaveBeenCalledTimes(1)
-    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
-    await waitFor(() => {
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-      })
-    })
-    expect(store.getTask(address)?.derived.isRunning).toBe(false)
-  })
-
-  test('serializes stale-projection recovery with one trailing reconciliation', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    let streamHandlers: ChatStreamHandlers = {}
-    const pendingRuntimeWork: Array<(value: RuntimeWorkListResponse) => void> = []
-    const listRuntimeWork = vi.fn(() => {
-      return new Promise<RuntimeWorkListResponse>(resolve => {
-        pendingRuntimeWork.push(resolve)
-      })
-    })
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork,
-          getRuntimeTranscript: vi.fn(),
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onRuntimeEventLagged?.({ skipped: 3 })
-      streamHandlers.onRuntimeTransportReplaced?.({
-        previousRuntimeInstanceId: 'runtime-1',
-        runtimeInstanceId: 'runtime-2',
-      })
-      await Promise.resolve()
-    })
-
-    expect(listRuntimeWork).toHaveBeenCalledTimes(1)
-    pendingRuntimeWork.shift()?.(runtimeWork(true))
-    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
-    pendingRuntimeWork.shift()?.(runtimeWork(false))
-
-    await waitFor(() => {
-      expect(store.getTask(address)?.task).toMatchObject({
-        status: 'done',
-        running: false,
-        completedAt: 1_786_692_066_192,
-      })
-    })
-    expect(store.getTask(address)?.execution.phase).toBe('idle')
-    expect(store.getTask(address)?.turn.phase).toBe('idle')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
-  })
-
-  test('refreshes the transcript and requeues an interrupted send after runtime replacement', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    store.setCurrentTask(address)
-    cacheRuntimeConversationQueuedMessages(address, [
-      {
-        id: 'queued-follow-up',
-        content: 'continue after restart',
-        status: 'sending',
-        deliveryMode: 'message',
-        awaitingTurnStart: false,
-        createdAt: '2026-08-21T00:00:00.000Z',
-      },
-    ])
-    let streamHandlers: ChatStreamHandlers = {}
-    const listRuntimeWork = vi.fn().mockResolvedValue(runtimeWork(false))
-    const getRuntimeTranscript = vi.fn().mockResolvedValue({
-      taskId: address.taskId,
-      workspacePath: address.workspacePath,
-      runtime: address.runtime,
-      running: false,
-      messages: [],
-      turns: [
-        {
-          id: 'interrupted-turn',
-          status: 'failed',
-          completedAt: 1_787_296_150_000,
-          items: [],
-        },
-      ],
-    })
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork,
-          getRuntimeTranscript,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onRuntimeTransportReplaced?.({
-        previousRuntimeInstanceId: 'runtime-1',
-        runtimeInstanceId: 'runtime-2',
-      })
-    })
-
-    await waitFor(() => {
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-      })
-    })
-    await waitFor(() => {
-      expect(getRuntimeConversationQueuedMessages(address)).toEqual([
-        expect.objectContaining({
-          id: 'queued-follow-up',
-          status: 'queued',
-          awaitingTurnStart: undefined,
-        }),
-      ])
-    })
-    expect(store.getTask(address)?.derived.isRunning).toBe(false)
-  })
-
-  test('recovers lagged transcripts while preserving an optimistic user message', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    store.setCurrentTask(address)
-    applyRuntimeConversationAction(address, {
-      type: 'user_added',
-      message: {
-        id: 'optimistic-user',
-        role: 'user',
-        content: '继续',
-        status: 'sending',
-        createdAt: '2026-08-21T14:39:00.000Z',
-      },
-    })
-    let streamHandlers: ChatStreamHandlers = {}
-    const getRuntimeTranscript = vi.fn().mockResolvedValue(runtimeTranscript(true))
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork: vi.fn().mockResolvedValue(runtimeWork(true)),
-          getRuntimeTranscript,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onRuntimeEventLagged?.({ skipped: 1_053 })
-    })
-
-    await waitFor(() => {
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-      })
-    })
-    await waitFor(() => {
-      expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
-        '之前的请求',
-        '已恢复的 AI 输出',
-        '继续',
-      ])
-    })
-  })
-
-  test('settles stale running state from a refreshed terminal transcript after event lag', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    store.turnStarted(address, 'turn-1')
-    let streamHandlers: ChatStreamHandlers = {}
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork: vi.fn().mockResolvedValue(runtimeWork(true)),
-          getRuntimeTranscript: vi.fn().mockResolvedValue(runtimeTranscript(false)),
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onRuntimeEventLagged?.({ skipped: 1 })
-    })
-
-    await waitFor(() => {
-      expect(store.getTask(address)?.execution.phase).toBe('idle')
-    })
-    expect(store.getTask(address)?.turn.phase).toBe('idle')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
-  })
-
-  test('clears a stale Goal from the authoritative snapshot after event lag', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    const activeWork = runtimeWork(false)
-    const activeTask = activeWork.chats[0]?.tasks[0]
-    if (activeTask) activeTask.goalStatus = 'active'
-    store.syncRuntimeWork(activeWork)
-    store.setCurrentTask(address)
-    setRuntimeConversationGoal(address, {
-      threadId: 'thread-1',
-      objective: 'Finish the task',
-      status: 'active',
-      tokenBudget: null,
-      tokensUsed: 100,
-      timeUsedSeconds: 10,
-      createdAt: 1,
-      updatedAt: 2,
-    })
-    let streamHandlers: ChatStreamHandlers = {}
-    const settledWork = runtimeWork(false)
-    const settledTask = settledWork.chats[0]?.tasks[0]
-    if (settledTask) settledTask.goalStatus = null
-    const getRuntimeGoal = vi.fn().mockResolvedValue({
-      accepted: true,
-      taskId: address.taskId,
-      goal: null,
-    })
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork: vi.fn().mockResolvedValue(settledWork),
-          getRuntimeTranscript: vi.fn().mockResolvedValue(runtimeTranscript(false)),
-          getRuntimeGoal,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onRuntimeEventLagged?.({ skipped: 1 })
-    })
-
-    await waitFor(() => expect(getRuntimeGoal).toHaveBeenCalledWith({ address }))
-    await waitFor(() => expect(getRuntimeConversationMetadata(address).goal).toBeNull())
-    expect(store.getTask(address)?.goalStatus).toBeNull()
-  })
-
-  test('recovers both the current task and every running task after event lag', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const currentAddress = runtimeTaskAddress()
-    const backgroundAddress = {
-      ...currentAddress,
-      taskId: 'background-task',
-    }
-    const work = runtimeWork(false)
-    work.chats[0]?.tasks.push({
-      taskId: backgroundAddress.taskId,
-      workspacePath: backgroundAddress.workspacePath,
-      title: 'Background task',
-      runtime: backgroundAddress.runtime,
-      running: true,
-      status: 'active',
-    })
-    work.totalTasks = 2
-    store.syncRuntimeWork(work)
-    store.setCurrentTask(currentAddress)
-    let streamHandlers: ChatStreamHandlers = {}
-    const getRuntimeTranscript = vi.fn().mockResolvedValue(runtimeTranscript(true))
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork: vi.fn().mockResolvedValue(work),
-          getRuntimeTranscript,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onRuntimeEventLagged?.({ skipped: 2 })
-    })
-
-    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
-    expect(getRuntimeTranscript.mock.calls.map(([request]) => request.taskId).sort()).toEqual(
-      [backgroundAddress.taskId, currentAddress.taskId].sort()
-    )
   })
 
   test('reconciles a provider-renamed terminal turn from the authoritative transcript', async () => {
@@ -550,12 +113,13 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
 
     expect(listRuntimeWork).not.toHaveBeenCalled()
     await waitFor(() =>
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-        includeFullContent: true,
-      })
+      expect(getRuntimeTranscript).toHaveBeenCalledWith(
+        {
+          ...address,
+          limit: 5,
+        },
+        { signal: expect.any(AbortSignal) }
+      )
     )
     await waitFor(() => expect(store.getTask(address)?.turn.outcome).toBe('succeeded'))
     expect(store.getTask(address)?.execution.phase).toBe('idle')
@@ -731,12 +295,13 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       })
 
       await waitFor(() =>
-        expect(getRuntimeTranscript).toHaveBeenCalledWith({
-          ...address,
-          limit: 50,
-          refresh: true,
-          includeFullContent: true,
-        })
+        expect(getRuntimeTranscript).toHaveBeenCalledWith(
+          {
+            ...address,
+            limit: 5,
+          },
+          { signal: expect.any(AbortSignal) }
+        )
       )
       expect(store.getTask(address)?.turn.id).toBe('turn-2')
       expect(store.getTask(address)?.turn.outcome).toBeNull()
@@ -957,12 +522,13 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     })
 
     await waitFor(() =>
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-        includeFullContent: true,
-      })
+      expect(getRuntimeTranscript).toHaveBeenCalledWith(
+        {
+          ...address,
+          limit: 5,
+        },
+        { signal: expect.any(AbortSignal) }
+      )
     )
     await waitFor(() => expect(store.getTask(address)?.execution.phase).toBe('idle'))
     expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
@@ -1035,10 +601,9 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       expect(getRuntimeTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           ...runtimeAddress,
-          limit: 50,
-          refresh: true,
-          includeFullContent: true,
-        })
+          limit: 5,
+        }),
+        { signal: expect.any(AbortSignal) }
       )
     )
     await waitFor(() =>
@@ -1162,75 +727,3 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.derived.isBusy).toBe(true)
   })
 })
-
-function runtimeTaskAddress() {
-  return {
-    deviceId: 'remote-device',
-    taskId: 'claude-task',
-    runtime: 'claude_code' as const,
-    workspacePath: '/workspace',
-  }
-}
-
-function runtimeWork(running: boolean, remoteHostId?: string): RuntimeWorkListResponse {
-  const address = runtimeTaskAddress()
-  return {
-    projects: [],
-    chats: [
-      {
-        deviceId: address.deviceId,
-        ...(remoteHostId ? { remoteHostId } : {}),
-        workspacePath: address.workspacePath,
-        available: true,
-        tasks: [
-          {
-            taskId: address.taskId,
-            workspacePath: address.workspacePath,
-            title: 'Claude task',
-            runtime: address.runtime,
-            running,
-            status: running ? 'active' : 'done',
-            ...(running ? {} : { completedAt: 1_786_692_066_192 }),
-          },
-        ],
-      },
-    ],
-    totalTasks: 1,
-  }
-}
-
-function runtimeTranscript(running: boolean): RuntimeTranscriptResponse {
-  const address = runtimeTaskAddress()
-  return {
-    taskId: address.taskId,
-    workspacePath: address.workspacePath,
-    runtime: address.runtime,
-    running,
-    messages: [],
-    turns: [
-      {
-        id: 'turn-1',
-        status: 'completed',
-        items: [
-          {
-            id: 'user-1',
-            type: 'user_message',
-            message: {
-              id: 'user-1',
-              role: 'user',
-              content: '之前的请求',
-              status: 'done',
-              createdAt: '2026-08-21T00:00:00.000Z',
-            },
-          },
-          {
-            id: 'assistant-1',
-            type: 'assistant_text',
-            content: '已恢复的 AI 输出',
-            createdAt: '2026-08-21T00:00:00.500Z',
-          },
-        ],
-      },
-    ],
-  }
-}

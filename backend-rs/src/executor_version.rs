@@ -75,7 +75,7 @@ const GITHUB_REPO: &str = "wecode-ai/Wegent";
 const REGISTRY_PROFILE: &str = "http://executor-registry/wegent-executor-linux-amd64/update.json";
 
 /// Stable metric profile for the GitHub releases check.
-const GITHUB_PROFILE: &str = "https://api.github.com/repos/wecode-ai/Wegent/releases/latest";
+const GITHUB_PROFILE: &str = "https://api.github.com/repos/wecode-ai/Wegent/releases";
 
 /// Source `cache_manager`: one cached read whose errors and missing keys both
 /// degrade to `None`, plus the `set(key, value, expire)` write the refresh uses.
@@ -212,33 +212,63 @@ impl VersionChecker for RegistryVersionChecker {
 /// `GithubVersionChecker`: fetch the latest release tag from GitHub.
 struct GithubVersionChecker {
     client: HttpClient,
+    api_base: String,
 }
 
 #[async_trait]
 impl VersionChecker for GithubVersionChecker {
     async fn latest_version(&self, request_id: Option<&str>) -> Option<String> {
-        let url = format!("{GITHUB_API_BASE}/repos/{GITHUB_REPO}/releases/latest");
-        let endpoint = self.client.endpoint_named(&url, GITHUB_PROFILE).ok()?;
-        let request = endpoint
-            .get()
-            .header("Accept", "application/vnd.github+json")
-            .timeout(VERSION_CHECK_TIMEOUT);
-        let response = match with_request_id(request, request_id).send().await {
-            Ok(response) => response,
-            Err(error) => {
-                tracing::warn!(%error, "failed to fetch executor version from GitHub");
+        let mut page = 1;
+        loop {
+            let url = format!(
+                "{}/repos/{GITHUB_REPO}/releases?per_page=100&page={page}",
+                self.api_base.trim_end_matches('/')
+            );
+            let endpoint = self.client.endpoint_named(&url, GITHUB_PROFILE).ok()?;
+            let request = endpoint
+                .get()
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "wegent-backend")
+                .timeout(VERSION_CHECK_TIMEOUT);
+            let response = match with_request_id(request, request_id).send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    tracing::warn!(%error, "failed to fetch executor version from GitHub");
+                    return None;
+                }
+            };
+            if !response.status().is_success() {
                 return None;
             }
-        };
-        if !response.status().is_success() {
-            return None;
+            let releases: Vec<serde_json::Value> = response.json().await.ok()?;
+            if let Some(version) = releases.iter().find_map(platform_release_version) {
+                return Some(version.to_owned());
+            }
+            if releases.len() < 100 {
+                return None;
+            }
+            page += 1;
         }
-        // `tag_name.lstrip("v")`.
-        let data: serde_json::Value = response.json().await.ok()?;
-        data.get("tag_name")
-            .and_then(serde_json::Value::as_str)
-            .map(|tag| tag.trim_start_matches('v').to_string())
     }
+}
+
+fn platform_release_version(release: &serde_json::Value) -> Option<&str> {
+    if release.get("draft").and_then(serde_json::Value::as_bool) == Some(true)
+        || release
+            .get("prerelease")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+    {
+        return None;
+    }
+    let tag = release.get("tag_name")?.as_str()?;
+    let version = tag.strip_prefix('v').unwrap_or(tag);
+    let parts: Vec<_> = version.split('.').collect();
+    (parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())))
+    .then_some(version)
 }
 
 /// Process-lifetime `executor_version_service` singleton.
@@ -341,7 +371,10 @@ fn build_checker() -> anyhow::Result<Arc<dyn VersionChecker>> {
             token: env_or_dotenv("EXECUTOR_REGISTRY_TOKEN").filter(|value| !value.is_empty()),
             client,
         }),
-        None => Arc::new(GithubVersionChecker { client }),
+        None => Arc::new(GithubVersionChecker {
+            client,
+            api_base: GITHUB_API_BASE.to_owned(),
+        }),
     })
 }
 
@@ -776,5 +809,110 @@ mod tests {
         assert!(cached_version_present(b"\"__unavailable__\""));
         assert!(!cached_version_present(b"0"));
         assert!(cached_version_present(b"1"));
+    }
+
+    fn release_fixture() -> Vec<serde_json::Value> {
+        serde_json::from_str(include_str!(
+            "../../.github/fixtures/executor-platform-releases.json"
+        ))
+        .unwrap()
+    }
+
+    async fn github_pages(
+        pages: Vec<serde_json::Value>,
+        status: u16,
+    ) -> (GithubVersionChecker, tokio::task::JoinHandle<Vec<String>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api_base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for page in pages {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let mut chunk = [0; 1024];
+                    let count = stream.read(&mut chunk).await.unwrap();
+                    assert_ne!(count, 0, "The HTTP request ended before its headers");
+                    request.extend_from_slice(&chunk[..count]);
+                }
+                requests.push(String::from_utf8(request).unwrap().to_ascii_lowercase());
+                let body = page.to_string();
+                let response = format!(
+                    "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        let checker = GithubVersionChecker {
+            client: HttpClient::builder().build().unwrap(),
+            api_base,
+        };
+        (checker, server)
+    }
+
+    #[tokio::test]
+    async fn github_discovers_platform_version_over_paginated_http() {
+        let fixture = release_fixture();
+        for pages in [
+            vec![serde_json::json!(fixture)],
+            vec![
+                serde_json::json!(vec![fixture[0].clone(); 100]),
+                serde_json::json!(fixture),
+            ],
+        ] {
+            let page_count = pages.len();
+            let (checker, server) = github_pages(pages, 200).await;
+            let version = tokio::time::timeout(
+                Duration::from_secs(5),
+                checker.latest_version(Some("platform-version-contract")),
+            )
+            .await
+            .unwrap();
+            assert_eq!(version.as_deref(), Some("2.0.25"));
+            let requests = tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(requests.len(), page_count);
+            for (index, request) in requests.iter().enumerate() {
+                assert!(
+                    request.starts_with(
+                        &format!(
+                            "GET /repos/wecode-ai/wegent/releases?per_page=100&page={} ",
+                            index + 1
+                        )
+                        .to_ascii_lowercase()
+                    )
+                );
+                assert!(request.contains("user-agent: wegent-backend\r\n"));
+                assert!(request.contains("accept: application/vnd.github+json\r\n"));
+                assert!(request.contains("x-request-id: platform-version-contract\r\n"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn github_never_reports_desktop_draft_or_prerelease_versions() {
+        let fixture = release_fixture();
+        for (payload, status) in [
+            (serde_json::json!(&fixture[..3]), 200),
+            (serde_json::json!([]), 200),
+            (serde_json::json!(fixture), 403),
+        ] {
+            let (checker, server) = github_pages(vec![payload], status).await;
+            let version =
+                tokio::time::timeout(Duration::from_secs(5), checker.latest_version(None))
+                    .await
+                    .unwrap();
+            assert_eq!(version, None);
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
     }
 }

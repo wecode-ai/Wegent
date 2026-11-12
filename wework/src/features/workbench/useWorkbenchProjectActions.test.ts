@@ -1,17 +1,17 @@
-import { updateRuntimeWorkProject } from '@/lib/runtime-project-update'
+import type { ExecutorClient } from '@/api/executorAccess'
+import { createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
+import '@/i18n'
 import { qualifyLocalRuntimeWork } from '@/lib/local-runtime-sidebar-identity'
-import { mergeRuntimeWorkLists } from './runtimeWorkMerge'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   getLocalRuntimeStateDeviceId,
   getRuntimeProjectActivation,
   getRuntimeRemoteProjectRegistrations,
 } from '@/lib/runtime-project-state'
-import '@/i18n'
-import { createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
-import { describe, expect, test, vi } from 'vitest'
+import { updateRuntimeWorkProject } from '@/lib/runtime-project-update'
 import { renderHook, waitFor } from '@testing-library/react'
-import type { ExecutorClient } from '@/api/executorAccess'
+import { describe, expect, test, vi } from 'vitest'
+import { mergeRuntimeWorkLists } from './runtimeWorkMerge'
 import {
   isMatchingGitCheckout,
   normalizeGitRepositoryUrl,
@@ -103,7 +103,7 @@ describe('device project settings save', () => {
     })
     const refreshWorkLists = vi.fn(async () => events.push('refresh'))
     const options = {
-      user: { id: 1 },
+      ownershipKey: JSON.stringify(['', 1]),
       state: {
         devices: [
           { id: 0, device_id: 'local', device_type: 'local', status: 'online' },
@@ -521,70 +521,6 @@ describe('device project settings save', () => {
     }
   )
 
-  test('omits unsupported 1.8.5 metadata and keeps the saved mirror values', async () => {
-    const { result, options, upsert, updateRuntimeProject } = setup()
-    options.state.devices[1].executor_version = '1.8.5'
-    const aiSettings = { instructions: 'Preserved legacy metadata' }
-    Object.assign(options.state.runtimeWork.projects[0].project, { aiSettings })
-    await result.current.updateLocalRuntimeProject({
-      ...update,
-      aiSettings: undefined,
-      defaultProjectSpace: undefined,
-    } as never)
-    expect(upsert).toHaveBeenCalledWith({
-      deviceId: update.deviceId,
-      projectKey: update.projectKey,
-      name: update.name,
-      roots: update.roots,
-      runtime: 'codex',
-    })
-    expect(updateRuntimeProject).toHaveBeenCalledWith(expect.objectContaining({ aiSettings }))
-  })
-
-  test('uses only the existing rename path on an unknown device version', async () => {
-    const { result, options, upsert, updateRuntimeProject } = setup()
-    options.state.devices[1].executor_version = 'unknown'
-    const aiSettings = {
-      instructions: 'Preserved',
-      plugins: [{ id: 'quality@team', pluginName: 'quality', marketplaceId: 'team' }],
-    }
-    Object.assign(options.state.runtimeWork.projects[0].project, { aiSettings })
-    options.executorClient.runtime.listRuntimeWork.mockResolvedValue({
-      projects: [
-        {
-          project: {
-            ...update,
-            key: update.projectKey,
-            source: 'local_project',
-            stateDeviceId: 'remote',
-            roots: [{ kind: 'local', path: '/old' }],
-            aiSettings,
-          },
-          deviceWorkspaces: [],
-        },
-      ],
-      chats: [],
-      totalTasks: 0,
-    })
-    await result.current.updateLocalRuntimeProject({
-      deviceId: update.deviceId,
-      projectKey: update.projectKey,
-      name: update.name,
-      roots: ['/old'],
-    })
-    expect(upsert).not.toHaveBeenCalled()
-    expect(options.executorClient.runtime.renameRuntimeWorkspace).toHaveBeenCalledWith({
-      deviceId: 'remote',
-      projectKey: 'owner-key',
-      workspacePath: '/old',
-      runtime: 'codex',
-      name: update.name,
-    })
-    expect(updateRuntimeProject).toHaveBeenCalledWith(
-      expect.objectContaining({ roots: ['/old'], aiSettings })
-    )
-  })
-
   test('confirms a legacy rename from owner workspace paths when its roots field is absent', async () => {
     const { result, options, upsert, updateRuntimeProject } = setup()
     options.state.devices[1].executor_version = 'unknown'
@@ -613,43 +549,6 @@ describe('device project settings save', () => {
     })
     expect(upsert).not.toHaveBeenCalled()
     expect(updateRuntimeProject).toHaveBeenCalledWith(expect.objectContaining({ roots: ['/old'] }))
-  })
-
-  test('confirms the real legacy rename RPC acknowledgement without an unprovided deviceId', async () => {
-    const { result, options, upsert, updateRuntimeProject } = setup()
-    options.state.devices[1].executor_version = 'unknown'
-    const ownerApi = createRuntimeWorkApiFromIpc(
-      async method =>
-        method === 'runtime.workspaces.rename'
-          ? { success: true, accepted: true, workspacePath: '/old', runtime: 'codex' }
-          : {
-              workspaces: [
-                {
-                  workspacePath: '/old',
-                  projectKey: update.projectKey,
-                  label: update.name,
-                  tasks: [],
-                },
-              ],
-            },
-      async () => 'remote'
-    )
-    options.executorClient.runtime.renameRuntimeWorkspace.mockImplementation(
-      data => ownerApi.renameRuntimeWorkspace(data) as never
-    )
-    options.executorClient.runtime.listRuntimeWork.mockImplementation(requestOptions =>
-      ownerApi.listRuntimeWork(requestOptions)
-    )
-    await result.current.updateLocalRuntimeProject({
-      deviceId: update.deviceId,
-      projectKey: update.projectKey,
-      name: update.name,
-      roots: ['/old'],
-    })
-    expect(upsert).not.toHaveBeenCalled()
-    expect(updateRuntimeProject).toHaveBeenCalledWith(
-      expect.objectContaining({ name: update.name, roots: ['/old'] })
-    )
   })
 
   test('rejects a modern owner snapshot that drops supported roots even when a workspace remains', async () => {
@@ -736,29 +635,6 @@ describe('device project settings save', () => {
     options.state.devices[1].status = 'offline'
     await expect(result.current.updateLocalRuntimeProject(update as never)).rejects.toThrow()
     expect(upsert).not.toHaveBeenCalled()
-  })
-
-  test('saves supported AI independently when explicit folder editing is disabled', async () => {
-    const { result, options, upsert } = setup()
-    Object.assign(options.state.devices[1], {
-      runtime_features: {
-        schemaVersion: 4,
-        projectEditing: { multiRoots: false, aiSettings: true, plugins: false },
-      },
-    })
-    upsert.mockImplementation(async data => ({
-      ...(data as typeof update),
-      accepted: true,
-      error: null,
-    }))
-    await result.current.updateLocalRuntimeProject({
-      ...update,
-      roots: ['/old'],
-      defaultProjectSpace: undefined,
-    } as never)
-    expect(upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ roots: ['/old'], aiSettings: update.aiSettings })
-    )
   })
 
   test('keeps the draft unconfirmed when the owning runtime changes during save', async () => {

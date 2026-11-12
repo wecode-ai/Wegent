@@ -9,6 +9,10 @@ export {
   type QuickPhraseMode,
 } from '@wegent/chat-core/composer-quick-phrases'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import {
+  INTERACTIONS_PATH,
+  INTERACTIONS_TAB_ID,
+} from '@/features/notifications/RuntimeInteractionsContext'
 import type { ModelSelectionConfig } from '@/types/api'
 import {
   defaultLocalHarnessPreferences,
@@ -17,6 +21,11 @@ import {
 } from '@/lib/local-harness'
 
 import { DEFAULT_CONTEXT_COMPACTION_THRESHOLD } from '@wegent/chat-core/runtime-context-usage'
+import {
+  normalizeAppearanceThemeSnapshot,
+  type AppearanceThemeSnapshot,
+} from '../../electron/src/host/appearance-theme-contract'
+export type { AppearanceThemeSnapshot } from '../../electron/src/host/appearance-theme-contract'
 export { DEFAULT_CONTEXT_COMPACTION_THRESHOLD } from '@wegent/chat-core/runtime-context-usage'
 export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
 export const CONTEXT_COMPACTION_THRESHOLD_MAX = 100
@@ -31,6 +40,7 @@ export function clampContextCompactionThreshold(value: number): number {
 export interface AppPreferences {
   workbenchMode: WorkbenchMode
   appearanceMode: AppearanceModePreference
+  appearanceThemeSnapshot: AppearanceThemeSnapshot | null
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
   fixedWorkspaceTabs: FixedWorkspaceTabPreference[]
@@ -44,7 +54,9 @@ export interface AppPreferences {
   experimentalFeaturesEnabled: boolean
   localCodexSubscriptionEnabled: boolean
   telemetryConsentAsked: boolean
+  telemetryConsentRevision: number
   telemetryEnabled: boolean
+  performanceRecordingEnabled: boolean
   supervisorPrinciples: string
   supervisorModelSelection: ModelSelectionConfig | null
   projectAiModelSelection: ModelSelectionConfig | null
@@ -56,6 +68,7 @@ export interface AppPreferences {
   browserExternalLinkTarget: BrowserLinkTarget
   browserLocalLinkTarget: BrowserLinkTarget
   browserDownloadDirectory: string | null
+  browserFullControl: boolean
   browserAskBeforeDownload: boolean
   appshotsPlaySound: boolean
   computerUseEnabled?: boolean
@@ -113,6 +126,7 @@ export interface FixedWorkspaceTabPreference {
 export interface AppPreferencesPatch {
   workbenchMode?: WorkbenchMode
   appearanceMode?: AppearanceModePreference
+  appearanceThemeSnapshot?: AppearanceThemeSnapshot | null
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
   fixedWorkspaceTabs?: FixedWorkspaceTabPreference[]
@@ -127,6 +141,7 @@ export interface AppPreferencesPatch {
   localCodexSubscriptionEnabled?: boolean
   telemetryConsentAsked?: boolean
   telemetryEnabled?: boolean
+  performanceRecordingEnabled?: boolean
   supervisorPrinciples?: string
   supervisorModelSelection?: ModelSelectionConfig | null
   projectAiModelSelection?: ModelSelectionConfig | null
@@ -138,6 +153,7 @@ export interface AppPreferencesPatch {
   browserExternalLinkTarget?: BrowserLinkTarget
   browserLocalLinkTarget?: BrowserLinkTarget
   browserDownloadDirectory?: string | null
+  browserFullControl?: boolean
   browserAskBeforeDownload?: boolean
   appshotsPlaySound?: boolean
   computerUseEnabled?: boolean
@@ -155,12 +171,14 @@ export interface AppPreferencesPatch {
 export const defaultAppPreferences: AppPreferences = {
   workbenchMode: 'developer',
   appearanceMode: 'system',
+  appearanceThemeSnapshot: null,
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   fixedWorkspaceTabs: [
     { id: 'fixed-task', kind: 'task' },
     { id: 'fixed-board', kind: 'board' },
     { id: 'fixed-agent', kind: 'agent' },
+    { id: INTERACTIONS_TAB_ID, kind: 'auxiliary', contentRoute: INTERACTIONS_PATH },
   ],
   startupWorkspaceTabId: 'fixed-task',
   systemDragEnabled: true,
@@ -172,7 +190,9 @@ export const defaultAppPreferences: AppPreferences = {
   experimentalFeaturesEnabled: false,
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
+  telemetryConsentRevision: 0,
   telemetryEnabled: false,
+  performanceRecordingEnabled: false,
   supervisorPrinciples: '',
   supervisorModelSelection: null,
   projectAiModelSelection: null,
@@ -184,6 +204,7 @@ export const defaultAppPreferences: AppPreferences = {
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
+  browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
   computerUseEnabled: false,
@@ -281,6 +302,7 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       supportedAppearanceModes.has(record.appearanceMode as AppearanceModePreference)
         ? (record.appearanceMode as AppearanceModePreference)
         : defaultAppPreferences.appearanceMode,
+    appearanceThemeSnapshot: normalizeAppearanceThemeSnapshot(record.appearanceThemeSnapshot),
     closeToTrayEnabled:
       typeof record.closeToTrayEnabled === 'boolean'
         ? record.closeToTrayEnabled
@@ -343,6 +365,16 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.telemetryEnabled === 'boolean'
         ? record.telemetryEnabled
         : defaultAppPreferences.telemetryEnabled,
+    telemetryConsentRevision:
+      typeof record.telemetryConsentRevision === 'number' &&
+      Number.isSafeInteger(record.telemetryConsentRevision) &&
+      record.telemetryConsentRevision >= 0
+        ? record.telemetryConsentRevision
+        : 0,
+    performanceRecordingEnabled:
+      typeof record.performanceRecordingEnabled === 'boolean'
+        ? record.performanceRecordingEnabled
+        : defaultAppPreferences.performanceRecordingEnabled,
     supervisorPrinciples:
       typeof record.supervisorPrinciples === 'string'
         ? record.supervisorPrinciples
@@ -382,6 +414,7 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.browserDownloadDirectory === 'string' && record.browserDownloadDirectory.trim()
         ? record.browserDownloadDirectory.trim()
         : defaultAppPreferences.browserDownloadDirectory,
+    browserFullControl: record.browserFullControl === true,
     browserAskBeforeDownload:
       typeof record.browserAskBeforeDownload === 'boolean'
         ? record.browserAskBeforeDownload
@@ -544,13 +577,21 @@ export async function getAppPreferences(): Promise<AppPreferences> {
   return mergeAppPreferences(await invokeDesktopHost<Record<string, unknown>>('preferences.get'))
 }
 
-export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<AppPreferences> {
+export async function updateAppPreferences(
+  patch: AppPreferencesPatch,
+  expectedTelemetryConsentRevision?: number
+): Promise<AppPreferences> {
   if (typeof window === 'undefined') {
     const preferences = mergeAppPreferences({ ...defaultAppPreferences, ...patch })
     return preferences
   }
   const preferences = mergeAppPreferences(
-    await invokeDesktopHost<Record<string, unknown>>('preferences.update', { patch })
+    await invokeDesktopHost<Record<string, unknown>>('preferences.update', {
+      patch,
+      ...(expectedTelemetryConsentRevision !== undefined
+        ? { expectedTelemetryConsentRevision }
+        : {}),
+    })
   )
   emitAppPreferencesChanged(preferences)
   return preferences

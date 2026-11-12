@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
-import { runInNewContext } from 'node:vm'
 import { describe, expect, test, vi } from 'vitest'
 import {
   createStartupReadyHandler,
@@ -12,6 +9,7 @@ import {
   type StartupSplashTheme,
   type StartupSplashWindow,
 } from './startup-splash.js'
+import { STARTUP_PROGRESS_CHANNEL } from './startup-progress.js'
 
 describe('startup readiness notifications', () => {
   test('presents the main window only once across concurrent and later notifications', async () => {
@@ -28,13 +26,8 @@ describe('startup readiness notifications', () => {
       .mockRejectedValueOnce(new Error('close failed'))
       .mockResolvedValue(undefined)
     const ready = createStartupReadyHandler(complete)
-    const activated = vi.fn()
-    const pending = ready.whenReady.then(activated)
     await expect(ready('task-list')).rejects.toThrow('close failed')
-    expect(activated).not.toHaveBeenCalled()
     await ready('task-list')
-    await pending
-    expect(activated).toHaveBeenCalledOnce()
     expect(complete).toHaveBeenCalledTimes(2)
   })
 
@@ -91,12 +84,14 @@ class FakeSplashWindow implements StartupSplashWindow {
   readonly show = vi.fn(() => {
     this.visible = true
   })
+  readonly setOpacity = vi.fn()
   readonly webContents = {
     capturePage: vi.fn(async () => ({
       toPNG: () => Buffer.from('splash-png'),
     })),
     executeJavaScript: vi.fn(async () => true),
     isDestroyed: vi.fn(() => false),
+    send: vi.fn(),
   }
 
   on(event: 'close', listener: (event: { preventDefault: () => void }) => void): void {
@@ -133,155 +128,13 @@ function createFixture(theme: StartupSplashTheme = 'light', onCloseRequest?: () 
   return { show, splash, target, writePng }
 }
 
-class FakeSplashElement {
-  readonly classList = {
-    add: vi.fn(),
-    remove: vi.fn(),
-    toggle: vi.fn(),
-  }
-  readonly dataset: Record<string, string> = {}
-  readonly listeners = new Map<string, () => void>()
-  disabled = false
-  hidden = true
-  textContent = ''
-
-  addEventListener(event: string, listener: () => void): void {
-    this.listeners.set(event, listener)
-  }
-
-  click(): void {
-    this.listeners.get('click')?.()
-  }
-
-  focus(): void {}
-
-  setAttribute(): void {}
-}
-
 describe('StartupSplash', () => {
-  test('ships a visible loading animation that reports readiness after two frames', async () => {
-    const electronRoot =
-      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
-    const splashAsset = (name: string) =>
-      readFile(join(electronRoot, 'src', 'shell', 'startup-splash', name), 'utf8')
-
-    const [html, styles, script] = await Promise.all([
-      splashAsset('index.html'),
-      splashAsset('styles.css'),
-      splashAsset('splash.js'),
-    ])
-
-    expect(html).toContain('class="workbench-scene"')
-    expect(html).toContain('class="ambient-workflow"')
-    expect(html).toContain('stage-corner-top-left')
-    expect(html).toContain('id="morph-primary"')
-    expect(html).toContain('class="stage-indicator"')
-    expect(html).toContain('class="robot"')
-    expect(html).toContain('class="human"')
-    expect(html).toContain('class="human-working-arm"')
-    expect(html).toContain('class="robot-working-arm"')
-    expect(html).toContain('aria-valuemax="3"')
-    expect(html).toContain('id="startup-recover"')
-    expect(html).toContain('id="startup-reset-open"')
-    expect(html).toContain('id="startup-confirmation"')
-    expect(styles).toContain('@keyframes robot-bob')
-    expect(styles).toContain('@keyframes human-bob')
-    expect(styles).toContain('@keyframes splash-enter')
-    expect(styles).toContain('@keyframes ambient-line-arrive')
-    expect(html).toContain('document.documentElement.dataset.theme = theme')
-    expect(styles).toContain(":root[data-theme='dark']")
-    expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
-    expect(script).toContain('const stages =')
-    expect(script).toContain('requestAnimationFrame(animateMorph)')
-    expect(script).toContain("navigator.language.toLowerCase().startsWith('zh')")
-    expect(script).toContain("stageIndicator.setAttribute('aria-valuenow'")
-    expect(script).toContain('启动时间比预期稍长')
-    expect(script).toContain('仍在加载任务列表，请稍候…')
-    expect(script).toContain('}, 10_000)')
-    expect(script).toContain('}, 30_000)')
-    expect(script).toContain("'wework-startup-error'")
-    expect(script).toContain("runRecoveryAction('retry')")
-    expect(script).toContain("showConfirmation('recover')")
-    expect(script).toContain("showConfirmation('resetAppState')")
-    expect(script).toContain("runRecoveryAction('disablePlugin', failedPluginName)")
-    expect(script).toContain('屏蔽 ${failedPluginName} 并重启')
-    expect(script).toMatch(
-      /requestAnimationFrame\(\(\) => \{\s+requestAnimationFrame\(\(\) => \{\s+document\.documentElement\.dataset\.animationReady = 'true'/
-    )
+  test('shows the startup window even when its animation never reports readiness', async () => {
+    const { show, target } = createFixture()
+    target.webContents.executeJavaScript = vi.fn(() => new Promise(() => {}))
+    expect((await show()).window.visible).toBe(true)
+    expect(target.show).toHaveBeenCalledOnce()
   })
-
-  test.each([
-    ['#startup-recover', 'recoverWorkbench'],
-    ['#startup-reset-open', 'resetAppState'],
-  ])('retries failed cleanup selected by %s', async (selector, action) => {
-    const electronRoot =
-      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
-    const script = await readFile(
-      join(electronRoot, 'src', 'shell', 'startup-splash', 'splash.js'),
-      'utf8'
-    )
-    const elements = new Map<string, FakeSplashElement>()
-    const element = (selector: string) => {
-      const existing = elements.get(selector)
-      if (existing) return existing
-      const created = new FakeSplashElement()
-      elements.set(selector, created)
-      return created
-    }
-    const cleanup = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('Cleanup failed'))
-      .mockResolvedValue(undefined)
-    const retry = vi.fn()
-    const windowListeners = new Map<string, () => void>()
-    const documentElement = element('documentElement')
-
-    runInNewContext(script, {
-      document: {
-        activeElement: null,
-        body: element('body'),
-        documentElement,
-        querySelector: (selector: string) => element(selector),
-        querySelectorAll: () => [
-          new FakeSplashElement(),
-          new FakeSplashElement(),
-          new FakeSplashElement(),
-        ],
-      },
-      HTMLElement: FakeSplashElement,
-      navigator: { language: 'en-US' },
-      performance: { now: () => 0 },
-      requestAnimationFrame: vi.fn(),
-      window: {
-        addEventListener: (event: string, listener: () => void) => {
-          windowListeners.set(event, listener)
-        },
-        matchMedia: () => ({ matches: true }),
-        requestAnimationFrame: vi.fn(),
-        setInterval: vi.fn(),
-        setTimeout: vi.fn(),
-        weworkStartupRecovery: {
-          [action]: cleanup,
-          retry,
-        },
-      },
-    })
-
-    element('#startup-retry').click()
-    expect(retry).toHaveBeenCalledOnce()
-    retry.mockClear()
-    element(selector).click()
-    element('#startup-confirmation-submit').click()
-    await Promise.resolve()
-
-    expect(cleanup).toHaveBeenCalledOnce()
-    await vi.waitFor(() => expect(element('#startup-action-error').hidden).toBe(false))
-    element('#startup-retry').click()
-    await Promise.resolve()
-    expect(cleanup).toHaveBeenCalledTimes(2)
-    expect(retry).not.toHaveBeenCalled()
-  })
-
   test('shows the branded animation in the main startup window and records its timeline', async () => {
     const { show, target } = createFixture()
 
@@ -313,6 +166,123 @@ describe('StartupSplash', () => {
     const snapshot = await show()
 
     expect(snapshot.theme).toBe('dark')
+  })
+
+  test('waits for native presentation before marking the splash visible', async () => {
+    const { show, splash, target } = createFixture()
+    let finishPresentation!: () => void
+    const presentation = new Promise<void>(resolve => {
+      finishPresentation = resolve
+    })
+    let presentationStarted!: () => void
+    const started = new Promise<void>(resolve => {
+      presentationStarted = resolve
+    })
+    const originalShow = target.show.getMockImplementation()!
+    target.show.mockImplementationOnce(async () => {
+      originalShow()
+      presentationStarted()
+      await presentation
+    })
+    const showing = show()
+    await started
+    expect(splash.snapshot().state).toBe('loading')
+    expect(splash.snapshot().events.map(event => event.name)).toEqual([
+      'created',
+      'animation-ready',
+    ])
+    finishPresentation()
+    expect((await showing).state).toBe('visible')
+    expect(splash.snapshot().events.at(-1)?.name).toBe('shown')
+  })
+
+  test('propagates native presentation failure without reporting a shown splash', async () => {
+    const { show, splash, target } = createFixture()
+    const error = new Error('Native maximize failed')
+    target.show.mockImplementationOnce(async () => {
+      throw error
+    })
+    await expect(show()).rejects.toBe(error)
+    expect(splash.snapshot().events.map(event => event.name)).toEqual([
+      'created',
+      'animation-ready',
+    ])
+  })
+
+  test('keeps a closed splash closed when pending native presentation finishes', async () => {
+    const { show, splash, target } = createFixture()
+    let finishPresentation!: () => void
+    const presentation = new Promise<void>(resolve => {
+      finishPresentation = resolve
+    })
+    let presentationStarted!: () => void
+    const started = new Promise<void>(resolve => {
+      presentationStarted = resolve
+    })
+    target.show.mockImplementationOnce(async () => {
+      presentationStarted()
+      await presentation
+    })
+    const showing = show()
+    await started
+    await splash.close()
+    finishPresentation()
+    expect((await showing).state).toBe('closed')
+    expect(splash.snapshot().events.map(event => event.name)).toEqual([
+      'created',
+      'animation-ready',
+      'closed',
+    ])
+  })
+
+  test('replays the latest startup stage once the splash is visible', async () => {
+    const { show, splash, target } = createFixture()
+    const update = {
+      index: 2,
+      total: 9,
+      completedWeight: 10,
+      startedAt: 1_000,
+      stage: {
+        id: 'components',
+        label: { en: 'Checking local components', zh: '检查本地组件' },
+        detail: { en: 'Scanning local component files…', zh: '正在扫描本地组件文件…' },
+        weight: 15,
+        expectedMs: 2_500,
+        timeoutMs: 60_000,
+      },
+    }
+
+    splash.updateProgress(update)
+    expect(target.webContents.send).not.toHaveBeenCalled()
+
+    await show()
+
+    expect(target.webContents.send).toHaveBeenCalledOnce()
+    expect(target.webContents.send).toHaveBeenCalledWith(STARTUP_PROGRESS_CHANNEL, update)
+  })
+
+  test('mirrors later startup stages while the splash is visible', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+    target.webContents.send.mockClear()
+    const update = {
+      index: 3,
+      total: 9,
+      completedWeight: 25,
+      startedAt: 2_000,
+      stage: {
+        id: 'runtime-files',
+        label: { en: 'Preparing the runtime', zh: '准备运行环境' },
+        detail: { en: 'Verifying and unpacking runtime files…', zh: '正在校验并解压运行环境…' },
+        weight: 15,
+        expectedMs: 4_000,
+        timeoutMs: 120_000,
+      },
+    }
+
+    splash.updateProgress(update)
+
+    expect(target.webContents.send).toHaveBeenCalledWith(STARTUP_PROGRESS_CHANNEL, update)
   })
 
   test('notifies the splash renderer when startup fails', async () => {

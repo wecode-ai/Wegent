@@ -35,7 +35,11 @@ export function TemporaryConversationLayout({
   composer: ReactNode
 }) {
   return (
-    <section data-testid={testId} className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <section
+      data-testid={testId}
+      aria-busy={loading}
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
+    >
       {messageCount > 0 ? (
         children
       ) : loading ? (

@@ -1,4 +1,4 @@
-import { CircleAlert, FolderOpen, GitBranch, Server } from 'lucide-react'
+import { CircleAlert, FolderOpen, GitBranch, GitCompareArrows, Server } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -13,6 +13,7 @@ interface TaskSidebarHoverCardContentProps {
   hostId?: string | null
   updatedLabel?: string | null
   branchWarning?: boolean
+  worktree?: boolean
 }
 
 function HoverRow({
@@ -62,6 +63,7 @@ export function TaskSidebarHoverCardContent({
   hostId,
   updatedLabel,
   branchWarning = false,
+  worktree = false,
 }: TaskSidebarHoverCardContentProps) {
   const { t } = useTranslation('common')
   return (
@@ -76,6 +78,18 @@ export function TaskSidebarHoverCardContent({
       </div>
       <div className="space-y-1">
         <HoverRow icon={<FolderOpen className="h-4 w-4" />} value={projectLabel} />
+        {worktree && (
+          <HoverRow
+            icon={
+              <GitCompareArrows
+                data-testid={`runtime-local-task-worktree-icon-${taskId}`}
+                className="h-4 w-4"
+                aria-hidden="true"
+              />
+            }
+            value={t('workbench.git_worktree_session')}
+          />
+        )}
         {repositoryLabel && repositoryLabel !== projectLabel && (
           <HoverRow icon={<GitBranch className="h-4 w-4" />} value={repositoryLabel} />
         )}
@@ -93,7 +107,7 @@ export function TaskSidebarHoverCardContent({
         )}
       </div>
       {branchWarning && (
-        <div className="flex items-start gap-2 text-sm leading-5 text-orange-500">
+        <div className="flex items-start gap-2 text-sm leading-5 text-warning wework:text-orange-500">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{t('workbench.runtime_task_branch_warning')}</span>
         </div>

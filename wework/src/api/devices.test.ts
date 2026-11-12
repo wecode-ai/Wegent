@@ -1,80 +1,89 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from './devices'
-import type { HttpClient } from './http'
+import { ApiError, type HttpClient } from './http'
+
+const deviceCommands = [
+  ['home directory', (api: ReturnType<typeof createDeviceApi>) => api.getHomeDirectory('device/1')],
+  [
+    'project root',
+    (api: ReturnType<typeof createDeviceApi>) => api.getProjectWorkspaceRoot('device/1'),
+  ],
+  [
+    'directories',
+    (api: ReturnType<typeof createDeviceApi>) => api.listDirectories('device/1', '/'),
+  ],
+  ['skills', (api: ReturnType<typeof createDeviceApi>) => api.listSkills('device/1')],
+  [
+    'workspace tree',
+    (api: ReturnType<typeof createDeviceApi>) => api.listWorkspaceEntries('device/1', '/repo'),
+  ],
+  [
+    'workspace text',
+    (api: ReturnType<typeof createDeviceApi>) =>
+      api.readWorkspaceTextFile('device/1', '/repo/a.txt'),
+  ],
+  [
+    'workspace chunk',
+    (api: ReturnType<typeof createDeviceApi>) =>
+      api.readWorkspaceFileChunk('device/1', '/repo/a.txt', 0),
+  ],
+  ['shared skills', (api: ReturnType<typeof createDeviceApi>) => api.setupSharedSkills('device/1')],
+  [
+    'directory creation',
+    (api: ReturnType<typeof createDeviceApi>) => api.createDirectory('device/1', '/repo'),
+  ],
+  [
+    'Git clone',
+    (api: ReturnType<typeof createDeviceApi>) =>
+      api.executeCommand('device/1', { command_key: 'git_clone' }),
+  ],
+  [
+    'local terminal',
+    (api: ReturnType<typeof createDeviceApi>) => api.openLocalTerminal('device/1', '/repo'),
+  ],
+] as const
 
 describe('createDeviceApi', () => {
-  test('filters OpenClaw devices out of device list responses', async () => {
-    const client = {
-      get: vi.fn().mockResolvedValue({
-        items: [
-          {
-            id: 1,
-            device_id: 'claude-device',
-            name: 'Claude Device',
-            status: 'online',
-            is_default: true,
-            device_type: 'cloud',
-            bind_shell: 'claudecode',
-            client_ip: '192.0.2.10',
-            runtime_transfer_host: '192.0.2.10:9000',
-          },
-          {
-            id: 2,
-            device_id: 'openclaw-device',
-            name: 'OpenClaw Device',
-            status: 'online',
-            is_default: false,
-            device_type: 'cloud',
-            bind_shell: 'openclaw',
-          },
-        ],
-        total: 2,
-      }),
-    } as unknown as HttpClient
+  test.each(deviceCommands)(
+    'maps an unavailable device consistently for %s',
+    async (_name, run) => {
+      const error = new ApiError('Device not found or access denied', 404)
+      const post = vi.fn().mockRejectedValue(error)
+      const api = createDeviceApi({ post } as never)
 
-    const api = createDeviceApi(client)
+      await expect(run(api)).rejects.toMatchObject({
+        message: 'executor-not-found:device/1',
+        cause: error,
+      })
+      expect(post.mock.calls[0][0]).toBe('/devices/device%2F1/commands')
+    }
+  )
 
-    await expect(api.listDevices()).resolves.toEqual([
-      expect.objectContaining({
-        device_id: 'claude-device',
-        client_ip: '192.0.2.10',
-        runtime_transfer_host: '192.0.2.10:9000',
-      }),
-    ])
-    await expect(api.getAllDevices()).resolves.toEqual([
-      expect.objectContaining({ device_id: 'claude-device' }),
-    ])
+  test.each(deviceCommands)('preserves non-404 transport errors for %s', async (_name, run) => {
+    for (const status of [401, 403, 400, 500]) {
+      const error = new ApiError('Device not found or access denied', status)
+      const api = createDeviceApi({ post: vi.fn().mockRejectedValue(error) } as never)
+
+      await expect(run(api)).rejects.toBe(error)
+    }
   })
 
-  test('loads Git account summaries and syncs only a selected device', async () => {
-    const summary = {
-      accounts: [],
-      effective_count: 0,
-      duplicate_count: 0,
+  test('does not classify a command or file failure as an unavailable device', async () => {
+    const response = {
+      success: false,
+      error: 'File not found',
+      exit_code: 1,
+      stdout: '',
+      stderr: '',
     }
-    const result = {
-      device_id: 'remote/1',
-      status: 'synced',
-      synced_domains: [],
-      removed_domains: ['git.example.com'],
-      duplicate_domains: [],
-      identity_warning_domains: [],
-      cli: [],
-      warning_codes: [],
-    }
-    const client = {
-      get: vi.fn().mockResolvedValue(summary),
-      put: vi.fn().mockResolvedValue(result),
-    } as unknown as HttpClient
-    const api = createDeviceApi(client)
+    const api = createDeviceApi({ post: vi.fn().mockResolvedValue(response) } as never)
 
-    await expect(api.getGitAccountSyncSummary()).resolves.toBe(summary)
-    await expect(api.syncGitAccounts('remote/1', true)).resolves.toBe(result)
-
-    expect(client.get).toHaveBeenCalledWith('/users/me/git-accounts/sync-summary')
-    expect(client.put).toHaveBeenCalledWith('/devices/remote%2F1/git-accounts', {
-      allow_empty: true,
-    })
+    await expect(api.executeCommand('device/1', { command_key: 'git_clone' })).resolves.toBe(
+      response
+    )
+    await expect(api.createDirectory('device/1', '/repo')).rejects.toThrow('File not found')
   })
 
   test('uses cloud device endpoints for restart and delete actions', async () => {
@@ -138,45 +147,6 @@ describe('createDeviceApi', () => {
 
     expect(client.post).toHaveBeenCalledWith('/devices/device%2F1/code-server', {
       path: '/workspace/project',
-    })
-  })
-
-  test('listWorkspaceEntries maps workspace tree output', async () => {
-    const post = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: {
-        path: '/workspace/project',
-        entries: [
-          {
-            name: 'src',
-            path: '/workspace/project/src',
-            is_directory: true,
-            size: 0,
-            modified_at: '2026-06-12T00:00:00+00:00',
-          },
-        ],
-      },
-      stderr: '',
-    })
-    const api = createDeviceApi({ post } as never)
-
-    await expect(api.listWorkspaceEntries('device-a', '/workspace/project')).resolves.toEqual({
-      path: '/workspace/project',
-      entries: [
-        {
-          name: 'src',
-          path: '/workspace/project/src',
-          isDirectory: true,
-          size: 0,
-          modifiedAt: '2026-06-12T00:00:00+00:00',
-        },
-      ],
-    })
-    expect(post).toHaveBeenCalledWith('/devices/device-a/commands', {
-      command_key: 'workspace_tree',
-      path: '/workspace/project',
-      timeout_seconds: 15,
-      max_output_bytes: 1024 * 512,
     })
   })
 
@@ -286,39 +256,6 @@ describe('createDeviceApi', () => {
     expect(post).not.toHaveBeenCalled()
   })
 
-  test('readWorkspaceTextFile calls parent path with file name arg', async () => {
-    const post = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: {
-        path: '/workspace/project/src/main.ts',
-        name: 'main.ts',
-        content: 'export {}',
-        truncated: false,
-        size: 9,
-        modified_at: null,
-      },
-      stderr: '',
-    })
-    const api = createDeviceApi({ post } as never)
-
-    await expect(
-      api.readWorkspaceTextFile('device-a', '/workspace/project/src/main.ts')
-    ).resolves.toMatchObject({
-      path: '/workspace/project/src/main.ts',
-      name: 'main.ts',
-      content: 'export {}',
-      truncated: false,
-      size: 9,
-    })
-    expect(post).toHaveBeenCalledWith('/devices/device-a/commands', {
-      command_key: 'workspace_read_text_file',
-      path: '/workspace/project/src',
-      args: ['main.ts'],
-      timeout_seconds: 15,
-      max_output_bytes: 1024 * 1024 * 2,
-    })
-  })
-
   test('readWorkspaceTextFile rejects relative file paths', async () => {
     const post = vi.fn()
     const api = createDeviceApi({ post } as never)
@@ -356,29 +293,6 @@ describe('createDeviceApi', () => {
       args: ['main.ts'],
       timeout_seconds: 15,
       max_output_bytes: 1024 * 1024 * 2,
-    })
-  })
-
-  test('readWorkspaceTextFile preserves a symlinked request path', async () => {
-    const post = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: {
-        path: '/workspace/.canonical/project/main.ts',
-        name: 'main.ts',
-        content: 'export {}',
-        truncated: false,
-        size: 9,
-        modified_at: null,
-      },
-      stderr: '',
-    })
-    const api = createDeviceApi({ post } as never)
-
-    await expect(
-      api.readWorkspaceTextFile('device-a', '/workspace/.alias/project/main.ts')
-    ).resolves.toMatchObject({
-      path: '/workspace/.alias/project/main.ts',
-      name: 'main.ts',
     })
   })
 

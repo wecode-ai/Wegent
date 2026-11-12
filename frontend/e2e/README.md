@@ -132,6 +132,11 @@ Runtime 与 Backend 共用数据库、`INTERNAL_SERVICE_TOKEN` 和 `GIT_TOKEN_AE
 批量导入目录固定为三篇在线文档；文件下载契约由后端 Provider 测试覆盖，
 本套 E2E 不覆盖 PDF 下载到检索的完整链路。
 
+外部链接预览使用真实 HTTPS、Range 请求、浏览器 canvas 和原生 video 元素，覆盖允许／禁止
+下载时的身份水印、单层水印、生成失败后的内容隐藏与重试，以及受限视频禁用原生全屏入口。
+这属于模拟钉钉 OAuth、MCP 和文件下载的协议集成测试；Wegent 内部链路保持真实，但不代表已经
+验证真实钉钉账号和线上文件服务的兼容性。
+
 本地服务就绪后，在 `frontend` 目录执行：
 
 ```bash
@@ -192,6 +197,8 @@ Normal and coding ClaudeCode tests run through the actual executor-manager Docke
 The executor job builds `fixtures/claudecode-executor/Dockerfile`, which includes both Claude Code and Codex CLI, and starts a real `executor_manager` service on port `8001`. The agent conversation regression covers Docker-based Claude Code and Codex execution, while a real local ClaudeCode executor process provides device-mode coverage. The fixture image compiles the Rust executor once, exposes it at `/app/executor`, and the workflow extracts that same binary for the local executor process. Source files live under `/workspace/src` because executor-manager mounts the extracted `/app/executor` entrypoint volume at `/app` for custom base images.
 
 For GitHub Actions, `executor_manager` runs directly on the runner and task containers use Docker bridge networking with normal port mappings. Keep `DOCKER_HOST_ADDR=localhost` so the runner can dispatch to mapped container ports. Use the runner's Docker bridge IP for container-to-runner URLs such as `TASK_API_DOMAIN`, `CALLBACK_HOST`, and the coding-agent mock model base URLs.
+
+The Executor and stalled Chat Playwright suites use the existing browser container on its own Docker bridge network. `run-isolated-e2e-browser.sh` routes its `localhost` names to the real runner gateway through the container's hosts file and Chromium's resolver rules. Browser origins, authentication state and service URLs stay the same. This isolates Chromium from sandbox interface changes that can otherwise abort application assets and API requests with `ERR_NETWORK_CHANGED`; the existing jobs, workers and real integrations are retained without test retries.
 
 `tests/tasks/claudecode-compaction.spec.ts` runs in the same `executor-chromium` CI suite. It creates a 1M-context cloud Model CRD with an 8,000-token output limit and supplies only the model identity to the real Backend runtime API. A dedicated CLI/local test device starts the real Executor and Claude Code 2.1.310 and forwards through the local model proxy and authenticated Backend gateway, using the endpoint for the declared upstream protocol. The App device retains its existing remote-control restrictions. Only the model service is mocked: its reported cached usage crosses the auto-compact threshold, or it returns a provider-specific 400/460 overflow. The tests require a summary request before successful completion, verify that every upstream request uses the plain provider model ID and at most 8,000 output tokens, and require unrelated errors to leave the runtime turn failed. Each scenario records its ordered provider requests in the Playwright artifacts and runs independently without retries.
 

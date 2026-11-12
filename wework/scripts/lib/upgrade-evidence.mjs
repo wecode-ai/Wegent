@@ -4,6 +4,14 @@ import {
   validateUpgradeCatalog,
 } from '../../electron/src/runtime/upgrade-policy.mjs'
 
+export function releaseVerificationChannels(channel, selected = '', sourceVersion = '') {
+  if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
+  const channels = releaseUpgradeChannels(channel, sourceVersion)
+  if (selected && !channels.includes(selected))
+    throw new Error('Verification channel is outside the target release channels')
+  return selected ? [selected] : channels
+}
+
 /** Production promotion accepts exact delivered packages, never regression fixture results. */
 export function verifiedUpgradeEdge({
   from,
@@ -16,6 +24,7 @@ export function verifiedUpgradeEdge({
   arch,
   channel,
 }) {
+  const manifest = evidence.manifestRecovery
   if (
     from.fixture ||
     to.fixture ||
@@ -37,6 +46,14 @@ export function verifiedUpgradeEdge({
     evidence.channel !== channel ||
     evidence.upgrade !== 'passed' ||
     evidence.rollback !== 'passed' ||
+    manifest?.schemaVersion !== 2 ||
+    manifest.restarted !== true ||
+    manifest.rolledBack !== true ||
+    typeof manifest.backup !== 'string' ||
+    typeof manifest.historicalBackup !== 'string' ||
+    !manifest.backup.startsWith('manifest.json.empty-') ||
+    !manifest.historicalBackup.startsWith('manifest.json.empty-') ||
+    manifest.backup === manifest.historicalBackup ||
     compareVersions(from.version, to.version) >= 0 ||
     compareVersions(from.version, to.minSourceVersion) < 0
   ) {
@@ -67,6 +84,13 @@ export function upgradeSource(catalogs, version) {
   if (candidates.some(release => release.sha256 !== candidates[0].sha256))
     throw new Error('A published release package is immutable across channels')
   return candidates[0]
+}
+
+/** Select catalog channels independently of the target package's release label. */
+export function releaseUpgradeChannels(targetChannel, sourceVersion) {
+  if (sourceVersion?.includes('-beta.')) return ['beta']
+  if (sourceVersion) return [targetChannel]
+  return targetChannel === 'stable' ? ['stable', 'beta'] : ['beta']
 }
 
 /** Select candidates automatically; only real-package E2E may authorize their edges. */
@@ -126,8 +150,11 @@ export function releaseUpgradePlan(catalogs, target, channel) {
 }
 
 /** The previous release must stay upgradeable even when the fixed baseline passes. */
-export async function verifyReleaseUpgradePlan(plan, verify) {
-  if (!plan) return null
+export async function verifyReleaseUpgradePlan(plan, verify, requiredSources = []) {
+  if (!plan) {
+    if (requiredSources.length) throw new Error('Required direct upgrades need published sources')
+    return null
+  }
   const baselineResult = plan.baseline ? await verify(plan.baseline) : null
   const previousResult =
     plan.baseline?.version === plan.previous.version ? baselineResult : await verify(plan.previous)
@@ -138,8 +165,17 @@ export async function verifyReleaseUpgradePlan(plan, verify) {
   const verified = baselineResult ? [{ source: plan.baseline, result: baselineResult }] : []
   if (!baselineResult || plan.baseline.version !== plan.previous.version)
     verified.push({ source: plan.previous, result: previousResult })
+  for (const source of requiredSources) {
+    if (verified.some(item => item.source.version === source.version)) continue
+    if (source.version === plan.baseline?.version && !baselineResult)
+      throw new Error(`Required direct upgrade from ${source.version} failed; publication blocked`)
+    const result = await verify(source)
+    if (!result)
+      throw new Error(`Required direct upgrade from ${source.version} failed; publication blocked`)
+    verified.push({ source, result })
+  }
   return {
-    minSourceVersion: baselineResult ? plan.baselineVersion : plan.previous.version,
+    minSourceVersion: verified.map(item => item.source.version).sort(compareVersions)[0],
     verified,
   }
 }

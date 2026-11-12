@@ -1,0 +1,12 @@
+{
+  "order": 42500,
+  "scenario": "./scenarios/stand-in-native-chat.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 31500,
+      "shard": 3,
+      "position": 2500
+    }
+  }
+}

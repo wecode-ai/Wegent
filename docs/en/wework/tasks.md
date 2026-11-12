@@ -4,11 +4,59 @@ sidebar_position: 4
 
 # Working with AI
 
+<a id="task-controls"></a>
+
+## Individual composer controls
+
+| Feature                          | UI steps                                                                         | Conditions and result                                                                                                      |
+| -------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Photos and files                 | Composer + → add photos/files → choose → review attachments                      | Removing an attachment does not delete its source file                                                                     |
+| Drawing attachment               | + → Drawing → draw → Add drawing                                                 | Cancel adds nothing; successful attachment still requires sending the message                                              |
+| Skill / plugin                   | Type / for a Skill or select an enabled plugin in the capability picker          | Installation and external app authorization remain separate                                                                |
+| Plan mode                        | + → Plan mode; close the plan-mode pill in the composer to return to normal mode | Requests planning, not scheduled execution                                                                                 |
+| Goal                             | + → Goal → enter a clear objective in the goal draft → send                      | A persistent objective, not a task title; explicitly state any intended budget rather than assuming a separate budget form |
+| Supervision                      | + → supervision → configure in the panel                                         | Does not replace native tool approvals                                                                                     |
+| Model, reasoning and permissions | Select model and supported effort; use the permission icon to change mode        | Varies by model/device; permission mode is not app authorization                                                           |
+| Voice                            | Microphone → record → stop and transcribe → review → send                        | First prepare a model and OS microphone access                                                                             |
+| Queue, guide and pause           | Use the running-task send actions; pause to interrupt the current reply          | Message queues, execution queues and persistent goals are separate                                                         |
+
+### Persistent-goal status and controls
+
+After creating a Goal, inspect its status bar near the composer. Hover or focus it for **Edit goal** and **Delete goal**. The right-side action offers **Pause goal** or **Start goal**, depending on status. Pause a persistent goal explicitly, then decide whether the current reply also needs interruption; stopping one reply does not mean the persistent goal is paused.
+
+Goals may be active, paused, blocked, budget/usage-limited or complete. Exhausted budgets, tool failures and disconnections are not completion evidence. Resolve the reported condition before continuing. Deleting a goal differs from deleting its conversation.
+
+### Sidebar task management
+
+| Feature                          | Steps and limits                                                                                                                                      |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search                           | Click the magnifying glass, enter keywords, select with arrow keys and Enter or click a result; close with X                                          |
+| Priority / collapse read / board | Use the task-view dropdown to choose an action, then click the main icon to execute it; expand read conversations from the menu after collapsing them |
+| Queued executions                | Hover for up/down actions; use the right-click menu to move to the front. Force-start requests immediate execution, so consider resource usage        |
+| Pin, unread and archive          | Use the task-row actions to pin/unpin, mark read/unread or archive; restore from Archived tasks in settings                                           |
+
+### Personal scheduled tasks
+
+<!-- ui-source: src/features/automations/AutomationsPage.tsx -->
+
+1. Open **left sidebar → Scheduled**, search existing schedules or create one.
+2. Enter a name and instructions. Choose a new task per run or an existing pinned task; enable a persistent goal only when intended and specify it.
+3. Choose local/cloud location, device, project, model and available reasoning effort. Directory, accounts and plugins belong to that device.
+4. Choose weekdays, daily, weekly, custom or once; set execution time and custom intervals. Notifications support every run, attention-only or none.
+5. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
+6. Disable to suspend future scheduling or delete after confirmation. Personal schedules, project-board automation and stand-in calendars are separate flows.
+
+Personal schedules using a cloud model revalidate model access and read the current cloud connection credentials on each trigger, including manual runs. Renewing your login token does not require recreating a schedule; both new tasks and existing-task continuations use current credentials. If login has expired, the model was removed or access was revoked, the run fails. Check your cloud connection and model access before retrying.
+
 ## Write a useful request
 
 Include the goal, scope, constraints, and acceptance criteria. For complex work, ask AI to investigate and propose a plan before editing.
 
 Add files, images, code locations, or an Appshot to the composer when they clarify the task. Type `/` to select an available Skill.
+
+Type `@` in the composer and select a conversation or Issue to insert a reference chip. Click the chip before sending, or focus it and press Enter/Space, to open the referenced conversation in the current task pane, or to open or reuse the matching project-space board with that Issue selected; the draft is preserved. After sending, click the same reference in the user message to make the same jump. If the reference address cannot be resolved, Wework does not navigate. If it resolves but the target was deleted or is inaccessible, Wework opens the corresponding task or board and shows the load error or unavailable state there.
+
+Conversation references retain completed visible assistant replies. A later tool-record update does not make a reply process text solely because of record order; explicit process messages and text still being generated retain their phase-based handling.
 
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
@@ -29,6 +77,10 @@ Voice input reuses the official DSH plugin. Once downloaded, the default local r
 Pasted Markdown appears as editable content in the composer. Sent messages also render tables, lists, bold text, and code. Use `Shift+Enter` for a new line and `Tab` / `Shift+Tab` to move between table cells.
 
 Hover over a message table to copy its Markdown or expand it; press `Esc` to close the expanded view. Click an HTTP/HTTPS link in the composer to open its actions. Sent links open using your browser preference. Text appended after a pasted link stays separate and does not change its destination.
+
+## Repair a PR from the task sidebar
+
+Click the PR/MR status beside a task and choose **Continue fixing with AI** when an abnormal status is shown. For a running task, the repair request guides the current response. For an idle task, it starts the next turn in the same conversation. If the current response finishes just after you click, the request is sent as the next turn. Delivery failures show an error so you can try sending again.
 
 ## Add a conversation to a project-space board
 

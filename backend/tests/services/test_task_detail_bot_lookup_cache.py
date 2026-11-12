@@ -73,13 +73,6 @@ def test_get_bots_for_subtasks_caches_shared_model_and_shell_queries():
     model_kind = SimpleNamespace(user_id=10)
     shell_kind = SimpleNamespace(json={"kind": "Shell"})
 
-    def _lookup_side_effect(_db, _user_id, kind, _namespace, _name):
-        if kind == KindType.MODEL:
-            return model_kind
-        if kind == KindType.SHELL:
-            return shell_kind
-        return None
-
     with (
         patch(
             "app.services.readers.kinds.kindReader.get_by_ids", return_value=bot_objects
@@ -94,8 +87,12 @@ def test_get_bots_for_subtasks_caches_shared_model_and_shell_queries():
         ),
         patch(
             "app.services.readers.kinds.kindReader.get_by_name_and_namespace",
-            side_effect=_lookup_side_effect,
+            return_value=model_kind,
         ) as mock_lookup,
+        patch(
+            "app.services.adapters.task_kinds.task_detail_helpers.get_shells_by_owners_batch",
+            return_value={(10, "shared-shell", "default"): shell_kind},
+        ) as mock_shells,
     ):
         result = get_bots_for_subtasks(db, {1, 2})
 
@@ -104,7 +101,10 @@ def test_get_bots_for_subtasks_caches_shared_model_and_shell_queries():
     assert result[1]["shell_type"] == "ClaudeCode"
     assert result[2]["agent_config"]["bind_model"] == "shared-model"
     assert result[2]["shell_type"] == "ClaudeCode"
-    assert mock_lookup.call_count == 2
+    mock_lookup.assert_called_once_with(
+        db, 10, KindType.MODEL, "default", "shared-model"
+    )
+    mock_shells.assert_called_once_with(db, {(10, "shared-shell", "default")})
 
 
 @pytest.mark.unit

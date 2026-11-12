@@ -173,6 +173,7 @@ fn approval_view_sets_only_the_active_status_fields() {
 
 fn response_fixture() -> LoopItemResponse {
     LoopItemResponse {
+        milestone_id: None,
         id: "REMOTEHI2E7B57-2".to_string(),
         cloud_project_id: "4132140824159326414".to_string(),
         sequence_number: 2,
@@ -243,9 +244,19 @@ fn response_serializes_all_fields_with_nulls() {
     assert_eq!(value["detail_loaded"], true);
     assert_eq!(value["permissions"]["assign"], true);
     assert_eq!(value["human_task_binding"], Value::Null);
+    assert_eq!(value["milestone_id"], Value::Null);
     assert!(value.get("human_work").is_none());
-    // 54 declared fields, matching the recorded source schema.
-    assert_eq!(value.as_object().expect("object").len(), 54);
+    // The shared Issue schema includes the project milestone reference.
+    assert_eq!(value.as_object().expect("object").len(), 55);
+}
+
+#[test]
+fn milestones_are_exposed_in_runtime_cloud_context() {
+    let stored = metadata(json!({"milestone_id": "ms-release"}));
+    let mut response = response_fixture();
+    response.milestone_id = stored.milestone_id;
+    let value = serde_json::to_value(response).expect("serializes");
+    assert_eq!(value["milestone_id"], "ms-release");
 }
 
 #[test]

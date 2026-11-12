@@ -8,6 +8,7 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 
 use crate::{
     agents::executor_home,
@@ -34,6 +35,7 @@ const APPLICATION_CONTEXT_CLOSE: &str = "</application_context>";
 pub(crate) struct TranscriptBuildOptions {
     truncate_content: bool,
     materialize_artifacts: bool,
+    immutable_artifacts: bool,
 }
 
 impl TranscriptBuildOptions {
@@ -41,6 +43,7 @@ impl TranscriptBuildOptions {
         Self {
             truncate_content: true,
             materialize_artifacts: true,
+            immutable_artifacts: false,
         }
     }
 
@@ -48,6 +51,7 @@ impl TranscriptBuildOptions {
         Self {
             truncate_content: false,
             materialize_artifacts: true,
+            immutable_artifacts: false,
         }
     }
 }
@@ -56,6 +60,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
     transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::truncated())
 }
 
+#[cfg(test)]
 pub(crate) fn full_transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
     transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::full_content())
 }
@@ -68,6 +73,7 @@ pub(super) fn search_transcript_messages(thread: &Value) -> Vec<Value> {
         TranscriptBuildOptions {
             truncate_content: false,
             materialize_artifacts: false,
+            immutable_artifacts: false,
         },
     )
 }
@@ -85,6 +91,61 @@ pub(crate) struct TranscriptProjection {
     pub turns: Vec<Value>,
 }
 
+/// Presentation ownership needs page identities and time bounds, never tool bodies.
+pub(super) fn transcript_page_identity(thread: &Value) -> Vec<Value> {
+    let mut identities = Vec::new();
+    for (index, turn) in thread["turns"].as_array().into_iter().flatten().enumerate() {
+        let turn_id = stable_indexed_id(turn, "turn", index);
+        let started_at = turn_started_at(turn);
+        identities.push(json!({"turnId":turn_id,"createdAt":started_at}));
+        for item in turn["items"].as_array().into_iter().flatten() {
+            if let Some(timestamp) = item_timestamp(item) {
+                identities.push(json!({"turnId":turn_id,"createdAt":timestamp}));
+            }
+        }
+    }
+    identities
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+
+    #[test]
+    fn a_long_turn_observes_cancellation_between_native_items() {
+        let items = (0..7_001)
+            .map(|index| {
+                json!({
+                    "id":format!("item-{index}"),"type":"reasoning","summary":[{"text":"working"}]
+                })
+            })
+            .collect::<Vec<_>>();
+        let thread =
+            json!({"id":"thread","turns":[{"id":"long","status":"completed","items":items}]});
+        let checkpoints = std::cell::Cell::new(0);
+        let result = project_transcript_checked(
+            &thread,
+            "device",
+            TranscriptBuildOptions::full_content(),
+            &|| {
+                let next = checkpoints.get() + 1;
+                checkpoints.set(next);
+                if next == 32 {
+                    Err(crate::local::app_ipc::AppIpcError::new(
+                        "request_cancelled",
+                        "cancelled",
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(result.err().unwrap().code, "request_cancelled");
+        assert_eq!(checkpoints.get(), 32);
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn project_transcript(
     thread: &Value,
     device_id: &str,
@@ -106,6 +167,32 @@ fn project_transcript_with_options(
     device_id: &str,
     options: TranscriptBuildOptions,
 ) -> TranscriptProjection {
+    project_transcript_checked(thread, device_id, options, &|| Ok(()))
+        .expect("uncancelled transcript projection cannot fail")
+}
+
+pub(super) fn project_transcript_cancellable(
+    thread: &Value,
+    device_id: &str,
+    full_content: bool,
+    immutable_artifacts: bool,
+    cancellation: &super::transcript_work::Cancellation,
+) -> Result<TranscriptProjection, crate::local::app_ipc::AppIpcError> {
+    let mut options = if full_content {
+        TranscriptBuildOptions::full_content()
+    } else {
+        TranscriptBuildOptions::truncated()
+    };
+    options.immutable_artifacts = immutable_artifacts;
+    project_transcript_checked(thread, device_id, options, &|| cancellation.check())
+}
+
+fn project_transcript_checked(
+    thread: &Value,
+    device_id: &str,
+    options: TranscriptBuildOptions,
+    checkpoint: &dyn Fn() -> Result<(), crate::local::app_ipc::AppIpcError>,
+) -> Result<TranscriptProjection, crate::local::app_ipc::AppIpcError> {
     let workspace_path = string_field(thread, "cwd").unwrap_or_default();
     let root_thread_id = string_field(thread, "id");
     let mut messages = Vec::new();
@@ -117,6 +204,7 @@ fn project_transcript_with_options(
         .flatten()
         .enumerate()
     {
+        checkpoint()?;
         if !is_root_transcript_item(turn)
             || !is_root_thread_transcript_item(turn, root_thread_id.as_deref())
         {
@@ -132,16 +220,19 @@ fn project_transcript_with_options(
             root_thread_id.as_deref(),
             options,
         )
-        .project();
+        .project(checkpoint)?;
         let mut normalized = json!({
             "id": stable_indexed_id(turn, "turn", turn_index),
-            "items": items,
             "status": turn_assistant_status(turn),
             "startedAt": turn_started_at(turn),
             "completedAt": turn_completed_at(turn, turn_started_at(turn)),
             "error": turn_error_message(turn),
             "position": turn.get("position"),
         });
+        normalized["items"] = Value::Array(items);
+        if let Some(item_merge) = turn.get("itemMerge") {
+            normalized["itemMerge"] = item_merge.clone();
+        }
         for message in &messages[message_start..] {
             for key in [
                 "fileChanges",
@@ -164,14 +255,13 @@ fn project_transcript_with_options(
         turns.push(normalized);
     }
     make_transcript_ids_unique(&mut messages);
-    TranscriptProjection { messages, turns }
+    Ok(TranscriptProjection { messages, turns })
 }
 
 struct TurnTranscriptProjector<'a> {
     messages: &'a mut Vec<Value>,
     normalized_items: Vec<Value>,
     items: Vec<Value>,
-    later_process: Vec<bool>,
     device_id: &'a str,
     workspace_path: &'a str,
     turn_id: String,
@@ -181,6 +271,7 @@ struct TurnTranscriptProjector<'a> {
     assistant_status: &'static str,
     assistant_error: Option<String>,
     fold_commentary: bool,
+    unphased_progress_item_ids: HashSet<String>,
     options: TranscriptBuildOptions,
     assistant_segment_index: usize,
     assistant: AssistantTurnAccumulation,
@@ -199,13 +290,12 @@ impl<'a> TurnTranscriptProjector<'a> {
     ) -> Self {
         let turn_id = stable_indexed_id(turn, "turn", turn_index);
         let items = canonical_turn_items(turn, &turn_id, root_thread_id);
-        let later_process = later_process_flags(&items);
+        let unphased_progress_item_ids = unphased_progress_item_ids(&items, turn_interrupted(turn));
         let created_at = turn_started_at(turn);
         Self {
             messages,
             normalized_items: Vec::new(),
             items,
-            later_process,
             device_id,
             workspace_path,
             subtask_id: turn_subtask_id(turn, &turn_id),
@@ -213,6 +303,7 @@ impl<'a> TurnTranscriptProjector<'a> {
             assistant_status: turn_assistant_status(turn),
             assistant_error: turn_error_message(turn),
             fold_commentary: turn_should_fold_commentary(turn),
+            unphased_progress_item_ids,
             assistant: AssistantTurnAccumulation::new(file_changes(turn)),
             turn_id,
             created_at,
@@ -222,25 +313,26 @@ impl<'a> TurnTranscriptProjector<'a> {
         }
     }
 
-    fn project(mut self) -> Vec<Value> {
+    fn project(
+        mut self,
+        checkpoint: &dyn Fn() -> Result<(), crate::local::app_ipc::AppIpcError>,
+    ) -> Result<Vec<Value>, crate::local::app_ipc::AppIpcError> {
         let message_start = self.messages.len();
         let mut positions = HashMap::new();
         let items = std::mem::take(&mut self.items);
-        for (item_index, item) in items.into_iter().enumerate() {
+        for item in items {
+            checkpoint()?;
             let previous_block_count = self.assistant.blocks.len();
             let previous_assistant_part_count = self.assistant.assistant_part_count();
-            self.project_item(&item, self.later_process[item_index]);
+            self.project_item(&item);
             self.assistant
                 .record_new_items(previous_block_count, previous_assistant_part_count);
             if let Some(position) = item.get("position").and_then(Value::as_u64) {
                 if let Some(id) = string_field(&item, "id") {
                     positions.entry(id).or_insert(position);
                 }
-                for normalized in self.assistant.runtime_items() {
-                    if let Some(id) = string_field(&normalized, "id") {
-                        positions.entry(id).or_insert(position);
-                    }
-                }
+                self.assistant
+                    .record_item_positions(&mut positions, position);
             }
         }
         self.emit_assistant(true);
@@ -266,10 +358,10 @@ impl<'a> TurnTranscriptProjector<'a> {
                 item["position"] = json!(position);
             }
         }
-        self.normalized_items
+        Ok(self.normalized_items)
     }
 
-    fn project_item(&mut self, item: &Value, has_later_process: bool) {
+    fn project_item(&mut self, item: &Value) {
         match item_type(item).as_str() {
             "usermessage" => self.project_user_message(item),
             "reasoning" => push_reasoning_block(
@@ -278,10 +370,12 @@ impl<'a> TurnTranscriptProjector<'a> {
                 self.created_at,
                 self.options,
             ),
-            "plan" => self
-                .assistant
-                .blocks
-                .push(plan_block(item, self.created_at, self.options)),
+            "plan" => self.assistant.blocks.push(plan_block(
+                item,
+                self.created_at,
+                self.assistant_status,
+                self.options,
+            )),
             "commandexecution" => merge_tool_output(
                 &mut self.assistant.blocks,
                 item,
@@ -319,7 +413,7 @@ impl<'a> TurnTranscriptProjector<'a> {
                 }
                 let summary = file_changes_from_file_change_item(
                     item,
-                    &self.turn_id,
+                    &self.artifact_turn_id(item),
                     self.device_id,
                     self.workspace_path,
                 );
@@ -331,7 +425,7 @@ impl<'a> TurnTranscriptProjector<'a> {
                 }
                 let summary = file_changes_from_patch_apply_end(
                     item,
-                    &self.turn_id,
+                    &self.artifact_turn_id(item),
                     self.device_id,
                     self.workspace_path,
                 );
@@ -349,10 +443,10 @@ impl<'a> TurnTranscriptProjector<'a> {
                 if !self.project_subagent_message(item)
                     && !self.project_async_request_user_input(item) =>
             {
-                self.project_assistant_message(item, has_later_process);
+                self.project_assistant_message(item);
             }
             "agentmessage" | "agentmessageevent" => {}
-            "message" => self.project_role_message(item, has_later_process),
+            "message" => self.project_role_message(item),
             _ if is_default_tool_output_item(item) => merge_tool_output(
                 &mut self.assistant.blocks,
                 item,
@@ -364,14 +458,14 @@ impl<'a> TurnTranscriptProjector<'a> {
         }
     }
 
-    fn project_role_message(&mut self, item: &Value, has_later_process: bool) {
+    fn project_role_message(&mut self, item: &Value) {
         match string_field(item, "role")
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str()
         {
             "user" => self.project_user_message(item),
-            "assistant" => self.project_assistant_message(item, has_later_process),
+            "assistant" => self.project_assistant_message(item),
             _ => {}
         }
     }
@@ -413,12 +507,15 @@ impl<'a> TurnTranscriptProjector<'a> {
         }
     }
 
-    fn project_assistant_message(&mut self, item: &Value, has_later_process: bool) {
+    fn project_assistant_message(&mut self, item: &Value) {
         collect_assistant_message(
             item,
             self.created_at,
             self.fold_commentary,
-            has_later_process || self.assistant_status == "streaming",
+            self.assistant_status == "streaming"
+                || self
+                    .unphased_progress_item_ids
+                    .contains(&item_id(item, "assistant-text")),
             &mut self.assistant,
             self.options,
         );
@@ -435,10 +532,11 @@ impl<'a> TurnTranscriptProjector<'a> {
             return false;
         };
         let item_id = item_id(item, "request-user-input");
-        let Some(render_payload) = async_question_render_payload(item_id.as_str(), questions)
+        let Some(mut render_payload) = async_question_render_payload(item_id.as_str(), questions)
         else {
             return false;
         };
+        render_payload["interactionScope"] = json!(self.turn_id);
         self.assistant.blocks.push(json!({
             "id": format!("request-user-input-{item_id}"),
             "subtaskId": self.subtask_id,
@@ -457,9 +555,19 @@ impl<'a> TurnTranscriptProjector<'a> {
             return;
         };
         if self.fold_commentary {
-            self.push_workbench_block(item);
+            self.assistant
+                .blocks
+                .push(file_changes_block(item, &summary, self.created_at));
         }
         self.merge_file_changes(summary);
+    }
+
+    fn artifact_turn_id(&self, item: &Value) -> String {
+        if !self.options.immutable_artifacts {
+            return self.turn_id.clone();
+        }
+        let bytes = serde_json::to_vec(item).expect("JSON values always serialize");
+        format!("{}-{:x}", self.turn_id, Sha256::digest(bytes))
     }
 
     fn push_workbench_block(&mut self, item: &Value) {
@@ -647,16 +755,6 @@ impl<'a> TurnTranscriptProjector<'a> {
     }
 }
 
-fn later_process_flags(items: &[Value]) -> Vec<bool> {
-    let mut has_later_process = false;
-    let mut flags = vec![false; items.len()];
-    for (index, item) in items.iter().enumerate().rev() {
-        flags[index] = has_later_process;
-        has_later_process |= is_substantive_process_item(item);
-    }
-    flags
-}
-
 fn make_transcript_ids_unique(messages: &mut [Value]) {
     let mut message_ids = HashSet::new();
     for (message_index, message) in messages.iter_mut().enumerate() {
@@ -817,6 +915,9 @@ pub(crate) fn workbench_block_from_codex_item(
     }
     if is_likely_codex_tool_item_type(&item_type) || is_default_tool_item(item) {
         let mut block = tool_block(item, fallback_timestamp, options);
+        if block["render_payload"]["delivery"] == "async" {
+            block["render_payload"]["interactionScope"] = json!(turn_id);
+        }
         if let Some(object) = block
             .as_object_mut()
             .filter(|_| options.materialize_artifacts)
@@ -1107,28 +1208,49 @@ fn turn_should_fold_commentary(turn: &Value) -> bool {
     turn_interrupted(turn) && turn_has_substantive_process(turn)
 }
 
+fn unphased_progress_item_ids(items: &[Value], interrupted: bool) -> HashSet<String> {
+    let mut progress_ids = HashSet::new();
+    let mut later_reply = interrupted;
+    let mut process_before_reply = false;
+    for item in items.iter().rev() {
+        let kind = item_type(item);
+        if kind == "usermessage"
+            || (kind == "message"
+                && string_field(item, "role").is_some_and(|role| role.eq_ignore_ascii_case("user")))
+        {
+            later_reply = interrupted;
+            process_before_reply = false;
+        } else if is_final_assistant_message(item) {
+            // Preserve legacy progress across a process/reply boundary. A late
+            // tool snapshot without a later reply must not hide the final text.
+            // Interrupted turns retain their unfinished process text instead.
+            if process_before_reply && assistant_message_phase_name(item).is_none() {
+                progress_ids.insert(item_id(item, "assistant-text"));
+            }
+            later_reply = true;
+        } else if later_reply && is_substantive_process_item(item) {
+            process_before_reply = true;
+        }
+    }
+    progress_ids
+}
+
 fn turn_has_substantive_process(turn: &Value) -> bool {
     turn.get("items")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .any(|raw_item| {
-            let item = transcript_item(raw_item);
-            let item_type = item_type(&item);
-            is_substantive_process_item_type(&item_type)
-                || (item_type == "message"
-                    && !string_field(&item, "role")
-                        .unwrap_or_default()
-                        .eq_ignore_ascii_case("user")
-                    && !is_agent_message(&item))
-        })
+        .any(|raw_item| is_substantive_process_item(&transcript_item(raw_item)))
 }
 
-fn is_agent_message(item: &Value) -> bool {
-    matches!(
-        item_type(item).as_str(),
-        "agentmessage" | "agentmessageevent"
-    )
+fn is_substantive_process_item(item: &Value) -> bool {
+    let kind = item_type(item);
+    is_substantive_process_item_type(&kind)
+        || is_default_tool_item(item)
+        || (kind == "message"
+            && !string_field(item, "role")
+                .unwrap_or_default()
+                .eq_ignore_ascii_case("user"))
 }
 
 fn is_substantive_process_item_type(item_type: &str) -> bool {
@@ -1251,12 +1373,6 @@ fn collab_subagent_block(
         "subtask_id": subtask_id,
         "children": [],
     })
-}
-
-fn is_substantive_process_item(item: &Value) -> bool {
-    is_substantive_process_item_type(&item_type(item))
-        || is_default_tool_item(item)
-        || is_default_tool_output_item(item)
 }
 
 fn is_default_tool_item(item: &Value) -> bool {

@@ -1,6 +1,6 @@
 # Wegent
 
-> An open-source AI work system spanning your local desktop, cloud agents, and remote machines.
+> An open-source work system where people and AI move projects forward together.
 
 English | [简体中文](README_zh.md)
 
@@ -11,103 +11,62 @@ English | [简体中文](README_zh.md)
 <img alt="LINUX DO"
             src="https://img.shields.io/badge/LINUX-DO-FFB003.svg?logo=data:image/svg%2bxml;base64,DQo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiPjxwYXRoIGQ9Ik00Ni44Mi0uMDU1aDYuMjVxMjMuOTY5IDIuMDYyIDM4IDIxLjQyNmM1LjI1OCA3LjY3NiA4LjIxNSAxNi4xNTYgOC44NzUgMjUuNDV2Ni4yNXEtMi4wNjQgMjMuOTY4LTIxLjQzIDM4LTExLjUxMiA3Ljg4NS0yNS40NDUgOC44NzRoLTYuMjVxLTIzLjk3LTIuMDY0LTM4LjAwNC0yMS40M1EuOTcxIDY3LjA1Ni0uMDU0IDUzLjE4di02LjQ3M0MxLjM2MiAzMC43ODEgOC41MDMgMTguMTQ4IDIxLjM3IDguODE3IDI5LjA0NyAzLjU2MiAzNy41MjcuNjA0IDQ2LjgyMS0uMDU2IiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZWNlY2VjO2ZpbGwtb3BhY2l0eToxIi8+PHBhdGggZD0iTTQ3LjI2NiAyLjk1N3EyMi41My0uNjUgMzcuNzc3IDE1LjczOGE0OS43IDQ5LjcgMCAwIDEgNi44NjcgMTAuMTU3cS00MS45NjQuMjIyLTgzLjkzIDAgOS43NS0xOC42MTYgMzAuMDI0LTI0LjM4N2E2MSA2MSAwIDAgMSA5LjI2Mi0xLjUwOCIgc3R5bGU9InN0cm9rZTpub25lO2ZpbGwtcnVsZTpldmVub2RkO2ZpbGw6IzE5MTkxOTtmaWxsLW9wYWNpdHk6MSIvPjxwYXRoIGQ9Ik03Ljk4IDcwLjkyNmMyNy45NzctLjAzNSA1NS45NTQgMCA4My45My4xMTNRODMuNDI2IDg3LjQ3MyA2Ni4xMyA5NC4wODZxLTE4LjgxIDYuNTQ0LTM2LjgzMi0xLjg5OC0xNC4yMDMtNy4wOS0yMS4zMTctMjEuMjYyIiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZjlhZjAwO2ZpbGwtb3BhY2l0eToxIi8+PC9zdmc+" /></a>
 
-Wegent includes a desktop workbench and a self-hostable web platform. Wegent Desktop works with local projects, files, commands, tests, and code changes. Wegent Web provides browser-based agents, knowledge, automation, and administration. Wegent Backend connects these applications to shared project spaces, models, and execution devices.
+Wegent brings team members, AI agents, and personal stand-ins together around the same Issue: describe a goal, assign work, execute tasks, and deliver results. Discussions, execution records, and deliverables stay connected. Work on a local coding project on your own, or hand work across your team in a shared project space.
 
-[Download the latest Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) · [Documentation](https://wecode-ai.github.io/wegent-docs/) · [Contributing](CONTRIBUTING.md)
+[Download the latest Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) · [Quick start](#quick-start) · [Documentation](https://wecode-ai.github.io/wegent-docs/) · [Contributing](CONTRIBUTING.md)
 
-## Wegent Desktop
+## One Issue, the whole team
 
-Wegent Desktop organizes local coding work by project and task. The task view keeps the conversation, tool activity, tests, changed files, and diffs together; the project-space view provides the board, shared files, automation, and execution status.
+[![Watch the 90-second collaboration demo (English)](https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-ai-collaboration-en-20261109.jpg)](https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-ai-collaboration-en-20261109.mp4)
 
-<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-desktop-workbench.png" width="100%" alt="A real Wegent Desktop coding task showing the verified result, changed files, and an expanded source-code diff in one workbench" />
+[Watch the full demo (90 seconds, English)](https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-ai-collaboration-en-20261109.mp4)
 
-<p align="center"><sub>Running and reviewing a local coding task in Wegent Desktop.</sub></p>
+Start with “Build an interactive three-column iteration board.” Here is how the work can move forward:
 
-<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-project-workspace.png" width="100%" alt="A real Wegent Desktop project workspace with its kanban board, project navigation, and a remote-machine test task in progress" />
+1. **Describe the goal** — Create an Issue and choose a team member, agent, or collaboration group to handle it.
+2. **Assign the work** — A configured AI lead can delegate planning and implementation to the appropriate roles. Members receive notifications and open the same Issue.
+3. **Execute and deliver** — Members create linked tasks in Wework, use AI to work with files, commands, and tests, then select results to deliver back to the Issue.
+4. **Discuss and hand off** — Add feedback and reassign from the discussion. The next member or agent continues with the existing plan and files.
+5. **Let a stand-in help, then confirm** — A configured personal stand-in handles work according to its intake scope and processing policy, then hands it back for your confirmation.
 
-<p align="center"><sub>A project space in Wegent Desktop with its task board, shared files, automation, and execution status.</sub></p>
+**Assignment is not completion, and AI output is not personal confirmation.** The Issue connects ownership, execution, discussion, and deliverables so the team can inspect progress, ask questions, and continue the work.
 
-## Features
+<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-project-workspace.png" width="100%" alt="A Wegent Desktop project space showing its task board, project navigation, and a task running on a remote work machine" />
 
-- **Desktop workbench** — Organize local projects, tasks, sessions, files, tool activity, tests, and diffs.
-- **Reusable agents** — Combine models, prompts, Skills, knowledge, tools, and collaboration settings.
-- **Project spaces** — Share task boards, files, discussions, automation, execution history, and deliveries.
-- **Multiple execution targets** — Run tasks locally, on remote work machines, or with server-managed executors.
-- **Self-hosting** — Deploy Wegent Web and Backend for team access, APIs, permissions, scheduling, and knowledge services.
+<p align="center"><sub>Organize work in a project space with task boards, shared files, and execution status.</sub></p>
 
-## Why Wegent
+## Core capabilities
 
-**The local coding experience built on Codex is the foundation of Wegent Desktop.** It works directly with the code, files, commands, and development environment in your projects. Connect it to Wegent Backend when coding work needs to move beyond one computer or one person. Once connected, the desktop workbench and Web use the same projects, tasks, and execution devices.
+- **People and AI working together** — Assign, discuss, and hand off Issues among team members, agents, and collaboration groups in one project.
+- **Task execution and delivery** — Create linked tasks from Issues, inspect execution, and deliver selected files and notes back to the project.
+- **Personal stand-ins (Beta)** — Receive work from authorized project sources according to configured responsibilities and processing policies, with execution records and human-intervention controls.
+- **Project management and automation** — Organize projects with task boards, shared files, execution records, and deliverables. Configure automatic processing rules and execution queues.
+- **Local coding workbench** — Use Codex directly with project code, files, commands, and development environments. Review tool activity, tests, and diffs together.
+- **Reusable agents and execution targets** — Combine models, prompts, Skills, knowledge, and tools. Run tasks locally, on remote work machines, or with server-managed executors.
+- **Self-hosting** — Deploy Wegent Web and Backend so your team can manage access, permissions, models, scheduling, knowledge services, and remote devices.
 
-- **Run tasks on the right device** — Keep using the code, files, commands, and development environment already on a local machine, or run a task for the same project on a remote work machine or server-managed executor.
-- **Move a project forward as a team** — Project spaces connect task boards, shared files, discussions, execution status, and deliveries instead of leaving conversations and code changes on separate computers.
-- **Automate repeated project work** — Project spaces can configure automation and execution queues to keep routine work moving.
-- **Keep services and data under team control** — Self-host Web and Backend for shared access, permissions, model configuration, scheduling, knowledge services, and remote-device management.
-
-If work always stays on one computer, Wegent Desktop provides a familiar Codex coding experience. Connect it to Wegent to extend that experience when tasks must move across people, devices, or a self-hosted environment.
-
-## Wegent Web
-
-Wegent Web provides the browser interface for remote agents. Agents can use configured models, knowledge, Skills, and tools while Wegent Backend manages their tasks and execution.
-
-<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-remote-agent.png" width="100%" alt="A Wegent remote agent using tools to generate and display a Gantt chart" />
-
-<p align="center"><sub>A Wegent remote agent uses tools to generate a Gantt chart.</sub></p>
-
-## How it works
-
-Wework is the Wegent desktop workbench. Electron owns desktop windows, system capabilities, and process management. DeepSeek Harness (DSH) is the embedded application and plugin runtime, and the Wework product UI is composed from a set of DSH plugins. Executor manages tasks and sessions, then drives Codex to perform the actual work in local projects.
-
-```mermaid
-flowchart LR
-    Electron["Electron<br/>Desktop host"]
-
-    subgraph DSH["DSH Runtime"]
-        direction TB
-        Core["DSH Core<br/>Plugin discovery, dependency injection, and lifecycle"]
-        App["dsh-app-wework<br/>Wework product shell and UI extension points"]
-        UI["dsh-ui-*<br/>Tasks, project spaces, settings, apps, and automation"]
-        ElectronPlugin["dsh-electron-host<br/>Electron capability bridge"]
-        ExecutorPlugin["dsh-executor-runtime<br/>Task execution and event adapter"]
-        TerminalPlugin["dsh-terminal-runtime<br/>Local interactive terminals"]
-
-        Core --> App
-        Core --> UI
-        Core --> ElectronPlugin
-        Core --> ExecutorPlugin
-        Core --> TerminalPlugin
-        App --> UI
-    end
-
-    Executor["Executor<br/>Task and session execution"]
-    Codex["Codex<br/>Coding agent"]
-    Workspace["Local project<br/>Files and commands"]
-
-    Electron -->|"Starts and hosts"| Core
-    Electron -->|"Starts and supervises"| Executor
-    ElectronPlugin <-->|"Restricted desktop capabilities"| Electron
-    UI <-->|"User actions and UI updates"| ExecutorPlugin
-    ExecutorPlugin -->|"Create, follow up, approve, cancel"| Executor
-    Executor -->|"Status, messages, tool events, results"| ExecutorPlugin
-    Executor <-->|"Launch, control, and events"| Codex
-    Codex <-->|"Read, modify, and execute"| Workspace
-    TerminalPlugin <-->|"PTY"| Workspace
-```
-
-DSH does not execute coding tasks itself. `dsh-app-wework` defines the product shell and extension points, `dsh-ui-*` provides the product modules, `dsh-electron-host` bridges restricted Electron capabilities, `dsh-executor-runtime` communicates bidirectionally with Executor throughout execution, and `dsh-terminal-runtime` manages local interactive terminals. Executor is the task execution layer, while Codex is the concrete coding agent it drives.
-
-Wework can also connect to Wegent Backend for shared project spaces, models, and remote execution devices. Wegent Web is a separate browser interface built on the same Backend.
+Personal stand-ins require source authorization, model configuration, and an available execution device. Automatic processing follows project permissions and operation approvals; it does not mean work continues on a powered-off computer. See the [project lead guide](docs/en/wework/personal-stand-in.md#project-lead-controls) for AI lead conversation and automatic-processing requirements; lead conversations currently require experimental features to be enabled. See [Personal stand-in and scenario roles](docs/en/wework/personal-stand-in.md) for configuration.
 
 ## Quick start
 
-### Wegent Desktop
+### Personal use: complete a task in a local project
 
 1. [Download the latest Wegent Desktop installer](https://github.com/wecode-ai/Wegent/releases/latest) and install it.
-2. Open the app and add or select a local project.
-3. Create a task and describe the work to perform.
-4. Review the agent activity, command output, and file changes.
+2. Open the app, follow model setup, and add or select a local project. Local work does not require Wegent Backend login.
+3. Create a task describing what to analyze, change, or verify.
+4. Inspect agent activity, command output, test results, and file diffs to review the outcome.
 
-### Wegent Web and Backend
+### Team collaboration: start with one Issue
+
+1. Create a collaboration project. For shared team access, connect to Wegent Backend and create or join a cloud collaboration project.
+2. Add project members. For AI execution, explicitly add agents and configure an available execution environment and model.
+3. Create an Issue, describe its goal, and assign it to a member, agent, or collaboration group.
+4. Create a linked task from the Issue and deliver the results after execution. Use comments to give feedback and hand work to the next owner.
+5. To let a personal stand-in help, configure its project sources, responsibilities, and processing policy in **My stand-in**, then handle human questions and confirmations as needed.
+
+New projects do not automatically add agents or enable stand-ins. See [Creating Issues in Collaboration](docs/en/wegent/user-guide/coding/collaboration-issue-home.md) and the [personal stand-in guide](docs/en/wework/personal-stand-in.md) for detailed controls.
+
+### Self-host Wegent Web and Backend
 
 To start the self-hosted web application and Backend in standalone mode with Docker:
 
@@ -116,6 +75,24 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 ```
 
 Open http://localhost:3000 and follow the setup flow to create the administrator password and configure a model. See the [Installation Guide](docs/en/wegent/getting-started/installation.md) and [Standalone Mode](docs/en/wegent/deployment/standalone-mode.md) for other deployment options.
+
+## Products
+
+### Wework / Wegent Desktop
+
+Wework is the Wegent desktop workbench, connecting project collaboration to execution. It retains the full local coding workflow: organize conversations by project and task, work directly with files, run commands and tests, and review changes and diffs in one workbench. Connect to Backend to use shared project spaces, cloud models, and remote execution devices.
+
+<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-desktop-workbench.png" width="100%" alt="A real Wegent Desktop coding task showing the verified result, changed files, and an expanded source-code diff in one workbench" />
+
+<p align="center"><sub>Running and reviewing a local coding task in Wegent Desktop.</sub></p>
+
+### Wegent Web and Backend
+
+Wegent Web provides browser-based project collaboration, remote agents, knowledge, automation, and administration. Agents use configured models, knowledge, Skills, and tools. Backend provides shared project resources, access permissions, APIs, scheduling, and execution-device management. Teams can self-host Web and Backend to manage their services and data.
+
+<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-remote-agent.png" width="100%" alt="A Wegent remote agent using tools to generate and display a Gantt chart" />
+
+<p align="center"><sub>A Wegent remote agent uses tools to generate a Gantt chart.</sub></p>
 
 ## Development
 
@@ -133,6 +110,8 @@ pnpm --filter wework dev:mac
 ```
 
 See [wework/README.md](wework/README.md) for desktop development, build, and release instructions. `wework/` is the current desktop application source directory.
+
+In the desktop architecture, Electron provides system capabilities and process management, DeepSeek Harness (DSH) hosts the product UI and plugins, and Executor manages tasks and sessions while driving Codex execution. See the [DSH application host](wework/dsh/app-wework/README.en.md) for plugin extension points and [Cloud project collaboration architecture](docs/en/wegent/developer-guide/cloud-project-collaboration.md) for shared-resource and execution boundaries.
 
 ## Repository map
 
@@ -256,28 +235,21 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/cc-yafei">
-                    <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
-                    <br />
-                    <sub><b>YaFei Liu</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/luckjun529-lang">
                     <img src="https://avatars.githubusercontent.com/u/224970532?v=4" width="80;" alt="luckjun529-lang"/>
                     <br />
                     <sub><b>junlong chen</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
-                <a href="https://github.com/moqimoqidea">
-                    <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
+                <a href="https://github.com/cc-yafei">
+                    <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
                     <br />
-                    <sub><b>Moqimoqidea</b></sub>
+                    <sub><b>YaFei Liu</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/sdadunderscoresdad">
                     <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
@@ -286,10 +258,24 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/moqimoqidea">
+                    <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
+                    <br />
+                    <sub><b>Moqimoqidea</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/sunnights">
                     <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
                     <br />
                     <sub><b>Jake Zhang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/hustfisher">
+                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
+                    <br />
+                    <sub><b>fishermen</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -304,13 +290,6 @@ Thanks to everyone who helps Wegent grow.
                     <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
                     <br />
                     <sub><b>Parabala</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/hustfisher">
-                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
-                    <br />
-                    <sub><b>fishermen</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -334,6 +313,13 @@ Thanks to everyone who helps Wegent grow.
                     <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
                     <br />
                     <sub><b>Birch</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/sleetdrop">
+                    <img src="https://avatars.githubusercontent.com/u/88603?v=4" width="80;" alt="sleetdrop"/>
+                    <br />
+                    <sub><b>sleetdrop</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -365,13 +351,6 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/sleetdrop">
-                    <img src="https://avatars.githubusercontent.com/u/88603?v=4" width="80;" alt="sleetdrop"/>
-                    <br />
-                    <sub><b>sleetdrop</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/DavidLeeUX">
                     <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
                     <br />
@@ -379,19 +358,19 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/earthAlone2026">
-                    <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
+                <a href="https://github.com/Twelveeee">
+                    <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
                     <br />
-                    <sub><b>xiaoqiang</b></sub>
+                    <sub><b>Twelveeee</b></sub>
                 </a>
             </td>
 		</tr>
 		<tr>
             <td align="center">
-                <a href="https://github.com/Twelveeee">
-                    <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
+                <a href="https://github.com/earthAlone2026">
+                    <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
                     <br />
-                    <sub><b>Twelveeee</b></sub>
+                    <sub><b>xiaoqiang</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -453,31 +432,17 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/WangZhuo2015">
+                    <img src="https://avatars.githubusercontent.com/u/12570477?v=4" width="80;" alt="WangZhuo2015"/>
+                    <br />
+                    <sub><b>wang zhuo</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/Qinxl0921">
                     <img src="https://avatars.githubusercontent.com/u/79916629?v=4" width="80;" alt="Qinxl0921"/>
                     <br />
                     <sub><b>qinxll</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/jolestar">
-                    <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
-                    <br />
-                    <sub><b>Jolestar</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/code-wangdi">
-                    <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
-                    <br />
-                    <sub><b>Code-wangdi</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/haosenwang1018">
-                    <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
-                    <br />
-                    <sub><b>Sense_wang</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -488,12 +453,35 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/haosenwang1018">
+                    <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
+                    <br />
+                    <sub><b>Sense_wang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/code-wangdi">
+                    <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
+                    <br />
+                    <sub><b>Code-wangdi</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/jolestar">
+                    <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
+                    <br />
+                    <sub><b>Jolestar</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/DeadLion">
                     <img src="https://avatars.githubusercontent.com/u/2594907?v=4" width="80;" alt="DeadLion"/>
                     <br />
                     <sub><b>Jasper Zhong</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/rayzhang0603">
                     <img src="https://avatars.githubusercontent.com/u/2917437?v=4" width="80;" alt="rayzhang0603"/>
@@ -501,8 +489,6 @@ Thanks to everyone who helps Wegent grow.
                     <sub><b>Ray</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/RichardoMrMu">
                     <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
@@ -515,6 +501,13 @@ Thanks to everyone who helps Wegent grow.
                     <img src="https://avatars.githubusercontent.com/u/4569451?v=4" width="80;" alt="Ged0"/>
                     <br />
                     <sub><b>_</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/pcbeingused333">
+                    <img src="https://avatars.githubusercontent.com/u/82875882?v=4" width="80;" alt="pcbeingused333"/>
+                    <br />
+                    <sub><b>alexcastgonz</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -545,6 +538,8 @@ Thanks to everyone who helps Wegent grow.
                     <sub><b>Graindt</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/haohaitao">
                     <img src="https://avatars.githubusercontent.com/u/26541344?v=4" width="80;" alt="haohaitao"/>
@@ -559,8 +554,6 @@ Thanks to everyone who helps Wegent grow.
                     <sub><b>Qingcheng</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/salt-hai">
                     <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>

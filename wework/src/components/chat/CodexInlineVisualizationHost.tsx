@@ -1,13 +1,29 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { localHtmlBrowserUrl } from './assistantMarkdownLinks'
+import {
+  createVisualizationWheelScript,
+  forwardVisualizationWheel,
+} from './inlineVisualizationScroll'
 import { joinDevicePath } from '@/lib/device-workspace-path'
 import { readInlineVisualizationHtml } from '@/desktop/inlineVisualization'
+import { useOptionalAppearance } from '@/features/appearance'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Button } from '@/components/ui/button'
 import type { TurnFileChangesSummary } from '@/types/api'
+import {
+  readVisualizationThemeVariables,
+  VISUALIZATION_THEME_PROPERTIES,
+} from '@/lib/visualization-theme'
 
 const MIN_FRAME_HEIGHT = 120
 const MAX_FRAME_HEIGHT = 1200
 const DEFAULT_FRAME_HEIGHT = 480
 const RESIZE_MESSAGE_TYPE = 'wework-inline-visualization-resize'
+const THEME_MESSAGE_TYPE = 'wework-inline-visualization-theme'
+
+type VisualizationDocument =
+  | { source: string; attempt: number; status: 'loaded'; url: string }
+  | { source: string; attempt: number; status: 'error' }
 
 // Codex visualization files are fragments that consume this host contract.
 const CODEX_VISUALIZATION_HOST_STYLES = `
@@ -67,17 +83,47 @@ export function CodexInlineVisualizationHost({
   mode?: 'wide'
   title?: string
 }) {
+  const { t } = useTranslation('chat')
+  const theme = useOptionalAppearance()?.resolvedMode ?? 'light'
+  const themeRef = useRef(theme)
   const sourcePath = resolveVisualizationPath(file, fileChanges)
   const sourceUrl = sourcePath ? localHtmlBrowserUrl(sourcePath) : null
-  const [documentUrl, setDocumentUrl] = useState<{ source: string; url: string }>()
+  const [document, setDocument] = useState<VisualizationDocument>()
+  const [attempt, setAttempt] = useState(0)
   const [frameHeight, setFrameHeight] = useState(DEFAULT_FRAME_HEIGHT)
   const frameRef = useRef<HTMLIFrameElement>(null)
   const [resizeToken] = useState(() => crypto.randomUUID())
 
-  useFrameResizeMessages(frameRef, resizeToken, setFrameHeight)
+  useFrameMessages(frameRef, resizeToken, setFrameHeight)
+
+  const updateFrameTheme = useCallback(() => {
+    frameRef.current?.contentWindow?.postMessage(
+      {
+        type: THEME_MESSAGE_TYPE,
+        token: resizeToken,
+        theme,
+        variables: readVisualizationThemeVariables(),
+      },
+      '*'
+    )
+  }, [resizeToken, theme])
 
   useEffect(() => {
-    if (!sourcePath || !sourceUrl || typeof URL.createObjectURL !== 'function') return
+    themeRef.current = theme
+    updateFrameTheme()
+  }, [theme, updateFrameTheme, document])
+
+  useEffect(() => {
+    const observer = new MutationObserver(updateFrameTheme)
+    observer.observe(window.document.documentElement, {
+      attributes: true,
+      attributeFilter: ['style', 'class', 'data-theme', 'data-appearance-theme'],
+    })
+    return () => observer.disconnect()
+  }, [updateFrameTheme])
+
+  useEffect(() => {
+    if (!sourcePath || !sourceUrl) return
 
     let active = true
     let objectUrl: string | undefined
@@ -85,58 +131,98 @@ export function CodexInlineVisualizationHost({
       .then(fragment => {
         if (!active) return
         objectUrl = URL.createObjectURL(
-          new Blob([buildVisualizationDocument(fragment, sourceUrl, resizeToken)], {
-            type: 'text/html;charset=utf-8',
-          })
+          new Blob(
+            [buildVisualizationDocument(fragment, sourceUrl, resizeToken, themeRef.current)],
+            { type: 'text/html;charset=utf-8' }
+          )
         )
-        setDocumentUrl({ source: sourceUrl, url: objectUrl })
+        setDocument({ source: sourceUrl, attempt, status: 'loaded', url: objectUrl })
       })
-      .catch(() => undefined)
+      .catch(error => {
+        if (!active) return
+        console.error('[Wework] Failed to load inline visualization:', sourcePath, error)
+        setDocument({ source: sourceUrl, attempt, status: 'error' })
+      })
 
     return () => {
       active = false
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [resizeToken, sourcePath, sourceUrl])
+  }, [attempt, resizeToken, sourcePath, sourceUrl])
 
   if (!sourceUrl) return null
-  const frameUrl = documentUrl?.source === sourceUrl ? documentUrl.url : 'about:blank'
+  const currentDocument =
+    document?.source === sourceUrl && document.attempt === attempt ? document : undefined
+  const frameUrl = currentDocument?.status === 'loaded' ? currentDocument.url : 'about:blank'
 
   return (
     <div
       data-scroll-anchor
       data-testid="codex-inline-visualization"
       data-visualization-mode={mode ?? 'inline'}
-      className="mb-3 overflow-hidden rounded-xl border border-border bg-background"
+      className="mb-3"
     >
+      {currentDocument?.status !== 'loaded' && (
+        <div
+          className="flex min-h-11 items-center justify-between gap-3 px-3 py-2 text-sm text-muted-foreground"
+          role={currentDocument?.status === 'error' ? 'alert' : 'status'}
+          data-testid="codex-inline-visualization-status"
+        >
+          <span>
+            {t(
+              currentDocument?.status === 'error'
+                ? 'visualization.load_failed'
+                : 'visualization.loading'
+            )}
+          </span>
+          {currentDocument?.status === 'error' && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-11 md:h-7"
+              onClick={() => setAttempt(value => value + 1)}
+              data-testid="codex-inline-visualization-retry"
+            >
+              {t('visualization.retry')}
+            </Button>
+          )}
+        </div>
+      )}
       <iframe
         ref={frameRef}
         title={title ?? file}
         src={frameUrl}
         sandbox="allow-scripts"
         style={{ height: frameHeight }}
-        className="w-full border-0 bg-background"
+        className={
+          currentDocument?.status === 'loaded' ? 'block w-full border-0 bg-transparent' : 'hidden'
+        }
+        onLoad={updateFrameTheme}
         data-testid="codex-inline-visualization-frame"
       />
     </div>
   )
 }
 
-function useFrameResizeMessages(
+function useFrameMessages(
   frameRef: React.RefObject<HTMLIFrameElement | null>,
   token: string,
   setHeight: (height: number) => void
 ) {
   useEffect(() => {
-    const handleResize = (event: MessageEvent) => {
-      if (event.source !== frameRef.current?.contentWindow) return
-      if (!isResizeMessage(event.data, token)) return
-      setHeight(
-        Math.min(MAX_FRAME_HEIGHT, Math.max(MIN_FRAME_HEIGHT, Math.ceil(event.data.height)))
-      )
+    const handleMessage = (event: MessageEvent) => {
+      const frame = frameRef.current
+      if (!frame || event.source !== frame.contentWindow) return
+      if (isResizeMessage(event.data, token)) {
+        setHeight(
+          Math.min(MAX_FRAME_HEIGHT, Math.max(MIN_FRAME_HEIGHT, Math.ceil(event.data.height)))
+        )
+      } else {
+        forwardVisualizationWheel(frame, event.data, token)
+      }
     }
-    window.addEventListener('message', handleResize)
-    return () => window.removeEventListener('message', handleResize)
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
   }, [frameRef, setHeight, token])
 }
 
@@ -154,12 +240,58 @@ function isResizeMessage(
   )
 }
 
-function buildVisualizationDocument(fragment: string, sourceUrl: string, token: string): string {
+function buildVisualizationDocument(
+  fragment: string,
+  sourceUrl: string,
+  token: string,
+  theme: 'light' | 'dark'
+): string {
   const directoryUrl = new URL('.', sourceUrl).href
   const base = `<base href="${escapeHtmlAttribute(directoryUrl)}">`
-  const styles = `<style>${CODEX_VISUALIZATION_HOST_STYLES}</style>`
-  const resizeScript = `<script>(()=>{const height=()=>{const body=document.body,top=body.getBoundingClientRect().top;return Math.max(body.getBoundingClientRect().height,...Array.from(body.children,child=>child.getBoundingClientRect().bottom-top))};const send=()=>parent.postMessage({type:${JSON.stringify(RESIZE_MESSAGE_TYPE)},token:${JSON.stringify(token)},height:height()},'*');new ResizeObserver(send).observe(document.body);addEventListener('load',send);send()})()</script>`
-  return `${base}${styles}${fragment}${resizeScript}`
+  const variables = Object.entries(readVisualizationThemeVariables())
+    .map(([property, value]) => `${property}:${value.replace(/</g, '\\3c ')};`)
+    .join('')
+  const themeStyleId = `wework-visualization-theme-${token}`
+  const styles = `<style>${CODEX_VISUALIZATION_HOST_STYLES}\n:root { color-scheme: ${theme}; }</style><style id="${escapeHtmlAttribute(themeStyleId)}">:root { ${variables} }</style>`
+  const resizeScript = `<script>(()=>{
+    const token=${JSON.stringify(token)};
+    const properties=${JSON.stringify(VISUALIZATION_THEME_PROPERTIES)};
+    const originalProperties=new Map();
+    const themeStyle=document.getElementById(${JSON.stringify(themeStyleId)});
+    const height=()=>{
+      const body=document.body,top=body.getBoundingClientRect().top;
+      return Math.max(body.getBoundingClientRect().height,...Array.from(body.children,child=>child.getBoundingClientRect().bottom-top));
+    };
+    const send=()=>parent.postMessage({type:${JSON.stringify(RESIZE_MESSAGE_TYPE)},token:token,height:height()},'*');
+    addEventListener('message',event=>{
+      const data=event.data;
+      if(event.source!==parent||!data||data.type!==${JSON.stringify(THEME_MESSAGE_TYPE)}||data.token!==token) return;
+      if(data.theme!=='light'&&data.theme!=='dark') return;
+      document.documentElement.style.colorScheme=data.theme;
+      themeStyle.textContent='';
+      if(data.variables&&typeof data.variables==='object') {
+        const style=document.documentElement.style;
+        for(const property of properties) {
+          const value=data.variables[property];
+          if(typeof value==='string') {
+            if(!originalProperties.has(property)) originalProperties.set(property,[style.getPropertyValue(property),style.getPropertyPriority(property)]);
+            style.setProperty(property,value);
+          } else if(originalProperties.has(property)) {
+            const [original,priority]=originalProperties.get(property);
+            if(original) style.setProperty(property,original,priority);
+            else style.removeProperty(property);
+            originalProperties.delete(property);
+          }
+        }
+      }
+      send();
+    });
+    new ResizeObserver(send).observe(document.body);
+    addEventListener('load',send);
+    send();
+  })()</script>`
+  const wheelScript = `<script>${createVisualizationWheelScript(token)}</script>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${base}${styles}</head><body>${fragment}${resizeScript}${wheelScript}</body></html>`
 }
 
 function escapeHtmlAttribute(value: string): string {

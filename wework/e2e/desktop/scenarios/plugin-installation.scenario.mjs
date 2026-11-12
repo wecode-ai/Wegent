@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { createDesktopScenario as createToggleScenario } from './plugin-toggle-persistence.scenario.mjs'
+import { verifyPersonalPluginVersionSubmission } from '../modules/plugin-personal-version-flow.mjs'
 import {
   accountPlugin,
   openPlugin,
@@ -28,7 +30,9 @@ export function createDesktopScenario(options) {
       const fixture = { ...release, slug }
       try {
         await openPlugin(control, fixture)
-        await control.command('click', testId('plugins-refresh-button'))
+        await control.command('clickWhenEnabled', testId('plugins-refresh-button'), {
+          timeoutMs: options.workbenchReadyTimeoutMs,
+        })
         const install = testId(`plugin-marketplace-install-${release.pluginId}`)
         await control.command('waitFor', install, {
           timeoutMs: options.workbenchReadyTimeoutMs,
@@ -42,7 +46,9 @@ export function createDesktopScenario(options) {
         assert.equal(await accountPlugin(cloud, slug), undefined)
         await control.command('clickWhenEnabled', install)
         await control.command('waitFor', testId('plugin-install-unofficial-warning'))
-        await control.command('click', testId('install-plugin-dialog-confirm'))
+        await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'), {
+          timeoutMs: options.workbenchReadyTimeoutMs,
+        })
         await control.command('waitFor', testId(`plugin-marketplace-actions-${release.pluginId}`), {
           timeoutMs: options.workbenchReadyTimeoutMs,
         })
@@ -53,7 +59,18 @@ export function createDesktopScenario(options) {
           await pluginApi(cloud, `/plugins/installed/${installed.metadata.labels.id}`, 'DELETE')
         }
       }
-      await toggle.verify(control)
+      await verifyPersonalPluginVersionSubmission({
+        cloudEnvironment: cloud,
+        control,
+        executorHome: options.executorHome,
+        codexHome: join(options.executorHome, 'codex'),
+        userDataDirectory: options.electronUserDataDirectory,
+        restartDesktopApp: options.restartDesktopApp,
+        verifySharedLifecycle: async restartDesktopApp => {
+          toggle.setRestartDesktopApp(restartDesktopApp)
+          await toggle.verify(control)
+        },
+      })
     },
   }
 }

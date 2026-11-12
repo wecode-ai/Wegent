@@ -48,29 +48,53 @@ export async function invokeDesktopHost<Result>(
   capability: string,
   params: Record<string, unknown> = {}
 ): Promise<Result> {
-  const response = await fetch('/wework/electron-host/v1/invoke', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ capability, params }),
-  })
-  const body = (await response.json()) as {
-    ok?: boolean
-    result?: Result
-    error?: DesktopHostErrorPayload
-  }
-  if (!response.ok || body.ok !== true) {
-    throw new DesktopHostError(
-      body.error?.code ?? `http_${response.status}`,
-      body.error?.message ?? `Electron host request failed with HTTP ${response.status}`,
-      body.error?.details
+  const startedAt = performance.now()
+  const e2e = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
+  const diagnostic = (phase: string, details: Record<string, number | boolean> = {}) => {
+    console.debug(
+      '[Wework] Electron host diagnostic ' +
+        JSON.stringify({
+          capability,
+          phase,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          ...details,
+        })
     )
   }
-  const result = body.result as Result
-  // E2E barriers delay delivery only after the real Electron operation completes.
-  if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
-    return gateRuntimeResponse(capability, params, result)
+  const pendingDiagnostic = e2e ? setTimeout(() => diagnostic('pending'), 1_000) : undefined
+  try {
+    const response = await fetch('/wework/electron-host/v1/invoke', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ capability, params }),
+    })
+    const body = (await response.json()) as {
+      ok?: boolean
+      result?: Result
+      error?: DesktopHostErrorPayload
+    }
+    if (e2e && (capability.startsWith('attachment.') || performance.now() - startedAt >= 1_000)) {
+      diagnostic('completed', {
+        status: response.status,
+        ok: response.ok && body.ok === true,
+        ...(capability === 'attachment.append' && typeof params.offset === 'number'
+          ? { offset: params.offset }
+          : {}),
+      })
+    }
+    if (!response.ok || body.ok !== true) {
+      throw new DesktopHostError(
+        body.error?.code ?? `http_${response.status}`,
+        body.error?.message ?? `Electron host request failed with HTTP ${response.status}`,
+        body.error?.details
+      )
+    }
+    const result = body.result as Result
+    // E2E barriers delay delivery only after the real Electron operation completes.
+    return e2e ? gateRuntimeResponse(capability, params, result) : result
+  } finally {
+    if (pendingDiagnostic !== undefined) clearTimeout(pendingDiagnostic)
   }
-  return result
 }
 
 export function subscribeDesktopHostEvents(
@@ -88,6 +112,10 @@ export function subscribeDesktopHostEvents(
     desktopHostEventHandlers.delete(handler)
     if (desktopHostEventHandlers.size === 0) desktopHostEventLoopGeneration += 1
   }
+}
+
+export function readDesktopHostEventCursor(): number {
+  return desktopHostEventAfter
 }
 
 function startDesktopHostEventLoop(): void {

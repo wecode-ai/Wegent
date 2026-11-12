@@ -57,7 +57,7 @@ Wegent 提供两种主要方式对外暴露能力：
 
 ### 第一步：创建 Skill 定义
 
-在 `backend/init_data/skills/{your-skill-name}/SKILL.md` 创建 Skill 定义：
+在 `backend-rs/init_data/skills/{your-skill-name}/SKILL.md` 创建 Skill 定义：
 
 ```yaml
 ---
@@ -518,7 +518,7 @@ def test_your_tool():
 
 - **Knowledge MCP**: `backend/app/mcp_server/tools/knowledge.py`
 - **Interactive Form MCP**: `backend/app/mcp_server/tools/interactive_form_question.py`
-- **Skill 定义**: `backend/init_data/skills/wegent-knowledge/SKILL.md`
+- **Skill 定义**: `backend-rs/init_data/skills/wegent-knowledge/SKILL.md`
 - **Server 注册**: `backend/app/mcp_server/server.py`
 - **装饰器实现**: `backend/app/mcp_server/tools/decorator.py`
 - **注册逻辑**: `backend/app/mcp_server/tool_registry.py`

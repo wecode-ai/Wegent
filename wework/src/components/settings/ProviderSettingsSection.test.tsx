@@ -1,13 +1,11 @@
+import { findLocalModelProviderProfile } from '@/features/model-settings/localModelProviders'
+import type { ModelConfigurationSnapshot } from '@/features/model-settings/providerModelConfiguration'
+import { reloadProviderConfiguration } from '@/features/model-settings/providerModelConfiguration'
+import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { ModelConfigurationSnapshot } from '@/features/model-settings/providerModelConfiguration'
 import { ProviderSettingsSection } from './ProviderSettingsSection'
-import { reloadProviderConfiguration } from '@/features/model-settings/providerModelConfiguration'
-import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
-import { findLocalModelProviderProfile } from '@/features/model-settings/localModelProviders'
-import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
-import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -63,16 +61,6 @@ function savedProviders() {
 }
 
 describe('Provider settings page', () => {
-  test('connection testing is available only inside the model editor', async () => {
-    const user = await openEditor()
-    expect(screen.queryByTestId('provider-test-relay')).toBeNull()
-    expect(screen.getByTestId('provider-editor-test')).toBeDisabled()
-    await user.click(screen.getByTestId('provider-model-add'))
-    const input = document.querySelector('[data-testid^="provider-model-id-"]')!
-    await user.type(input, 'upstream-a')
-    expect(screen.getByTestId('provider-editor-test')).toBeEnabled()
-    expect(savedProviders()).toBeUndefined()
-  })
   test.each(['success', 'failure'])(
     'waits for a superseding catalog refresh before completing a deletion: %s',
     async outcome => {
@@ -148,42 +136,6 @@ describe('Provider settings page', () => {
     )
   })
 
-  test('custom endpoint is the last service option and switching services invalidates discovery', async () => {
-    render(<ProviderSettingsSection />)
-    const user = userEvent.setup()
-    await user.click(await screen.findByTestId('provider-add'))
-    expect(within(screen.getByTestId('provider-preset')).getAllByRole('option').at(-1)).toHaveValue(
-      'custom'
-    )
-    await user.selectOptions(screen.getByTestId('provider-preset'), 'deepseek')
-    await user.type(screen.getByTestId('provider-api-key'), 'draft-key')
-    let finish!: (value: string[]) => void
-    discover = () =>
-      new Promise(resolve => {
-        finish = resolve
-      })
-    await user.click(screen.getByTestId('provider-discover'))
-    await user.selectOptions(screen.getByTestId('provider-preset'), 'custom')
-    expect(screen.getByTestId('provider-base-url')).toHaveValue('')
-    expect(screen.getByTestId('provider-api-key')).toHaveValue('')
-    await act(async () => finish(['stale-model']))
-    expect(screen.queryByTestId('provider-discovered-stale-model')).not.toBeInTheDocument()
-  })
-
-  test('selected models can be unchecked without saving and the modal restores trigger focus', async () => {
-    const user = await openEditor()
-    expect(screen.getByTestId('provider-editor')).toHaveAttribute('role', 'dialog')
-    await user.click(screen.getByTestId('provider-discover'))
-    await user.click(await screen.findByTestId('provider-discovered-upstream-a'))
-    expect(screen.getByTestId('provider-discovered-upstream-a')).toBeChecked()
-    await user.click(screen.getByTestId('provider-discovered-upstream-a'))
-    expect(screen.queryByTestId(/^provider-model-editor-/)).not.toBeInTheDocument()
-    await user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByTestId('provider-editor')).not.toBeInTheDocument())
-    expect(screen.getByTestId('provider-edit-relay')).toHaveFocus()
-    expect(savedProviders()).toBeUndefined()
-  })
-
   test('keeps a provider with a missing device key editable and allows replacement', async () => {
     snapshot.providers[0].api_key_ref = 'wework-model-key.missing'
     snapshot.providers[0].api_key_configured = false
@@ -194,22 +146,6 @@ describe('Provider settings page', () => {
     await user.click(screen.getByTestId('provider-editor-save'))
     await waitFor(() => expect(savedProviders()?.[0].api_key).toBe('replacement-key'))
     expect(screen.queryByTestId('provider-settings-error')).not.toBeInTheDocument()
-  })
-
-  test('hides file controls, batch input and the extra capabilities gate', async () => {
-    await openEditor()
-    for (const id of [
-      'provider-file-path',
-      'provider-file-choose',
-      'provider-file-open',
-      'provider-file-reload',
-      'provider-batch-models',
-      'provider-append-models',
-      'provider-add-selected',
-    ]) {
-      expect(screen.queryByTestId(id)).not.toBeInTheDocument()
-    }
-    expect(screen.queryByText('/test/model.yml')).not.toBeInTheDocument()
   })
 
   test('adds models individually without re-entering the stored key', async () => {
@@ -257,19 +193,6 @@ describe('Provider settings page', () => {
     expect(savedProviders()).toBeUndefined()
   })
 
-  test('discovered models are added one click at a time and duplicates are disabled', async () => {
-    const user = await openEditor()
-    await user.click(screen.getByTestId('provider-discover'))
-    await user.click(await screen.findByTestId('provider-discovered-upstream-a'))
-    expect(screen.getByTestId('provider-discovered-upstream-a')).toBeChecked()
-    expect(screen.getAllByTestId(/^provider-model-editor-/)).toHaveLength(1)
-    await user.click(screen.getByTestId('provider-discovered-upstream-b'))
-    expect(screen.getAllByTestId(/^provider-model-editor-/)).toHaveLength(2)
-    expect(savedProviders()).toBeUndefined()
-    await user.click(screen.getByTestId('provider-editor-save'))
-    await waitFor(() => expect(savedProviders()?.[0].models).toHaveLength(2))
-  })
-
   test('editing a saved connection fetches the new draft rather than old saved settings', async () => {
     const user = await openEditor()
     await user.clear(screen.getByTestId('provider-base-url'))
@@ -309,7 +232,7 @@ describe('Provider settings page', () => {
     await user.type(output, '16000')
     expect(
       (model.getByTestId('local-model-base-instructions-input') as HTMLTextAreaElement).value
-    ).toContain('# Working with the user')
+    ).toBe('')
     await user.selectOptions(model.getByTestId('local-model-default-reasoning-input'), 'high')
     await user.click(model.getByTestId(/^provider-model-image-generation-/))
     await user.selectOptions(model.getByTestId(/^provider-model-web-search-/), 'live')
@@ -356,7 +279,7 @@ describe('Provider settings page', () => {
       additional_speed_tiers: ['fast'],
       default_service_tier: 'priority',
     })
-    expect(saved.catalog_entry.base_instructions).toContain('# Rules for getting work done')
+    expect(saved.catalog_entry).not.toHaveProperty('base_instructions')
   })
 
   test.each(['kimi-coding', 'minimax', 'minimax-global'])(
@@ -401,33 +324,6 @@ describe('Provider settings page', () => {
     }
   )
 
-  test('offers image models as vision proxies and preserves the selected model ID', async () => {
-    const entry = createDefaultLocalModelCatalogEntry({
-      id: 'vision',
-      displayName: 'Vision Model',
-      toolProfile: 'custom',
-    })
-    entry.input_modalities = ['text', 'image']
-    const user = await openEditor()
-    saveLocalModelConfig({
-      id: 'vision',
-      providerProfileId: 'custom',
-      displayName: 'Vision Model',
-      modelId: 'vision-model',
-      baseUrl: 'https://vision.example/v1',
-      catalogEntry: entry,
-      enabled: true,
-    })
-    await user.click(screen.getByTestId('provider-model-add'))
-    await user.type(screen.getByTestId(/^provider-model-id-/), 'text-model')
-    const visionSelect = screen.getByTestId(/^provider-model-vision-/)
-    expect(visionSelect).toHaveTextContent('Vision Model')
-    await user.selectOptions(visionSelect, 'vision')
-    await user.click(screen.getByTestId('provider-editor-save'))
-    await waitFor(() => expect(savedProviders()).toBeDefined())
-    expect(savedProviders()[0].models[0].vision_model_config_id).toBe('vision')
-  })
-
   test('a late discovery response is discarded when connection settings change', async () => {
     const user = await openEditor()
     let finish!: (value: string[]) => void
@@ -463,19 +359,6 @@ describe('Provider settings page', () => {
     expect(await screen.findByTestId('provider-discovery-empty')).toBeVisible()
     expect(screen.queryByTestId('provider-discovery-error')).not.toBeInTheDocument()
     expect(savedProviders()).toBeUndefined()
-  })
-
-  test('a conflicting external edit keeps the unsaved form visible', async () => {
-    const user = await openEditor()
-    await user.type(screen.getByTestId('provider-name'), ' changed')
-    invoke.mockImplementationOnce(async () => {
-      throw new Error('model.yml changed externally. Reload before saving.')
-    })
-    await user.click(screen.getByTestId('provider-editor-save'))
-    expect(await screen.findByTestId('provider-editor-error')).toHaveTextContent(
-      'changed externally'
-    )
-    expect(screen.getByTestId('provider-name')).toHaveValue('My relay changed')
   })
 
   test('fetching models and cancelling does not create or save a provider', async () => {

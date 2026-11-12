@@ -428,44 +428,42 @@ export function applyCompletedAssistantContent(
   items: RuntimeConversationItem[],
   turnId: string | null,
   itemId: string | undefined,
-  content: string | undefined,
+  content: string | undefined
 ): RuntimeConversationItem[] {
-  if (!content) return items;
-  const lastUserIndex = findLastIndex(
-    items,
-    (item) => item.type === "user_message",
-  );
+  if (!content) return items
+  if (itemId) {
+    return upsertAssistantText(items, itemId, content, 'snapshot', undefined)
+  }
+  const lastUserIndex = findLastIndex(items, item => item.type === 'user_message')
   const hasStreamedAssistantText = items.some(
-    (item, index) => index > lastUserIndex && item.type === "assistant_text",
-  );
-  if (hasStreamedAssistantText) return items;
+    (item, index) => index > lastUserIndex && item.type === 'assistant_text'
+  )
+  if (hasStreamedAssistantText) return items
   const matchingProcessTextIndex = findLastIndex(
     items,
-    (item) =>
-      item.type === "block" &&
-      item.block.type === "text" &&
-      item.block.content === content,
-  );
+    item => item.type === 'block' && item.block.type === 'text' && item.block.content === content
+  )
   if (matchingProcessTextIndex >= 0) {
     return replaceAt(items, matchingProcessTextIndex, {
-      id: itemId ?? items[matchingProcessTextIndex].id,
-      type: "assistant_text",
+      id: items[matchingProcessTextIndex].id,
+      position: items[matchingProcessTextIndex].position,
+      type: 'assistant_text',
       content,
       createdAt: new Date().toISOString(),
-    });
+    })
   }
   const retained = items.filter(
-    (item, index) => index <= lastUserIndex || item.type !== "assistant_text",
-  );
+    (item, index) => index <= lastUserIndex || item.type !== 'assistant_text'
+  )
   return [
     ...retained,
     {
-      id: itemId ?? `runtime-final:${turnId ?? "pending"}`,
-      type: "assistant_text",
+      id: `runtime-final:${turnId ?? 'pending'}`,
+      type: 'assistant_text',
       content,
       createdAt: new Date().toISOString(),
     },
-  ];
+  ]
 }
 
 export function upsertReasoningChunk(

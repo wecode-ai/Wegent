@@ -3,6 +3,33 @@ export const conversationMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
+    "conversation.tool_activity.command_done": "运行 {{name}}",
+    "conversation.tool_activity.command_running": "正在运行 {{name}}",
+    "conversation.tool_activity.command_error": "运行失败 {{name}}",
+    "conversation.tool_activity.create_done": "新增 {{name}}",
+    "conversation.tool_activity.create_running": "正在新增 {{name}}",
+    "conversation.tool_activity.create_error": "新增失败 {{name}}",
+    "conversation.tool_activity.edit_done": "编辑 {{name}}",
+    "conversation.tool_activity.edit_running": "正在编辑 {{name}}",
+    "conversation.tool_activity.edit_error": "编辑失败 {{name}}",
+    "conversation.tool_activity.read_done": "读取 {{name}}",
+    "conversation.tool_activity.read_running": "正在读取 {{name}}",
+    "conversation.tool_activity.read_error": "读取失败 {{name}}",
+    "conversation.tool_activity.create_file_done": "新增文件",
+    "conversation.tool_activity.create_file_running": "正在新增文件",
+    "conversation.tool_activity.create_file_error": "新增文件失败",
+    "conversation.tool_activity.edit_file_done": "编辑文件",
+    "conversation.tool_activity.edit_file_running": "正在编辑文件",
+    "conversation.tool_activity.edit_file_error": "编辑文件失败",
+    "conversation.tool_activity.read_file_done": "读取文件",
+    "conversation.tool_activity.read_file_running": "正在读取文件",
+    "conversation.tool_activity.read_file_error": "读取文件失败",
+    "conversation.tool_activity.web_search_done": "搜索网页",
+    "conversation.tool_activity.web_search_running": "正在搜索网页",
+    "conversation.tool_activity.web_search_error": "搜索网页失败",
+    "conversation.tool_activity.guidance_done": "引导对话",
+    "conversation.tool_activity.guidance_running": "正在引导对话",
+    "conversation.tool_activity.guidance_error": "引导对话失败",
     "conversation.tool_activity.review_approved": "AI 审核已通过",
     "conversation.tool_activity.review_blocked":
       "操作未执行：AI 审核未通过或未完成",
@@ -31,7 +58,8 @@ export const conversationMessages: Record<
       "在下方输入问题、粘贴上下文或添加附件，WeWork 会在这里展示回复。",
     "conversation.workbench.loading_older_messages": "正在加载...",
     "conversation.workbench.load_older_messages": "加载更早记录",
-    "conversation.workbench.load_older_messages_failed": "加载更早记录失败，点击重试",
+    "conversation.workbench.load_older_messages_failed":
+      "加载更早记录失败，点击重试",
     "conversation.workbench.code_comment_count": "{{count}} 个评论",
     "conversation.workbench.goal_chip": "目标",
     "conversation.user_message.collapse": "收起",
@@ -49,6 +77,23 @@ export const conversationMessages: Record<
     "conversation.assistant_status.stopped": "已停止",
     "conversation.assistant_status.stopped_after": "你在 {{duration}} 后停止了",
     "conversation.assistant_error.details": "错误详情",
+    "conversation.assistant_error.git_access.title": "Git 仓库访问失败",
+    "conversation.assistant_error.git_access.credentials-required":
+      "{{domain}} 需要目标设备上的 Git 凭据。请在设置 → 集成 → Git 账户配置对应域；本机执行请配置本机 Git 或 SSH 后重试。",
+    "conversation.assistant_error.git_access.authentication-failed":
+      "{{domain}} 的 Git 认证被拒绝。请检查设置 → 集成 → Git 账户中的令牌或目标设备的 SSH 密钥后重试。",
+    "conversation.assistant_error.git_access.ssh-authentication-failed":
+      "{{domain}} 的 SSH 认证被拒绝。请配置目标设备的 SSH 密钥后重试，云端 Git 令牌不能替代 SSH 密钥。",
+    "conversation.assistant_error.git_access.repository-inaccessible":
+      "请检查仓库地址和账户的仓库访问权限；不一定是登录问题。",
+    "conversation.assistant_error.git_access.network-error":
+      "请检查目标设备网络、代理、TLS 证书和 SSH 主机信任后重试。",
+    "conversation.assistant_error.git_access.git-unavailable":
+      "目标设备无法启动 Git，请安装或修复 Git 后重试。",
+    "conversation.assistant_error.git_access.invalid-url":
+      "请使用不含凭据或查询参数的合法仓库地址。",
+    "conversation.assistant_error.git_access.clone-failed":
+      "仓库访问检查已通过，但克隆失败。请检查分支、目标目录、磁盘空间和设备权限。",
     "conversation.assistant_error.actions.switch_model_retry": "切换模型并重试",
     "conversation.assistant_error.actions.retry": "重试",
     "conversation.assistant_error.types.context_length_exceeded.title":
@@ -197,7 +242,7 @@ export const conversationMessages: Record<
     "conversation.file_changes.conflicted": "存在后续冲突，未修改工作区",
     "conversation.file_changes.created_file": "已创建 {{filename}}",
     "conversation.file_changes.deleted_file": "已删除 {{filename}}",
-    "conversation.file_changes.device_offline": "设备离线，无法审核或撤销",
+    "conversation.file_changes.device_offline": "设备离线，无法审查或撤销",
     "conversation.file_changes.edited_file": "已编辑 {{filename}}",
     "conversation.file_changes.edited_files": "已编辑 {{count}} 个文件",
     "conversation.file_changes.preview_file_label": "预览 {{path}} 的文件变更",
@@ -207,7 +252,7 @@ export const conversationMessages: Record<
     "conversation.file_changes.revert_failed": "撤销文件变更失败",
     "conversation.file_changes.reverted": "已撤销",
     "conversation.file_changes.reverting": "撤销中",
-    "conversation.file_changes.review": "审核",
+    "conversation.file_changes.review": "审查",
     "conversation.file_changes.show_less": "收起文件",
     "conversation.file_changes.show_more": "再显示 {{count}} 个文件",
     "conversation.file_changes.view_changes": "查看更改",
@@ -268,6 +313,7 @@ export const conversationMessages: Record<
     "conversation.request_user_input.approval_title": "需要审批",
     "conversation.request_user_input.asked_count": "已询问 {{count}} 个问题",
     "conversation.request_user_input.custom_placeholder": "输入你的回答",
+    "conversation.request_user_input.collapse": "收起",
     "conversation.request_user_input.ignore": "取消",
     "conversation.request_user_input.submit": "提交",
     "conversation.subagent.active_count": "进行中 · {{count}}",
@@ -354,6 +400,7 @@ export const conversationMessages: Record<
     "conversation.tool_activity.wait_done": "等待工具结果",
     "conversation.tool_activity.wait_error": "等待工具结果失败",
     "conversation.tool_activity.wait_running": "等待工具结果",
+    "conversation.workbench.fill_selection_to_answer": "填入回答",
     "conversation.workbench.add_selection_to_conversation": "添加到对话",
     "conversation.workbench.ask_selection_in_sidebar": "在侧边栏中提问",
     "conversation.file_changes.editing_files": "正在编辑 {{count}} 个文件",
@@ -382,8 +429,6 @@ export const conversationMessages: Record<
     "conversation.file_changes.commit_label": "提交",
     "conversation.file_changes.branch_label": "分支",
     "conversation.file_changes.branch_unknown": "当前工作区",
-    "conversation.file_changes.large_diff_single_file_notice":
-      "此差异较大，每次仅显示一个文件",
     "conversation.file_changes.file_list_label": "变更文件",
     "conversation.file_changes.file_search_placeholder": "筛选文件...",
     "conversation.file_changes.file_search_empty": "没有匹配的文件",
@@ -391,6 +436,33 @@ export const conversationMessages: Record<
     "conversation.file_changes.review_failed": "加载文件变更失败",
   },
   en: {
+    "conversation.tool_activity.command_done": "Ran {{name}}",
+    "conversation.tool_activity.command_running": "Running {{name}}",
+    "conversation.tool_activity.command_error": "Command failed: {{name}}",
+    "conversation.tool_activity.create_done": "Created {{name}}",
+    "conversation.tool_activity.create_running": "Creating {{name}}",
+    "conversation.tool_activity.create_error": "Could not create {{name}}",
+    "conversation.tool_activity.edit_done": "Edited {{name}}",
+    "conversation.tool_activity.edit_running": "Editing {{name}}",
+    "conversation.tool_activity.edit_error": "Could not edit {{name}}",
+    "conversation.tool_activity.read_done": "Read {{name}}",
+    "conversation.tool_activity.read_running": "Reading {{name}}",
+    "conversation.tool_activity.read_error": "Could not read {{name}}",
+    "conversation.tool_activity.create_file_done": "Created file",
+    "conversation.tool_activity.create_file_running": "Creating file",
+    "conversation.tool_activity.create_file_error": "Could not create file",
+    "conversation.tool_activity.edit_file_done": "Edited file",
+    "conversation.tool_activity.edit_file_running": "Editing file",
+    "conversation.tool_activity.edit_file_error": "Could not edit file",
+    "conversation.tool_activity.read_file_done": "Read file",
+    "conversation.tool_activity.read_file_running": "Reading file",
+    "conversation.tool_activity.read_file_error": "Could not read file",
+    "conversation.tool_activity.web_search_done": "Searched the web",
+    "conversation.tool_activity.web_search_running": "Searching the web",
+    "conversation.tool_activity.web_search_error": "Web search failed",
+    "conversation.tool_activity.guidance_done": "Guided conversation",
+    "conversation.tool_activity.guidance_running": "Guiding conversation",
+    "conversation.tool_activity.guidance_error": "Could not guide conversation",
     "conversation.tool_activity.review_approved": "AI review approved",
     "conversation.tool_activity.review_blocked":
       "Not executed: AI review denied or incomplete",
@@ -423,7 +495,8 @@ export const conversationMessages: Record<
       "Ask a question, paste context, or add attachments below. WeWork responses will appear here.",
     "conversation.workbench.loading_older_messages": "Loading...",
     "conversation.workbench.load_older_messages": "Load older messages",
-    "conversation.workbench.load_older_messages_failed": "Could not load older messages. Retry",
+    "conversation.workbench.load_older_messages_failed":
+      "Could not load older messages. Retry",
     "conversation.workbench.code_comment_count": "{{count}} comments",
     "conversation.workbench.goal_chip": "Goal",
     "conversation.user_message.collapse": "Collapse",
@@ -442,6 +515,24 @@ export const conversationMessages: Record<
     "conversation.assistant_status.stopped_after":
       "You stopped after {{duration}}",
     "conversation.assistant_error.details": "Error details",
+    "conversation.assistant_error.git_access.title":
+      "Git repository access failed",
+    "conversation.assistant_error.git_access.credentials-required":
+      "{{domain}} requires Git credentials on the selected device. Configure the domain under Settings → Integrations → Git accounts; for local execution, configure local Git or SSH and retry.",
+    "conversation.assistant_error.git_access.authentication-failed":
+      "Git authentication for {{domain}} was rejected. Check the token under Settings → Integrations → Git accounts or the device SSH key, then retry.",
+    "conversation.assistant_error.git_access.ssh-authentication-failed":
+      "SSH authentication for {{domain}} was rejected. Configure the target device SSH key and retry; cloud Git tokens cannot replace SSH keys.",
+    "conversation.assistant_error.git_access.repository-inaccessible":
+      "Check the repository URL and account access; this is not necessarily a login problem.",
+    "conversation.assistant_error.git_access.network-error":
+      "Check the device network, proxy, TLS certificate and SSH host trust, then retry.",
+    "conversation.assistant_error.git_access.git-unavailable":
+      "Git cannot start on the selected device. Install or repair Git and retry.",
+    "conversation.assistant_error.git_access.invalid-url":
+      "Use a valid repository URL without credentials or query parameters.",
+    "conversation.assistant_error.git_access.clone-failed":
+      "Repository access passed, but cloning failed. Check the branch, destination, disk space and device permissions.",
     "conversation.assistant_error.actions.switch_model_retry":
       "Switch model and retry",
     "conversation.assistant_error.actions.retry": "Retry",
@@ -676,6 +767,7 @@ export const conversationMessages: Record<
     "conversation.request_user_input.asked_count":
       "Asked {{count}} question(s)",
     "conversation.request_user_input.custom_placeholder": "Type your answer",
+    "conversation.request_user_input.collapse": "Collapse",
     "conversation.request_user_input.ignore": "Cancel",
     "conversation.request_user_input.submit": "Submit",
     "conversation.subagent.active_count": "Active · {{count}}",
@@ -771,6 +863,7 @@ export const conversationMessages: Record<
     "conversation.tool_activity.wait_done": "Waited for tool result",
     "conversation.tool_activity.wait_error": "Failed waiting for tool result",
     "conversation.tool_activity.wait_running": "Wait for tool result",
+    "conversation.workbench.fill_selection_to_answer": "Fill answer",
     "conversation.workbench.add_selection_to_conversation":
       "Add to conversation",
     "conversation.workbench.ask_selection_in_sidebar": "Ask in sidebar",
@@ -802,8 +895,6 @@ export const conversationMessages: Record<
     "conversation.file_changes.commit_label": "Commit",
     "conversation.file_changes.branch_label": "Branch",
     "conversation.file_changes.branch_unknown": "Current workspace",
-    "conversation.file_changes.large_diff_single_file_notice":
-      "This diff is large, so only one file is shown at a time",
     "conversation.file_changes.file_list_label": "Changed files",
     "conversation.file_changes.file_search_placeholder": "Filter files...",
     "conversation.file_changes.file_search_empty": "No matching files",

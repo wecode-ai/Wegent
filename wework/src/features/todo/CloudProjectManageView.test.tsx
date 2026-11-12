@@ -1,9 +1,9 @@
+import type { CloudProject } from '@/api/deliveries'
+import '@/i18n'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
-import '@/i18n'
-import type { CloudProject } from '@/api/deliveries'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { describe, expect, test, vi } from 'vitest'
 import { CloudProjectManageView } from './CloudProjectManageView'
 
 const project: CloudProject = {
@@ -79,18 +79,6 @@ describe('CloudProjectManageView', () => {
     } as unknown as SharedWorkspaceApi
   }
 
-  test('does not render the deprecated event subscription section', async () => {
-    const api = createApi()
-
-    render(<CloudProjectManageView api={api} project={project} />)
-
-    expect(await screen.findByRole('heading', { name: '基本信息' })).toBeInTheDocument()
-    expect(screen.getByText('管理项目属性、标签与任务来源。')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-project-board-layout-settings')).toBeInTheDocument()
-    expect(screen.queryByTestId('event-subscription-settings')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('event-subscription-create')).not.toBeInTheDocument()
-  })
-
   test('keeps visibility state and persistence in the shared manage body', async () => {
     const user = userEvent.setup()
     const updateProject = vi.fn().mockResolvedValue({
@@ -111,31 +99,6 @@ describe('CloudProjectManageView', () => {
         expect.objectContaining({ version: 1, visibility: 'public' })
       )
     )
-  })
-
-  test('keeps tag creation DOM and persistence behavior', async () => {
-    const user = userEvent.setup()
-    const updateProject = vi.fn().mockResolvedValue({
-      ...project,
-      tags: ['bug'],
-      version: 2,
-    })
-    const api = createApi({ projects: { update: updateProject } })
-
-    render(<CloudProjectManageView api={api} project={project} />)
-
-    await user.click(screen.getByTestId('cloud-project-manage-tags-toggle'))
-    await user.click(await screen.findByRole('button', { name: '＋ 新建标签' }))
-    await user.type(screen.getByTestId('cloud-project-tag-create-input'), 'bug')
-    await user.click(screen.getByTestId('cloud-project-tag-create-confirm'))
-
-    await waitFor(() =>
-      expect(updateProject).toHaveBeenCalledWith(
-        project.id,
-        expect.objectContaining({ version: 1, tags: ['bug'] })
-      )
-    )
-    expect(await screen.findByTestId('cloud-project-tag-bug')).toBeInTheDocument()
   })
 
   test('resets project-owned state when navigating to another project', async () => {

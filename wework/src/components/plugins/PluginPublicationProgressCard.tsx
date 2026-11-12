@@ -93,7 +93,11 @@ export function PluginPublicationProgressCard({
           <p
             className={cn(
               'mt-1 text-xs',
-              failed ? 'text-red-600' : published ? 'text-green-700' : 'text-text-muted'
+              failed
+                ? 'text-destructive wework:text-red-600'
+                : published
+                  ? 'text-success wework:text-green-700'
+                  : 'text-text-muted'
             )}
           >
             {publicationStatusLabel(publication.status, t)}
@@ -129,7 +133,7 @@ export function PluginPublicationProgressCard({
               type="button"
               size="sm"
               variant="outline"
-              className="border-red-500/40 text-red-600 hover:border-red-500/60 hover:bg-red-500/10 hover:text-red-700"
+              className="border-destructive/40 text-destructive hover:border-destructive/60 hover:bg-destructive/10 hover:text-destructive wework:border-red-500/40 wework:text-red-600 wework:hover:border-red-500/60 wework:hover:bg-red-500/10 wework:hover:text-red-700"
               disabled={withdrawing}
               data-testid={'plugin-publication-withdraw-' + publication.id}
               onClick={onWithdraw}
@@ -178,11 +182,11 @@ export function PluginPublicationProgressCard({
                   className={cn(
                     'flex h-5 w-5 shrink-0 items-center justify-center rounded-full',
                     complete
-                      ? 'bg-green-600/10 text-green-700'
+                      ? 'bg-success/10 text-success wework:bg-green-600/10 wework:text-green-700'
                       : stageFailed
-                        ? 'bg-red-500/10 text-red-600'
+                        ? 'bg-destructive/10 text-destructive wework:bg-red-500/10 wework:text-red-600'
                         : active
-                          ? 'bg-blue-500/10 text-blue-600'
+                          ? 'bg-focus/10 text-focus wework:bg-blue-500/10 wework:text-blue-600'
                           : 'text-text-muted'
                   )}
                 >
@@ -193,7 +197,7 @@ export function PluginPublicationProgressCard({
                     aria-hidden="true"
                     className={cn(
                       'mx-1 hidden h-px flex-1 sm:block',
-                      complete ? 'bg-green-600/30' : 'bg-border'
+                      complete ? 'bg-success/30 wework:bg-green-600/30' : 'bg-border'
                     )}
                   />
                 ) : null}

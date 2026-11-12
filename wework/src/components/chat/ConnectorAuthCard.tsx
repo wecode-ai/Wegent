@@ -3,14 +3,17 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { openExternalUrl } from '@/lib/external-links'
 import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
+import { gitlabVerificationUrl, isGitlabCliTarget } from '@/api/local/gitlabCli'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   LocalConnectorAuthResult,
   LocalConnectorAuthTarget,
+  LocalConnectorAuthTransport,
 } from '@/api/local/localConnectorAuth'
 import { useLocalConnectorAuthSession } from '@/features/plugins/useLocalConnectorAuthSession'
 
 interface ConnectorAuthCardProps {
+  transport?: LocalConnectorAuthTransport
   target: LocalConnectorAuthTarget
   title?: string
   description?: string
@@ -33,10 +36,13 @@ function ConnectorAuthCardSession({
   description,
   onSuccess,
   onCancel,
+  transport,
 }: ConnectorAuthCardProps) {
   const { t } = useTranslation('common')
   const githubCli = isGithubCliTarget(target)
-  const [loginRequested, setLoginRequested] = useState(!githubCli)
+  const deviceCli = githubCli || isGitlabCliTarget(target)
+  const prefix = githubCli ? 'github-cli' : 'gitlab-cli'
+  const [loginRequested, setLoginRequested] = useState(!deviceCli)
   const [openFailed, setOpenFailed] = useState(false)
   const {
     status,
@@ -53,8 +59,14 @@ function ConnectorAuthCardSession({
     target,
     t,
     onSuccess,
+    transport,
   })
-  const verificationUrl = githubVerificationUrl(status?.verificationUrl)
+  const verificationUrl =
+    !error && status?.status === 'waiting_browser'
+      ? githubCli
+        ? githubVerificationUrl(status.verificationUrl, status.userCode)
+        : gitlabVerificationUrl(target, status.verificationUrl)
+      : null
 
   const handleCancel = () => {
     cancelActiveSession()
@@ -82,24 +94,30 @@ function ConnectorAuthCardSession({
         </p>
       </div>
       <div className="flex flex-col items-center gap-3 rounded-xl bg-muted/30 p-4">
-        {githubCli ? (
+        {deviceCli ? (
           <div
             className="flex flex-col items-center gap-3 text-center"
-            data-testid="github-cli-auth"
+            data-testid={`${prefix}-auth`}
           >
-            <p className="text-sm">{t('workbench.github_cli_login_description')}</p>
+            <p className="text-sm">
+              {t(
+                githubCli
+                  ? 'workbench.github_cli_login_description'
+                  : 'standIn.git.gitlab_login_description'
+              )}
+            </p>
             {status?.userCode ? (
-              <code className="select-text text-code" data-testid="github-cli-device-code">
+              <code className="select-text text-code" data-testid={`${prefix}-device-code`}>
                 {status.userCode}
               </code>
             ) : null}
             {!loginRequested ? (
-              <Button data-testid="github-cli-login" onClick={() => setLoginRequested(true)}>
-                {t('workbench.github_cli_login')}
+              <Button data-testid={`${prefix}-login`} onClick={() => setLoginRequested(true)}>
+                {t(githubCli ? 'workbench.github_cli_login' : 'standIn.git.login')}
               </Button>
             ) : verificationUrl ? (
               <Button
-                data-testid="github-cli-open-browser"
+                data-testid={`${prefix}-open-browser`}
                 onClick={async () => {
                   setOpenFailed(false)
                   try {
@@ -153,7 +171,7 @@ function ConnectorAuthCardSession({
             <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
           </div>
         )}
-        {!githubCli || loginRequested ? (
+        {!deviceCli || loginRequested ? (
           <div className="flex items-center gap-2 text-sm" role="status">
             {usesBrowser ? (
               <ExternalLink className="h-4 w-4 text-muted-foreground" />

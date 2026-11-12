@@ -1,0 +1,69 @@
+{
+  "revision": "a1b2c3d4e5f6",
+  "parents": [
+    "b1c2d3e4f607"
+  ],
+  "source": "20260409_a1b2c3d4e5f6_add_inbox_ai_fields.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE queue_messages MODIFY COLUMN status ENUM('unread','read','processing','processed','archived','failed') NOT NULL DEFAULT 'unread'"
+      ],
+      "warning": true
+    },
+    {
+      "sql": [
+        "ALTER TABLE queue_messages ADD COLUMN process_subscription_id INTEGER NOT NULL COMMENT 'Subscription Kind.id used for processing (0 = none)' DEFAULT '0'"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='queue_messages' AND COLUMN_NAME='process_subscription_id'",
+        "nonzero": false
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE background_executions ADD COLUMN inbox_message_id INTEGER NOT NULL COMMENT 'Originating QueueMessage ID for inbox auto-processing' DEFAULT '0'",
+        "CREATE INDEX idx_bg_exec_inbox_message_id ON background_executions (inbox_message_id)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='background_executions' AND COLUMN_NAME='inbox_message_id'",
+        "nonzero": false
+      }
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_bg_exec_inbox_message_id ON background_executions"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='background_executions' AND INDEX_NAME='idx_bg_exec_inbox_message_id'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE background_executions DROP COLUMN inbox_message_id"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='background_executions' AND COLUMN_NAME='inbox_message_id'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE queue_messages DROP COLUMN process_subscription_id"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='queue_messages' AND COLUMN_NAME='process_subscription_id'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE queue_messages MODIFY COLUMN status ENUM('unread','read','processing','processed','archived') NOT NULL DEFAULT 'unread'"
+      ],
+      "warning": true
+    }
+  ]
+}

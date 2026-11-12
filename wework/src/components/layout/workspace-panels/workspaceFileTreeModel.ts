@@ -1,3 +1,4 @@
+import { normalizeWorkspaceSeparators } from '@/lib/workspace-file-contract'
 import type { WorkspaceFileEntry } from '@/types/workspace-files'
 
 export interface WorkspaceTreeModel {
@@ -9,7 +10,7 @@ export interface WorkspaceTreeModel {
 }
 
 function normalizeWorkspacePath(path: string) {
-  return path.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalizeWorkspaceSeparators(path).replace(/\/+$/, '')
 }
 
 function isWindowsWorkspacePath(path: string) {

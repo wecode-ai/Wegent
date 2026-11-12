@@ -1,0 +1,71 @@
+{
+  "revision": "f82c5d1a9e37",
+  "parents": [
+    "d47dd270f4b6"
+  ],
+  "source": "20260820_f82c5d1a9e37_add_smart_app_marketplace.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE smart_apps (\n    id BIGINT NOT NULL COMMENT 'Smart app primary key' AUTO_INCREMENT, \n    owner_user_id BIGINT NOT NULL COMMENT 'Owner user ID; 0 means platform-owned official app' DEFAULT '0', \n    name VARCHAR(100) NOT NULL COMMENT 'Canonical Smart app name from manifest' DEFAULT '', \n    display_name VARCHAR(200) NOT NULL COMMENT 'Human-readable Smart app title' DEFAULT '', \n    summary VARCHAR(500) NOT NULL COMMENT 'Short marketplace summary' DEFAULT '', \n    description_md VARCHAR(8192) NOT NULL COMMENT 'Markdown marketplace description, limited to 8192 characters' DEFAULT '', \n    source_type VARCHAR(20) NOT NULL COMMENT 'Publisher source: official or user' DEFAULT 'user', \n    visibility VARCHAR(20) NOT NULL COMMENT 'Distribution scope: public, restricted, or private' DEFAULT 'restricted', \n    status VARCHAR(20) NOT NULL COMMENT 'Catalog lifecycle status: draft or published' DEFAULT 'draft', \n    tags_json JSON NOT NULL COMMENT 'Marketplace tag IDs as a JSON array' DEFAULT ('[]'), \n    icon_storage_key VARCHAR(500) NOT NULL COMMENT 'Object-storage key for the active icon' DEFAULT '', \n    screenshots_json JSON NOT NULL COMMENT 'Object-storage keys for screenshots as a JSON array' DEFAULT ('[]'), \n    extensions_json JSON NOT NULL COMMENT 'Versioned namespaced application extension fields' DEFAULT ('{}'), \n    latest_release_id BIGINT NOT NULL COMMENT 'Latest published release ID; 0 means no release' DEFAULT '0', \n    featured_rank BIGINT NOT NULL COMMENT 'Marketplace featured rank; 0 means not featured' DEFAULT '0', \n    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n    updated_at DATETIME(6) NOT NULL COMMENT 'Last update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \n    published_at DATETIME(6) NOT NULL COMMENT 'First publish time; epoch means unpublished' DEFAULT '1970-01-01 00:00:00.000000', \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_smart_app_owner_name UNIQUE (owner_user_id, name)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Smart app marketplace catalog identities'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_smart_apps_catalog ON smart_apps (status, source_type, featured_rank)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE TABLE smart_app_releases (\n    id BIGINT NOT NULL COMMENT 'Smart app release primary key' AUTO_INCREMENT, \n    smart_app_id BIGINT NOT NULL COMMENT 'Owning Smart app ID; logical reference without database foreign key' DEFAULT '0', \n    version VARCHAR(50) NOT NULL COMMENT 'Immutable semantic version' DEFAULT '', \n    manifest_json JSON NOT NULL COMMENT 'Validated immutable runtime manifest snapshot' DEFAULT ('{}'), \n    release_notes VARCHAR(4096) NOT NULL COMMENT 'Release notes, limited to 4096 characters' DEFAULT '', \n    storage_key VARCHAR(500) NOT NULL COMMENT 'Immutable package object-storage key' DEFAULT '', \n    sha256 VARCHAR(64) NOT NULL COMMENT 'Lowercase package SHA-256 hex digest' DEFAULT '', \n    size_bytes BIGINT NOT NULL COMMENT 'Package size in bytes' DEFAULT '0', \n    scan_status VARCHAR(20) NOT NULL COMMENT 'Security scan status: passed or failed' DEFAULT 'passed', \n    scan_report_json JSON NOT NULL COMMENT 'Security scan report snapshot' DEFAULT ('{}'), \n    extensions_json JSON NOT NULL COMMENT 'Versioned namespaced release extension fields' DEFAULT ('{}'), \n    created_by_user_id BIGINT NOT NULL COMMENT 'Publisher user ID; 0 means official publisher' DEFAULT '0', \n    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n    published_at DATETIME(6) NOT NULL COMMENT 'Release publish time' DEFAULT CURRENT_TIMESTAMP(6), \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_smart_app_release_version UNIQUE (smart_app_id, version)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Immutable Smart app package releases'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_smart_app_releases_app ON smart_app_releases (smart_app_id, published_at)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE TABLE smart_app_submissions (\n    id BIGINT NOT NULL COMMENT 'Smart app submission primary key' AUTO_INCREMENT, \n    smart_app_id BIGINT NOT NULL COMMENT 'Target Smart app ID; logical reference without database foreign key' DEFAULT '0', \n    owner_user_id BIGINT NOT NULL COMMENT 'Submitting owner user ID' DEFAULT '0', \n    version VARCHAR(50) NOT NULL COMMENT 'Submitted semantic version' DEFAULT '', \n    status VARCHAR(20) NOT NULL COMMENT 'Submission status: uploading, scanning, published, rejected, or cancelled' DEFAULT 'uploading', \n    staging_storage_key VARCHAR(500) NOT NULL COMMENT 'Temporary package object-storage key' DEFAULT '', \n    sha256 VARCHAR(64) NOT NULL COMMENT 'Expected lowercase package SHA-256 hex digest' DEFAULT '', \n    size_bytes BIGINT NOT NULL COMMENT 'Expected package size in bytes' DEFAULT '0', \n    metadata_json JSON NOT NULL COMMENT 'Submission listing, asset, recipient, and extension snapshot' DEFAULT ('{}'), \n    error_message VARCHAR(1000) NOT NULL COMMENT 'Rejected submission error; empty means no error' DEFAULT '', \n    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n    updated_at DATETIME(6) NOT NULL COMMENT 'Last update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \n    PRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Two-phase Smart app publication submissions'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_smart_app_submissions_owner ON smart_app_submissions (owner_user_id, status)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_smart_app_submissions_owner ON smart_app_submissions"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE smart_app_submissions"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_smart_app_releases_app ON smart_app_releases"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE smart_app_releases"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_smart_apps_catalog ON smart_apps"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE smart_apps"
+      ]
+    }
+  ]
+}

@@ -9,7 +9,9 @@ import type { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions } from '
  */
 
 export const APPLICATION_MENU_ACTIONS = {
+  openAbout: 'open-about',
   openSettings: 'open-settings',
+  openFeedback: 'open-feedback',
   openTasks: 'open-tasks',
   openProjectSpaces: 'open-project-spaces',
   openPlugins: 'open-plugins',
@@ -84,6 +86,7 @@ export interface ApplicationMenuDependencies {
   dispatch: (action: ApplicationMenuAction, window: BrowserWindow) => void
   openDevTools: (window: BrowserWindow) => void
   openLogDirectory: () => Promise<void>
+  openProcessExplorer: () => Promise<void>
   showMain: () => Promise<void>
   quit: () => void
   openExternal: (url: string) => Promise<void>
@@ -251,7 +254,7 @@ export class ApplicationMenu {
     return this.menu?.items.map(snapshotItem) ?? []
   }
 
-  activateForTesting(id: string, windowLabel: string): boolean {
+  async activateForTesting(id: string, windowLabel: string): Promise<boolean> {
     const item = this.menu?.getMenuItemById(id)
     const window = this.dependencies.targetWindow(windowLabel)
     if (!item?.enabled || !item.visible || !window || window.isDestroyed() || item.submenu) {
@@ -259,7 +262,9 @@ export class ApplicationMenu {
     }
     this.popupWindow = window
     try {
-      item.click(item, window, {} as Electron.KeyboardEvent)
+      // Native actions finish their existing window readiness checks before
+      // the desktop control response acknowledges the activation.
+      await item.click(item, window, {} as Electron.KeyboardEvent)
       return true
     } finally {
       this.popupWindow = null
@@ -275,8 +280,8 @@ export class ApplicationMenu {
     return () => this.withWindow(window => this.dependencies.dispatch(action, window))
   }
 
-  private run(action: () => Promise<void>): () => void {
-    return () => void action().catch(this.dependencies.reportError)
+  private run(action: () => Promise<void>): () => Promise<void> {
+    return () => action().catch(this.dependencies.reportError)
   }
 
   private template(language: string): MenuItemConstructorOptions[] {
@@ -288,7 +293,11 @@ export class ApplicationMenu {
     const quitAccelerator = mac ? 'Command+Q' : platform === 'linux' ? 'Control+Q' : undefined
     const separator: MenuItemConstructorOptions = { type: 'separator' }
     const application: MenuItemConstructorOptions[] = [
-      { role: 'about', label: `${labels.about} ${this.dependencies.appName}` },
+      {
+        id: 'application.about',
+        label: `${labels.about} ${this.dependencies.appName}`,
+        click: this.dispatch('open-about'),
+      },
       separator,
       { id: 'application.settings', label: labels.settings, click: this.dispatch('open-settings') },
       ...(mac
@@ -463,9 +472,7 @@ export class ApplicationMenu {
           {
             id: 'help.issues',
             label: labels.issues,
-            click: this.run(() =>
-              this.dependencies.openExternal('https://github.com/wecode-ai/Wegent/issues')
-            ),
+            click: this.dispatch('open-feedback'),
           },
           separator,
           {
@@ -486,7 +493,7 @@ export class ApplicationMenu {
               {
                 id: 'developer.processExplorer',
                 label: labels.processExplorer,
-                click: this.dispatch('open-process-explorer'),
+                click: this.run(this.dependencies.openProcessExplorer),
               },
               {
                 id: 'developer.logs',

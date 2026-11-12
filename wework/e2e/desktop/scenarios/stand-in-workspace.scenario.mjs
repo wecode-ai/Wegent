@@ -1,10 +1,21 @@
-import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
+import {
+  openStandInSettings,
+  openStandInActivity,
+} from '../modules/stand-in-profile-navigation.mjs'
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import {
+  openProjectStandIn,
+  discardStandInDraft,
+  editProjectSource,
+} from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { readStandInBinding } from '../modules/stand-in-instance-flows.mjs'
+import { verifyStandInInstantReturn } from '../modules/stand-in-instant-open.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { shellCommandPollResponse } from '../modules/shell-command-response.mjs'
@@ -44,6 +55,7 @@ async function clickVisibleControl(control, target) {
   })
 }
 
+/** Verify stand-in workspace configuration and native source-work approval boundaries. */
 export function createDesktopScenario({
   workspacePath,
   homePath,
@@ -140,7 +152,7 @@ export function createDesktopScenario({
           tool.arguments.sandbox_permissions = 'require_escalated'
           tool.arguments.justification =
             'REVIEW_PRIVATE_READ: source requests an unrelated private file'
-          events = functionCall('source-private-review', tool.name, tool.arguments)
+          events = selectedToolCall('source-private-review', tool)
         } else if (requestContainsToolOutput(body, 'source-approved-escalation')) {
           const output =
             accountCommandResult(body.input, 'source-approved-escalation')?.output ?? ''
@@ -151,7 +163,7 @@ export function createDesktopScenario({
               ? `try { Add-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'unapproved' -NoNewline -ErrorAction Stop; Write-Output 'SOURCE_OUTSIDE_WRITE_ALLOWED' } catch { Write-Output 'SOURCE_OUTSIDE_WRITE_BLOCKED' }`
               : `if printf 'unapproved' >> ${quote(elevatedFile)}; then printf 'SOURCE_OUTSIDE_WRITE_ALLOWED'; else printf 'SOURCE_OUTSIDE_WRITE_BLOCKED'; fi`
           const tool = selectShellToolCommand(body, command, undefined)
-          events = functionCall('source-escalation-not-persistent', tool.name, tool.arguments)
+          events = selectedToolCall('source-escalation-not-persistent', tool)
         } else if (requestContainsToolOutput(body, 'source-sandbox-probe')) {
           const output = accountCommandResult(body.input, 'source-sandbox-probe')?.output ?? ''
           for (const marker of [
@@ -177,7 +189,7 @@ export function createDesktopScenario({
           tool.arguments.sandbox_permissions = 'require_escalated'
           tool.arguments.justification =
             'Create the explicitly authorized regression proof outside the workspace.'
-          events = functionCall('source-approved-escalation', tool.name, tool.arguments)
+          events = selectedToolCall('source-approved-escalation', tool)
         } else if (requestContainsToolOutput(body, 'source-context-read')) {
           const command =
             process.platform === 'win32'
@@ -185,7 +197,7 @@ export function createDesktopScenario({
               : `printf 'source-sandbox-ok' > source-sandbox-proof.txt && curl -fsS --connect-timeout 3 --max-time 5 ${quote(url.origin + '/external-source-probe')} && cat ${quote(pluginSkill)} && test "$(GH_CONFIG_DIR=${quote(ghConfigDirectory)} gh config get git_protocol)" = ssh && printf 'SOURCE_GH_CONFIG_READABLE'; if printf 'unapproved' > ${quote(elevatedFile)}; then printf 'SOURCE_OUTSIDE_WRITE_ALLOWED'; else printf 'SOURCE_OUTSIDE_WRITE_BLOCKED'; fi`
           const tool = selectShellToolCommand(body, command, undefined)
           tool.arguments.login = false
-          events = functionCall('source-sandbox-probe', tool.name, tool.arguments)
+          events = selectedToolCall('source-sandbox-probe', tool)
         } else {
           events = mcpToolRequestEvents(body, {
             toolName: 'get_current_context',
@@ -215,20 +227,24 @@ export function createDesktopScenario({
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
         connect: true,
       })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
-      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
       const beforeSave = await requestExecutor(
         control,
         'runtime.stand_in.get',
         { projectId: project.id, userId: USER_ID, projectStore: 'local' },
         uiTimeoutMs
       )
-      assert.equal(beforeSave.enabled, false, 'Automatic handling must wait for explicit save')
+      assert.equal(
+        beforeSave.enabled,
+        true,
+        'The preceding explicit connection Save enabled intake'
+      )
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('click', '[data-testid="stand-in-advanced-open"]')
-      assert.ok(
-        await control.command('getValue', '[data-testid="stand-in-device"]'),
-        'Current device must be selected by default'
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-device"]'), '0')
+      assert.equal(
+        (await readStandInBinding(control, uiTimeoutMs)).target.deviceId,
+        beforeSave.executionDeviceId,
+        'Workspace settings must remain on the bound Executor'
       )
       await clickVisibleControl(
         control,
@@ -280,7 +296,8 @@ export function createDesktopScenario({
       )
       await control.command('clickWhenEnabled', selector(`model-option-${modelKey}`))
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-agent"]')
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]')
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-agent"]'), '0')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command(
@@ -303,11 +320,13 @@ export function createDesktopScenario({
       assert.equal(saved.workspace.executionMode, 'git_worktree')
       assert.equal(saved.model.model_id, model.model_id)
 
-      await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await verifyStandInInstantReturn(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-overview-role-default"]')
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await openStandInSettings(control)
       await control.command('waitFor', '[data-testid="stand-in-advanced-open"]')
       await control.command('click', '[data-testid="stand-in-advanced-open"]')
       await control.command('waitFor', '[data-testid="project-work-button"]', {
@@ -318,8 +337,7 @@ export function createDesktopScenario({
       assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
       // Goal persistence is asserted above; ordinary completion uses one model response.
       await control.command('click', '[data-testid="cancel-goal-draft-button"]')
-      await control.command('click', '[data-testid="stand-in-auto"]')
-      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+      await editProjectSource(control, false)
       const beforeDisableSave = await requestExecutor(
         control,
         'runtime.stand_in.get',
@@ -327,10 +345,14 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       assert.equal(beforeDisableSave.enabled, true, 'Disabling must also wait for explicit save')
+      assert.equal(
+        beforeDisableSave.collaboration.enabled,
+        true,
+        'Disconnecting a source waits for Save'
+      )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-overview-status"]', {
-        text: '未开启',
-      })
+      await control.command('waitFor', '[data-testid="stand-in-sources-empty"]')
+      await control.command('click', '[data-testid="stand-in-close"]')
       saved = await requestExecutor(
         control,
         'runtime.stand_in.get',
@@ -338,7 +360,13 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       assert.equal(saved.goalMode, false)
-      assert.equal(saved.enabled, false)
+      assert.equal(
+        saved.enabled,
+        true,
+        'Disconnecting one source must not stop the entire identity'
+      )
+      assert.equal(saved.collaboration.enabled, false)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-home"]`)
       await control.command('waitFor', '[data-testid="collaboration-issue-project-trigger"]', {
         visible: true,
@@ -397,7 +425,11 @@ export function createDesktopScenario({
               { project_id: project.id, task_id: issue.id },
               uiTimeoutMs
             )
-            assert.equal(assigned.assignee_user_id, USER_ID)
+            assert.equal(
+              assigned.assignee_user_id,
+              issue.assignee_user_id,
+              'Manual delegation must preserve the existing Issue assignee'
+            )
             const result = await requestExecutor(
               control,
               'runtime.tasks.get',
@@ -447,8 +479,9 @@ export function createDesktopScenario({
           '---\nname: stand-in-catalog\ndescription: Verify the stand-in composer catalog.\n---\nInspect the current task.\n'
         )
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
+        await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+          connect: true,
+        })
         await control.command('fill', '[data-testid="stand-in-prompt"]', {
           value: `${MARKER}_UNSAVED /`,
         })
@@ -457,18 +490,18 @@ export function createDesktopScenario({
           '[data-testid="slash-command-option-skill-stand-in-catalog"]'
         )
         await control.command('click', '[data-testid="slash-command-option-plugin-marketplace"]')
-        await control.command(
-          'waitFor',
-          '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]'
-        )
         await control.command('waitFor', `${CONTENT} [data-testid="plugins-page-content"]`)
-        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('waitFor', `${CONTENT} [data-testid="collaboration-primary-home"]`)
+        await control.command('waitFor', '[data-testid="stand-in-profile-backdrop"]', {
+          visible: false,
+        })
+        await control.command('press', 'body', { key: 'Escape' })
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         assert.equal(
           (await control.command('getValue', '[data-testid="stand-in-prompt"]')).trim(),
           `${MARKER}_UNSAVED`
         )
+        await captureScreenshot(control, 'stand-in-marketplace-draft-preserved.png')
         await discardStandInDraft(control)
       } finally {
         await rm(skillDirectory, { recursive: true, force: true })
@@ -481,6 +514,7 @@ export function createDesktopScenario({
         { userId: USER_ID },
         uiTimeoutMs
       )
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, '分身复用-' + process.pid)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
@@ -498,9 +532,11 @@ export function createDesktopScenario({
       assert.deepEqual(afterProject.roles[0].workspace, saved.workspace)
       assert.equal(afterProject.roles.length, beforeProject.roles.length)
       await control.command('click', '[data-testid="stand-in-cancel"]')
-      await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
-      await control.command('click', selector(`stand-in-overview-role-${saved.id}`))
+      await control.command('clickWhenEnabled', selector(`stand-in-overview-role-${saved.id}`))
+      await openStandInActivity(control)
       await control.command('waitFor', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', '[data-testid="stand-in-preview-open"]')

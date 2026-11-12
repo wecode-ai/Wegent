@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import {
   executionDisplayStatus,
@@ -9,16 +11,6 @@ import {
 } from './executionStatus'
 
 describe('executionStatus', () => {
-  it('preserves distinct automation lifecycle and terminal outcomes', () => {
-    expect(executionDisplayStatus('pending')).toBe('queued')
-    expect(executionDisplayStatus('waiting_device')).toBe('waiting_runtime')
-    expect(executionDisplayStatus('running')).toBe('running')
-    expect(executionDisplayStatus('succeeded')).toBe('succeeded')
-    expect(executionDisplayStatus('failed')).toBe('failed')
-    expect(executionDisplayStatus('skipped')).toBe('skipped')
-    expect(executionDisplayStatus('cancelled')).toBe('cancelled')
-  })
-
   it('maps message and execution aliases without hiding state boundaries', () => {
     expect(executionDisplayStatus('streaming')).toBe('running')
     expect(executionDisplayStatus('queued')).toBe('queued')

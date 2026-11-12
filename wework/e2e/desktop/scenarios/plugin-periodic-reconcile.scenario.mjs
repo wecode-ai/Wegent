@@ -10,7 +10,11 @@ import {
   pluginApi,
   until,
 } from '../modules/plugin-regression-fixture.mjs'
-import { observePluginSyncTransport } from '../modules/plugin-sync-observer.mjs'
+import {
+  acknowledgedPluginGeneration,
+  latestPluginSyncRequest,
+  observePluginSyncTransport,
+} from '../modules/plugin-sync-observer.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
@@ -117,7 +121,7 @@ export async function createDesktopScenario({
     const fixture = await operate()
     await Promise.all(
       targets.map(async (target, index) => {
-        const requests = await until(
+        await until(
           () =>
             target.observation.capabilities
               .slice(offsets[index])
@@ -130,27 +134,42 @@ export async function createDesktopScenario({
           `${target.kind} did not receive its actual setup delta`,
           workbenchReadyTimeoutMs
         )
-        assert.equal(requests.length, 1, `${target.kind} received duplicate setup deltas`)
-        const [request] = requests
         const before = previous.find(row => row.device_id === target.persistedDeviceId)
         const settled = await until(
-          async () => ({
-            acknowledgement: target.observation.acknowledgements.find(
-              value =>
-                value.at >= request.at &&
-                value.id === request.id &&
-                value.namespace === request.namespace &&
-                value.pluginSync?.generation === request.pluginSync.generation
-            ),
-            plugin: await materializedPlugin(target.home, fixture.installedId),
-            rows: await cloud.queryDatabase(
-              'SELECT state, desired_release_id, actual_release_id, error_code, CAST(last_sync_at AS CHAR) AS last_sync_at FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
-              [1, fixture.installedId, target.persistedDeviceId]
-            ),
-          }),
+          async () => {
+            // Full syncs and newer deltas can advance the installed generation
+            // while setup is settling. Match the current request on every poll.
+            const requests = target.observation.capabilities
+              .slice(offsets[index])
+              .filter(value => value.pluginIds.includes(String(fixture.installedId)))
+            const generations = requests.map(request => request.pluginSync.generation)
+            assert.equal(
+              new Set(generations).size,
+              requests.length,
+              `${target.kind} received duplicate setup syncs for the same generation`
+            )
+            // Full snapshots can overtake an allocated delta. Settle against
+            // the highest intent, never an older frame that happened to arrive last.
+            const request = latestPluginSyncRequest(requests)
+            const plugin = await materializedPlugin(target.home, fixture.installedId)
+            return {
+              request,
+              acknowledgement: acknowledgedPluginGeneration(
+                target.observation,
+                plugin,
+                fixture.installedId,
+                request
+              ),
+              plugin,
+              rows: await cloud.queryDatabase(
+                'SELECT state, desired_release_id, actual_release_id, error_code, CAST(last_sync_at AS CHAR) AS last_sync_at FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
+                [1, fixture.installedId, target.persistedDeviceId]
+              ),
+            }
+          },
           value =>
             value.acknowledgement?.success === true &&
-            value.plugin?.plugin_sync_generation === request.pluginSync.generation &&
+            value.plugin?.plugin_sync_generation === value.request.pluginSync.generation &&
             value.rows.length === 1 &&
             value.rows[0].state === 'installed' &&
             value.rows[0].desired_release_id === fixture.releaseId &&
@@ -160,12 +179,15 @@ export async function createDesktopScenario({
           `${target.kind} setup ACK, Runtime generation and persisted result did not settle`,
           workbenchReadyTimeoutMs
         )
-        assert.deepEqual(settled.acknowledgement.pluginSync, request.pluginSync)
+        assert.deepEqual(settled.acknowledgement.pluginSync, settled.request.pluginSync)
         evidence.push({
           case: 'setup-delta-acknowledged-and-persisted-before-baseline',
           target: target.kind,
           installedId: fixture.installedId,
-          generation: request.pluginSync.generation,
+          generation: settled.request.pluginSync.generation,
+          scope: settled.request.scope,
+          currentGeneration: settled.plugin.plugin_sync_generation,
+          currentGenerationAcknowledgement: settled.acknowledgement,
           persisted: settled.rows,
         })
       })

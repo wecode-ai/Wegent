@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { verifyPerformanceRecording } from '../modules/performance-recording.mjs'
 
 import { verifyWorkbenchBackgroundSurfaces } from '../modules/appearance-flows.mjs'
 
@@ -10,7 +11,11 @@ const STORAGE_ENTRIES = {
   'wework.e2e.renderer-storage.layout': 'layout-state',
 }
 
-export async function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs }) {
+export async function createDesktopScenario({
+  electronUserDataDirectory,
+  restartDesktopApp,
+  uiTimeoutMs,
+}) {
   const originStatePath = join(electronUserDataDirectory, 'renderer-local-storage-origins.json')
 
   return {
@@ -74,6 +79,12 @@ export async function createDesktopScenario({ electronUserDataDirectory, uiTimeo
         )
         await control.command('removeLocalStorageItem', 'body', { value: key })
       }
+
+      await verifyPerformanceRecording(control, {
+        electronUserDataDirectory,
+        restartDesktopApp,
+        uiTimeoutMs,
+      })
     },
 
     diagnostics() {

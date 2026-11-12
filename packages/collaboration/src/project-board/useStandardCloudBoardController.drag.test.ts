@@ -20,10 +20,42 @@ const baseItem: StandardCloudBoardItem = {
 }
 
 function column(groupValue: string): ProjectBoardColumn {
-  return { key: groupValue, groupValue, label: groupValue, status: '', dotClass: '' }
+  return {
+    key: groupValue,
+    groupValue,
+    label: groupValue,
+    status: '',
+    dotClass: '',
+  }
 }
 
 describe('board drag source and tag semantics', () => {
+  it('rejects empty cells in another parent row without changing task ownership', () => {
+    const source = { ...column('design'), type: 'tag' as const }
+    const target = { ...column('develop'), type: 'tag' as const }
+    const item = { ...baseItem, parent_id: 'parent-a', tags: ['design'] }
+    const input = {
+      activeItemId: item.id,
+      beforeItemId: null,
+      columnDropKey: target.key,
+      columns: [source, target],
+      extensions: {},
+      groupBy: 'tag' as const,
+      items: [item],
+      sourceColumnKey: source.key,
+    }
+    expect(resolveStandardCloudBoardDrop({ ...input, targetParentId: 'parent-b' })).toBeNull()
+    expect(resolveStandardCloudBoardDrop({ ...input, targetParentId: null })).toBeNull()
+    expect(resolveStandardCloudBoardDrop({ ...input, targetParentId: 'parent-a' })).toMatchObject({
+      itemId: item.id,
+      column: target,
+    })
+    expect(item).toMatchObject({
+      parent_id: 'parent-a',
+      status: 'pending',
+      tags: ['design'],
+    })
+  })
   it.each([
     ['red', 'green', ['red', 'blue'], ['blue', 'green']],
     ['red', 'blue', ['red', 'blue'], ['blue']],
@@ -71,8 +103,14 @@ describe('board drag source and tag semantics', () => {
       items: [first, item],
     }
     expect(resolveStandardCloudBoardMutation(input)).toBeNull()
-    const mutation = resolveStandardCloudBoardMutation({ ...input, manualSort: true })!
-    expect(mutation).toMatchObject({ kind: 'reorder', position: { beforeItemId: first.id } })
+    const mutation = resolveStandardCloudBoardMutation({
+      ...input,
+      manualSort: true,
+    })!
+    expect(mutation).toMatchObject({
+      kind: 'reorder',
+      position: { beforeItemId: first.id },
+    })
     expect(mutation).not.toHaveProperty('tags')
     expect(mutation.optimisticItems.find(candidate => candidate.id === item.id)?.tags).toEqual([
       'red',
@@ -95,10 +133,18 @@ describe('board drag source and tag semantics', () => {
     }
     for (const beforeItemId of [target.id, item.id]) {
       const drop = resolveStandardCloudBoardDrop({ ...input, beforeItemId })!
-      expect(drop).toMatchObject({ column: column('blue'), sourceColumn: column('red') })
+      expect(drop).toMatchObject({
+        column: column('blue'),
+        sourceColumn: column('red'),
+      })
       expect(drop.beforeItemId).toBe(beforeItemId === item.id ? null : target.id)
       expect(
-        resolveStandardCloudBoardMutation({ ...drop, item, items: input.items, groupBy: 'tag' })
+        resolveStandardCloudBoardMutation({
+          ...drop,
+          item,
+          items: input.items,
+          groupBy: 'tag',
+        })
       ).toMatchObject({ kind: 'tag', tags: ['blue', 'shared'] })
     }
   })
@@ -143,7 +189,10 @@ describe('board drag source and tag semantics', () => {
     ).toBeNull()
     for (const foreign of [{ parent_id: 'other' }, { cloud_project_id: 'other' }]) {
       expect(
-        resolveStandardCloudBoardDrop({ ...input, items: [baseItem, { ...target, ...foreign }] })
+        resolveStandardCloudBoardDrop({
+          ...input,
+          items: [baseItem, { ...target, ...foreign }],
+        })
       ).toBeNull()
     }
     expect(

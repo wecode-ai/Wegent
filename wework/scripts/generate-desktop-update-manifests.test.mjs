@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'

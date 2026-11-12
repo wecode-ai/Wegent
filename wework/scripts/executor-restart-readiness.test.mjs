@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 const { readFile, requestRuntime } = vi.hoisted(() => ({

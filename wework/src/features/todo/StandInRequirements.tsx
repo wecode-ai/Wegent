@@ -1,6 +1,6 @@
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { ComposerCatalogContext } from '@/components/chat/composer/ComposerCatalogContext'
-import { useRuntimeComposerCatalog } from '@/components/chat/composer/useRuntimeComposerCatalog'
+import { useStandInComposerCatalog } from './useStandInComposerCatalog'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { StandInRole } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -19,7 +19,7 @@ export function StandInRequirements({
   onSave(): void
 }) {
   const { t } = useTranslation('common')
-  const catalog = useRuntimeComposerCatalog(
+  const catalog = useStandInComposerCatalog(
     {
       deviceId: role.executionDeviceId,
       scope: 'workspace',

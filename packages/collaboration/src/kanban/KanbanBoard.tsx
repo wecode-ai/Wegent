@@ -110,6 +110,36 @@ export function KanbanColumnDropzone({
   );
 }
 
+export function KanbanColumnEmptyState({
+  emptyState,
+  testId,
+  renderAddIcon,
+}: {
+  emptyState: KanbanEmptyState;
+  testId: string;
+  renderAddIcon(): ReactNode;
+}) {
+  return emptyState.action ? (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={emptyState.action.onClick}
+      className="flex min-h-24 w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border px-4 text-center text-text-muted transition hover:border-text-muted hover:bg-background hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+      aria-label={emptyState.action.ariaLabel}
+    >
+      {renderAddIcon()}
+      <span className="text-sm font-medium text-text-secondary">
+        {emptyState.action.label}
+      </span>
+      <span className="text-xs leading-4">{emptyState.hint}</span>
+    </button>
+  ) : (
+    <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
+      {emptyState.hint}
+    </div>
+  );
+}
+
 interface KanbanColumnProps<TColumn, TItem> extends Omit<
   KanbanBoardProps<TColumn, TItem>,
   "columns" | "dndContextProps" | "renderDragOverlay"
@@ -184,25 +214,11 @@ export function KanbanColumn<TColumn, TItem>({
         ))}
         {renderItemsFooter?.(column, columnItems)}
         {emptyState ? (
-          emptyState.action ? (
-            <button
-              type="button"
-              data-testid={`${testIdPrefix}-column-empty-add-${columnKey}`}
-              onClick={emptyState.action.onClick}
-              className="flex min-h-24 w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border px-4 text-center text-text-muted transition hover:border-text-muted hover:bg-background hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
-              aria-label={emptyState.action.ariaLabel}
-            >
-              {renderAddIcon()}
-              <span className="text-sm font-medium text-text-secondary">
-                {emptyState.action.label}
-              </span>
-              <span className="text-xs leading-4">{emptyState.hint}</span>
-            </button>
-          ) : (
-            <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
-              {emptyState.hint}
-            </div>
-          )
+          <KanbanColumnEmptyState
+            emptyState={emptyState}
+            testId={`${testIdPrefix}-column-empty-add-${columnKey}`}
+            renderAddIcon={renderAddIcon}
+          />
         ) : null}
       </KanbanColumnDropzone>
       {renderColumnFooter?.(column, columnItems)}

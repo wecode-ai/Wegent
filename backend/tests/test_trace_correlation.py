@@ -1,7 +1,10 @@
 """Exercise the real service middleware and HTTPX propagation in process."""
 
+from typing import Iterator
+
 import httpx
 import pytest
+from fastapi import FastAPI
 from opentelemetry import trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
@@ -14,18 +17,61 @@ from shared.telemetry.http import internal_http_event_hooks
 from shared.utils.http_client import traced_async_client
 
 
-@pytest.mark.asyncio
-async def test_chat_shell_to_backend_uses_one_trace_and_distinct_spans():
+@pytest.fixture(params=[False, True], ids=["uninstrumented", "auto-instrumented"])
+def service_apps(request: pytest.FixtureRequest) -> Iterator[list[FastAPI]]:
     from app.main import create_app as create_backend
     from chat_shell.main import create_app as create_chat_shell
 
+    automatic_provider = TracerProvider()
+    apps = []
+    try:
+        for create_app in (create_backend, create_chat_shell):
+            app = create_app()
+            apps.append(app)
+            if getattr(app, "_is_instrumented_by_opentelemetry", False):
+                FastAPIInstrumentor.uninstrument_app(app)
+            app.middleware_stack = None
+            if request.param:
+                FastAPIInstrumentor.instrument_app(
+                    app, tracer_provider=automatic_provider
+                )
+        yield apps
+    finally:
+        for app in apps:
+            if getattr(app, "_is_instrumented_by_opentelemetry", False):
+                FastAPIInstrumentor.uninstrument_app(app)
+        automatic_provider.shutdown()
+
+
+@pytest.fixture
+def in_memory_tracing(
+    service_apps: list[FastAPI],
+) -> Iterator[tuple[TracerProvider, InMemorySpanExporter]]:
     provider = TracerProvider()
     exporter = InMemorySpanExporter()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    backend = create_backend()
-    chat_shell = create_chat_shell()
-    FastAPIInstrumentor.instrument_app(backend, tracer_provider=provider)
-    FastAPIInstrumentor.instrument_app(chat_shell, tracer_provider=provider)
+    try:
+        yield provider, exporter
+    finally:
+        for app in service_apps:
+            if getattr(app, "_is_instrumented_by_opentelemetry", False):
+                FastAPIInstrumentor.uninstrument_app(app)
+        provider.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_chat_shell_to_backend_uses_one_trace_and_distinct_spans(
+    service_apps: list[FastAPI],
+    in_memory_tracing: tuple[TracerProvider, InMemorySpanExporter],
+) -> None:
+    backend, chat_shell = service_apps
+    provider, exporter = in_memory_tracing
+    for app in service_apps:
+        if getattr(app, "_is_instrumented_by_opentelemetry", False):
+            FastAPIInstrumentor.uninstrument_app(app)
+        # Uninstrumenting eagerly builds a stack; rebuild it with this provider.
+        app.middleware_stack = None
+        FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
 
     @backend.get("/__trace_probe")
     async def probe():
@@ -83,4 +129,3 @@ async def test_chat_shell_to_backend_uses_one_trace_and_distinct_spans():
         s for s in spans if s.context.span_id == backend_span.parent.span_id
     )
     assert f"{client_span.parent.span_id:016x}" == body["local_span"]
-    provider.shutdown()

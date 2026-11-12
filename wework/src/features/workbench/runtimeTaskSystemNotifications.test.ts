@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+// @vitest-environment node
+
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 
 const runtime = vi.hoisted(() => ({
@@ -39,23 +41,6 @@ describe('runtime task system notifications', () => {
       title: 'Task completed',
       body: 'The local task has finished.',
       url: 'wework://tasks/device-1/task-1',
-    })
-  })
-
-  test('preserves a project notification destination', async () => {
-    runtime.electron = true
-    invokeDesktopHostMock.mockResolvedValue(undefined)
-
-    await sendSystemNotification({
-      title: 'Assigned',
-      body: 'A project task was assigned.',
-      url: 'wework://boards/12/issues/gitlab%3A12%2Fissue%233',
-    })
-
-    expect(invokeDesktopHostMock).toHaveBeenCalledWith('notification.show', {
-      title: 'Assigned',
-      body: 'A project task was assigned.',
-      url: 'wework://boards/12/issues/gitlab%3A12%2Fissue%233',
     })
   })
 

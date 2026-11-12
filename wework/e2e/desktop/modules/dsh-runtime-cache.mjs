@@ -15,11 +15,6 @@ export async function verifyDefaultOnlyDshPackage(resourceRoot, runtimeRoot) {
     [...new Set(catalog.runtimes.map(runtime => runtime.dshVersion))],
     ['0.2.0-rc.2']
   )
-  assert.equal(
-    (await readdir(runtimeRoot)).includes('archives'),
-    false,
-    'The scenario must start without downloaded runtime archives'
-  )
   const legacy = catalog.downloadableRuntimes.find(runtime => runtime.dshVersion === '0.1.0-rc.8')
   if (!legacyDshRuntimeIsPublished()) {
     assert.equal(
@@ -27,11 +22,22 @@ export async function verifyDefaultOnlyDshPackage(resourceRoot, runtimeRoot) {
       undefined,
       'The first Windows arm64 release must not advertise a nonexistent legacy runtime'
     )
-    return
+    assert.equal(
+      (await readdir(runtimeRoot)).includes('archives'),
+      false,
+      'The scenario must start without downloaded runtime archives'
+    )
+    return legacy
   }
   assert.ok(legacy, 'The package must retain the pinned legacy runtime download descriptor')
   await assert.rejects(stat(join(resourceRoot, legacy.assetName)), { code: 'ENOENT' })
   await assert.rejects(stat(join(runtimeRoot, legacy.sourceFingerprint)), { code: 'ENOENT' })
+  assert.equal(
+    (await readdir(runtimeRoot)).includes('archives'),
+    false,
+    'The scenario must start without downloaded runtime archives'
+  )
+  return legacy
 }
 
 export async function verifyDownloadedDshRuntimeCache(runtimeRoot, version) {

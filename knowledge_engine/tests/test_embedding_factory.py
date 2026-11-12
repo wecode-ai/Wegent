@@ -26,7 +26,7 @@ def test_create_embedding_model_uses_runtime_model_name_when_model_id_missing(
     mocker: MockerFixture,
 ) -> None:
     custom_embedding_cls = mocker.patch(
-        "knowledge_engine.embedding.factory.CustomEmbedding",
+        "knowledge_engine.embedding.custom.CustomEmbedding",
         return_value=SimpleNamespace(),
     )
 
@@ -57,7 +57,7 @@ def test_create_embedding_model_exposes_additional_input_modalities(
 ) -> None:
     embedding_instance = SimpleNamespace()
     custom_embedding_cls = mocker.patch(
-        "knowledge_engine.embedding.factory.CustomEmbedding",
+        "knowledge_engine.embedding.custom.CustomEmbedding",
         return_value=embedding_instance,
     )
 

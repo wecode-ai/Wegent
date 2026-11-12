@@ -19,7 +19,7 @@ import { PermissionModeSelector } from '../controls/PermissionModeSelector'
 import { ProjectWorkBar } from '../controls/ProjectWorkBar'
 import { resolveAutomaticModel } from '../controls/runtimeModelSelection'
 import { createHttpCommentRuntime } from '../execution/httpCommentRuntime'
-import { startTaskAiRun } from '../execution/taskAiExecution'
+import { refreshTaskAfterComment, startTaskAiRun } from '../execution/taskAiExecution'
 import { commentAgentMentions } from '../execution/taskCardReply'
 import { useBrowserIssueExecution } from './browserIssueExecutionContext'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
@@ -119,6 +119,11 @@ export function BrowserIssueCommentComposer({
       return false
     const attachments = draft.attachments.attachments
     let persisted = false
+    let executionFailed = false
+    const reportError = (cause: unknown) => {
+      if (!executionFailed) draft.setError(cause instanceof Error ? cause.message : String(cause))
+      executionFailed = true
+    }
     try {
       if (!serverExecution && agent && !execution.target)
         throw new Error(t('activity.comment_execution_target_required'))
@@ -193,16 +198,23 @@ export function BrowserIssueCommentComposer({
           attachments,
           selectedModel: model,
           selectedModelOptions: options,
-          onError: draft.setError,
+          onError: reportError,
           onMessages,
           onTaskUpdated,
           startFailedText: t('workbench.project_chat_agent_start_failed'),
         })
       return true
     } catch (cause) {
-      draft.setError(cause instanceof Error ? cause.message : String(cause))
+      reportError(cause)
       return persisted
     } finally {
+      if (persisted)
+        await refreshTaskAfterComment({
+          projectId: project.id,
+          taskId: issue.id,
+          getTask: api.issues.get,
+          onTaskUpdated,
+        })
       draft.endOperation()
     }
   }

@@ -1,0 +1,12 @@
+{
+  "order": 193000,
+  "scenario": "./scenarios/collaboration-issue-badges.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 141000,
+      "shard": 7,
+      "position": 10000
+    }
+  }
+}

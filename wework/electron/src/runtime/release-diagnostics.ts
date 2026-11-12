@@ -1,8 +1,20 @@
 import { join } from 'node:path'
 import { appendFileSync } from 'node:fs'
 import { redactLog, RotatingLog } from './rotating-log.js'
+import { startStartupWatchdog } from './startup-watchdog.js'
 
 let log: RotatingLog | undefined
+let stopStartupWatchdog: (() => void) | undefined
+
+if (process.env.WEWORK_E2E_CONTROL_URL) {
+  process.on('uncaughtExceptionMonitor', (error, origin) => {
+    recordReleaseDiagnostic(
+      'uncaught-exception',
+      { errorType: error.name, message: error.message, stack: error.stack, origin },
+      true
+    )
+  })
+}
 
 /** Keep isolated activation diagnostics after Electron's relaunch loses stdio. */
 export function recordReleaseDiagnostic(
@@ -13,6 +25,17 @@ export function recordReleaseDiagnostic(
   const root = process.env.WEWORK_RELEASE_ROOT
   if (!root || !process.env.WEWORK_E2E_CONTROL_URL) return
   const path = join(root, 'activation-diagnostics.log')
+  if (event === 'startup-step' && details.step === 'core-dsh-start') {
+    stopStartupWatchdog?.()
+    stopStartupWatchdog = undefined
+    if (details.status === 'started') {
+      try {
+        stopStartupWatchdog = startStartupWatchdog(path, process.env.WEWORK_ACTIVE_RELEASE_ID)
+      } catch (error) {
+        reportDiagnosticError(error)
+      }
+    }
+  }
   const message = JSON.stringify({
     event,
     releaseId: process.env.WEWORK_ACTIVE_RELEASE_ID,

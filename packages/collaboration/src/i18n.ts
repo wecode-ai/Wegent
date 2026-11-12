@@ -259,6 +259,10 @@ const sharedMessages: Record<
   Readonly<Record<string, string>>
 > = {
   "zh-CN": {
+    "todo.milestone": "里程碑",
+    "todo.no_milestone": "未设置里程碑",
+    "todo.milestone_error": "里程碑操作失败，请重试",
+    "todo.milestone_retry": "重试",
     "todo.permission_owner": "所有者",
     "todo.project_members_intro": "管理项目访问权限与成员职责。",
     "todo.project_membership_inherit_hint":
@@ -347,6 +351,14 @@ const sharedMessages: Record<
     "todo.status_in_progress": "进行中",
     "todo.status_in_review": "待确认",
     "todo.status_completed": "已完成",
+    "todo.trigger_status_changed": "进入指定状态后",
+    "todo.trigger_status_changed_description": "Issue 进入指定状态时",
+    "todo.matching_status": "状态",
+    "todo.select_matching_status": "请选择状态",
+    "todo.trigger_entered_processing": "进入处理阶段后",
+    "todo.automatic_processing_prompt": "提示词（可选）",
+    "todo.automatic_processing_prompt_hint":
+      "触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。",
     "todo.projects_home": "项目空间",
     "todo.projects_home_subtitle": "跨项目的个人工作台与项目空间概览",
     "todo.new_project_space": "新建项目空间",
@@ -473,6 +485,9 @@ const sharedMessages: Record<
     "todo.access_token": "访问令牌",
     "todo.saved": "已保存",
     "todo.save_assignment": "保存分配",
+    "todo.notify_assignee": "通知负责人",
+    "todo.search_milestone": "搜索里程碑",
+    "todo.no_matching_milestone": "没有匹配的里程碑",
     "todo.save_and_notify": "保存并通知",
     "todo.save_without_notification": "仅保存不通知",
     "todo.save_options": "保存选项",
@@ -581,9 +596,12 @@ const sharedMessages: Record<
     "todo.priority_urgent": "紧急",
     "todo.assignee": "负责人",
     "todo.search_assignee": "搜索负责人",
-    "todo.comment_assign_to": "转派给",
-    "todo.keep_assignee": "保持当前",
+    "todo.comment_assign_to": "转派给：",
+    "todo.assignment_suggestion": "转派建议：{{name}}",
+    "todo.dismiss_assignment_suggestion": "忽略转派建议",
     "todo.send_and_assign": "发送并转派",
+    "todo.keep_assignee": "保持当前",
+    "todo.confirm_assignment": "填入转派对象",
     "todo.assign_only": "转派",
     "todo.no_matching_assignee": "没有匹配的负责人",
     "todo.assignee_add_member": "添加人员",
@@ -609,6 +627,9 @@ const sharedMessages: Record<
     "todo.none": "暂无",
     "todo.select_project_member": "选择项目空间成员",
     "todo.new_issue": "新建任务",
+    "todo.issue_markdown_hint": "支持 Markdown，可拖拽文件到编辑器添加附件",
+    "todo.created_at_short": "创建于 {{date}}",
+    "todo.automation_source": "自动化",
     "todo.issue_detail": "任务详情",
     "todo.project_space": "项目空间",
     "todo.new_sub_issue": "新建子任务",
@@ -724,7 +745,7 @@ const sharedMessages: Record<
     "todo.archive_issue_title": "归档任务？",
     "todo.archive_issue_description": "“{{title}}”将从看板中归档。",
     "todo.archive_issue_children_description":
-      "“{{title}}”及同批已完成子任务将从看板中归档。",
+      "“{{title}}”及其子任务将从看板中归档。",
     "todo.archive_issue_restore_hint": "归档后可从当前项目的归档箱恢复。",
     "todo.archive_issue_failed_count": "{{count}} 个任务归档失败，请重试。",
     "todo.archive_completed_tasks": "归档已完成任务",
@@ -792,6 +813,10 @@ const sharedMessages: Record<
     "workbench.quick_view_conversation": "查看对话",
   },
   en: {
+    "todo.milestone": "Milestone",
+    "todo.no_milestone": "No milestone",
+    "todo.milestone_error": "Milestone operation failed. Try again",
+    "todo.milestone_retry": "Retry",
     "todo.permission_owner": "Owner",
     "todo.project_members_intro":
       "Manage project access and member responsibilities.",
@@ -886,6 +911,15 @@ const sharedMessages: Record<
     "todo.status_in_progress": "In progress",
     "todo.status_in_review": "In review",
     "todo.status_completed": "Completed",
+    "todo.trigger_status_changed": "Status reached",
+    "todo.trigger_status_changed_description":
+      "When an issue enters the selected status",
+    "todo.matching_status": "Status",
+    "todo.select_matching_status": "Select a status",
+    "todo.trigger_entered_processing": "Processing phase entered",
+    "todo.automatic_processing_prompt": "Prompt (optional)",
+    "todo.automatic_processing_prompt_hint":
+      "Sent to AI when triggered to work on the current Issue. Leave blank to use the target's responsibilities.",
     "todo.projects_home": "Project spaces",
     "todo.projects_home_subtitle": "Your cross-project workspace overview",
     "todo.new_project_space": "New project space",
@@ -1018,6 +1052,9 @@ const sharedMessages: Record<
     "todo.access_token": "Access token",
     "todo.saved": "Saved",
     "todo.save_assignment": "Save assignment",
+    "todo.notify_assignee": "Notify assignee",
+    "todo.search_milestone": "Search milestones",
+    "todo.no_matching_milestone": "No matching milestones",
     "todo.save_and_notify": "Save and notify",
     "todo.save_without_notification": "Save without notifying",
     "todo.save_options": "Save options",
@@ -1130,9 +1167,12 @@ const sharedMessages: Record<
     "todo.priority_urgent": "Urgent",
     "todo.assignee": "Assignee",
     "todo.search_assignee": "Search assignees",
-    "todo.comment_assign_to": "Assign to",
-    "todo.keep_assignee": "Keep current",
+    "todo.comment_assign_to": "Assign to:",
+    "todo.assignment_suggestion": "Suggested assignee: {{name}}",
+    "todo.dismiss_assignment_suggestion": "Dismiss assignment suggestion",
     "todo.send_and_assign": "Send and assign",
+    "todo.keep_assignee": "Keep current",
+    "todo.confirm_assignment": "Use as assignment target",
     "todo.assign_only": "Assign",
     "todo.no_matching_assignee": "No matching assignees",
     "todo.assignee_add_member": "Add member",
@@ -1158,6 +1198,10 @@ const sharedMessages: Record<
     "todo.none": "None",
     "todo.select_project_member": "Select a project member",
     "todo.new_issue": "New issue",
+    "todo.issue_markdown_hint":
+      "Markdown supported. Drop files into the editor to attach them.",
+    "todo.created_at_short": "Created {{date}}",
+    "todo.automation_source": "Automation",
     "todo.issue_detail": "Issue details",
     "todo.project_space": "Project space",
     "todo.new_sub_issue": "New sub-issue",
@@ -1281,7 +1325,7 @@ const sharedMessages: Record<
     "todo.archive_issue_description":
       "“{{title}}” will be archived from the board.",
     "todo.archive_issue_children_description":
-      "“{{title}}” and completed child issues archived with it will be removed from the board.",
+      "“{{title}}” and its child issues will be removed from the board.",
     "todo.archive_issue_restore_hint":
       "You can restore it later from this project's archive.",
     "todo.archive_issue_failed_count":
@@ -1430,8 +1474,24 @@ export function localizeStandardStatuses<
   }
   return statuses.map((status) => ({
     ...status,
-    name: translate(`todo.status_${status.id}`, status.name),
+    name: localizeStandardStatusName(status.id, status.name, translate),
   }));
+}
+
+export function localizeStandardStatusName(
+  statusId: string,
+  name: string | null | undefined,
+  translate: CollaborationTranslate,
+): string {
+  const standardId = standardStatusIds.find((id) => id === statusId);
+  if (
+    !name ||
+    !standardId ||
+    !standardStatusNames[standardId].includes(name.trim())
+  ) {
+    return name ?? "";
+  }
+  return translate(`todo.status_${standardId}`, name);
 }
 
 export const collaborationMyWorkMessages: Record<

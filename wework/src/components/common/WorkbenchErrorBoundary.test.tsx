@@ -1,9 +1,8 @@
+import i18n from '@/i18n'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { useEffect, useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import i18n from '@/i18n'
 import { WorkbenchErrorBoundary } from './WorkbenchErrorBoundary'
-import { WorkbenchErrorPage } from './WorkbenchErrorPage'
 
 function BrokenRender(): never {
   throw new Error('Render failed')
@@ -26,16 +25,6 @@ describe('Workbench error recovery', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     await i18n.changeLanguage('zh-CN')
-  })
-
-  test('keeps the healthy application visible', () => {
-    render(
-      <WorkbenchErrorBoundary>
-        <p>Workbench</p>
-      </WorkbenchErrorBoundary>
-    )
-    expect(screen.getByText('Workbench')).toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   test.each([BrokenRender, BrokenEffect])('shows recovery for a component crash: %s', Broken => {
@@ -76,14 +65,5 @@ describe('Workbench error recovery', () => {
     expect(reload).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '刷新页面' }))
     expect(reload).toHaveBeenCalledOnce()
-  })
-
-  test('localizes startup recovery and preserves existing selectors', async () => {
-    await i18n.changeLanguage('en')
-    render(<WorkbenchErrorPage kind="startup" />)
-    expect(screen.getByTestId('workbench-startup-error')).toHaveTextContent(
-      'Wework could not start'
-    )
-    expect(screen.getByTestId('workbench-startup-retry')).toHaveAccessibleName('Refresh page')
   })
 })

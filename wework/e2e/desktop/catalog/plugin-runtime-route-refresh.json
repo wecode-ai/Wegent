@@ -1,0 +1,12 @@
+{
+  "order": 120000,
+  "scenario": "./scenarios/plugin-runtime-route-refresh.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "cloud": {
+      "order": 45000,
+      "shard": 7,
+      "position": 3000
+    }
+  }
+}

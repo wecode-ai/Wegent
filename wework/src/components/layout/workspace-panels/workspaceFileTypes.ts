@@ -1,3 +1,4 @@
+import { normalizeWorkspaceSeparators } from '@/lib/workspace-file-contract'
 const MARKDOWN_FILE_PATTERN = /\.(?:md|markdown)$/i
 
 export type WorkspaceFilePreviewKind = 'text' | 'binary' | 'unknown'
@@ -79,7 +80,7 @@ const BINARY_FILE_EXTENSIONS = new Set([
 const TEXT_FILE_NAMES = new Set(['dockerfile', 'license', 'makefile', 'readme'])
 
 function fileName(path: string): string {
-  return path.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? ''
+  return normalizeWorkspaceSeparators(path).split('/').pop()?.toLowerCase() ?? ''
 }
 
 export function isMarkdownFile(path: string): boolean {
@@ -145,4 +146,29 @@ export function isLikelyTextContent(bytes: Uint8Array): boolean {
     }
   }
   return controlCharacters / Math.max(text.length, 1) <= 0.01
+}
+
+export function mimeTypeForFileName(name: string): string {
+  const extension = name.split('.').pop()?.toLowerCase()
+  const types: Record<string, string> = {
+    csv: 'text/csv',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    gif: 'image/gif',
+    htm: 'text/html',
+    html: 'text/html',
+    jpeg: 'image/jpeg',
+    jpg: 'image/jpeg',
+    mp4: 'video/mp4',
+    ogv: 'video/ogg',
+    pdf: 'application/pdf',
+    png: 'image/png',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    webp: 'image/webp',
+    webm: 'video/webm',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  }
+  return types[extension ?? ''] ?? 'application/octet-stream'
 }

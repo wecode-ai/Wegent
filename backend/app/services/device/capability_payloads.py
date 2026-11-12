@@ -19,6 +19,8 @@ from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_package_storage import plugin_package_storage
+from app.services.plugin_release_components import components_with_manifest_account_auth
+from app.services.skill_resolution import get_runtime_skill_shells
 
 logger = logging.getLogger(__name__)
 
@@ -195,8 +197,9 @@ class CapabilityPayloadResolver:
         installed_plugin_ids: Optional[list[int]] = None,
         strict: bool = False,
         release_overrides: Optional[dict[int, int]] = None,
+        device_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        payloads: list[dict[str, Any]] = []
+        installed_rows: list[Kind] = []
         seen_ids: set[int] = set()
         for installed_id in installed_plugin_ids or []:
             installed = self._get_user_kind(
@@ -219,15 +222,21 @@ class CapabilityPayloadResolver:
                 continue
             if installed.id in seen_ids:
                 continue
-            payloads.append(
-                self._plugin_payload(
-                    db,
-                    installed,
-                    release_id_override=(release_overrides or {}).get(installed.id),
-                )
-            )
+            installed_rows.append(installed)
             seen_ids.add(installed.id)
-        return payloads
+        overrides = (
+            release_overrides
+            if release_overrides is not None
+            else self._device_release_overrides(
+                db, user_id=user_id, device_id=device_id, installed_rows=installed_rows
+            )
+        )
+        return [
+            self._plugin_payload(
+                db, installed, release_id_override=overrides.get(installed.id)
+            )
+            for installed in installed_rows
+        ]
 
     def _resolve_mcp_payloads(
         self,
@@ -343,6 +352,7 @@ class CapabilityPayloadResolver:
             "name": name,
             "namespace": namespace,
             "is_public": skill.user_id == 0,
+            "bind_shells": get_runtime_skill_shells(skill),
             "content_hash": f"sha256:{file_hash}" if file_hash else None,
             "download_path": (
                 f"/api/v1/kinds/skills/{skill.id}/download?namespace={namespace}"
@@ -407,9 +417,10 @@ class CapabilityPayloadResolver:
                 if release_id_override is not None:
                     payload["version"] = release.version
                     payload["checksum"] = f"sha256:{release.sha256}"
-                    release_components = (release.scan_report_json or {}).get(
-                        "components"
-                    ) or {}
+                    release_components = components_with_manifest_account_auth(
+                        (release.scan_report_json or {}).get("components") or {},
+                        release.manifest_json or {},
+                    )
                     if release_components:
                         payload["components"] = release_components
                 download_url, expires_at = plugin_package_storage.presign_download(

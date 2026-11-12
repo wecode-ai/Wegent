@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { verifyArchivedStandInNotification } from '../modules/stand-in-archived-notification.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -13,7 +14,8 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
-const OBSERVATION_MS = 12_000
+// Cover one complete five-second scheduler interval, including timer jitter.
+const OBSERVATION_MS = 5_500
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let cloud
@@ -102,7 +104,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     },
     async verify(control) {
       const device = await environment.waitForConnectedAppDevice()
-      deviceId = device.app_device_id ?? device.device_id
+      deviceId = device.execution_target_id
+      assert.ok(deviceId, 'The real App must expose its unique Backend execution route')
       const params = { projectId: String(project.id), userId: user.id, projectStore: 'cloud' }
       const initial = await requestExecutor(control, 'runtime.stand_in.get', params, uiTimeoutMs)
       settings = await requestExecutor(
@@ -126,7 +129,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       const notice = inbox.items.find(row => row.payload.itemId === unmatched.id)
       assert.ok(notice, 'The real assignment notification must be stored')
       await control.command('waitFor', `[data-testid="wework-notification-${notice.id}"]`)
-      // Observe more than two old five-second polling periods on an unhandled assignment.
+      // Observe beyond one old five-second polling period on an unhandled assignment.
       await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
       assert.equal(await countAssignments(unmatched), 0, 'Unmatched work must not poll assignments')
       assert.deepEqual(await request(`/v1/loop-items/${unmatched.id}/tasks`), [])
@@ -178,6 +181,15 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       assert.equal(await countAssignments(unmatched), 0)
       assert.equal(modelRequests, 1)
       assert.deepEqual(await request(`/v1/loop-items/${matching.id}/tasks`), rows)
+      await verifyArchivedStandInNotification({
+        control,
+        request,
+        projectId: String(project.id),
+        issueId: matching.id,
+        taskId: binding.task_id,
+        userId: user.id,
+        uiTimeoutMs,
+      })
       await requestExecutor(
         control,
         'runtime.stand_in.save',

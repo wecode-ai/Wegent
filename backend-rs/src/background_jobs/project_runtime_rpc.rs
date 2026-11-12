@@ -75,10 +75,27 @@ pub(crate) async fn call(
     payload: Value,
     timeout: std::time::Duration,
 ) -> Result<Value> {
-    let online = crate::device_online_state::read_online_state::<Value>(state, user_id, device_id)
-        .await
-        .map_err(|error| anyhow::anyhow!("Runtime online lookup failed: {error:?}"))?
-        .context("Device is offline")?;
+    // `runtime_rpc_service.call` resolves the owned route (a MySQL Device
+    // read) before consulting the online entry, and uses the resolved runtime
+    // device id for the RPC address.
+    let route =
+        crate::device_identity::resolve_runtime_route_identity(&state.mysql, user_id, device_id)
+            .await
+            .map_err(|error| anyhow::anyhow!("Runtime route lookup failed: {error:?}"))?
+            .context(
+                "Device not found, access denied, or ambiguous historical identity; \
+         select a specific device",
+            )?;
+    let payload =
+        enforce_remote_runtime_proxy(state, user_id, route.device_type, method, payload).await?;
+    let online = crate::device_online_state::read_online_state::<Value>(
+        state,
+        user_id,
+        &route.runtime_device_id,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("Runtime online lookup failed: {error:?}"))?
+    .context("Device is offline")?;
     let socket = online["socket_id"]
         .as_str()
         .filter(|value| !value.is_empty())
@@ -109,7 +126,7 @@ pub(crate) async fn call(
     })
 }
 
-async fn direct_execution(
+pub(crate) async fn direct_execution(
     state: &AppState,
     user: &UserRow,
     task_id: &str,
@@ -148,7 +165,7 @@ async fn direct_execution(
     )
 }
 
-fn sign(state: &AppState, claims: &Value) -> Result<String> {
+pub(crate) fn sign(state: &AppState, claims: &Value) -> Result<String> {
     let algorithm = match state.auth.algorithm.as_str() {
         "HS384" => jsonwebtoken::Algorithm::HS384,
         "HS512" => jsonwebtoken::Algorithm::HS512,
@@ -161,7 +178,18 @@ fn sign(state: &AppState, claims: &Value) -> Result<String> {
     )?)
 }
 
-async fn runtime_model_config(
+#[derive(Debug)]
+pub(crate) struct IncompleteCloudModelIdentity;
+
+impl std::fmt::Display for IncompleteCloudModelIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Cloud model identity is incomplete")
+    }
+}
+
+impl std::error::Error for IncompleteCloudModelIdentity {}
+
+pub(crate) async fn runtime_model_config(
     state: &AppState,
     user: &UserRow,
     selection: &Value,
@@ -182,10 +210,10 @@ async fn runtime_model_config(
         let namespace = options["weworkCloudModelNamespace"]
             .as_str()
             .filter(|value| !value.is_empty())
-            .context("Cloud model identity is incomplete")?;
+            .ok_or(IncompleteCloudModelIdentity)?;
         let owner = super::authority::integer(&options["weworkCloudModelResourceUserId"])
             .filter(|value| *value >= 0)
-            .context("Cloud model identity is incomplete")?;
+            .ok_or(IncompleteCloudModelIdentity)?;
         let config = crate::llm_proxy::resolve_model_config(
             state,
             user,
@@ -206,15 +234,15 @@ async fn runtime_model_config(
             }
             crate::llm_proxy::model_config::Protocol::AnthropicMessages => "anthropic-messages",
         };
-        let base = crate::config::env_or_dotenv("WEGENT_BACKEND_PUBLIC_URL")
-            .filter(|value| !value.trim().is_empty())
-            .context("Cloud model gateway is not configured")?;
+        let base = crate::attachments::public_link::public_base_url();
+        if base.trim().is_empty() {
+            bail!("Cloud model gateway is not configured");
+        }
         let access = sign(
             state,
             &json!({"sub":user.user_name,"user_id":user.id,"exp":chrono::Utc::now().timestamp()+30*60}),
         )?;
-        let native = format == "openai-responses";
-        let mut result = json!({"model":"openai","model_id":model,"api_format":"responses","protocol":"openai-responses","upstream_api_format":format,"codex_catalog_model_id":"wework-gpt-5.6-sol","base_url":format!("{}/api/runtime-work/llm-responses-proxy",base.trim_end_matches('/')),"api_key":access,"default_headers":{"X-Wegent-Model-Type":kind,"X-Wegent-Model-Namespace":namespace,"X-Wegent-Model-User-Id":owner.to_string(),"X-Wegent-Upstream-Header-wecode-executor":"codex","X-Wegent-Upstream-Header-wecode-source":"wegent-agent"},"runtime_config":{"codex":{"use_user_config":false,"configured":true}},"wework_model_kind":"cloud","tool_profile":"custom","codex_responses_compat_proxy":true,"native_tool_search":native,"native_namespace_tools":native});
+        let mut result = json!({"model":"openai","model_id":model,"api_format":"responses","protocol":"openai-responses","upstream_api_format":format,"codex_catalog_model_id":"wework-gpt-5.6-sol","base_url":format!("{}/api/runtime-work/llm-responses-proxy",base.trim_end_matches('/')),"api_key":access,"default_headers":{"X-Wegent-Model-Type":kind,"X-Wegent-Model-Namespace":namespace,"X-Wegent-Model-User-Id":owner.to_string(),"X-Wegent-Upstream-Header-wecode-executor":"codex","X-Wegent-Upstream-Header-wecode-source":"wegent-agent"},"runtime_config":{"codex":{"use_user_config":false,"configured":true}},"wework_model_kind":"cloud","tool_profile":"function","codex_responses_compat_proxy":true,"native_tool_search":false,"native_namespace_tools":false});
         apply_model_options(&mut result, options);
         return Ok(result);
     }
@@ -251,7 +279,7 @@ async fn runtime_model_config(
     Ok(result)
 }
 
-fn apply_model_options(config: &mut Value, options: &Value) {
+pub(crate) fn apply_model_options(config: &mut Value, options: &Value) {
     for (from, to) in [
         ("weworkCloudModelNativeToolSearch", "native_tool_search"),
         (
@@ -280,4 +308,132 @@ fn apply_model_options(config: &mut Value, options: &Value) {
             config[key] = options[key].clone();
         }
     }
+}
+
+/// `runtime_rpc_service.RUNTIME_MODEL_CONFIG_METHODS`: the methods whose
+/// payload carries a `model_config` the account proxy policy applies to.
+const RUNTIME_MODEL_CONFIG_METHODS: [&str; 8] = [
+    "runtime.text.generate",
+    "runtime.tasks.create",
+    "runtime.tasks.send",
+    "runtime.tasks.rollback",
+    "runtime.tasks.interrupt_and_send",
+    "runtime.tasks.supervisor.set",
+    "runtime.automations.create",
+    "runtime.automations.update",
+];
+
+/// `runtime_rpc_service._enforce_remote_runtime_proxy`: remote/cloud runtime
+/// dispatches re-read the account's `UserProxyConfig` and rewrite every
+/// `model_config` in the payload with the resulting proxy policy. Methods
+/// without a model config (for example `runtime.tasks.get`) are untouched.
+async fn enforce_remote_runtime_proxy(
+    state: &AppState,
+    user_id: i64,
+    device_type: crate::device_identity::DeviceType,
+    method: &str,
+    payload: Value,
+) -> Result<Value> {
+    if !matches!(
+        device_type,
+        crate::device_identity::DeviceType::Cloud | crate::device_identity::DeviceType::Remote
+    ) || !RUNTIME_MODEL_CONFIG_METHODS.contains(&method)
+        || !contains_model_config(&payload)
+    {
+        return Ok(payload);
+    }
+    let proxy_url = crate::users_runtime_configs::proxy_url_for_execution(&state.mysql, user_id)
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("Failed to resolve cloud device proxy configuration: {error:?}")
+        })?;
+    let mut payload = payload;
+    apply_model_config_proxy(&mut payload, &proxy_url);
+    Ok(payload)
+}
+
+/// `_runtime_model_configs`: any object value stored under `model_config` or
+/// `modelConfig`, at any depth.
+fn contains_model_config(value: &Value) -> bool {
+    match value {
+        Value::Array(items) => items.iter().any(contains_model_config),
+        Value::Object(map) => map.iter().any(|(key, item)| {
+            (key == "model_config" || key == "modelConfig") && item.is_object()
+                || contains_model_config(item)
+        }),
+        _ => false,
+    }
+}
+
+fn apply_model_config_proxy(value: &mut Value, proxy_url: &str) {
+    match value {
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|item| apply_model_config_proxy(item, proxy_url)),
+        Value::Object(map) => {
+            for (key, item) in map.iter_mut() {
+                if (key == "model_config" || key == "modelConfig") && item.is_object() {
+                    set_runtime_proxy(item, proxy_url);
+                    continue;
+                }
+                apply_model_config_proxy(item, proxy_url);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `_set_runtime_proxy`: a backend-gated cloud model never uses the provider
+/// proxy; every other model replaces its proxy with the account URL.
+fn set_runtime_proxy(model_config: &mut Value, proxy_url: &str) {
+    let Some(config) = model_config.as_object_mut() else {
+        return;
+    };
+    let proxy_url = if uses_backend_model_gateway(config) {
+        ""
+    } else {
+        proxy_url
+    };
+    config.remove("proxy_url");
+    config.remove("proxyUrl");
+    if proxy_url.is_empty() {
+        config.remove("proxy");
+    } else {
+        config.insert("proxy".to_string(), json!({"url": proxy_url}));
+    }
+    let mut runtime_config = config
+        .remove("runtimeConfig")
+        .or_else(|| config.get("runtime_config").cloned())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    let mut codex = runtime_config
+        .get("codex")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let has_proxy = !proxy_url.is_empty();
+    codex.insert("use_proxy".to_string(), json!(has_proxy));
+    codex.insert("proxy_configured".to_string(), json!(has_proxy));
+    runtime_config.insert("codex".to_string(), Value::Object(codex));
+    config.insert("runtime_config".to_string(), Value::Object(runtime_config));
+}
+
+/// `_uses_backend_model_gateway`: the model already routes through the backend
+/// gateway, so device-to-backend traffic must not use a provider proxy.
+fn uses_backend_model_gateway(config: &serde_json::Map<String, Value>) -> bool {
+    let headers = config.get("default_headers").and_then(Value::as_object);
+    let base = config
+        .get("base_url")
+        .or_else(|| config.get("baseUrl"))
+        .and_then(Value::as_str);
+    let (Some(headers), Some(base)) = (headers, base) else {
+        return false;
+    };
+    let path_ok = url::Url::parse(base).ok().is_some_and(|url| {
+        url.path().trim_end_matches('/') == "/api/runtime-work/llm-responses-proxy"
+    });
+    path_ok
+        && headers
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case("x-wegent-model-type"))
 }

@@ -2,7 +2,7 @@
   "name": "@wegent/wework-electron",
   "private": true,
   "packageManager": "pnpm@11.7.0",
-  "version": "0.6.4-beta.1",
+  "version": "0.6.8-beta.4",
   "description": "Wework desktop workbench",
   "author": "Wecode",
   "type": "module",
@@ -27,19 +27,21 @@
     "@types/archiver": "8.0.0",
     "@types/node": "24.13.3",
     "@types/semver": "7.8.0",
+    "@types/yauzl": "3.4.0",
     "electron": "43.0.0",
     "electron-builder": "26.15.3",
+    "pnpm": "11.7.0",
     "typescript": "~6.0.2",
     "vitest": "4.1.7"
   },
   "dependencies": {
     "@trycua/cua-driver": "0.22.1",
     "archiver": "8.0.0",
-    "extract-zip": "2.0.1",
     "semver": "7.8.5",
     "socket.io-client": "4.8.3",
     "systeminformation": "5.33.15",
     "tar": "7.5.22",
-    "yaml": "2.9.0"
+    "yaml": "2.9.0",
+    "yauzl": "3.4.0"
   }
 }

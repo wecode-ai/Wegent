@@ -131,26 +131,14 @@ class ExecutionDispatcher:
             )
             # Create default emitter if not provided
             if emitter is None:
-                # Extract team info from request for task:created event
-                team_id = None
-                team_name = None
-                is_group_chat = False
-                if request.bot and len(request.bot) > 0:
-                    team_id = request.bot[0].get("team_id")
-                    team_name = request.bot[0].get("team_name")
-                    is_group_chat = request.bot[0].get("is_group_chat", False)
-
-                # Extract task title from request
-                task_title = request.task_title
-
                 emitter = WebSocketResultEmitter(
                     task_id=request.task_id,
                     subtask_id=request.subtask_id,
                     user_id=request.user.get("id") if request.user else None,
-                    team_id=team_id,
-                    team_name=team_name,
-                    task_title=task_title,
-                    is_group_chat=is_group_chat,
+                    team_id=request.team_id,
+                    team_name=request.team_name,
+                    task_title=request.task_title,
+                    is_group_chat=request.is_group_chat,
                     project_id=request.project_id,
                 )
 

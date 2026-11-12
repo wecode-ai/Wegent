@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 
 import { ACTIVE_WORKBENCH_SELECTOR } from './shared.mjs'
+import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 import {
   TERMINAL_HISTORY_TURN_COUNT as LEGACY_TURN_COUNT,
   assertAsyncHistoryUnloaded,
@@ -39,28 +41,55 @@ async function assertLegacyContext(control, first, last) {
   }
 }
 
-export async function verifyLegacySearch(control, timeoutMs) {
+export async function verifyLegacySearch(control, taskId, timeoutMs) {
   const findInput = '[data-testid="conversation-find-input"]'
+  const historyStart = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`
   const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
   const loadNewer = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-transcript-button"]`
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`,
-    { timeoutMs }
-  )
-  await control.command('waitFor', '[data-testid="assistant-message-content"]', {
-    text: `Legacy search answer ${LEGACY_TURN_COUNT - 1}`,
+  const answers = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+  const latestAnswer = `Legacy search answer ${LEGACY_TURN_COUNT - 1}`
+  const latestMessageId = `runtime-view:legacy-search-turn-${LEGACY_TURN_COUNT - 1}:assistant`
+  const gates = runtimeTransportGates(control)
+  const initialTranscript = 'legacy-search-initial-transcript'
+  await gates.arm({
+    id: initialTranscript,
+    kind: 'response',
+    name: 'runtime.tasks.transcript',
+    where: [{ path: 'params.taskId', equals: taskId }],
   })
-  const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+  try {
+    await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
+    await gates.wait(initialTranscript, undefined, timeoutMs)
+    // Find must suspend automatic pagination before the real initial page arrives.
+    await control.command('nativePress', COMPOSER_SELECTOR, {
+      key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+    })
+    await assertFindInputFocus(control, findInput)
+  } finally {
+    if (await gates.read(initialTranscript)) await gates.release(initialTranscript)
+  }
+  await control.command('waitFor', `${historyStart}[aria-busy="false"]`, { timeoutMs })
+  await control.command('waitFor', answers, {
+    text: latestAnswer,
+    visible: true,
+  })
+  const original = (
+    await waitForWorkbenchDebugState(
+      control,
+      ({ pane }) =>
+        pane?.currentRuntimeTask?.taskId === taskId &&
+        pane.messageSummary.lastMessage?.id === latestMessageId &&
+        pane.transcript.loading === false &&
+        pane.transcript.loadingMoreBefore === false,
+      'The live transcript did not finish loading before the search baseline',
+      timeoutMs
+    )
+  ).pane
   await assertAsyncHistoryUnloaded(control)
   assert.doesNotMatch(
     await control.command('getText', '[data-testid="assistant-message-content"]'),
     /interrupted|TERMINAL_ERROR_BODY/
   )
-  await control.command('nativePress', COMPOSER_SELECTOR, {
-    key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
-  })
-  await assertFindInputFocus(control, findInput)
   await control.command('fill', findInput, { value: LEGACY_ATTACHMENT_PREVIEW })
   await waitForHistorySearchCount(control, '0 个结果', timeoutMs)
   assert.equal(
@@ -107,17 +136,32 @@ export async function verifyLegacySearch(control, timeoutMs) {
     'Browsing either side of a historical search match reported a history failure'
   )
   await verifyTerminalHistorySearch(control, timeoutMs)
-  await control.command('nativePress', findInput, { key: 'Escape' })
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`
-  )
-  await control.command('waitFor', '[data-testid="assistant-message-content"]', {
-    text: `Legacy search answer ${LEGACY_TURN_COUNT - 1}`,
+  const beforeRestore = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  // Restore the live view while find still owns pagination. Escape resumes normal
+  // automatic paging, whose valid writes are independent of search isolation.
+  await control.command('fill', findInput, { value: '' })
+  await control.command('waitFor', `${historyStart}[aria-busy="false"]`)
+  await control.command('waitFor', answers, {
+    text: latestAnswer,
+    visible: true,
   })
-  const restored = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+  const restored = (
+    await waitForWorkbenchDebugState(
+      control,
+      ({ pane }) =>
+        pane?.currentRuntimeTask?.taskId === taskId && pane.updatedAt > beforeRestore.updatedAt,
+      'The restored live view did not publish its current state',
+      timeoutMs
+    )
+  ).pane
   // Navigation metadata loads independently while search is open.
-  for (const field of ['loading', 'hasMoreBefore', 'loadingMoreBefore', 'loadedRanges']) {
+  for (const field of [
+    'loading',
+    'hasMoreBefore',
+    'loadingMoreBefore',
+    'beforeCursor',
+    'loadedRanges',
+  ]) {
     assert.deepEqual(
       restored.transcript[field],
       original.transcript[field],
@@ -127,4 +171,11 @@ export async function verifyLegacySearch(control, timeoutMs) {
   assert.deepEqual(restored.messageSummary, original.messageSummary, 'Search changed live messages')
   assert.equal(Number(await control.command('getElementCount', loadNewer)), 0)
   await assertAsyncHistoryUnloaded(control)
+  await control.command('nativePress', findInput, { key: 'Escape' })
+  assert.equal(Number(await control.command('getElementCount', findInput)), 0)
+  assert.equal(Number(await control.command('getElementCount', loadNewer)), 0)
+  await control.command('waitFor', answers, {
+    text: latestAnswer,
+    visible: true,
+  })
 }

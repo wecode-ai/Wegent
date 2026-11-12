@@ -8,6 +8,10 @@ import {
   type WeworkUpdateDownloadProgress,
   type WeworkUpdateInfo,
 } from '@/lib/app-updater'
+import {
+  createWeworkUpdateFailureError,
+  WeworkUpdateRetryConfirmationError,
+} from '@/lib/app-updater-errors'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useAppVersion } from '@/hooks/useAppVersion'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -90,6 +94,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   )
   const [error, setError] = useState<AppUpdateError | null>(null)
   const [restartConfirmationOpen, setRestartConfirmationOpen] = useState(false)
+  const [retryUpdate, setRetryUpdate] = useState<WeworkUpdateInfo | null>(null)
   const [downloadedUpdateVersion, setDownloadedUpdateVersion] = useState<string | null>(null)
   const updateChannelRef = useRef(updateChannel)
   const autoUpdateEnabledRef = useRef(autoUpdateEnabled)
@@ -99,8 +104,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     promise: Promise<UpdateCheckResult>
   } | null>(null)
   const activeDownloadRef = useRef<{
-    version: string
-    promise: Promise<void>
+    promise: Promise<WeworkUpdateInfo | null>
     progressListeners: Set<(progress: WeworkUpdateDownloadProgress) => void>
   } | null>(null)
   const simulationTimerRef = useRef<number | null>(null)
@@ -117,11 +121,11 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const downloadUpdate = useCallback(
     (
-      update: WeworkUpdateInfo,
-      onProgress?: (progress: WeworkUpdateDownloadProgress) => void
-    ): Promise<void> => {
+      onProgress?: (progress: WeworkUpdateDownloadProgress) => void,
+      retryToken?: string
+    ): Promise<WeworkUpdateInfo | null> => {
       const activeDownload = activeDownloadRef.current
-      if (activeDownload?.version === update.version) {
+      if (activeDownload) {
         if (!onProgress) return activeDownload.promise
 
         activeDownload.progressListeners.add(onProgress)
@@ -132,10 +136,14 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
       const progressListeners = new Set<(progress: WeworkUpdateDownloadProgress) => void>()
       if (onProgress) progressListeners.add(onProgress)
-      const promise = downloadPendingWeworkUpdate(progress => {
+      const reportProgress = (progress: WeworkUpdateDownloadProgress) => {
+        if (progress.update !== undefined) setAvailableUpdate(progress.update)
         progressListeners.forEach(listener => listener(progress))
-      })
-      activeDownloadRef.current = { version: update.version, promise, progressListeners }
+      }
+      const promise = retryToken
+        ? downloadPendingWeworkUpdate(reportProgress, retryToken)
+        : downloadPendingWeworkUpdate(reportProgress)
+      activeDownloadRef.current = { promise, progressListeners }
       const clearActiveDownload = () => {
         if (activeDownloadRef.current?.promise === promise) {
           activeDownloadRef.current = null
@@ -152,31 +160,75 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   )
 
   const markUpdateReadyToInstall = useCallback((version: string) => {
+    setRetryUpdate(null)
     setDownloadedUpdateVersion(version)
     setDownloadProgress(null)
     setStatus('available')
     setRestartConfirmationOpen(true)
   }, [])
 
+  const requestRetryConfirmation = useCallback((update: WeworkUpdateInfo) => {
+    setAvailableUpdate(update)
+    setDownloadedUpdateVersion(null)
+    setRestartConfirmationOpen(false)
+    setRetryUpdate(update.retryConfirmation ? update : null)
+    setDownloadProgress(null)
+    setStatus('available')
+    setError(null)
+  }, [])
+
+  const handleDownloadFailure = useCallback(
+    (caughtError: unknown) => {
+      if (caughtError instanceof WeworkUpdateRetryConfirmationError) {
+        requestRetryConfirmation(caughtError.update)
+        return
+      }
+      setDownloadProgress(null)
+      setStatus('error')
+      setError(createAppUpdateError(caughtError, 'download'))
+    },
+    [requestRetryConfirmation]
+  )
+
+  const applyDownloadResult = useCallback(
+    (update: WeworkUpdateInfo | null) => {
+      if (update?.retryConfirmation && !update.readyToInstall) {
+        requestRetryConfirmation(update)
+        return
+      }
+      setAvailableUpdate(update)
+      setError(null)
+      if (update) {
+        markUpdateReadyToInstall(update.version)
+      } else {
+        setDownloadedUpdateVersion(null)
+        setRestartConfirmationOpen(false)
+        setRetryUpdate(null)
+        setDownloadProgress(null)
+        setStatus('upToDate')
+      }
+    },
+    [markUpdateReadyToInstall, requestRetryConfirmation]
+  )
+
   const startBackgroundDownload = useCallback(
-    (update: WeworkUpdateInfo, channel: WeworkUpdateChannel) => {
+    (channel: WeworkUpdateChannel) => {
       setError(null)
       setStatus('downloading')
       setDownloadProgress({ downloadedBytes: 0, totalBytes: null, phase: 'preparing' })
-      void downloadUpdate(update, setDownloadProgress)
-        .then(() => {
+      void downloadUpdate(setDownloadProgress)
+        .then(update => {
           if (updateChannelRef.current === channel) {
-            markUpdateReadyToInstall(update.version)
+            applyDownloadResult(update)
           }
         })
         .catch(caughtError => {
           if (updateChannelRef.current === channel) {
-            setStatus('error')
-            setError(createAppUpdateError(caughtError, 'download'))
+            handleDownloadFailure(caughtError)
           }
         })
     },
-    [downloadUpdate, markUpdateReadyToInstall]
+    [downloadUpdate, applyDownloadResult, handleDownloadFailure]
   )
 
   const isUpdateBusy = status === 'downloading' || status === 'installing'
@@ -188,7 +240,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         .then(progress => {
           if (progress?.phase !== 'failed') return
           setError(
-            createAppUpdateError(new Error(progress.failure?.message || 'Update failed'), 'install')
+            createAppUpdateError(createWeworkUpdateFailureError(progress.failure), 'install')
           )
           setStatus('error')
           setDownloadedUpdateVersion(null)
@@ -201,6 +253,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const resetDownloadedUpdate = useCallback(() => {
     setDownloadedUpdateVersion(null)
     setRestartConfirmationOpen(false)
+    setRetryUpdate(null)
   }, [])
 
   const runCheck = useCallback(
@@ -211,7 +264,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       silent: boolean
       channel?: WeworkUpdateChannel
     }): Promise<WeworkUpdateInfo | null> => {
-      if (isUpdateBusy) {
+      if (isUpdateBusy || activeDownloadRef.current) {
         return availableUpdate
       }
 
@@ -224,14 +277,10 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
         const result = await activeCheck.promise
         if (!silent && channel === updateChannelRef.current) {
-          setAvailableUpdate(result.update)
           if (result.error) {
             setStatus('error')
             setError(result.error)
-          } else if (result.update) {
-            setStatus('available')
-            setError(null)
-          } else {
+          } else if (!result.update) {
             setStatus('upToDate')
             setError(null)
           }
@@ -243,6 +292,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       }
 
       const promise = (async (): Promise<UpdateCheckResult> => {
+        setRetryUpdate(null)
         if (!silent && channel === updateChannelRef.current) {
           setStatus('checking')
           setError(null)
@@ -255,15 +305,22 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           }
 
           setAvailableUpdate(update)
-          setDownloadedUpdateVersion(null)
+          if (update?.readyToInstall && downloadedUpdateVersion === update.version) {
+            setStatus('available')
+            setError(null)
+            return { update, error: null }
+          }
+          resetDownloadedUpdate()
 
           if (update) {
             setStatus('available')
             setError(null)
-            if (autoUpdateEnabledRef.current) {
-              startBackgroundDownload(update, channel)
+            if (update.retryConfirmation) {
+              if (!silent || autoUpdateEnabledRef.current) requestRetryConfirmation(update)
+            } else if (autoUpdateEnabledRef.current) {
+              startBackgroundDownload(channel)
             }
-          } else if (!silent) {
+          } else if (!silent || availableUpdate) {
             setStatus('upToDate')
             setError(null)
           }
@@ -288,7 +345,15 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [availableUpdate, isUpdateBusy, startBackgroundDownload, updateChannel]
+    [
+      availableUpdate,
+      downloadedUpdateVersion,
+      isUpdateBusy,
+      resetDownloadedUpdate,
+      requestRetryConfirmation,
+      startBackgroundDownload,
+      updateChannel,
+    ]
   )
 
   const checkNow = useCallback(() => runCheck({ silent: false }), [runCheck])
@@ -371,30 +436,61 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       setRestartConfirmationOpen(true)
       return
     }
+    if (availableUpdate.retryConfirmation) {
+      requestRetryConfirmation(availableUpdate)
+      return
+    }
     if (simulatedUpdatePendingRef.current && availableUpdate.version === SIMULATED_UPDATE_VERSION) {
       startSimulatedDownload()
       return
     }
 
     setStatus('downloading')
-    setDownloadProgress({ downloadedBytes: 0, totalBytes: null })
+    setDownloadProgress({ downloadedBytes: 0, totalBytes: null, phase: 'preparing' })
     setError(null)
 
     try {
-      await downloadUpdate(availableUpdate, setDownloadProgress)
-      markUpdateReadyToInstall(availableUpdate.version)
+      const update = await downloadUpdate(setDownloadProgress)
+      applyDownloadResult(update)
     } catch (caughtError) {
-      setDownloadProgress(null)
-      setStatus('error')
-      setError(createAppUpdateError(caughtError, 'download'))
+      handleDownloadFailure(caughtError)
     }
   }, [
     availableUpdate,
     downloadedUpdateVersion,
     downloadUpdate,
-    markUpdateReadyToInstall,
+    applyDownloadResult,
+    handleDownloadFailure,
+    requestRetryConfirmation,
     startSimulatedDownload,
     status,
+  ])
+
+  const confirmRetryUpdate = useCallback(async () => {
+    const token = retryUpdate?.retryConfirmation?.token
+    if (
+      !token ||
+      token !== availableUpdate?.retryConfirmation?.token ||
+      isUpdateBusy ||
+      activeCheckRef.current
+    )
+      return
+    setRetryUpdate(null)
+    setStatus('downloading')
+    setError(null)
+    setDownloadProgress({ downloadedBytes: 0, totalBytes: null, phase: 'preparing' })
+    try {
+      applyDownloadResult(await downloadUpdate(setDownloadProgress, token))
+    } catch (caughtError) {
+      handleDownloadFailure(caughtError)
+    }
+  }, [
+    availableUpdate,
+    retryUpdate,
+    isUpdateBusy,
+    applyDownloadResult,
+    downloadUpdate,
+    handleDownloadFailure,
   ])
 
   const dismissInstalledReleaseNotes = useCallback(() => {
@@ -410,16 +506,24 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       autoUpdateEnabledRef.current = enabled
       setAutoUpdateEnabledState(enabled)
 
-      if (enabled && availableUpdate && !isUpdateBusy) {
-        startBackgroundDownload(availableUpdate, updateChannel)
+      if (enabled && availableUpdate && !isUpdateBusy && !downloadedUpdateVersion) {
+        if (availableUpdate.retryConfirmation) requestRetryConfirmation(availableUpdate)
+        else startBackgroundDownload(updateChannel)
       }
     },
-    [availableUpdate, isUpdateBusy, startBackgroundDownload, updateChannel]
+    [
+      availableUpdate,
+      downloadedUpdateVersion,
+      isUpdateBusy,
+      requestRetryConfirmation,
+      startBackgroundDownload,
+      updateChannel,
+    ]
   )
 
   const setUpdateChannel = useCallback(
     async (channel: WeworkUpdateChannel) => {
-      if (channel === updateChannel || isUpdateBusy) return
+      if (channel === updateChannel || isUpdateBusy || activeDownloadRef.current) return
 
       window.localStorage.setItem(APP_UPDATE_CHANNEL_KEY, channel)
       updateChannelRef.current = channel
@@ -439,6 +543,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     resetDownloadedUpdate()
     setAvailableUpdate({
       currentVersion: appVersion ?? __WEWORK_APP_VERSION__,
+      readyToInstall: false,
       version: SIMULATED_UPDATE_VERSION,
       body: SIMULATED_RELEASE_NOTES,
     })
@@ -466,7 +571,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     if (!isElectronRuntime()) return
 
     const maybeAutoCheck = () => {
-      if (availableUpdate || isUpdateBusy) return
+      if (downloadedUpdateVersion || isUpdateBusy || activeCheckRef.current) return
 
       const now = Date.now()
       if (!shouldAutoCheck(updateChannel, now)) return
@@ -482,7 +587,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(initialTimer)
       window.clearInterval(intervalTimer)
     }
-  }, [availableUpdate, isUpdateBusy, runCheck, updateChannel])
+  }, [downloadedUpdateVersion, isUpdateBusy, runCheck, updateChannel])
 
   const value = useMemo<AppUpdateContextValue>(
     () => ({
@@ -519,21 +624,48 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     <AppUpdateContext.Provider value={value}>
       {children}
       <ConfirmDialog
-        open={restartConfirmationOpen}
-        title={t('workbench.app_update_restart_confirm_title', '重启并更新 Wework？')}
-        description={formatAppUpdateVersion(
-          t('workbench.app_update_restart_confirm_description', {
-            defaultValue: '更新到 v{{version}} 需要关闭并重新打开 Wework。请先保存尚未完成的工作。',
-            version: availableUpdate?.version ?? '',
-          }),
-          availableUpdate?.version ?? ''
-        )}
+        open={restartConfirmationOpen || retryUpdate !== null}
+        title={
+          retryUpdate
+            ? t('workbench.app_update_retry_confirm_title')
+            : t('workbench.app_update_restart_confirm_title', '重启并更新 Wework？')
+        }
+        description={
+          retryUpdate
+            ? t(
+                retryUpdate.retryConfirmation?.reason === 'startup-failed'
+                  ? 'workbench.app_update_retry_startup_description'
+                  : retryUpdate.retryConfirmation?.reason === 'rolled-back'
+                    ? 'workbench.app_update_retry_rollback_description'
+                    : 'workbench.app_update_retry_legacy_description',
+                { version: retryUpdate.retryConfirmation?.version }
+              )
+            : formatAppUpdateVersion(
+                t('workbench.app_update_restart_confirm_description', {
+                  defaultValue:
+                    '更新到 v{{version}} 需要关闭并重新打开 Wework。请先保存尚未完成的工作。',
+                  version: availableUpdate?.version ?? '',
+                }),
+                availableUpdate?.version ?? ''
+              )
+        }
         cancelLabel={t('common.cancel', '取消')}
-        confirmLabel={t('workbench.app_update_restart_confirm_action', '更新并重启')}
-        confirmTestId="app-update-restart-confirm"
-        onClose={() => setRestartConfirmationOpen(false)}
+        confirmLabel={
+          retryUpdate
+            ? t('workbench.app_update_retry_confirm_action')
+            : t('workbench.app_update_restart_confirm_action', '更新并重启')
+        }
+        confirmTestId={retryUpdate ? 'app-update-retry-confirm' : 'app-update-restart-confirm'}
+        dialogTestId={retryUpdate ? 'app-update-retry-dialog' : undefined}
+        cancelTestId={retryUpdate ? 'app-update-retry-cancel' : undefined}
+        confirmDisabled={status === 'checking'}
+        onClose={() => {
+          setRestartConfirmationOpen(false)
+          setRetryUpdate(null)
+        }}
         onConfirm={() => {
-          void confirmInstallUpdate()
+          if (retryUpdate) void confirmRetryUpdate()
+          else void confirmInstallUpdate()
         }}
       />
     </AppUpdateContext.Provider>

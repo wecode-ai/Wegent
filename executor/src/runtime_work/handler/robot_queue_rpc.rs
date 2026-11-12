@@ -52,7 +52,17 @@ impl RuntimeWorkRpcHandler {
                 ticks = ticks.wrapping_add(1);
                 if ticks % LOCAL_ISSUE_HEARTBEAT_TICKS == 0 {
                     handler.heartbeat_local_issue_executions();
+                    for link in handler.local_task_links(false) {
+                        handler.sync_stand_in_issue_replies(&link.local_task_id);
+                        if link.runtime_handle["issueHumanRequestOutbox"]
+                            .as_object()
+                            .is_some_and(|outbox| !outbox.is_empty())
+                        {
+                            handler.sync_issue_human_requests(&link.local_task_id);
+                        }
+                    }
                 }
+                handler.reconcile_local_project_coordination().await;
                 handler.drain_local_issue_queue().await;
             }
         });
@@ -65,11 +75,7 @@ impl RuntimeWorkRpcHandler {
                     .turn_scheduler
                     .lock()
                     .expect("runtime turn scheduler lock should not be poisoned");
-                scheduler.max_concurrent_tasks.saturating_sub(
-                    scheduler
-                        .active_tasks
-                        .saturating_add(scheduler.queued_turns.len()),
-                )
+                scheduler.available(RuntimeTaskKind::Agent)
             };
             if available == 0 {
                 return;
@@ -231,7 +237,7 @@ impl RuntimeWorkRpcHandler {
                 }
                 Ok(response) => {
                     let error = format!("Runtime rejected local Issue dispatch: {response}");
-                    let _ = store.fail_execution(execution.id, &error, false);
+                    let _ = store.reject_runtime_dispatch(execution.id, &error);
                     return;
                 }
                 Err(error) => {
@@ -250,7 +256,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned");
             scheduler
                 .active_task_ids
-                .iter()
+                .keys()
                 .cloned()
                 .chain(
                     scheduler

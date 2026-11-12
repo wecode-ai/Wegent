@@ -206,7 +206,7 @@ mod tests {
         let detail = error.validation_detail();
         assert!(detail.contains("\"string_pattern_mismatch\""));
         assert!(detail.contains("[\"query\",\"resource_type\"]"));
-        assert!(detail.contains("^(agent|skill|model|shell|retriever)$"));
+        assert!(detail.contains("^(agent|skill|model|shell|retriever|template)$"));
     }
 
     #[test]

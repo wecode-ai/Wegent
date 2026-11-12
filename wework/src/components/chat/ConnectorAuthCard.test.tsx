@@ -130,6 +130,32 @@ describe('ConnectorAuthCard browser oauth', () => {
     expect(screen.getByText('在浏览器中授权')).toBeInTheDocument()
   })
 
+  test('GitLab CLI preserves its instance and opens only that native device authorization URL', async () => {
+    const target = {
+      pluginKey: 'gitlab',
+      connectorSlug: `wework-gitlab-cli-${'a'.repeat(64)}`,
+      instance: 'https://gitlab.company.example',
+    }
+    authMocks.start.mockResolvedValue({
+      status: 'waiting_browser',
+      sessionId: 'gitlab-session',
+      userCode: 'GITLAB-CODE',
+      verificationUrl: `${target.instance}/oauth/device`,
+    })
+    authMocks.poll.mockImplementation(() => new Promise(() => undefined))
+    render(<ConnectorAuthCard target={target} onSuccess={vi.fn()} />)
+    expect(authMocks.start).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('gitlab-cli-login'))
+    expect(await screen.findByTestId('gitlab-cli-device-code')).toHaveTextContent('GITLAB-CODE')
+    expect(authMocks.start).toHaveBeenCalledWith(expect.objectContaining(target))
+    fireEvent.click(screen.getByTestId('gitlab-cli-open-browser'))
+    await waitFor(() =>
+      expect(authMocks.open).toHaveBeenCalledWith(`${target.instance}/oauth/device`, {
+        target: 'system',
+      })
+    )
+  })
+
   test('GitHub CLI waits for consent, displays a device code, and opens GitHub in the system browser', async () => {
     authMocks.start.mockResolvedValue({
       status: 'waiting_browser',
@@ -213,5 +239,41 @@ describe('ConnectorAuthCard browser oauth', () => {
     fireEvent.click(screen.getByTestId('connector-auth-retry'))
     await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(2))
     expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    { status: 'waiting_browser', verificationUrl: 'https://github.com/login/device' },
+    {
+      status: 'error',
+      errorCode: 'gh_login_code_missing',
+      verificationUrl: 'https://github.com/login/device',
+    },
+  ])('never opens a device authorization page without a code: $status', async result => {
+    authMocks.start.mockResolvedValue(result)
+    authMocks.poll.mockImplementation(() => new Promise(() => undefined))
+    const onSuccess = vi.fn()
+    render(<ConnectorAuthCard target={GITHUB_CLI_TARGET} onSuccess={onSuccess} />)
+    fireEvent.click(screen.getByTestId('github-cli-login'))
+    await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('github-cli-open-browser')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('github-cli-device-code')).not.toBeInTheDocument()
+    if (result.status === 'error') {
+      expect(await screen.findByTestId('connector-auth-retry')).toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent('设备验证码')
+    }
+    expect(authMocks.open).not.toHaveBeenCalled()
+    expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  test('allows the OAuth redirect flow without a device code', async () => {
+    authMocks.start.mockResolvedValue({
+      status: 'waiting_browser',
+      verificationUrl: 'https://github.com/login/oauth/authorize?client_id=fixture',
+    })
+    render(<ConnectorAuthCard target={GITHUB_CLI_TARGET} onSuccess={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('github-cli-login'))
+    fireEvent.click(await screen.findByTestId('github-cli-open-browser'))
+    await waitFor(() => expect(authMocks.open).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('github-cli-device-code')).not.toBeInTheDocument()
   })
 })

@@ -784,12 +784,13 @@ class SqlAlchemySubtaskStore:
     def list_assistant_by_task(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> list[Subtask]:
-        query = db.query(Subtask).filter(
+        query = db.query(Subtask.id).filter(
             Subtask.task_id == task_id,
             Subtask.role == SubtaskRole.ASSISTANT,
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
-        return query.order_by(Subtask.message_id.asc()).all()
+        rows = query.order_by(Subtask.message_id.asc()).all()
+        return self._load_ordered(db, [row[0] for row in rows])
 
     def list_after_message_id(
         self,
@@ -828,7 +829,7 @@ class SqlAlchemySubtaskStore:
         order_by: Literal["id", "message_id", "created_at"] = "message_id",
         owner_user_id: Optional[int] = None,
     ) -> list[Subtask]:
-        query = db.query(Subtask).filter(Subtask.task_id == task_id)
+        query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         if message_ids is not None:
             if not message_ids:
@@ -844,7 +845,8 @@ class SqlAlchemySubtaskStore:
             query = query.order_by(Subtask.created_at.asc(), Subtask.id.asc())
         else:
             query = query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
-        subtasks = query.all()
+        rows = query.all()
+        subtasks = self._load_ordered(db, [row[0] for row in rows])
         self._attach_sender_user_names(db, subtasks)
         return subtasks
 
@@ -1060,13 +1062,15 @@ class SqlAlchemySubtaskStore:
         cutoff: datetime,
         max_age_cutoff: datetime,
         limit: int,
+        after_updated_at: datetime | None = None,
+        after_subtask_id: int | None = None,
     ) -> list[StalledRunningSubtask]:
         """Find recent RUNNING assistant subtasks silent since ``cutoff``.
 
         ``created_at`` is indexed, so the bounded recent window keeps this a
         range scan instead of filtering every RUNNING row.
         """
-        rows = (
+        query = (
             db.query(
                 Subtask.task_id,
                 Subtask.id,
@@ -1083,7 +1087,17 @@ class SqlAlchemySubtaskStore:
                 Subtask.created_at >= max_age_cutoff,
                 TaskResource.is_active != TaskResource.STATE_DELETED,
             )
-            .order_by(Subtask.updated_at.asc(), Subtask.id.asc())
+        )
+        if after_updated_at is not None and after_subtask_id is not None:
+            query = query.filter(
+                or_(
+                    Subtask.updated_at > after_updated_at,
+                    (Subtask.updated_at == after_updated_at)
+                    & (Subtask.id > after_subtask_id),
+                )
+            )
+        rows = (
+            query.order_by(Subtask.updated_at.asc(), Subtask.id.asc())
             .limit(limit)
             .all()
         )

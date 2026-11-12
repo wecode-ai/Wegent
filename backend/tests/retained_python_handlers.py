@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""HTTP component contracts for Python functions retained after Rust cutover.
+"""Temporary HTTP contracts for chat history pending reference-replay parity.
 
 The production application's routes are never changed. Each opt-in module gets
 an independent FastAPI application with cloned production routes and explicitly
@@ -12,102 +12,47 @@ production ownership is independently checked by test_rust_cutover.py.
 """
 
 from contextlib import contextmanager
+from copy import copy
 from importlib import import_module
 from typing import Iterator
 
 from fastapi import APIRouter, FastAPI
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, request_response
 from fastapi.testclient import TestClient
 
 # Only components used by HTTP contracts that cannot be replaced by a direct
 # function call without losing authentication or request/response assertions.
 _COMPONENTS = {
-    "attachment_detail": (
-        "adapter.attachments",
-        "get_attachment",
-        "GET",
-        "/api/attachments/{attachment_id}",
-        "AttachmentDetailResponse",
-    ),
-    "attachment_download": (
-        "adapter.attachments",
-        "download_attachment",
-        "GET",
-        "/api/attachments/{attachment_id}/download",
-        None,
-    ),
-    "restore_sandbox": (
-        "internal.workspace_archives",
-        "restore_sandbox_workspace",
-        "POST",
-        "/api/internal/workspace-archives/{task_id}/restore-sandbox",
-        "SandboxRestoreResponse",
-    ),
-    "runtime_rpc": (
-        "internal.robot_queue",
-        "emit_runtime_rpc",
-        "POST",
-        "/api/internal/robot-queue/emit-runtime-rpc",
-        None,
-    ),
-    "groups": ("groups", "list_groups", "GET", "/api/groups", "GroupListResponse"),
     "chat_history": (
         "internal.chat_storage",
         "get_chat_history",
         "GET",
         "/api/internal/chat/history/{session_id}",
         "HistoryResponse",
-    ),
-    "llm_responses": (
-        "runtime_work",
-        "llm_responses_proxy_endpoint",
-        "POST",
-        "/api/runtime-work/llm-responses-proxy/responses",
-        None,
-    ),
-    "project_members": (
-        "cloud_projects",
-        "list_cloud_project_members",
-        "GET",
-        "/api/v1/cloud-projects/{project_id}/members",
-        "list[CloudProjectMemberResponse]",
-    ),
-    "issue_assignments": (
-        "deliveries",
-        "list_issue_assignments",
-        "GET",
-        "/api/v1/loop-items/{item_id}/assignments",
-        "IssueAssignmentListResponse",
-    ),
-    "issue_tasks": (
-        "deliveries",
-        "list_loop_item_tasks",
-        "GET",
-        "/api/v1/loop-items/{item_id}/tasks",
-        "list[LoopItemTaskBindingResponse]",
-    ),
-    "execution_statuses": (
-        "loop_item_executions",
-        "execution_statuses",
-        "POST",
-        "/api/v1/cloud-projects/{project_id}/executions/statuses",
-        None,
-    ),
-    "projects": (
-        "projects",
-        "list_projects",
-        "GET",
-        "/api/projects",
-        "ProjectListResponse",
-    ),
-    "workspaces": (
-        "workspaces",
-        "list_workspaces",
-        "GET",
-        "/api/v1/workspaces",
-        "WorkspaceListResponse",
-    ),
+    )
 }
+
+
+def _clone_application(production: FastAPI) -> FastAPI:
+    """Reuse compiled declarations with request handlers bound to a fresh app."""
+    app = FastAPI(exception_handlers=dict(production.exception_handlers))
+    for route in production.routes:
+        if isinstance(route, APIRoute):
+            # Dependency trees and model fields are compiled from immutable route
+            # declarations. Bind the request handler to this app's overrides
+            # without recompiling every production model for every test.
+            cloned = copy(route)
+            cloned.dependency_overrides_provider = app
+            cloned.app = request_response(cloned.get_route_handler())
+            app.router.routes.append(cloned)
+        else:
+            router = APIRouter()
+            router.routes.append(route)
+            app.include_router(router)
+    app.dependency_overrides.update(production.dependency_overrides)
+    app.user_middleware = list(production.user_middleware)
+    app.state._state.update(production.state._state)
+    return app
 
 
 @contextmanager
@@ -119,11 +64,7 @@ def component_client(
 ) -> Iterator[TestClient]:
     """Build a separate client; never re-enable a retired production route."""
     production = production_client.app
-    app = FastAPI(exception_handlers=dict(production.exception_handlers))
-    app.include_router(production.router)
-    app.dependency_overrides.update(production.dependency_overrides)
-    app.user_middleware = list(production.user_middleware)
-    app.state._state.update(production.state._state)
+    app = _clone_application(production)
     for component in components:
         module_name, name, method, path, model_name = _COMPONENTS[component]
         path = api_prefix + path.removeprefix("/api")

@@ -18,6 +18,7 @@ from app.models.kind import Kind
 from app.services.execution.team_readiness import (
     validate_team_execution_readiness,
 )
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.project_event_sources import supported_event_type
 from app.services.share import team_share_service
 
@@ -64,6 +65,18 @@ def metadata(row: object) -> dict:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def status_automation_target(context: object) -> str | None:
+    """Return the status that explicitly admitted this automation Run."""
+    if not isinstance(context, dict) or not context.get("run_id"):
+        return None
+    event = context.get("event")
+    if not isinstance(event, dict) or event.get("type") != "task.status_changed":
+        return None
+    payload = event.get("payload")
+    value = payload.get("status") if isinstance(payload, dict) else None
+    return value if isinstance(value, str) else None
+
+
 def next_run(expression: str, timezone_name: str, after: datetime) -> datetime:
     try:
         tz = ZoneInfo(timezone_name)
@@ -106,6 +119,7 @@ def project_agent(
     )
 
 
+@execution_resource_scope()
 def wegent_team(
     db: Session,
     user_id: int,

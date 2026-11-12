@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 
 use super::{AuthError, auth_id, cached_user_by_id, cached_user_by_name};
 use crate::request_sql::{RequestSql, RouteKey};
+use crate::sql_support::StatementArg;
 use crate::user_reader::{UserByIdReader, UserRecord};
 
 /// `KEY_TYPE_PERSONAL` (`app.models.api_key`).
@@ -163,6 +164,9 @@ fn api_key_expired(expires_at: chrono::NaiveDateTime) -> bool {
 pub(crate) struct AuthenticatedKey {
     pub api_key_id: i64,
     pub api_key_name: Option<String>,
+    /// Hex SHA-256 of the presented key, reused by the Wework endpoint's
+    /// second personal-key verification.
+    pub key_hash: String,
     pub lookup: UserLookup,
 }
 
@@ -283,6 +287,7 @@ pub(crate) async fn authenticate_api_key(
         return Ok(AuthenticatedKey {
             api_key_id: i64::from(record.id),
             api_key_name,
+            key_hash,
             lookup: UserLookup::ById(i64::from(record.user_id)),
         });
     }
@@ -303,11 +308,135 @@ pub(crate) async fn authenticate_api_key(
         return Ok(AuthenticatedKey {
             api_key_id: i64::from(record.id),
             api_key_name,
+            key_hash,
             lookup: UserLookup::ByName(target_username),
         });
     }
 
     Err(AuthError::InvalidAuthenticationCredentials)
+}
+
+/// The `api_keys` columns SQLAlchemy renders for an expired-attribute
+/// refresh (`db.refresh`): bare entity columns, no labels and no `LIMIT`.
+const API_KEY_RELOAD_COLUMNS: &str = "api_keys.id, api_keys.user_id, \
+     api_keys.key_hash, api_keys.key_prefix, api_keys.name, api_keys.key_type, \
+     api_keys.description, api_keys.expires_at, api_keys.last_used_at, \
+     api_keys.is_active, api_keys.created_at, api_keys.updated_at";
+
+/// `find_valid_api_key`'s statement: the `get_auth_context` projection plus
+/// the personal `key_type` filter.
+fn personal_api_key_find_sql(key_hash: &str) -> String {
+    format!(
+        "SELECT {API_KEY_COLUMNS} \nFROM api_keys \n\
+         WHERE api_keys.key_hash = '{key_hash}' \
+         AND api_keys.key_type = 'personal' \
+         AND api_keys.is_active = true \n LIMIT 1"
+    )
+}
+
+/// The `last_used_at` bookkeeping write both authentications emit.
+fn last_used_at_update_sql(api_key_id: i32, now: &str) -> String {
+    format!(
+        "UPDATE api_keys SET last_used_at='{now}', updated_at=now() \
+         WHERE api_keys.id = {api_key_id}"
+    )
+}
+
+/// The post-commit expired-object refresh for the `api_keys` row (bare
+/// columns, no `LIMIT`, literal id).
+fn api_key_reload_sql(api_key_id: i32) -> String {
+    format!(
+        "SELECT {API_KEY_RELOAD_COLUMNS} \nFROM api_keys \n\
+         WHERE api_keys.id = {api_key_id}"
+    )
+}
+
+/// `current_api_user` → `verify_api_key`: the Wework endpoint's second
+/// personal-key verification (`app/api/endpoints/wework_api.py:29-42`,
+/// `app/core/auth_utils.py:85-126`).
+///
+/// Runs on the caller's request transaction, which the endpoint's
+/// `db.commit()` ends: the hash select (personal filter), the owner read and
+/// the `last_used_at` write all belong to that transaction. The post-commit
+/// expired-object reloads run afterwards ([`reload_personal_api_objects`]).
+pub(crate) async fn verify_personal_api_key_on(
+    sql: &mut dyn RequestSql,
+    key_hash: &str,
+) -> Result<(i32, i32), AuthError> {
+    // `find_valid_api_key`: `db.query(APIKey).filter(key_hash, key_type,
+    // is_active).first()`.
+    let row = sql
+        .fetch_optional_row(
+            RouteKey::None,
+            &personal_api_key_find_sql(key_hash),
+            Vec::new(),
+        )
+        .await
+        .map_err(AuthError::dependency)?;
+    let Some(record) = row
+        .as_ref()
+        .map(ApiKeyRow::from_row)
+        .transpose()
+        .map_err(AuthError::dependency)?
+    else {
+        return Err(AuthError::InvalidApiKey);
+    };
+    if api_key_expired(record.expires_at) {
+        return Err(AuthError::ApiKeyExpired);
+    }
+    // `db.query(User).filter(User.id == api_key_record.user_id).first()`.
+    let owner = sql
+        .fetch_optional_row(
+            RouteKey::None,
+            crate::user_reader::USER_BY_ID_QUERY,
+            vec![StatementArg::Int(i64::from(record.user_id))],
+        )
+        .await
+        .map_err(AuthError::dependency)?;
+    let active: Option<bool> = owner
+        .as_ref()
+        .map(|row| row.get_required("users_is_active"))
+        .transpose()
+        .map_err(AuthError::dependency)?;
+    if active != Some(true) {
+        return Err(AuthError::UserNotFoundOrInactive);
+    }
+    // `api_key_record.last_used_at = datetime.utcnow(); db.commit()`.
+    let now = chrono::Utc::now()
+        .naive_utc()
+        .format("%Y-%m-%d %H:%M:%S%.6f")
+        .to_string();
+    sql.execute_statement(
+        RouteKey::None,
+        &last_used_at_update_sql(record.id, &now),
+        Vec::new(),
+    )
+    .await
+    .map_err(AuthError::dependency)?;
+    Ok((record.id, record.user_id))
+}
+
+/// The commit expires both ORM objects; `logger.debug` then reads
+/// `api_key_record.name` and `user.user_name`, reloading each by id on the
+/// post-commit session. The reloaded user is the object `verify_api_key`
+/// returns: the endpoint reuses it instead of reading the row again.
+pub(crate) async fn reload_personal_api_objects(
+    mysql: &brz_mysql::MysqlService,
+    api_key_id: i32,
+    user_id: i32,
+) -> Result<crate::models_unified::mysql::UserRow, AuthError> {
+    let _: Option<brz_mysql::MysqlRow> = mysql
+        .fetch_optional(&api_key_reload_sql(api_key_id), ())
+        .await
+        .map_err(AuthError::dependency)?;
+    let user: Option<crate::models_unified::mysql::UserRow> = mysql
+        .fetch_optional(
+            crate::user_reader::USER_ENTITY_BY_ID_QUERY,
+            (i64::from(user_id),),
+        )
+        .await
+        .map_err(AuthError::dependency)?;
+    user.ok_or(AuthError::UserNotFoundOrInactive)
 }
 
 /// The auth fields every resolved `users` row yields.
@@ -455,4 +584,30 @@ fn user_by_name_literal(username: &str) -> String {
          WHERE users.user_name = '{}' \n LIMIT 1",
         username.replace('\'', "\\'")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `verify_api_key` is personal-only: the second select keeps the
+    /// `key_type` filter and reuses the presented hash.
+    #[test]
+    fn the_second_verification_selects_a_personal_key_by_hash() {
+        let sql = personal_api_key_find_sql("abc123");
+        assert!(sql.contains("api_keys.key_type = 'personal'"));
+        assert!(sql.contains("api_keys.key_hash = 'abc123'"));
+        assert!(sql.contains("api_keys.is_active = true"));
+        assert!(sql.ends_with("LIMIT 1"));
+    }
+
+    /// After the write commit SQLAlchemy expires the row, so the source's
+    /// `api_key_record.name` read reloads bare columns by id.
+    #[test]
+    fn the_post_commit_reload_is_unlabeled_without_limit() {
+        let sql = api_key_reload_sql(9);
+        assert!(sql.contains("api_keys.id = 9"));
+        assert!(!sql.contains(" AS api_keys_"));
+        assert!(!sql.contains("LIMIT"));
+    }
 }

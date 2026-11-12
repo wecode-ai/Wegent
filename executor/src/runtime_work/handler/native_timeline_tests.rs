@@ -2,6 +2,101 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use base64::Engine;
+
+#[tokio::test]
+async fn archived_history_reads_canonical_rollout_without_reactivating_the_thread() {
+    for (label, options) in [
+        ("conversation", json!({"conversationContextOnly":true})),
+        ("bounded", json!({"transcriptProtocolVersion":2})),
+        ("navigation", json!({"navigationOnly":true})),
+    ] {
+        let (handler, root) = native_handler(&format!("archived-rollout-{label}"));
+        handler.store.update_task("task-1", |link| {
+            link.status = "archived".into();
+            link.running = false;
+            link.continuable = false;
+        });
+        let rollout = root.join("archived-history.jsonl");
+        let records = [
+            json!({"type":"task_started","turn_id":"current","started_at":1780000000}),
+            json!({"type":"item_completed","turn_id":"current","item":{
+                "id":"user","type":"userMessage","content":[{"type":"text","text":"Question"}]
+            }}),
+            json!({"type":"item_completed","turn_id":"current","item":{
+                "id":"reply","type":"agentMessage","text":"Archived result"
+            }}),
+            json!({"type":"task_complete","turn_id":"current","completed_at":1780000001}),
+        ];
+        fs::write(
+            &rollout,
+            records
+                .iter()
+                .map(|payload| json!({"type":"event_msg","payload":payload}).to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("thread_read.json"),
+            json!({"thread":{
+                "id":"thread-1","cwd":"/tmp/project","historyMode":"paginated","path":rollout
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("thread_timeline_list.error-once.json"),
+            json!({"code":-32600,"message":"thread thread-1 is archived"}).to_string(),
+        )
+        .unwrap();
+        let mut payload = options;
+        payload["taskId"] = json!("task-1");
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method":"runtime.tasks.transcript","payload":payload
+            }))
+            .await;
+        handler
+            .codex_app_server
+            .request("test/stop", json!({}))
+            .await
+            .unwrap();
+        let mut response = result.unwrap();
+        if label == "bounded" {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(response["transfer"]["payload"].as_str().unwrap())
+                .unwrap();
+            let mut packed: Value =
+                serde_json::from_reader(flate2::read::GzDecoder::new(bytes.as_slice())).unwrap();
+            response = packed["transcript"].take();
+        }
+        if label == "navigation" {
+            assert_eq!(response["turnNavigation"][0]["turnId"], "current");
+        } else {
+            assert!(response["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| {
+                    message["role"] == "assistant" && message["content"] == "Archived result"
+                }));
+        }
+        assert_eq!(
+            handler.local_task_link("task-1").unwrap().status,
+            "archived"
+        );
+        let requests = fs::read_to_string(root.join("requests.jsonl")).unwrap();
+        for forbidden in ["thread/timeline/list", "thread/resume", "thread/unarchive"] {
+            assert!(
+                !requests.contains(forbidden),
+                "Archived reads must not invoke {forbidden}"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+}
 
 #[tokio::test]
 async fn native_timeline_keeps_an_active_open_turn_running_without_unpersisted_items() {
@@ -93,6 +188,25 @@ fn native_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
         None,
     );
     (handler, root)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_history_uses_an_immutable_executable_with_isolated_quoted_data_paths() {
+    let (mut handler, root) = native_handler("native-static-fixture ' root");
+    let binary = root.join("native-history.sh");
+    assert!(fs::symlink_metadata(&binary)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read_link(&binary).unwrap(),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/native-history.sh")
+    );
+    let response = read_and_stop(&mut handler).await.unwrap();
+    assert_eq!(response["messages"][0]["content"], "Superseded");
+    assert!(root.join("requests.jsonl").is_file());
+    fs::remove_dir_all(root).unwrap();
 }
 
 async fn read_and_stop(handler: &mut RuntimeWorkRpcHandler) -> Result<Value, AppIpcError> {
@@ -220,6 +334,36 @@ async fn native_timeline_only_restores_user_presentations_on_their_own_page() {
 }
 
 #[tokio::test]
+async fn protocol_two_rejects_a_provider_page_that_ignores_the_requested_item_limit() {
+    let (handler, root) = native_handler("native-oversized-provider-page");
+    handler.store.update_task("task-1", |link| {
+        link.runtime_handle["lastTurnId"] = json!("current");
+    });
+    let entries = (0..101)
+        .map(|position| json!({"type":"realtime","position":position}))
+        .collect::<Vec<_>>();
+    fs::write(
+        root.join("thread_timeline_list.json"),
+        json!({"data":entries,"nextCursor":null}).to_string(),
+    )
+    .unwrap();
+    let response = handler
+        .handle_runtime_rpc(json!({"method":"runtime.tasks.transcript","payload":{
+            "taskId":"task-1","transcriptProtocolVersion":2
+        }}))
+        .await;
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+    let error = response.unwrap_err();
+    assert_eq!(error.code, "codex_error");
+    assert!(error.message.contains("item budget"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn native_timeline_restores_only_runtime_commands_outside_durable_history() {
     let (mut handler, root) = native_handler("native-runtime-commands");
     handler.store.update_task("task-1", |link| {
@@ -253,6 +397,133 @@ async fn native_timeline_restores_only_runtime_commands_outside_durable_history(
     );
     assert_eq!(runtime[0]["items"][1]["id"], "current-text");
     assert_eq!(runtime[0]["items"][1]["content"], "Current");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn bounded_native_history_never_copies_unrelated_cached_bodies() {
+    use base64::Engine;
+    let (handler, root) = native_handler("bounded-native-cache-snapshot");
+    let large = "unrelated historical tool output".repeat(200_000);
+    handler.store.update_task("task-1", |link| {
+        link.runtime_handle["lastTurnId"] = json!("current");
+        link.runtime_handle["origin"] = json!({"type":"test-origin"});
+        link.runtime_handle["messages"] = json!([{"content":large}]);
+        set_transcript_snapshot_messages(&mut link.runtime_handle, "thread-1", vec![json!({
+            "id":"snapshot","turnId":"current","content":large
+        })], None, None);
+        append_runtime_handle_user_message_presentation(&mut link.runtime_handle, json!({
+            "clientUserMessageId":"client-user","turnId":"current","ensureVisible":true,
+            "content":"Original prompt","createdAt":1780000000000_i64
+        }));
+        append_runtime_handle_user_message_presentation(&mut link.runtime_handle, json!({
+            "clientUserMessageId":"other-user","turnId":"unrelated","content":large
+        }));
+        append_runtime_handle_user_message_presentation(&mut link.runtime_handle, json!({
+            "clientUserMessageId":"not-accepted","content":"Optimistic send without a native turn"
+        }));
+        append_completed_transcript_messages(&mut link.runtime_handle, "thread-1", vec![json!({
+            "id":"cached-current","turnId":"current","role":"assistant","status":"done",
+            "content":large,"blocks":[{"tool_output":large}],"runtimeItems":[
+                {"id":"unrelated-output","type":"assistant_text","content":large},
+                {"id":"running-command","type":"block","block":{
+                    "id":"running-command","type":"tool","status":"pending","tool_name":"bash",
+                    "tool_output":"live output","render_payload":{"kind":"command_execution","status":"inProgress"}
+                }},
+                {"id":"approval","type":"block","block":{
+                    "id":"approval","type":"tool","status":"done","tool_name":"auto_approval_review",
+                    "tool_output":"Approved read"
+                }},
+                {"id":"current-text","type":"assistant_text","content":large}
+            ]
+        })]);
+    });
+    let reads = handler.store.full_task_read_count();
+    let (metadata, bounded) = handler.transcript_read_link("task-1", true);
+    assert!(bounded);
+    let metadata = metadata.unwrap();
+    assert!(metadata.runtime_handle.get("messages").is_none());
+    assert!(metadata
+        .runtime_handle
+        .get("completedTranscriptMessages")
+        .is_none());
+    assert!(metadata
+        .runtime_handle
+        .get("transcriptSnapshotMessages")
+        .is_none());
+    assert!(metadata
+        .runtime_handle
+        .get("userMessagePresentations")
+        .is_none());
+    let page = handler.native_transcript_page_link("task-1", &json!({"turns":[
+                {"id":"current","ownsUserPresentation":true,"items":[{"id":"current-text","type":"agentMessage","text":"Current"}]}
+    ]}), &super::super::super::transcript_work::Cancellation::new()).unwrap().unwrap();
+    let encoded_page = serde_json::to_string(&page.runtime_handle).unwrap();
+    assert!(encoded_page.len() < 10_000);
+    assert!(!encoded_page.contains("unrelated historical tool output"));
+    assert_eq!(
+        page.runtime_handle["userMessagePresentations"][0]["content"],
+        "Original prompt"
+    );
+    assert_eq!(
+        page.runtime_handle["completedTranscriptMessages"][0]["runtimeItems"][2],
+        json!({"id":"current-text"})
+    );
+    let result = handler
+        .transcript(json!({
+        "taskId":"task-1","transcriptProtocolVersion":2,
+        "reconcileClientUserMessageIds":["client-user","other-user","not-accepted"]
+        }))
+        .await;
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+    let response = result.unwrap();
+    assert_eq!(handler.store.full_task_read_count(), reads);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(response["transfer"]["payload"].as_str().unwrap())
+        .unwrap();
+    let packed: Value =
+        serde_json::from_reader(flate2::read::GzDecoder::new(bytes.as_slice())).unwrap();
+    assert!(!packed
+        .to_string()
+        .contains("unrelated historical tool output"));
+    let transcript = &packed["transcript"];
+    assert_eq!(
+        transcript["acceptedClientUserMessageIds"],
+        json!(["client-user", "other-user"])
+    );
+    assert_eq!(
+        handler.accepted_reconciliation_ids(
+            "task-1",
+            &json!({"threadId":"another-thread"}),
+            &["client-user".to_owned()]
+        ),
+        None
+    );
+    assert_eq!(transcript["origin"]["type"], "test-origin");
+    assert!(transcript["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| { message["role"] == "user" && message["content"] == "Original prompt" }));
+    let overlays = transcript["runtimeTurns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+        .collect::<Vec<_>>();
+    assert!(overlays.iter().any(
+        |item| item["id"] == "running-command" && item["block"]["tool_output"] == "live output"
+    ));
+    assert!(overlays
+        .iter()
+        .any(|item| item["id"] == "approval" && item["block"]["tool_output"] == "Approved read"));
+    assert!(overlays
+        .iter()
+        .any(|item| item["id"] == "current-text" && item["content"] == "Current"));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -440,4 +711,75 @@ async fn native_approval_expiry_clears_only_its_waiter_and_updates_the_visible_c
                 == "expired"
     ));
     fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn native_timeline_running_identity_survives_before_transcript_buffer_initializes() {
+    for completed in [false, true] {
+        let (mut handler, root) = native_handler(if completed {
+            "running-boundary"
+        } else {
+            "running-before-buffer"
+        });
+        let execution_id = start_test_execution(&handler, "task-1");
+        handler.record_active_codex_turn(
+            "task-1",
+            execution_id,
+            "thread-1".into(),
+            "current".into(),
+        );
+        handler.apply_native_lifecycle("task-1", &ExecutionRequest::default(), &json!({
+            "method":"turn/started", "params":{"threadId":"thread-1", "turn":{"id":"current","status":"inProgress"}}
+        }).into());
+        assert_eq!(
+            handler
+                .local_task_link("task-1")
+                .unwrap()
+                .execution_state
+                .unwrap()
+                .phase,
+            crate::runtime_work::lifecycle::NativeExecutionPhase::Running
+        );
+        assert!(handler
+            .active_codex_transcript_items
+            .lock()
+            .unwrap()
+            .is_empty());
+        fs::write(
+            root.join("thread_turns_list.json"),
+            json!({"data":[
+                {"id":"current","status":"interrupted","items":[]}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let mut events = vec![
+            json!({"type":"turnStarted","position":1,"turnId":"current"}),
+            json!({"type":"item","position":2,"turnId":"current","item":{
+                "id":"user","type":"userMessage","content":[{"type":"text","text":"Question"}]
+            }}),
+        ];
+        if completed {
+            events.push(json!({"type":"turnCompleted","position":3,"turnId":"current","status":"interrupted"}));
+        }
+        fs::write(
+            root.join("thread_timeline_list.json"),
+            json!({"data":events,"nextCursor":null}).to_string(),
+        )
+        .unwrap();
+        let response = read_and_stop(&mut handler).await.unwrap();
+        assert_eq!(
+            response["turns"][0]["status"],
+            if completed { "cancelled" } else { "streaming" }
+        );
+        if !completed {
+            assert_eq!(response["running"], true);
+            assert!(response["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|message| message["stoppedNotice"] != true));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 }

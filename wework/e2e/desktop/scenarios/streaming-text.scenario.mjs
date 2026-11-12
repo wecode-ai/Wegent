@@ -1,7 +1,11 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { createConversationSwitchingChecks } from '../modules/streaming-conversation-switching.mjs'
+import { createComposerLayoutChecks } from '../modules/streaming-text-composer-layout.mjs'
 import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
+import { createRichTaskSwitchChecks } from '../modules/streaming-text-rich-task-switch.mjs'
 import { createFileCitationChecks } from '../modules/streaming-file-citations.mjs'
-import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { handleEmptyReplyPrediction, selectTool } from '../modules/response-protocol.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createMarkdownLinkChecks,
   MARKDOWN_LINKS_PROMPT,
@@ -97,9 +101,14 @@ import { createStreamingContentChecks } from '../modules/streaming-text-content.
 import { createStreamingToolChecks } from '../modules/streaming-text-tools.mjs'
 import { createStreamingScrollChecks } from '../modules/streaming-text-scroll.mjs'
 import { createStreamingTranscriptIdentityChecks } from '../modules/streaming-transcript-identity.mjs'
+import { createStreamingGuidanceOrderChecks } from '../modules/streaming-text-guidance-order.mjs'
+import { createInteractiveVisualizationChecks } from '../modules/streaming-interactive-visualization.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
+import { createVisualizationScrollChecks } from '../modules/streaming-visualization-scroll.mjs'
 
 export function createDesktopScenario({
   checkpoint,
+  codexSqliteHome,
   captureScreenshot,
   resultDir,
   standalone,
@@ -107,12 +116,23 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   recordScenarioRequest,
   workspacePath,
+  beforeSubagentOutput,
+  subagentTextRelease,
 }) {
   const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
-  const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs })
-  const conversationScrollbar = createConversationScrollbarChecks({ uiTimeoutMs })
+  const guidanceOrder = createStreamingGuidanceOrderChecks({ resultDir, uiTimeoutMs })
+  const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs, resultDir })
+  const conversationScrollbar = createConversationScrollbarChecks({ resultDir, uiTimeoutMs })
+  const richTaskSwitch = createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqliteHome })
+  const composerLayout = createComposerLayoutChecks({ workspacePath, resultDir, uiTimeoutMs })
+  const interactiveVisualization = createInteractiveVisualizationChecks({
+    workspacePath,
+    uiTimeoutMs,
+    captureScreenshot,
+  })
+  const visualizationScroll = createVisualizationScrollChecks({ workspacePath, uiTimeoutMs })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   const subagentToolRenderTimeoutMs =
@@ -125,6 +145,8 @@ export function createDesktopScenario({
   let toolRegressionStage = 'initial'
   let reclassifiedCommentaryStage = 'initial'
   let timerStage = 'initial'
+  const timerToolReleasePath = join(resultDir, 'running-timer-tool-released')
+  const releaseTimerTool = () => writeFile(timerToolReleasePath, '')
   let releaseAppend
   let releaseLongCodeStream
   let releasePhaseFlipCompletion
@@ -245,6 +267,7 @@ export function createDesktopScenario({
     subagentToolRenderTimeoutMs,
     subagentPartialWritten,
     releaseSubagentCompletion,
+    beforeSubagentOutput,
     releasePhaseFlipCompletion,
     toolFollowUpReceived,
     releaseToolCompletion,
@@ -259,6 +282,7 @@ export function createDesktopScenario({
     modelResponseTimeoutMs,
     uiTimeoutMs,
     capture,
+    releaseTimerTool,
     releaseTimerFinalCompletion,
     requestReceived,
     getTargetRequest: () => targetRequest,
@@ -271,6 +295,10 @@ export function createDesktopScenario({
     releaseResponse,
   })
   return {
+    cleanup() {
+      guidanceOrder.cleanup()
+      return releaseTimerTool()
+    },
     codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
     modelProviderAuthToml: '',
     modelProviderConfigToml:
@@ -291,6 +319,9 @@ export function createDesktopScenario({
       // Rendering assertions exercise direct tools with the shared fixture label.
       model.tool_mode = 'direct'
       model.use_responses_lite = false
+      model.experimental_supported_tools = [
+        ...new Set([...(model.experimental_supported_tools ?? []), 'request_user_input_async']),
+      ]
       model.display_name = DEFAULT_MODEL_LABEL
       const catalogPath = join(codexHome, 'rendering-model-catalog.json')
       await writeFile(catalogPath, JSON.stringify(catalog))
@@ -331,9 +362,14 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       const responseId = `wework-streaming-text-${Date.now()}`
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
+      if (await guidanceOrder.handleModelRequest(body, response, responseId)) return true
       if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
       if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
+      if (await composerLayout.handleModelRequest(body, response, responseId)) return true
+      if (await richTaskSwitch.handleModelRequest(body, response, responseId)) return true
       if (await fileCitations.handleModelRequest(body, response, responseId)) return true
+      if (await interactiveVisualization.handleModelRequest(body, response, responseId)) return true
+      if (await visualizationScroll.handleModelRequest(body, response, responseId)) return true
       const latestInput = latestModelInputText(body)
       if (latestInput.includes(MARKDOWN_LINKS_PROMPT)) {
         recordScenarioRequest('markdown_original_links', body)
@@ -371,7 +407,7 @@ export function createDesktopScenario({
               ...commentary.start.slice(1),
               ...textDeltaEvents(commentary.itemId, SUBAGENT_CHILD_COMMENTARY),
               ...commentary.finish.slice(0, -1),
-              ...functionCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool.name, tool.arguments),
+              ...selectedToolCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool),
               responseCompleted(responseId),
             ])
           )
@@ -387,6 +423,7 @@ export function createDesktopScenario({
           'The child tool output was not returned to the subagent'
         )
         subagentChildStage = 'streaming-text'
+        await subagentTextRelease
         const stream = streamingEvents(responseId, SUBAGENT_CHILD_COMPLETION, 'final_answer')
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
@@ -437,9 +474,10 @@ export function createDesktopScenario({
         response.end(
           sse([
             responseCreated(responseId),
-            ...namespacedFunctionCall(SUBAGENT_WAIT_CALL_ID, 'collaboration', 'wait_agent', {
-              timeout_ms: 60_000,
-            }),
+            ...selectedToolCall(
+              SUBAGENT_WAIT_CALL_ID,
+              selectTool(body, 'wait_agent', { timeout_ms: 60_000 })
+            ),
             responseCompleted(responseId),
           ])
         )
@@ -482,30 +520,19 @@ export function createDesktopScenario({
       }
       if (requestContainsSubagentPrompt(body)) {
         assert.equal(subagentStage, 'initial', `Unexpected subagent stage: ${subagentStage}`)
-        const collaborationTools = (body.tools ?? []).find(
-          tool => tool?.type === 'namespace' && tool.name === 'collaboration'
-        )?.tools
-        const collaborationToolNames = new Set(
-          (collaborationTools ?? []).map(tool => tool?.name).filter(Boolean)
-        )
-        assert.ok(
-          collaborationToolNames.has('spawn_agent'),
-          'The native collaboration.spawn_agent tool was not available'
-        )
-        assert.ok(
-          collaborationToolNames.has('wait_agent'),
-          'The native collaboration.wait_agent tool was not available'
-        )
         subagentStage = 'awaiting-spawn-output'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([
             responseCreated(responseId),
-            ...namespacedFunctionCall(SUBAGENT_CALL_ID, 'collaboration', 'spawn_agent', {
-              task_name: 'streaming_panel',
-              message: SUBAGENT_CHILD_PROMPT,
-              agent_type: 'explorer',
-            }),
+            ...selectedToolCall(
+              SUBAGENT_CALL_ID,
+              selectTool(body, 'spawn_agent', {
+                task_name: 'streaming_panel',
+                message: SUBAGENT_CHILD_PROMPT,
+                agent_type: 'explorer',
+              })
+            ),
             responseCompleted(responseId),
           ])
         )
@@ -614,6 +641,10 @@ export function createDesktopScenario({
         return true
       }
       if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
+        await assert.doesNotReject(
+          readFile(timerToolReleasePath),
+          'The native timer tool returned before its explicit release'
+        )
         timerStage = 'awaiting-final-completion'
         const stream = streamingEvents(responseId, TIMER_COMPLETION)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -645,13 +676,24 @@ export function createDesktopScenario({
 
       if (requestContainsTimerPrompt(body)) {
         if (timerStage === 'initial') {
-          const tool = selectShellTool(body, workspacePath, 'sleep 15', 20_000)
+          // Complete only after the running timer has been checked on both pages.
+          const releasePath = `'${timerToolReleasePath.replaceAll("'", process.platform === 'win32' ? "''" : "'\\''")}'`
+          const command =
+            process.platform === 'win32'
+              ? `while (-not (Test-Path -LiteralPath ${releasePath})) { Start-Sleep -Milliseconds 50 }`
+              : `while [ ! -f ${releasePath} ]; do sleep 0.05; done`
+          const tool = selectShellTool(
+            body,
+            workspacePath,
+            command,
+            Math.max(20_000, uiTimeoutMs * 3)
+          )
           timerStage = 'awaiting-tool-output'
           response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
           response.end(
             sse([
               responseCreated(responseId),
-              ...functionCall('wework-running-timer', tool.name, tool.arguments),
+              ...selectedToolCall('wework-running-timer', tool),
               responseCompleted(responseId),
             ])
           )
@@ -713,7 +755,7 @@ export function createDesktopScenario({
               responseCreated(responseId),
               ...reasoningEvents('wework-reasoning-summary', REASONING_SUMMARY),
               assistantMessage(TOOL_PREAMBLE),
-              ...functionCall('wework-tool-text-offset', tool.name, tool.arguments),
+              ...selectedToolCall('wework-tool-text-offset', tool),
               responseCompleted(responseId),
             ])
           )
@@ -734,7 +776,7 @@ export function createDesktopScenario({
           response.end(
             sse([
               responseCreated(responseId),
-              ...functionCall(TOOL_DETAIL_PERSISTENCE_CALL_ID, tool.name, tool.arguments),
+              ...selectedToolCall(TOOL_DETAIL_PERSISTENCE_CALL_ID, tool),
               responseCompleted(responseId),
             ])
           )
@@ -791,14 +833,7 @@ export function createDesktopScenario({
         )
         const tool = selectImageGenerationTool(body)
         generatedImageStage = 'awaiting-image-api'
-        const toolCallEvents = tool.namespace
-          ? namespacedFunctionCall(
-              GENERATED_IMAGE_CALL_ID,
-              tool.namespace,
-              tool.name,
-              tool.arguments
-            )
-          : functionCall(GENERATED_IMAGE_CALL_ID, tool.name, tool.arguments)
+        const toolCallEvents = selectedToolCall(GENERATED_IMAGE_CALL_ID, tool)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([responseCreated(responseId), ...toolCallEvents, responseCompleted(responseId)])
@@ -850,7 +885,20 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       active = true
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
+      })
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime', value: '1' }),
+      })
+      await requestExecutor(
+        control,
+        'runtime.codex.stream_debug.set',
+        { enabled: true },
+        uiTimeoutMs
+      )
       if (standalone) {
         await createLocalProject(control, workspacePath, uiTimeoutMs)
       } else {
@@ -883,7 +931,10 @@ export function createDesktopScenario({
           'streaming-content',
           async control => {
             await verifyContent(control)
+            await interactiveVisualization.verify(control)
+            await visualizationScroll.verify(control)
             await transcriptIdentity.verify(control)
+            await guidanceOrder.verify(control)
           },
         ],
         [
@@ -900,8 +951,10 @@ export function createDesktopScenario({
         [
           'streaming-conversation-switching',
           async control => {
+            await composerLayout.verify(control)
             await conversationSwitching.verify(control)
             await conversationScrollbar.verify(control)
+            await richTaskSwitch.verify(control)
           },
         ],
         ['streaming-subagents', verifySubagentStreamingPanel],

@@ -15,6 +15,7 @@ import {
 } from './conversation-navigation.mjs'
 
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
+import { logDesktopE2eSignal } from '../process-lifecycle.mjs'
 
 import {
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -895,6 +896,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     assert.ok(forcedExitDshPid > 0, 'Core DSH PID was unavailable before forced Electron exit')
     assert.ok(forcedExitExecutorPid > 0, 'Executor PID was unavailable before forced Electron exit')
 
+    logDesktopE2eSignal({ action: 'force-exit-app', pid: forcedExitApp.pid, signal: 'SIGKILL' })
     process.kill(forcedExitApp.pid, 'SIGKILL')
     await Promise.all([
       waitForProcessExit(forcedExitApp.pid, 'Wework remained alive after the forced Electron exit'),
@@ -981,7 +983,9 @@ async function verifyBackgroundTaskWindowLifecycle({
   // readiness, and that guard used to cancel app.quit() and strand the app on the
   // splash with its runtime already torn down.
   setPhase('quit-during-startup-splash')
-  const startupQuitApp = await restartDesktopApp()
+  const startupQuitApp = await restartDesktopApp({
+    appEnvironmentOverrides: { WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '60000' },
+  })
   const startupSplash = JSON.parse(await control.command('getStartupSplashSnapshot', 'body'))
   assert.notEqual(
     startupSplash.state,

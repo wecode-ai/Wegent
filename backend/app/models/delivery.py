@@ -178,10 +178,26 @@ class LoopNode(Base):
     )
 
 
+class ProjectMilestone(LoopNode):
+    """Project delivery milestone stored as a unified node."""
+
+    __mapper_args__ = {"polymorphic_identity": "milestone"}
+
+
 class LoopItemActiveAssignment(LoopNode):
     """Current-assignment index nodes; parent is the Issue, loop item is the event."""
 
     __mapper_args__ = {"polymorphic_identity": "assignment_index"}
+
+
+class StandInIssueInbox(LoopNode):
+    """Recipient-owned sequence for durable Issue wakeups, not human reminders."""
+
+    __mapper_args__ = {"polymorphic_identity": "stand_in_issue_inbox"}
+
+
+class StandInIssueEvent(LoopNode):
+    __mapper_args__ = {"polymorphic_identity": "stand_in_issue_event"}
 
 
 class CloudProject(LoopNode):
@@ -273,6 +289,10 @@ class LoopItem(LoopNode):
             if isinstance(values, list)
             else []
         )
+
+    @property
+    def milestone_id(self) -> str | None:
+        return (self.metadata_json or {}).get("milestone_id")
 
     @property
     def tags(self) -> list[str]:

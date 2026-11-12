@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import type { User, UnifiedModel } from '@/types/api'
 import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'

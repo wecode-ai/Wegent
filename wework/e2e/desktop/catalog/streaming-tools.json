@@ -1,0 +1,12 @@
+{
+  "order": 187000,
+  "scenario": "./scenarios/streaming-text.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 134000,
+      "shard": 2,
+      "position": 10000
+    }
+  }
+}

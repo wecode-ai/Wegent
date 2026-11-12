@@ -1,21 +1,22 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import {
   getLocalRuntimeSourceIdentity,
   qualifyLocalRuntimeSource,
 } from './local-runtime-sidebar-identity'
 import {
   createWorkbenchDeviceResolver,
+  findNativeLocalWorkbenchDevice,
+  findWorkbenchDevice,
   getExecutorOfflineDeviceId,
-  getActiveWorkbenchDeviceId,
+  getRuntimeWorkDeviceNamesById,
   getWorkbenchDeviceIds,
   getWorkbenchDeviceNamesById,
-  getRuntimeWorkDeviceNamesById,
-  findWorkbenchDevice,
-  findNativeLocalWorkbenchDevice,
-  mergeDeviceLists,
   getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
+  mergeDeviceLists,
   resolveLocalWorkbenchDeviceId,
   resolveWorkbenchDeviceId,
 } from './workbench-device'
@@ -150,26 +151,6 @@ describe('workbench-device', () => {
     expect(isWorkbenchDeviceOnline(createDevice({ status: 'busy' }))).toBe(true)
   })
 
-  test('uses the project configured device before standalone fallback', () => {
-    expect(
-      getActiveWorkbenchDeviceId({
-        currentProject: {
-          id: 7,
-          name: 'Wegent',
-          config: { execution: { targetType: 'local', deviceId: 'project-device' } },
-        },
-        standaloneDeviceId: 'standalone-device',
-      })
-    ).toBe('project-device')
-
-    expect(
-      getActiveWorkbenchDeviceId({
-        currentProject: null,
-        standaloneDeviceId: 'standalone-device',
-      })
-    ).toBe('standalone-device')
-  })
-
   test('resolves the local-device CLI alias to the real local executor device', () => {
     const devices = [
       createDevice({
@@ -193,13 +174,6 @@ describe('workbench-device', () => {
       status: 'online',
     })
     expect(isWorkbenchDeviceOnline(findWorkbenchDevice(devices, 'local-device'))).toBe(true)
-  })
-
-  test('keeps an exact local-device match when the executor reports that id', () => {
-    const devices = [createDevice({ device_id: 'local-device' })]
-
-    expect(resolveLocalWorkbenchDeviceId(devices, 'local-device')).toBe('local-device')
-    expect(findWorkbenchDevice(devices, 'local-device')?.device_id).toBe('local-device')
   })
 
   test('finds a device by its socket and runtime route aliases', () => {

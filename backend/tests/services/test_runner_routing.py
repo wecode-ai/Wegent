@@ -27,6 +27,7 @@ def _execution_stub(**kwargs):
         team_id=None,
         execution_environment="local",
         execution_intent={},
+        runtime_origin_context={},
         executor_owner_user_id=kwargs["assigner_user_id"],
         runtime_device_id="",
         execution_device_id="",

@@ -1,0 +1,26 @@
+{
+  "revision": "c8d2e3f4a5b6",
+  "parents": [
+    "b7c1d2e3f4a5"
+  ],
+  "source": "20260726_c8d2e3f4a5b6_add_knowledge_artifacts.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE knowledge_artifacts (\n    artifact_id VARCHAR(36) NOT NULL COMMENT 'Artifact UUID', \n    knowledge_base_id INTEGER NOT NULL COMMENT 'Owning knowledge base ID; 0 means unset' DEFAULT '0', \n    artifact_type VARCHAR(32) NOT NULL COMMENT 'Artifact type: briefing or mind_map' DEFAULT 'briefing', \n    title VARCHAR(255) NOT NULL COMMENT 'Artifact title' DEFAULT '', \n    status VARCHAR(32) NOT NULL COMMENT 'Lifecycle status' DEFAULT 'queued', \n    task_id BIGINT NOT NULL COMMENT 'Related task ID; 0 means unset' DEFAULT '0', \n    assistant_subtask_id BIGINT NOT NULL COMMENT 'Related assistant subtask ID; 0 means unset' DEFAULT '0', \n    content TEXT NOT NULL COMMENT 'Generated content; empty means unavailable', \n    source_document_ids JSON NOT NULL COMMENT 'Source document ID list', \n    generation_config JSON NOT NULL COMMENT 'Generation configuration', \n    error_message VARCHAR(2000) NOT NULL COMMENT 'Failure message; empty means no error' DEFAULT '', \n    user_id INTEGER NOT NULL COMMENT 'Creator user ID; 0 means unset' DEFAULT '0', \n    attempt INTEGER NOT NULL COMMENT 'Generation attempt number' DEFAULT '1', \n    created_at DATETIME NOT NULL COMMENT 'Creation time' DEFAULT now(), \n    updated_at DATETIME NOT NULL COMMENT 'Last update time' DEFAULT now(), \n    PRIMARY KEY (artifact_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Knowledge base generated artifacts'"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_knowledge_artifacts_kb_created ON knowledge_artifacts (knowledge_base_id, created_at, artifact_id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP TABLE knowledge_artifacts"
+      ]
+    }
+  ]
+}

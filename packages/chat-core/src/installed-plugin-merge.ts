@@ -40,7 +40,7 @@ function marketplaceKey(item: InstalledPlugin): string {
   return isWegentCloudMarketplace(normalized) ? 'wegent' : normalized
 }
 
-function pluginIdentity(item: InstalledPlugin): string {
+export function pluginIdentity(item: InstalledPlugin): string {
   const plugin = pluginKey(item)
   const marketplace = marketplaceKey(item)
   return plugin && marketplace ? `${plugin}@${marketplace}` : ''
@@ -54,7 +54,7 @@ export function storeDirMatchesPluginKey(dirName: string, pluginKeyValue: string
   return haystack.includes(`-${needle}-`) || haystack.endsWith(`-${needle}`)
 }
 
-function localMatchesCloudPlugin(local: InstalledPlugin, cloud: InstalledPlugin): boolean {
+export function localMatchesCloudPlugin(local: InstalledPlugin, cloud: InstalledPlugin): boolean {
   const linkedId = linkedCloudPluginId(local)
   if (linkedId !== null && typeof cloud.spec.pluginId === 'number') {
     return linkedId === cloud.spec.pluginId
@@ -92,30 +92,49 @@ export function linkedCloudInstalledPluginId(item: InstalledPlugin): string | nu
   return typeof value === 'string' || typeof value === 'number' ? value : null
 }
 
+function storePackageMatchesLocal(local: InstalledPlugin, store: InstalledPlugin): boolean {
+  const marketplace = marketplaceKey(local)
+  const storeMarketplace = marketplaceKey(store)
+  if (marketplace && storeMarketplace && marketplace !== storeMarketplace) return false
+  const cloudId = linkedCloudPluginId(local)
+  if (cloudId !== null && cloudId !== linkedCloudPluginId(store)) return false
+  const installId = linkedCloudInstalledPluginId(local)
+  if (installId !== null && String(installId) !== String(linkedCloudInstalledPluginId(store))) {
+    return false
+  }
+  const id = localPluginId(local)
+  const identity = pluginIdentity(local)
+  return (
+    (Boolean(id) && localPluginId(store) === id) ||
+    (Boolean(identity) && pluginIdentity(store) === identity)
+  )
+}
+
+export function isIndependentPublishedSource(item: InstalledPlugin): boolean {
+  return (
+    (item.spec.origin === 'created' || item.spec.source.type === 'local') &&
+    !isWegentManagedStorePlugin(item) &&
+    linkedCloudPluginId(item) !== null &&
+    Object.prototype.hasOwnProperty.call(item.spec.sourcePayload, 'cloudReleaseId')
+  )
+}
+
 /** Fold unpacked Wegent store dirs into Codex membership without duplicating ids. */
 export function mergeLocalInstalledWithStorePackages(
   localItems: InstalledPlugin[],
   storePackages: InstalledPlugin[]
 ): InstalledPlugin[] {
   if (storePackages.length === 0) return localItems
-  const existingIds = new Set(localItems.map(localPluginId).filter(Boolean))
-  const existingIdentities = new Set(localItems.map(pluginIdentity).filter(Boolean))
-  const extra = storePackages.filter(item => {
-    const id = localPluginId(item)
-    const identity = pluginIdentity(item)
-    if (id && existingIds.has(id)) return false
-    if (identity && existingIdentities.has(identity)) return false
-    if (!id && !identity) return false
-    if (id) existingIds.add(id)
-    if (identity) existingIdentities.add(identity)
-    return true
-  })
-  const enriched = localItems.map(item => {
-    const store = storePackages.find(
-      candidate =>
-        (Boolean(localPluginId(item)) && localPluginId(candidate) === localPluginId(item)) ||
-        (Boolean(pluginIdentity(item)) && pluginIdentity(candidate) === pluginIdentity(item))
-    )
+  const extra: InstalledPlugin[] = []
+  for (const store of storePackages) {
+    if (!localPluginId(store) && !pluginIdentity(store)) continue
+    if ([...localItems, ...extra].some(local => storePackageMatchesLocal(local, store))) continue
+    extra.push(store)
+  }
+  const enriched = localItems.map<InstalledPlugin>(item => {
+    // Cloud links bind an author's independent source, not a materialized package.
+    if (isIndependentPublishedSource(item)) return item
+    const store = storePackages.find(candidate => storePackageMatchesLocal(item, candidate))
     if (!store?.spec.sourcePayload?.managedByWegent) return item
     return {
       ...item,
@@ -125,6 +144,8 @@ export function mergeLocalInstalledWithStorePackages(
           : item.status,
       spec: {
         ...item.spec,
+        source: { ...item.spec.source, type: 'marketplace' },
+        origin: 'market',
         sourcePayload: {
           ...(item.spec.sourcePayload ?? {}),
           // Store ownership must not replace Codex marketplace routing metadata.
@@ -133,7 +154,9 @@ export function mergeLocalInstalledWithStorePackages(
           cloudInstalledPluginId: store.spec.sourcePayload.cloudInstalledPluginId ?? null,
           ...(store.spec.sourcePayload.runtimeRecoveryError !== undefined ||
           item.spec.sourcePayload?.runtimeRecoveryError !== undefined
-            ? { runtimeRecoveryError: store.spec.sourcePayload.runtimeRecoveryError ?? null }
+            ? {
+                runtimeRecoveryError: store.spec.sourcePayload.runtimeRecoveryError ?? null,
+              }
             : {}),
         },
       },

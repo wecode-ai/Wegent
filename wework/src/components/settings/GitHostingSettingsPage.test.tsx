@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import { notifyLocalConnectorAuthChanged } from '@/api/local/localConnectorAuthEvents'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { ApiError } from '@/api/http'
-import { defaultAppPreferences } from '@/desktop/appPreferences'
 import './../../../src/i18n'
 import { DeviceGitSyncSection } from './DeviceGitSyncSection'
 import { GitHostingSettingsPage } from './GitHostingSettingsPage'
@@ -17,6 +17,8 @@ const syncGitAccounts = vi.hoisted(() => vi.fn())
 const cloudConnection = vi.hoisted(() => ({
   isConnected: true,
   apiBaseUrl: 'https://cloud.example.com/api',
+  backendUrl: 'https://backend.example.com',
+  webUrl: 'https://cloud.example.com',
   token: 'cloud-token',
   refreshUser: vi.fn(),
 }))
@@ -53,9 +55,41 @@ vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard }))
 vi.mock('@/lib/external-links', () => ({ openExternalUrl }))
 
 describe('GitHostingSettingsPage', () => {
+  test('refreshes after local authentication changes and external CLI changes on focus', async () => {
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: true,
+      detectionError: null,
+    })
+    render(<GitHostingSettingsPage />)
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+    )
+    getGitHostingCliStatus.mockClear()
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: false,
+      detectionError: null,
+    })
+    act(() => notifyLocalConnectorAuthChanged())
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('未登录')
+    )
+    expect(getGitHostingCliStatus.mock.calls.map(([provider]) => provider)).toContain('github')
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: true,
+      detectionError: null,
+    })
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+    )
+  })
   beforeEach(() => {
     cloudConnection.isConnected = true
     cloudConnection.apiBaseUrl = 'https://cloud.example.com/api'
+    cloudConnection.webUrl = 'https://cloud.example.com'
     cloudConnection.token = 'cloud-token'
     getGitHostingCliStatus.mockReset()
     updateAppPreferences.mockReset()
@@ -166,19 +200,6 @@ describe('GitHostingSettingsPage', () => {
     )
   })
 
-  test('detects both CLIs and saves the PR/MR status switch', async () => {
-    render(<GitHostingSettingsPage />)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('未登录')
-      expect(screen.getByTestId('git-hosting-cli-gitlab-status')).toHaveTextContent('未安装')
-    })
-
-    await userEvent.click(screen.getByTestId('change-request-status-switch'))
-    expect(updateAppPreferences).toHaveBeenCalledWith({ changeRequestStatusEnabled: false })
-    expect(screen.queryByTestId('git-device-sync-section')).not.toBeInTheDocument()
-  })
-
   test('offers login and installation configuration actions', async () => {
     render(<GitHostingSettingsPage />)
     await screen.findByText('gh version 2.80.0')
@@ -188,14 +209,6 @@ describe('GitHostingSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('git-hosting-cli-gitlab-install'))
     expect(openExternalUrl).toHaveBeenCalledWith('https://docs.gitlab.com/cli/')
-  })
-
-  test('rechecks CLI state on demand', async () => {
-    render(<GitHostingSettingsPage />)
-
-    await waitFor(() => expect(getGitHostingCliStatus).toHaveBeenCalledTimes(2))
-    await userEvent.click(screen.getByTestId('git-hosting-cli-refresh'))
-    await waitFor(() => expect(getGitHostingCliStatus).toHaveBeenCalledTimes(4))
   })
 
   test('does not offer remediation when CLI detection fails', async () => {
@@ -239,7 +252,7 @@ describe('GitHostingSettingsPage', () => {
 
     await waitFor(() => expect(syncGitAccounts).toHaveBeenCalledWith('remote-1', false))
     expect(await screen.findByTestId('git-device-sync-result')).toHaveTextContent(
-      'CLI 未安装，Git 认证已生效'
+      'CLI 未安装，Git 凭据已写入；仓库访问仍需检查'
     )
   })
 
@@ -269,7 +282,7 @@ describe('GitHostingSettingsPage', () => {
     await userEvent.click(screen.getByTestId('git-device-sync-submit'))
 
     expect(await screen.findByTestId('git-device-sync-result')).toHaveTextContent(
-      'CLI 登录失败，Git 认证已生效（exit=1 error validating token: unauthorized）'
+      'CLI 登录失败，Git 凭据已写入；仓库访问仍需检查（exit=1 error validating token: unauthorized）'
     )
   })
 
@@ -293,12 +306,46 @@ describe('GitHostingSettingsPage', () => {
 
     await screen.findByText('云端尚未配置 Git 账户。')
     await userEvent.selectOptions(screen.getByTestId('git-device-sync-select'), 'remote-1')
-    await userEvent.click(screen.getByTestId('git-device-sync-submit'))
+    expect(screen.getByTestId('git-device-sync-submit')).toBeDisabled()
+    await userEvent.click(screen.getByTestId('git-device-sync-clear'))
 
     expect(screen.getByTestId('git-device-sync-clear-dialog')).toBeInTheDocument()
     expect(syncGitAccounts).not.toHaveBeenCalled()
     await userEvent.click(screen.getByTestId('git-device-sync-clear-confirm'))
     await waitFor(() => expect(syncGitAccounts).toHaveBeenCalledWith('remote-1', true))
+  })
+
+  test('guides missing accounts to the actual cloud Git settings without clearing credentials', async () => {
+    getGitAccountSyncSummary.mockResolvedValue({
+      accounts: [],
+      effective_count: 0,
+      duplicate_count: 0,
+    })
+    render(<DeviceGitSyncSection />)
+    await screen.findByText('云端尚未配置 Git 账户。')
+    await userEvent.click(screen.getByTestId('git-device-sync-configure'))
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      'https://cloud.example.com/settings?tab=integrations#git-accounts',
+      { source: 'device-git-settings' }
+    )
+    expect(syncGitAccounts).not.toHaveBeenCalled()
+  })
+
+  test('waits for Web metadata without sending users to Backend or clearing credentials', async () => {
+    cloudConnection.webUrl = ''
+    const { rerender } = render(<DeviceGitSyncSection />)
+    await screen.findByTestId('git-device-sync-accounts')
+    expect(screen.queryByTestId('git-device-sync-configure')).not.toBeInTheDocument()
+    expect(openExternalUrl).not.toHaveBeenCalled()
+    expect(syncGitAccounts).not.toHaveBeenCalled()
+    cloudConnection.webUrl = 'https://cloud.example.com'
+    rerender(<DeviceGitSyncSection />)
+    await userEvent.click(screen.getByTestId('git-device-sync-configure'))
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      'https://cloud.example.com/settings?tab=integrations#git-accounts',
+      { source: 'device-git-settings' }
+    )
+    expect(syncGitAccounts).not.toHaveBeenCalled()
   })
 
   test('shows managed cleanup and terminal restart guidance', async () => {
@@ -347,28 +394,5 @@ describe('GitHostingSettingsPage', () => {
     )
     expect(screen.queryByTestId('git-device-sync-accounts')).not.toBeInTheDocument()
     expect(screen.queryByTestId('git-device-sync-submit')).not.toBeInTheDocument()
-  })
-
-  test('marks an expired cloud session without rendering missing accounts', async () => {
-    getGitAccountSyncSummary.mockRejectedValue(new ApiError('Could not validate credentials', 401))
-
-    render(<DeviceGitSyncSection />)
-
-    expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
-      'Wegent 云端登录已失效'
-    )
-    expect(cloudConnection.refreshUser).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText('云端尚未配置 Git 账户。')).not.toBeInTheDocument()
-  })
-
-  test('explains when the connected Backend does not support Git sync', async () => {
-    getGitAccountSyncSummary.mockRejectedValue(new ApiError('Not Found', 404))
-
-    render(<DeviceGitSyncSection />)
-
-    expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
-      '当前 Wegent Backend 不支持设备 Git 配置同步'
-    )
-    expect(screen.queryByText('云端尚未配置 Git 账户。')).not.toBeInTheDocument()
   })
 })

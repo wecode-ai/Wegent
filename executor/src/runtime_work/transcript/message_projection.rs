@@ -42,6 +42,7 @@ pub(super) struct AssistantTurnAccumulation {
     pub(super) file_changes: Option<Value>,
     assistant_parts: Vec<AssistantTextPart>,
     item_order: Vec<AssistantItemIdentity>,
+    positioned_item_count: usize,
     memory_citations: Vec<Value>,
 }
 
@@ -63,6 +64,7 @@ impl AssistantTurnAccumulation {
             file_changes,
             assistant_parts: Vec::new(),
             item_order: Vec::new(),
+            positioned_item_count: 0,
             memory_citations: Vec::new(),
         }
     }
@@ -98,6 +100,7 @@ impl AssistantTurnAccumulation {
         self.file_changes = None;
         self.assistant_parts.clear();
         self.item_order.clear();
+        self.positioned_item_count = 0;
         self.memory_citations.clear();
     }
 
@@ -130,6 +133,31 @@ impl AssistantTurnAccumulation {
             .extend((part_start..self.assistant_parts.len()).map(AssistantItemIdentity::Text));
     }
 
+    pub(super) fn record_item_positions(
+        &mut self,
+        positions: &mut HashMap<String, u64>,
+        position: u64,
+    ) {
+        // Each identity is visited once, including items preceding the first position.
+        for identity in &self.item_order[self.positioned_item_count..] {
+            let id = match identity {
+                AssistantItemIdentity::Block(index) => self
+                    .blocks
+                    .get(*index)
+                    .and_then(|block| block.get("id"))
+                    .and_then(Value::as_str),
+                AssistantItemIdentity::Text(index) => self
+                    .assistant_parts
+                    .get(*index)
+                    .map(|part| part.id.as_str()),
+            };
+            if let Some(id) = id.map(str::trim).filter(|id| !id.is_empty()) {
+                positions.entry(id.to_owned()).or_insert(position);
+            }
+        }
+        self.positioned_item_count = self.item_order.len();
+    }
+
     pub(super) fn runtime_items(&self) -> Vec<Value> {
         self.item_order
             .iter()
@@ -137,11 +165,11 @@ impl AssistantTurnAccumulation {
                 AssistantItemIdentity::Block(index) => {
                     let block = self.blocks.get(*index)?;
                     let id = string_field(block, "id")?;
-                    Some(json!({
-                        "id": id,
-                        "type": "block",
-                        "block": block,
-                    }))
+                    Some(Value::Object(Map::from_iter([
+                        ("id".to_owned(), Value::String(id)),
+                        ("type".to_owned(), Value::String("block".to_owned())),
+                        ("block".to_owned(), block.clone()),
+                    ])))
                 }
                 AssistantItemIdentity::Text(index) => {
                     self.assistant_parts.get(*index).map(|part| {
@@ -587,18 +615,23 @@ pub(super) fn push_reasoning_block(
 pub(super) fn plan_block(
     item: &Value,
     fallback_timestamp: i64,
+    turn_status: &str,
     options: TranscriptBuildOptions,
 ) -> Value {
+    // Native Plan items omit status; their owning turn supplies the streaming boundary.
     let status = string_field(item, "status")
         .map(normalized_phase_or_status)
-        .filter(|status| {
-            matches!(
+        .map(|status| {
+            if matches!(
                 status.as_str(),
                 "inprogress" | "pending" | "running" | "streaming"
-            )
+            ) {
+                "streaming"
+            } else {
+                "done"
+            }
         })
-        .map(|_| "streaming")
-        .unwrap_or("done");
+        .unwrap_or(turn_status);
     let mut block = json!({
         "id": format!("plan-{}", item_id(item, "plan")),
         "type": "plan",
@@ -617,12 +650,12 @@ pub(super) fn collect_assistant_message(
     item: &Value,
     fallback_timestamp: i64,
     fold_commentary: bool,
-    unphased_is_process: bool,
+    unphased_process: bool,
     assistant: &mut AssistantTurnAccumulation,
     options: TranscriptBuildOptions,
 ) {
     if let Some(content) = extract_text(item) {
-        match assistant_message_phase(item, fold_commentary, unphased_is_process) {
+        match assistant_message_phase(item, fold_commentary, unphased_process) {
             AssistantMessagePhase::Process => {
                 assistant.blocks.push(process_text_block(
                     item,
@@ -677,13 +710,12 @@ enum AssistantMessagePhase {
 fn assistant_message_phase(
     item: &Value,
     fold_commentary: bool,
-    unphased_is_process: bool,
+    unphased_process: bool,
 ) -> AssistantMessagePhase {
     match assistant_message_phase_name(item).as_deref() {
         Some("analysis") => AssistantMessagePhase::Process,
         Some("commentary") if fold_commentary => AssistantMessagePhase::Process,
-        // A completed item can precede a tool while its turn is still active.
-        None if unphased_is_process
+        None if unphased_process
             || string_field(item, "status")
                 .is_some_and(|status| normalized_phase_or_status(status) == "inprogress") =>
         {
@@ -786,9 +818,9 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "subtaskId": draft.subtask_id,
         "turnId": draft.turn_id,
         "createdAt": draft.created_at,
-        "blocks": draft.blocks,
-        "runtimeItems": draft.runtime_items,
     });
+    message["blocks"] = Value::Array(draft.blocks.to_vec());
+    message["runtimeItems"] = Value::Array(draft.runtime_items.to_vec());
     if draft.options.truncate_content {
         limit_content_field(&mut message, MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS);
     }

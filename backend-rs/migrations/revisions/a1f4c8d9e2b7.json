@@ -1,0 +1,21 @@
+{
+  "revision": "a1f4c8d9e2b7",
+  "parents": [
+    "c0d1e2f3a4b5"
+  ],
+  "source": "20260804_a1f4c8d9e2b7_add_loop_item_ai_assignee.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE loop_items ADD COLUMN assignee_agent_id VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Assigned project chat agent ID; empty when unassigned', ADD INDEX idx_loop_items_assignee_agent_id (assignee_agent_id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE loop_items DROP INDEX idx_loop_items_assignee_agent_id, DROP COLUMN assignee_agent_id"
+      ]
+    }
+  ]
+}

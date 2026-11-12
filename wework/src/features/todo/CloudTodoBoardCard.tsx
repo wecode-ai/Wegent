@@ -5,6 +5,7 @@ import {
   IssueCardTaskSummary,
   createIssueBoardCardLabels,
   createCollaborationTranslator,
+  standInProcessingActor,
 } from '@wegent/collaboration'
 import {
   useCallback,
@@ -88,7 +89,15 @@ export function CloudTodoCardContent({
   const t = useBoardTranslate()
   return (
     <IssueBoardCardContent
-      item={item}
+      item={{
+        ...item,
+        execution_state: goalBinding?.running ? 'running' : item.execution_state,
+        processing_actor:
+          standInProcessingActor(
+            goalBinding?.runtimeTask?.runtimeHandle,
+            goalBinding?.running === true
+          ) ?? item.processing_actor,
+      }}
       reference={item.id}
       display={display}
       labels={{
@@ -128,6 +137,7 @@ export interface CloudTodoBoardTaskBinding {
 }
 
 interface CloudTodoBoardCardProps {
+  metadata?: ReactNode
   childrenAction?: ReactNode
   statusNames?: Record<string, string>
   item: CloudLoopItem
@@ -165,6 +175,7 @@ interface CloudTodoBoardCardProps {
 }
 
 export function CloudTodoBoardCard({
+  metadata,
   childrenAction,
   statusNames,
   item,
@@ -239,7 +250,16 @@ export function CloudTodoBoardCard({
         : []
   return (
     <IssueBoardCard
-      item={item}
+      metadata={metadata}
+      item={{
+        ...item,
+        execution_state: runningTaskBindings.length ? 'running' : item.execution_state,
+        processing_actor:
+          standInProcessingActor(
+            currentTaskBinding?.runtimeTask?.runtimeHandle,
+            currentTaskBinding?.running === true
+          ) ?? item.processing_actor,
+      }}
       unread={unread}
       reference={item.id}
       display={display}
@@ -297,7 +317,7 @@ export function CloudTodoBoardCard({
                   }}
                   className={
                     cardAction.kind === 'archive'
-                      ? 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-red-600 focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
+                      ? 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-destructive focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100 wework:hover:text-red-600'
                       : 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-text-primary focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
                   }
                 >

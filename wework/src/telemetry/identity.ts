@@ -1,5 +1,5 @@
 import { getTelemetryConfig } from './config'
-import type { WeworkTelemetryContext } from './facts'
+import { parseSmartAppSource, type WeworkTelemetryContext } from './facts'
 
 let emailPrefix: string | undefined
 
@@ -53,8 +53,7 @@ export function telemetryContextProperties(
         (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
       )
         return []
-      if (field === 'smart_app_source' && !['managed', 'linked', 'market'].includes(String(value)))
-        return []
+      if (field === 'smart_app_source' && !parseSmartAppSource(value)) return []
       return [[field, value]]
     })
   )

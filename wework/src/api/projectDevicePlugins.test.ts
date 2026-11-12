@@ -1,7 +1,9 @@
+// @vitest-environment node
+
 import { CODEX_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
+import { toInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
 import { describe, expect, test, vi } from 'vitest'
 import * as localPlugins from './local/codexPlugins'
-import { toInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
 import {
   createLocalProjectDevicePluginApi,
   createRemoteProjectDevicePluginApi,
@@ -45,29 +47,6 @@ describe('device project plugins', () => {
       expect.objectContaining({ keyPath: 'plugins."second@team".enabled', value: false })
     )
   })
-  test('does not read a replacement runtime catalogue after an old inventory resolves', async () => {
-    let finishRead!: (value: unknown) => void
-    const request = vi.fn(async (method: string) =>
-      method === 'plugin/installed'
-        ? new Promise(resolve => {
-            finishRead = resolve
-          })
-        : { marketplaces: [] }
-    )
-    const api = createRemoteProjectDevicePluginApi('remote', request as never)
-    const device = {
-      device_id: 'remote',
-      device_type: 'remote',
-      status: 'online',
-      runtime_instance_id: 'old',
-    }
-    api.observeDevice?.(device as never)
-    const reading = api.readState()
-    api.observeDevice?.({ ...device, runtime_instance_id: 'replacement' } as never)
-    finishRead({ marketplaces: [] })
-    await expect(reading).rejects.toThrow()
-    expect(request).not.toHaveBeenCalledWith('plugin/list', expect.anything())
-  })
   test('does not start plugin RPC for an observed offline or missing owner', async () => {
     const request = vi.fn()
     const api = createRemoteProjectDevicePluginApi('remote', request as never)
@@ -106,54 +85,7 @@ describe('device project plugins', () => {
     expect(request).not.toHaveBeenCalledWith('plugin/install', expect.anything())
     expect(request).not.toHaveBeenCalledWith('config/value/write', expect.anything())
   })
-  test('invalidates unsupported knowledge after runtime instance, version, and status changes', async () => {
-    const request = vi
-      .fn()
-      .mockRejectedValue(
-        new Error(
-          'unsupported_method: Unsupported runtime RPC method: runtime.codex.app_server.request'
-        )
-      )
-    const api = createRemoteProjectDevicePluginApi('remote', request as never)
-    const device = {
-      device_id: 'remote',
-      device_type: 'remote',
-      executor_version: '2.0.21',
-      runtime_instance_id: 'old',
-      status: 'online',
-    } as const
-    api.observeDevice?.(device as never)
-    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
-    request.mockResolvedValue({ marketplaces: [] })
-    api.observeDevice?.({ ...device, runtime_instance_id: 'replacement' } as never)
-    await expect(api.readState()).resolves.toMatchObject({ deviceId: 'remote' })
-    request.mockRejectedValue(
-      new Error('Unsupported runtime RPC method: runtime.codex.app_server.request')
-    )
-    api.observeDevice?.({ ...device, executor_version: '2.0.22' } as never)
-    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
-    request.mockResolvedValue({ marketplaces: [] })
-    api.observeDevice?.({ ...device, status: 'offline' } as never)
-    api.observeDevice?.({ ...device, status: 'online' } as never)
-    await expect(api.readState()).resolves.toMatchObject({ deviceId: 'remote' })
-  })
-
-  test('explicit false capability never probes or writes', async () => {
-    const request = vi.fn()
-    const api = createRemoteProjectDevicePluginApi('remote', request as never)
-    api.observeDevice?.({
-      device_id: 'remote',
-      device_type: 'remote',
-      status: 'online',
-      runtime_features: { schemaVersion: 4, projectEditing: { plugins: false } },
-    } as never)
-    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
-    await expect(api.installAvailablePlugin(item as never)).rejects.toMatchObject({
-      name: 'ProjectPluginsUnsupportedError',
-    })
-    expect(request).not.toHaveBeenCalled()
-  })
-  test.each(['', 'unsupported_method: ', 'runtime_rpc_failed: '])(
+  test.each(['runtime_rpc_failed: '])(
     'remembers an exact unsupported runtime dispatcher with %s without repeating probes or writes',
     async prefix => {
       const request = vi

@@ -192,6 +192,16 @@ def test_standalone_nginx_routes_frontend_backend_and_wework() -> None:
     assert "proxy_pass http://wegent_frontend;" in nginx_config
 
 
+def test_standalone_nginx_redirects_keep_the_published_port() -> None:
+    """Redirects must stay relative so a remapped host port is not replaced."""
+    nginx_config = STANDALONE_NGINX_CONFIG.read_text(encoding="utf-8")
+    server_block = nginx_config.split("server {", maxsplit=1)[1]
+    server_directives = server_block.split("location ", maxsplit=1)[0]
+
+    assert "return 308 /wework/;" in server_block
+    assert "absolute_redirect off;" in server_directives
+
+
 def test_standalone_start_serves_wework_without_public_ttyd() -> None:
     """Startup should serve Wework through Nginx without a fixed public shell service."""
     start_script = STANDALONE_START.read_text(encoding="utf-8")

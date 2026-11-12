@@ -57,7 +57,7 @@ struct Subtask {
     error_message: Option<String>,
 }
 
-#[derive(Debug, FromMysqlRow)]
+#[derive(Debug, Clone, FromMysqlRow)]
 pub(crate) struct Message {
     pub(crate) id: i64,
     pub(crate) message_id: String,

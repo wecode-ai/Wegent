@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createRequire } from 'node:module'
+import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
 
 import { resolveElectronBinary } from './electron-binary.mjs'
+
+export function occupiedPublicationEntry(root, source, target) {
+  if (!basename(source).startsWith('.content-')) return null
+  const parent = dirname(target)
+  if (parent === join(root, 'data', 'managed-components', 'composed', 'wework-core-plugins'))
+    return join('wework-app', 'client.js')
+  if (parent === join(root, 'runtimes')) return 'runtime.json'
+  return null
+}
 
 // Included in the Windows workbench-mode checkpoint using real packaged resources.
 export async function verifyWindowsComponentPublication({ resources, environment, root }) {
@@ -14,7 +25,32 @@ export async function verifyWindowsComponentPublication({ resources, environment
     holder,
     `
 param([string]$Path, [int]$ReleaseAfterMs = 0)
-$handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+$ErrorActionPreference = 'Stop'
+$prefix = '{0}{0}?{0}' -f [char]92
+$nativePath = if ($Path.StartsWith($prefix)) { $Path } else { $prefix + $Path }
+if ([System.IO.Directory]::Exists($nativePath)) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class NativeDirectoryHolder {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern SafeFileHandle CreateFile(string path, uint access,
+    uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+}
+'@
+  # Lock the directory being renamed; a child file handle does not fence its parent.
+  $handle = [NativeDirectoryHolder]::CreateFile(
+    $nativePath, [uint32]2147483648, 3, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero
+  )
+  if ($handle.IsInvalid) {
+    throw [System.ComponentModel.Win32Exception]::new(
+      [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    )
+  }
+} else {
+  $handle = [System.IO.File]::Open($nativePath, 'Open', 'Read', 'ReadWrite')
+}
 try {
   [Console]::Out.WriteLine('held')
   [Console]::Out.Flush()
@@ -36,8 +72,11 @@ import { syncBuiltinESMExports } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const input = JSON.parse(process.argv[2])
+const { waitForNativeFileHolder } = await import(pathToFileURL(input.holderHelper).href)
+const occupiedPublicationEntry = ${occupiedPublicationEntry.toString()}
 app.setPath('userData', join(input.root, 'electron'))
 const originalSymlink = fs.symlink
+const runtimeRoot = join(input.root, 'runtimes')
 let child
 let closed
 let occupiedPublications = 0
@@ -45,28 +84,22 @@ async function holdFile(file, releaseAfterMs = 0) {
   child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', input.holder,
     '-Path', file, '-ReleaseAfterMs', String(releaseAfterMs)],
     { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+  let stderr = ''
+  child.stderr.on('data', data => { stderr = (stderr + data.toString()).slice(-8000) })
   closed = new Promise((accept, reject) => {
     child.once('error', reject)
-    child.once('close', code => code === 0 ? accept(code) : reject(new Error('Native holder failed')))
+    child.once('close', code => code === 0 ? accept(code) :
+      reject(new Error('Native holder failed (' + code + '): ' + stderr)))
   })
-  child.stderr.resume()
-  await new Promise((accept, reject) => {
-    let output = ''
-    const timer = setTimeout(() => reject(new Error('Native file holder did not start')), 10000)
-    child.once('error', error => { clearTimeout(timer); reject(error) })
-    child.stdout.on('data', data => {
-      output += data.toString()
-      if (!output.includes(String.fromCharCode(10))) return
-      clearTimeout(timer)
-      output.trim() === 'held' ? accept() : reject(new Error('Invalid native holder acknowledgement'))
-    })
-  })
+  // Publication workers can fail before anyone awaits the eventual close receipt.
+  closed.catch(() => {})
+  await waitForNativeFileHolder(child)
 }
 fs.symlink = async (source, target, type) => {
-  if (basename(source).startsWith('.content-')) {
-    const file = basename(dirname(target)) === 'wework-core-plugins'
-      ? join('wework-app', 'client.js') : 'runtime.json'
-    await holdFile(join(source, file))
+  const file = occupiedPublicationEntry(input.root, source, target)
+  if (file) {
+    assert.equal((await fs.stat(join(source, file))).isFile(), true)
+    await holdFile(source)
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
     await originalSymlink(source, target, type)
@@ -96,7 +129,6 @@ try {
   assert.deepEqual(await fs.readdir(join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')), entries)
   const { materializeBundledRuntimes } = await import(pathToFileURL(join(input.resources,
     'app.asar/dist/runtime/bundled-runtime-materializer.js')).href)
-  const runtimeRoot = join(input.root, 'runtimes')
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
   assert.equal(occupiedPublications, 2)
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
@@ -131,7 +163,15 @@ try {
   delete env.ELECTRON_RUN_AS_NODE
   const { stdout } = await promisify(execFile)(
     electronBinary,
-    [script, JSON.stringify({ root, resources, holder })],
+    [
+      script,
+      JSON.stringify({
+        root,
+        resources,
+        holder,
+        holderHelper: fileURLToPath(new URL('./native-file-holder.mjs', import.meta.url)),
+      }),
+    ],
     { env, timeout: 120000, maxBuffer: 1024 * 1024 }
   )
   const evidence = JSON.parse(stdout)

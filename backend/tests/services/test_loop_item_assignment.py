@@ -5,14 +5,27 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import event
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    LoopItemActiveAssignment,
+    LoopItemComment,
+    LoopNode,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
+    ProjectChatAgent,
+)
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -22,6 +35,7 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_items.service import loop_item_service
 from tests.utils.agent_resources import create_runnable_wegent_team
@@ -36,6 +50,69 @@ from tests.utils.collaboration import (
 def isolate_notification_delivery():
     with patch("app.core.async_utils.schedule_async_task"):
         yield
+
+
+@pytest.mark.parametrize("for_update", [False, True])
+def test_assignment_history_query_does_not_require_a_named_mysql_index(
+    for_update: bool,
+) -> None:
+    with (
+        Session() as db,
+        patch("sqlalchemy.orm.Query.all", autospec=True, return_value=[]) as read,
+    ):
+        assert (
+            issue_assignment_service._assignment_comments(
+                db, ["issue-with-history"], for_update=for_update
+            )
+            == []
+        )
+
+    query = read.call_args.args[0]
+    statement = str(
+        query.statement.compile(
+            dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "INDEX" not in statement
+    assert "loop_items.loop_item_id IN ('issue-with-history')" in statement
+    assert ("FOR UPDATE" in statement) is for_update
+    assert query.load_options._populate_existing is for_update
+    if for_update:
+        where_clause = statement.split("WHERE ", 1)[1].split(" ORDER BY", 1)[0]
+        assert where_clause == "loop_items.loop_item_id IN ('issue-with-history')"
+
+
+@pytest.mark.parametrize(
+    "deleted_at", [None, datetime(1970, 1, 1), datetime(1970, 1, 1, 0, 0, 1)]
+)
+def test_locking_assignment_history_filters_issue_nodes(
+    deleted_at: datetime | None,
+) -> None:
+    assignment = LoopItemComment(
+        id="assignment",
+        deleted_at=deleted_at,
+        metadata_json={"event_type": "assignment"},
+    )
+    nodes = [
+        LoopNode(
+            id="attachment",
+            resource_type="attachment",
+            metadata_json={"event_type": "assignment"},
+        ),
+        LoopItemComment(id="normal-comment", metadata_json={"event_type": "comment"}),
+        LoopItemComment(id="no-metadata", metadata_json=None),
+        LoopItemComment(id="invalid-metadata", metadata_json=[]),
+        LoopItemComment(
+            id="deleted",
+            deleted_at=datetime(2026, 11, 9),
+            metadata_json={"event_type": "assignment"},
+        ),
+        assignment,
+    ]
+    with Session() as db, patch("sqlalchemy.orm.Query.all", return_value=nodes):
+        assert issue_assignment_service._assignment_comments(
+            db, ["issue-with-history"], for_update=True
+        ) == [assignment]
 
 
 def _make_project(db: Session, user: User) -> CloudProject:
@@ -987,6 +1064,71 @@ def test_create_completed_issue_does_not_start_execution(
     )
 
 
+@pytest.mark.parametrize("target_status", ["in_review", "completed"])
+@pytest.mark.parametrize("target_type", ["agent", "team"])
+def test_status_automation_creates_new_runs_for_an_existing_agent_assignment(
+    test_db: Session, test_user: User, target_status: str, target_type: str
+) -> None:
+    project = _make_project(test_db, test_user)
+    if target_type == "agent":
+        bot = _make_bot(test_db, project, test_user)
+        target_id = bot.id
+    else:
+        team = create_runnable_wegent_team(
+            test_db, user_id=test_user.id, name_prefix="status-handler"
+        )
+        _make_bot(test_db, project, test_user, wegent_team_id=team.id)
+        target_id = str(team.id)
+    item = _make_item(test_db, project, test_user)
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Status handler",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(rule)
+    test_db.flush()
+    run_ids = []
+    for _ in range(2):
+        run = ProjectAutomationRun(
+            cloud_project_id=project.id,
+            parent_id=rule.id,
+            created_by_user_id=test_user.id,
+        )
+        test_db.add(run)
+        item.status = target_status
+        test_db.commit()
+        run_ids.append(str(run.id))
+        loop_item_service.assign(
+            test_db,
+            project_id=project.id,
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                assignee_type=target_type,
+                assignee_id=target_id,
+                version=item.version,
+                trigger="automation",
+            ),
+            automation_context={
+                "run_id": str(run.id),
+                "event": {
+                    "type": "task.status_changed",
+                    "payload": {"status": target_status},
+                },
+            },
+        )
+
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == item.id)
+        .all()
+    )
+    assert {row.automation_run_id for row in executions} == set(run_ids)
+    assert len(executions) == 2
+    if target_status == "completed":
+        assert item.status == "completed"
+
+
 def test_refresh_execution_configuration_starts_run_without_snapshot(
     test_db: Session, test_user: User
 ) -> None:
@@ -1189,6 +1331,134 @@ def test_assign_to_self_does_not_send_notification(
         )
 
     notify.assert_not_called()
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_initial_assignment_inserts_complete_index_without_empty_range_locks(
+    test_db: Session, test_user: User, explicit: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_project(test_db, test_user)
+    history_lock_reads: list[bool] = []
+    deletes: list[str] = []
+    read_comments = issue_assignment_service._assignment_comments
+
+    def track_history(*args: Any, **kwargs: Any) -> list[LoopItemComment]:
+        history_lock_reads.append(kwargs.get("for_update", False))
+        return read_comments(*args, **kwargs)
+
+    def track_delete(
+        _conn: Any,
+        _cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: bool,
+    ) -> None:
+        if statement.lstrip().upper().startswith("DELETE"):
+            deletes.append(statement)
+
+    monkeypatch.setattr(issue_assignment_service, "_assignment_comments", track_history)
+    engine = test_db.get_bind()
+    event.listen(engine, "before_cursor_execute", track_delete)
+    try:
+        item = loop_item_service.create(
+            test_db,
+            int(project.id),
+            test_user.id,
+            LoopItemCreate(
+                title="Initial assignment",
+                assignee_user_id=test_user.id if explicit else None,
+            ),
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", track_delete)
+
+    comments = (
+        test_db.query(LoopItemComment)
+        .filter(LoopItemComment.loop_item_id == item.id)
+        .all()
+    )
+    assert len(comments) == 1
+    assignment = comments[0]
+    assert assignment.metadata_json["action"] == "assign"
+    assert assignment.metadata_json["target_id"] == str(test_user.id)
+    assert assignment.metadata_json["receipt_tracking"] is True
+    assert assignment.metadata_json["trigger"] == ("manual" if explicit else "default")
+    index = (
+        test_db.query(LoopItemActiveAssignment)
+        .filter(LoopItemActiveAssignment.parent_id == item.id)
+        .all()
+    )
+    assert {row.id for row in index} == {
+        sha256(f"assignment-index:{item.id}".encode()).hexdigest(),
+        sha256(f"active-assignment:{assignment.id}".encode()).hexdigest(),
+    }
+    assert [row.loop_item_id for row in index if row.loop_item_id] == [assignment.id]
+    assert True not in history_lock_reads
+    assert deletes == []
+
+
+def test_existing_assignment_changes_keep_locked_current_history_and_rebuild_index(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = loop_item_service.create(
+        test_db,
+        int(project.id),
+        test_user.id,
+        LoopItemCreate(title="Existing assignment"),
+    )
+    history_lock_reads: list[bool] = []
+    read_comments = issue_assignment_service._assignment_comments
+
+    def track_history(*args: Any, **kwargs: Any) -> list[LoopItemComment]:
+        history_lock_reads.append(kwargs.get("for_update", False))
+        return read_comments(*args, **kwargs)
+
+    monkeypatch.setattr(issue_assignment_service, "_assignment_comments", track_history)
+    with patch.object(
+        issue_assignment_service,
+        "_lock_issue",
+        wraps=issue_assignment_service._lock_issue,
+    ) as lock_issue:
+        assignment, created = issue_assignment_service.record(
+            test_db,
+            project_id=project.id,
+            issue_id=item.id,
+            member_type="user",
+            member_id=str(test_user.id),
+            assigned_by_user_id=test_user.id,
+            workflow_step=None,
+            notify=True,
+            trigger="manual",
+        )
+        assert created is True
+        assert history_lock_reads == [True, True]
+        index = (
+            test_db.query(LoopItemActiveAssignment)
+            .filter(
+                LoopItemActiveAssignment.parent_id == item.id,
+                LoopItemActiveAssignment.loop_item_id.isnot(None),
+            )
+            .all()
+        )
+        assert [row.loop_item_id for row in index] == [assignment.id]
+
+        history_lock_reads.clear()
+        issue_assignment_service.remove(
+            test_db,
+            project_id=int(project.id),
+            issue_id=item.id,
+            assignment_id=assignment.id,
+            user_id=test_user.id,
+        )
+        assert history_lock_reads == [True, True]
+        assert lock_issue.call_count == 2
+    assert (
+        test_db.query(LoopItemActiveAssignment)
+        .filter(LoopItemActiveAssignment.parent_id == item.id)
+        .count()
+    ) == 1
 
 
 def test_create_with_explicit_self_assignment_sends_dispatch_notification(

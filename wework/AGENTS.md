@@ -20,6 +20,44 @@ Do not treat task ownership, project-space storage, code-workspace location, exe
 
 Before changing a Wework flow, identify the affected product area and trace its source object, storage owner, workspace, executor, and session lifecycle. If the requested behavior does not make these boundaries clear, ask the user before implementation.
 
+## Startup availability and fault isolation
+
+Opening Wework is a primary availability requirement. Application-managed failures
+must leave an operable window available, including after a restart. Data corruption,
+the risk of irreversible data loss, missing or unreadable credentials, failed
+authentication, incompatible versions, damaged release history, and failed updates
+or migrations do not justify refusing to open the entire application.
+
+- Separate opening the interface from enabling a capability or modifying data.
+  Keep unaffected workbench features usable. If the core runtime cannot load,
+  open an independent recovery interface that does not require that runtime,
+  its database, credentials, or a cloud connection.
+- Keep data integrity and permission protections at the operation they guard.
+  Refuse unsafe writes, migrations, restores, credential access, or unauthorized
+  requests; isolate the affected data or capability while the application stays
+  open. Never weaken permission invariants or security assertions to satisfy
+  startup availability.
+- Missing credentials disable only the capabilities that require them and must
+  leave a sign-in or repair entry accessible. Never clear credentials, reset user
+  state, overwrite damaged data, or restore a snapshot automatically just to make
+  startup succeed.
+- Remove unnecessary startup checks and dependencies. Optional services,
+  maintenance, diagnostics, preference persistence, update bookkeeping, and one
+  page's initial requests must not gate opening the workbench. Handle failures in
+  their owning feature with an actionable retry or repair entry.
+- For every retained rejection, identify the exact operation being refused and
+  substantiate its concrete data or permission consequence from code or evidence.
+  A version mismatch or hypothetical risk alone is not grounds for an application
+  exit, an endless splash, or a restart loop.
+- Do not hide defects by swallowing errors or reporting failed components as
+  ready. Preserve truthful feature status and useful diagnostics. Reuse the
+  existing recovery mechanisms, fix the primary flow, and remove obsolete paths.
+- Cover failure isolation as well as successful startup: the window remains
+  usable, unaffected features remain available, unsafe operations stay blocked,
+  original data and credentials remain intact, and retry and subsequent launch
+  can recover after the cause is repaired. Follow the repository's test execution
+  policy; a visible recovery window is not proof that the normal runtime is ready.
+
 ## UI and component rules
 
 - Before changing Wework UI or interaction behavior, read and follow [`DESIGN.md`](DESIGN.md). It is the source of truth for product-level visual, interaction, accessibility, and responsive-design decisions.
@@ -75,6 +113,13 @@ inside its own surface can stay without a menu entry.
 - Use the local `@/hooks/useTranslation` wrapper for new Wework code.
 - Add new copy to the appropriate Wework namespace in both `src/i18n/locales/en/` and `src/i18n/locales/zh-CN/`; register a new namespace in `src/i18n/index.ts`.
 
+## User-facing navigation documentation
+
+- When adding, removing, renaming or moving a user-facing entry, update `docs/{zh,en}/wework/interface-navigation.md` and its owning usage guide in the same change. Record the visible starting region, click path, purpose and visibility conditions; do not substitute an internal route or test selector for user instructions.
+- Review all affected surfaces: top tabs, sidebar, account/native menus, composer, project/Issue menus, right workspace, bottom panel and settings. Registered settings/sidebar entries have automatic coverage; controls outside those registries, nested controls, dynamic plugin entries and permissions-dependent paths still require explicit review against actual code and existing verification evidence.
+- Each `*Page.tsx` under `wework/src` and `packages/collaboration/src` must have one owning topic in both languages, declared with `<!-- ui-source: src/... -->` or `<!-- ui-source: ../packages/collaboration/src/... -->` in that topic. Keep source ownership identical across languages. The contract checks literal JSX field labels and General's literal helper labels against visible documentation; metadata alone does not count. Update the topic's purpose, visible path, action steps, activation/save behavior and restrictions when changing a field. Page ownership and literal-label coverage do not prove dynamic menus, delegated forms or all behaviors are documented: review non-Page first-party operation groups too, including shared collaboration UI, Applications, notifications, delivery, drag/stash, memory and conditional project-lead controls. Do not exclude an entry merely because it is experimental or permission-dependent. Keep the navigation page as links to topic sections, not a second copy of the procedures, and remove obsolete paths instead of appending competing instructions.
+- Run `pnpm --filter wework test scripts/wework-navigation-docs.test.mjs scripts/bundled-wework-docs.test.mjs` for navigation documentation changes. The existing Lint workflow's settings-configuration job runs them even for docs-only PRs; keep the index linked from both language READMEs and the bundled skill. Update maintained docs, not generated or installed `references/` copies. Do not claim a running UI was verified from a static documentation check.
+
 ## Testing
 
 - Before modifying code, locate and understand the tests and E2E coverage for
@@ -115,19 +160,21 @@ E2E tests use real backend requests. Do not skip, silently fail, or replace a fa
 
 ## Upgrade and rollback maintenance contract
 
-- Release-gate exception: macOS x64 adopts successful macOS arm64 paths and minimum source versions instead of running release-pair E2E. Preserve x64 package identities, require matching source revisions at both ends, and record arm64 hashes under `verification.kind=architecture-equivalence`. Keep independent Windows x64 release verification and all three PR mechanism-regression platforms.
+- Release-gate exception: macOS x64 adopts successful macOS arm64 paths and minimum source versions instead of running release-pair E2E. Preserve x64 package identities, require matching source revisions at both ends, and record arm64 hashes under `verification.kind=architecture-equivalence`. Keep independent Windows x64 release verification. Ordinary PRs do not run packaged upgrade E2E.
 
 - Extend the existing Electron/component manifests with optional upgrade policy fields; preserve legacy fields and endpoints. Legacy clients continue upgrading directly to the advertised latest version. Verified-path enforcement starts once a client contains the new updater; do not pin the legacy channel to a bridge or claim that new fields constrain old clients. Do not introduce a parallel update discovery protocol.
 - Each target release declares its minimum source version. Only exact source-to-target edges verified for the same platform, architecture, channel policy, and delivered package hashes may be offered. Never infer an edge from a version range or silently bypass the upgrade policy.
 - Prepare the next release in an isolated slot while the current release remains usable. Do not show restart readiness before extraction, integrity checks, and target-owned runtime/profile preparation finish. Keep mutable application data separate from versioned program files.
+- Deliver high file-count bundled components as archives bound to both archive and complete content hashes. The target owns materialization before restart readiness; component publication must verify and reuse the exact sealed archive bytes. Keep archive caches outside signed package resources.
 - Switch the complete host and component set through one atomic release selection. An independent launcher must supervise activation; only both runtime and renderer readiness confirm health. Preserve the previous healthy release and prevent automatic rollback loops.
 - Take consistent migration-data snapshots only after writers stop. Compatible rollback may switch directly; incompatible rollback requires explicit confirmation before restoring a snapshot and must preserve the failed release's newer data. Never restore user repositories, cloud records, or personal agent credentials.
 - Preserve active Goal recovery journals when the executor or app-server stops. A previous turn's completed outcome does not complete its still-active Goal; neither an exit notification nor a closed stream may finalize that Goal using the older outcome.
 - Maintain three layers of verification: pure policy/transaction tests, reusable real-package upgrade/rollback scenarios, and a release-edge matrix. Keep scenario behavior independent of version numbers: add a source/target pair to matrix data instead of copying a test for every release.
-- Upgrade E2E must start the actual source package, perform the real UI update, restart into the actual target package, verify persisted task/plugin/configuration data and task continuation, then exercise rollback. Independently built regression fixture packages exercise the mechanism; their results never authorize production edges. Release evidence must use the immutable delivered source and target archives without changing their package identity or signatures. Renaming or editing an existing archive is not cross-version verification. Pre-protocol legacy clients are outside this new E2E matrix.
-- Verify the complete selected release: host, Core runtime, executor, Codex, and DWS paths must match that slot's prepared composition. Do not carry fixed source-package binary overrides into the target or rollback process. Build an installed source's prerequisites through its shipped preparation entry, and keep fixture output separate from formal packages and unrelated checkpoints.
-- Maintain the scenario list, phase budgets, and acceptance version in `e2e/desktop/upgrade-suite.mjs`. Bound sequential preparation phases independently, reject stalled or regressing phases, and retain `logs/release-preparation.log` stage timings; never apply one operation's timeout to the entire serial preparation. Run the `upgrade-and-rollback` checkpoint group on both macOS and Windows. Use fixed A-to-B pairs with B newer than A; B need not be the newest release. Meaningful changes to the acceptance contract increment the suite version and invalidate older proof for new edges.
-- The `Wework Upgrade E2E` workflow runs macOS arm64, macOS x64, Windows x64, and Windows arm64 under `ci:all` for non-draft PRs and supports manual dispatch. Preserve all four matrix entries and the shared checkpoint group when changing CI.
+- Upgrade E2E must start the actual source package, perform the real UI update, restart into the actual target package, verify persisted task/plugin/configuration data and task continuation, then exercise rollback. Consume prebuilt release packages instead of building regression fixture packages. Release evidence must use the immutable delivered source and target archives without changing their package identity or signatures. Renaming or editing an existing archive is not cross-version verification. Pre-protocol legacy clients are outside this new E2E matrix.
+- Verify the complete selected release: host, Core runtime, executor, Codex, and DWS paths must match that slot's prepared composition. Do not carry fixed source-package binary overrides into the target or rollback process. Build an installed source's prerequisites through its shipped preparation entry, and keep test output separate from formal packages and unrelated checkpoints.
+- Maintain the scenario list, phase budgets, and acceptance version in `e2e/desktop/upgrade-suite.mjs`. Bound sequential preparation phases independently, reject stalled or regressing phases, and retain `logs/release-preparation.log` stage timings; never apply one operation's timeout to the entire serial preparation. Run the complete `upgrade-and-rollback` group on macOS arm64. Windows x64 certifies the core `app-rollback` checkpoint: real source-to-target UI upgrade, persisted task/configuration data, task continuation, and normal rollback. Interrupted rollback and failed-activation recovery remain covered by the macOS group and may be run as non-publishing Windows diagnostics. Use fixed A-to-B pairs with B newer than A; B need not be the newest release. Meaningful changes to the acceptance contract increment the suite version and invalidate older proof for new edges.
+- Packaged upgrade E2E runs only in the `Wework App` release workflow, including release dry runs; ordinary PR workflows do not run it. Verification consumes the release build artifacts and immutable historical downloads without compiling, packaging, or signing. Preserve the shared checkpoint group on macOS arm64 and Windows x64; macOS x64 follows the architecture-equivalence release-gate exception above.
+- Freeze published catalogs and every baseline, previous, and required source before dispatching package-pair shards. Limit verification to eight concurrent runners. Prepare shared immutable source runtimes before starting workers; warmed reads must not rewrite their catalog. Keep mutable catalogs, profiles and release slots isolated. The target may publish immutable programs to `.prepared`, keyed by fingerprint, version, archive hash and size, for later preparations to reuse after checking their own delivered archive. Never add future target roles to the source runtime catalog. Keep checkpoints serial within each pair: Windows shares the native legacy application-data and singleton identity, while macOS replaces the shared application bundle. Aggregate all source results before generating policies; missing proof must block promotion. Report complete execution against the ten-minute optimization target, including input resolution, downloads, preparation, scenarios, cleanup, uploads, and aggregation. Duration alone does not block publication; successful exact-package functional verification remains mandatory. Exclude external runner queues, but count additional scheduling waves under the concurrency limit.
 - Register every new scenario with the shared desktop checkpoint runner and CI. Each checkpoint establishes its own fixtures and cleanup. Only model services may be mocked; package download, extraction, launcher, storage, executor, and Electron integration must be real. Deterministic fault injection must exercise the production transaction rather than fabricate a result.
 - Changes to updating, rollback, migration, packaging, or release gates require focused packaged-Electron upgrade and rollback E2E. Do not replace these with unit tests, skips, weakened assertions, or retries. Preserve full failure diagnostics without credentials or session files.
 - Candidate edge configuration is authored; verified edge records are generated only by successful CI runs. Bind records to both package hashes, source revisions, scenario suite version, and CI evidence. Package changes invalidate previous verification. Publish immutable artifacts before atomically promoting the catalog, and retain every intermediate artifact referenced by an active path.
@@ -176,4 +223,4 @@ pnpm --filter wework ai:verify stop --session <session-path>
 
 - Keep the local runtime and desktop UI isolated from a developer's normal Codex home. Do not copy or log credentials.
 - Local coding tasks and desktop workbench behavior must remain functional when the cloud connection is unavailable; do not hide primary-path state or synchronization bugs behind fallback behavior.
-- Keep project-space conversation semantics identical for cloud and local projects. Each top-level activity comment owns one independent executor session; replies inside that activity thread continue the owning session; a new top-level comment starts a new session. Cloud and local implementations may differ in storage and dispatch, but must not differ in these user-visible session boundaries.
+- Keep project-space conversation semantics identical for cloud and local projects. Ordinary task comments retain one independent executor session per top-level activity thread; replies continue that session. Project stand-ins instead retain one conversation per user, role, project store, project and Issue: assignments and mentions only wake it, and public root-agent messages become separate comments. Cloud and local storage differences must not change these user-visible boundaries or expose private transcripts.

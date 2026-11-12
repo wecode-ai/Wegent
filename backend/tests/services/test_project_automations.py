@@ -43,6 +43,26 @@ def test_external_events_default_to_creating_an_issue() -> None:
     assert config["execution_target"] == "create_issue"
 
 
+@pytest.mark.parametrize(
+    ("event_config", "expected"),
+    [
+        ({}, {"transition": "entered_processing"}),
+        ({"transition": "any"}, {"transition": "any"}),
+        (
+            {"statuses": ["in_review"]},
+            {"statuses": ["in_review"], "transition": "any"},
+        ),
+    ],
+)
+def test_status_trigger_preserves_explicit_transition_and_target_statuses(
+    event_config: dict, expected: dict
+) -> None:
+    assert _canonical_event_config("task.status_changed", event_config) == {
+        **expected,
+        "execution_target": "existing_issue",
+    }
+
+
 def test_next_run_respects_rule_timezone():
     result = _next_run(
         "0 3 * * *",
@@ -506,7 +526,7 @@ def test_create_rejects_invalid_runtime_workflow_definition(
     )
 
 
-def test_status_rule_create_and_update_persist_only_canonical_transition(
+def test_status_rule_create_and_update_preserve_target_statuses(
     test_db,
     test_user,
     monkeypatch: pytest.MonkeyPatch,
@@ -516,6 +536,15 @@ def test_status_rule_create_and_update_persist_only_canonical_transition(
         name="Status automation project",
         created_by_user_id=test_user.id,
         storage_prefix="projects/status-automation",
+        metadata_json={
+            "board_config": {
+                "statuses": [
+                    {"id": "inbox", "name": "Inbox"},
+                    {"id": "custom_review", "name": "Custom review"},
+                    {"id": "completed", "name": "Completed"},
+                ]
+            }
+        },
     )
     authorize_project(test_db, project)
     test_db.add(project)
@@ -533,7 +562,7 @@ def test_status_rule_create_and_update_persist_only_canonical_transition(
             prompt="Run when work begins",
             triggerType="event",
             eventType="task.status_changed",
-            eventConfig={"statuses": ["pending", "in_progress"]},
+            eventConfig={"statuses": ["custom_review"]},
             targetKind="human",
             targetId=str(test_user.id),
         ),
@@ -542,9 +571,145 @@ def test_status_rule_create_and_update_persist_only_canonical_transition(
     rule = test_db.get(ProjectAutomationRule, created["id"])
     assert rule is not None
     assert rule.metadata_json["event_config"] == {
-        "transition": "entered_processing",
+        "statuses": ["custom_review"],
+        "transition": "any",
         "execution_target": "existing_issue",
     }
+
+    updated = project_automation_service.update(
+        test_db,
+        str(project.id),
+        created["id"],
+        test_user.id,
+        ProjectAutomationUpdate(
+            version=created["version"],
+            eventConfig={"statuses": ["completed"], "transition": "any"},
+        ),
+    )
+
+    assert updated["event_config"] == {
+        "statuses": ["completed"],
+        "transition": "any",
+        "execution_target": "existing_issue",
+    }
+    test_db.expire_all()
+    assert (
+        test_db.get(ProjectAutomationRule, created["id"]).metadata_json["event_config"]
+        == updated["event_config"]
+    )
+
+
+@pytest.mark.parametrize("statuses", [[], "in_review", [None], [1], [""], ["unknown"]])
+def test_status_rule_rejects_invalid_or_unknown_target_statuses(
+    test_db, statuses: object
+) -> None:
+    project = CloudProject(
+        project_key="INVALIDSTATUS",
+        name="Invalid status automation",
+        created_by_user_id=1,
+        storage_prefix="projects/invalid-status",
+    )
+    test_db.add(project)
+    test_db.flush()
+
+    with pytest.raises(HTTPException) as exc_info:
+        project_automation_service._validate_event_config(
+            test_db,
+            project_id=str(project.id),
+            trigger_type="event",
+            event_type="task.status_changed",
+            event_config={
+                "statuses": statuses,
+                "transition": "any",
+                "execution_target": "existing_issue",
+            },
+        )
+
+    assert exc_info.value.status_code == 422
+
+
+def test_status_rule_with_removed_column_can_be_disabled_and_repaired(
+    test_db, test_user
+) -> None:
+    project = CloudProject(
+        project_key="REMOVEDSTATUS",
+        name="Removed status project",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/removed-status",
+        metadata_json={
+            "board_config": {
+                "statuses": [
+                    {"id": "custom_review", "name": "Custom review"},
+                    {"id": "completed", "name": "Completed"},
+                ]
+            }
+        },
+    )
+    authorize_project(test_db, project)
+    test_db.commit()
+    created = project_automation_service.create(
+        test_db,
+        str(project.id),
+        test_user.id,
+        ProjectAutomationCreate(
+            name="Custom review automation",
+            prompt="Review the Issue",
+            trigger_type="event",
+            event_type="task.status_changed",
+            event_config={"statuses": ["custom_review"]},
+            target_kind="human",
+            target_id=str(test_user.id),
+        ),
+    )
+    project.metadata_json = {
+        "board_config": {"statuses": [{"id": "completed", "name": "Completed"}]}
+    }
+    test_db.commit()
+
+    disabled = project_automation_service.update(
+        test_db,
+        str(project.id),
+        created["id"],
+        test_user.id,
+        ProjectAutomationUpdate(
+            version=created["version"],
+            enabled=False,
+            event_config=created["event_config"],
+        ),
+    )
+
+    assert disabled["enabled"] is False
+    assert disabled["event_config"]["statuses"] == ["custom_review"]
+    for enabled, statuses in [(False, []), (True, ["custom_review"])]:
+        with pytest.raises(HTTPException) as exc_info:
+            project_automation_service.update(
+                test_db,
+                str(project.id),
+                created["id"],
+                test_user.id,
+                ProjectAutomationUpdate(
+                    version=disabled["version"],
+                    enabled=enabled,
+                    event_config={"statuses": statuses},
+                ),
+            )
+        assert exc_info.value.status_code == 422
+        test_db.rollback()
+
+    repaired = project_automation_service.update(
+        test_db,
+        str(project.id),
+        created["id"],
+        test_user.id,
+        ProjectAutomationUpdate(
+            version=disabled["version"],
+            enabled=True,
+            event_config={"statuses": ["completed"]},
+        ),
+    )
+
+    assert repaired["enabled"] is True
+    assert repaired["event_config"]["statuses"] == ["completed"]
 
 
 @pytest.mark.parametrize(

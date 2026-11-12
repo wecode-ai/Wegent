@@ -7,7 +7,7 @@
 # This script downloads and installs the wegent-executor binary for macOS and Linux.
 #
 # Usage:
-#   curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.sh | bash
 #
 # Or with a specific version:
 #   curl -fsSL https://github.com/wecode-ai/Wegent/releases/download/v1.0.0/local_executor_install.sh | bash -s -- --version v1.0.0
@@ -458,10 +458,10 @@ detect_platform() {
             print_error "This script does not support Windows directly."
             print_info "Please use PowerShell to install on Windows:"
             echo ""
-            echo "  irm https://github.com/${GITHUB_REPO}/releases/latest/download/local_executor_install.ps1 | iex"
+            echo "  irm https://raw.githubusercontent.com/${GITHUB_REPO}/main/executor/scripts/local_executor_install.ps1 | iex"
             echo ""
             print_info "Or with a specific version:"
-            echo '  $env:WEGENT_VERSION="v1.0.0"; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex'
+            echo '  $env:WEGENT_VERSION="v1.0.0"; irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.ps1 | iex'
             echo ""
             exit 1
             ;;
@@ -516,15 +516,56 @@ parse_args() {
     done
 }
 
+fetch_url() {
+    local url="$1" output="$2"
+    if command -v curl &> /dev/null; then
+        curl -fsSL -o "$output" "$url"
+    elif command -v wget &> /dev/null; then
+        wget -q -O "$output" "$url"
+    else
+        print_error "Neither curl nor wget found. Please install one of them." >&2
+        return 1
+    fi
+}
+
+resolve_latest_platform_version() {
+    local page=1 releases version status
+    while true; do
+        releases="$(fetch_url "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100&page=${page}" -)" || return 1
+        if version="$(printf '%s' "$releases" | node -e '
+            const releases = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+            if (!Array.isArray(releases)) throw new Error("Invalid GitHub releases response")
+            const release = releases.find(item => !item.draft && !item.prerelease && /^v\d+\.\d+\.\d+$/.test(item.tag_name))
+            if (release) {
+                if (!release.assets?.some(asset => asset.name === process.argv[1])) {
+                    throw new Error(`Platform release ${release.tag_name} has no ${process.argv[1]}`)
+                }
+                process.stdout.write(release.tag_name)
+            } else if (releases.length < 100) process.exit(3)
+        ' "${BINARY_NAME}-${PLATFORM}")"; then
+            if [[ -n "$version" ]]; then
+                printf '%s' "$version"
+                return 0
+            fi
+        else
+            status=$?
+            if [[ "$status" -eq 3 ]]; then
+                print_error "No stable Wegent platform release was found." >&2
+            fi
+            return 1
+        fi
+        page=$((page + 1))
+    done
+}
+
 # Get download URL
 get_download_url() {
     local base_url="https://github.com/${GITHUB_REPO}/releases"
 
-    if [[ -n "$VERSION" ]]; then
-        DOWNLOAD_URL="${base_url}/download/${VERSION}/${BINARY_NAME}-${PLATFORM}"
-    else
-        DOWNLOAD_URL="${base_url}/latest/download/${BINARY_NAME}-${PLATFORM}"
+    if [[ -z "$VERSION" ]]; then
+        VERSION="$(resolve_latest_platform_version)" || return 1
     fi
+    DOWNLOAD_URL="${base_url}/download/${VERSION}/${BINARY_NAME}-${PLATFORM}"
 
     print_info "Download URL: ${DOWNLOAD_URL}"
 }
@@ -544,20 +585,9 @@ download_binary() {
 
     print_info "Downloading ${BINARY_NAME}..."
 
-    if command -v curl &> /dev/null; then
-        if ! curl -fsSL -o "$tmp_file" "$DOWNLOAD_URL"; then
-            print_error "Failed to download ${BINARY_NAME}"
-            rm -f "$tmp_file"
-            exit 1
-        fi
-    elif command -v wget &> /dev/null; then
-        if ! wget -q -O "$tmp_file" "$DOWNLOAD_URL"; then
-            print_error "Failed to download ${BINARY_NAME}"
-            rm -f "$tmp_file"
-            exit 1
-        fi
-    else
-        print_error "Neither curl nor wget found. Please install one of them."
+    if ! fetch_url "$DOWNLOAD_URL" "$tmp_file"; then
+        print_error "Failed to download ${BINARY_NAME}"
+        rm -f "$tmp_file"
         exit 1
     fi
 

@@ -35,6 +35,7 @@ export async function createDesktopScenario({
   const evidence = []
   const composerMessaging = createPluginComposerRouteMessaging({
     executorHome,
+    executorLogPath: join(resultDir, 'executor.log'),
     timeoutMs: workbenchReadyTimeoutMs,
   })
   const objectStorage = await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
@@ -163,8 +164,10 @@ export async function createDesktopScenario({
     })
     const fixture = { ...release, slug }
     await openPlugin(control, fixture)
-    await refreshPluginInventory(control, workbenchReadyTimeoutMs)
-    await control.command('waitFor', testId(`plugin-marketplace-install-${release.pluginId}`))
+    await composerMessaging.assertLocalRefreshDoesNotReadOfficialCatalog(async () => {
+      await refreshPluginInventory(control, workbenchReadyTimeoutMs)
+      await control.command('waitFor', testId(`plugin-marketplace-install-${release.pluginId}`))
+    })
     return fixture
   }
 
@@ -411,11 +414,14 @@ export async function createDesktopScenario({
         'clickWhenEnabled',
         testId(`plugin-marketplace-install-${pending.pluginId}`)
       )
-      await control.command('waitFor', testId('install-plugin-dialog-confirm'))
-      await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
       await control.command(
         'waitFor',
         `${testId('plugin-operation-notice')}[data-notice-kind="error"]`
+      )
+      const rejected = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        !rejected.testIds.includes('install-plugin-dialog-confirm'),
+        'A rejected Runtime preflight must not open the installation dialog'
       )
       const installs = restoredTransport.writes
         .slice(installOffset)

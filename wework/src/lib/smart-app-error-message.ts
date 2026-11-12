@@ -10,6 +10,16 @@ interface ErrorTranslation {
 
 const ERROR_TRANSLATIONS: ErrorTranslation[] = [
   {
+    pattern: /^Stop the Smart app before installing a new version$/,
+    key: 'workbench.smart_apps_install_stop_first',
+    fallback: '请先停止智能工作台，再安装新版本。',
+  },
+  {
+    pattern: /^Smart app ZIP extraction timed out$/,
+    key: 'workbench.smart_apps_error_extraction_timeout',
+    fallback: '发布包解压超时，请重试安装；若仍然失败，请重新生成发布包。',
+  },
+  {
     pattern: /^SA-PACKAGE-UNVERIFIED$/,
     key: 'workbench.smart_apps_error_unverified',
     fallback: '请先完成工作台正式验证，再导出或发布。',

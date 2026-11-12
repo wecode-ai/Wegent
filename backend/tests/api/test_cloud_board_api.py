@@ -7,6 +7,7 @@
 import hashlib
 from datetime import datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -134,6 +135,7 @@ def test_service_api_key_cannot_create_user_board(
     assert response.json()["detail"] == "Invalid or expired API key"
 
 
+@pytest.mark.xdist_group("production_openapi")
 def test_board_creation_endpoints_document_jwt_and_api_key_authentication(
     test_client: TestClient,
 ) -> None:
@@ -148,6 +150,7 @@ def test_board_creation_endpoints_document_jwt_and_api_key_authentication(
         assert {"APIKeyHeader": []} in security
 
 
+@pytest.mark.xdist_group("production_openapi")
 def test_legacy_project_get_preserves_openapi_operation_id(
     test_client: TestClient,
 ) -> None:

@@ -1,3 +1,4 @@
+import { BetaBadge } from '@/components/common/BetaBadge'
 import {
   Archive,
   AlarmClock,
@@ -24,6 +25,7 @@ import {
   Search,
   SquareTerminal,
   Sparkles,
+  UserRound,
   X,
 } from 'lucide-react'
 import {
@@ -42,7 +44,7 @@ import type {
   PointerEventHandler,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { ActionMenu } from '@/components/common/ActionMenu'
+import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu'
 import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
@@ -129,7 +131,6 @@ import {
 import type {
   CloneGitRepositoryInput,
   DeviceInfo,
-  GitCloneProjectOperation,
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
@@ -147,8 +148,8 @@ import type {
   UnifiedModel,
   User as UserProfile,
 } from '@/types/api'
-import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
-import type { CloudWorkStatus } from '@/types/workbench'
+import type { CloudWorkStatus, RuntimeWorkLoadState } from '@/types/workbench'
+import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
 import type {
   ArchiveRuntimeConversationsResult,
   ArchiveRuntimeTaskOptions,
@@ -203,7 +204,11 @@ import {
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
-import { debugRuntimeSidebarState } from '@/features/workbench/runtimeSidebarDiagnostics'
+import {
+  debugRuntimeSidebarState,
+  runtimeSidebarScrollMetrics,
+  RuntimeSidebarScrollDiagnostics,
+} from '@/features/workbench/runtimeSidebarDiagnostics'
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
@@ -216,15 +221,17 @@ interface DesktopSidebarProps {
   devices: DeviceInfo[]
   cloudWorkStatus?: CloudWorkStatus
   runtimeWork?: RuntimeWorkListResponse | null
-  gitCloneOperations?: GitCloneProjectOperation[]
+  runtimeWorkLoad?: RuntimeWorkLoadState
+  onRetryRuntimeWork?: () => Promise<void>
   currentRuntimeTask?: RuntimeTaskAddress | null
   splitGroupMemberships?: Readonly<Record<string, WorkbenchSplitGroupMembership>>
   standaloneDeviceId?: string | null
   standaloneWorkspacePath?: string | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
+  standInUnreadCount?: number
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
+  activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation' | 'stand-in'
   taskView?: 'workbench' | 'default-work-items'
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
@@ -240,6 +247,7 @@ interface DesktopSidebarProps {
   onPointerLeave?: PointerEventHandler<HTMLElement>
   onToggleSidebar?: () => void
   onNewChat: () => void
+  onOpenStandIn?: () => void
   onStartStandaloneChat: () => void
   onOpenLocalHarnessSession?: (sessionId: string) => void
   onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
@@ -286,7 +294,6 @@ interface DesktopSidebarProps {
     name: string
   }) => Promise<void>
   onSelectStandaloneDevice?: (deviceId: string | null) => void
-  onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onUpdateLocalRuntimeProject?: (data: {
     deviceId: string
@@ -305,10 +312,7 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onCloneGitRepository: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
-  onStartGitCloneProject?: (deviceId: string, input: CloneGitRepositoryInput) => void
-  onRetryGitCloneOperation?: (operation: GitCloneProjectOperation) => void
-  onDismissGitCloneOperation?: (operationId: string) => void
+  onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   projectDevicePluginApi?: (deviceId: string) => ProjectDevicePluginApi
   projectSpaceApis?: ProjectSpaceApi[]
   models?: UnifiedModel[]
@@ -641,7 +645,7 @@ function ArchiveConversationsConfirmDialog({
             data-testid={`${testId}-confirm-button`}
             onClick={() => void onConfirm()}
             disabled={submitting}
-            className="inline-flex h-8 min-w-[96px] items-center justify-center gap-2 rounded-lg bg-red-500/15 px-4 text-sm font-semibold text-red-500 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-8 min-w-[96px] items-center justify-center gap-2 rounded-lg bg-destructive/15 px-4 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-60 wework:bg-red-500/15 wework:text-red-500 wework:hover:bg-red-500/20"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {confirmLabel}
@@ -1143,7 +1147,7 @@ function SidebarReleaseNotesCard({
         type="button"
         data-testid="sidebar-release-notes-open"
         onClick={onOpen}
-        className="block w-full py-3 pl-3 pr-10 text-left hover:bg-muted/60 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500"
+        className="block w-full py-3 pl-3 pr-10 text-left hover:bg-muted/60 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus wework:keyboard:focus-visible:ring-blue-500"
       >
         <span className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
@@ -1208,7 +1212,11 @@ function ProjectDeviceInlineStatus({
           'h-2 w-2 shrink-0 rounded-full',
           !online && 'bg-[rgb(var(--color-sidebar-text-muted))] opacity-55'
         )}
-        style={online ? { backgroundColor: '#1FD660' } : undefined}
+        style={
+          online
+            ? { backgroundColor: 'rgb(var(--color-device-online, var(--color-success)))' }
+            : undefined
+        }
       />
     </span>
   )
@@ -1223,6 +1231,14 @@ function getDeviceUnavailableActionTitle(
     t('workbench.project_chat_device_unavailable', '设备{{status}}，无法问AI：{{device}}'),
     { status, device: getSidebarDeviceName(deviceState) }
   )
+}
+
+function dshMenuItemIcon(name?: string): ActionMenuItem['icon'] {
+  if (!name) return undefined
+  const Icon = ({ className }: { className?: string }) => (
+    <DshIcon name={name} className={className} />
+  )
+  return Icon
 }
 
 function RuntimeTaskRow({
@@ -1521,6 +1537,7 @@ function RuntimeTaskRow({
             hostId={hostId && hostId !== hostLabel ? hostId : null}
             updatedLabel={task.updatedAt ? formatRelativeSidebarTime(task.updatedAt) : null}
             branchWarning={hasRuntimeTaskBranchWarning(task)}
+            worktree={worktreeTask}
           />
         }
       >
@@ -1531,6 +1548,9 @@ function RuntimeTaskRow({
           role="button"
           tabIndex={disabled ? -1 : 0}
           aria-disabled={disabled}
+          aria-label={
+            worktreeTask ? `${task.title} · ${t('workbench.git_worktree_session')}` : undefined
+          }
           aria-current={
             splitGroup?.active
               ? splitGroup.focused
@@ -1630,13 +1650,6 @@ function RuntimeTaskRow({
               data-testid={`runtime-local-task-time-${task.taskId}`}
               className={SIDEBAR_ROW_METADATA_CLASS}
             >
-              {worktreeTask && (
-                <GitCompareArrows
-                  data-testid={`runtime-local-task-worktree-icon-${task.taskId}`}
-                  className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
-                  aria-label="Worktree"
-                />
-              )}
               {experimentalFeaturesEnabled &&
                 notificationsSubscribed &&
                 renderNotificationButton(
@@ -1986,6 +1999,7 @@ function RuntimeTaskRow({
           moveTaskMenu,
           ...conversationMenuActions.map(action => ({
             label: action.title,
+            icon: dshMenuItemIcon(action.icon),
             testId: `runtime-local-task-menu-extension-${action.id}-${task.taskId}`,
             disabled: !workspace.available || !action.enabled,
             onSelect: async () => {
@@ -2830,7 +2844,7 @@ function ProjectItem({
                 ))}
                 {(hasHiddenRuntimeTasks || canCollapseRuntimeTasks) && (
                   <div className="ml-9 flex h-8 items-center gap-2">
-                    {hasHiddenRuntimeTasks ? (
+                    {hasHiddenRuntimeTasks && (
                       <button
                         type="button"
                         data-testid={`project-runtime-tasks-expand-${project.id}`}
@@ -2842,18 +2856,21 @@ function ProjectItem({
                             )
                           )
                         }
-                        className="flex h-8 items-center rounded-md px-2 text-left text-sm font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                        aria-controls={`project-local-tasks-panel-${project.id}`}
+                        className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
                         {t('workbench.expand_display', '展开显示')}
                       </button>
-                    ) : (
+                    )}
+                    {canCollapseRuntimeTasks && (
                       <button
                         type="button"
                         data-testid={`project-runtime-tasks-collapse-${project.id}`}
                         onClick={() =>
                           setRuntimeTaskVisibleLimit(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT)
                         }
-                        className="flex h-8 items-center rounded-md px-2 text-left text-sm font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                        aria-controls={`project-local-tasks-panel-${project.id}`}
+                        className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
                         {t('workbench.collapse_display', '折叠显示')}
                       </button>
@@ -2913,25 +2930,29 @@ function ProjectItem({
   )
 }
 
+/** Presents workbench destinations and device-owned task lists without gating public Beta entries. */
 export function DesktopSidebar({
   user,
   projects,
   devices,
   cloudWorkStatus,
   runtimeWork,
-  gitCloneOperations = [],
+  runtimeWorkLoad,
+  onRetryRuntimeWork,
   currentRuntimeTask,
   splitGroupMemberships = EMPTY_SPLIT_GROUP_MEMBERSHIPS,
   standaloneDeviceId,
   standaloneWorkspacePath,
   imNotificationSettings,
   unreadRuntimeTaskKeys,
+  standInUnreadCount = 0,
   preferredDeviceId,
   activeItem = 'chat',
   taskView = 'workbench',
   localHarnessSessions = [],
   activeLocalHarnessSessionId = null,
   onNewChat,
+  onOpenStandIn,
   onStartStandaloneChat,
   onOpenLocalHarnessSession,
   onCloseLocalHarnessSession,
@@ -2951,7 +2972,6 @@ export function DesktopSidebar({
   onOpenStandaloneWorkspace,
   onCreatePermanentWorktree,
   onSelectStandaloneDevice,
-  onGetRemoteDeviceStartupCommand,
   onUpdateProjectName,
   onUpdateLocalRuntimeProject,
   onRemoveProject,
@@ -2964,9 +2984,6 @@ export function DesktopSidebar({
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   onCloneGitRepository,
-  onStartGitCloneProject,
-  onRetryGitCloneOperation,
-  onDismissGitCloneOperation,
   projectSpaceApis,
   projectDevicePluginApi,
   models = [],
@@ -3102,6 +3119,7 @@ export function DesktopSidebar({
   const runtimeTaskPinSnapshotRevisionRef = useRef(0)
   const runtimeTaskPersistedPinStatesRef = useRef(new Map<string, boolean>())
   const [sidebarScrolled, setSidebarScrolled] = useState(false)
+  const sidebarScrollDiagnosticsRef = useRef(new RuntimeSidebarScrollDiagnostics())
   const {
     scrollContainerRef: sidebarWorklistsScrollRef,
     dragOutsideSidebar: paneDragOutsideSidebar,
@@ -3733,6 +3751,7 @@ export function DesktopSidebar({
   const displayedProjectsExpanded = projectsExpanded
   const runtimeWorkCheck = cloudWorkStatus?.checks.runtimeWork
   const showEmptyProjectCreateAction =
+    (!runtimeWorkLoad || runtimeWorkLoad.phase === 'ready') &&
     runtimeWork !== null &&
     runtimeWork !== undefined &&
     runtimeWorkCheck !== null &&
@@ -3956,15 +3975,47 @@ export function DesktopSidebar({
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [collapseReadShortcut, collapseReadTaskView, priorityFilterShortcut, togglePriorityTaskView])
 
+  const autoScrollDependenciesRef = useRef<{
+    taskId: string | null
+    taskKey: string | null
+    rowVisible: boolean
+  } | null>(null)
   useEffect(() => {
-    if (!currentRuntimeTaskKey || !currentRuntimeTaskRowVisible) return
-
-    const taskRow = document.querySelector(
-      `[data-testid="runtime-local-task-row-${currentRuntimeTask?.taskId}"]`
+    const dependencies = {
+      taskId: currentRuntimeTask?.taskId ?? null,
+      taskKey: currentRuntimeTaskKey,
+      rowVisible: currentRuntimeTaskRowVisible,
+    }
+    const previousDependencies = autoScrollDependenciesRef.current
+    autoScrollDependenciesRef.current = dependencies
+    const changedDependencies = (['taskId', 'taskKey', 'rowVisible'] as const).filter(
+      key => previousDependencies?.[key] !== dependencies[key]
     )
-
+    const shouldScroll = Boolean(currentRuntimeTaskKey && currentRuntimeTaskRowVisible)
+    const taskRow = shouldScroll
+      ? document.querySelector(
+          `[data-testid="runtime-local-task-row-${currentRuntimeTask?.taskId}"]`
+        )
+      : null
+    const recordScroll = (phase: 'before' | 'after') =>
+      debugRuntimeSidebarState('active-task-auto-scroll', () => ({
+        phase,
+        dependencies,
+        previousDependencies,
+        changedDependencies,
+        willScroll: shouldScroll && taskRow !== null,
+        metrics: runtimeSidebarScrollMetrics(sidebarWorklistsScrollRef.current, taskRow),
+      }))
+    recordScroll('before')
+    if (!shouldScroll) return
     taskRow?.scrollIntoView({ block: 'nearest' })
-  }, [currentRuntimeTask?.taskId, currentRuntimeTaskKey, currentRuntimeTaskRowVisible])
+    recordScroll('after')
+  }, [
+    currentRuntimeTask?.taskId,
+    currentRuntimeTaskKey,
+    currentRuntimeTaskRowVisible,
+    sidebarWorklistsScrollRef,
+  ])
 
   return (
     <aside
@@ -3977,7 +4028,8 @@ export function DesktopSidebar({
       onPointerLeave={onPointerLeave}
       className={cn(
         'relative z-popover h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
-        !collapsed && 'border-r border-black/[0.08] dark:border-white/[0.08]',
+        !collapsed &&
+          'border-r border-border/70 wework:border-black/[0.08] wework:dark:border-white/[0.08]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
@@ -4035,7 +4087,7 @@ export function DesktopSidebar({
                       type="button"
                       data-testid="runtime-search-button"
                       onClick={onOpenSearch}
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-focus wework:keyboard:focus-visible:ring-blue-500"
                       aria-label={t('workbench.search')}
                     >
                       <Search className="h-4 w-4" />
@@ -4071,6 +4123,29 @@ export function DesktopSidebar({
               testId="new-chat-button"
               onClick={onNewChat}
             />
+            {onOpenStandIn && (
+              <DesktopSidebarNavItem
+                icon={UserRound}
+                label={t('standIn.title')}
+                testId="personal-stand-in-button"
+                badge={
+                  <>
+                    <BetaBadge testId="personal-stand-in-beta" />
+                    {standInUnreadCount > 0 && (
+                      <span
+                        data-testid="personal-stand-in-unread-count"
+                        aria-label={t('notifications.total_unread', { count: standInUnreadCount })}
+                        className="ml-auto min-w-5 rounded-full bg-text-primary px-1.5 text-center text-xs tabular-nums text-background"
+                      >
+                        {standInUnreadCount > 99 ? '99+' : standInUnreadCount}
+                      </span>
+                    )}
+                  </>
+                }
+                selected={activeItem === 'stand-in'}
+                onClick={onOpenStandIn}
+              />
+            )}
           </nav>
 
           <SidebarWorklistsScroll
@@ -4078,10 +4153,35 @@ export function DesktopSidebar({
             scrolled={sidebarScrolled}
             locked={paneDragOutsideSidebar}
             onScroll={event => {
-              if (preserveLockedScrollPosition(event)) return
-              setSidebarScrolled(event.currentTarget.scrollTop > 0)
+              const viewport = event.currentTarget
+              const scrollLocked = preserveLockedScrollPosition(event)
+              sidebarScrollDiagnosticsRef.current.record(
+                () =>
+                  runtimeSidebarScrollMetrics(
+                    viewport,
+                    currentRuntimeTask
+                      ? document.querySelector(
+                          `[data-testid="runtime-local-task-row-${currentRuntimeTask.taskId}"]`
+                        )
+                      : null
+                  ),
+                {
+                  taskId: currentRuntimeTask?.taskId ?? null,
+                  taskKey: currentRuntimeTaskKey,
+                  rowVisible: currentRuntimeTaskRowVisible,
+                  loadPhase: runtimeWorkLoad?.phase ?? null,
+                  scrollLocked,
+                }
+              )
+              if (scrollLocked) return
+              setSidebarScrolled(viewport.scrollTop > 0)
             }}
           >
+            <RuntimeWorkLoadStatus
+              load={runtimeWorkLoad}
+              hasSnapshot={runtimeWork != null}
+              onRetry={onRetryRuntimeWork}
+            />
             <nav className="mb-4 space-y-0.5">
               {sidebarNavigation.map(item => {
                 if (item.surface === 'module') {
@@ -4358,7 +4458,7 @@ export function DesktopSidebar({
                     <DesktopSidebarSectionHeader
                       title={t('workbench.sidebar_project_spaces', '项目空间')}
                       expanded={displayedProjectsExpanded}
-                      hasContent={sidebarProjects.length > 0 || gitCloneOperations.length > 0}
+                      hasContent={sidebarProjects.length > 0}
                       toggleTestId="projects-section-toggle"
                       iconTestId="projects-section-chevron-right"
                       onToggle={() => setProjectsExpanded(expanded => !expanded)}
@@ -4513,78 +4613,13 @@ export function DesktopSidebar({
                     )}
                   {displayedProjectsExpanded && (
                     <>
-                      {showEmptyProjectCreateAction && gitCloneOperations.length === 0 && (
+                      {showEmptyProjectCreateAction && (
                         <DesktopSidebarNavItem
                           icon={Plus}
                           label={t('workbench.new_project', '新建项目')}
                           testId="projects-empty-create-button"
                           onClick={openProjectCreateDialog}
                         />
-                      )}
-                      {gitCloneOperations.length > 0 && (
-                        <div
-                          data-testid="git-clone-project-operations"
-                          className="mb-1 space-y-0.5"
-                        >
-                          {gitCloneOperations.map(operation => (
-                            <div
-                              key={operation.id}
-                              data-testid={`git-clone-project-operation-${operation.id}`}
-                              className="flex min-h-[30px] items-center gap-2 rounded-[10px] px-2.5 text-sm text-[rgb(var(--color-sidebar-text-primary))]"
-                              title={operation.error || operation.targetPath}
-                            >
-                              {operation.status !== 'failed' ? (
-                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                              ) : (
-                                <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
-                              )}
-                              <span className="min-w-0 flex-1 truncate">{operation.name}</span>
-                              <span className="shrink-0 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
-                                {operation.status === 'cloning'
-                                  ? t('workbench.remote_project_git_cloning', '克隆中')
-                                  : operation.status === 'opening'
-                                    ? t('workbench.remote_project_git_opening', '添加中')
-                                    : operation.failureReason === 'executor-offline'
-                                      ? t('workbench.remote_project_device_offline', '设备离线')
-                                      : operation.failureStage === 'open'
-                                        ? t('workbench.remote_project_git_open_failed', '添加失败')
-                                        : t('workbench.remote_project_git_failed', '克隆失败')}
-                              </span>
-                              {operation.status === 'failed' && (
-                                <>
-                                  <Tooltip
-                                    label={t('workbench.retry', '重试')}
-                                    testId={`retry-git-clone-project-${operation.id}-tooltip`}
-                                  >
-                                    <button
-                                      type="button"
-                                      data-testid={`retry-git-clone-project-${operation.id}`}
-                                      onClick={() => onRetryGitCloneOperation?.(operation)}
-                                      className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
-                                      aria-label={t('workbench.retry', '重试')}
-                                    >
-                                      <RotateCw className="h-3.5 w-3.5" />
-                                    </button>
-                                  </Tooltip>
-                                  <Tooltip
-                                    label={t('workbench.remove', '移除')}
-                                    testId={`dismiss-git-clone-project-${operation.id}-tooltip`}
-                                  >
-                                    <button
-                                      type="button"
-                                      data-testid={`dismiss-git-clone-project-${operation.id}`}
-                                      onClick={() => onDismissGitCloneOperation?.(operation.id)}
-                                      className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
-                                      aria-label={t('workbench.remove', '移除')}
-                                    >
-                                      <X className="h-3.5 w-3.5" />
-                                    </button>
-                                  </Tooltip>
-                                </>
-                              )}
-                            </div>
-                          ))}
-                        </div>
                       )}
                       {sidebarProjects.length > 0 && (
                         <SidebarSortableList
@@ -4709,14 +4744,16 @@ export function DesktopSidebar({
                     <div className="space-y-0.5 pb-2">
                       {standaloneLocalHarnessSessions.length === 0 &&
                       regularChatTaskItems.length === 0 ? (
-                        <div
-                          data-testid="runtime-chat-empty"
-                          className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
-                        >
-                          {chatTaskItemsWithPinState.some(({ task }) => !task.pinned)
-                            ? t('workbench.read_conversations_collapsed', '已读会话已收起')
-                            : t('workbench.no_chats', '暂无会话')}
-                        </div>
+                        runtimeWorkLoad && runtimeWorkLoad.phase !== 'ready' ? null : (
+                          <div
+                            data-testid="runtime-chat-empty"
+                            className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
+                          >
+                            {chatTaskItemsWithPinState.some(({ task }) => !task.pinned)
+                              ? t('workbench.read_conversations_collapsed', '已读会话已收起')
+                              : t('workbench.no_chats', '暂无会话')}
+                          </div>
+                        )
                       ) : regularChatTaskItems.length > 0 ? (
                         <SidebarSortableList
                           testId="runtime-chat-task-sortable-list"
@@ -4849,9 +4886,7 @@ export function DesktopSidebar({
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
             onCloneGitRepository={onCloneGitRepository}
-            onStartGitCloneProject={onStartGitCloneProject}
             onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-            onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
             onRefreshDevices={onRefreshDevices}
           />
           <ArchiveConversationsConfirmDialog

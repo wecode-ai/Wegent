@@ -1,0 +1,13 @@
+{
+  "order": 151000,
+  "scenario": "./scenarios/goal-overload-recovery.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": ["wework/e2e/desktop/modules/goal-admission-recovery.mjs"],
+  "ci": {
+    "core": {
+      "order": 105000,
+      "shard": 5,
+      "position": 16000
+    }
+  }
+}

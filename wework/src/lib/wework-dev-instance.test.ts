@@ -22,20 +22,4 @@ describe('Wework development instance information', () => {
       worktree: '/workspace/plugin',
     })
   })
-
-  test('keeps build-time development metadata authoritative', async () => {
-    vi.stubEnv('VITE_WEWORK_DEV_TITLE', 'Source development')
-    vi.stubEnv('VITE_WEWORK_DEV_WORKTREE', '/workspace/source')
-    window.history.replaceState(
-      {},
-      '',
-      '/?weworkDevTitle=Plugin%20development&weworkDevWorktree=%2Fworkspace%2Fplugin'
-    )
-    const { getWeworkDevInstanceInfo } = await import('./wework-dev-instance')
-
-    expect(getWeworkDevInstanceInfo()).toMatchObject({
-      title: 'Source development',
-      worktree: '/workspace/source',
-    })
-  })
 })

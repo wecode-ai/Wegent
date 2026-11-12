@@ -1,7 +1,9 @@
-import { describe, expect, test, vi } from 'vitest'
-import type { WeworkWorkspaceRuntimePort } from '@wegent/collaboration'
+// @vitest-environment node
 
-import { createCloudProjectTaskRuntimeApi, rememberProjectTaskStore } from './projectTaskTracking'
+import type { WeworkWorkspaceRuntimePort } from '@wegent/collaboration'
+import { describe, expect, test, vi } from 'vitest'
+
+import { createCloudProjectTaskRuntimeApi } from './projectTaskTracking'
 
 describe('project task runtime binding', () => {
   test('preserves the assigned Team through the cloud runtime binding port', async () => {
@@ -54,12 +56,5 @@ describe('project task runtime binding', () => {
 
     expect(bindTask).toHaveBeenCalledWith('ISSUE-1', sharedTask, 'Task')
     expect(trackProjectTask).toHaveBeenCalledWith('project-1', sharedTask, 'Task', 'Description')
-  })
-
-  test('records project store changes only once per binding', () => {
-    const address = { deviceId: 'local-device', taskId: 'runtime-bound-locally' }
-    expect(rememberProjectTaskStore(address, 'local')).toBe(true)
-    expect(rememberProjectTaskStore(address, 'local')).toBe(false)
-    expect(rememberProjectTaskStore(address, 'backend')).toBe(true)
   })
 })

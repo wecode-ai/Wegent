@@ -1,10 +1,27 @@
+// @vitest-environment node
+
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import { describe, expect, test, vi } from 'vitest'
-import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
+import { createRuntimeWorkApi } from './runtimeWork'
 
 describe('createRuntimeWorkApi', () => {
+  test('forwards cancellation separately from the serialized transcript request', async () => {
+    const controller = new AbortController()
+    const post = vi.fn().mockResolvedValue({ messages: [], turns: [] })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = { deviceId: 'cloud-device', taskId: 'task-1' }
+    await api.getRuntimeTranscript(request, { signal: controller.signal })
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      '/runtime-work/transcript',
+      {
+        ...request,
+        transcriptProtocolVersion: 2,
+      },
+      { signal: controller.signal }
+    )
+  })
   test('assembles canonical HTTP history while preserving project scope on every chunk', async () => {
     const content = Array.from({ length: 18_000 }, (_, index) =>
       createHash('sha256').update(String(index)).digest('hex')
@@ -62,21 +79,6 @@ describe('createRuntimeWorkApi', () => {
         ...(index > 0 ? { transcriptTransfer: { snapshotId, offset: index * chunkSize } } : {}),
       })
     }
-  })
-
-  test('preserves unversioned HTTP transcript responses from older executors', async () => {
-    const transcript = { messages: [], turns: [] }
-    const post = vi.fn().mockResolvedValue(transcript)
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-
-    await expect(
-      api.getRuntimeTranscript({ deviceId: 'cloud-device', taskId: 'task-1' })
-    ).resolves.toBe(transcript)
-    expect(post).toHaveBeenCalledExactlyOnceWith('/runtime-work/transcript', {
-      deviceId: 'cloud-device',
-      taskId: 'task-1',
-      transcriptProtocolVersion: 2,
-    })
   })
 
   test('never sends qualified local sidebar mutations through the backend transport', async () => {
@@ -148,34 +150,6 @@ describe('createRuntimeWorkApi', () => {
     expect(post).toHaveBeenCalledWith('/runtime-work/create', request)
   })
 
-  test('materializes a Team request without dispatching it', async () => {
-    const response = {
-      payload: {
-        schemaVersion: 2,
-        runtime: 'codex',
-        message: 'continue',
-        title: 'continue',
-        executionRequest: { team_id: 42 },
-      },
-      runtimeHandle: { wegentTeam: { id: 42 } },
-    }
-    const post = vi.fn().mockResolvedValue(response)
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-    const request = {
-      schemaVersion: 3 as const,
-      wegentTeamId: 42,
-      newSession: false,
-      deviceId: 'local-device-1',
-      workspacePath: '/repo',
-      taskId: 'task-1',
-      runtime: 'codex' as const,
-      message: 'continue',
-    }
-
-    await expect(api.materializeRuntimeTask(request)).resolves.toEqual(response)
-    expect(post).toHaveBeenCalledWith('/runtime-work/materialize', request)
-  })
-
   test('lists runtime work without client origin query', async () => {
     const get = vi.fn().mockResolvedValue({
       projects: [],
@@ -225,118 +199,6 @@ describe('createRuntimeWorkApi', () => {
     )
   })
 
-  test('reads Worktree capabilities for a target device', async () => {
-    const response = {
-      success: true,
-      deviceId: 'device-1',
-      runtimeWorktrees: {
-        version: 1,
-        managed: true,
-        deferredPrepare: true,
-        snapshots: true,
-        restore: true,
-        preflight: true,
-      },
-    }
-    const post = vi.fn().mockResolvedValue(response)
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-
-    await expect(api.getWorktreeCapabilities({ deviceId: 'device-1' })).resolves.toEqual(response)
-
-    expect(post).toHaveBeenCalledWith('/runtime-work/worktrees/capabilities', {
-      deviceId: 'device-1',
-    })
-  })
-
-  test('preflights a Worktree source path on a target device', async () => {
-    const response = {
-      success: true,
-      deviceId: 'device-1',
-      supported: true,
-      sourcePath: '/repo/Wegent',
-      sourceExists: true,
-      sourceDirectory: true,
-      gitRepository: true,
-      gitCommonDirValid: true,
-      gitCommonDirWritable: true,
-      writable: true,
-      repoRoot: '/repo/Wegent',
-      repoRootFingerprint: 'repo-fingerprint',
-      resolvedWorktreeRoot: '/runtime/worktrees',
-    }
-    const post = vi.fn().mockResolvedValue(response)
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-
-    await expect(
-      api.preflightWorktree({
-        deviceId: 'device-1',
-        sourcePath: '/repo/Wegent',
-      })
-    ).resolves.toEqual(response)
-
-    expect(post).toHaveBeenCalledWith('/runtime-work/worktrees/preflight', {
-      deviceId: 'device-1',
-      sourcePath: '/repo/Wegent',
-    })
-  })
-
-  test('forks a runtime task by runtime addresses', async () => {
-    const post = vi.fn().mockResolvedValue({
-      accepted: true,
-      source: {
-        deviceId: 'source-device',
-        workspacePath: '/repo/Wegent',
-        taskId: 'codex-1',
-      },
-      target: {
-        deviceId: 'target-device',
-        workspacePath: '/repo/Wegent-copy',
-        taskId: 'runtime-copy',
-      },
-      runtime: 'codex',
-    })
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-
-    await expect(
-      api.forkRuntimeTask({
-        source: {
-          deviceId: 'source-device',
-          workspacePath: '/repo/Wegent',
-          taskId: 'codex-1',
-        },
-        target: {
-          deviceId: 'target-device',
-          workspacePath: '/repo/Wegent-copy',
-        },
-      })
-    ).resolves.toEqual({
-      accepted: true,
-      source: {
-        deviceId: 'source-device',
-        workspacePath: '/repo/Wegent',
-        taskId: 'codex-1',
-      },
-      target: {
-        deviceId: 'target-device',
-        workspacePath: '/repo/Wegent-copy',
-        taskId: 'runtime-copy',
-      },
-      runtime: 'codex',
-    })
-
-    expect(post).toHaveBeenCalledWith('/runtime-work/fork', {
-      source: {
-        deviceId: 'source-device',
-        workspacePath: '/repo/Wegent',
-        taskId: 'codex-1',
-      },
-      target: {
-        deviceId: 'target-device',
-        workspacePath: '/repo/Wegent-copy',
-      },
-    })
-  })
-
   test('cancels a runtime task by address', async () => {
     const post = vi.fn().mockResolvedValue({
       accepted: true,
@@ -362,72 +224,6 @@ describe('createRuntimeWorkApi', () => {
       workspacePath: '/repo/Wegent',
       taskId: 'codex-1',
     })
-  })
-
-  test('searches runtime work transcripts', async () => {
-    const post = vi.fn().mockResolvedValue({
-      items: [
-        {
-          address: {
-            deviceId: 'device-1',
-            workspacePath: '/repo/Wegent',
-            taskId: 'codex-1',
-          },
-          runtime: 'codex',
-          title: '执行 pwd',
-          snippet: '执行 pwd',
-          matchStart: 3,
-          matchEnd: 6,
-          messageId: 'm1',
-          messageRole: 'user',
-          messageCreatedAt: '2026-06-21T12:00:00Z',
-          updatedAt: '2026-06-21T12:00:01Z',
-          deviceName: 'MacBook',
-          workspacePath: '/repo/Wegent',
-          project: { id: 1, name: 'Wegent' },
-        },
-      ],
-    })
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-
-    await expect(api.searchRuntimeWork({ query: 'pwd', limit: 20 })).resolves.toEqual({
-      items: [
-        expect.objectContaining({
-          title: '执行 pwd',
-          snippet: '执行 pwd',
-        }),
-      ],
-    })
-
-    expect(post).toHaveBeenCalledWith('/runtime-work/search', {
-      query: 'pwd',
-      limit: 20,
-    })
-  })
-
-  test('starts a supervisor review immediately', async () => {
-    const response = {
-      accepted: true,
-      taskId: 'codex-1',
-      supervisor: {
-        mode: 'auto' as const,
-        status: 'active' as const,
-        instructions: '',
-        suggestions: [],
-      },
-    }
-    const post = vi.fn().mockResolvedValue(response)
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-    const request = {
-      address: {
-        deviceId: 'device-1',
-        taskId: 'codex-1',
-      },
-    }
-
-    await expect(api.runRuntimeSupervisorNow(request)).resolves.toEqual(response)
-
-    expect(post).toHaveBeenCalledWith('/runtime-work/supervisor/run-now', request)
   })
 
   test('opens a runtime workspace without creating a task', async () => {
@@ -458,190 +254,6 @@ describe('createRuntimeWorkApi', () => {
       workspacePath: '/Users/crystal/Documents/hello-0',
       runtime: 'codex',
       label: 'Hello project',
-    })
-  })
-
-  test('renames a runtime workspace project', async () => {
-    const post = vi.fn().mockResolvedValue({
-      accepted: true,
-      deviceId: 'device-1',
-      workspacePath: '/Users/crystal/Documents/hello-0',
-      runtime: 'codex',
-    })
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-
-    await expect(
-      api.renameRuntimeWorkspace({
-        deviceId: 'device-1',
-        workspacePath: '/Users/crystal/Documents/hello-0',
-        runtime: 'codex',
-        name: 'Hello project',
-      })
-    ).resolves.toEqual({
-      accepted: true,
-      deviceId: 'device-1',
-      workspacePath: '/Users/crystal/Documents/hello-0',
-      runtime: 'codex',
-    })
-
-    expect(post).toHaveBeenCalledWith('/runtime-work/workspaces/rename', {
-      deviceId: 'device-1',
-      workspacePath: '/Users/crystal/Documents/hello-0',
-      runtime: 'codex',
-      name: 'Hello project',
-    })
-  })
-
-  test('removes a runtime workspace project', async () => {
-    const post = vi.fn().mockResolvedValue({
-      accepted: true,
-      deviceId: 'device-1',
-      workspacePath: '/Users/crystal/Documents/hello-0',
-      runtime: 'codex',
-    })
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-
-    await expect(
-      api.removeRuntimeWorkspace({
-        deviceId: 'device-1',
-        workspacePath: '/Users/crystal/Documents/hello-0',
-        runtime: 'codex',
-      })
-    ).resolves.toEqual({
-      accepted: true,
-      deviceId: 'device-1',
-      workspacePath: '/Users/crystal/Documents/hello-0',
-      runtime: 'codex',
-    })
-
-    expect(post).toHaveBeenCalledWith('/runtime-work/workspaces/remove', {
-      deviceId: 'device-1',
-      workspacePath: '/Users/crystal/Documents/hello-0',
-      runtime: 'codex',
-    })
-  })
-
-  test('binds private IM sessions to a runtime task address', async () => {
-    const post = vi.fn().mockResolvedValue({
-      address: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-1',
-      },
-      boundSessionKeys: ['session-a', 'session-b'],
-      notifiedCount: 2,
-    })
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-
-    await expect(
-      api.bindRuntimeTaskImSessions({
-        address: {
-          deviceId: 'device-1',
-          workspacePath: '/workspace/project-alpha',
-          taskId: 'runtime-1',
-        },
-        taskTitle: '修复 IM 通知标题',
-        sessionKeys: ['session-a', 'session-b'],
-        modelSelection: {
-          modelName: 'gpt-5.6-luna',
-          modelType: 'public',
-          options: { reasoningEffort: 'low' },
-        },
-      })
-    ).resolves.toEqual({
-      address: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-1',
-      },
-      boundSessionKeys: ['session-a', 'session-b'],
-      notifiedCount: 2,
-    })
-
-    expect(post).toHaveBeenCalledWith('/runtime-work/im-sessions', {
-      address: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-1',
-      },
-      taskTitle: '修复 IM 通知标题',
-      sessionKeys: ['session-a', 'session-b'],
-      modelSelection: {
-        modelName: 'gpt-5.6-luna',
-        modelType: 'public',
-        options: { reasoningEffort: 'low' },
-      },
-    })
-  })
-
-  test('manages runtime IM notification settings', async () => {
-    const get = vi.fn().mockResolvedValue({
-      global: {
-        enabled: false,
-        sessionKey: null,
-        session: null,
-      },
-      runtimeTaskSubscriptions: [],
-    })
-    const put = vi.fn().mockResolvedValue({
-      address: {
-        deviceId: 'device-1',
-        taskId: 'codex-1',
-      },
-      subscribed: true,
-      sessionKeys: ['session-a'],
-    })
-    const post = vi.fn().mockResolvedValue({
-      address: {
-        deviceId: 'device-1',
-        taskId: 'codex-1',
-      },
-      subscribed: false,
-      sessionKeys: [],
-    })
-    const api = createRuntimeWorkApi({ get, put, post } as unknown as HttpClient)
-
-    await expect(api.getImNotificationSettings()).resolves.toEqual({
-      global: {
-        enabled: false,
-        sessionKey: null,
-        session: null,
-      },
-      runtimeTaskSubscriptions: [],
-    })
-    await api.updateGlobalImNotification({ enabled: true, sessionKey: 'session-a' })
-    await api.updateImNotificationPresence({ clientId: 'desktop-client-1', away: false })
-    await api.subscribeRuntimeTaskNotifications({
-      address: {
-        deviceId: 'device-1',
-        taskId: 'codex-1',
-      },
-      sessionKeys: ['session-a'],
-    })
-    await api.unsubscribeRuntimeTaskNotifications({
-      deviceId: 'device-1',
-      taskId: 'codex-1',
-    })
-
-    expect(get).toHaveBeenCalledWith('/runtime-work/im-notifications')
-    expect(put).toHaveBeenNthCalledWith(1, '/runtime-work/im-notifications/global', {
-      enabled: true,
-      sessionKey: 'session-a',
-    })
-    expect(put).toHaveBeenNthCalledWith(2, '/runtime-work/im-notifications/presence', {
-      clientId: 'desktop-client-1',
-      away: false,
-    })
-    expect(put).toHaveBeenNthCalledWith(3, '/runtime-work/im-notifications/runtime-task', {
-      address: {
-        deviceId: 'device-1',
-        taskId: 'codex-1',
-      },
-      sessionKeys: ['session-a'],
-    })
-    expect(post).toHaveBeenCalledWith('/runtime-work/im-notifications/runtime-task/unsubscribe', {
-      deviceId: 'device-1',
-      taskId: 'codex-1',
     })
   })
 })

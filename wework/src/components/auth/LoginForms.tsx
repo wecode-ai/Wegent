@@ -145,7 +145,10 @@ export function PasswordLoginForm({
         </div>
       </div>
       {error && (
-        <div className="text-sm text-red-600" data-testid={resolvedTestIds.error}>
+        <div
+          className="text-sm text-destructive wework:text-red-600"
+          data-testid={resolvedTestIds.error}
+        >
           {error}
         </div>
       )}
@@ -285,7 +288,10 @@ export function AdminPasswordSetupForm({
         </div>
       </div>
       {error && (
-        <div className="text-sm text-red-600" data-testid={resolvedTestIds.error}>
+        <div
+          className="text-sm text-destructive wework:text-red-600"
+          data-testid={resolvedTestIds.error}
+        >
           {error}
         </div>
       )}

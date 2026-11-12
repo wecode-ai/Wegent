@@ -1,17 +1,16 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { CloudWorkPage } from './CloudWorkPage'
-import { navigateTo } from '@/lib/navigation'
-import { requestProjectCreateMode } from '@/components/layout/workbenchShellEvents'
 import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { installGitUiTestContributions } from '../../ui-git/test-support'
+import { CloudWorkPage } from './CloudWorkPage'
 
 const sidebarMock = vi.hoisted(() => ({ renderReal: false }))
+const runtimeMock = vi.hoisted(() => ({ desktop: false }))
 
 const workbenchMock = vi.hoisted(() => ({
   value: {
@@ -103,7 +102,6 @@ const workbenchMock = vi.hoisted(() => ({
     archiveChatConversations: vi.fn(),
     selectStandaloneDevice: vi.fn(),
     openStandaloneWorkspace: vi.fn(),
-    getRemoteDeviceStartupCommand: vi.fn(),
     refreshDevices: vi.fn().mockResolvedValue(undefined),
     createProject: vi.fn(),
     createGitWorkspaceProject: vi.fn(),
@@ -133,6 +131,14 @@ vi.mock('@/features/auth/useAuth', () => ({
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: () => false,
 }))
+
+vi.mock('@/lib/runtime-environment', async importOriginal => {
+  const original = await importOriginal<typeof import('@/lib/runtime-environment')>()
+  return {
+    ...original,
+    isElectronRuntime: () => runtimeMock.desktop,
+  }
+})
 
 vi.mock('@/components/layout/useDesktopSidebarCollapsed', () => ({
   useDesktopSidebarCollapsed: () => ({
@@ -186,53 +192,60 @@ describe('CloudWorkPage', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     sidebarMock.renderReal = false
+    runtimeMock.desktop = false
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
   }, 60_000)
 
-  test('refreshes devices when the cloud work page opens', async () => {
-    render(<CloudWorkPage />)
-
-    await waitFor(() => expect(workbenchMock.value.refreshDevices).toHaveBeenCalledOnce())
+  test('keeps local recovery available on desktop even with no cloud devices', async () => {
+    runtimeMock.desktop = true
+    const originalDevices = workbenchMock.value.state.devices
+    workbenchMock.value.state.devices = []
+    try {
+      const { navigateTo } = await import('@/lib/navigation')
+      render(<CloudWorkPage />)
+      expect(screen.getByTestId('cloud-work-devices-empty')).toBeVisible()
+      expect(screen.getByTestId('cloud-work-local-device-guidance')).toHaveTextContent(
+        '本机执行环境由当前 Wework 管理'
+      )
+      const localVersion = screen.getByRole('button', { name: '查看本机版本' })
+      expect(navigateTo).not.toHaveBeenCalled()
+      localVersion.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/settings/about')
+    } finally {
+      workbenchMock.value.state.devices = originalDevices
+    }
   })
 
-  test('shows cloud devices and cloud projects without local resources', () => {
+  test('keeps local guidance separate from cloud device management', () => {
+    runtimeMock.desktop = true
     render(<CloudWorkPage />)
-
-    expect(screen.getByTestId('cloud-work-page')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-work-local-device-guidance')).toBeVisible()
     expect(screen.getByTestId('cloud-device-section')).toHaveTextContent('cloud-device')
     expect(screen.getByTestId('cloud-device-section')).not.toHaveTextContent('local-device')
-    expect(screen.getByText('Cloud Project')).toBeInTheDocument()
-    expect(screen.queryByText('Local Project')).not.toBeInTheDocument()
-    expect(screen.getByText('Cloud Box · /workspace/cloud-project')).toBeInTheDocument()
   })
 
-  test('opens a cloud project in the standard workbench', async () => {
-    render(<CloudWorkPage />)
-
-    await userEvent.click(screen.getByTestId('cloud-work-project-21'))
-
-    expect(navigateTo).toHaveBeenCalledWith('/')
-    expect(workbenchMock.value.selectProject).toHaveBeenCalledWith(21)
+  test('lets desktop users return to their stand-in from the real sidebar', async () => {
+    runtimeMock.desktop = true
+    sidebarMock.renderReal = true
+    const { navigateTo } = await import('@/lib/navigation')
+    render(
+      <RuntimeTaskLifecycleProvider
+        store={new RuntimeTaskLifecycleStore('cloud-work-stand-in-return')}
+      >
+        <CloudWorkPage />
+      </RuntimeTaskLifecycleProvider>
+    )
+    await userEvent.click(await screen.findByTestId('personal-stand-in-button'))
+    expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/stand-in')
   })
 
-  test('keeps device setup and project creation in their existing flows', async () => {
+  test('does not offer local Wework recovery in a web browser', () => {
     render(<CloudWorkPage />)
-
-    await userEvent.click(screen.getByTestId('cloud-work-add-device-button'))
-    expect(navigateTo).toHaveBeenCalledWith('/settings/connections?addDevice=1')
-
-    await userEvent.click(screen.getByTestId('cloud-work-create-project-button'))
-    expect(navigateTo).toHaveBeenCalledWith('/')
-    expect(requestProjectCreateMode).toHaveBeenCalledWith('git')
-  })
-
-  test('opens cloud connection settings only from the explicit settings action', async () => {
-    render(<CloudWorkPage />)
-
-    await userEvent.click(screen.getByTestId('cloud-work-settings-button'))
-
-    expect(navigateTo).toHaveBeenCalledWith('/settings/connections')
+    expect(screen.queryByTestId('cloud-work-local-device-guidance')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-work-local-version-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-device-section')).toHaveTextContent('cloud-device')
   })
 
   test('clones from the cloud work sidebar and recovers from a clone failure', async () => {

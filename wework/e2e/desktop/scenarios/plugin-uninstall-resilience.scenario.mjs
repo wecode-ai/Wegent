@@ -3,9 +3,20 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
+import { verifyPluginCatalogBoundaries } from '../modules/plugin-catalog-boundaries.mjs'
+import { verifyPluginSourceContinuation } from '../modules/plugin-source-continuation.mjs'
+import { verifyPersonalInventoryRecovery } from '../modules/plugin-personal-inventory-recovery.mjs'
+import { verifyPluginInstallUpdateResilience } from '../modules/plugin-install-update-resilience.mjs'
+import { verifyPluginLateResponseResilience } from '../modules/plugin-late-response-resilience.mjs'
+import { verifyPluginDetailResilience } from '../modules/plugin-detail-resilience.mjs'
+import { verifyPluginPartialInventoryResilience } from '../modules/plugin-partial-inventory-resilience.mjs'
+import { verifyPluginScopeBoundaries } from '../modules/plugin-scope-boundaries.mjs'
+import { verifyPluginLocalSync } from '../modules/plugin-local-sync.mjs'
 import { verifyPluginWriteCoordination } from '../modules/plugin-write-coordination.mjs'
 import { verifyPluginRegistrationCoordination } from '../modules/plugin-registration-coordination.mjs'
 import { verifyPluginSyncDisconnect } from '../modules/plugin-sync-disconnect.mjs'
+import { verifyPluginReinstallStatus } from '../modules/plugin-reinstall-status.mjs'
+import { verifyPluginCopiedSourceReinstall } from '../modules/plugin-copied-source-reinstall.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import {
   accountPlugin,
@@ -24,14 +35,22 @@ import {
 
 // Real MySQL, Python API, gateway, Executor and Electron. Only the network
 // transport is faulted; no plugin responses or cache state are synthesized.
+// The partial-inventory checkpoint fixes host pressure so concurrent CI work
+// cannot prevent the real idle scheduler from exercising the inventory guard.
 export async function createDesktopScenario({
   checkpoint,
   captureScreenshot,
-  resultDir,
+  codexSqliteHome,
+  electronUserDataDirectory,
   executorHome,
+  homePath,
+  resultDir,
   workbenchReadyTimeoutMs,
 }) {
-  const appEnvironment = {}
+  const appEnvironment = { ELECTRON_ENABLE_LOGGING: '1' }
+  if (checkpoint === 'plugin-uninstall-lost-response') {
+    appEnvironment.WEWORK_E2E_SYSTEM_PRESSURE = 'idle'
+  }
   const evidence = []
   const objectStorage =
     checkpoint === 'plugin-write-coordination'
@@ -39,7 +58,7 @@ export async function createDesktopScenario({
       : null
   let packageProxy
   try {
-    if (objectStorage) {
+    if (checkpoint === 'plugin-write-coordination') {
       // Preserve the signed Host while forwarding real S3 traffic to MinIO.
       packageProxy = await new TransportFaultProxy(
         objectStorage.backendEnv.ATTACHMENT_S3_ENDPOINT,
@@ -56,6 +75,7 @@ export async function createDesktopScenario({
   let apiProxy
   let deviceProxy
   let local
+  let restartDesktopApp
   const fixture = suffix =>
     installFixture(
       cloud,
@@ -106,14 +126,76 @@ export async function createDesktopScenario({
     apiProxy.rule = () => null
   }
 
-  async function unknownResult(control) {
-    const item = await fixture('unknown-result')
+  async function preflightTimeout(control) {
+    const item = await fixture('preflight-timeout')
     const startIndex = apiProxy.requests.length
     apiProxy.rule = request =>
-      (request.method === 'DELETE' && request.path === deletePath(item)) ||
-      (request.method === 'GET' && request.path === '/api/plugins/installed' && request.unscoped)
+      request.method === 'GET' && request.path === '/api/plugins/installed' && request.unscoped
         ? 'hold-request'
         : null
+    const started = await uninstallInUi(control, item)
+    await control.command('click', testId(`plugin-marketplace-row-${item.pluginId}`))
+    await control.command('waitFor', `button${testId('plugin-prompt-0')}:disabled`)
+    // This deliberately held read must settle at the account-preflight deadline.
+    await control.command('waitFor', testId('plugin-operation-notice'), {
+      text: '暂时无法确认当前账号的插件安装状态',
+      timeoutMs: 15_000,
+    })
+    const elapsedMs = Date.now() - started
+    assert.ok(elapsedMs < 15_000, `Account preflight kept loading for ${elapsedMs}ms`)
+    await control.command('waitFor', `button${testId('plugin-prompt-0')}:not(:disabled)`, {
+      enabled: true,
+    })
+    assert.equal(
+      apiProxy.requests
+        .slice(startIndex)
+        .filter(
+          request =>
+            request.method === 'POST' &&
+            request.path === `/api/plugins/marketplace/${item.pluginId}/install`
+        ).length,
+      0,
+      'Uninstalling detail initiated another installation'
+    )
+    await control.command('click', testId('plugin-detail-back-button'))
+    assert.equal(deletes(item).length, 0, 'Unconfirmed account preflight issued a DELETE')
+    assert.ok(await accountPlugin(cloud, item.slug), 'Preflight failure removed membership')
+    await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
+      enabled: true,
+    })
+    await assertInventory(control, item.slug, true)
+    apiProxy.rule = () => null
+    await uninstallInUi(control, item)
+    await assertInstallButton(control, item)
+    assert.equal(deletes(item).length, 1, 'Explicit retry must issue exactly one DELETE')
+    await assertSurfaces(control, item, false)
+    evidence.push({
+      case: 'account-preflight-timeout-and-explicit-retry',
+      elapsedMs,
+      examplesBlockedDuringUninstall: true,
+      examplesRestoredAfterFailure: true,
+    })
+  }
+
+  async function unknownResult(control) {
+    await preflightTimeout(control)
+    const item = await fixture('unknown-result')
+    const startIndex = apiProxy.requests.length
+    let deleteStarted = false
+    apiProxy.rule = request => {
+      if (request.method === 'DELETE' && request.path === deletePath(item)) {
+        deleteStarted = true
+        return 'hold-request'
+      }
+      // Let account preflight succeed; this case faults the DELETE and its
+      // outcome-verification read, rather than preventing the DELETE entirely.
+      return deleteStarted &&
+        request.method === 'GET' &&
+        request.path === '/api/plugins/installed' &&
+        request.unscoped
+        ? 'hold-request'
+        : null
+    }
     const started = await uninstallInUi(control, item)
     await control.command('waitFor', testId('plugin-operation-notice'), {
       text: '暂时无法确认卸载结果',
@@ -148,7 +230,7 @@ export async function createDesktopScenario({
     evidence.push({ case: 'unknown-outcome-and-explicit-retry', elapsedMs })
   }
 
-  async function heldCleanup(control, suffix) {
+  async function heldCleanup(control, suffix, beforePause) {
     // Catalog refresh must preserve removals while another install remains active.
     const retained = await fixture(`${suffix}-retained`)
     const item = await fixture(suffix)
@@ -162,6 +244,7 @@ export async function createDesktopScenario({
     assert.ok(installed.runtime?.codex_link)
     const runtimePath = resolve(remoteHome, 'capabilities', installed.runtime.codex_link)
     assert.ok(await pathExists(runtimePath), 'Fixture has no real runtime files')
+    if (beforePause) await beforePause(item)
     assert.ok(deviceProxy.websockets.size > 0, 'Device fault proxy has no real connection')
     deviceProxy.pauseDeviceDelivery(true)
     const started = await uninstallInUi(control, item)
@@ -175,11 +258,29 @@ export async function createDesktopScenario({
     )
     assert.ok(await pathExists(runtimePath), 'Fault did not actually delay device cleanup')
     assert.equal(await accountPlugin(cloud, item.slug), undefined)
+    // Exercise the Rust listing while this exact device still has a real
+    // removal awaiting delivery. Account removal must hide its cleanup state.
+    const market = await pluginApi(
+      cloud,
+      `/plugins/marketplace?device_id=${encodeURIComponent(CLOUD_DEVICE_ID)}`
+    )
+    const removedListing = market.items.find(plugin => plugin.id === item.pluginId)
+    assert.ok(removedListing, 'Uninstalled plugin disappeared from the marketplace')
+    assert.equal(removedListing.installed, false)
+    assert.equal(removedListing.installedPluginId, null)
+    assert.equal(removedListing.currentDeviceInstallation, null)
     await assertSurfaces(control, item, false)
     await openPlugin(control, item)
     await control.command('click', testId('plugins-refresh-button'))
     await assertInstallButton(control, item)
     await assertInventory(control, item.slug, false)
+    await control.command('click', testId(`plugin-marketplace-row-${item.pluginId}`))
+    await control.command('waitFor', testId(`plugin-detail-toggle-${item.pluginId}`), {
+      text: '安装插件',
+      enabled: true,
+    })
+    await control.command('click', testId('plugin-detail-back-button'))
+    await assertInstallButton(control, item)
     assert.ok(await pathExists(runtimePath), 'Cleanup unexpectedly finished before fault release')
     assert.ok(await accountPlugin(cloud, retained.slug), 'Unrelated active install disappeared')
     evidence.push({ case: suffix, accountResponseMs: elapsedMs })
@@ -228,11 +329,14 @@ export async function createDesktopScenario({
   }
 
   async function reinstallRace(control) {
-    const { item, remoteHome } = await heldCleanup(control, 'reinstall-pending')
-    const release = await cloud.publishPluginRelease({
-      slug: item.slug,
-      version: '2.0.0',
-      skills: { [item.slug]: 'Reinstalled version two' },
+    let release
+    const { item, remoteHome } = await heldCleanup(control, 'reinstall-pending', async fixture => {
+      // Publish before holding cleanup so process startup cannot expire its heartbeat.
+      release = await cloud.publishPluginRelease({
+        slug: fixture.slug,
+        version: '2.0.0',
+        skills: { [fixture.slug]: 'Reinstalled version two' },
+      })
     })
     // Start a real install while the old removal is still awaiting its device ACK.
     const install = pluginApi(
@@ -289,6 +393,62 @@ export async function createDesktopScenario({
     }
   }
 
+  async function verifyBoundaryGroups(control, groups) {
+    const rendererDevice = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+    assert.ok(rendererDevice.deviceId, 'The renderer has no real local device identity')
+    assert.equal(rendererDevice.deviceId, local.app_device_id)
+    const options = {
+      cloud,
+      control,
+      apiProxy,
+      deviceProxy,
+      packageProxy,
+      localDeviceId: local.device_id,
+      evidence,
+      timeoutMs: workbenchReadyTimeoutMs,
+      deviceId: rendererDevice.deviceId,
+      executorHome,
+      codexSqliteHome,
+      electronUserDataDirectory,
+      homePath,
+      restartDesktopApp,
+      resultDir,
+      captureScreenshot,
+      workbenchReadyTimeoutMs,
+    }
+    const failures = []
+    // Every group restores its own real fault and fixtures before the next one.
+    // Keep all independent evidence, then fail the checkpoint if any group failed.
+    for (const [name, verify] of groups) {
+      const phaseStartedAt = Date.now()
+      try {
+        console.log(`[plugin-boundary-e2e] START ${name}`)
+        await control.command('click', testId('workspace-tab-select-fixed-task'))
+        await control.command('waitFor', testId('plugins-button'))
+        await control.command('click', testId('new-chat-button'))
+        const result = await verify(options)
+        evidence.push({
+          group: name,
+          ...result,
+          phaseStartedAt,
+          phaseElapsedMs: Date.now() - phaseStartedAt,
+        })
+        console.log(`[plugin-boundary-e2e] PASS ${name}`)
+      } catch (error) {
+        console.log(`[plugin-boundary-e2e] FAIL ${name}: ${error?.message ?? error}`)
+        failures.push(new Error(`${name}: ${error?.message ?? error}`, { cause: error }))
+        evidence.push({
+          group: name,
+          passed: false,
+          error: String(error?.stack ?? error),
+          phaseStartedAt,
+          phaseElapsedMs: Date.now() - phaseStartedAt,
+        })
+      }
+    }
+    if (failures.length) throw new AggregateError(failures, 'Plugin boundary E2E failures')
+  }
+
   return {
     requiresCloudEnvironment: true,
     appEnvironment,
@@ -296,7 +456,7 @@ export async function createDesktopScenario({
       ? {
           backendEnv: {
             ...objectStorage.backendEnv,
-            ATTACHMENT_S3_ENDPOINT: packageProxy.url,
+            ...(packageProxy ? { ATTACHMENT_S3_ENDPOINT: packageProxy.url } : {}),
           },
         }
       : {}),
@@ -314,8 +474,17 @@ export async function createDesktopScenario({
     setCloudEnvironment(value) {
       cloud = value
     },
+    setRestartDesktopApp(value) {
+      restartDesktopApp = value
+    },
     async verify(control) {
       controlRef = control
+      if (objectStorage) {
+        assert.equal(
+          cloud.backendEnv.ATTACHMENT_S3_ENDPOINT,
+          packageProxy?.url ?? objectStorage.backendEnv.ATTACHMENT_S3_ENDPOINT
+        )
+      }
       local = await cloud.waitForConnectedAppDevice()
       cloud.remoteExecutorEnv.WEGENT_SOCKET_URL = deviceProxy.url
       await cloud.restartCloudExecutor()
@@ -326,6 +495,21 @@ export async function createDesktopScenario({
       )
       try {
         const checks = new Map([
+          [
+            'plugin-uninstall-lost-response',
+            control =>
+              // The real empty-catalog checks must precede the old uninstall fixtures.
+              verifyBoundaryGroups(control, [
+                ['source-continuation', verifyPluginSourceContinuation],
+                ['personal-inventory-recovery', verifyPersonalInventoryRecovery],
+                ['catalog-sources', verifyPluginCatalogBoundaries],
+                ['late-response', verifyPluginLateResponseResilience],
+                ['plugin-detail', verifyPluginDetailResilience],
+                ['partial-inventory', verifyPluginPartialInventoryResilience],
+                ['account-and-device', verifyPluginScopeBoundaries],
+                ['committed-delete-lost-response', () => lostResponse(control)],
+              ]),
+          ],
           [
             'plugin-registration-coordination',
             control =>
@@ -340,29 +524,16 @@ export async function createDesktopScenario({
           ],
           [
             'plugin-write-coordination',
-            async control => {
-              await verifyPluginSyncDisconnect({
-                cloud,
-                control,
-                apiProxy,
-                packageProxy,
-                executorHome,
-                localDeviceId: local.device_id,
-                evidence,
-                timeoutMs: workbenchReadyTimeoutMs,
-              })
-              await verifyPluginWriteCoordination({
-                cloud,
-                control,
-                apiProxy,
-                deviceProxy,
-                localDeviceId: local.device_id,
-                evidence,
-                timeoutMs: workbenchReadyTimeoutMs,
-              })
-            },
+            control =>
+              verifyBoundaryGroups(control, [
+                ['sync-disconnect', verifyPluginSyncDisconnect],
+                ['reinstall-status', verifyPluginReinstallStatus],
+                ['copied-source-reinstall', verifyPluginCopiedSourceReinstall],
+                ['write-coordination', verifyPluginWriteCoordination],
+                ['install-and-update', verifyPluginInstallUpdateResilience],
+                ['local-http-without-registration', verifyPluginLocalSync],
+              ]),
           ],
-          ['plugin-uninstall-lost-response', lostResponse],
           ['plugin-uninstall-unknown-result', unknownResult],
           ['plugin-uninstall-restart-recovery', restartRecovery],
           ['plugin-uninstall-reinstall-race', reinstallRace],
@@ -379,7 +550,12 @@ export async function createDesktopScenario({
         await writeFile(
           join(resultDir, 'plugin-uninstall-evidence.json'),
           JSON.stringify(
-            { evidence, requests: apiProxy.requests, packageRequests: packageProxy?.requests },
+            {
+              checkpoint,
+              evidence,
+              requests: apiProxy.requests,
+              packageRequests: packageProxy?.requests,
+            },
             null,
             2
           )

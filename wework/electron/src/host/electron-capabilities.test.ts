@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clipboard, type WebContents } from 'electron'
 import { resolve } from 'node:path'
+import { EventEmitter } from 'node:events'
+import { acquireDebuggerSession } from './debugger-session.js'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type {
   HostCapability,
@@ -11,7 +13,8 @@ import {
   captureWebContentsDataUrl,
   createElectronCapabilityRouter,
   coreGrantedCapabilities,
-  cpuLoadRatioBetween,
+  e2eSystemPressureOverride,
+  systemPressureSnapshot,
   e2eOpenDialogOverride,
   e2eSaveDialogOverride,
   createWorkbenchCapabilityRouter,
@@ -27,6 +30,7 @@ import {
   type ElectronDesktopServices,
   type ElectronE2EHost,
 } from './electron-capabilities.js'
+import { cpuLoadRatioBetween } from './system-cpu.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
@@ -92,6 +96,42 @@ describe('cpuLoadRatioBetween', () => {
       0.7
     )
     expect(cpuLoadRatioBetween({ idle: 100, total: 200 }, { idle: 100, total: 200 })).toBe(0)
+  })
+})
+
+describe('E2E system pressure fixture', () => {
+  const environment = {
+    VITE_WEWORK_E2E: 'true',
+    WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
+    WEWORK_E2E_SYSTEM_PRESSURE: 'idle',
+  }
+
+  test('requires an explicit pressure fixture and a controlled E2E process', () => {
+    expect(e2eSystemPressureOverride(environment)).toEqual({
+      cpuLoadRatio: 0.1,
+      freeMemoryRatio: 0.5,
+      userIdleSeconds: 60,
+    })
+    for (const key of Object.keys(environment)) {
+      expect(e2eSystemPressureOverride({ ...environment, [key]: undefined })).toBeNull()
+    }
+    expect(e2eSystemPressureOverride({ ...environment, VITE_WEWORK_E2E: 'false' })).toBeNull()
+    expect(
+      e2eSystemPressureOverride({ ...environment, WEWORK_E2E_SYSTEM_PRESSURE: 'unknown' })
+    ).toBeNull()
+  })
+
+  test('serves the same fixture to scheduler and diagnostic pressure probes', async () => {
+    const original = { ...process.env }
+    try {
+      Object.assign(process.env, environment)
+      expect(await systemPressureSnapshot()).toEqual(e2eSystemPressureOverride(environment))
+    } finally {
+      for (const key of Object.keys(environment)) {
+        if (original[key] === undefined) delete process.env[key]
+        else process.env[key] = original[key]
+      }
+    }
   })
 })
 
@@ -247,6 +287,23 @@ describe('showElectronNotification', () => {
     expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
   })
 
+  test('opens only the fixed platform notification settings destination', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.shellOpenExternal.mockClear()
+    const result = await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.openSettings', {
+      url: 'https://untrusted.invalid',
+    })
+    const expected =
+      process.platform === 'darwin'
+        ? 'x-apple.systempreferences:com.apple.preference.notifications'
+        : process.platform === 'win32'
+          ? 'ms-settings:notifications'
+          : null
+    expect(result).toEqual({ supported: Boolean(expected) })
+    if (expected) expect(electronMocks.shellOpenExternal).toHaveBeenCalledExactlyOnceWith(expected)
+    else expect(electronMocks.shellOpenExternal).not.toHaveBeenCalled()
+  })
+
   test('uses the production click action for desktop regression activation', async () => {
     const { router, notificationNavigation } = createIsolatedClipboardRouter()
     const url = 'wework://tasks/device-1/task-1'
@@ -351,19 +408,25 @@ function createWebContents(input: {
   debuggerPending?: boolean
 }) {
   let debuggerAttached = false
+  const debuggerEvents = new EventEmitter()
   const debuggerSession = {
     attach: vi.fn(() => {
       debuggerAttached = true
     }),
     detach: vi.fn(() => {
       debuggerAttached = false
+      debuggerEvents.emit('detach', {}, 'target closed')
     }),
     isAttached: vi.fn(() => debuggerAttached),
-    sendCommand: vi.fn(async () => {
-      if (input.debuggerPending) return new Promise<never>(() => undefined)
-      if (input.debuggerError) throw input.debuggerError
-      return { data: input.debuggerData }
-    }),
+    sendCommand: vi.fn<(method: string, params?: Record<string, unknown>) => Promise<unknown>>(
+      async () => {
+        if (input.debuggerPending) return new Promise<never>(() => undefined)
+        if (input.debuggerError) throw input.debuggerError
+        return { data: input.debuggerData }
+      }
+    ),
+    on: debuggerEvents.on.bind(debuggerEvents),
+    off: debuggerEvents.off.bind(debuggerEvents),
   }
   const capturePage = vi.fn(async () => {
     if (input.capturePending) return new Promise<never>(() => undefined)
@@ -376,6 +439,7 @@ function createWebContents(input: {
   const contents = {
     capturePage,
     debugger: debuggerSession,
+    isDestroyed: () => false,
   } as unknown as WebContents
   return { capturePage, contents, debuggerSession }
 }
@@ -436,13 +500,181 @@ function createIsolatedClipboardRouter(
   return { router, targetWindow, notificationNavigation }
 }
 
+describe('external browser capability', () => {
+  test('routes explicit browser opens through the host and keeps unsafe protocols rejected', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'browser.openExternal', {
+      url: 'https://example.com/',
+    })
+    expect(electronMocks.shellOpenExternal).toHaveBeenCalledWith('https://example.com/')
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'browser.openExternal', { url: 'javascript:alert(1)' })
+    ).rejects.toThrow()
+  })
+})
+
 describe('Process explorer capabilities', () => {
   test('stays read-only', () => {
     expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')
   })
 })
 
+describe('inline visualization window targeting', () => {
+  test.each([undefined, 'workspace-visualization'])(
+    'inspects the frame in the requested window: %s',
+    async windowLabel => {
+      const original = {
+        VITE_WEWORK_E2E: process.env.VITE_WEWORK_E2E,
+        WEWORK_E2E_CONTROL_URL: process.env.WEWORK_E2E_CONTROL_URL,
+      }
+      try {
+        process.env.VITE_WEWORK_E2E = 'true'
+        process.env.WEWORK_E2E_CONTROL_URL = 'http://127.0.0.1:1234'
+        const url = 'blob:http://127.0.0.1/visualization'
+        const frame = { url, executeJavaScript: vi.fn(async () => '249.32') }
+        const captureTarget = vi.fn(
+          () =>
+            ({
+              isDestroyed: () => false,
+              mainFrame: { executeJavaScript: vi.fn(async () => true), frames: [frame] },
+            }) as unknown as WebContents
+        )
+        const { router } = createIsolatedClipboardRouter(true, { captureTarget })
+
+        await expect(
+          router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.inlineVisualizationFrame', {
+            url,
+            action: 'text',
+            selector: '#interest',
+            ...(windowLabel ? { windowLabel } : {}),
+          })
+        ).resolves.toBe('249.32')
+        expect(captureTarget).toHaveBeenCalledExactlyOnceWith(windowLabel ?? 'main')
+        expect(frame.executeJavaScript).toHaveBeenCalledOnce()
+      } finally {
+        for (const [key, value] of Object.entries(original)) {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+      }
+    }
+  )
+})
+
+describe('renderer heap debugger ownership', () => {
+  test('releases its heap lease without detaching another active consumer', async () => {
+    const { contents, debuggerSession } = createWebContents({})
+    const other = acquireDebuggerSession(contents)
+    const heap = { usedSize: 123, totalSize: 456 }
+    debuggerSession.sendCommand.mockResolvedValue(heap)
+    const { router } = createIsolatedClipboardRouter(true, { captureTarget: () => contents })
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.getRendererHeapUsage', {})
+    ).resolves.toEqual(heap)
+    expect(debuggerSession.sendCommand.mock.calls).toEqual([
+      ['HeapProfiler.collectGarbage'],
+      ['Runtime.getHeapUsage'],
+    ])
+    expect(debuggerSession.detach).not.toHaveBeenCalled()
+    expect(other.isActive()).toBe(true)
+    other.release()
+    expect(debuggerSession.detach).toHaveBeenCalledOnce()
+  })
+
+  test('releases a failed heap command without terminating another consumer', async () => {
+    const { contents, debuggerSession } = createWebContents({})
+    const other = acquireDebuggerSession(contents)
+    debuggerSession.sendCommand.mockRejectedValueOnce(new Error('heap failed'))
+    const { router } = createIsolatedClipboardRouter(true, { captureTarget: () => contents })
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.getRendererHeapUsage', {})
+    ).rejects.toThrow('heap failed')
+    expect(debuggerSession.sendCommand).toHaveBeenCalledOnce()
+    expect(debuggerSession.detach).not.toHaveBeenCalled()
+    other.release()
+    expect(debuggerSession.detach).toHaveBeenCalledOnce()
+  })
+})
+
+describe('startup renderer capabilities', () => {
+  test('preserves the failed task-list source in the startup handoff', async () => {
+    const rendererStartupReady = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, { rendererStartupReady })
+    for (const source of ['task-list', 'task-list-error', 'unrecognized']) {
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'renderer.startupReady', { source })
+    }
+    expect(rendererStartupReady.mock.calls).toEqual([['task-list'], ['task-list-error'], ['other']])
+  })
+  test('forwards the real renderer failure and supplies a message for legacy callers', async () => {
+    const rendererStartupFailed = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, { rendererStartupFailed })
+    const failure = {
+      message: 'Could not read the task database',
+      stack: 'Error: Could not read the task database\n    at loadTasks',
+      source: 'task_list',
+    }
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'renderer.startupFailed', failure)
+    expect(rendererStartupFailed).toHaveBeenLastCalledWith(failure)
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'renderer.startupFailed', {})
+    expect(rendererStartupFailed).toHaveBeenLastCalledWith({
+      message: 'Desktop frontend failed to initialize',
+      source: 'renderer_initialize',
+    })
+  })
+
+  test('restricts startup test actions to desktop E2E and visible diagnostics controls', async () => {
+    const startupSplashClick = vi.fn(async () => undefined)
+    const { router } = createIsolatedClipboardRouter(true, { startupSplashClick })
+    const original = process.env.VITE_WEWORK_E2E
+    try {
+      process.env.VITE_WEWORK_E2E = 'false'
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.clickStartupSplash', {
+          testId: 'startup-timeout-copy-button',
+        })
+      ).rejects.toThrow('disabled')
+      process.env.VITE_WEWORK_E2E = 'true'
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.clickStartupSplash', { testId: 'startup-retry' })
+      ).rejects.toThrow('Unsupported startup splash action')
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.clickStartupSplash', {
+        testId: 'startup-timeout-copy-button',
+      })
+      expect(startupSplashClick).toHaveBeenCalledOnce()
+      expect(startupSplashClick).toHaveBeenCalledWith('startup-timeout-copy-button')
+    } finally {
+      if (original === undefined) delete process.env.VITE_WEWORK_E2E
+      else process.env.VITE_WEWORK_E2E = original
+    }
+  })
+})
+
 describe('Core DSH runtime capabilities', () => {
+  test('passes the consent revision to the atomic preference owner and rejects invalid revisions', async () => {
+    const updatePreferences = vi
+      .fn()
+      .mockResolvedValue({ telemetryEnabled: true, telemetryConsentRevision: 8 })
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, {
+      updatePreferences,
+    })
+    const patch = { telemetryEnabled: true, telemetryConsentAsked: true }
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.update', {
+      patch,
+      expectedTelemetryConsentRevision: 7,
+    })
+    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith(patch, 7)
+    for (const expectedTelemetryConsentRevision of [-1, 1.5, '7']) {
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.update', {
+          patch,
+          expectedTelemetryConsentRevision,
+        })
+      ).rejects.toThrow()
+    }
+    expect(updatePreferences).toHaveBeenCalledTimes(1)
+  })
   test('commits a mode before scheduling its restart outside the renderer lifetime', async () => {
     const stored = { workbenchMode: 'developer' }
     const updatePreferences = vi.fn(async patch => Object.assign(stored, patch))
@@ -470,7 +702,7 @@ describe('Core DSH runtime capabilities', () => {
     expect(completions).toHaveLength(1)
     await completions[0]()
     expect(scheduleCoreDshRestart).toHaveBeenCalledOnce()
-    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith({ workbenchMode: 'focus' })
+    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith({ workbenchMode: 'focus' }, undefined)
     expect(stored.workbenchMode).toBe('focus')
   })
 
@@ -766,7 +998,11 @@ describe('registerAppUpdateCapabilities', () => {
       }),
     } as unknown as HostCapabilityRouter
     const appUpdates = {
-      check: vi.fn(async () => ({ currentVersion: '0.2.6', version: '0.2.7' })),
+      check: vi.fn(async () => ({
+        currentVersion: '0.2.6',
+        readyToInstall: false,
+        version: '0.2.7',
+      })),
       download: vi.fn(async () => undefined),
       downloadProgress: vi.fn(() => ({ downloadedBytes: 25, totalBytes: 100 })),
       createInstallAction: vi.fn(() => vi.fn(async () => undefined)),
@@ -784,22 +1020,33 @@ describe('registerAppUpdateCapabilities', () => {
       handlers.get('appUpdate.check')?.({ channel: 'stable' }, context)
     ).resolves.toEqual({
       currentVersion: '0.2.6',
+      readyToInstall: false,
       version: '0.2.7',
     })
-    await handlers.get('appUpdate.download')?.({}, context)
+    await handlers.get('appUpdate.download')?.({ channel: 'stable' }, context)
     expect(await handlers.get('appUpdate.downloadProgress')?.({}, context)).toEqual({
       downloadedBytes: 25,
       totalBytes: 100,
     })
-    await handlers.get('appUpdate.install')?.({}, context)
+    await handlers.get('appUpdate.install')?.({ version: '0.2.7' }, context)
 
     expect(appUpdates.check).toHaveBeenCalledWith('stable')
     expect(appUpdates.download).toHaveBeenCalledOnce()
+    expect(appUpdates.download).toHaveBeenCalledWith('stable', undefined)
+    await handlers.get('appUpdate.download')?.(
+      { channel: 'stable', retryToken: 'confirmed-attempt' },
+      context
+    )
+    expect(appUpdates.download).toHaveBeenLastCalledWith('stable', 'confirmed-attempt')
     expect(appUpdates.downloadProgress).toHaveBeenCalledOnce()
     expect(appUpdates.createInstallAction).toHaveBeenCalledOnce()
+    expect(appUpdates.createInstallAction).toHaveBeenCalledWith('0.2.7')
     expect(installCompletions).toHaveLength(1)
     await installCompletions[0]()
     expect(() => handlers.get('appUpdate.check')?.({ channel: 'nightly' }, context)).toThrow(
+      'channel is invalid'
+    )
+    expect(() => handlers.get('appUpdate.download')?.({ channel: 'nightly' }, context)).toThrow(
       'channel is invalid'
     )
   })
@@ -816,7 +1063,7 @@ describe('registerAppUpdateCapabilities', () => {
 
     expect(() =>
       handlers.get('appUpdate.download')?.(
-        {},
+        { channel: 'stable' },
         { principal: 'test', deferUntilResponseSent: vi.fn() }
       )
     ).toThrow('App updates are unavailable')
@@ -837,7 +1084,7 @@ describe('registerAppUpdateCapabilities', () => {
 
     expect(
       handlers.get('appUpdate.download')?.(
-        {},
+        { channel: 'stable' },
         { principal: 'test', deferUntilResponseSent: vi.fn() }
       )
     ).toBeNull()
@@ -889,6 +1136,43 @@ describe('registerRendererStorageCapabilities', () => {
 })
 
 describe('registerDesktopServiceCapabilities', () => {
+  test.each(['true', 'false'])(
+    'preserves process snapshot collection options with E2E diagnostics %s',
+    async e2e => {
+      const handlers = new Map<HostCapability, HostCapabilityHandler>()
+      const router = {
+        register: (capability: HostCapability, handler: HostCapabilityHandler) =>
+          handlers.set(capability, handler),
+      } as unknown as HostCapabilityRouter
+      const snapshot = vi.fn(async () => ({ processes: [], degraded: [] }))
+      const log = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      vi.stubEnv('VITE_WEWORK_E2E', e2e)
+      try {
+        registerDesktopServiceCapabilities(
+          router,
+          { processExplorer: { snapshot } } as unknown as ElectronDesktopServices,
+          {
+            openLogDirectory: vi.fn(),
+            openDevTools: vi.fn(),
+            openProcessExplorer: vi.fn(),
+            setProcessExplorerAlwaysOnTop: vi.fn(),
+          }
+        )
+        const handler = handlers.get('diagnostics.processSnapshot')!
+        await handler({}, { principal: 'test' })
+        expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: true })
+        await handler({ waitForSystemProcesses: false }, { principal: 'test' })
+        expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: false })
+        const failure = new Error('Snapshot collection failed')
+        snapshot.mockRejectedValueOnce(failure)
+        await expect(handler({}, { principal: 'test' })).rejects.toBe(failure)
+      } finally {
+        vi.unstubAllEnvs()
+        log.mockRestore()
+      }
+    }
+  )
+
   test.each([
     {
       label: 'supplied',

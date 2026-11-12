@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 
 import {
@@ -37,6 +39,16 @@ describe('Wework desktop release planning', () => {
         'pnpm-lock.yaml',
       ])
     ).toBe('full')
+  })
+
+  test('requires a full release for each shared Rust library', () => {
+    for (const path of [
+      'shared/rust/protocol/src/execution.rs',
+      'shared/rust/crypto/src/lib.rs',
+      'shared/rust/protocol/Cargo.toml',
+    ]) {
+      expect(classifyDesktopChanges([path])).toBe('full')
+    }
   })
 
   test('requires a full release for Electron host and unmanaged resource changes', () => {

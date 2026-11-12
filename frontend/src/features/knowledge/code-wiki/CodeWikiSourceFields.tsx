@@ -17,7 +17,6 @@ import {
 import { RepositorySelector } from '@/features/tasks/components/selector'
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import { useTranslation } from '@/hooks/useTranslation'
-import { buildKbUrl } from '@/utils/knowledgeUrl'
 import { codeWikiApi } from '@/apis/code-wiki'
 import { useUser } from '@/features/common/UserContext'
 import type { GitInfo, GitRepoInfo } from '@/types/api'
@@ -291,7 +290,7 @@ function SourceStatus({
               <li key={wiki.id} className="text-xs text-text-muted">
                 {wiki.accessible ? (
                   <a
-                    href={buildKbUrl('default', wiki.name, false)}
+                    href={`/knowledge/document/${wiki.id}`}
                     className="text-primary hover:underline"
                     data-testid={`code-wiki-existing-open-${wiki.id}`}
                   >

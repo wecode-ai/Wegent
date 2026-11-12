@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import type { RuntimeProjectWork } from '@/types/api'
 import type { Automation } from '@/types/automation'
@@ -41,8 +43,8 @@ describe('automationModelFields', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '0',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
-        weworkCloudModelNativeToolSearch: 'true',
-        weworkCloudModelNativeNamespaceTools: 'true',
+        weworkCloudModelNativeToolSearch: 'false',
+        weworkCloudModelNativeNamespaceTools: 'false',
       },
     })
   })
@@ -241,6 +243,39 @@ describe('buildAutomationTaskOptions', () => {
 })
 
 describe('automation schedule draft conversion', () => {
+  test.each(['0 * * * *', '15 */3 * * *', '*/15 8-18 * * 1-5', '0 9 */2 * *'])(
+    'preserves the exact saved cron when only its name changes: %s',
+    expression => {
+      const automation: Automation = {
+        id: 'cron',
+        version: 1,
+        source: 'local',
+        name: 'Check releases',
+        description: '',
+        prompt: 'Check official releases',
+        schedule: { type: 'cron', expression },
+        timezone: 'Asia/Shanghai',
+        enabled: false,
+        conversationMode: 'independent',
+        taskPayload: {},
+        createdAt: '2026-11-09T00:00:00Z',
+        updatedAt: '2026-11-09T00:00:00Z',
+      }
+      const draft = automationDraftFromAutomation(automation)
+      draft.name = 'Renamed'
+      expect(scheduleFromAutomationDraft(draft)).toEqual(automation.schedule)
+      if (expression.includes('*/15')) expect(draft.customFrequency).toBe('cron')
+      if (expression === '0 * * * *') expect(draft.customFrequency).toBe('hourly')
+      if (expression === '15 */3 * * *') {
+        expect(draft.customFrequency).toBe('hourly')
+        draft.customInterval = '2'
+        expect(scheduleFromAutomationDraft(draft)).toEqual({
+          type: 'cron',
+          expression: '15 */2 * * *',
+        })
+      }
+    }
+  )
   test('saves ChatGPT-style custom weekly recurrence as a multi-day cron schedule', () => {
     const draft = emptyAutomationDraft('local')
     draft.cronPreset = 'custom'

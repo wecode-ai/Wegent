@@ -145,6 +145,7 @@ async fn persisted_sessions<M: Mysql>(
             (task_id,),
         )
         .await?;
+    let rows = crate::task_store_listing::order_assistant_subtasks(rows)?;
     // `_extract_persisted_sessions`: newest first (`reversed`), one
     // `result.executor_session` per subtask.
     let mut sessions = Vec::new();
@@ -452,8 +453,7 @@ mod tests {
         );
     }
 
-    /// The listing statement keeps the recorded predicate and message order,
-    /// against the deployment's resolved subtask table.
+    /// Keep the recorded filters while restoring message order outside MySQL.
     #[test]
     fn the_listing_statement_matches_the_recording() {
         let statement = assistant_subtasks_by_task_statement("subtasks_0711");
@@ -466,10 +466,7 @@ mod tests {
                 .contains("WHERE subtasks_0711.task_id = ? AND subtasks_0711.`role` = 'ASSISTANT'"),
             "{statement}"
         );
-        assert!(
-            statement.contains("ORDER BY subtasks_0711.message_id ASC"),
-            "{statement}"
-        );
+        assert!(!statement.contains("ORDER BY"), "{statement}");
         assert_eq!(statement.matches('?').count(), 1);
     }
 

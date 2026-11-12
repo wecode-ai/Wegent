@@ -40,5 +40,5 @@ mkdir -p "$standalone_dir/.next"
 cp -R frontend/public "$standalone_dir/public"
 cp -R frontend/.next/static "$standalone_dir/.next/static"
 
-tar --exclude='.next/cache' -I 'zstd -T0 -3' -cf "$archive" -C frontend .next public
+tar --exclude='.next/cache' -cf - -C frontend .next public | zstd -T0 -3 -f -o "$archive"
 test -s "$archive"

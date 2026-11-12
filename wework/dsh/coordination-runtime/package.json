@@ -1,0 +1,20 @@
+{
+  "name": "@wegent/dsh-coordination-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@wegent/dsh-executor-runtime": "0.1.0",
+    "@wegent/dsh-plugin-runtime": "0.1.0"
+  }
+}

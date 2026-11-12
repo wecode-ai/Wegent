@@ -13,6 +13,7 @@ export {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
+  useRuntimeTaskSummaryResolver,
 } from './context'
 export type {
   RuntimeTaskExecutionPhase,

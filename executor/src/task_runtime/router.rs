@@ -28,6 +28,26 @@ pub struct TaskRuntime {
 }
 
 impl TaskRuntime {
+    pub(crate) fn list_milestones(&self, project: &str) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store.list_milestones(project)
+    }
+    pub(crate) fn save_milestone(
+        &self,
+        project: &str,
+        id: Option<&str>,
+        input: super::store::milestones::MilestoneInput,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store.save_milestone(project, id, input)
+    }
+    pub(crate) fn delete_milestone(
+        &self,
+        project: &str,
+        id: &str,
+        version: i64,
+    ) -> Result<(), TaskRuntimeError> {
+        self.local_store.delete_milestone(project, id, version)
+    }
+
     pub(crate) fn stand_in_store(&self) -> &LocalTaskStore {
         &self.local_store
     }
@@ -581,13 +601,16 @@ impl TaskRuntime {
         project_id: &str,
         task_id: &str,
         activity_sequence: Option<i64>,
+        content_revision: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
-            TaskProviderKind::Local => {
-                self.local_store
-                    .mark_task_read(project_id, task_id, activity_sequence)
-            }
+            TaskProviderKind::Local => self.local_store.mark_task_read(
+                project_id,
+                task_id,
+                activity_sequence,
+                content_revision,
+            ),
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
@@ -1752,6 +1775,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Created issue".to_owned(),
                     description: "Description".to_owned(),
                     status: "pending".to_owned(),
@@ -1858,6 +1882,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "GitLab created".to_owned(),
                     description: "GitLab body".to_owned(),
                     status: "pending".to_owned(),

@@ -26,6 +26,56 @@ from shared.models.execution import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("is_group_chat", [False, True])
+async def test_dispatch_notifies_task_creation_from_request_metadata(
+    is_group_chat: bool,
+) -> None:
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=1,
+        subtask_id=2,
+        user={"id": 9},
+        bot=[{"shell_type": "Chat"}],
+        team_id=5,
+        team_name="chat-team",
+        task_title="Persisted task title",
+        is_group_chat=is_group_chat,
+        project_id=8,
+    )
+    target = ExecutionTarget(mode=CommunicationMode.SSE, url="http://chat-shell")
+    ws_emitter = AsyncMock()
+
+    async def start_execution(_request, _target, emitter):
+        await emitter.emit_start(task_id=1, subtask_id=2)
+
+    with (
+        patch.object(dispatcher, "_recover_executor_if_needed", AsyncMock()),
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
+        patch.object(dispatcher, "_dispatch_sse", side_effect=start_execution),
+        patch(
+            "app.services.chat.storage.session_manager.set_task_streaming_status",
+            AsyncMock(),
+        ),
+        patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter",
+            return_value=ws_emitter,
+        ),
+    ):
+        await dispatcher.dispatch(request)
+
+    ws_emitter.emit_task_created.assert_awaited_once_with(
+        user_id=9,
+        task_id=1,
+        title="Persisted task title",
+        team_id=5,
+        team_name="chat-team",
+        is_group_chat=is_group_chat,
+        project_id=8,
+    )
+
+
+@pytest.mark.asyncio
 async def test_dispatch_allows_app_device_task_execution() -> None:
     dispatcher = ExecutionDispatcher()
     request = ExecutionRequest(

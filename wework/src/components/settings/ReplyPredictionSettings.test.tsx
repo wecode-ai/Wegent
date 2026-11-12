@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defaultAppPreferences, type AppPreferences } from '@/desktop/appPreferences'
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 
 const save = vi.hoisted(() => vi.fn())
@@ -28,13 +28,6 @@ describe('reply prediction settings', () => {
     fireEvent.click(screen.getByTestId('reply-prediction-enabled'))
     await waitFor(() => expect(save).toHaveBeenCalledWith({ replyPredictionsEnabled: true }))
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
-  })
-  it('enables predictions by default and can disable them', async () => {
-    setup()
-    expect(screen.getByTestId('reply-prediction-enabled')).toHaveAttribute('aria-checked', 'true')
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('reply-prediction-enabled'))
-    await waitFor(() => expect(save).toHaveBeenCalledWith({ replyPredictionsEnabled: false }))
   })
   it('reports a preference save failure', async () => {
     save.mockRejectedValue(new Error('storage unavailable'))

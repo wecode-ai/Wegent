@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { createAndAssignCloudIssue } from '../e2e/desktop/modules/workspace-agent-setup.mjs'
@@ -6,7 +8,38 @@ import {
   openProjectAgentCreator,
   expandCollaborationWorkspace,
   selectCollaborationIssueAgent,
+  selectCollaborationProjectView,
 } from '../e2e/desktop/modules/workspace-flows.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
+
+test.each([
+  ['expanded', 'manage', 'collaboration-tab-manage'],
+  ['compact', 'manage', 'collaboration-tab-manage'],
+  ['expanded', 'milestones', 'collaboration-milestones-tab'],
+  ['compact', 'milestones', 'collaboration-milestones-tab'],
+])('selects %s navigation view %s after the switcher mounts', async (layout, view, tabId) => {
+  let selected = null
+  let commands = 0
+  const control = {
+    async command(action, selector, options) {
+      commands += 1
+      assert.equal(action, 'chooseWhenEnabled')
+      assert.equal(
+        selector,
+        `main [data-testid="collaboration-project-view-select"], main [data-testid="${tabId}"]`
+      )
+      assert.deepEqual(options, {
+        value: view,
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      selected = options.value
+    },
+  }
+  await selectCollaborationProjectView(control, 'main', view)
+  assert.equal(selected, view)
+  assert.equal(commands, 1, 'Mount readiness and selection must use one renderer command')
+})
 
 function projectCreationControl({ menuTrigger = false, menuCount = 0, dialogError } = {}) {
   const calls = []
@@ -243,9 +276,12 @@ test('waits for the saved Issue editor before assigning a persisted Issue', asyn
           assigneeClickAction = action
         }
       }
-      if (action === 'click' && selector === option) selected = true
-      if (action === 'clickWhenEnabled' && selector.endsWith('[data-testid="cloud-todo-save"]')) {
-        assert.ok(rendered && selected, 'Assignment must be saved through the detail editor')
+      if (action === 'click' && selector === option) {
+        selected = true
+        assert.ok(
+          rendered && selected,
+          'Assignment must be selected through the persisted detail editor'
+        )
         saved = true
       }
     },

@@ -5,7 +5,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping, Optional, Tuple, Type
+from typing import Any, Literal, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
 from pydantic import Field, SecretStr, field_validator
@@ -112,6 +112,7 @@ class Settings(BaseSettings):
 
     # Database auto-migration configuration (only in development)
     DB_AUTO_MIGRATE: bool = True
+    DB_INITIALIZATION_OWNER: Literal["python", "rust"] = "python"
 
     # Database connection pool configuration. Each Backend or Celery process owns
     # its own pool, so deployment capacity must account for every process.
@@ -323,6 +324,7 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    SOCKETIO_REDIS_CLIENT_NAME: str | None = None
     SOCKETIO_REDIS_SOCKET_TIMEOUT: float = Field(
         default=30.0, gt=0, allow_inf_nan=False
     )
@@ -331,6 +333,9 @@ class Settings(BaseSettings):
     )
     SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL: float = Field(
         default=15.0, gt=0, allow_inf_nan=False
+    )
+    SOCKETIO_REDIS_ACK_PROBE_INTERVAL_SECONDS: float = Field(
+        default=30.0, gt=0, allow_inf_nan=False
     )
     TERMINAL_SESSION_CACHE_MAX_ENTRIES: int = 8192
     TERMINAL_SESSION_CACHE_TTL_SECONDS: float = 5.0
@@ -668,6 +673,7 @@ class Settings(BaseSettings):
     EXTERNAL_WIKI_DOWNLOAD_TIMEOUT_SECONDS: int = Field(default=300, ge=1)
 
     # Plugin marketplace package storage and controlled publishing.
+    PLUGIN_LOCAL_SYNC_ENABLED: bool = False
     PLUGIN_STORAGE_BUCKET: str = "plugins"
     PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
     PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS: int = 1200

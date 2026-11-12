@@ -23,17 +23,38 @@ Codex
   -> packaged wegent-executor
   -> Bearer-authenticated loopback HTTP bridge
   -> Electron ComputerUseService
+  -> Electron Node Helper child process (Node IPC)
   -> @trycua/cua-driver
   -> platform accessibility and screen-capture APIs
 ```
 
 The Electron main process owns the CUA Driver lifecycle. Once computer use is
 enabled and system permissions are ready, `ComputerUseService` creates the
-Driver, listens on a random `127.0.0.1` port, and atomically writes the PID,
+Driver in a separate Electron Node Helper process. The main process listens on a
+random `127.0.0.1` port and atomically writes its own PID,
 address, random token, and start time to
 `runtime/computer-use-bridge.json` under the active Executor Home. Disabling
 the feature or quitting the application must cancel the current action, close
 the bridge, stop the Driver, and remove this file.
+
+Native tools must execute outside the Electron main process. On macOS,
+same-process accessibility calls can enter AppKit directly, but CUA's background
+threads cannot manipulate AppKit windows. A child process routes window calls
+through the host's main thread and isolates native crashes. The child runs the
+bundled Helper with `ELECTRON_RUN_AS_NODE=1`, preserving the host's TCC
+responsibility chain. Wework still owns permission requests. Node IPC forwards
+cancellation to the corresponding native call; losing the host IPC channel
+terminates the child immediately.
+
+The bridge uses Node's `child_process.fork` and `send` with error callbacks.
+Electron 43.0.0 has a native main-process crash in `utilityProcess.postMessage`
+after child termination, so that API cannot carry this crash-isolation boundary.
+See [Electron #53293](https://releases.electronjs.org/pr/53293).
+
+An unexpected Driver exit removes the bridge and reports an error while retaining
+the enabled preference. Status checks neither restart the Driver nor replay an
+action with an unknown outcome. Turning computer use off and on creates a new
+process.
 
 Executor reads this runtime record when it launches a Codex conversation. It
 does not inject `wework_computer` when the file is absent or invalid, or when
@@ -44,9 +65,40 @@ only through token-authenticated local HTTP requests. Mutating tools use
 not inherit write approval.
 
 Only one desktop action may run at a time. When the user clicks Stop or presses
-Escape, Electron cancels the active Driver call through an `AbortSignal`.
+Escape, Electron requests cancellation through an `AbortSignal`.
 Hiding the activity indicator while leaving the underlying action running is
 not sufficient.
+
+MCP continues reading input while tools run, including `notifications/cancelled`
+and ping. Cancellation or stdio EOF drops the corresponding HTTP request;
+Electron requests SDK cancellation when the response connection closes prematurely.
+Tool execution and discovery have a 90-second host deadline, below the HTTP
+client's 120-second deadline. Cancelling a dispatched tool call reports its
+original reason and `action outcome is unknown`; it does not prove the action
+was never executed. Pre-dispatch cancellation and discovery retain their original
+reason. Late results cannot replace cancellation errors.
+
+The worker derives read-only classification from the SDK catalog's `readOnlyHint`,
+without a handwritten tool registry. Read-only calls and discovery cancel their
+SDK Future directly. Mutating calls retain that Future: CUA 0.22.1 can otherwise
+leave native input running and skip release cleanup. Action admission remains
+occupied until the native call actually finishes or its process exits. Driver
+shutdown also waits for process exit before a replacement can be created.
+Discovery and tool calls share cancellation handling. If the worker has not
+replied within five seconds of cancellation, the host forcibly terminates it
+and reports an unknown action outcome. Recovery follows the existing worker
+failure flow: the user disables and re-enables computer use, without automatic
+action replay. Re-enabling only rebuilds the runtime; forced process termination
+does not prove that OS mouse-button or modifier-key state has been released.
+
+The main-process `[computer-use]` log records an operation ID, host and native
+worker PIDs, tool name, start, completion, cancellation, failure, and elapsed
+time without arguments, screenshots, session content, or tokens. Check these
+stages before sampling that operation's `nativePid`. An aggregate call's display
+name does not identify the blocked operation. CUA 0.22.1 bounds AX traversal at
+20 seconds, but cancelling a Rust
+Future cannot forcibly stop already running `spawn_blocking` native work.
+Successful SDK cancellation alone therefore does not prove native-thread exit.
 
 ## Permissions and settings
 
@@ -62,13 +114,13 @@ Linux do not show the macOS permission flow, but Driver capability and runtime
 errors remain visible.
 
 The master switch is stored in Wework desktop preferences. While configuring
-the Desktop Runtime, Electron only creates `ComputerUseService`; it does not
-read the enablement preference or load the Driver. Once the main surface is
-actionable, the Renderer closes the startup window through
-`renderer.startupReady`. Electron then schedules one background preference
-restore without waiting for native Driver initialization. CUA native module
-loading and macOS permission checks therefore do not block Executor, Core DSH,
-or the first actionable workbench.
+the Desktop Runtime, Electron creates a `ComputerUseService` instance. Once
+the current surface and its required data are usable, the Renderer starts
+the window handoff through `renderer.startupReady`. After the splash presents
+100%, fades out, and closes, and the main window receives focus, Electron
+schedules one background preference restore to read the enablement preference
+and initialize the Driver. CUA native module loading and macOS permission
+checks run in this background flow.
 
 The background restore reads the latest preference before it starts. It skips
 Driver startup when the feature has been disabled or the application is

@@ -86,6 +86,7 @@ export interface HttpClientOptions {
   baseUrl: string
   getToken?: () => string | null
   redirectOnUnauthorized?: boolean
+  signal?: AbortSignal
 }
 
 export interface HttpRequestOptions {
@@ -162,7 +163,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     init: RequestInit,
     fetchOptions: HttpFetchOptions
   ): Promise<HttpResponseDiagnostics> {
-    const { token, signal } = fetchOptions
+    const { token } = fetchOptions
+    const signal =
+      fetchOptions.signal && options.signal && fetchOptions.signal !== options.signal
+        ? AbortSignal.any([options.signal, fetchOptions.signal])
+        : (fetchOptions.signal ?? options.signal)
     const isFormData = init.body instanceof FormData
     const method = init.method ?? 'GET'
     const startedAt = nowMs()

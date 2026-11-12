@@ -2,11 +2,47 @@
 name = "wegent-backend-rs"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94"
+rust-version.workspace = true
 description = "Incremental Rust migration gateway for the Wegent backend"
 license = "Apache-2.0"
 
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+default-members = [".", "crates/*"]
+
+[workspace.package]
+rust-version = "1.94"
+
 [dependencies]
+wegent-oidc = { path = "crates/oidc" }
+wegent-onboarding = { path = "crates/onboarding" }
+wegent-authentication = { path = "crates/authentication" }
+wegent-backend-users = { path = "crates/users" }
+wegent-remote-workspace = { path = "crates/remote-workspace" }
+wegent-executor-manager = { path = "crates/executor-manager" }
+wegent-media = { path = "crates/media" }
+wegent-capabilities = { path = "crates/capabilities" }
+wegent-models = { path = "crates/models" }
+wegent-runtime-check = { path = "crates/runtime-check" }
+wegent-task-store = { path = "crates/task-store" }
+wegent-resource-store = { path = "crates/resource-store" }
+wegent-job-runtime = { path = "crates/job-runtime" }
+wegent-socket-events = { path = "crates/socket-events" }
+wegent-git-repositories = { path = "crates/git-repositories" }
+wegent-network-policy = { path = "crates/network-policy" }
+wegent-sites = { path = "crates/sites" }
+wegent-access = { path = "crates/access" }
+wegent-directory = { path = "crates/directory" }
+wegent-identity = { path = "crates/identity" }
+wegent-backend-config = { path = "crates/config" }
+wegent-backend-persistence = { path = "crates/persistence" }
+wegent-celery = { path = "crates/celery" }
+wegent-python-compat = { path = "crates/python-compat" }
+wegent-http-compat = { path = "crates/http-compat" }
+wegent-storage = { path = "crates/storage" }
+wegent-protocol = { path = "../shared/rust/protocol" }
+wegent-crypto = { path = "../shared/rust/crypto" }
 aes = "0.8"
 aes-gcm = "0.10"
 anyhow = "1"
@@ -15,13 +51,14 @@ base64 = "0.23.1"
 bcrypt = "0.19"
 cbc = { version = "0.1", features = ["alloc", "block-padding"] }
 brz-http = { version = "=0.0.14", features = ["json", "gzip", "metrics", "slow-log"] }
-brz-http-gateway = { version = "=0.2.14", features = ["fallback-log"] }
-brz-http-server = { version = "=0.0.33", features = ["macros", "metrics", "api-log", "slow-log"] }
+brz-http-gateway = { version = "=0.2.15", features = ["fallback-log"] }
+brz-http-server = { version = "=0.0.33", features = ["macros", "metrics", "api-log", "slow-log", "hyper"] }
+brz-socket-io = { version = "=0.0.6", features = ["macros", "metrics"] }
 brz-logs = { version = "=0.0.17", features = ["metrics"] }
 # Keep one published metrics registry across all Breeze components.
 brz-metrics = { version = "=0.0.13", features = ["tokio"] }
-brz-mysql = { version = "=0.0.25", features = ["metrics", "slow-log"] }
-brz-redis = { version = "=0.0.17", features = ["metrics", "slow-log"] }
+brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
 brz-schedule = "=0.0.1"
 brz-schedule-redis = "=0.0.1"
 bytes = "1"
@@ -73,6 +110,8 @@ zstd = { version = "0.13.1", features = ["arrays"] }
 zip = { version = "=6.0.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+wegent-identity = { path = "crates/identity", features = ["test-support"] }
+wegent-backend-test-support = { path = "crates/test-support" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints.rust]

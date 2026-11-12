@@ -1,0 +1,46 @@
+{
+  "revision": "e6f7a8b9c013",
+  "parents": [
+    "d5e6f7a8b9c0"
+  ],
+  "source": "20260729_e6f7a8b9c013_add_marketplace_resources.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE marketplace_resources (\n    kind_id INTEGER NOT NULL COMMENT 'Associated Kind resource ID', \n    resource_type VARCHAR(20) NOT NULL COMMENT 'Resource type: agent or skill' DEFAULT '', \n    install_count INTEGER NOT NULL COMMENT 'Cumulative first-time marketplace installations' DEFAULT '0', \n    published_at DATETIME NOT NULL COMMENT 'Initial marketplace publication time' DEFAULT now(), \n    updated_at DATETIME NOT NULL COMMENT 'Marketplace resource update time' DEFAULT now(), \n    PRIMARY KEY (kind_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_marketplace_resources_type_updated ON marketplace_resources (resource_type, updated_at, kind_id)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_marketplace_resources_type_installs ON marketplace_resources (resource_type, install_count, updated_at, kind_id)"
+      ]
+    },
+    {
+      "sql": [
+        "INSERT INTO marketplace_resources (kind_id, resource_type, install_count, published_at, updated_at) SELECT kinds.id, CASE WHEN (kinds.kind = 'Team') THEN 'agent' ELSE 'skill' END AS anon_1, CASE WHEN (kinds.kind = 'Team') THEN coalesce(anon_3.install_count, 0) ELSE coalesce(anon_4.install_count, 0) END AS anon_2, kinds.created_at, kinds.updated_at \nFROM kinds LEFT OUTER JOIN (SELECT resource_members.resource_id AS kind_id, count(*) AS install_count \nFROM resource_members \nWHERE resource_members.resource_type = 'Team' AND resource_members.status = 'approved' GROUP BY resource_members.resource_id) AS anon_3 ON anon_3.kind_id = kinds.id LEFT OUTER JOIN (SELECT CAST(json_unquote(json_extract(skill_bindings.json, '$.spec.skillRef.skillId')) AS SIGNED INTEGER) AS kind_id, count(*) AS install_count \nFROM kinds AS skill_bindings \nWHERE skill_bindings.kind = 'SkillBinding' AND skill_bindings.is_active IS true GROUP BY CAST(json_unquote(json_extract(skill_bindings.json, '$.spec.skillRef.skillId')) AS SIGNED INTEGER)) AS anon_4 ON anon_4.kind_id = kinds.id \nWHERE kinds.user_id != 0 AND kinds.kind IN ('Team', 'Skill') AND kinds.is_active IS true AND json_unquote(json_extract(kinds.json, '$.spec.capability.visibility')) = 'public' AND json_unquote(json_extract(kinds.json, '$.spec.capability.publishStatus')) = 'published'"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_marketplace_resources_type_installs ON marketplace_resources"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_marketplace_resources_type_updated ON marketplace_resources"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE marketplace_resources"
+      ]
+    }
+  ]
+}

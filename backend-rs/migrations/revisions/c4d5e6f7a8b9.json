@@ -1,0 +1,31 @@
+{
+  "revision": "c4d5e6f7a8b9",
+  "parents": [
+    "b2c3d4e5f6a7"
+  ],
+  "source": "20260604_c4d5e6f7a8b9_add_skill_binary_metadata_columns.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE skill_binaries ADD COLUMN type VARCHAR(32) NOT NULL DEFAULT ''"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE skill_binaries ADD COLUMN file_name VARCHAR(255) NOT NULL DEFAULT ''"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE skill_binaries DROP COLUMN file_name"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE skill_binaries DROP COLUMN type"
+      ]
+    }
+  ]
+}

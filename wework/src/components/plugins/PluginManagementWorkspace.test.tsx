@@ -1,19 +1,26 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import * as localPlugins from '@/api/local/codexPlugins'
+import * as localExecutor from '@/desktop/localExecutor'
+import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
+import * as connectorCleanup from '@/features/plugins/logoutLocalQrConnectors'
 import {
   clearPluginMarketplaceCache,
   getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
   setPluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
-import { navigateTo } from '@/lib/navigation'
-import * as localPlugins from '@/api/local/codexPlugins'
-import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
 import '@/i18n'
-import { PluginManagementWorkspace } from './PluginManagementWorkspace'
+import { navigateTo } from '@/lib/navigation'
+import * as runtimeEnvironment from '@/lib/runtime-environment'
+import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { InstalledPluginItem } from './PluginManagementRows'
-import type { PluginMarketplaceItem } from '@/types/api'
+import { PluginManagementWorkspace } from './PluginManagementWorkspace'
+
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
 
 vi.mock('@/lib/navigation', () => ({
   navigateTo: vi.fn(),
@@ -162,7 +169,7 @@ describe('PluginManagementWorkspace cache', () => {
 
     expect(await screen.findByText('Cached Plugin')).toBeInTheDocument()
     expect(screen.queryByText('正在加载插件')).not.toBeInTheDocument()
-    expect(listInstalledPlugins).toHaveBeenCalledWith({ requireComplete: true })
+    expect(listInstalledPlugins).toHaveBeenCalledWith()
     expect(readState).not.toHaveBeenCalled()
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('device_id=app-record-70')
@@ -173,52 +180,125 @@ describe('PluginManagementWorkspace cache', () => {
     expect(String(vi.mocked(fetch).mock.calls[0][0])).not.toContain('marketplace')
   })
 
-  test('renders a confirmed empty inventory immediately while refreshing', () => {
+  test.each(['success', 'failure'] as const)(
+    'shows cold cloud inventory before a pending local read ends in %s',
+    async localOutcome => {
+      vi.spyOn(runtimeEnvironment, 'isDesktopRuntime').mockReturnValue(true)
+      vi.spyOn(localExecutor, 'getKnownLocalExecutorDeviceId').mockReturnValue('device-1')
+      let finishLocal!: (value: { items: InstalledPlugin[]; deviceId: string }) => void
+      let failLocal!: (error: Error) => void
+      const local = new Promise<{ items: InstalledPlugin[]; deviceId: string }>(
+        (resolve, reject) => {
+          finishLocal = resolve
+          failLocal = reject
+        }
+      )
+      const api = localPlugins.createLocalCodexPluginApi()
+      const listInstalledPlugins = vi.fn(() => local)
+      vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+        ...api,
+        listInstalledPlugins,
+      })
+      const cloud = cachedInstalledPlugin().raw
+      cloud.spec.pluginId = 1
+      cloud.spec.releaseId = 1
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(() => Promise.resolve(Response.json({ items: [cloud] })))
+      )
+      const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+
+      render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+      expect(await screen.findByText('Cached Plugin')).toBeInTheDocument()
+      expect(screen.queryByText('正在加载插件')).not.toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([cloud])
+      expect(getPluginMarketplaceCache(key)?.installedPluginsFetchedAt).toBeUndefined()
+      expect(listInstalledPlugins).toHaveBeenCalledExactlyOnceWith()
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
+        '/plugins/installed?device_id=app-record-70'
+      )
+
+      if (localOutcome === 'failure') {
+        await act(async () => failLocal(new Error('Local unavailable')))
+        expect(await screen.findByRole('alert')).toHaveTextContent('Local unavailable')
+        expect(screen.getByText('Cached Plugin')).toBeInTheDocument()
+        expect(getPluginMarketplaceCache(key)?.installedPluginsFetchedAt).toBeUndefined()
+      } else {
+        const personal = cachedInstalledPlugin().raw
+        personal.metadata = {
+          ...personal.metadata,
+          name: 'local-plugin',
+          labels: { id: 'local-1' },
+        }
+        personal.spec = {
+          ...personal.spec,
+          origin: 'created',
+          displayName: 'Local Plugin',
+          source: { ...personal.spec.source, type: 'local', pluginKey: 'local-plugin' },
+        }
+        await act(async () => finishLocal({ items: [personal], deviceId: 'device-1' }))
+        expect(await screen.findByText('Local Plugin')).toBeInTheDocument()
+        expect(screen.getByText('Cached Plugin')).toBeInTheDocument()
+        expect(getPluginMarketplaceCache(key)?.installedPluginsFetchedAt).toBeGreaterThan(0)
+      }
+    }
+  )
+
+  test('shows fresh warm local rows while cloud is pending and clears only successful empty cloud membership', async () => {
+    vi.spyOn(runtimeEnvironment, 'isDesktopRuntime').mockReturnValue(true)
+    vi.spyOn(localExecutor, 'getKnownLocalExecutorDeviceId').mockReturnValue('device-1')
     const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+    const cloud = cachedInstalledPlugin().raw
+    cloud.spec.pluginId = 1
+    cloud.spec.releaseId = 1
     setPluginMarketplaceCache({
       cacheKey: key,
       marketplaceItems: [],
-      installedPlugins: [],
-      installedPluginsFetchedAt: Date.now(),
+      installedPlugins: [cloud],
+      installedPluginsFetchedAt: 123,
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
       fetchedAt: Date.now(),
     })
+    const personal = cachedInstalledPlugin().raw
+    personal.metadata = { ...personal.metadata, name: 'local-plugin', labels: { id: 'local-1' } }
+    personal.spec = {
+      ...personal.spec,
+      origin: 'created',
+      displayName: 'Local Plugin',
+      source: { ...personal.spec.source, type: 'local', pluginKey: 'local-plugin' },
+    }
+    const api = localPlugins.createLocalCodexPluginApi()
+    vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+      ...api,
+      listInstalledPlugins: vi.fn().mockResolvedValue({ items: [personal], deviceId: 'device-1' }),
+    })
+    let finishCloud!: (response: Response) => void
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => new Promise(() => {}))
+      vi.fn(
+        () =>
+          new Promise<Response>(resolve => {
+            finishCloud = resolve
+          })
+      )
     )
 
     render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
-    expect(screen.queryByText('正在加载插件')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('plugin-management-installed-list')).not.toBeInTheDocument()
-  })
-
-  test('unblocks rendering when another consumer publishes inventory during a slow local read', async () => {
-    const api = localPlugins.createLocalCodexPluginApi()
-    vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
-      ...api,
-      listInstalledPlugins: vi.fn(() => new Promise(() => {})),
-    })
-    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
-    expect(screen.getByText('正在加载插件')).toBeInTheDocument()
-
-    act(() => {
-      setPluginMarketplaceCache({
-        cacheKey: pluginMarketplaceCacheKey('/api', 'cloud-token'),
-        marketplaceItems: [],
-        installedPlugins: [cachedInstalledPlugin().raw],
-        marketplaces: [],
-        selectedMarketplaceKey: '',
-        deviceId: 'device-1',
-        fetchedAt: Date.now(),
-      })
-    })
-
+    expect(await screen.findByText('Local Plugin')).toBeInTheDocument()
     expect(screen.getByText('Cached Plugin')).toBeInTheDocument()
-    expect(screen.queryByText('正在加载插件')).not.toBeInTheDocument()
+    expect(getPluginMarketplaceCache(key)?.installedPluginsFetchedAt).toBe(123)
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    await act(async () => finishCloud(Response.json({ items: [] })))
+
+    expect(screen.queryByText('Cached Plugin')).not.toBeInTheDocument()
+    expect(screen.getByText('Local Plugin')).toBeInTheDocument()
+    expect(getPluginMarketplaceCache(key)?.installedPluginsFetchedAt).toBeGreaterThan(123)
   })
 
   test('ends loading and reports a failed installed read instead of persisting an empty inventory', async () => {
@@ -227,6 +307,7 @@ describe('PluginManagementWorkspace cache', () => {
       ...api,
       listInstalledPlugins: vi.fn().mockRejectedValue(new Error('Inventory unavailable')),
     })
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Cloud unavailable')))
     render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Inventory unavailable')
@@ -234,48 +315,96 @@ describe('PluginManagementWorkspace cache', () => {
     expect(getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))).toBeNull()
   })
 
-  test('resets the rendered inventory when the account changes and ignores the old read', async () => {
+  test('renders healthy cloud rows and the existing error notice when local inventory fails', async () => {
     const api = localPlugins.createLocalCodexPluginApi()
-    let finishOldRead!: (value: { items: []; deviceId: string }) => void
-    const listInstalledPlugins = vi
-      .fn()
-      .mockImplementationOnce(
-        () =>
-          new Promise(resolve => {
-            finishOldRead = resolve
-          })
-      )
-      .mockImplementation(() => new Promise(() => {}))
     vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
       ...api,
-      listInstalledPlugins,
+      listInstalledPlugins: vi.fn().mockRejectedValue(new Error('Local unavailable')),
     })
+    const cloud = cachedInstalledPlugin().raw
+    cloud.spec.pluginId = 1
+    cloud.spec.releaseId = 1
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => new Promise(() => {}))
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ items: [cloud] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
     )
-    setPluginMarketplaceCache({
-      cacheKey: pluginMarketplaceCacheKey('/api', 'cloud-token'),
-      marketplaceItems: [],
-      installedPlugins: [cachedInstalledPlugin().raw],
-      marketplaces: [],
-      selectedMarketplaceKey: '',
-      deviceId: 'device-1',
-      fetchedAt: Date.now(),
+
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Cached Plugin')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Local unavailable')
+    expect(screen.queryByText('正在加载插件')).not.toBeInTheDocument()
+    expect(
+      getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))
+        ?.installedPluginsFetchedAt
+    ).toBeUndefined()
+  })
+
+  test('drops partial cloud rows after an account switch and ignores the previous local completion', async () => {
+    vi.spyOn(runtimeEnvironment, 'isDesktopRuntime').mockReturnValue(true)
+    vi.spyOn(localExecutor, 'getKnownLocalExecutorDeviceId').mockReturnValue('device-1')
+    let finishOldLocal!: (value: { items: InstalledPlugin[]; deviceId: string }) => void
+    const oldLocal = new Promise<{ items: InstalledPlugin[]; deviceId: string }>(resolve => {
+      finishOldLocal = resolve
     })
+    const api = localPlugins.createLocalCodexPluginApi()
+    vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+      ...api,
+      listInstalledPlugins: vi
+        .fn()
+        .mockReturnValueOnce(oldLocal)
+        .mockResolvedValue({ items: [], deviceId: 'device-1' }),
+    })
+    const firstAccount = cachedInstalledPlugin().raw
+    firstAccount.spec.pluginId = 1
+    firstAccount.spec.releaseId = 1
+    const secondAccount = {
+      ...firstAccount,
+      metadata: {
+        ...firstAccount.metadata,
+        name: 'second-account-plugin',
+        labels: { id: 'second' },
+      },
+      spec: { ...firstAccount.spec, pluginId: 2, displayName: 'Second Account Plugin' },
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(
+          Response.json({
+            items: [
+              new Headers(init?.headers).get('Authorization') === 'Bearer other-account'
+                ? secondAccount
+                : firstAccount,
+            ],
+          })
+        )
+      )
+    )
     const { rerender } = render(
       <PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />
     )
-    expect(screen.getByText('Cached Plugin')).toBeInTheDocument()
+    expect(await screen.findByText('Cached Plugin')).toBeInTheDocument()
 
     rerender(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="other-account" />)
+
     expect(screen.queryByText('Cached Plugin')).not.toBeInTheDocument()
-    expect(screen.getByText('正在加载插件')).toBeInTheDocument()
-    await act(async () => {
-      finishOldRead({ items: [], deviceId: 'device-1' })
-    })
-    expect(fetch).not.toHaveBeenCalled()
-    expect(screen.getByText('正在加载插件')).toBeInTheDocument()
+    expect(await screen.findByText('Second Account Plugin')).toBeInTheDocument()
+    const key = pluginMarketplaceCacheKey('/api', 'other-account')
+    await waitFor(() =>
+      expect(getPluginMarketplaceCache(key)?.installedPluginsFetchedAt).toBeGreaterThan(0)
+    )
+    const expected = getPluginMarketplaceCache(key)
+    await act(async () => finishOldLocal({ items: [firstAccount], deviceId: 'device-1' }))
+
+    expect(screen.queryByText('Cached Plugin')).not.toBeInTheDocument()
+    expect(screen.getByText('Second Account Plugin')).toBeInTheDocument()
+    expect(getPluginMarketplaceCache(key)).toBe(expected)
   })
 
   test('renders cached installed plugins immediately without the loading state', async () => {
@@ -448,6 +577,107 @@ describe('PluginManagementWorkspace cache', () => {
     expect(getPluginMarketplaceCache(key)?.deviceId).toBe('device-1')
   })
 
+  test.each(['failure'] as const)(
+    'keeps the newer enabled setting after an older save returns %s',
+    async outcome => {
+      const { key, installed } = seedCloudInstalledPlugin()
+      let releaseOld!: (response: Response) => void
+      const oldResponse = new Promise<Response>(resolve => {
+        releaseOld = resolve
+      })
+      let firstWrite = true
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.method !== 'PUT') return Response.json({ items: [installed] })
+          const { enabled } = JSON.parse(String(init.body)) as { enabled: boolean }
+          if (firstWrite) {
+            firstWrite = false
+            return oldResponse
+          }
+          return Response.json({ ...installed, spec: { ...installed.spec, enabled } })
+        })
+      )
+      render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      const toggle = await screen.findByTestId('installed-plugin-toggle-cached-1')
+      await userEvent.click(toggle)
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+      await userEvent.click(toggle)
+      await waitFor(() =>
+        expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.enabled).toBe(true)
+      )
+      if (outcome === 'failure') {
+        await userEvent.click(toggle)
+        await waitFor(() =>
+          expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.enabled).toBe(false)
+        )
+      }
+      const before = getPluginMarketplaceCache(key)
+
+      await act(async () =>
+        releaseOld(
+          outcome === 'failure'
+            ? Response.json({ detail: 'Old save failed' }, { status: 500 })
+            : Response.json({ ...installed, spec: { ...installed.spec, enabled: false } })
+        )
+      )
+
+      expect(toggle).toHaveAttribute('aria-checked', String(outcome === 'success'))
+      expect(getPluginMarketplaceCache(key)).toBe(before)
+    }
+  )
+
+  test('rolls back only the failed component while preserving another completed save', async () => {
+    const { key, installed } = seedCloudInstalledPlugin()
+    delete installed.spec.pluginId
+    delete installed.spec.releaseId
+    installed.spec.components.skills = [{ name: 'alpha' }, { name: 'beta' }]
+    installed.spec.componentStates = { 'skill:alpha': true, 'skill:beta': false }
+    let failAlpha!: (error: Error) => void
+    const alphaResponse = new Promise<InstalledPlugin>((_resolve, reject) => {
+      failAlpha = reject
+    })
+    const api = localPlugins.createLocalCodexPluginApi()
+    vi.mocked(localPlugins.createLocalCodexPluginApi).mockReturnValue({
+      ...api,
+      updateInstalledPlugin: vi.fn(async (_id, request) => {
+        const componentStates = request.componentStates ?? {}
+        if (Object.hasOwn(componentStates, 'skill:alpha')) return alphaResponse
+        return {
+          ...installed,
+          spec: {
+            ...installed.spec,
+            componentStates: { ...installed.spec.componentStates, ...componentStates },
+          },
+        }
+      }),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ items: [] }))
+    )
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByRole('button', { name: '查看 Cached Plugin 详情' }))
+    const alpha = screen.getByTestId('plugin-component-toggle-skill:alpha')
+    const beta = screen.getByTestId('plugin-component-toggle-skill:beta')
+    await userEvent.click(alpha)
+    await userEvent.click(beta)
+    await waitFor(() =>
+      expect(
+        getPluginMarketplaceCache(key)?.installedPlugins[0].spec.componentStates['skill:beta']
+      ).toBe(true)
+    )
+
+    await act(async () => failAlpha(new Error('Alpha save failed')))
+
+    expect(alpha).toHaveAttribute('aria-checked', 'true')
+    expect(beta).toHaveAttribute('aria-checked', 'true')
+    expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.componentStates).toEqual({
+      'skill:alpha': true,
+      'skill:beta': true,
+    })
+  })
+
   test('rolls back the enabled toggle when the account preference HTTP request fails', async () => {
     const { key } = seedCloudInstalledPlugin()
     vi.mocked(ensureLocalExecutorAvailable).mockRejectedValue(new Error('Runtime IPC unavailable'))
@@ -524,6 +754,7 @@ describe('PluginManagementWorkspace cache', () => {
       labels: { id: 267250 },
     }
     installed.raw.spec.pluginId = 267250
+    installed.raw.spec.releaseId = 6
     installed.raw.spec.source.pluginKey = 'wegent-sites'
     installed.raw.spec.displayName = '快速建站'
     const marketplaceItem = {
@@ -570,6 +801,55 @@ describe('PluginManagementWorkspace cache', () => {
     expect(screen.queryByTestId('plugin-detail-toggle-267250')).not.toBeInTheDocument()
   })
 
+  test('does not expose publication or scope management for a stale locally labelled received package', async () => {
+    const api = localPlugins.createLocalCodexPluginApi()
+    vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+      ...api,
+      listInstalledPlugins: vi.fn(() => new Promise(() => {})),
+    })
+    const installed = cachedInstalledPlugin()
+    installed.origin = 'created'
+    installed.raw.spec.origin = 'created'
+    installed.raw.spec.source.type = 'local'
+    installed.raw.spec.sourcePayload = { managedByWegent: true, cloudPluginId: 901 }
+    const listing = {
+      id: 901,
+      remotePluginId: 'cached-plugin',
+      name: 'cached-plugin',
+      displayName: installed.name,
+      description: '',
+      featured: false,
+      installed: true,
+      installedPluginId: installed.id,
+      enabled: true,
+      sourceType: 'marketplace' as const,
+      visibility: 'personal' as const,
+      ownerUserId: 2,
+      accessRole: 'recipient' as const,
+      latestReleaseId: 12,
+      components: installed.raw.spec.components,
+      manifest: {},
+    }
+    setPluginMarketplaceCache({
+      cacheKey: pluginMarketplaceCacheKey('/api', 'cloud-token'),
+      marketplaceItems: [listing],
+      installedPlugins: [installed.raw],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      fetchedAt: Date.now(),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {}))
+    )
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(screen.getByTestId('installed-plugin-actions-cached-1'))
+    expect(screen.queryByTestId('installed-plugin-publish-cached-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('installed-plugin-share-cached-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('installed-plugin-uninstall-cached-1')).toBeInTheDocument()
+  })
+
   test('routes personal plugin publication to the canonical plugin workspace flow', async () => {
     const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
     const installed = cachedInstalledPlugin()
@@ -588,6 +868,13 @@ describe('PluginManagementWorkspace cache', () => {
       pluginKey: 'smart-workbench-dev-assistant',
     }
     installed.raw.spec.displayName = installed.name
+    const api = localPlugins.createLocalCodexPluginApi()
+    vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+      ...api,
+      listInstalledPlugins: vi
+        .fn()
+        .mockResolvedValue({ items: [installed.raw], deviceId: 'device-1' }),
+    })
     setPluginMarketplaceCache({
       cacheKey: key,
       marketplaceItems: [],
@@ -638,6 +925,13 @@ describe('PluginManagementWorkspace cache', () => {
       pluginKey: 'team-helper',
     }
     installed.raw.spec.displayName = installed.name
+    const api = localPlugins.createLocalCodexPluginApi()
+    vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+      ...api,
+      listInstalledPlugins: vi
+        .fn()
+        .mockResolvedValue({ items: [installed.raw], deviceId: 'device-1' }),
+    })
     const ownedListing = {
       id: 901,
       remotePluginId: 'team-helper',
@@ -695,6 +989,7 @@ describe('PluginManagementWorkspace cache', () => {
     installed.name = '产品设计'
     installed.raw.metadata.labels = { id: 267250 }
     installed.raw.spec.pluginId = 901
+    installed.raw.spec.releaseId = 6
     installed.raw.spec.source.pluginKey = 'product-design'
     installed.raw.spec.displayName = installed.name
     const marketplaceItem = {
@@ -728,6 +1023,9 @@ describe('PluginManagementWorkspace cache', () => {
       'fetch',
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }))
+        if (String(input).endsWith('/plugins/installed')) {
+          return Promise.resolve(Response.json({ items: [installed.raw] }))
+        }
         return new Promise<Response>(() => {
           // A slow catalog refresh must not delay the committed uninstall state.
         })
@@ -746,4 +1044,114 @@ describe('PluginManagementWorkspace cache', () => {
       expect.objectContaining({ installed: false, installedPluginId: null, enabled: false }),
     ])
   })
+
+  test.each(['none', 'current', 'unavailable', 'delete-failure', 'account-change', 'unmount'])(
+    'preflights a published local source before uninstall cleanup (%s)',
+    async outcome => {
+      const source = cachedInstalledPlugin().raw
+      source.metadata.labels = { id: 'author-source' }
+      source.spec.source = {
+        type: 'local',
+        providerKey: 'wework-personal',
+        marketplace: 'wework-personal',
+        pluginKey: 'dev-tools',
+      }
+      source.spec.origin = 'created'
+      source.spec.sourcePayload = { cloudPluginId: 901, cloudReleaseId: 6 }
+      const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+      setPluginMarketplaceCache({
+        cacheKey: key,
+        marketplaceItems: [],
+        installedPlugins: [source],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        deviceId: 'device-1',
+        fetchedAt: Date.now(),
+      })
+      const api = localPlugins.createLocalCodexPluginApi()
+      const uninstallLocal = vi.fn().mockResolvedValue(undefined)
+      vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+        ...api,
+        listInstalledPlugins: vi.fn().mockResolvedValue({ items: [source], deviceId: 'device-1' }),
+        uninstallInstalledPlugin: uninstallLocal,
+      })
+      const logout = vi
+        .spyOn(connectorCleanup, 'logoutLocalConnectorsForPlugin')
+        .mockResolvedValue(undefined)
+      let finish!: (response: Response) => void
+      const request = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'DELETE') {
+          return Promise.resolve(
+            outcome === 'delete-failure'
+              ? Response.json({ detail: 'Forbidden' }, { status: 403 })
+              : new Response(null, { status: 204 })
+          )
+        }
+        if (String(input).endsWith('/plugins/installed')) {
+          return new Promise<Response>(resolve => {
+            finish = resolve
+          })
+        }
+        return Promise.resolve(Response.json({ items: [] }))
+      })
+      vi.stubGlobal('fetch', request)
+      const view = render(
+        <PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />
+      )
+      await userEvent.click(await screen.findByTestId('installed-plugin-actions-author-source'))
+      await userEvent.click(screen.getByTestId('installed-plugin-uninstall-author-source'))
+      expect(screen.getByTestId('uninstall-plugin-dialog')).toHaveTextContent(
+        '源码、已分享版本和分享范围会保留'
+      )
+      await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+      await waitFor(() => expect(finish).toBeDefined())
+      expect(logout).not.toHaveBeenCalled()
+      expect(uninstallLocal).not.toHaveBeenCalled()
+      if (outcome === 'account-change') {
+        view.rerender(
+          <PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="another-account" />
+        )
+      } else if (outcome === 'unmount') view.unmount()
+      const accountPlugin = {
+        ...source,
+        metadata: { ...source.metadata, labels: { id: 208 } },
+        spec: { ...source.spec, pluginId: 901, releaseId: 6 },
+      }
+      await act(async () =>
+        finish(
+          outcome === 'unavailable'
+            ? Response.json({ detail: 'Unavailable' }, { status: 503 })
+            : Response.json({
+                items: outcome === 'current' || outcome === 'delete-failure' ? [accountPlugin] : [],
+              })
+        )
+      )
+      if (outcome === 'none' || outcome === 'current') {
+        await waitFor(() => expect(uninstallLocal).toHaveBeenCalledWith('author-source'))
+        expect(logout).toHaveBeenCalledOnce()
+        expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([])
+      } else {
+        await waitFor(() => {
+          if (outcome === 'unavailable' || outcome === 'delete-failure') {
+            expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+              'data-notice-kind',
+              'error'
+            )
+          }
+        })
+        expect(logout).not.toHaveBeenCalled()
+        expect(uninstallLocal).not.toHaveBeenCalled()
+        if (outcome !== 'account-change') {
+          expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([source])
+        }
+      }
+      const deletes = request.mock.calls.filter(([, init]) => init?.method === 'DELETE')
+      if (outcome === 'current' || outcome === 'delete-failure') {
+        expect(deletes).toEqual([
+          ['/api/plugins/installed/208', expect.objectContaining({ method: 'DELETE' })],
+        ])
+      } else expect(deletes).toEqual([])
+      view.unmount()
+    }
+  )
 })

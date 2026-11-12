@@ -1,8 +1,12 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { createDesktopScenario as createConsecutiveQuestions } from './consecutive-questions.scenario.mjs'
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { mcpElicitationConfigToml } from '../modules/desktop-build-flows.mjs'
 import {
+  assertElicitationToolResult,
   currentTurnHasToolOutput,
   currentTurnHasToolSearchResult,
 } from '../modules/runtime-input-answer-model.mjs'
@@ -124,7 +128,81 @@ async function releaseRequestHold(control, timeoutMs) {
   assert.fail(`The held executor request never completed: ${JSON.stringify(latest)}`)
 }
 
-async function openElicitation(control, scope, composer, timeoutMs) {
+async function recordElicitationFailure(control, scope, resultDir, transportCaptureId) {
+  try {
+    const transport = JSON.parse(
+      await control.command('readRuntimeTransportGate', 'body', { value: transportCaptureId })
+    )
+    const history = {}
+    for (const status of ['cancelled', 'interrupted']) {
+      history[status] = JSON.parse(
+        await control.command('readRuntimeTransportGate', 'body', {
+          value: `${transportCaptureId}-${status}`,
+        })
+      )
+    }
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const task = snapshot.pane?.currentRuntimeTask ?? snapshot.workbench?.currentRuntimeTask
+    const address = task && { deviceId: task.deviceId, taskId: task.taskId }
+    const native = task?.taskId
+      ? JSON.parse(
+          await control.command('getLocalRuntimeTranscript', 'body', {
+            value: JSON.stringify({ taskId: task.taskId, limit: 100 }),
+          })
+        )
+      : null
+    const messages = address
+      ? JSON.parse(
+          await control.command('getRuntimeConversationMessages', 'body', {
+            value: JSON.stringify(address),
+          })
+        )
+      : []
+    await writeFile(
+      join(resultDir, 'runtime-input-answer-native-failure.json'),
+      JSON.stringify(
+        {
+          scope,
+          address,
+          transport,
+          history,
+          native,
+          messages,
+          transitions: snapshot.paneTransitions,
+        },
+        null,
+        2
+      )
+    )
+  } catch (error) {
+    console.error('[desktop-e2e] Elicitation failure diagnostics unavailable:', String(error))
+  }
+}
+
+async function openElicitation(control, scope, composer, timeoutMs, resultDir) {
+  // Observe the original form event without holding or changing its delivery.
+  const transportCaptureId = `elicitation-form-${Date.now()}`
+  await control.command('armRuntimeTransportGate', 'body', {
+    value: JSON.stringify({
+      id: transportCaptureId,
+      kind: 'event',
+      name: 'response.block.created',
+      hold: false,
+      where: [{ path: '**.interactionKind', equals: 'mcp_form' }],
+    }),
+  })
+  // Retain the first terminal-looking history response before later reads replace it.
+  for (const status of ['cancelled', 'interrupted']) {
+    await control.command('armRuntimeTransportGate', 'body', {
+      value: JSON.stringify({
+        id: `${transportCaptureId}-${status}`,
+        kind: 'response',
+        name: 'runtime.tasks.transcript',
+        hold: false,
+        where: [{ path: '**.status', equals: status }],
+      }),
+    })
+  }
   await control.command('fill', composer, { value: PROMPT })
   await control.command('press', composer, { key: 'Enter' })
   const deadline = Date.now() + Math.max(timeoutMs, 90_000)
@@ -164,6 +242,7 @@ async function openElicitation(control, scope, composer, timeoutMs) {
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
+  await recordElicitationFailure(control, scope, resultDir, transportCaptureId)
   assert.fail(`Timed out waiting for the elicitation form in ${scope}`)
 }
 
@@ -209,7 +288,7 @@ async function startNewChat(control, composer, timeoutMs) {
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, WORKBENCH)
 }
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTimeoutMs }) {
+function createPersistenceScenario({ resultDir, uiTimeoutMs, modelResponseTimeoutMs }) {
   const evidencePath = join(resultDir, 'runtime-input-answer-evidence.jsonl')
   const pendingGates = new Set()
   let activeContinuationGate = null
@@ -235,12 +314,9 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
     modelRequestCount += 1
     const responseId = `wework-input-answer-${modelRequestCount}-${Date.now()}`
     if (currentTurnHasToolOutput(body, TOOL_CALL_ID)) {
-      assert.ok(
-        JSON.stringify(body).includes('E2E_MCP_ELICITATION_ACCEPTED:owner'),
-        'The real MCP server did not return the accepted audience to the model'
-      )
       const gate = activeContinuationGate
       assert.ok(gate, 'The terminal continuation arrived without a release gate')
+      assertElicitationToolResult(body, TOOL_CALL_ID, gate.cancelled === true)
       await gate.promise
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(
@@ -258,7 +334,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
     )
     if (namespaceAdvertised || currentTurnHasToolSearchResult(body, TOOL_NAMESPACE)) {
       const tool = selectMcpTool(body, TOOL_NAMESPACE, TOOL_NAME, {})
-      events = namespacedFunctionCall(TOOL_CALL_ID, tool.namespace, tool.name, tool.arguments)
+      events = selectedToolCall(TOOL_CALL_ID, tool)
     } else {
       events = toolSearchResponseEvents(SEARCH_CALL_ID, selectToolSearch(body, TOOL_NAME))
     }
@@ -282,7 +358,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, WORKBENCH)
 
       const mainGate = nextContinuationGate()
-      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs, resultDir)
       await waitForWorkbenchDebugState(
         control,
         snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
@@ -321,7 +397,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       })
       await control.command('waitFor', SIDE_CHAT, { visible: true, timeoutMs: taskTimeoutMs })
       await control.command('waitFor', SIDE_COMPOSER, { visible: true, timeoutMs: taskTimeoutMs })
-      await openElicitation(control, SIDE_CHAT, SIDE_COMPOSER, taskTimeoutMs)
+      await openElicitation(control, SIDE_CHAT, SIDE_COMPOSER, taskTimeoutMs, resultDir)
       await control.command('holdLocalExecutorRequests', 'body', {
         value: JSON.stringify({ method: 'runtime.tasks.list' }),
       })
@@ -349,7 +425,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
 
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       const failureGate = nextContinuationGate()
-      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs, resultDir)
       const failureTask = await waitForWorkbenchDebugState(
         control,
         snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
@@ -408,8 +484,10 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
 
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       const rejectionGate = deferred()
+      // Cancellation can return the real MCP result before turn interruption settles.
+      rejectionGate.cancelled = true
       activeContinuationGate = rejectionGate
-      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs, resultDir)
       const rejectionTask = await waitForWorkbenchDebugState(
         control,
         snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
@@ -460,7 +538,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
 
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       const archiveGate = nextContinuationGate()
-      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs, resultDir)
       const archiveTask = await waitForWorkbenchDebugState(
         control,
         snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
@@ -518,6 +596,22 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         'An archived conversation was restored by its late input answer',
         taskTimeoutMs
       )
+    },
+  }
+}
+
+export function createDesktopScenario(options) {
+  const persistence = createPersistenceScenario(options)
+  const consecutive = createConsecutiveQuestions(options)
+  return {
+    ...persistence,
+    async handleHttp(request, response, url) {
+      if (await consecutive.handleHttp(request, response, url)) return true
+      return persistence.handleHttp(request, response, url)
+    },
+    async verify(control) {
+      await persistence.verify(control)
+      await consecutive.verify(control)
     },
   }
 }

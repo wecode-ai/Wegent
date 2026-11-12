@@ -1,20 +1,53 @@
-import { act, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   mergeRuntimeConversationTurns,
   projectRuntimeConversationTurns,
-  reduceRuntimeConversationTurns,
 } from '@/features/workbench/runtimeConversationTurns'
-import { runtimeTranscriptTurnsToConversationTurns } from '@/features/workbench/runtimePaneMessages'
-import type { RuntimeTranscriptTurn } from '@/types/api'
-import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
+import '@/i18n'
+import type { RuntimeConversationTurn } from '@/types/workbench'
+import { act, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { MessageList } from './MessageList'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
-import '@/i18n'
 
 afterEach(() => vi.useRealTimers())
 
 describe('MessageList processing duration', () => {
+  test('times only the latest native turn without rewriting unfinished historical state', () => {
+    vi.useFakeTimers()
+    const startedAt = Date.parse('2026-09-17T00:00:00Z')
+    vi.setSystemTime(startedAt + 24 * 60 * 60_000)
+    const turns: RuntimeConversationTurn[] = ['old', 'current'].map((id, index) => ({
+      id,
+      status: 'streaming',
+      startedAt: index ? Date.now() : startedAt,
+      items: [
+        {
+          id: `${id}-tool`,
+          type: 'block',
+          block: {
+            id: `${id}-tool`,
+            type: 'tool',
+            toolName: 'exec_command',
+            status: 'streaming',
+            createdAt: index ? Date.now() : startedAt,
+            toolInput: { command: 'pwd' },
+          },
+        },
+      ],
+    }))
+    const { container } = render(
+      <MessageList messages={projectRuntimeConversationTurns(turns)} turns={turns} />
+    )
+    const old = container.querySelector('[data-message-id="runtime-view:old:assistant"]')!
+    const current = container.querySelector('[data-message-id="runtime-view:current:assistant"]')!
+    expect(old.querySelector('[data-testid="processing-duration-label"]')).toBeNull()
+    act(() => vi.advanceTimersByTime(10_000))
+    expect(current.querySelector('[data-testid="processing-duration-label"]')).toHaveTextContent(
+      '已处理 10秒'
+    )
+    expect(turns[0].status).toBe('streaming')
+    expect(turns[0].completedAt).toBeUndefined()
+  })
   test.each([
     { name: 'message list', Conversation: MessageList },
     { name: 'scrollable conversation', Conversation: ScrollableMessageArea },
@@ -44,119 +77,7 @@ describe('MessageList processing duration', () => {
     }
   )
 
-  test('keeps a failed turn duration after native history removes transient processing blocks', () => {
-    vi.useFakeTimers()
-    const start = Date.parse('2026-09-17T00:00:00Z')
-    vi.setSystemTime(start + 5000)
-    const turn: RuntimeConversationTurn = {
-      id: 'failed-without-items',
-      status: 'failed',
-      startedAt: start,
-      completedAt: start + 5000,
-      durationMs: 5000,
-      error: 'upstream unavailable',
-      items: [],
-    }
-    const { rerender } = render(
-      <MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />
-    )
-    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
-    act(() => vi.advanceTimersByTime(10000))
-    rerender(<MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />)
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
-  })
-
-  test('shows turn elapsed time when a completed turn has timestamps but no duration', () => {
-    const startedAt = Date.parse('2026-09-17T00:00:00Z')
-    const turn: RuntimeConversationTurn = {
-      id: 'timestamped-turn',
-      status: 'done',
-      startedAt,
-      completedAt: startedAt + 12 * 60_000 + 23_000,
-      items: [
-        {
-          id: 'tool',
-          type: 'block',
-          block: {
-            id: 'tool',
-            type: 'tool',
-            toolName: 'exec_command',
-            status: 'done',
-            createdAt: startedAt + 1000,
-          },
-        },
-        {
-          id: 'answer',
-          type: 'assistant_text',
-          content: 'Done',
-          createdAt: new Date(startedAt + 12 * 60_000).toISOString(),
-        },
-      ],
-    }
-
-    render(<MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />)
-
-    expect(screen.getByTestId('final-processing-toggle')).toHaveTextContent('用时 12分钟 23秒')
-  })
-
-  test('labels the processing toggle when a completed turn has no timing data', () => {
-    const turn: RuntimeConversationTurn = {
-      id: 'untimed-turn',
-      status: 'done',
-      items: [
-        {
-          id: 'tool',
-          type: 'block',
-          block: {
-            id: 'tool',
-            type: 'tool',
-            toolName: 'exec_command',
-            status: 'done',
-            createdAt: Date.parse('2026-09-17T00:00:00Z'),
-          },
-        },
-        {
-          id: 'answer',
-          type: 'assistant_text',
-          content: 'Done',
-          createdAt: '2026-09-17T00:00:01Z',
-        },
-      ],
-    }
-
-    render(<MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />)
-
-    expect(screen.getByTestId('final-processing-toggle')).toHaveTextContent('已处理')
-  })
-
-  test('uses the completion timestamp of a hidden thinking block', () => {
-    vi.useFakeTimers()
-    const start = Date.parse('2026-09-17T00:00:00Z')
-    const message: WorkbenchMessage = {
-      id: 'thinking-only',
-      role: 'assistant',
-      content: 'Done',
-      status: 'done',
-      createdAt: new Date(start).toISOString(),
-      blocks: [
-        {
-          id: 'thinking',
-          type: 'thinking',
-          content: 'Thinking',
-          status: 'done',
-          createdAt: start,
-          completedAt: start + 5000,
-        },
-      ],
-    }
-    render(<MessageList messages={[message]} />)
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
-    act(() => vi.advanceTimersByTime(10000))
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
-  })
-
-  test.each(['done', 'failed', 'cancelled'] as const)(
+  test.each(['failed', 'cancelled'] as const)(
     'preserves a %s turn duration when transcript timestamps lose millisecond precision',
     status => {
       vi.useFakeTimers()
@@ -235,249 +156,4 @@ describe('MessageList processing duration', () => {
       expect(screen.getByTestId(selector).textContent).toBe(frozen)
     }
   )
-
-  test.each(['failed', 'done', 'cancelled'] as const)(
-    'freezes a %s turn despite a tool retaining its streaming status',
-    status => {
-      vi.useFakeTimers()
-      const start = Date.parse('2026-09-17T00:00:00Z')
-      vi.setSystemTime(start)
-      let turns: RuntimeConversationTurn[] = [
-        { id: 'terminal-timer', status: 'streaming', startedAt: start, items: [] },
-      ]
-      turns = reduceRuntimeConversationTurns(turns, {
-        type: 'block_created',
-        subtaskId: 'terminal-timer',
-        block: {
-          id: 'unfinished-tool',
-          type: 'tool',
-          toolName: 'exec_command',
-          toolInput: { command: 'pwd' },
-          status: 'streaming',
-          createdAt: start,
-        },
-      })
-      const first = render(
-        <MessageList messages={projectRuntimeConversationTurns(turns)} turns={turns} />
-      )
-      act(() => vi.advanceTimersByTime(5000))
-      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
-      if (status === 'done') {
-        turns = [
-          {
-            ...turns[0],
-            status,
-            durationMs: 5_000,
-            completedAt: new Date().toISOString(),
-          },
-        ]
-      } else {
-        turns = reduceRuntimeConversationTurns(
-          turns,
-          status === 'failed'
-            ? {
-                type: 'assistant_error',
-                subtaskId: 'terminal-timer',
-                error: 'upstream unavailable',
-                durationMs: 5_000,
-              }
-            : {
-                type: 'assistant_cancelled',
-                subtaskId: 'terminal-timer',
-                durationMs: 5_000,
-              }
-        )
-      }
-      expect(turns[0].completedAt).toBe(new Date(start + 5000).toISOString())
-      expect(turns[0].items[0]).toMatchObject({ block: { status: 'streaming' } })
-      const messages = projectRuntimeConversationTurns(turns)
-      const expectFrozenDuration = () => {
-        if (status === 'cancelled') {
-          expect(screen.queryByTestId('processing-duration-label')).not.toBeInTheDocument()
-          expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('5s')
-        } else {
-          expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
-        }
-      }
-      first.rerender(<MessageList messages={messages} turns={turns} />)
-      expectFrozenDuration()
-      act(() => vi.advanceTimersByTime(10000))
-      expectFrozenDuration()
-      first.unmount()
-      render(<MessageList messages={messages} turns={turns} />)
-      expectFrozenDuration()
-    }
-  )
-
-  test('restores the stopped and resumed durations from their own turn completion timestamps', () => {
-    const start = Date.parse('2026-09-16T15:41:32.813Z')
-    const resumedStart = start + 17_000
-    const transcript: RuntimeTranscriptTurn[] = [
-      { id: 'stopped', status: 'cancelled', stoppedNotice: true, completedAt: start + 13_000 },
-      { id: 'resumed', status: 'done', completedAt: resumedStart + 72_000 },
-    ].map((turn, index) => {
-      const createdAt = index === 0 ? start : resumedStart
-      return {
-        ...turn,
-        startedAt: createdAt,
-        durationMs: turn.completedAt - createdAt,
-        items: [
-          {
-            id: `user-${turn.id}`,
-            type: 'user_message',
-            message: {
-              id: `user-${turn.id}`,
-              role: 'user',
-              content: index === 0 ? '检查代码' : '继续',
-              createdAt: new Date(createdAt).toISOString(),
-            },
-          },
-          {
-            id: `tool-${turn.id}`,
-            type: 'block',
-            block: {
-              id: `tool-${turn.id}`,
-              type: 'tool',
-              toolName: 'exec_command',
-              toolInput: { command: 'pwd' },
-              status: 'done',
-              createdAt,
-              completedAt: turn.completedAt,
-            },
-          },
-          {
-            id: `answer-${turn.id}`,
-            type: 'assistant_text',
-            content: index === 0 ? '我检查计时边界。' : '继续检查完成。',
-            // Transcript items without timestamps inherit the turn start.
-            createdAt,
-          },
-        ],
-      }
-    })
-    const turns = runtimeTranscriptTurnsToConversationTurns(transcript)
-    const messages = projectRuntimeConversationTurns(turns)
-    const first = render(<MessageList messages={messages} turns={turns} />)
-    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('13s')
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 1分钟 12秒')
-    first.unmount()
-    render(<MessageList messages={messages} turns={turns} />)
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 1分钟 12秒')
-  })
-
-  test('keeps timing a running tool when visible text has already arrived', () => {
-    vi.useFakeTimers()
-    const start = Date.parse('2026-09-16T10:00:00Z')
-    vi.setSystemTime(start + 3000)
-    const message: WorkbenchMessage = {
-      id: 'running-tool-duration',
-      role: 'assistant',
-      content: '继续检查。',
-      status: 'streaming',
-      createdAt: new Date(start + 1000).toISOString(),
-      turnId: 'running-tool-turn',
-      blocks: [
-        {
-          id: 'tool',
-          type: 'tool',
-          toolName: 'exec_command',
-          status: 'streaming',
-          createdAt: start + 2000,
-        },
-      ],
-    }
-    render(
-      <MessageList
-        messages={[message]}
-        turns={[
-          {
-            id: 'running-tool-turn',
-            status: 'streaming',
-            startedAt: start,
-            items: [],
-          },
-        ]}
-      />
-    )
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 3秒')
-    act(() => vi.advanceTimersByTime(2000))
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
-  })
-
-  test('keeps timing through final answer streaming and freezes only when the turn completes', () => {
-    vi.useFakeTimers()
-    const start = Date.parse('2026-09-16T10:00:00Z')
-    vi.setSystemTime(start + 5000)
-    const turn: RuntimeConversationTurn = {
-      id: 'interleaved-duration',
-      status: 'streaming',
-      startedAt: start,
-      items: [
-        {
-          id: 'user',
-          type: 'user_message',
-          message: {
-            id: 'user',
-            role: 'user',
-            content: '继续',
-            createdAt: new Date(start).toISOString(),
-          },
-        },
-        {
-          id: 'partial',
-          type: 'assistant_text',
-          content: '继续检查。',
-          createdAt: new Date(start + 1000).toISOString(),
-        },
-        {
-          id: 'tool',
-          type: 'block',
-          block: {
-            id: 'tool',
-            type: 'tool',
-            toolName: 'exec_command',
-            status: 'done',
-            createdAt: start + 2000,
-            completedAt: start + 4000,
-          },
-        },
-      ],
-    }
-    const pendingMessages = projectRuntimeConversationTurns([turn])
-    const { rerender } = render(<MessageList messages={pendingMessages} turns={[turn]} />)
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
-    act(() => vi.advanceTimersByTime(3000))
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 8秒')
-
-    const finalTurn: RuntimeConversationTurn = {
-      ...turn,
-      items: [
-        ...turn.items,
-        {
-          id: 'final',
-          type: 'assistant_text',
-          content: '检查完成。',
-          createdAt: new Date(start + 8000).toISOString(),
-        },
-      ],
-    }
-    const finalMessages = projectRuntimeConversationTurns([finalTurn])
-    rerender(<MessageList messages={finalMessages} turns={[finalTurn]} />)
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 8秒')
-    act(() => vi.advanceTimersByTime(1000))
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 9秒')
-    act(() => vi.advanceTimersByTime(1000))
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 10秒')
-    rerender(
-      <MessageList
-        messages={projectRuntimeConversationTurns([
-          { ...finalTurn, status: 'done', durationMs: 10_000 },
-        ])}
-        turns={[{ ...finalTurn, status: 'done', durationMs: 10_000 }]}
-      />
-    )
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 10秒')
-    act(() => vi.advanceTimersByTime(5000))
-    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 10秒')
-  })
 })

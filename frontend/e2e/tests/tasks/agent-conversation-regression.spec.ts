@@ -45,6 +45,8 @@ type CreatedTeam = {
   botName: string
 }
 
+type CodingRuntime = 'ClaudeCode' | 'Codex'
+
 type CreatedPipelineTeam = CreatedTeam & {
   stageOneBotName: string
   stageTwoBotName: string
@@ -729,80 +731,14 @@ test.describe('Agent conversation regression', () => {
   })
 
   test('coding mode ClaudeCode supports dialogue and follow-up', async ({ page, request }) => {
-    const contextToken = makeContextToken('code')
-    const firstPrompt = `Remember this code context token: ${contextToken}`
-    const followUpPrompt = 'What context token did I provide in the previous code turn?'
-
-    await openTaskPage(page, '/chat?agent=code', codeTeam.id, 'code')
-
-    await sendMessage(page, firstPrompt)
-    const taskId = await waitForTaskId(page)
-    createdTaskIds.add(taskId)
-    await expect(page.getByTestId('messages-container')).toContainText(
-      `Mock model remembered ${contextToken}`,
-      { timeout: RESPONSE_TIMEOUT_MS }
-    )
-    await waitForBackendTerminal(request, taskId)
-
-    await sendMessage(page, `${followUpPrompt} Reply with only that token.`)
-    await expect(page.getByTestId('messages-container')).toContainText(
-      `Mock model resumed with ${contextToken}`,
-      { timeout: RESPONSE_TIMEOUT_MS }
-    )
-    await waitForBackendTerminal(request, taskId)
-
-    const secondRequest = await waitForCapturedModelRequest(
-      request,
-      capture =>
-        isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(followUpPrompt),
-      `ClaudeCode model request containing ${followUpPrompt}`
-    )
-    expect(extractText(secondRequest.body)).toContain(contextToken)
-    expect(extractText(secondRequest.body)).toContain(firstPrompt)
+    await assertCodingConversationAndDiff(page, request, 'ClaudeCode')
   })
 
   test('coding mode Codex executes through app-server and resumes a follow-up', async ({
     page,
     request,
   }) => {
-    const contextToken = makeContextToken('codex_code')
-    const firstPrompt = `Remember this Codex context token: ${contextToken}`
-    const followUpPrompt = 'What context token did I provide in the previous Codex turn?'
-
-    await openTaskPage(page, '/chat?agent=code', codexCodeTeam.id, 'code')
-
-    await sendMessage(page, firstPrompt)
-    const taskId = await waitForTaskId(page)
-    createdTaskIds.add(taskId)
-    await expect(page.getByTestId('messages-container')).toContainText(
-      `Mock model remembered ${contextToken}`,
-      { timeout: RESPONSE_TIMEOUT_MS }
-    )
-    await waitForBackendTerminal(request, taskId)
-
-    const firstRequest = await waitForCapturedModelRequest(
-      request,
-      capture =>
-        isOpenAIResponsesRequest(capture) && extractText(capture.body).includes(firstPrompt),
-      `Codex Responses request containing ${firstPrompt}`
-    )
-    expect(firstRequest.url).toContain('/responses')
-
-    await sendMessage(page, `${followUpPrompt} Reply with only that token.`)
-    await expect(page.getByTestId('messages-container')).toContainText(
-      `Mock model resumed with ${contextToken}`,
-      { timeout: RESPONSE_TIMEOUT_MS }
-    )
-    await waitForBackendTerminal(request, taskId)
-
-    const secondRequest = await waitForCapturedModelRequest(
-      request,
-      capture =>
-        isOpenAIResponsesRequest(capture) && extractText(capture.body).includes(followUpPrompt),
-      `resumed Codex Responses request containing ${followUpPrompt}`
-    )
-    expect(extractText(secondRequest.body)).toContain(contextToken)
-    expect(extractText(secondRequest.body)).toContain(firstPrompt)
+    await assertCodingConversationAndDiff(page, request, 'Codex')
   })
 
   for (const rewriteCompletedText of [false, true]) {
@@ -959,6 +895,11 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+
+    // Exercise the same task through its public message API without rendering
+    // the oversized response in the browser.
+    await page.goto('about:blank')
+    await assertOversizedDeviceCompletionFailure(request, taskId)
   })
 
   test('device Git project runs without server AES keys on the executor', async ({ request }) => {
@@ -967,9 +908,28 @@ test.describe('Agent conversation regression', () => {
     const projectName = `${TEST_PREFIX}-device-git-project`
     const contextToken = makeContextToken('device_git')
     const prompt = `Remember this device Git context token: ${contextToken}`
+    const changedPath = 'backend-rs/large-device-diff.txt'
+    const reply = `Mock model remembered ${contextToken}`
 
     try {
       await waitForWeworkDeviceOnline(request)
+      const commandMarkers = await configureCodingGitTurn(
+        request,
+        'ClaudeCode',
+        prompt,
+        [
+          'git config diff.noprefix true',
+          'git config diff.external echo',
+          'git config color.diff always',
+          "mkdir -p 'backend-rs'",
+          // Each line is almost entirely JSON-escaped bytes. A single 512 KiB
+          // inline patch exceeds the device packet limit after JSON encoding.
+          `awk 'BEGIN { for (i = 0; i < 9000; i++) { for (j = 0; j < 100; j++) printf "%c%c", 34, 92; printf "%c", 10 } }' > '${changedPath}'`,
+          `git add -- '${changedPath}'`,
+          "git -c user.name='Wegent E2E' -c user.email='wegent-e2e@example.test' commit -m 'test: large device callback diff'",
+        ],
+        reply
+      )
 
       const gitAccountResponse = await request.put(`${API_BASE_URL}/api/users/me`, {
         headers: authHeaders(),
@@ -1029,11 +989,18 @@ test.describe('Agent conversation regression', () => {
         },
       })
       expect(taskResponse.status()).toBe(200)
-      const task = (await taskResponse.json()) as { taskId?: number }
+      const task = (await taskResponse.json()) as {
+        taskId?: number
+        assistantSubtaskId?: number
+        deviceId?: string
+      }
       expect(task.taskId).toBeTruthy()
+      expect(task.assistantSubtaskId).toBeTruthy()
+      expect(task.deviceId).toBeTruthy()
       createdTaskIds.add(task.taskId!)
 
       await waitForBackendTerminal(request, task.taskId!)
+      await assertCodingCommandOutputs(request, 'ClaudeCode', commandMarkers)
       const modelRequest = await waitForCapturedModelRequest(
         request,
         capture =>
@@ -1041,6 +1008,60 @@ test.describe('Agent conversation regression', () => {
         `device Git model request containing ${contextToken}`
       )
       expect(extractText(modelRequest.body)).toContain(contextToken)
+
+      type Snapshot = {
+        status: string
+        files: Array<{ path: string; additions: number }>
+        diff: string
+        diff_truncated: boolean
+        artifact_id?: string | null
+      }
+      const detailResponse = await request.get(`${API_BASE_URL}/api/tasks/${task.taskId}`, {
+        headers: authHeaders(),
+      })
+      expect(detailResponse.status()).toBe(200)
+      const detail = (await detailResponse.json()) as {
+        status: string
+        device_id: string
+        subtasks: Array<{
+          id: number
+          status: string
+          executor_name: string
+          result: { value: string; file_changes: Snapshot; task_file_changes: Snapshot }
+        }>
+      }
+      expect(detail.status).toBe('COMPLETED')
+      expect(detail.device_id).toBe(task.deviceId)
+      const completed = detail.subtasks.find(item => item.id === task.assistantSubtaskId)
+      expect(completed).toBeDefined()
+      expect(completed!.status).toBe('COMPLETED')
+      expect(completed!.executor_name).toBe(`device-${task.deviceId}`)
+      expect(completed!.result.value).toBe(reply)
+      for (const snapshot of [
+        completed!.result.file_changes,
+        completed!.result.task_file_changes,
+      ]) {
+        expect(snapshot.status).toBe('active')
+        expect(snapshot.files).toEqual([
+          expect.objectContaining({ path: changedPath, additions: 9000 }),
+        ])
+        expect(snapshot.diff_truncated).toBe(true)
+      }
+      expect(completed!.result.file_changes.artifact_id).toMatch(/^turn-file-changes\//)
+      const taskDiff = completed!.result.task_file_changes.diff
+      expect(taskDiff).toContain(`diff --git a/${changedPath} b/${changedPath}`)
+      expect(taskDiff).toContain(`+${'"\\'.repeat(100)}`)
+      expect(taskDiff).not.toContain('\u001b[')
+      // The capture cap alone is 512 KiB. A smaller persisted patch proves that
+      // the completed device packet also applied its JSON-encoded byte budget.
+      expect(Buffer.byteLength(taskDiff, 'utf8')).toBeLessThan(512 * 1024)
+      expect(Buffer.byteLength(JSON.stringify({ diff: taskDiff }), 'utf8')).toBeLessThan(1_000_000)
+
+      await assertOversizedDeviceCompletionFailure(request, task.taskId!, [
+        `printf '%s\\n' 'oversized-diff-${contextToken}' >> '${changedPath}'`,
+        `git add -- '${changedPath}'`,
+        "git -c user.name='Wegent E2E' -c user.email='wegent-e2e@example.test' commit -m 'test: oversized completion with file changes'",
+      ])
     } finally {
       await gitFixture.close()
     }
@@ -1993,6 +2014,396 @@ test.describe('Agent conversation regression', () => {
         }
       )
       .toBeGreaterThan(latestUpdatedSecond)
+  }
+
+  async function assertCodingConversationAndDiff(
+    page: Page,
+    request: APIRequestContext,
+    runtime: CodingRuntime
+  ): Promise<void> {
+    const contextToken = makeContextToken(runtime.toLowerCase())
+    const firstPrompt = `Remember this ${runtime} context token: ${contextToken}`
+    const followUpPrompt = `What context token did I provide in the previous ${runtime} turn?`
+    const filePath = 'dir b/file.txt'
+    const secondPath = 'nested folder/second file.txt'
+    const before = `before-${contextToken}`
+    const after = `after-${contextToken}`
+    const secondBefore = `second-before-${contextToken}`
+    const secondAfter = `second-after-${contextToken}`
+    const finalAfter = `second-final-${contextToken}`
+    const questionId = 'diff_scope'
+    const question = `Continue the diff changes for ${contextToken}?`
+    const commit = "git -c user.name='Wegent E2E' -c user.email='wegent-e2e@example.test' commit"
+    const setupCommands = await configureCodingGitTurn(
+      request,
+      runtime,
+      firstPrompt,
+      [
+        'git init --initial-branch=main',
+        'git config diff.noprefix true',
+        ...(runtime === 'ClaudeCode'
+          ? ['git config diff.external echo']
+          : [
+              "git config diff.wegent-e2e.textconv 'echo TEXTCONV_ACTIVE'",
+              "printf '%s\\n' '*.txt diff=wegent-e2e' > .git/info/attributes",
+            ]),
+        'git config diff.mnemonicPrefix true',
+        'git config diff.srcPrefix before/',
+        'git config diff.dstPrefix after/',
+        'git config color.diff always',
+        "mkdir -p 'dir b' 'nested folder'",
+        `printf '%s\\n' '${before}' > '${filePath}'`,
+        `printf '%s\\n' '${secondBefore}' > '${secondPath}'`,
+        `git add -- '${filePath}' '${secondPath}'`,
+        `${commit} -m 'test: seed coding diff baseline'`,
+      ],
+      `Mock model remembered ${contextToken}`
+    )
+    const team = runtime === 'ClaudeCode' ? codeTeam : codexCodeTeam
+    await openTaskPage(page, '/chat?agent=code', team.id, 'code')
+    await sendMessage(page, firstPrompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await expect(page.getByTestId('messages-container')).toContainText(
+      `Mock model remembered ${contextToken}`,
+      { timeout: RESPONSE_TIMEOUT_MS }
+    )
+    await waitForBackendTerminal(request, taskId)
+    await assertCloudCodingRequest(request, taskId, runtime, firstPrompt)
+    await assertCodingCommandOutputs(request, runtime, setupCommands)
+
+    // Establish a Git baseline, then preserve it across branches, user input and turns.
+    const beforeAnswerCommands = [
+      `git switch -c diff-${contextToken.toLowerCase()}`,
+      `printf '%s\\n' '${after}' > '${filePath}'`,
+      `git add -- '${filePath}'`,
+      `${commit} -m 'test: change first coding diff fixture'`,
+    ]
+    const afterAnswerCommands = [
+      `printf '%s\\n' '${secondAfter}' > '${secondPath}'`,
+      `git add -- '${secondPath}'`,
+      `${commit} -m 'test: change second coding diff fixture'`,
+    ]
+    const resumedCommands = await configureCodingGitTurn(
+      request,
+      runtime,
+      firstPrompt,
+      runtime === 'Codex' ? afterAnswerCommands : [...beforeAnswerCommands, ...afterAnswerCommands],
+      `Mock model resumed with ${contextToken}`,
+      runtime === 'Codex' ? { beforeAnswerCommands, questionId, question } : undefined
+    )
+    await sendMessage(page, `${followUpPrompt} Reply with only that token.`)
+    if (runtime === 'Codex') {
+      const form = page.getByTestId('ask-user-form')
+      await expect(form).toContainText(question, { timeout: RESPONSE_TIMEOUT_MS })
+      await page.getByTestId(`ask-user-option-${questionId}-0`).click()
+      await page.getByTestId('ask-user-submit').click()
+    }
+    await expect(page.getByTestId('messages-container')).toContainText(
+      `Mock model resumed with ${contextToken}`,
+      { timeout: RESPONSE_TIMEOUT_MS }
+    )
+    await waitForBackendTerminal(request, taskId)
+    const resumed = await assertCloudCodingRequest(request, taskId, runtime, followUpPrompt)
+    await assertCodingCommandOutputs(request, runtime, resumedCommands)
+    expect(extractText(resumed.body)).toContain(firstPrompt)
+    expect(extractText(resumed.body)).toContain(contextToken)
+    await assertWorkbenchDiff(page, filePath, before, after)
+    await assertWorkbenchDiff(page, secondPath, secondBefore, secondAfter)
+
+    // A later turn touching only the second file must retain the first file's net change.
+    const accumulatedCommands = await configureCodingGitTurn(
+      request,
+      runtime,
+      firstPrompt,
+      [
+        `printf '%s\\n' '${finalAfter}' > '${secondPath}'`,
+        `git add -- '${secondPath}'`,
+        `${commit} -m 'test: update only the second coding diff fixture'`,
+      ],
+      `Mock model accumulated ${contextToken}`
+    )
+    await sendMessage(page, `Update only the second fixture for ${contextToken}.`)
+    await expect(page.getByTestId('messages-container')).toContainText(
+      `Mock model accumulated ${contextToken}`,
+      { timeout: RESPONSE_TIMEOUT_MS }
+    )
+    await waitForBackendTerminal(request, taskId)
+    await assertCodingCommandOutputs(request, runtime, accumulatedCommands)
+    await assertWorkbenchDiff(page, filePath, before, after)
+    await assertWorkbenchDiff(page, secondPath, secondBefore, finalAfter)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await assertWorkbenchDiff(page, filePath, before, after)
+    await assertWorkbenchDiff(page, secondPath, secondBefore, finalAfter)
+
+    const restoredCommands = await configureCodingGitTurn(
+      request,
+      runtime,
+      firstPrompt,
+      [
+        `printf '%s\\n' '${before}' > '${filePath}'`,
+        `printf '%s\\n' '${secondBefore}' > '${secondPath}'`,
+        `git add -- '${filePath}' '${secondPath}'`,
+        `${commit} -m 'test: restore the coding diff baseline'`,
+      ],
+      `Mock model restored ${contextToken}`
+    )
+    await sendMessage(page, `Restore both fixtures for ${contextToken}.`)
+    await expect(page.getByTestId('messages-container')).toContainText(
+      `Mock model restored ${contextToken}`,
+      { timeout: RESPONSE_TIMEOUT_MS }
+    )
+    await waitForBackendTerminal(request, taskId)
+    await assertCodingCommandOutputs(request, runtime, restoredCommands)
+    await assertEmptyWorkbenchDiff(page)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await assertEmptyWorkbenchDiff(page)
+  }
+
+  async function configureCodingGitTurn(
+    request: APIRequestContext,
+    runtime: CodingRuntime,
+    matchText: string,
+    commands: string[],
+    responseContent: string,
+    clarification?: { beforeAnswerCommands: string[]; questionId: string; question: string }
+  ): Promise<string[]> {
+    const markers: string[] = []
+    const commandStep = (items: string[]): PhaseRegressionStep => {
+      const marker = makeContextToken('git_success')
+      markers.push(marker)
+      const command = ['set -eu', ...items, `printf '%s\\n' '${marker}'`].join('\n')
+      return {
+        toolCalls: [
+          {
+            toolName: runtime === 'ClaudeCode' ? 'Bash' : 'exec_command',
+            arguments: runtime === 'ClaudeCode' ? { command } : { cmd: command },
+          },
+        ],
+      }
+    }
+    const steps: PhaseRegressionStep[] = []
+    if (clarification) {
+      steps.push(commandStep(clarification.beforeAnswerCommands), {
+        toolCalls: [
+          {
+            toolName: 'request_user_input',
+            arguments: {
+              questions: [
+                {
+                  id: clarification.questionId,
+                  header: 'Diff changes',
+                  question: clarification.question,
+                  options: [
+                    { label: 'Continue', description: 'Change the second fixture.' },
+                    { label: 'Stop', description: 'Keep the current fixture.' },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      })
+    }
+    await configureToolScenario(request, matchText, [
+      ...steps,
+      commandStep(commands),
+      { responseContent },
+    ])
+    return markers
+  }
+
+  async function assertCodingCommandOutputs(
+    request: APIRequestContext,
+    runtime: CodingRuntime,
+    markers: string[]
+  ): Promise<void> {
+    for (const marker of markers) {
+      await waitForCapturedModelRequest(
+        request,
+        capture =>
+          (runtime === 'ClaudeCode'
+            ? isAnthropicMessagesRequest(capture)
+            : isOpenAIResponsesRequest(capture)) && toolOutputContains(capture.body, marker),
+        `${runtime} successful Git command output ${marker}`
+      )
+    }
+  }
+
+  async function assertOversizedDeviceCompletionFailure(
+    request: APIRequestContext,
+    taskId: number,
+    commands: string[] = []
+  ): Promise<void> {
+    type DeviceTask = {
+      status: string
+      device_id: string
+      subtasks: Array<{
+        id: number
+        role: string
+        status: string
+        executor_name: string
+        error_message?: string
+        result?: {
+          value?: string
+          error_type?: string
+          file_changes?: unknown
+          task_file_changes?: unknown
+        }
+      }>
+    }
+    const readTask = async (): Promise<DeviceTask> => {
+      const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+        headers: authHeaders(),
+      })
+      expect(response.status()).toBe(200)
+      return response.json()
+    }
+    const before = await readTask()
+    expect(before.status).toBe('COMPLETED')
+    expect(before.device_id).toBeTruthy()
+    if (commands.length === 0) {
+      const assistants = before.subtasks.filter(item => item.role === 'ASSISTANT')
+      expect(assistants.length).toBeGreaterThan(0)
+      for (const assistant of assistants) {
+        expect(assistant.result?.file_changes).toBeFalsy()
+        expect(assistant.result?.task_file_changes).toBeFalsy()
+      }
+    }
+    const marker = makeContextToken('oversized_device_callback')
+    const prompt = `Return the oversized final response for this existing device conversation so the completed callback packet exceeds the transport budget: ${marker}`
+    // Spaces keep each real model delta small; only the completed response
+    // crosses the packet limit. The CLI stdout limit is 10 MiB.
+    const reply = `${marker}_START ${Array.from({ length: 40 }, () => '中'.repeat(8500)).join(' ')} ${marker}_END`
+    expect(Buffer.byteLength(reply, 'utf8')).toBeGreaterThan(1_000_000)
+    await configureStreamRule(request, prompt, reply)
+    const commandMarkers =
+      commands.length > 0
+        ? await configureCodingGitTurn(request, 'ClaudeCode', prompt, commands, reply)
+        : []
+    const sent = await request.post(`${API_BASE_URL}/api/device-chat/tasks`, {
+      headers: authHeaders(),
+      data: {
+        taskId,
+        teamId: deviceTeam.id,
+        deviceId: before.device_id,
+        message: prompt,
+        taskType: 'task',
+        clientOrigin: 'frontend',
+      },
+    })
+    expect(sent.status()).toBe(200)
+    const appended = (await sent.json()) as {
+      taskId: number
+      assistantSubtaskId: number
+      deviceId: string
+      aiTriggered: boolean
+    }
+    expect(appended.taskId).toBe(taskId)
+    expect(appended.deviceId).toBe(before.device_id)
+    expect(appended.assistantSubtaskId).toBeTruthy()
+    expect(appended.aiTriggered).toBe(true)
+    await expect
+      .poll(
+        async () => {
+          const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}/runtime-check`, {
+            headers: authHeaders(),
+          })
+          expect(response.status()).toBe(200)
+          return ((await response.json()) as RuntimeCheckResponse).task_status
+        },
+        {
+          message: 'Oversized device completion must settle as FAILED',
+          timeout: RESPONSE_TIMEOUT_MS,
+        }
+      )
+      .toBe('FAILED')
+    await assertCodingCommandOutputs(request, 'ClaudeCode', commandMarkers)
+    await waitForCapturedModelRequest(
+      request,
+      capture => isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(prompt),
+      'real device ClaudeCode request for the oversized completed response'
+    )
+    const failed = await readTask()
+    expect(failed.status).toBe('FAILED')
+    expect(failed.device_id).toBe(before.device_id)
+    const assistant = failed.subtasks.find(item => item.id === appended.assistantSubtaskId)
+    expect(assistant).toBeDefined()
+    expect(assistant!.status).toBe('FAILED')
+    expect(assistant!.executor_name).toBe(`device-${before.device_id}`)
+    expect(assistant!.result?.error_type).toBe('device_callback_too_large')
+    // Failed-result collection preserves accumulated stream text. This proves
+    // the real CLI emitted the entire body before the terminal budget rejected it.
+    expect(assistant!.result?.value).toBe(reply)
+  }
+
+  function toolOutputContains(value: unknown, marker: string): boolean {
+    if (typeof value === 'string') {
+      try {
+        return toolOutputContains(JSON.parse(value), marker)
+      } catch {
+        return false
+      }
+    }
+    if (Array.isArray(value)) return value.some(item => toolOutputContains(item, marker))
+    if (!value || typeof value !== 'object') return false
+    const item = value as Record<string, unknown>
+    if (
+      ['tool_result', 'function_call_output', 'custom_tool_call_output'].includes(
+        String(item.type)
+      ) ||
+      item.role === 'tool'
+    ) {
+      return extractText(item.output ?? item.content).includes(marker)
+    }
+    return Object.values(item).some(child => toolOutputContains(child, marker))
+  }
+
+  async function assertCloudCodingRequest(
+    request: APIRequestContext,
+    taskId: number,
+    runtime: CodingRuntime,
+    prompt: string
+  ): Promise<CapturedModelRequest> {
+    const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+      headers: authHeaders(),
+    })
+    expect(response.status()).toBe(200)
+    const task = (await response.json()) as { task_type: string; device_id?: string | null }
+    expect(task.task_type).toBe('code')
+    expect(task.device_id).toBeFalsy()
+    return waitForCapturedModelRequest(
+      request,
+      capture =>
+        (runtime === 'ClaudeCode'
+          ? isAnthropicMessagesRequest(capture)
+          : isOpenAIResponsesRequest(capture)) && extractText(capture.body).includes(prompt),
+      `${runtime} native model request containing ${prompt}`
+    )
+  }
+
+  async function assertWorkbenchDiff(
+    page: Page,
+    filePath: string,
+    before: string,
+    after: string
+  ): Promise<void> {
+    await page.getByRole('button', { name: /Files Changed|文件变更/i }).click()
+    const files = page.getByTestId('workbench-files')
+    const file = files.getByTestId('diff-file-toggle').filter({ hasText: filePath })
+    await expect(file).toBeVisible({ timeout: RESPONSE_TIMEOUT_MS })
+    await expect(file).toBeEnabled()
+    if ((await file.getAttribute('aria-expanded')) !== 'true') await file.click()
+    const content = file.locator('..').getByTestId('diff-file-content')
+    await expect(content.locator('[data-diff-line-type="deletion"]')).toContainText(before)
+    await expect(content.locator('[data-diff-line-type="addition"]')).toContainText(after)
+  }
+
+  async function assertEmptyWorkbenchDiff(page: Page): Promise<void> {
+    await page.getByRole('button', { name: /Files Changed|文件变更/i }).click()
+    const files = page.getByTestId('workbench-files')
+    await expect(files).toContainText(/No changes found|未找到变更/)
+    await expect(files.getByTestId('diff-file-toggle')).toHaveCount(0)
   }
 
   async function openTaskPage(

@@ -1,0 +1,12 @@
+{
+  "order": 165000,
+  "scenario": "./scenarios/renderer-crash-recovery.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 113000,
+      "shard": 5,
+      "position": 17000
+    }
+  }
+}

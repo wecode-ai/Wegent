@@ -7,6 +7,7 @@ export interface DeviceInfo {
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
+  last_seen_at?: string | null
   device_type: 'local' | 'app' | 'cloud' | 'remote'
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
@@ -22,6 +23,7 @@ export interface DeviceInfo {
   runtime_transfer_host?: string | null
   runtime_instance_id?: string | null
   app_device_id?: string | null
+  local_identity_unresolved?: boolean
   socket_device_id?: string | null
   runtime_routes?: Array<{
     kind: 'local-ipc' | 'cloud-relay' | 'remote-relay' | 'app-ipc'
@@ -66,6 +68,8 @@ export interface DeviceListResponse {
 export interface DeviceRuntimeSettingsResponse {
   device_id: string
   max_concurrent_tasks: number
+  max_concurrent_stand_in_tasks?: number
+  max_concurrent_agent_tasks?: number
   active_tasks: number
   queued_tasks: number
 }

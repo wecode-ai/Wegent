@@ -5,7 +5,13 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { verifyBrowserFullControl } from '../modules/browser-full-control.mjs'
+import { createSetupRenderingEvidence } from '../modules/setup-rendering-evidence.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import {
+  handleBrowserHistoryModelRequest,
+  verifyBrowserHistoryResume,
+} from './browser-history-resume-regression.mjs'
 import {
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
@@ -19,6 +25,7 @@ const BROWSER_INPUT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="works
 const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-status"]`
 const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-resume-button"]`
 const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
+const BROWSER_AGENT_REJECT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-reject-button"]`
 const BROWSER_AGENT_CURSOR_SELECTOR =
   '[data-testid="workspace-browser-agent-cursor"][data-visible="true"]'
 const BROWSER_AGENT_TAB_ICON_SELECTOR =
@@ -79,6 +86,7 @@ function fixtureHtml() {
       h1 { margin: 0 0 12px; font-size: 24px; }
       label, input, button, output, select { display: block; margin-block: 6px; }
       input, button, select { font: inherit; padding: 4px 6px; }
+      #scheme-deep-link { display: inline-block; margin-block: 6px; color: #0759d6; }
       #agent-confirm { display: inline; padding: 0; margin: 0 6px 0 0; }
       #agent-scroll-box { block-size: 120px; overflow: auto; border: 1px solid #ccc; padding: 8px; }
       #agent-scroll-spacer { block-size: 420px; }
@@ -86,11 +94,13 @@ function fixtureHtml() {
   </head>
   <body>
     <h1>${READY_TEXT}</h1>
+    <a id="scheme-deep-link" href="wework://apps/todo">Open project workspace</a>
     <label for="agent-name">Agent name</label>
     <input id="agent-name" name="agent-name" placeholder="Name" />
     <button id="agent-submit" type="button">Run agent form</button>
     <button id="agent-delete" type="button">Delete agent record</button>
     <button id="agent-hover" type="button">Hover target</button>
+    <textarea id="script-editor" aria-label="Code editor" oninput="this.dataset.edits = Number(this.dataset.edits || 0) + 1"></textarea>
     <label for="agent-kind">Agent kind</label>
     <select id="agent-kind">
       <option value="general">General</option>
@@ -277,6 +287,138 @@ async function waitForControlValue(control, selector, expected, timeoutMs, messa
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(message)
+}
+
+async function verifyPendingApprovalTakeover(bridgeCall, control, label, timeoutMs) {
+  await control.command('setEmbeddedBrowserAgentControlPaused', 'body', {
+    value: JSON.stringify({ label, paused: true }),
+  })
+  await control.command('waitFor', BROWSER_AGENT_RESUME_SELECTOR, { timeoutMs })
+  await bridgeCall({ action: 'inspect' })
+  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
+  await control.command('waitFor', BROWSER_AGENT_RESUME_SELECTOR, { timeoutMs })
+  await control.command('click', BROWSER_AGENT_RESUME_SELECTOR)
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
+}
+
+async function verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs) {
+  const result = await bridgeCall({
+    action: 'waitFor',
+    options: { condition: { textVisible: 'WEWORK_APPROVAL_ABSENT_TEXT' } },
+    timeoutMs: 100,
+  })
+  assert.equal(result.ok, false, JSON.stringify(result))
+  assert.equal(result.error?.code, 'wait_timeout', JSON.stringify(result))
+  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
+  await control.command('waitFor', BROWSER_AGENT_STATUS_SELECTOR, {
+    text: 'AI 需要你处理当前页面',
+    timeoutMs,
+  })
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
+}
+
+async function beginEditorApproval(invoke, control, text, timeoutMs, previousId = '') {
+  let completed = false
+  const pending = invoke({ action: 'fill', selector: '#script-editor', text }).then(
+    result => {
+      completed = true
+      return result
+    },
+    error => {
+      completed = true
+      return { transportError: String(error) }
+    }
+  )
+  const selector = previousId
+    ? BROWSER_AGENT_APPROVE_SELECTOR + ':not([data-approval-id="' + previousId + '"])'
+    : BROWSER_AGENT_APPROVE_SELECTOR
+  await control.command('waitFor', selector, { timeoutMs })
+  const approvalId = await control.command('getAttribute', selector, { value: 'data-approval-id' })
+  assert.ok(approvalId, 'The visible approval must identify its original operation')
+  assert.equal(completed, false, 'The original tool call must await the user decision')
+  return { pending, approvalId, completed: () => completed }
+}
+
+async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeoutMs, mcpFill) {
+  const editText = 'pipeline regression fixture'
+  const first = await beginEditorApproval(mcpFill, control, editText, timeoutMs)
+  const readEditor = async () => {
+    const result = await bridgeCall({
+      action: 'evaluate',
+      expression:
+        '({ text: document.querySelector("#script-editor").value, edits: Number(document.querySelector("#script-editor").dataset.edits || 0) })',
+    })
+    assert.equal(result.ok, true, JSON.stringify(result))
+    return result.value
+  }
+  assert.deepEqual(await readEditor(), { text: '', edits: 0 })
+  const inspected = await bridgeCall({ action: 'inspect' })
+  assert.ok(inspected.inspectText.includes('Code editor'))
+  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: true, timeoutMs })
+  assert.equal(first.completed(), false)
+  console.log(
+    '[browser-approval] Original MCP fill remains pending; inspect preserves its controls'
+  )
+  await verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs)
+  await verifyPendingApprovalTakeover(bridgeCall, control, label, timeoutMs)
+  await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
+  const edited = await first.pending
+  assert.equal(edited.ok, true, JSON.stringify(edited))
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
+  assert.deepEqual(await readEditor(), { text: editText, edits: 1 })
+  console.log(
+    '[browser-approval] Continue executed the original MCP fill once and returned its result'
+  )
+
+  const rejected = await beginEditorApproval(bridgeCall, control, 'rejected change', timeoutMs)
+  await control.command('click', BROWSER_AGENT_REJECT_SELECTOR)
+  const rejectedResult = await rejected.pending
+  assert.equal(rejectedResult.error?.code, 'approval_rejected', JSON.stringify(rejectedResult))
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
+  assert.deepEqual(await readEditor(), { text: editText, edits: 1 })
+
+  const earlier = await beginEditorApproval(
+    bridgeCall,
+    control,
+    'earlier pending change',
+    timeoutMs
+  )
+  const latestText = 'latest pending change'
+  const latest = await beginEditorApproval(
+    bridgeCall,
+    control,
+    latestText,
+    timeoutMs,
+    earlier.approvalId
+  )
+  await bridgeCall({ action: 'inspect' })
+  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
+  assert.equal(
+    await control.command('getAttribute', BROWSER_AGENT_APPROVE_SELECTOR, {
+      value: 'data-approval-id',
+    }),
+    latest.approvalId
+  )
+  await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
+  const latestResult = await latest.pending
+  assert.equal(latestResult.ok, true, JSON.stringify(latestResult))
+  assert.equal(
+    earlier.completed(),
+    false,
+    'Approving the latest operation must not approve the earlier one'
+  )
+  await control.command(
+    'waitFor',
+    BROWSER_AGENT_REJECT_SELECTOR + '[data-approval-id="' + earlier.approvalId + '"]',
+    { timeoutMs }
+  )
+  await control.command('click', BROWSER_AGENT_REJECT_SELECTOR)
+  const earlierResult = await earlier.pending
+  assert.equal(earlierResult.error?.code, 'approval_rejected', JSON.stringify(earlierResult))
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
+  assert.deepEqual(await readEditor(), { text: latestText, edits: 2 })
+  console.log('[browser-approval] Separate pending operations settle independently without retries')
 }
 
 async function waitForElementCount(control, selector, expected, timeoutMs, message) {
@@ -495,7 +637,7 @@ function parseToolJson(text) {
   return JSON.parse(text)
 }
 
-export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) {
+export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, workspacePath }) {
   let cacheResourceRequests = 0
 
   return {
@@ -503,6 +645,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       desktopScenarioExecutorBinary = path
     },
     async handleHttp(request, response, url) {
+      if (await handleBrowserHistoryModelRequest(request, response, url)) return true
       if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
         response.writeHead(302, { location: FIXTURE_PATH })
         response.end()
@@ -538,34 +681,62 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       const fixtureUrl = `${control.url}${FIXTURE_PATH}`
       const redirectUrl = `${control.url}${REDIRECT_PATH}`
       control.setScenario('embedded_browser_setup')
-      await control.command(
-        'waitFor',
-        '[data-testid="chat-message-input"][contenteditable="true"]',
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command('fill', '[data-testid="chat-message-input"][contenteditable="true"]', {
-        value: EMBEDDED_BROWSER_SETUP_PROMPT,
-      })
-      await control.command('press', '[data-testid="chat-message-input"][contenteditable="true"]', {
-        key: 'Enter',
-      })
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
-        timeoutMs: uiTimeoutMs,
-      })
-      const taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
-      const browserLabel = await readBrowserPanelLabel(
+      const captureSetupRendering = createSetupRenderingEvidence(
         control,
-        ACTIVE_WORKBENCH_SELECTOR,
-        uiTimeoutMs
+        join(resultDir, 'embedded-browser-setup-rendering.json')
       )
-      assert.equal(
-        browserLabel,
-        `workspace-browser-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
-        'The fresh local task did not expose its task-scoped embedded browser label'
-      )
+      let taskId
+      let browserLabel
+      let setupCompleted = false
+      try {
+        await control.command(
+          'waitFor',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            timeoutMs: uiTimeoutMs,
+          }
+        )
+        await captureSetupRendering('input-ready')
+        await control.command(
+          'fill',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            value: EMBEDDED_BROWSER_SETUP_PROMPT,
+          }
+        )
+        await control.command(
+          'press',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            key: 'Enter',
+          }
+        )
+        await captureSetupRendering('submitted')
+        taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
+        browserLabel = await readBrowserPanelLabel(control, ACTIVE_WORKBENCH_SELECTOR, uiTimeoutMs)
+        assert.equal(
+          browserLabel,
+          `workspace-browser-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+          'The fresh local task did not expose its task-scoped embedded browser label'
+        )
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
+          timeoutMs: uiTimeoutMs,
+        })
+        setupCompleted = true
+      } finally {
+        try {
+          await captureSetupRendering(setupCompleted ? 'assistant-visible' : 'setup-failed')
+        } catch (error) {
+          console.error(
+            '[desktop-e2e] Failed to persist embedded-browser setup rendering evidence',
+            {
+              name: error instanceof Error ? error.name : 'Error',
+            }
+          )
+          if (setupCompleted) throw error
+        }
+      }
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const originalBridgeRuntime = await readFile(bridgeIdentity.runtimePath, 'utf8')
       const stopForeignBridge = await startForeignBridgeRuntime(bridgeIdentity.runtimePath)
@@ -643,6 +814,16 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         backgroundOpenResult.ok,
         true,
         `The unloaded runtime task browser open failed: ${JSON.stringify(backgroundOpenResult)}`
+      )
+      const backgroundPolicy = JSON.parse(
+        await control.command('getWindowBackgroundPolicy', 'body', {
+          value: backgroundBrowserLabel,
+        })
+      )
+      assert.equal(
+        backgroundPolicy.backgroundThrottling,
+        process.platform === 'win32',
+        'The task browser did not inherit the workbench background execution policy'
       )
       const backgroundInspect = await callBridge(
         bridgeIdentity,
@@ -908,6 +1089,39 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         timeoutMs: 5_000,
       })
       assert.equal(readyWait.ok, true, `Bridge fixture wait failed: ${JSON.stringify(readyWait)}`)
+      const browserTaskTabTestId = await control.command(
+        'getAttribute',
+        '[data-tab-kind="task"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.ok(browserTaskTabTestId, 'The embedded browser task did not expose its tab identity')
+      const schemeClick = await bridgeCall({
+        action: 'click',
+        selector: '#scheme-deep-link',
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        schemeClick.ok,
+        true,
+        `Embedded browser scheme click failed: ${JSON.stringify(schemeClick)}`
+      )
+      await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="${browserTaskTabTestId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="${browserTaskTabTestId}"][aria-selected="true"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureUrl,
+        uiTimeoutMs,
+        'Returning from an embedded browser scheme link did not restore the browser page'
+      )
 
       const fixtureServerUrl = new URL(control.url)
       const schemeLessLocalhostUrl = `localhost:${fixtureServerUrl.port}${FIXTURE_PATH}`
@@ -958,7 +1172,14 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       const localhostWait = await bridgeCall({
         action: 'waitFor',
-        options: { condition: { textVisible: READY_TEXT } },
+        // The previous origin serves the same text and the address bar updates
+        // before navigation commits. Wait for the target document itself.
+        options: {
+          condition: {
+            textVisible: READY_TEXT,
+            expression: `location.href === ${JSON.stringify(normalizedLocalhostUrl)}`,
+          },
+        },
         timeoutMs: 5_000,
       })
       assert.equal(
@@ -1335,19 +1556,18 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       })
       assert.ok(finalInspect.inspectText.includes(DIRECT_CLICKED_TEXT))
 
-      const deleteApproval = await bridgeCall({
+      const pendingDelete = bridgeCall({
         action: 'click',
         ref: deleteNode.ref,
         timeoutMs: 5_000,
       })
-      assert.equal(
-        deleteApproval.ok,
-        false,
-        `Delete click should require approval: ${JSON.stringify(deleteApproval)}`
-      )
-      assert.equal(deleteApproval.error?.code, 'approval_required')
-      assert.ok(deleteApproval.approval?.approvalId)
       await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const deleteApprovalId = await control.command(
+        'getAttribute',
+        BROWSER_AGENT_APPROVE_SELECTOR,
+        { value: 'data-approval-id' }
+      )
+      assert.ok(deleteApprovalId)
       await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
       const approvalResolutionStartedAt = Date.now()
       let approvalButtonCount = 1
@@ -1364,11 +1584,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'Browser approval remained pending after the user approved it'
       )
 
-      const approvedDeleteResult = await bridgeCall({
-        action: 'click',
-        ref: deleteNode.ref,
-        timeoutMs: 5_000,
-      })
+      const approvedDeleteResult = await pendingDelete
       assert.equal(
         approvedDeleteResult.ok,
         true,
@@ -1440,6 +1656,28 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         )
         screenshotResult = screenshotResponse
       }
+
+      await withBrowserMcp(mcpIdentity, browserLabel, async callTool => {
+        await verifyEditorApprovalPersistence(
+          bridgeCall,
+          control,
+          browserLabel,
+          uiTimeoutMs,
+          async request =>
+            parseToolJson(
+              await callTool('browser_fill', {
+                selector: request.selector,
+                text: request.text,
+              })
+            )
+        )
+        await verifyBrowserFullControl(
+          control,
+          bridgeCall,
+          async request => parseToolJson(await callTool('browser_fill', request)),
+          uiTimeoutMs
+        )
+      })
 
       // file:// local file support: the bridge renders a local HTML page, and
       // an un-previewable local file surfaces a notice instead of downloading.
@@ -1531,8 +1769,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
 
       const localDirectoryPath = join(resultDir, 'local-directory-fixture')
-      await mkdir(join(localDirectoryPath, 'nested'), { recursive: true })
+      const nestedDirectoryPath = join(localDirectoryPath, 'nested')
+      await mkdir(nestedDirectoryPath, { recursive: true })
       await writeFile(join(localDirectoryPath, LOCAL_DIRECTORY_TEXT), 'directory fixture', 'utf8')
+      await writeFile(join(nestedDirectoryPath, 'nested-entry.txt'), 'nested fixture', 'utf8')
       const localDirectoryOpenResult = await bridgeCall({
         action: 'open',
         url: pathToFileURL(localDirectoryPath).href,
@@ -1562,6 +1802,47 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `file:// directory was not rendered: ${localDirectoryInspect.inspectText}`
       )
 
+      const nestedDirectoryUrl = `${pathToFileURL(nestedDirectoryPath).href}/`
+      const nestedNavigation = await bridgeCall({
+        action: 'click',
+        selector: `a[href="${nestedDirectoryUrl}"]`,
+        timeoutMs: 5_000,
+      })
+      assert.equal(nestedNavigation.ok, true, 'Clicking nested/ did not succeed')
+      const nestedDirectoryWait = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: 'nested-entry.txt' } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(nestedDirectoryWait.ok, true, 'Nested directory did not open')
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        nestedDirectoryUrl,
+        uiTimeoutMs,
+        'The browser address did not update to the nested directory'
+      )
+
+      const parentNavigation = await bridgeCall({
+        action: 'click',
+        selector: `a[href="${pathToFileURL(localDirectoryPath).href}/"]`,
+        timeoutMs: 5_000,
+      })
+      assert.equal(parentNavigation.ok, true, 'Clicking the parent directory link failed')
+      const parentDirectoryWait = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: LOCAL_DIRECTORY_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(parentDirectoryWait.ok, true, 'Parent directory did not reopen')
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        `${pathToFileURL(localDirectoryPath).href}/`,
+        uiTimeoutMs,
+        'The browser address did not return to the parent directory'
+      )
+
       const localZipPath = join(resultDir, 'local-file-fixture.zip')
       const zipBytes = Buffer.alloc(1024)
       zipBytes.set([0x50, 0x4b, 0x03, 0x04])
@@ -1585,7 +1866,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
             deleteRef: deleteNode.ref,
             fillEffect: fillResult.effect,
             clickEffect: clickResult.effect,
-            approvalId: deleteApproval.approval.approvalId,
+            approvalId: deleteApprovalId,
             deleteEffect: approvedDeleteResult.effect,
             waitReason: waitResult.reason,
             screenshot: screenshotResult,
@@ -1599,6 +1880,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         )}\n`,
         'utf8'
       )
+      await verifyBrowserHistoryResume(control, resultDir, workspacePath, uiTimeoutMs)
     },
   }
 }

@@ -195,9 +195,10 @@ fn select_group_namespaces(
 /// Resolve the group namespaces a scope expands to, the namespace-
 /// authorization ids, and the restricted group namespaces
 /// (`_build_accessible_teams_query` prelude).
-pub(super) async fn resolve_namespace_context<M: brz_mysql::Mysql>(
+pub(super) async fn resolve_namespace_context<M: brz_mysql::Mysql, R: brz_redis::Redis>(
     mysql: &M,
-    erp: &ErpContext<'_, impl brz_redis::Redis>,
+    erp: &ErpContext<'_, R>,
+    resolvers: &crate::permissions::EntityResolvers<R>,
     user_id: i64,
     scope: &str,
     group_name: Option<&str>,
@@ -213,7 +214,7 @@ pub(super) async fn resolve_namespace_context<M: brz_mysql::Mysql>(
         None
     } else {
         Some(
-            user_group_memberships(mysql, erp, user_id)
+            user_group_memberships(mysql, erp, resolvers, user_id)
                 .await
                 .map_err(|error| HttpError::internal(error.to_string()))?,
         )
@@ -276,6 +277,7 @@ async fn list_user_teams(
             erp: state.erp.as_ref(),
             redis: state.redis.as_ref(),
         },
+        &state.entity_resolvers,
         user_id,
         scope,
         group_name.as_deref(),
@@ -320,9 +322,15 @@ async fn list_user_teams(
     };
 
     // Batch preload related users, bots, shells, and models.
-    let preloaded = preload_related(&state.mysql, user_id, &teams)
-        .await
-        .map_err(|error| HttpError::internal(error.to_string()))?;
+    let preloaded = preload_related(
+        &state.mysql,
+        &state.entity_resolvers,
+        state.redis.as_ref(),
+        user_id,
+        &teams,
+    )
+    .await
+    .map_err(|error| HttpError::internal(error.to_string()))?;
 
     // Convert to response items.
     let default_config = DefaultTeamsConfig::from_env().parsed();
@@ -415,6 +423,7 @@ async fn resolve_default_team(
             erp: state.erp.as_ref(),
             redis: state.redis.as_ref(),
         },
+        &state.entity_resolvers,
         user_id,
         "all",
         None,
@@ -440,9 +449,15 @@ async fn resolve_default_team(
     let Some(team) = teams.first() else {
         return Ok(None);
     };
-    let preloaded = preload_related(&state.mysql, user_id, &teams)
-        .await
-        .map_err(|error| HttpError::internal(error.to_string()))?;
+    let preloaded = preload_related(
+        &state.mysql,
+        &state.entity_resolvers,
+        state.redis.as_ref(),
+        user_id,
+        &teams,
+    )
+    .await
+    .map_err(|error| HttpError::internal(error.to_string()))?;
     Ok(Some(team_item(team, &preloaded, default_config, user_id)))
 }
 

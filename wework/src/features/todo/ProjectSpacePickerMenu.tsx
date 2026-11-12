@@ -1,5 +1,5 @@
 import { Check, Folder, LayoutDashboard, Search, X } from 'lucide-react'
-import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { CloudProject } from '@/api/deliveries'
 import { useOutsideClick } from '@/components/chat/composer/useOutsideClick'
@@ -43,6 +43,10 @@ export function ProjectSpacePickerMenu({
   const [activeKey, setActiveKey] = useState(project ? projectKey(project) : '')
   const outsideRefs = useMemo(() => [menuRef], [])
   const layout = useAnchoredPortalMenu(true, triggerRef, menuRef, { align: 'start' })
+  const close = useCallback(() => {
+    triggerRef.current?.focus()
+    onClose()
+  }, [onClose, triggerRef])
   useOutsideClick(containerRef, true, onClose, outsideRefs)
 
   const localLabel = t('workbench.project_picker_local', '本地项目')
@@ -75,22 +79,21 @@ export function ProjectSpacePickerMenu({
   )
 
   useEffect(() => {
-    const trigger = triggerRef.current
     const frame = window.requestAnimationFrame(() => inputRef.current?.focus())
     return () => {
       window.cancelAnimationFrame(frame)
-      trigger?.focus()
     }
   }, [triggerRef])
 
   useEffect(() => {
+    // Follow user navigation, not project array refreshes from the workbench.
     menuRef.current
       ?.querySelector<HTMLElement>('[data-active="true"]')
       ?.scrollIntoView?.({ block: 'nearest' })
-  }, [activeIndex, visible])
+  }, [activeKey, groupKey, order, query])
 
   const choose = (option: CloudProject) => {
-    onClose()
+    close()
     onSelect(option)
   }
 
@@ -116,7 +119,7 @@ export function ProjectSpacePickerMenu({
         if (event.key !== 'Escape' || event.nativeEvent.isComposing) return
         event.preventDefault()
         event.stopPropagation()
-        onClose()
+        close()
       }}
       className="fixed z-system-popover flex w-[40rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl bg-background text-text-primary shadow-xl ring-1 ring-foreground/10"
     >
@@ -125,7 +128,7 @@ export function ProjectSpacePickerMenu({
           {t('workbench.project_picker_title', '加入项目空间')}
         </h2>
         <div className="mt-3 flex gap-2">
-          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border px-2 keyboard:focus-within:ring-1 keyboard:focus-within:ring-blue-500/70 max-md:h-11">
+          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border px-2 keyboard:focus-within:ring-1 keyboard:focus-within:ring-focus/70 max-md:h-11 wework:keyboard:focus-within:ring-blue-500/70">
             <Search className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
             <input
               ref={inputRef}
@@ -182,7 +185,7 @@ export function ProjectSpacePickerMenu({
               setOrder(event.target.value as ProjectSpacePickerOrder)
               setActiveKey('')
             }}
-            className="h-8 max-w-32 shrink-0 rounded-lg border border-border bg-background px-2 text-sm focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500/70 max-md:h-11"
+            className="h-8 max-w-32 shrink-0 rounded-lg border border-border bg-background px-2 text-sm focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 max-md:h-11 wework:keyboard:focus-visible:ring-blue-500/70"
           >
             <option value="name-asc" className="bg-background text-text-primary">
               {t('workbench.project_picker_name_asc', '名称 A–Z')}
@@ -212,7 +215,7 @@ export function ProjectSpacePickerMenu({
                 aria-label={group.label}
                 title={group.label}
                 onClick={() => selectGroup(group.key)}
-                className={`flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500/70 max-md:h-11 ${groupKey === group.key ? 'bg-muted font-medium' : ''}`}
+                className={`flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 max-md:h-11  wework:keyboard:focus-visible:ring-blue-500/70 ${groupKey === group.key ? 'bg-muted font-medium' : ''}`}
               >
                 {group.key === null ? (
                   <LayoutDashboard className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -300,10 +303,10 @@ export function ProjectSpacePickerMenu({
             type="button"
             data-testid="clear-project-space-context-button"
             onClick={() => {
-              onClose()
+              close()
               onRemoveProject()
             }}
-            className="flex h-9 items-center gap-2 rounded-lg px-2 text-left text-sm text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500/70 max-md:h-11"
+            className="flex h-9 items-center gap-2 rounded-lg px-2 text-left text-sm text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 max-md:h-11 wework:keyboard:focus-visible:ring-blue-500/70"
           >
             <X className="h-4 w-4 shrink-0" aria-hidden="true" />
             {t('workbench.clear_extra_project_space', '不加入其他项目空间')}

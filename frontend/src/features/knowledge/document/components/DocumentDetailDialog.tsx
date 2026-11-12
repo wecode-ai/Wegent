@@ -222,7 +222,16 @@ export function DocumentDetailDialog({
 
   // Build the full accessible URL using virtual path
   const documentFullUrl = document
-    ? `${typeof window !== 'undefined' ? window.location.origin : ''}${buildKbUrl(knowledgeBaseNamespace, knowledgeBaseName, isOrganization, document.name)}?documentId=${document.id}`
+    ? `${typeof window !== 'undefined' ? window.location.origin : ''}${buildKbUrl(
+        knowledgeBaseNamespace,
+        knowledgeBaseName,
+        isOrganization,
+        document.name,
+        {
+          knowledgeBaseId,
+          searchParams: new URLSearchParams({ documentId: String(document.id) }).toString(),
+        }
+      )}`
     : null
 
   const handleCopyLink = async () => {
@@ -640,6 +649,7 @@ export function DocumentDetailDialog({
                                     variant="outline"
                                     size="sm"
                                     onClick={handleCopyLink}
+                                    data-testid="knowledge-document-copy-link"
                                     disabled={copiedLink}
                                   >
                                     {copiedLink ? (
@@ -745,6 +755,8 @@ export function DocumentDetailDialog({
                           knowledgeBaseName={knowledgeBaseName}
                           knowledgeBaseNamespace={knowledgeBaseNamespace}
                           isOrganization={isOrganization}
+                          protectedPreview={protectedPreview}
+                          watermarkText={effectiveWatermarkText}
                           viewMode={viewMode}
                           hasMoreContent={hasMoreContent}
                           loadingMore={loadingMore}

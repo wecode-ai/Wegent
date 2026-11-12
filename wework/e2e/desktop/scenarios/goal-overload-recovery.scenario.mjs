@@ -18,12 +18,14 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { createGoalAdmissionRecovery } from '../modules/goal-admission-recovery.mjs'
 
 const GOAL = 'WEWORK_OVERLOADED_GOAL'
 const RECOVERED = 'WEWORK_OVERLOADED_GOAL_RECOVERED'
 
 export function createDesktopScenario(options) {
   const existing = createOverloadRecovery(options)
+  const admission = createGoalAdmissionRecovery(options)
   let active = false
   let requests = 0
   let releaseRecovered
@@ -42,6 +44,7 @@ export function createDesktopScenario(options) {
   return {
     ...existing,
     async handleHttp(request, response, url) {
+      if (admission.active) return admission.handleHttp(request, response, url)
       if (!active) return existing.handleHttp(request, response, url)
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -112,7 +115,11 @@ export function createDesktopScenario(options) {
           )
           await control.command('click', '[data-testid="set-goal-button"]')
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `${GOAL}_${action}` })
+          // Admit the user mutation before recovery sees the failed native frame.
+          // UI commands must not race the production five-second retry deadline.
+          if (!continuing) await existing.overloadTerminalGate.arm()
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+          if (!continuing) await existing.overloadTerminalGate.wait()
           const stopped = await waitForWorkbenchDebugState(
             control,
             snapshot =>
@@ -161,6 +168,7 @@ export function createDesktopScenario(options) {
           } else {
             if (action === 'clear') await rpc('runtime.tasks.goal.clear', { address })
             else await rpc('runtime.tasks.goal.set', { address, status: action })
+            await existing.overloadTerminalGate.release()
           }
           await waitForWorkbenchDebugState(
             control,
@@ -188,11 +196,13 @@ export function createDesktopScenario(options) {
           address = null
         }
       } finally {
+        await existing.overloadTerminalGate.release()
         releaseRecovered?.()
         releaseContinuation?.()
         if (address) await rpc('runtime.tasks.goal.clear', { address })
         active = false
       }
+      await admission.verify(control)
     },
     diagnostics() {
       return { ...existing.diagnostics(), goalRequests: requests, goalActive: active }

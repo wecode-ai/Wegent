@@ -4,6 +4,7 @@
 import { expect, test as base, type Route } from '@playwright/test'
 import { selectCollaborationProjectView, webApi } from '../../utils/collaboration-test-support'
 import { PROVIDER_NATIVE_MOCK_URL } from '../../utils/provider-native-test-support'
+import { failRequestTransport as loseRealResponse } from '../../utils/transport-faults'
 
 interface Resource {
   id: string
@@ -162,13 +163,72 @@ const test = base.extend<{
   },
 })
 
-// Cut the response only after the actual Backend has served it. No non-model
-// component or response data is replaced by a frontend mock.
-async function loseRealResponse(route: Route) {
-  const response = await route.fetch()
-  expect(response.ok(), 'The real API must succeed before its response is lost').toBe(true)
-  await route.abort('failed')
-}
+test('creates and persists a workspace draft after delayed account initialization', async ({
+  page,
+}) => {
+  let release!: () => void
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let fetched = false
+  let delivered = false
+  let userName = ''
+  let workspaceId: string | undefined
+  const profileUrl = (url: URL) => url.pathname === '/api/users/me'
+  const holdProfile = async (route: Route) => {
+    const response = await route.fetch()
+    expect(response.ok(), 'The signed-in profile must come from the real Backend').toBe(true)
+    userName = ((await response.json()) as { user_name: string }).user_name
+    fetched = true
+    await held
+    await route.fulfill({ response })
+    delivered = true
+  }
+  await page.route(profileUrl, holdProfile)
+  try {
+    await page.goto('/collaboration')
+    await expect.poll(() => fetched).toBe(true)
+    await expect(page.getByTestId('collaboration-platform-root')).toHaveCount(0)
+    await expect(page.getByTestId('collaboration-workspace-create')).toHaveCount(0)
+    release()
+    await expect.poll(() => delivered).toBe(true)
+    await expect(page.getByTestId('user-floating-menu-toggle')).toContainText(userName)
+    await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
+    await page.getByTestId('collaboration-workspace-create').click()
+    const name = `Delayed profile ${crypto.randomUUID()}`
+    const description = 'Persist this draft after the authenticated owner becomes available.'
+    await page.getByTestId('collaboration-workspace-name-input').fill(name)
+    await page.getByTestId('collaboration-workspace-description-input').fill(description)
+
+    await expect(page.getByTestId('collaboration-workspace-name-input')).toHaveValue(name)
+    await expect(page.getByTestId('collaboration-workspace-description-input')).toHaveValue(
+      description
+    )
+    const createdWorkspace = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname === '/api/v1/workspaces'
+    )
+    await page.getByTestId('collaboration-workspace-create-confirm').click()
+    const response = await createdWorkspace
+    expect(response.ok()).toBe(true)
+    workspaceId = String(((await response.json()) as Resource).id ?? '')
+    expect(workspaceId).not.toBe('')
+    await expect(page).toHaveURL(/\/collaboration\/workspaces\/[^/?]+$/)
+    expect(await webApi(page, `/api/v1/workspaces/${workspaceId}`)).toMatchObject({
+      name,
+      description,
+    })
+  } finally {
+    release()
+    await page.unroute(profileUrl, holdProfile)
+    if (workspaceId) {
+      const path = `/api/v1/workspaces/${workspaceId}`
+      const current = await webApi<Resource>(page, path)
+      await webApi(page, `${path}?version=${current.version}`, { method: 'DELETE' })
+    }
+  }
+})
 
 test('late initial snapshot cannot undo an Issue assignment and refreshed board', async ({
   page,
@@ -218,8 +278,13 @@ test('late initial snapshot cannot undo an Issue assignment and refreshed board'
       `${path}/issues/${issue.id}?view=manage`
     )
     await page.getByTestId('cloud-todo-detail-assignee').click()
+    const assignmentSaved = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname.endsWith(`/loop-items/${issue.id}/assign`)
+    )
     await page.getByTestId(`cloud-todo-detail-assignee-option-user:${assignee}`).click()
-    await page.getByTestId('cloud-todo-save').click()
+    expect((await assignmentSaved).ok()).toBe(true)
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
       'data-value',

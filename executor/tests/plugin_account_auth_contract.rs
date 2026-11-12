@@ -9,6 +9,8 @@ use std::{
     time::Duration,
 };
 use wegent_executor::plugin_account_auth::{AuthError, Credential, NativeAdapter};
+// Protocol fixtures must not depend on the running desktop's runtime bridge.
+use wegent_executor_test_support as _;
 
 fn python() -> PathBuf {
     std::env::var_os("WEGENT_TEST_PYTHON")
@@ -136,13 +138,20 @@ async fn declared_local_configuration_reaches_export_but_not_business() {
             r#"
 with open("bootstrap-stages.txt", "w", encoding="utf-8") as probe:
     probe.write("python_started\n")
-import json, os, sys, time
+import faulthandler, sys, time
+bootstrap_trace = open("bootstrap-stack.txt", "w", encoding="utf-8")
+faulthandler.dump_traceback_later(5, file=bootstrap_trace)
 started = time.monotonic()
 def record_stage(stage):
     with open("bootstrap-stages.txt", "a", encoding="utf-8") as probe:
         probe.write(f"{{time.monotonic() - started:.6f}} {{stage}}\n")
+record_stage("diagnostics_ready")
+import json, os
+record_stage("stdlib_loaded")
 from wegent_plugin_auth import AccountAuthAdapter, local_configuration
 record_stage("sdk_loaded")
+faulthandler.cancel_dump_traceback_later()
+bootstrap_trace.close()
 def trace_transport(frame, event, argument):
     if (frame.f_globals.get("__name__") == "wegent_plugin_auth.transport"
             and frame.f_code.co_name in ("_open_socket", "_read_exact", "write_frame")
@@ -176,6 +185,14 @@ raise SystemExit(adapter.main(sys.argv[1:]))
         fs::read_to_string(root.path().join("bootstrap-stages.txt"))
             .unwrap_or_else(|_| "python_not_started".into())
     );
+    if exported.is_err() {
+        let _ = writeln!(
+            std::io::stderr(),
+            "native_auth_bootstrap_stack={}",
+            fs::read_to_string(root.path().join("bootstrap-stack.txt"))
+                .unwrap_or_else(|_| "stack_unavailable".into())
+        );
+    }
     let exported = exported.unwrap();
     let output = adapter
         .run(
@@ -297,8 +314,10 @@ impl wegent_executor::local::backend::LocalBackendTransport for OAuthTransport {
             let package = json!({"installed_plugin_id":42,"connector_slug":"mail","checksum":format!("sha256:{}", "a".repeat(64)),"auth_definition":oauth_definition()});
             match event {
                 "plugin.auth.oauth.revocations" => {
-                    assert_eq!(payload, json!({}));
-                    Ok(json!({"success":true,"connection_ids":["c".repeat(64)]}))
+                    assert_eq!(payload, json!({"after_id":0}));
+                    Ok(json!({"success":true,"revocations":[{
+                        "connection_id":"c".repeat(64),"package":package
+                    }],"next_cursor":null}))
                 }
                 "plugin.auth.oauth.revoke_begin" => {
                     assert_eq!(payload, json!({"connection_id":"c".repeat(64)}));
@@ -669,8 +688,15 @@ impl wegent_executor::local::backend::LocalBackendTransport for MigrationTranspo
         Box::pin(async move {
             match event {
                 "plugin.auth.automatic" => {
-                    assert_eq!(payload, json!({"installed_plugin_ids":[42]}));
-                    Ok(json!({"success":true,"migrations":[]}))
+                    assert_eq!(
+                        payload,
+                        json!({"installed_plugin_ids":[42],"prepare_only":true})
+                    );
+                    Ok(json!({"success":true,"packages":[]}))
+                }
+                "plugin.auth.oauth.revocations" => {
+                    assert_eq!(payload, json!({"after_id":0}));
+                    Ok(json!({"success":true,"revocations":[],"next_cursor":null}))
                 }
                 "plugin.auth.execute" => {
                     assert_eq!(
@@ -731,6 +757,29 @@ fn managed_fixture(root: &Path, checksum: &str) -> PathBuf {
     )
     .unwrap();
     home
+}
+
+#[tokio::test]
+async fn migration_fixture_handles_read_only_background_revocation_queries() {
+    use wegent_executor::local::backend::LocalBackendTransport;
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let transport = MigrationTransport(calls.clone());
+    let response = transport
+        .call(
+            "plugin.auth.oauth.revocations",
+            json!({"after_id":0}),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response,
+        json!({"success":true,"revocations":[],"next_cursor":null})
+    );
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec!["plugin.auth.oauth.revocations"]
+    );
 }
 
 #[derive(Clone)]
@@ -1098,11 +1147,10 @@ async fn public_sdk_cli_reaches_native_broker_without_local_login_or_secret_outp
         .await
         .unwrap();
     assert_eq!(rejected, json!({"error":"plugin_auth_broker_unauthorized"}));
-    assert!(calls
-        .lock()
-        .unwrap()
-        .iter()
-        .all(|event| event == "plugin.auth.automatic"));
+    assert!(calls.lock().unwrap().iter().all(|event| matches!(
+        event.as_str(),
+        "plugin.auth.automatic" | "plugin.auth.oauth.revocations"
+    )));
     let output = tokio::process::Command::new(python())
         .arg(&cli)
         .arg("read")
@@ -1138,7 +1186,10 @@ async fn public_sdk_cli_reaches_native_broker_without_local_login_or_secret_outp
             .lock()
             .unwrap()
             .iter()
-            .filter(|event| event.as_str() != "plugin.auth.automatic")
+            .filter(|event| !matches!(
+                event.as_str(),
+                "plugin.auth.automatic" | "plugin.auth.oauth.revocations"
+            ))
             .cloned()
             .collect::<Vec<_>>(),
         vec!["plugin.auth.execute"]

@@ -182,6 +182,7 @@ pub(super) async fn assign(
     instruction: &str,
 ) -> Result<()> {
     let owner = rule.created_by_user_id;
+    let automation = automation_actor(&context);
     authority::require(state, &project.id, owner).await?;
     let issue = issues::load(state, project, &run.task_id, owner).await?;
     authority::require_issue(state, project, &issue, owner).await?;
@@ -265,15 +266,16 @@ pub(super) async fn assign(
     let result=state.mysql.with_transaction(async |tx| {
         let Some(mut issue)=store::locked(tx,"task",&issue.id).await? else{return Err(brz_mysql::MysqlError::RowNotFound)};
         let mut notifications=Vec::new();
-        let (assignment_id,created)=record(tx,&issue,kind,&id,&name,owner,notify,trigger).await?;
+        let (assignment_id,created)=record(tx,&issue,kind,&id,&name,owner,notify,trigger,&automation).await?;
         let previous_user=issue.assignee_user_id;
         let mut metadata=issue.meta();
         history(&mut metadata,owner,if kind=="human"{"user"}else{kind},&id,&name);
+        attribute_history(&mut metadata, "assignment_history", &automation);
         let revision=metadata["content_revision"].as_i64().filter(|value|*value>0).unwrap_or(1)+1;metadata["content_revision"]=json!(revision);
         if !metadata["read_revisions"].is_object(){metadata["read_revisions"]=json!({})}metadata["read_revisions"][owner.to_string()]=json!(revision);
         let user=if kind=="human"{id.parse::<i64>().unwrap_or(0)}else{0};let team=if kind=="team"{id.parse::<i64>().unwrap_or(0)}else{0};let agent=if kind=="agent"{id.as_str()}else{""};
         let status=if kind!="human"&&issue.status!="completed"&&issue.status!="in_progress"&&has_status(project,"in_progress"){
-            status_history(&mut metadata,project,&issue.status,"in_progress",owner);"in_progress".to_owned()
+            status_history(&mut metadata,project,&issue.status,"in_progress",owner);attribute_history(&mut metadata, "status_history", &automation);"in_progress".to_owned()
         }else{issue.status.clone()};
         tx.execute("UPDATE loop_items SET assignee_user_id=?,assignee_team_id=?,assignee_agent_id=?,status=?,metadata=?,version=version+1,updated_by_user_id=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(user,team,agent,status.as_str(),Json(metadata.clone()),owner,issue.id.as_str())).await?;
         issue.status=status;issue.metadata=Json(metadata);issue.assignee_user_id=user;issue.assignee_team_id=team;issue.assignee_agent_id=agent.to_owned();
@@ -286,12 +288,14 @@ pub(super) async fn assign(
             if notify&&created&&previous_user!=user && let Some(pending)=notifications::direct_human_on(tx,state,project,&issue,user,owner,&name,&assignment_id).await?{notifications.push(pending);}
             tx.execute("UPDATE loop_items SET status='succeeded',completed_at=UTC_TIMESTAMP(6),version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(run.id.as_str(),)).await?;
         }else{
-            let execution=if let Some(execution)=execution{execution}else{
-                #[derive(FromMysqlRow)]struct Existing{id:i64,status:String,execution_device_id:String}
-                let existing:Existing=tx.fetch_one("SELECT id,status,execution_device_id FROM loop_item_executions WHERE automation_run_id=? ORDER BY id DESC LIMIT 1",(run.id.as_str(),)).await?;
-                queue::Execution{id:existing.id,status:existing.status,device_id:existing.execution_device_id}
+            let device_id=if let Some(execution)=execution{execution.device_id}else{
+                let (device_id,): (String,) = tx.fetch_one(
+                    "SELECT execution_device_id FROM loop_item_executions WHERE automation_run_id=? ORDER BY id DESC LIMIT 1",
+                    (run.id.as_str(),),
+                ).await?;
+                device_id
             };
-            tx.execute("UPDATE loop_items SET status='queued',assignee_agent_id=?,device_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(agent,execution.device_id.as_str(),run.id.as_str())).await?;
+            tx.execute("UPDATE loop_items SET status='queued',assignee_agent_id=?,device_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(agent,device_id.as_str(),run.id.as_str())).await?;
         }
         Ok(notifications)
     }).await?;
@@ -331,6 +335,7 @@ pub(crate) async fn record(
     owner: i64,
     notify: bool,
     trigger: &str,
+    automation: &Value,
 ) -> brz_mysql::MysqlResult<(String, bool)> {
     let comments: Vec<CommentRow> = tx
         .fetch_all(
@@ -370,7 +375,7 @@ pub(crate) async fn record(
             store::insert(tx,"comment",json!({"cloud_project_id":issue.cloud_project_id,"loop_item_id":issue.id,"created_by_user_id":owner,"updated_by_user_id":owner,"status":"active","metadata":{"event_type":"assignment","action":"unassign","assignment_event_id":previous.comment.id,"target_type":previous.metadata.target_type,"target_id":previous.metadata.target_id,"workflow_step":"","notify":false,"trigger":"reassignment"}})).await?;
         }
     }
-    let id=store::insert(tx,"comment",json!({"cloud_project_id":issue.cloud_project_id,"loop_item_id":issue.id,"created_by_user_id":owner,"updated_by_user_id":owner,"status":"active","metadata":{"event_type":"assignment","action":"assign","target_type":canonical,"target_id":target,"target_name":name,"workflow_step":"","notify":notify,"trigger":trigger}})).await?;
+    let id=store::insert(tx,"comment",json!({"cloud_project_id":issue.cloud_project_id,"loop_item_id":issue.id,"created_by_user_id":owner,"updated_by_user_id":owner,"status":"active","metadata":{"event_type":"assignment","action":"assign","target_type":canonical,"target_id":target,"target_name":name,"workflow_step":"","notify":notify,"trigger":trigger,"automation":automation}})).await?;
     refresh_active_index(tx, &issue.id).await?;
     Ok((id, true))
 }
@@ -383,7 +388,7 @@ pub(super) fn history(metadata: &mut Value, user: i64, kind: &str, id: &str, nam
     history.push(json!({"by_user_id":user,"to_type":kind,"to_id":id,"to_name":name,"action":if history.is_empty(){"assign"}else{"reassign"},"at":iso(Utc::now().naive_utc())}));
     metadata["assignment_history"] = json!(history);
 }
-pub(super) fn has_status(project: &Node, status: &str) -> bool {
+pub(crate) fn has_status(project: &Node, status: &str) -> bool {
     project.metadata.0["board_config"]["statuses"]
         .as_array()
         .map_or(
@@ -407,4 +412,47 @@ pub(super) fn status_history(
         .unwrap_or_default();
     history.push(json!({"from_status":previous,"from_status_name":issues::status_name(project,previous),"to_status":current,"to_status_name":issues::status_name(project,current),"trigger":"assignment","by_user_id":user,"at":Utc::now().to_rfc3339()}));
     metadata["status_history"] = json!(history);
+}
+
+/// Keep the automation source distinct from the user used for authorization.
+pub(super) fn automation_actor(context: &Value) -> Value {
+    if !context["rule_id"].is_string() || !context["run_id"].is_string() {
+        return Value::Null;
+    }
+    json!({"rule_id":context["rule_id"],"rule_name":context.get("rule_name").filter(|v|v.as_str().is_some_and(|s|!s.is_empty())).unwrap_or(&context["rule_id"]),"run_id":context["run_id"]})
+}
+
+pub(super) fn attribute_history(metadata: &mut Value, key: &str, automation: &Value) {
+    if automation.is_object()
+        && let Some(last) = metadata[key]
+            .as_array_mut()
+            .and_then(|rows| rows.last_mut())
+    {
+        last["automation"] = automation.clone();
+    }
+}
+
+#[cfg(test)]
+mod attribution_tests {
+    use super::*;
+
+    #[test]
+    fn snapshots_rule_without_changing_authorizing_user_or_older_history() {
+        let context = json!({"rule_id":"rule-1","rule_name":"Review new Issues","run_id":"run-1"});
+        let mut metadata = json!({"assignment_history":[{"by_user_id":7}]});
+        history(&mut metadata, 52, "agent", "agent-1", "Leader");
+        attribute_history(
+            &mut metadata,
+            "assignment_history",
+            &automation_actor(&context),
+        );
+        assert!(
+            metadata["assignment_history"][0]
+                .get("automation")
+                .is_none()
+        );
+        assert_eq!(metadata["assignment_history"][1]["by_user_id"], 52);
+        assert_eq!(metadata["assignment_history"][1]["automation"], context);
+        assert!(automation_actor(&json!({"runtime_subject_user_id":52})).is_null());
+    }
 }

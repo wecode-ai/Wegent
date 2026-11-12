@@ -39,6 +39,7 @@ class LoopItemCreate(BaseModel):
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
     start_at: datetime | None = None
     due_at: datetime | None = None
+    milestone_id: str | None = Field(default=None, max_length=64)
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[TagName] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
@@ -86,6 +87,7 @@ class LoopItemUpdate(BaseModel):
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
     start_at: datetime | None = None
     due_at: datetime | None = None
+    milestone_id: str | None = Field(default=None, max_length=64)
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[TagName] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
@@ -132,6 +134,7 @@ class LoopItemPermissions(BaseModel):
 
 class LoopItemRead(BaseModel):
     activity_sequence: int | None = Field(default=None, ge=0)
+    content_revision: int | None = Field(default=None, ge=0)
 
 
 class IssueBadge(BaseModel):
@@ -162,6 +165,9 @@ class LoopItemResponse(BaseModel):
     assignee_team_id: int | None = None
     assignee_team_name: str | None = None
     ai_state: dict[str, Any] | None = None
+    processing_actor: dict[str, str] | None = None
+    human_waiting_since: str | None = None
+    human_requests: list[dict[str, Any]] = Field(default_factory=list)
     execution_id: int | None = None
     execution_state: str | None = None
     execution_control_state: str | None = None
@@ -184,6 +190,7 @@ class LoopItemResponse(BaseModel):
     start_at: datetime | None = None
     due_at: datetime | None
     sort_order: int
+    milestone_id: str | None = None
     tags: list[str] = []
     created_by_user_id: int
     created_by_user_name: str | None = None
@@ -273,8 +280,14 @@ class LoopItemResponse(BaseModel):
             return {
                 **value,
                 "badges": value.get("badges", metadata.get("badges", [])),
+                "milestone_id": value.get("milestone_id", metadata.get("milestone_id")),
                 "tags": _normalize_tags(metadata.get("tags")),
                 "ai_state": ai_state,
+                "processing_actor": value.get("processing_actor"),
+                "human_waiting_since": value.get("human_waiting_since"),
+                "human_requests": value.get(
+                    "human_requests", metadata.get("human_requests", [])
+                ),
                 "execution_state": (
                     value.get("execution_state")
                     if value.get("execution_state") is not None
@@ -419,6 +432,7 @@ class MyWorkItemResponse(LoopItemResponse):
 
 class MyWorkListResponse(BaseModel):
     items: list[MyWorkItemResponse]
+    next_cursor: str | None = None
 
 
 class LoopItemCollaboratorCreate(BaseModel):
@@ -438,6 +452,10 @@ class LoopItemCollaboratorResponse(BaseModel):
 
 class LoopItemTaskBind(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+
+    stand_in_conversation_id: str | None = Field(
+        default=None, alias="standInConversationId", min_length=1, max_length=255
+    )
 
     device_id: str = Field(alias="deviceId", min_length=1, max_length=100)
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)

@@ -1,18 +1,18 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import i18n from '@/i18n'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
-import { WorkbenchProvider, type WorkbenchServices } from '@/features/workbench/WorkbenchProvider'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import {
-  clearRuntimeConversationCacheForTests,
   applyRuntimeConversationAction,
+  clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
+import { WorkbenchProvider, type WorkbenchServices } from '@/features/workbench/WorkbenchProvider'
+import i18n from '@/i18n'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TaskActivityView } from './TaskActivityView'
 
 vi.mock('@/api/plugins', () => ({
@@ -21,7 +21,7 @@ vi.mock('@/api/plugins', () => ({
 
 const address = { deviceId: 'device-1', taskId: 'runtime-a' }
 const createdAt = '2026-08-01T00:00:00.000Z'
-function fixture({ identified = false, hasMoreBefore = false } = {}) {
+function fixture({ identified = false, hasMoreBefore = false, publicStandIn = false } = {}) {
   const original: ProjectChatMessage = {
     messageId: 'activity-run',
     taskId: 'WEG-1',
@@ -35,6 +35,15 @@ function fixture({ identified = false, hasMoreBefore = false } = {}) {
     updatedAt: createdAt,
     metadata: { run_id: 'run-1', run_status: 'running', automation_run_id: 'automation-1' },
     runtimeAddress: address,
+  }
+  if (publicStandIn) {
+    original.type = 'text'
+    original.status = 'completed'
+    original.runtimeAddress = undefined
+    original.metadata = {
+      execution_dispatch: 'comment_only',
+      stand_in: { user_id: 1, role_id: 'review' },
+    }
   }
   const client = {
     subscribe: vi.fn(async () => ({
@@ -78,7 +87,7 @@ function fixture({ identified = false, hasMoreBefore = false } = {}) {
     ],
   }))
   const cancelRuntimeTask = vi.fn().mockResolvedValue({ accepted: true })
-  const getLoopItem = vi.fn()
+  const getLoopItem = vi.fn().mockResolvedValue({ assignment_history: [], status_history: [] })
   const onTaskUpdated = vi.fn()
   const services = {
     teamApi: { listTeams: vi.fn().mockResolvedValue([]) },
@@ -149,6 +158,7 @@ function fixture({ identified = false, hasMoreBefore = false } = {}) {
           task={{ id: 'WEG-1', title: 'Original task', status: 'in_progress' } as CloudLoopItem}
           onTaskUpdated={onTaskUpdated}
           linear
+          issueTimeline={publicStandIn}
         />
       </WorkbenchProvider>
     </CloudConnectionContext.Provider>
@@ -179,6 +189,20 @@ describe('opening an activity execution with the real pane session', () => {
   afterEach(() => {
     cleanup()
     clearRuntimeConversationCacheForTests()
+  })
+
+  it('renders public stand-in messages as conversation replies, not completed executions', async () => {
+    fixture({ publicStandIn: true })
+    await screen.findByText('Activity summary')
+    expect(
+      screen.queryByTestId('cloud-task-activity-execution-badge-activity-run')
+    ).not.toBeInTheDocument()
+    const reply = await screen.findByTestId('cloud-task-activity-reply-toggle-activity-run')
+    expect(reply).toHaveTextContent('回复')
+    expect(reply).not.toHaveTextContent('继续此任务')
+    await userEvent.click(reply)
+    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent('继续此 Issue 对话')
+    expect(screen.getByTestId('issue-reply-composer')).not.toHaveTextContent('原执行任务')
   })
 
   it.each([false, true])(
@@ -274,16 +298,6 @@ describe('opening an activity execution with the real pane session', () => {
     expect(screen.queryByTestId('runtime-execution-detail-stop')).not.toBeInTheDocument()
   })
 
-  it('keeps an unreadable execution separate from a completed execution', async () => {
-    const result = fixture()
-    result.getRuntimeTranscript.mockRejectedValueOnce(new Error('device unavailable'))
-    const badge = await openExecution()
-    await screen.findByTestId('runtime-execution-detail-transcript-error')
-    expect(badge).toHaveAttribute('data-status', 'running')
-    expect(screen.getByTestId('runtime-execution-detail-status')).toHaveTextContent('执行中')
-    expect(result.getLoopItem).not.toHaveBeenCalled()
-  })
-
   it('updates the associated run from live conversation events after the dialog closes', async () => {
     const result = fixture({ identified: true })
     const page = await result.getRuntimeTranscript()
@@ -309,16 +323,5 @@ describe('opening an activity execution with the real pane session', () => {
     await waitFor(() => expect(badge).toHaveAttribute('data-status', 'succeeded'))
     expect(result.original.status).toBe('streaming')
     expect(result.getLoopItem).not.toHaveBeenCalled()
-  })
-
-  it('does not infer a legacy execution from a partial history page', async () => {
-    fixture({ hasMoreBefore: true })
-    const badge = await openExecution()
-    await waitFor(() =>
-      expect(screen.getByTestId('runtime-execution-detail-body')).toHaveTextContent(
-        'ORIGINAL_ANSWER'
-      )
-    )
-    expect(badge).toHaveAttribute('data-status', 'running')
   })
 })

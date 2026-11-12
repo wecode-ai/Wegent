@@ -1,0 +1,12 @@
+{
+  "order": 52000,
+  "scenario": "./scenarios/stand-in-permissions.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 49000,
+      "shard": 7,
+      "position": 7000
+    }
+  }
+}

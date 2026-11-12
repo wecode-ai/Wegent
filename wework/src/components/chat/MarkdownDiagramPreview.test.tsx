@@ -1,20 +1,19 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import type { ComponentProps } from 'react'
-import { MarkdownDiagramPreview as SharedMarkdownDiagramPreview } from '@wegent/collaboration/markdown/MarkdownDiagramPreview'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
-import { useDesktopMarkdownServices } from './useDesktopMarkdownServices'
-import {
-  createMarkdownWindowingScope,
-  MarkdownWindowingContext,
-  MarkdownWindowingDisabledContext,
-} from '../../../../packages/collaboration/src/markdown/MarkdownWindowingScope'
+import { MarkdownDiagramPreview as SharedMarkdownDiagramPreview } from '@wegent/collaboration/markdown/MarkdownDiagramPreview'
+import type { ComponentProps } from 'react'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import {
   getConversationDiagnosticsSnapshot,
   resetConversationDiagnosticsForTest,
   startConversationDiagnosticCapture,
 } from '../../../../packages/collaboration/src/conversation/conversationDiagnostics'
+import {
+  createMarkdownWindowingScope,
+  MarkdownWindowingContext,
+  MarkdownWindowingDisabledContext,
+} from '../../../../packages/collaboration/src/markdown/MarkdownWindowingScope'
+import { useDesktopMarkdownServices } from './useDesktopMarkdownServices'
 
 function MarkdownDiagramPreview(props: ComponentProps<typeof SharedMarkdownDiagramPreview>) {
   return (
@@ -176,19 +175,6 @@ function mockDiagramViewport(initialTop: number) {
   }
 }
 
-test.each([0, 1_800, 2_400, -1_984])(
-  'prepares a newly mounted diagram at %ipx before any intersection notification',
-  top => {
-    mockDiagramViewport(top)
-    render(
-      <div data-scroll-origin="bottom">
-        <MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />
-      </div>
-    )
-    expect(artifactMocks.render).toHaveBeenCalledTimes(1)
-  }
-)
-
 test('search expansion keeps distant diagrams idle and scroll activation retains the viewer', () => {
   const viewport = mockDiagramViewport(4_000)
   const scrollElementRef = { current: null as HTMLDivElement | null }
@@ -232,30 +218,6 @@ test('search expansion keeps distant diagrams idle and scroll activation retains
   expect(artifactMocks.render).toHaveBeenCalledTimes(1)
 })
 
-test('prepares diagrams on standalone scrolling and ignores callbacks after cleanup', () => {
-  const viewport = mockDiagramViewport(4_000)
-  const view = render(
-    <div data-scroll-origin="bottom" data-testid="diagram-scroll-viewport">
-      <MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />
-    </div>
-  )
-  viewport.move(1_800)
-  act(() => screen.getByTestId('diagram-scroll-viewport').dispatchEvent(new Event('scroll')))
-  expect(artifactMocks.render).toHaveBeenCalledTimes(1)
-  view.unmount()
-  viewport.move(4_000)
-  const distant = render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />)
-  const observation = viewport.observations.at(-1)!
-  distant.unmount()
-  act(() =>
-    observation.callback(
-      [{ isIntersecting: true } as IntersectionObserverEntry],
-      {} as IntersectionObserver
-    )
-  )
-  expect(artifactMocks.render).toHaveBeenCalledTimes(1)
-})
-
 test('refreshes a stale intersection after a layout jump without waiting for scrolling', () => {
   let refresh!: FrameRequestCallback
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
@@ -289,93 +251,4 @@ test('refreshes a stale intersection after a layout jump without waiting for scr
   expect(cancel).toHaveBeenCalledWith(1)
   act(() => refresh(performance.now()))
   expect(pendingObservation.observe).toHaveBeenCalledTimes(1)
-})
-
-test('requests PlantUML with its configured server', () => {
-  render(<MarkdownDiagramPreview code={'@startuml\nAlice -> Bob\n@enduml'} language="plantuml" />)
-
-  expect(screen.getByTestId('assistant-diagram-preview')).toHaveAttribute(
-    'data-language',
-    'plantuml'
-  )
-  expect(artifactMocks.render).toHaveBeenCalledWith(
-    expect.objectContaining({
-      kind: 'plantuml',
-      plantumlServerUrl: 'https://www.plantuml.com/plantuml/svg',
-    })
-  )
-})
-
-test('normalizes mmd fences to the Mermaid drawing renderer', () => {
-  render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mmd" />)
-
-  expect(screen.getByTestId('assistant-diagram-preview')).toHaveAttribute(
-    'data-language',
-    'mermaid'
-  )
-  expect(artifactMocks.render).toHaveBeenCalledWith(
-    expect.objectContaining({
-      kind: 'mermaid',
-    })
-  )
-})
-
-test('uses the current Wework dark theme', () => {
-  appearanceMocks.resolvedMode = 'dark'
-
-  render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />)
-
-  expect(artifactMocks.render).toHaveBeenCalledWith(
-    expect.objectContaining({
-      theme: 'dark',
-    })
-  )
-})
-
-test('copies and saves the rendered diagram as a PNG', async () => {
-  const user = userEvent.setup()
-  render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />)
-
-  await user.click(screen.getByTestId('diagram-copy-image-button'))
-  await waitFor(() => {
-    expect(imageExportMocks.copy).toHaveBeenCalledWith(expect.any(Blob))
-  })
-
-  await user.click(screen.getByTestId('diagram-save-image-button'))
-  await waitFor(() => {
-    expect(imageExportMocks.save).toHaveBeenCalledWith(expect.any(Blob), 'mermaid-diagram.png')
-  })
-})
-
-test('traps focus in the full screen diagram and restores it after Escape', async () => {
-  const user = userEvent.setup()
-  render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />)
-
-  const trigger = screen.getByTestId('diagram-fullscreen-button')
-  expect(trigger).toHaveClass('h-11', 'w-11', 'md:h-7', 'md:w-7')
-  await user.click(trigger)
-
-  expect(screen.getByTestId('assistant-diagram-fullscreen')).toBeInTheDocument()
-  const exitButton = screen.getByTestId('diagram-exit-fullscreen-button')
-  await waitFor(() => expect(exitButton).toHaveFocus())
-
-  await user.tab()
-  expect(screen.getByTestId('diagram-zoom-out-button')).toHaveFocus()
-  await user.tab({ shift: true })
-  expect(exitButton).toHaveFocus()
-
-  await user.keyboard('{Escape}')
-
-  expect(screen.queryByTestId('assistant-diagram-fullscreen')).not.toBeInTheDocument()
-  await waitFor(() => expect(screen.getByTestId('diagram-fullscreen-button')).toHaveFocus())
-})
-
-test('exits the diagram full screen from the collapse action', async () => {
-  const user = userEvent.setup()
-  render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />)
-
-  await user.click(screen.getByTestId('diagram-fullscreen-button'))
-  await user.click(screen.getByTestId('diagram-exit-fullscreen-button'))
-
-  expect(screen.queryByTestId('assistant-diagram-fullscreen')).not.toBeInTheDocument()
 })

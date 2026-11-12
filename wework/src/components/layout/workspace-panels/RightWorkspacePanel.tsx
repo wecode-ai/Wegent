@@ -1,4 +1,9 @@
 import { McpAppPanelSlot } from '@/features/mcp-apps/McpAppPanelSlot'
+import { QuestionDiscussionTabPanel } from '@/features/notifications/QuestionDiscussionScope'
+import {
+  isQuestionDiscussionTab,
+  type QuestionDiscussionTab,
+} from '@/features/notifications/questionDiscussion'
 import {
   getMcpAppPanel,
   isMcpAppPanelTab,
@@ -132,6 +137,7 @@ export type RightWorkspaceTerminalTab = `terminal:${string}`
 export type RightWorkspaceBackgroundTerminalTab = `background-terminal:${string}`
 export type RightWorkspacePanelTab =
   | McpAppPanelTab
+  | QuestionDiscussionTab
   | 'review'
   | 'files'
   | 'plan'
@@ -951,7 +957,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         ) : activeView === 'files' && workspaceTargetError ? (
           <section
             data-testid="workspace-target-error"
-            className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-red-500"
+            className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-destructive wework:text-red-500"
           >
             {workspaceTargetError}
           </section>
@@ -1184,6 +1190,18 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             </div>
           )
         })}
+        {openTabs.filter(isQuestionDiscussionTab).map(tab => (
+          <div
+            key={tab}
+            className={cn('min-h-0 flex-1 flex-col', activeView === tab ? 'flex' : 'hidden')}
+          >
+            <QuestionDiscussionTabPanel
+              tab={tab}
+              active={visible && activeView === tab}
+              onClose={() => onCloseTab(tab)}
+            />
+          </div>
+        ))}
         {mcpAppPanels
           .filter(panel => openTabs.includes(panel.id))
           .map(panel => (
@@ -1317,7 +1335,7 @@ function RightWorkspaceTitleTab({
             event.stopPropagation()
             onClose()
           }}
-          className="flex h-[18px] w-[18px] items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-black/70 hover:text-white focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40"
+          className="flex h-[18px] w-[18px] items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-text-primary/70 hover:text-background focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 wework:hover:bg-black/70 wework:hover:text-white"
           aria-label={t('workbench.close_right_workspace_panel')}
         >
           <X className="h-3 w-3" />
@@ -1565,6 +1583,7 @@ function getRightWorkspaceTabLabel(
   backgroundTerminals: BackgroundTerminal[]
 ) {
   if (isMcpAppPanelTab(tab)) return getMcpAppPanel(tab)?.title ?? t('mcp_apps.title')
+  if (isQuestionDiscussionTab(tab)) return t('question_discussion.title')
   if (tab.startsWith('background-terminal:')) {
     return (
       unwrapShellCommand(
@@ -1607,6 +1626,7 @@ function getRightWorkspaceTabLabel(
 
 function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
   if (isMcpAppPanelTab(tab)) return `right-workspace-mcp-app-tab-${tab.slice(8)}`
+  if (isQuestionDiscussionTab(tab)) return `right-workspace-discussion-tab-${tab.slice(11)}`
   if (isWorkspaceFileTab(tab)) return `right-workspace-file-tab-${tab.slice('file:'.length)}`
   if (isRightWorkspaceExtensionTab(tab)) {
     return `right-workspace-extension-tab-${tab.slice('dsh:'.length)}`
@@ -1632,6 +1652,7 @@ function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
 
 function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
   if (isMcpAppPanelTab(tab)) return PanelRight
+  if (isQuestionDiscussionTab(tab)) return MessageCircle
   if (tab.startsWith('background-terminal:')) return SquareTerminal
   if (isRightWorkspaceExtensionTab(tab)) return PanelRight
   if (tab === 'review') return FileDiff

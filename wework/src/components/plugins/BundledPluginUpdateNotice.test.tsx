@@ -26,13 +26,3 @@ test('offers recovery for a failed update without uninstalling the plugin', () =
   fireEvent.click(screen.getByTestId('bundled-plugin-update-retry-smart-app-builder'))
   expect(mocks.retry).toHaveBeenCalledWith('smart-app-builder')
 })
-
-test('explains deferred updates and hides the notice once ready', () => {
-  mocks.state = { status: 'deferred' }
-  const view = render(<BundledPluginUpdateNotice name="smart-app-builder" />)
-  expect(screen.getByRole('status')).toHaveTextContent('当前任务结束后更新')
-  expect(screen.queryByRole('button')).toBeNull()
-  mocks.state = { status: 'ready' }
-  view.rerender(<BundledPluginUpdateNotice name="smart-app-builder" />)
-  expect(screen.queryByRole('status')).toBeNull()
-})

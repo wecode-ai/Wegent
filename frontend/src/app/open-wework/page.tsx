@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { parseWeworkHandoff } from './handoff'
 
+const WEWORK_DOWNLOAD_URL = 'https://github.com/wecode-ai/Wegent/releases/latest'
+
 function WeworkHandoffContent() {
   const { t } = useTranslation('wework-open')
   const searchParams = useSearchParams()
@@ -32,12 +34,33 @@ function WeworkHandoffContent() {
                 {t('open_wework')}
               </a>
             </Button>
-            <Button asChild variant="secondary" size="lg" className="min-h-11 w-full">
-              <a href={destination.webPath} data-testid="view-task-button">
-                {t('view_task')}
-              </a>
-            </Button>
+            {destination.webPath ? (
+              <Button asChild variant="secondary" size="lg" className="min-h-11 w-full">
+                <a href={destination.webPath} data-testid="view-task-button">
+                  {t('view_task')}
+                </a>
+              </Button>
+            ) : null}
             <p className="mt-2 text-xs leading-5 text-text-muted">{t('browser_hint')}</p>
+            <div
+              data-testid="wework-install-hint"
+              className="rounded-xl border border-border bg-base p-3"
+            >
+              <p className="text-sm font-medium text-text-primary">{t('not_installed_title')}</p>
+              <p className="mt-1 text-xs leading-5 text-text-secondary">
+                {t('not_installed_description')}
+              </p>
+              <Button asChild variant="secondary" size="sm" className="mt-3 min-h-11">
+                <a
+                  href={WEWORK_DOWNLOAD_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="download-wework-button"
+                >
+                  {t('download_wework')}
+                </a>
+              </Button>
+            </div>
           </div>
         )}
       </section>

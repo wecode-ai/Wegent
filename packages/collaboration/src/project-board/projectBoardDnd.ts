@@ -12,6 +12,26 @@ import {
 } from '@dnd-kit/core'
 import type { ProjectBoardGroupBy } from './useProjectBoardState'
 
+const rowColumnPrefix = 'todo-row-column:'
+
+export function projectBoardRowDropId(parentId: string | null, columnKey: string): string {
+  return `${rowColumnPrefix}${JSON.stringify([parentId, columnKey])}`
+}
+
+function rowDropTarget(id: unknown): { targetParentId: string | null; columnKey: string } | null {
+  if (typeof id !== 'string' || !id.startsWith(rowColumnPrefix)) return null
+  try {
+    const value: unknown = JSON.parse(id.slice(rowColumnPrefix.length))
+    if (!Array.isArray(value) || value.length !== 2) return null
+    const [parentId, columnKey] = value
+    return (parentId === null || typeof parentId === 'string') && typeof columnKey === 'string'
+      ? { targetParentId: parentId, columnKey }
+      : null
+  } catch {
+    return null
+  }
+}
+
 export const projectBoardDnd = { DndContext, DragOverlay, useDroppable }
 
 export function useProjectBoardSensors() {
@@ -28,6 +48,7 @@ export function projectBoardDrop(event: Pick<DragEndEvent, 'active' | 'over'>) {
   const overData = event.over?.data.current
   const beforeItemId = typeof overData?.itemId === 'string' ? overData.itemId : null
   const id = event.over?.id
+  const rowTarget = rowDropTarget(id)
   return {
     activeItemId: projectBoardDragItemId(event.active),
     beforeItemId,
@@ -35,9 +56,12 @@ export function projectBoardDrop(event: Pick<DragEndEvent, 'active' | 'over'>) {
     groupBy: activeData?.groupBy as ProjectBoardGroupBy | undefined,
     columnDropKey: beforeItemId
       ? ((overData?.columnKey as string | undefined) ?? null)
-      : typeof id === 'string' && id.startsWith('todo-column:')
-        ? id.slice('todo-column:'.length) || null
-        : null,
+      : rowTarget
+        ? rowTarget.columnKey
+        : typeof id === 'string' && id.startsWith('todo-column:')
+          ? id.slice('todo-column:'.length) || null
+          : null,
+    ...(rowTarget ? { targetParentId: rowTarget.targetParentId } : {}),
   }
 }
 

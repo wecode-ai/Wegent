@@ -19,6 +19,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPLETE = 'PERSONAL_STAND_IN_COMPLETE'
@@ -33,7 +34,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let workspace
   let project
   let manualIssue
-  let currentDevice
+  let currentDeviceRoute
   const completed = []
   let savedSettings
   let assignmentDiagnostics
@@ -88,9 +89,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     return mcpToolRequestEvents(body, {
       toolName: step.name,
       argumentsValue: step.args,
-      directToolName: (body.tools ?? [])
-        .map(tool => tool.name)
-        .find(name => name?.endsWith(`__${step.name}`)),
+      directToolName: `mcp__wework_space__${step.name}`,
       searchCallId: `${callId()}-search`,
       toolCallId: callId(),
     }).events
@@ -122,14 +121,14 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     return text ? JSON.parse(text) : null
   }
 
-  async function assertCompleted(control, issue) {
+  async function assertCompleted(control, issue, expectedDevice = currentDeviceRoute) {
     const deadline = Date.now() + modelResponseTimeoutMs
     let bindings
     while (Date.now() < deadline) {
       bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
       assert.ok(bindings.length <= 1, 'One Issue must not create duplicate personal tasks')
       if (bindings[0]) {
-        assert.equal(bindings[0].device_id, currentDevice)
+        assert.equal(bindings[0].device_id, expectedDevice)
         const result = await requestExecutor(
           control,
           'runtime.tasks.get',
@@ -245,7 +244,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     },
     async verify(control) {
       const desktop = await environment.waitForConnectedAppDevice()
-      currentDevice = desktop.app_device_id ?? desktop.device_id
+      currentDeviceRoute = desktop.execution_target_id
+      assert.ok(currentDeviceRoute, 'The real App must expose its registered execution route')
       // A real ordinary member, with no project device binding or initialized environment.
       await request(`/admin/users/${user.id}/role`, { role: 'user' }, ownerToken, 'PUT')
       assert.equal((await request('/users/me')).role, 'user')
@@ -262,7 +262,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         scoped(`collaboration-workspace-toggle-${workspace.id}`)
       )
       await control.command('click', scoped(`collaboration-workspace-project-${project.id}`))
-      await control.command('clickWhenEnabled', scoped('collaboration-tab-board'))
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', scoped(`cloud-todo-card-${manualIssue.id}`))
       await control.command('clickWhenEnabled', scoped('cloud-todo-personal-task-start'))
       const composer = `${scoped('work-item-new-task-chat-panel')} [data-testid="chat-message-input"]`
@@ -277,12 +277,11 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           timeoutMs: modelResponseTimeoutMs,
         }
       )
-      await assertCompleted(control, manualIssue)
+      await assertCompleted(control, manualIssue, desktop.app_device_id ?? desktop.device_id)
       await assertCollaboration(manualIssue)
       await control.command('click', scoped('ai-chat-modal-close'))
       await control.command('click', scoped('cloud-todo-detail-close'))
       await openProjectStandIn(control, scoped('stand-in-open'), { connect: true })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', {
         value: 'Review my assigned Issues, post the result and return them to the project owner.',
       })

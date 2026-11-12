@@ -1,4 +1,4 @@
-import { subscribeDshTerminalEvents } from '@/api/dsh/terminalTransport'
+import { observeDshTerminalEvents } from '@/api/dsh/terminalTransport'
 import { getLocalTerminalSnapshot, listLocalHarnessSessions } from '@/lib/local-terminal'
 
 interface TerminalHistory {
@@ -12,7 +12,7 @@ let installed = false
 export function installLocalHarnessDiagnostics(): void {
   if (installed) return
   installed = true
-  subscribeDshTerminalEvents(event => {
+  observeDshTerminalEvents(event => {
     const sessionId = event.payload.session_id
     if (
       typeof sessionId !== 'string' ||

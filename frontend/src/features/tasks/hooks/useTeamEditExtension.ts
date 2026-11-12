@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import type { Bot } from '@/types/api'
 import type { BaseRole } from '@/types/base-role'
 import type { ChatAreaTeamEditExtension } from '../components/chat/types'
 import React from 'react'
+import { createLatestRequestGuard } from '@/utils/latest-request-guard'
 
 /**
  * Dependencies required by useTeamEditExtension
@@ -57,9 +58,7 @@ export function useTeamEditExtension(
 ): ChatAreaTeamEditExtension | undefined {
   const { currentTeamId, currentTeamNamespace, userId, deps, onTeamUpdated } = options
 
-  const [open, setOpen] = useState(false)
-  const [bots, setBots] = useState<Bot[]>([])
-  const [, setLoading] = useState(false)
+  const botsRequestRef = useRef(createLatestRequestGuard())
 
   // Compute edit permission
   const canEdit = useMemo(() => {
@@ -68,28 +67,41 @@ export function useTeamEditExtension(
     return deps.checkCanEdit(currentTeamId, userId, roleMap)
   }, [currentTeamId, userId, deps])
 
+  const context = useMemo(
+    () => ({ currentTeamId, currentTeamNamespace, userId, canEdit }),
+    [currentTeamId, currentTeamNamespace, userId, canEdit]
+  )
+  const [dialog, setDialog] = useState<{ context: typeof context; bots: Bot[] } | null>(null)
+
+  useEffect(() => {
+    const requests = botsRequestRef.current
+    return () => requests.invalidate()
+  }, [context])
+
   // Extract deps functions to stable refs
   const { fetchBots } = deps
 
   const handleOpen = useCallback(async () => {
     if (!currentTeamId || !canEdit) return
 
-    setLoading(true)
+    const requestId = botsRequestRef.current.begin()
     try {
       const scope =
         currentTeamNamespace && currentTeamNamespace !== 'default' ? 'group' : 'personal'
       const groupName = scope === 'group' ? currentTeamNamespace : undefined
 
       const botList = await fetchBots(scope, groupName ?? undefined)
-      setBots(botList)
-      setOpen(true)
-    } finally {
-      setLoading(false)
+      if (botsRequestRef.current.isLatest(requestId)) {
+        setDialog({ context, bots: botList })
+      }
+    } catch (cause) {
+      if (botsRequestRef.current.isLatest(requestId)) throw cause
     }
-  }, [currentTeamId, canEdit, currentTeamNamespace, fetchBots])
+  }, [currentTeamId, canEdit, currentTeamNamespace, fetchBots, context])
 
   const handleClose = useCallback(() => {
-    setOpen(false)
+    botsRequestRef.current.invalidate()
+    setDialog(null)
     onTeamUpdated()
   }, [onTeamUpdated])
 
@@ -99,16 +111,16 @@ export function useTeamEditExtension(
   // Render the dialog with current state
   // NOTE: All hooks must be called before any conditional return
   const renderDialog = useCallback(() => {
-    if (!open) {
+    if (!dialog || dialog.context !== context) {
       return null
     }
 
     return createDialogComponent({
-      open,
+      open: true,
       onClose: handleClose,
-      bots,
+      bots: dialog.bots,
     })
-  }, [open, bots, createDialogComponent, handleClose])
+  }, [dialog, context, createDialogComponent, handleClose])
 
   if (!canEdit || !currentTeamId) {
     return undefined

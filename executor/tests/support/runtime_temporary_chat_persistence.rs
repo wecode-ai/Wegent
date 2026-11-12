@@ -85,6 +85,10 @@ async fn temporary_chat_restores_history_and_continues_after_capability_reload()
     request["task_id"] = json!("side-chat");
     request["subtask_id"] = json!("side-turn-1");
     request["ephemeral"] = json!(true);
+    super::runtime_side_source_contract::write_source_rollout(
+        &root.path().join("parent.jsonl"),
+        "parent",
+    );
     let created = handler.handle_runtime_rpc(json!({
         "method": "runtime.tasks.create",
         "payload": {
@@ -334,7 +338,13 @@ while IFS= read -r line; do
       printf '{"method":"turn/completed","params":{"threadId":"temporary-thread","turn":{"id":"turn-%s","status":"completed"}}}\n' "$turn_count"
       continue
       ;;
-    *'"method":"thread/unsubscribe"'*) thread_loaded=0; result='{}' ;;
+    *'"method":"thread/unsubscribe"'*)
+      thread_loaded=0
+      printf '{"id":%s,"result":{"status":"unsubscribed"}}\n' "$request_id"
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{"method":"thread/closed","params":{"threadId":"'"$closed_thread_id"'"}}'
+      continue
+      ;;
     *) result='{}' ;;
   esac
   printf '{"id":%s,"result":%s}\n' "$request_id" "$result"

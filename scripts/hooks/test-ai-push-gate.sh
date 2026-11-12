@@ -273,6 +273,41 @@ if ! grep -qE '(^| )pytest tests/' "$CALL_LOG"; then
     exit 1
 fi
 
+for worker_count in 0 1; do
+    : > "$CALL_LOG"
+    if ! AI_VERIFIED=1 AI_PUSH_FULL_TESTS=1 \
+        BACKEND_PRE_PUSH_TEST_WORKERS="$worker_count" PATH="$TMP_DIR/bin:$PATH" \
+        bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FULL_TEST_OUT" 2>&1
+refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA
+EOF
+    then
+        cat "$FULL_TEST_OUT"
+        exit 1
+    fi
+    if ! grep -qE "pytest tests/ --tb=short -q -n $worker_count$" "$CALL_LOG"; then
+        echo "Backend worker limit did not reach pytest: $worker_count"
+        cat "$CALL_LOG"
+        exit 1
+    fi
+done
+
+: > "$CALL_LOG"
+if AI_VERIFIED=1 AI_PUSH_FULL_TESTS=1 BACKEND_PRE_PUSH_TEST_WORKERS=invalid \
+    PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FULL_TEST_OUT" 2>&1
+refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA
+EOF
+then
+    echo 'Expected an invalid Backend worker limit to reject the push.'
+    exit 1
+fi
+if grep -qE '(^| )pytest tests/' "$CALL_LOG" || \
+    ! grep -q 'Invalid BACKEND_PRE_PUSH_TEST_WORKERS' "$FULL_TEST_OUT"; then
+    echo 'Invalid Backend worker limits must fail before pytest starts.'
+    cat "$FULL_TEST_OUT"
+    exit 1
+fi
+
 : > "$CALL_LOG"
 
 # This historical range changes only Wework files. It verifies the pre-push
@@ -314,7 +349,7 @@ if grep -qE '^pnpm --filter wework lint$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 --testTimeout 15000 src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
     echo "Expected renderer source changes to run changed and sibling test files."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -378,8 +413,8 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_FULL_TEST_OUT
 refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=1/2$' "$CALL_LOG" ||
-    ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=2/2$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --reporter=default --shard=1/2$' "$CALL_LOG" ||
+    ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --reporter=default --shard=2/2$' "$CALL_LOG"; then
     echo "Expected full renderer tests to exclude Electron-owned test files and use two shards."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -391,6 +426,14 @@ if ! grep -qE 'Running full renderer unit tests in 2 shards with 1 worker each' 
     cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi
+
+for shard in 1 2; do
+    if ! grep -q "wework_test_shard_${shard}: finished (exit 0)" "$WEWORK_FULL_TEST_OUT"; then
+        echo "Expected renderer shard $shard to report completion."
+        cat "$WEWORK_FULL_TEST_OUT"
+        exit 1
+    fi
+done
 
 assert_renderer_tests_follow_static_checks
 
@@ -415,7 +458,7 @@ if [ "$(cat "$CALL_LOG.renderer-order")" != "$(printf 'start 1\nfinish 1\nstart 
     exit 1
 fi
 for shard in 1 2; do
-    if ! grep -qE "^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=$shard/2$" "$CALL_LOG"; then
+    if ! grep -qE "^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --reporter=default --shard=$shard/2$" "$CALL_LOG"; then
         echo "Expected serialized execution to retain renderer shard $shard and its original budget."
         exit 1
     fi
@@ -547,7 +590,7 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_MIXED_TEST_OU
 refs/heads/topic $MIXED_LOCAL_SHA refs/heads/topic $MIXED_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 src/api/changeRequests.test.ts$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 --testTimeout 15000 src/api/changeRequests.test.ts$' "$CALL_LOG"; then
     echo "Expected merge-like Wework changes to run only the related renderer test."
     echo "Calls:"
     cat "$CALL_LOG"

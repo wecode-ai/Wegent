@@ -10,6 +10,7 @@ use super::{
     routing,
     store::{self, COLUMNS, LIVE, Node},
 };
+use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
 use anyhow::{Context, Result, bail};
 use brz_mysql::{FromMysqlRow, Json, MysqlTransaction};
@@ -25,22 +26,52 @@ struct Group {
 }
 type Id = (i64,);
 
+pub(crate) fn current_dispatch(assigned: &Value, context: &Value) -> bool {
+    let snapshot = &context["collaboration_group"];
+    let assignment_key = assigned["collaboration_group_assignment_key"]
+        .as_str()
+        .filter(|key| !key.is_empty());
+    let group_id = authority::integer(&snapshot["id"]).filter(|id| *id > 0);
+    let dispatch_key = context["assignment_key"].as_str().or_else(|| {
+        context["run_id"].as_str().map(|run_id| {
+            run_id
+                .strip_prefix("collaboration-group:")
+                .unwrap_or(run_id)
+        })
+    });
+    context["dispatch_kind"] == "collaboration_group"
+        && group_id.is_some()
+        && group_id == authority::integer(&assigned["collaboration_group"]["id"])
+        && group_id == authority::integer(&context["collaboration_group_id"])
+        && assignment_key.is_some()
+        && assignment_key == dispatch_key
+}
+
 async fn authorized_definition(
     state: &AppState,
     project_id: &str,
     id: &str,
     actor: i64,
 ) -> Result<Value> {
-    authority::require(state, project_id, actor).await?;
-    let workspace = authority::parent(state, project_id).await?;
-    let group:Option<Group>=state.mysql.fetch_optional("SELECT id,user_id,name,namespace,json FROM kinds WHERE id=? AND kind='CollaborationGroup' AND is_active=true",(id.parse::<i64>()?,)).await?;
+    authorized_definition_on(&mut &state.mysql, project_id, id, actor).await
+}
+
+async fn authorized_definition_on(
+    query: &mut impl PluginQuery,
+    project_id: &str,
+    id: &str,
+    actor: i64,
+) -> Result<Value> {
+    authority::require_on(query, project_id, actor).await?;
+    let workspace = authority::parent_on(query, project_id).await?;
+    let group:Option<Group>=query.fetch_optional("SELECT id,user_id,name,namespace,json FROM kinds WHERE id=? AND kind='CollaborationGroup' AND is_active=true",(id.parse::<i64>()?,)).await?;
     let group = group.context("Collaboration group is unavailable")?;
-    let grant:Option<Id>=state.mysql.fetch_optional("SELECT id FROM resource_members WHERE resource_type='CollaborationGroup' AND resource_id=? AND entity_type='project' AND entity_id=? AND status='approved' AND role IN ('Owner','Maintainer','Developer') LIMIT 1",(group.id,project_id)).await?;
+    let grant:Option<Id>=query.fetch_optional("SELECT id FROM resource_members WHERE resource_type='CollaborationGroup' AND resource_id=? AND entity_type='project' AND entity_id=? AND status='approved' AND role IN ('Owner','Maintainer','Developer') LIMIT 1",(group.id,project_id)).await?;
     if grant.is_none() {
         bail!("Collaboration group is not enabled in this project")
     }
     if group.namespace != format!("projects/{project_id}") {
-        let grant:Option<Id>=state.mysql.fetch_optional("SELECT id FROM resource_members WHERE resource_type='CollaborationGroup' AND resource_id=? AND entity_type='workspace' AND entity_id=? AND status='approved' AND role IN ('Owner','Maintainer','Developer') LIMIT 1",(group.id,workspace.to_string())).await?;
+        let grant:Option<Id>=query.fetch_optional("SELECT id FROM resource_members WHERE resource_type='CollaborationGroup' AND resource_id=? AND entity_type='workspace' AND entity_id=? AND status='approved' AND role IN ('Owner','Maintainer','Developer') LIMIT 1",(group.id,workspace.to_string())).await?;
         if grant.is_none() || group.namespace != format!("workspaces/{workspace}") {
             bail!("Collaboration group resource authorization is revoked")
         }
@@ -96,10 +127,18 @@ async fn validate_member(
     member: &Value,
     actor: i64,
 ) -> Result<()> {
+    validate_member_on(&mut &state.mysql, project_id, member, actor).await
+}
+
+async fn validate_member_on(
+    query: &mut impl PluginQuery,
+    project_id: &str,
+    member: &Value,
+    actor: i64,
+) -> Result<()> {
     let id = member_id(member);
     if member["kind"] == "human" {
-        let active: Option<Id> = state
-            .mysql
+        let active: Option<Id> = query
             .fetch_optional(
                 "SELECT id FROM users WHERE id=? AND is_active=true",
                 (id.parse::<i64>()?,),
@@ -108,23 +147,23 @@ async fn validate_member(
         if active.is_none() {
             bail!("Collaboration group participant is unavailable")
         }
-        authority::require(state, project_id, id.parse()?)
+        authority::require_on(query, project_id, id.parse()?)
             .await
             .context("Collaboration group participant cannot execute")?;
     } else {
-        let agent = resolve_agent(state, project_id, &id).await?;
-        authority::agent(state, project_id, &agent.id, actor, true).await?;
+        let agent = resolve_agent_on(query, project_id, &id).await?;
+        authority::agent_on(query, project_id, &agent.id, actor, true).await?;
     }
     Ok(())
 }
 
-pub(crate) async fn authorize_snapshot(
-    state: &AppState,
+pub(crate) async fn authorize_snapshot_on(
+    query: &mut impl PluginQuery,
     project_id: &str,
     snapshot: &Value,
     actor: i64,
 ) -> Result<()> {
-    let current = authorized_definition(state, project_id, &member_id(snapshot), actor).await?;
+    let current = authorized_definition_on(query, project_id, &member_id(snapshot), actor).await?;
     let identities: std::collections::BTreeSet<_> = participants(&current)?
         .iter()
         .map(|member| {
@@ -141,13 +180,21 @@ pub(crate) async fn authorize_snapshot(
         )) {
             bail!("Collaboration group membership was revoked")
         }
-        validate_member(state, project_id, member, actor).await?;
+        validate_member_on(query, project_id, member, actor).await?;
     }
     Ok(())
 }
 
-async fn resolve_agent(state: &AppState, project_id: &str, id: &str) -> Result<Node> {
-    state.mysql.fetch_optional(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='chat_agent' AND cloud_project_id=? AND status='active' AND {LIVE} AND (id=? OR CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.wegent_team_id')) AS CHAR)=?) ORDER BY (id=?) DESC LIMIT 1"),(project_id,id,id,id)).await?.context("Collaboration group member Agent is unavailable")
+pub(crate) async fn resolve_agent(state: &AppState, project_id: &str, id: &str) -> Result<Node> {
+    resolve_agent_on(&mut &state.mysql, project_id, id).await
+}
+
+async fn resolve_agent_on(
+    query: &mut impl PluginQuery,
+    project_id: &str,
+    id: &str,
+) -> Result<Node> {
+    query.fetch_optional(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='chat_agent' AND cloud_project_id=? AND status='active' AND {LIVE} AND (id=? OR CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.wegent_team_id')) AS CHAR)=?) ORDER BY (id=?) DESC LIMIT 1"),(project_id,id,id,id)).await?.context("Collaboration group member Agent is unavailable")
 }
 
 pub(crate) async fn runner_requirements(
@@ -200,17 +247,26 @@ pub(crate) async fn runner_requirements(
     Ok(Value::Object(requirements))
 }
 
-pub(super) async fn assign(
+pub(crate) struct GroupAssignment {
+    pub issue: Node,
+    pub group: Value,
+    pub key: String,
+    pub actor: i64,
+    pub admission: Option<Admission>,
+    pub automation: Value,
+}
+
+pub(crate) async fn prepare_assignment(
     state: &AppState,
     project: &Node,
-    rule: &Node,
-    run: &Node,
+    mut issue: Node,
     id: &str,
+    actor: i64,
     mut context: Value,
-) -> Result<()> {
-    let group = authorize(state, &project.id, id, rule.created_by_user_id).await?;
-    let mut issue = issues::load(state, project, &run.task_id, rule.created_by_user_id).await?;
-    authority::require_issue(state, project, &issue, rule.created_by_user_id).await?;
+) -> Result<GroupAssignment> {
+    let automation = assignments::automation_actor(&context);
+    let group = authorize(state, &project.id, id, actor).await?;
+    authority::require_issue(state, project, &issue, actor).await?;
     let key = if issue.metadata.0["collaboration_group"]["id"].as_str() == Some(id) {
         issue.metadata.0["collaboration_group_assignment_key"]
             .as_str()
@@ -224,11 +280,12 @@ pub(super) async fn assign(
     issue.metadata.0["collaboration_group_assignment_key"] = json!(key);
     assignments::history(
         &mut issue.metadata.0,
-        rule.created_by_user_id,
+        actor,
         "group",
         id,
         group["name"].as_str().unwrap_or(""),
     );
+    assignments::attribute_history(&mut issue.metadata.0, "assignment_history", &automation);
     let mut admission = None;
     if group["leader"]["kind"] == "agent" {
         let leader = resolve_agent(state, &project.id, &member_id(&group["leader"])).await?;
@@ -236,7 +293,7 @@ pub(super) async fn assign(
             state,
             &leader,
             if leader.created_by_user_id == 0 {
-                rule.created_by_user_id
+                actor
             } else {
                 leader.created_by_user_id
             },
@@ -250,7 +307,7 @@ pub(super) async fn assign(
             &project.id,
             &issue,
             &group,
-            rule.created_by_user_id,
+            actor,
             &context["runner_selection"],
             true,
         )
@@ -277,11 +334,11 @@ pub(super) async fn assign(
         }
         let mut plan = Admission {
             owner: if routed || leader.created_by_user_id == 0 {
-                rule.created_by_user_id
+                actor
             } else {
                 leader.created_by_user_id
             },
-            assigner: rule.created_by_user_id,
+            assigner: actor,
             agent_id: String::new(),
             team_id: 0,
             environment: config["execution_environment"]
@@ -307,23 +364,83 @@ pub(super) async fn assign(
         queue::prepare(state, &issue, &mut plan).await?;
         admission = Some(plan);
     }
+    Ok(GroupAssignment {
+        automation,
+        issue,
+        group,
+        key,
+        actor,
+        admission,
+    })
+}
+
+pub(crate) async fn apply_assignment_on(
+    tx: &mut impl MysqlTransaction,
+    project: &Node,
+    assignment: &GroupAssignment,
+) -> brz_mysql::MysqlResult<()> {
+    let issue = &assignment.issue;
+    let current = store::locked(tx, "task", &issue.id)
+        .await?
+        .ok_or(brz_mysql::MysqlError::RowNotFound)?;
+    if current.version != issue.version {
+        return Err(brz_mysql::MysqlError::InvalidQuery {
+            reason: "Issue changed before group assignment".into(),
+        });
+    }
+    let actor = assignment.actor;
+    let mut metadata = issue.meta();
+    let revision = metadata["content_revision"].as_i64().unwrap_or(1) + 1;
+    metadata["content_revision"] = json!(revision);
+    if !metadata["read_revisions"].is_object() {
+        metadata["read_revisions"] = json!({});
+    }
+    metadata["read_revisions"][actor.to_string()] = json!(revision);
+    if issue.status != "in_progress" {
+        assignments::status_history(&mut metadata, project, &issue.status, "in_progress", actor);
+        assignments::attribute_history(&mut metadata, "status_history", &assignment.automation);
+        if let Some(last) = metadata["status_history"]
+            .as_array_mut()
+            .and_then(|rows| rows.last_mut())
+        {
+            last["trigger"] = json!("collaboration_group_assignment");
+        }
+    }
+    tx.execute("UPDATE loop_items SET assignee_user_id=0,assignee_agent_id='',assignee_team_id=0,status='in_progress',completed_at=?,sort_order=0,metadata=?,version=version+1,updated_by_user_id=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(store::UNSET,Json(metadata),actor,issue.id.as_str())).await?;
+    Ok(())
+}
+
+pub(super) async fn assign(
+    state: &AppState,
+    project: &Node,
+    rule: &Node,
+    run: &Node,
+    id: &str,
+    context: Value,
+) -> Result<()> {
+    let actor = rule.created_by_user_id;
+    let issue = issues::load(state, project, &run.task_id, actor).await?;
+    let assignment = prepare_assignment(state, project, issue, id, actor, context).await?;
+    let GroupAssignment {
+        issue,
+        group,
+        key,
+        admission,
+        ..
+    } = &assignment;
     let pending=state.mysql.with_transaction(async |tx| {
-        let existing=store::locked(tx,"task",&issue.id).await?.ok_or(brz_mysql::MysqlError::RowNotFound)?;
-        let _=existing;
-        let mut metadata=issue.meta();let revision=metadata["content_revision"].as_i64().unwrap_or(1)+1;metadata["content_revision"]=json!(revision);if !metadata["read_revisions"].is_object(){metadata["read_revisions"]=json!({})}metadata["read_revisions"][rule.created_by_user_id.to_string()]=json!(revision);
-        if issue.status!="in_progress" {assignments::status_history(&mut metadata,project,&issue.status,"in_progress",rule.created_by_user_id);let last=metadata["status_history"].as_array_mut().and_then(|rows|rows.last_mut());if let Some(last)=last{last["trigger"]=json!("collaboration_group_assignment");}}
-        tx.execute("UPDATE loop_items SET assignee_user_id=0,assignee_agent_id='',assignee_team_id=0,status='in_progress',completed_at=?,sort_order=0,metadata=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(store::UNSET,Json(metadata),issue.id.as_str())).await?;
+        apply_assignment_on(tx,project,&assignment).await?;
         if let Some(plan)=admission.as_ref(){
             let existing:Option<Id>=tx.fetch_optional("SELECT id FROM loop_item_executions WHERE loop_item_id=? AND automation_run_id=? ORDER BY id DESC LIMIT 1",(issue.id.as_str(),run.id.as_str())).await?;
-            if existing.is_none(){let execution=queue::enqueue_on(tx,state,&issue,run,plan).await?;let payload=json!({"runtime_selection":plan.runtime_selection,"origin_context":plan.context,"dispatch_request":{"kind":"collaboration_group"}});tx.execute("UPDATE loop_item_executions SET execution_payload=? WHERE id=?",(payload.to_string(),execution.id)).await?;}
+            if existing.is_none(){let execution=queue::enqueue_on(tx,state,issue,run,plan).await?;let payload=json!({"runtime_selection":plan.runtime_selection,"origin_context":plan.context,"dispatch_request":{"kind":"collaboration_group"}});tx.execute("UPDATE loop_item_executions SET execution_payload=? WHERE id=?",(payload.to_string(),execution.id)).await?;}
             tx.execute("UPDATE loop_items SET status='queued',version=version+1 WHERE id=?",(run.id.as_str(),)).await?;Ok(None)
         }else{
             let leader=authority::integer(&group["leader"]["id"]).ok_or_else(||brz_mysql::MysqlError::InvalidQuery{reason:"Collaboration group human leader is invalid".into()})?;
-            let mut payload=notifications::target(state,project,&issue,leader).await.map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?;
+            let mut payload=notifications::target(state,project,issue,leader).await.map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?;
             let assignment_key=format!("group:{id}:{key}");
             let existing:Option<Id>=tx.fetch_optional("SELECT 1 AS id FROM wework_notifications WHERE user_id=? AND kind='assignment' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.collaborationGroupAssignmentKey'))=? LIMIT 1",(leader,assignment_key.as_str())).await?;
-            payload["action"]=json!("coordinate_collaboration_group");payload["issueId"]=json!(issue.id);payload["collaborationGroupId"]=json!(id);payload["collaborationGroupAssignmentKey"]=json!(assignment_key);payload["instructions"]=json!(human_instructions(project,&issue,&group).map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?);
-            let pending=if existing.is_none(){Some(notifications::create_on(tx,state,leader,rule.created_by_user_id,"assignment",&format!("请协调：{}",issue.title),"你是该协作小组的负责人。请打开 Issue 分配本轮任务并验收结果。",payload).await?)}else{None};
+            payload["action"]=json!("coordinate_collaboration_group");payload["issueId"]=json!(issue.id);payload["collaborationGroupId"]=json!(id);payload["collaborationGroupAssignmentKey"]=json!(assignment_key);payload["instructions"]=json!(human_instructions(project,issue,group).map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?);
+            let pending=if existing.is_none(){Some(notifications::create_on(tx,state,leader,actor,"assignment",&format!("请协调：{}",issue.title),"你是该协作小组的负责人。请打开 Issue 分配本轮任务并验收结果。",payload).await?)}else{None};
             tx.execute("UPDATE loop_items SET status='succeeded',completed_at=UTC_TIMESTAMP(6),version=version+1 WHERE id=?",(run.id.as_str(),)).await?;Ok(pending)
         }
     }).await?;
@@ -361,4 +478,29 @@ fn human_instructions(project: &Node, issue: &Node, group: &Value) -> Result<Str
                 .unwrap_or(&json!({}))
         )?
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_reply_requires_the_current_group_and_assignment() {
+        let mut issue = json!({
+            "collaboration_group": {"id": "42"},
+            "collaboration_group_assignment_key": "current",
+        });
+        let dispatch = json!({
+            "dispatch_kind": "collaboration_group",
+            "collaboration_group": {"id": 42},
+            "collaboration_group_id": "42",
+            "assignment_key": "current",
+        });
+        assert!(current_dispatch(&issue, &dispatch));
+        issue["collaboration_group_assignment_key"] = json!("reassigned");
+        assert!(!current_dispatch(&issue, &dispatch));
+        issue["collaboration_group_assignment_key"] = json!("current");
+        issue["collaboration_group"]["id"] = json!("43");
+        assert!(!current_dispatch(&issue, &dispatch));
+    }
 }

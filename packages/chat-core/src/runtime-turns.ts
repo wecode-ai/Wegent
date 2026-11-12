@@ -31,6 +31,7 @@ import {
   upsertReasoningChunk,
   upsertBlocks,
   upsertRuntimeBlock,
+  replaceAssistantTextWithBlock,
   resolveRuntimeStreamingThinkingContent,
   boundVisibleRuntimeProcessingBlocks,
   settleProcessingBlocks,
@@ -40,7 +41,8 @@ import {
   mergeProcessingBlockUpdate,
   replaceAt,
 } from "./runtime-turn-updates";
-import { projectRuntimeConversationTurn } from "./runtime-turn-projection";
+export { projectRuntimeConversationTurns } from "./runtime-turn-projection";
+import { insertMissingOrderedEntries } from "./ordered-conversation-entries";
 
 /** Materialize in-flight deltas against their observed base, then atomically publish native order.
  * Applying append-only deltas directly to history would duplicate output already persisted there.
@@ -59,16 +61,16 @@ export function hydrateRuntimeConversationTurns(
     local.flatMap(runtimeConversationTurnClientUserMessageIds),
   );
   // A viewer can attach after turn/start. Native history supplies that turn's prerequisites.
-  let observed = [
-    ...local,
-    ...snapshot.filter(
+  let observed = mergeRuntimeConversationTurns(
+    local,
+    snapshot.filter(
       (turn) =>
         !localIds.has(turn.id) &&
         !runtimeConversationTurnClientUserMessageIds(turn).some((id) =>
           localUserIds.has(id),
         ),
     ),
-  ];
+  );
   const updatedTextIds = new Set<string>();
   const recoveringTurnIds = new Set<string>();
   for (const action of actions) {
@@ -89,10 +91,15 @@ export function hydrateRuntimeConversationTurns(
     }
   }
   const observedByTurn = new Map(observed.map((turn) => [turn.id, turn]));
+  const classifiedSnapshot = preserveLiveClassifications(
+    snapshot,
+    observedByTurn,
+    actions,
+  );
   const reconciledSnapshot =
     recoveringTurnIds.size === 0
-      ? snapshot
-      : snapshot.map((turn) =>
+      ? classifiedSnapshot
+      : classifiedSnapshot.map((turn) =>
           preserveLiveRecovery(
             turn,
             observedByTurn.get(turn.id),
@@ -127,6 +134,45 @@ export function hydrateRuntimeConversationTurns(
         }),
       };
     });
+}
+
+function preserveLiveClassifications(
+  snapshot: RuntimeConversationTurn[],
+  observedByTurn: ReadonlyMap<string | null, RuntimeConversationTurn>,
+  actions: RuntimePaneMessageAction[],
+): RuntimeConversationTurn[] {
+  const replacements = actions.filter(
+    (
+      action,
+    ): action is Extract<RuntimePaneMessageAction, { type: "block_created" }> =>
+      action.type === "block_created" &&
+      Boolean(action.replaceAssistantTextItemId),
+  );
+  if (replacements.length === 0) return snapshot;
+  return snapshot.map((turn) => {
+    let items = turn.items;
+    for (const action of replacements) {
+      if (action.subtaskId !== turn.id) continue;
+      const previousId = action.replaceAssistantTextItemId;
+      const live = observedByTurn
+        .get(turn.id)
+        ?.items.find((item) => item.id === action.block.id);
+      if (
+        live?.type !== "block" ||
+        !items.some(
+          (item) => item.type === "assistant_text" && item.id === previousId,
+        )
+      )
+        continue;
+      // The explicit native classification arrived during this historical read.
+      // Use its latest observed block, including any subsequent live updates.
+      items =
+        live.id !== previousId && items.some((item) => item.id === live.id)
+          ? items.filter((item) => item.id !== previousId)
+          : replaceAssistantTextWithBlock(items, previousId, live.block);
+    }
+    return items === turn.items ? turn : { ...turn, items };
+  });
 }
 
 function preserveLiveRecovery(
@@ -172,6 +218,7 @@ export function mergeRuntimeConversationTurns(
     ),
   );
   const emittedLocalIndexes = new Set<number>();
+  const retainedLocalIndexes = new Set<number>();
   const canonicalLocalTurnIds = new Map<number, string | null>();
   const snapshotUserMessageIds = new Set(
     snapshotTurns.flatMap(runtimeConversationTurnClientUserMessageIds),
@@ -224,14 +271,37 @@ export function mergeRuntimeConversationTurns(
       turn.id === null ||
       !snapshotTurns.some((snapshotTurn) => snapshotTurn.id === turn.id)
     ) {
-      merged.push(turn);
+      retainedLocalIndexes.add(index);
     }
   });
   const localOrder = localTurns.map((turn, index) => {
     const id = canonicalLocalTurnIds.get(index);
     return id === undefined ? turn : { ...turn, id };
   });
-  return orderRuntimeConversationTurns(merged, [localOrder, snapshotTurns]);
+  // A page may contain the live overlay but omit already loaded Goal turns.
+  // Insert those turns beside their observed neighbors instead of appending
+  // them after the page's live tail. Null-id optimistic users remain at the end.
+  const ordered = insertMissingOrderedEntries(
+    merged.filter(
+      (turn): turn is RuntimeConversationTurn & { id: string } =>
+        turn.id !== null,
+    ),
+    localOrder.filter(
+      (turn, index): turn is RuntimeConversationTurn & { id: string } =>
+        turn.id !== null &&
+        (canonicalLocalTurnIds.has(index) || retainedLocalIndexes.has(index)),
+    ),
+  );
+  const pending = [
+    ...merged.filter((turn) => turn.id === null),
+    ...localTurns.filter(
+      (turn, index) => turn.id === null && retainedLocalIndexes.has(index),
+    ),
+  ];
+  return orderRuntimeConversationTurns(
+    [...ordered, ...pending],
+    [localOrder, snapshotTurns],
+  );
 }
 
 export function uniqueSnapshotIndexByAssistantItemId(
@@ -269,13 +339,14 @@ export function runtimeConversationTurnClientUserMessageIds(
 export function runtimeConversationTurnAssistantItemIds(
   turn: RuntimeConversationTurn,
 ): string[] {
-  // Interaction request ids are scoped to a turn and may be reused by later turns.
-  // They cannot establish that two native/runtime turn identities are aliases.
+  // Interaction ids are turn-scoped; child agents can be resumed across turns.
+  // Neither identity establishes that two native/runtime turns are aliases.
   return turn.items.flatMap((item) =>
     item.type === "user_message" ||
     (item.type === "block" &&
-      item.block.type === "tool" &&
-      item.block.toolName === "request_user_input")
+      (item.block.type === "subagent" ||
+        (item.block.type === "tool" &&
+          item.block.toolName === "request_user_input")))
       ? []
       : [item.id],
   );
@@ -402,13 +473,15 @@ export function reduceRuntimeConversationTurns(
         return {
           ...turn,
           ...boundVisibleRuntimeProcessingBlocks(turn, items),
-          ...(!isTerminalProcessingBlockStatus(action.block.status) && {
-            status: "streaming" as const,
-            completedAt: undefined,
-            error: undefined,
-            errorType: undefined,
-            stoppedNotice: undefined,
-          }),
+          ...(!action.block.parentToolUseId &&
+            !(action.block.type === "subagent" && action.block.agentThreadId) &&
+            !isTerminalProcessingBlockStatus(action.block.status) && {
+              status: "streaming" as const,
+              completedAt: undefined,
+              error: undefined,
+              errorType: undefined,
+              stoppedNotice: undefined,
+            }),
           streamingThinkingContent:
             action.block.type === "thinking" || action.block.type === "tool"
               ? getLatestThinkingContent(processingBlocks(items))
@@ -448,7 +521,10 @@ export function reduceRuntimeConversationTurns(
           ...(action.updates.status !== undefined &&
             !(
               previousBlock?.type === "block" &&
-              commandExecutionPayload(previousBlock.block)
+              (commandExecutionPayload(previousBlock.block) ||
+                previousBlock.block.parentToolUseId ||
+                (previousBlock.block.type === "subagent" &&
+                  previousBlock.block.agentThreadId))
             ) &&
             !isTerminalProcessingBlockStatus(action.updates.status) && {
               status: "streaming" as const,
@@ -469,12 +545,6 @@ export function reduceRuntimeConversationTurns(
         };
       });
   }
-}
-
-export function projectRuntimeConversationTurns(
-  turns: RuntimeConversationTurn[],
-): WorkbenchMessage[] {
-  return turns.flatMap(projectRuntimeConversationTurn);
 }
 
 export function appendRuntimeConversationGuidance(

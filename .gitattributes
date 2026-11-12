@@ -7,5 +7,8 @@
 *.sh text eol=lf
 *.mjs text eol=lf
 
+# Runtime patch digests must use the same bytes on every build platform.
+wework/harness-runtime/patches/** text eol=lf
+
 # SDK inventories hash source bytes, including when checked out on Windows.
 sdk/** text eol=lf

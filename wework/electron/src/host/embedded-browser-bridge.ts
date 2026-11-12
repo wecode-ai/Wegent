@@ -54,11 +54,13 @@ export class EmbeddedBrowserBridge {
   private runtimePath: string | null = null
   private baseUrl: string | null = null
   private token: string | null = null
+  private readonly inFlight = new Set<AbortController>()
   private readonly scripts = new Map<string, string>()
 
   constructor(
     private readonly browser: EmbeddedBrowserManager,
-    private readonly executorHome: string
+    private readonly executorHome: string,
+    private readonly fullControlEnabled: () => Promise<boolean> = async () => false
   ) {}
 
   async start(): Promise<string> {
@@ -116,6 +118,7 @@ export class EmbeddedBrowserBridge {
     this.runtimePath = null
     this.baseUrl = null
     this.token = null
+    for (const controller of this.inFlight) controller.abort()
     await Promise.allSettled([
       runtimePath ? rm(runtimePath, { force: true }) : Promise.resolve(),
       server ? new Promise<void>(resolve => server.close(() => resolve())) : Promise.resolve(),
@@ -163,27 +166,33 @@ export class EmbeddedBrowserBridge {
     response: import('node:http').ServerResponse,
     request: BrowserBridgeRequest
   ): Promise<void> {
+    const controller = new AbortController()
+    const cancel = () => controller.abort()
+    this.inFlight.add(controller)
+    response.once('close', cancel)
     try {
       writeResponse(response, 200, {
         ok: true,
-        data: await this.dispatch(request),
+        data: await this.dispatch(request, controller.signal),
       })
     } catch (error) {
       writeResponse(response, 200, {
         ok: false,
         error: errorMessage(error),
       })
+    } finally {
+      response.off('close', cancel)
+      this.inFlight.delete(controller)
     }
   }
 
-  private async dispatch(request: BrowserBridgeRequest): Promise<unknown> {
+  private async dispatch(request: BrowserBridgeRequest, signal: AbortSignal): Promise<unknown> {
     const baseLabel = request.label?.trim() || DEFAULT_LABEL
     const label = this.browser.activeLabel(baseLabel)
     const action = request.action
     const observable = isObservableAction(action)
     const mutating = isMutatingAction(action)
     const target = actionTarget(request)
-    const signature = actionSignature(action, request)
     if (mutating && this.browser.isAgentControlPaused(label)) {
       const result = agentControlPausedResult(action)
       this.browser.emitAgentState(label, 'paused', {
@@ -194,20 +203,13 @@ export class EmbeddedBrowserBridge {
       })
       return result
     }
-    if (mutating && this.browser.consumeApprovedAgentRisk(label, signature)) {
-      request.options = { ...(request.options ?? {}), riskApproved: true }
-    }
     if (observable) this.browser.emitAgentState(label, 'running', { action, target })
 
     try {
-      const result = await this.dispatchAction(baseLabel, label, request)
+      const result = await this.dispatchWithApproval(baseLabel, label, request, signal)
       const object =
         result && typeof result === 'object' && !Array.isArray(result)
           ? (result as Record<string, unknown>)
-          : null
-      const approval =
-        mutating && object
-          ? this.browser.registerAgentApproval(label, signature, action, object)
           : null
       if (observable) {
         const error = object?.error as { code?: unknown; message?: unknown } | undefined
@@ -216,7 +218,6 @@ export class EmbeddedBrowserBridge {
           target,
           message: typeof error?.message === 'string' ? error.message : null,
           errorCode: typeof error?.code === 'string' ? error.code : null,
-          approval,
         })
       }
       return result
@@ -231,6 +232,63 @@ export class EmbeddedBrowserBridge {
       }
       throw error
     }
+  }
+
+  private async dispatchWithApproval(
+    baseLabel: string,
+    label: string,
+    request: BrowserBridgeRequest,
+    signal: AbortSignal
+  ): Promise<unknown> {
+    if (isMutatingAction(request.action) && (await this.fullControlEnabled())) {
+      if (signal.aborted) throw new Error('Browser operation cancelled')
+      if (this.browser.isAgentControlPaused(label)) return agentControlPausedResult(request.action)
+      return this.dispatchAction(baseLabel, label, {
+        ...request,
+        options: { ...request.options, riskApproved: true },
+      })
+    }
+    const result = await this.dispatchAction(baseLabel, label, request)
+    if (
+      !isMutatingAction(request.action) ||
+      !result ||
+      typeof result !== 'object' ||
+      Array.isArray(result)
+    )
+      return result
+    const approval = this.browser.registerAgentApproval(
+      label,
+      request.action,
+      result as Record<string, unknown>
+    )
+    if (!approval) return result
+    const decision = this.browser.waitForAgentApproval(label, approval.approvalId, signal)
+    this.browser.emitAgentState(label, 'needs_user', {
+      action: request.action,
+      errorCode: 'approval_required',
+    })
+    const outcome = await decision
+    if (outcome !== 'approved' || signal.aborted) {
+      const code = signal.aborted ? 'cancelled' : outcome
+      return {
+        ...result,
+        approval: null,
+        error: {
+          code: `approval_${code}`,
+          message: `Browser action approval was ${code}.`,
+          recoverable: false,
+        },
+      }
+    }
+    if (this.browser.isAgentControlPaused(label)) return agentControlPausedResult(request.action)
+    this.browser.emitAgentState(label, 'running', {
+      action: request.action,
+      target: actionTarget(request),
+    })
+    return this.dispatchAction(baseLabel, label, {
+      ...request,
+      options: { ...request.options, riskApproved: true },
+    })
   }
 
   private async dispatchAction(
@@ -346,12 +404,21 @@ export class EmbeddedBrowserBridge {
     }
     const state = this.browser.state(resolvedLabel)
     if (state.url !== url) await this.browser.navigate(resolvedLabel, url)
+    await withTimeout(
+      this.browser.waitForNavigation(resolvedLabel, request.timeoutMs ?? OPEN_TIMEOUT_MS),
+      request.timeoutMs ?? OPEN_TIMEOUT_MS,
+      'Timed out waiting for embedded browser navigation'
+    )
     return { ok: true }
   }
 
-  private async evaluate(label: string, expression: string): Promise<unknown> {
+  private async evaluate(
+    label: string,
+    expression: string,
+    options?: { awaitPromise?: boolean }
+  ): Promise<unknown> {
     return withTimeout(
-      this.browser.evaluate(label, expression),
+      this.browser.evaluate(label, expression, options),
       DEFAULT_EVAL_TIMEOUT_MS,
       'Timed out waiting for embedded browser evaluation'
     )
@@ -395,7 +462,10 @@ export class EmbeddedBrowserBridge {
       (await this.loadScript('embedded_browser_action.js')).replace(
         '__WEWORK_ACTION_INPUT__',
         JSON.stringify(input)
-      )
+      ),
+      // This script returns synchronously. A Promise callback can be destroyed by
+      // the navigation that the action itself dispatched.
+      { awaitPromise: false }
     )
   }
 
@@ -749,7 +819,8 @@ function actionCursorPoint(
   }
   const target = result.target
   if (!target || typeof target !== 'object' || Array.isArray(target)) return null
-  const rect = (target as Record<string, unknown>).rect
+  const targetRecord = target as Record<string, unknown>
+  const rect = targetRecord.viewportRect ?? targetRecord.rect
   if (!rect || typeof rect !== 'object' || Array.isArray(rect)) return null
   const values = rect as Record<string, unknown>
   const x = Number(values.x)
@@ -761,16 +832,6 @@ function actionCursorPoint(
     x: x + width / 2,
     y: y + height / 2,
   }
-}
-
-function actionSignature(action: string, request: BrowserBridgeRequest): string {
-  if (request.ref) return `${action}:ref:${request.ref}`
-  if (request.inspectId) return `${action}:inspect:${request.inspectId}:${request.index ?? 0}`
-  if (request.selector) return `${action}:selector:${request.selector}`
-  if (request.x !== undefined || request.y !== undefined) {
-    return `${action}:coord:${request.x ?? 0}:${request.y ?? 0}`
-  }
-  return `${action}:active`
 }
 
 function agentControlPausedResult(action: string): Record<string, unknown> {

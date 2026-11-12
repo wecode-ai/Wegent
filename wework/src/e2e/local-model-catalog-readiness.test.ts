@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { beforeEach, expect, test, vi } from 'vitest'
 import { ensureLocalModelCatalogReady } from './local-model-catalog-readiness'
 

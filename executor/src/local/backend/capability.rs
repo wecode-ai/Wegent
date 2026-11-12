@@ -28,6 +28,13 @@ pub trait CapabilityReportProvider: Send + Sync + 'static {
 }
 
 pub trait CapabilitySyncRpcHandler: Send + Sync + 'static {
+    fn invalidate_connection(&self) {}
+    fn local_plugin_digest(&self) -> Option<String> {
+        None
+    }
+    fn local_plugin_revision(&self) -> Option<String> {
+        None
+    }
     fn handle_sync_capabilities<'a>(
         &'a self,
         payload: Value,
@@ -63,6 +70,16 @@ impl<P> CapabilitySyncRpcHandler for CapabilitySyncHandler<P>
 where
     P: CapabilityPackageProvider + Send + Sync + 'static,
 {
+    fn invalidate_connection(&self) {
+        CapabilitySyncHandler::invalidate_connection(self);
+    }
+    fn local_plugin_digest(&self) -> Option<String> {
+        CapabilitySyncHandler::local_plugin_digest(self).ok()
+    }
+    fn local_plugin_revision(&self) -> Option<String> {
+        CapabilitySyncHandler::local_plugin_revision(self).ok()
+    }
+
     fn handle_sync_capabilities<'a>(
         &'a self,
         payload: Value,
@@ -85,6 +102,7 @@ pub(super) fn default_capability_sync_handler(
         config.auth_token.clone(),
         default_plugin_store(),
         HttpPackageProvider::new(config.backend_url.clone(), config.auth_token.clone()),
+        std::sync::Arc::new(crate::agents::CodexSkillConfigurationReloader),
     )
 }
 

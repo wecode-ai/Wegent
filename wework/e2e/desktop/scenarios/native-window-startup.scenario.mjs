@@ -4,24 +4,22 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
+import {
+  parseStartupEvents,
+  verifyStartupSplashProgress,
+  waitForStartupProgressEvidence,
+} from '../modules/startup-splash-progress.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
+import { verifyFirstUsePageLoading } from '../modules/first-use-page-loading.mjs'
+import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
+import { verifyStartupSplashHandoff } from '../modules/startup-splash-handoff.mjs'
+import {
+  captureStartupThemeEvidence,
+  seedStoppedStartupTheme,
+} from '../modules/startup-theme-evidence.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
-
-function parseStartupEvents(appLog) {
-  const events = []
-  for (const match of appLog.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)) {
-    const body = match[1]
-    const step = body.match(/\bstep:\s*'([^']+)'/)?.[1]
-    const status = body.match(/\bstatus:\s*'([^']+)'/)?.[1]
-    const elapsedMs = Number(body.match(/\belapsedMs:\s*(\d+)/)?.[1])
-    if (step && status && Number.isFinite(elapsedMs)) {
-      events.push({ step, status, elapsedMs })
-    }
-  }
-  return events
-}
 
 function startupEventIndex(events, step, status) {
   return events.findIndex(event => event.step === step && event.status === status)
@@ -49,20 +47,44 @@ async function waitForStartupLogs(resultDir) {
 
 export async function createDesktopScenario({ resultDir }) {
   let restartDesktopApp
+  let lightThemeSeed
+  const userDataDirectory = join(resultDir, 'electron-user-data')
   return {
     appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
+
+    async prepareApp() {
+      // This checkpoint exercises first-launch geometry without a saved window state.
+      const preferencesPath = join(userDataDirectory, 'app-preferences.json')
+      const preferences = JSON.parse(await readFile(preferencesPath, 'utf8'))
+      delete preferences.mainWindowState
+      await writeFile(preferencesPath, `${JSON.stringify(preferences, null, 2)}\n`, {
+        mode: 0o600,
+      })
+      lightThemeSeed = await seedStoppedStartupTheme({
+        resultDir,
+        userDataDirectory,
+        mode: 'light',
+      })
+    },
 
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
     },
 
     async verify(control) {
-      await verifyStartupRecovery({ appBinary: process.env.WEWORK_E2E_APP_BIN, resultDir })
+      const appBinary = process.env.WEWORK_E2E_APP_BIN
+      await verifyStartupRecovery({
+        appBinary,
+        resultDir,
+        electronRoot: join(packagedResourcesRoot(appBinary), 'app.asar'),
+      })
       const snapshot = await waitForClosedStartupSplash(control)
-      assert.deepEqual(
-        snapshot.events.map(event => event.name),
-        ['created', 'animation-ready', 'shown', 'closed'],
-        'The Electron startup splash did not complete its animated lifecycle'
+      await verifyStartupSplashHandoff({ snapshot, resultDir })
+      const initialWindow = JSON.parse(await control.command('getNativeWindowState', 'body'))
+      assert.equal(
+        initialWindow.maximized,
+        false,
+        'A fresh launch unexpectedly maximized the window'
       )
       assert.ok(
         snapshot.theme === 'light' || snapshot.theme === 'dark',
@@ -75,14 +97,26 @@ export async function createDesktopScenario({ resultDir }) {
         'PNG',
         'The Electron startup splash evidence was not a PNG'
       )
+      await captureStartupThemeEvidence({
+        control,
+        snapshot,
+        seed: lightThemeSeed,
+        resultDir,
+      })
+      await waitForStartupProgressEvidence({ userDataDirectory, resultDir })
       const appLog = await waitForStartupLogs(resultDir)
       const startupReady = appLog.indexOf("step: 'renderer-startup-ready'")
       const taskListReady = appLog.indexOf("source: 'task-list'", startupReady)
+      const presentationStarted = appLog.indexOf("step: 'startup-window-presentation'")
+      const mainShown = appLog.indexOf("step: 'main-window-show'")
       const splashClosed = appLog.indexOf("step: 'startup-splash-close'")
       assert.ok(taskListReady >= 0, 'The renderer did not log task-list readiness')
+      assert.ok(startupReady >= 0, 'The renderer did not report startup readiness')
+      // Window presentation is independent of task-list health. The loaded
+      // document must become visible even when the task list is still loading.
       assert.ok(
-        startupReady <= taskListReady && taskListReady < splashClosed,
-        'The startup stages were logged out of order'
+        presentationStarted >= 0 && presentationStarted < mainShown && mainShown < splashClosed,
+        'The loaded desktop was not presented before closing the startup splash'
       )
       const runtimeStartupEvents = parseStartupEvents(appLog)
       const corePrepareStarted = startupEventIndex(
@@ -137,18 +171,89 @@ export async function createDesktopScenario({ resultDir }) {
         `${JSON.stringify(runtimeStartupEvents, null, 2)}\n`
       )
 
+      await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1000, height: 620 }),
+      })
+      const savedWindow = JSON.parse(await control.command('getNativeWindowState', 'body'))
+      assert.equal(savedWindow.maximized, false)
+      assert.equal(savedWindow.fullScreen, false)
+
+      await verifyStartupSplashProgress({
+        control,
+        resultDir,
+        restartDesktopApp,
+        userDataDirectory,
+      })
+
       // Consent is already saved by common bootstrap. Restart without clicking or focusing
       // anything so the assertion exercises startup autofocus itself.
       assert.ok(restartDesktopApp, 'The startup focus scenario requires the desktop restart hook')
       const telemetryRequestCountBeforeRestart = control.telemetryRequestCount()
-      await restartDesktopApp()
-      await waitForClosedStartupSplash(control)
+      const afterBytes = (await readFile(join(userDataDirectory, 'logs', 'wework-main.log'))).length
+      let darkThemeSeed
+      const darkSplashCapturePath = join(resultDir, 'startup-theme-dark-splash.png')
+      await restartDesktopApp({
+        afterStop: async () => {
+          const preferences = JSON.parse(
+            await readFile(join(userDataDirectory, 'app-preferences.json'), 'utf8')
+          )
+          assert.deepEqual(
+            preferences.mainWindowState,
+            { bounds: savedWindow.normalBounds, maximized: false },
+            'An interrupted startup overwrote the previously saved window size'
+          )
+          darkThemeSeed = await seedStoppedStartupTheme({
+            resultDir,
+            userDataDirectory,
+            mode: 'dark',
+          })
+        },
+        appEnvironmentOverrides: {
+          WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '',
+          WEWORK_E2E_STARTUP_SLOW_AFTER_MS: '',
+          WEWORK_E2E_STARTUP_STAGE_TIMEOUT_MS: '',
+          WEWORK_E2E_STARTUP_SPLASH_CAPTURE: darkSplashCapturePath,
+        },
+      })
+      const recoveredSplash = await waitForClosedStartupSplash(control)
+      await verifyStartupSplashHandoff({
+        snapshot: recoveredSplash,
+        resultDir,
+        name: 'startup-recovered-handoff',
+      })
+      await captureStartupThemeEvidence({
+        control,
+        snapshot: recoveredSplash,
+        seed: darkThemeSeed,
+        resultDir,
+        splashCapturePath: darkSplashCapturePath,
+      })
+      await waitForStartupProgressEvidence({
+        userDataDirectory,
+        resultDir,
+        name: 'startup-recovered-progress',
+        afterBytes,
+      })
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]')
       await control.command(
         'waitFor',
         '[data-testid="chat-message-input"][contenteditable="true"]:focus'
       )
       const focusSnapshot = JSON.parse(await control.command('getComposerFocusSnapshot', 'body'))
+      const nativeWindow = JSON.parse(await control.command('getNativeWindowState', 'body'))
+      assert.equal(nativeWindow.maximized, false, 'Restart unexpectedly maximized the workbench')
+      assert.deepEqual(
+        nativeWindow.bounds,
+        savedWindow.bounds,
+        'Restart lost the saved window size or position'
+      )
+      assert.deepEqual(
+        recoveredSplash.handoff.bounds.splash,
+        savedWindow.bounds,
+        'The startup splash did not use the saved main-window geometry'
+      )
+      assert.equal(nativeWindow.visible, true, 'The workbench was hidden after the startup fade')
+      assert.equal(nativeWindow.focused, true, 'The startup handoff did not focus the workbench')
       await writeFile(
         join(resultDir, 'startup-composer-focus.json'),
         `${JSON.stringify(focusSnapshot, null, 2)}\n`
@@ -181,6 +286,7 @@ export async function createDesktopScenario({ resultDir }) {
         Number.isFinite(succeeded.properties?.duration_ms) && succeeded.properties.duration_ms >= 0,
         'The successful desktop startup did not include a valid duration'
       )
+      await verifyFirstUsePageLoading(control)
     },
 
     diagnostics() {

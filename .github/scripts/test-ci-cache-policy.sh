@@ -61,6 +61,7 @@ warmup_all_false=$(
   cat <<'EOF'
 docker=false
 executor_rust=false
+backend_rs_rust=false
 node=false
 python=false
 wework_target=false
@@ -73,6 +74,16 @@ assert_warmup_case "workflow change" "$warmup_all_true" \
 node_only="${warmup_all_false/node=false/node=true}"
 node_and_wework_target="${node_only/wework_target=false/wework_target=true}"
 assert_warmup_case "pnpm lock" "$node_and_wework_target" "pnpm-lock.yaml"
+for frontend_input in .github/scripts/frontend-e2e-build.mjs \
+  .github/scripts/frontend-e2e-build-oci.mjs .github/scripts/restore-frontend-ci-build.mjs \
+  .github/scripts/archive-frontend-e2e-build.sh .github/scripts/restore-frontend-e2e-build.sh \
+  .github/actions/build-frontend-e2e/action.yml; do
+  assert_warmup_case "Frontend complete build: $frontend_input" "$node_only" "$frontend_input"
+done
+for frontend_input in frontend/next.config.js frontend/public/icon.svg \
+  frontend/scripts/prepare-file-viewer-assets.mjs frontend/src/locales/zh.json .npmrc patches/package.patch; do
+  assert_warmup_case "Frontend input: $frontend_input" "$node_and_wework_target" "$frontend_input"
+done
 assert_warmup_case "workspace manifest" "$node_and_wework_target" \
   "pnpm-workspace.yaml"
 assert_warmup_case "Wework manifest" "$node_and_wework_target" \
@@ -86,7 +97,9 @@ assert_warmup_case "Wework source" \
   "wework/src/main.ts"
 for build_input in wework/electron/src/main.ts wework/vite.config.ts \
   wework/public/icon.svg wework/resources/plugins/skills/SKILL.md \
-  wework/harness-runtime/core.ts .github/scripts/wework-windows-e2e-build-key.mjs; do
+  wework/harness-runtime/core.ts .github/scripts/wework-windows-e2e-build-key.mjs \
+  .github/scripts/wework-core-e2e-transport.mjs \
+  .github/scripts/restore-wework-core-e2e-build.sh; do
   assert_warmup_case "Windows build input: $build_input" \
     "${warmup_all_false/wework_target=false/wework_target=true}" "$build_input"
 done
@@ -114,10 +127,11 @@ executor_lock="${executor_lock/executor_rust=false/executor_rust=true}"
 executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
 backend_rs_lock="${warmup_all_false/wework_target=false/wework_target=true}"
+backend_rs_lock="${backend_rs_lock/backend_rs_rust=false/backend_rs_rust=true}"
 assert_warmup_case "Backend Rust lock" "$backend_rs_lock" "backend-rs/Cargo.lock"
-assert_warmup_case "Backend Rust OCI resolver" "$backend_rs_lock" \
+assert_warmup_case "Backend Rust OCI resolver" "${warmup_all_false/wework_target=false/wework_target=true}" \
   ".github/scripts/resolve-backend-rs-e2e-runtime.sh"
-assert_warmup_case "Backend Rust OCI recipe" "$backend_rs_lock" \
+assert_warmup_case "Backend Rust OCI recipe" "${warmup_all_false/wework_target=false/wework_target=true}" \
   ".github/runtime-images/backend-rs-e2e.Dockerfile"
 assert_warmup_case "Backend Rust source" "$backend_rs_lock" \
   "backend-rs/src/hybrid.rs"
@@ -125,6 +139,17 @@ assert_warmup_case "Executor source warms desktop sidecar" "$executor_lock" \
   "executor/src/main.rs"
 assert_warmup_case "Executor dependency source warms desktop sidecar" "$executor_lock" \
   "executor/vendor/tf-rust-socketio/src/ack_id.rs"
+shared_protocol="${warmup_all_false/docker=false/docker=true}"
+shared_protocol="${shared_protocol/wework_target=false/wework_target=true}"
+assert_warmup_case "Shared protocol warms runtime images and desktop sidecar" "$shared_protocol" \
+  "shared/protocol/runtime_task_create_request_v2.schema.json"
+
+shared_rust="${executor_lock/backend_rs_rust=false/backend_rs_rust=true}"
+assert_warmup_case "Shared Rust warms both runtimes" "$shared_rust" \
+  "shared/rust/crypto/src/lib.rs"
+if ! grep -q '"shared/rust/\*\*"' "$workflow_dir/ci-cache-warmup.yml"; then
+  fail "Shared Rust changes must trigger cache warmup"
+fi
 
 if ! ruby - "$workflow_dir" "$script_dir/../.." <<'RUBY'
 workflow_dir, root = ARGV
@@ -132,6 +157,7 @@ workflow_dir, root = ARGV
   File.read(File.join(workflow_dir, name)).scan(/hashFiles\([^)]*\)/).each do |expression|
     next unless expression.include?("'executor/src/")
     abort "#{name} omits vendored Executor dependencies from its source digest" unless expression.include?("'executor/vendor/**'")
+    abort "#{name} omits shared Executor protocols from its source digest" unless expression.include?("'shared/protocol/**'")
   end
 end
 [
@@ -144,6 +170,10 @@ end
   copy = lines.index { |line| line.start_with?('COPY executor/vendor ') }
   build = lines.index { |line| line.include?('cargo build') }
   abort "#{name} must copy Executor dependencies before compiling" unless copy && build && copy < build
+  source = lines.index { |line| line.start_with?('COPY executor/src ') }
+  protocol = lines.index { |line| line.start_with?('COPY shared/protocol ') }
+  source_build = lines.each_index.find { |index| index > source && lines[index].include?('cargo build') }
+  abort "#{name} must copy shared protocols before compiling Executor source" unless protocol && source_build && protocol < source_build
 end
 RUBY
 then
@@ -326,7 +356,7 @@ if ! grep -A3 '^  changes:$' "$warmup_workflow" |
 fi
 
 node_manifests=(
-  frontend/package.json
+  "frontend/**"
   package.json
   "packages/**"
   pnpm-lock.yaml
@@ -368,26 +398,28 @@ if ! grep -Fq 'SCCACHE_BASEDIRS="$GITHUB_WORKSPACE"' "$sccache_action" ||
   fail "sccache must degrade safely and allow cache writes only from main"
 fi
 
+macos_build_action="$action_dir/build-wework-macos-e2e/action.yml"
+macos_build_source="$(cat "$macos_build_action")"
 macos_warmup_section="$(
   sed -n \
     '/^  warm-wework-macos-electron:/,/^  prepare-wework-desktop-image:/p' \
     "$warmup_workflow"
 )"
 if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Electron Build Cache'* ]] ||
-  [[ "$macos_warmup_section" != *'runs-on: macos-14'* ]] ||
+  [[ "$macos_warmup_section" != *'runs-on: macos-15'* ]] ||
   [[ "$macos_warmup_section" != *"needs.changes.outputs.wework_target == 'true'"* ]] ||
-  [[ "$macos_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
-  [[ "$macos_warmup_section" != *'wework-electron-app-v2-'* ]] ||
-  [[ "$macos_warmup_section" != *'pnpm-store-v2-'* ]] ||
-  [[ "$macos_warmup_section" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
-  [[ "$macos_warmup_section" != *'executor/target'* ]] ||
-  [[ "$macos_warmup_section" != *'backend-rs/target'* ]] ||
-  [[ "$macos_warmup_section" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
-  [[ "$macos_warmup_section" != *'wework-macos-executor-runtime-v1-'* ]] ||
-  [[ "$macos_warmup_section" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
-  [[ "$macos_warmup_section" != *'build-macos-e2e-runtimes.sh'* ]] ||
-  [[ "$macos_warmup_section" != *'~/Library/Caches/electron'* ]] ||
-  [[ "$macos_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]]; then
+  [[ "$macos_build_source" != *'uses: ./.github/actions/setup-rust-cache'* ]] ||
+  [[ "$macos_build_source" != *'wework-electron-app-v3-'* ]] ||
+  [[ "$macos_build_source" != *'pnpm-store-v2-'* ]] ||
+  [[ "$macos_build_source" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
+  [[ "$macos_build_source" != *'executor/target'* ]] ||
+  [[ "$macos_build_source" != *'backend-rs/target'* ]] ||
+  [[ "$macos_build_source" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
+  [[ "$macos_build_source" != *'wework-macos-executor-runtime-v1-'* ]] ||
+  [[ "$macos_build_source" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
+  [[ "$macos_build_source" != *'build-macos-e2e-runtimes.sh'* ]] ||
+  [[ "$macos_build_source" != *'~/Library/Caches/electron'* ]] ||
+  [[ "$macos_build_source" != *'pnpm --filter wework ai:verify:electron:build'* ]]; then
   fail "Wework macOS Electron builds must be prewarmed with the shared build cache"
 fi
 
@@ -510,6 +542,17 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     grep -F 'docker run --rm' >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
+    grep -F -- '--network bridge' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- '--add-host wegent-e2e-runner:host-gateway' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- \
+      '--entrypoint "$container_workspace/.github/scripts/run-isolated-e2e-browser.sh"' \
+      >/dev/null ||
+  sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
+    "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--network host' >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
@@ -575,6 +618,21 @@ fi
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
+if ! ruby -ryaml - "$wework_workflow" "$wework_desktop_image" <<'RUBY'
+core = YAML.load_file(ARGV[0]).fetch('jobs').fetch('wework-desktop-core-e2e')
+commands = core.fetch('steps').map { |step| step.fetch('run', '') }.join("\n")
+abort 'Core shards must consume system dependencies from their immutable image' if commands.match?(/install-e2e-apt-packages|apt-get/)
+image = File.read(ARGV[1])
+%w[file xdg-utils pcmanfm openjdk-21-jre-headless gdb].each do |package|
+  abort "Desktop image must install #{package}" unless image.lines.any? { |line| line.strip == "#{package} \\" }
+end
+%w[java keytool gdb pcmanfm].each do |binary|
+  abort "Core setup must verify #{binary}" unless commands.include?(binary)
+end
+RUBY
+then
+  fail "Desktop Core dependencies must be prepared in the immutable image"
+fi
 if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
   ! grep -Fq '"https://astral.sh/uv/${UV_VERSION}/install.sh"' \
     "$wework_browser_image" ||
@@ -620,7 +678,7 @@ jobs = YAML.load_file(ARGV[0])['jobs']
     abort "#{name} must install Electron for #{segment}" unless step['if'].include?("contains(matrix.segments, '#{segment}')")
   end
   commands = step['run'].lines.map(&:strip).reject(&:empty?)
-  abort "#{name} must install the locked Electron toolchain" unless commands.first == 'pnpm --dir wework/electron install --frozen-lockfile'
+  abort "#{name} must install the locked Electron toolchain" unless commands.first == 'pnpm --dir wework prepare:electron'
   if name.include?('windows')
     resolved = step['run'].include?("const binary = require('electron');")
     verified = resolved && step['run'].include?('fs.statSync(binary)')
@@ -671,11 +729,13 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   [[ "$desktop_build_section" != *'restore-wework-core-e2e-build-oci.sh'* ]] ||
   [[ "$desktop_build_section" != *'uses: ./.github/actions/build-wework-core-e2e'* ]] ||
   [[ "$desktop_build_section" != *'uses: actions/upload-artifact@v4'* ]] ||
-  ! grep -Fq 'BUILD_RUNTIMES_FROM_SOURCE:' "$desktop_build_action" ||
+  ! grep -Fq 'RUNTIME_ARTIFACTS:' "$desktop_build_action" ||
   ! grep -Fq 'restore-oci-runtime-binary.sh' "$desktop_build_action" ||
   ! grep -Fq 'ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml' "$desktop_build_action" ||
-  ! grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA="$EXECUTOR_HEAD_SHA"' "$desktop_build_action" ||
-  ! grep -Fq 'executor-e2e-binary "$artifact_directory"' "$desktop_build_action" ||
+  ! grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA="$RUNTIME_HEAD_SHA"' "$desktop_build_action" ||
+  ! grep -Fq 'restore_runtime executor executor-e2e-binary' "$desktop_build_action" ||
+  ! grep -Fq 'executor-e2e-binary wegent-executor' "$desktop_build_action" ||
+  ! grep -Fq 'backend-rs-e2e-runtime wegent-backend-rs' "$desktop_build_action" ||
   ! grep -Fq 'WEWORK_E2E_PREBUILT_EXECUTOR_PATH' "$desktop_build_action" ||
   ! grep -Fq 'pnpm --filter wework ai:verify:electron:build' \
     "$desktop_build_action" ||
@@ -683,20 +743,27 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   ! grep -Fq 'uses: ./.github/actions/build-wework-core-e2e' \
     "$warmup_workflow" ||
   ! grep -Fq 'publish-wework-core-e2e-build-oci.sh' "$warmup_workflow" ||
-  [[ "$memory_build_section" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
-  [[ "$memory_build_section" != *'wework-macos-executor-runtime-v1-'* ]] ||
-  [[ "$memory_build_section" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
-  [[ "$memory_build_section" != *'build-macos-e2e-runtimes.sh'* ]] ||
-  [[ "$memory_build_section" != *'resolve-wework-macos-e2e-build-ref.sh'* ]] ||
-  [[ "$memory_build_section" != *'restore-wework-macos-e2e-build.sh'* ]] ||
-  [[ "$memory_build_section" != *'archive-wework-macos-e2e-build.sh'* ]] ||
+  [[ "$macos_build_source" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
+  [[ "$macos_build_source" != *'wework-macos-executor-runtime-v1-'* ]] ||
+  [[ "$macos_build_source" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
+  [[ "$macos_build_source" != *'build-macos-e2e-runtimes.sh'* ]] ||
+  [[ "$macos_build_source" != *'node .github/scripts/macos-e2e-build.mjs restore'* ]] ||
+  [[ "$macos_build_source" != *'restore-wework-macos-e2e-build.sh'* ]] ||
+  [[ "$macos_build_source" != *'archive-wework-macos-e2e-build.sh'* ]] ||
   [[ "$memory_build_section" != *'node wework/e2e/desktop/run-checkpoints.mjs'* ]] ||
-  ! grep -Fq 'Publish shared macOS Wework E2E build' "$warmup_workflow" ||
+  ! grep -Fq 'Archive and publish shared macOS Wework E2E build' "$macos_build_action" ||
   ! grep -Fq 'strip --strip-debug' \
     "$script_dir/archive-wework-core-e2e-build.sh"; then
   fail "Wework desktop builds must reuse content-addressed artifacts and shared Rust runtimes"
 fi
 
+node --test "$script_dir/runtime-artifact.test.mjs"
+node --test "$script_dir/builtin-plugin-staging.test.mjs"
+node --test "$script_dir/wework-core-e2e-transport.test.mjs"
+node --test "$script_dir/frontend-e2e-build.test.mjs"
+node --test "$script_dir/macos-e2e-build.test.mjs"
+node --test "$script_dir/ci-prebuilt-images.test.mjs"
+node --test "$script_dir/resolve-ci-image.test.mjs"
 ruby "$script_dir/test-backend-rs-e2e-runtime.rb"
 bash "$script_dir/test-wework-core-e2e-runtimes.sh"
 
@@ -708,6 +775,7 @@ bash "$script_dir/test-wework-core-e2e-build-oci.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"
 bash "$script_dir/test-restore-oci-runtime-binary.sh"
 bash "$script_dir/test-configure-sccache.sh"
+bash "$script_dir/test-rust-cache.sh"
 bash "$script_dir/test-download-actions-artifact.sh"
 
 printf 'CI cache policy tests passed\n'

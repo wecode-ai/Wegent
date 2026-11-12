@@ -1,0 +1,12 @@
+{
+  "order": 146000,
+  "scenario": "./scenarios/context-compaction.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 107000,
+      "shard": 3,
+      "position": 16000
+    }
+  }
+}

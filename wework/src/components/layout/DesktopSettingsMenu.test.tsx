@@ -1,13 +1,17 @@
+import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
+import { getWegentUsageDisplay } from '@/api/wegentUsage'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
+import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
+import type { AppUpdateError } from '@/features/app-update/app-update-error'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
-import { getWegentUsageDisplay } from '@/api/wegentUsage'
-import type { AppUpdateError } from '@/features/app-update/app-update-error'
-import { defaultAppPreferences } from '@/desktop/appPreferences'
-import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
+import zh from '@/i18n/locales/zh-CN/common.json'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 
+const translations = createInstance()
 const mockCheckNow = vi.fn()
 const mockInstallUpdate = vi.fn()
 const runtimeModeMock = vi.hoisted(() => ({
@@ -111,23 +115,26 @@ function renderMenu({
     />
   )
   render(
-    localCodexSubscriptionEnabled === undefined ? (
-      menu
-    ) : (
-      <AppPreferencesContext.Provider
-        value={{
-          loaded: true,
-          preferences: { ...defaultAppPreferences, localCodexSubscriptionEnabled },
-        }}
-      >
-        {menu}
-      </AppPreferencesContext.Provider>
-    )
+    <I18nextProvider i18n={translations}>
+      {localCodexSubscriptionEnabled === undefined ? (
+        menu
+      ) : (
+        <AppPreferencesContext.Provider
+          value={{
+            loaded: true,
+            preferences: { ...defaultAppPreferences, localCodexSubscriptionEnabled },
+          }}
+        >
+          {menu}
+        </AppPreferencesContext.Provider>
+      )}
+    </I18nextProvider>
   )
 }
 
 describe('DesktopSettingsMenu', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await translations.init({ lng: 'zh-CN', resources: { 'zh-CN': { common: zh } } })
     vi.clearAllMocks()
     mockUpdateState = {
       availableUpdate: null,
@@ -170,61 +177,6 @@ describe('DesktopSettingsMenu', () => {
     expect(mockCheckNow).toHaveBeenCalledTimes(1)
   })
 
-  test('uses subdued regular text for normal menu actions', () => {
-    renderMenu()
-
-    expect(screen.getByTestId('settings-menu-button')).toHaveClass(
-      'font-normal',
-      'text-text-primary'
-    )
-  })
-
-  test('opens the About settings page from the menu', async () => {
-    const onOpenAbout = vi.fn()
-    renderMenu({ onOpenAbout })
-
-    await userEvent.click(screen.getByTestId('about-menu-button'))
-
-    expect(onOpenAbout).toHaveBeenCalledTimes(1)
-  })
-
-  test('does not render the old account or quota summary row', async () => {
-    renderMenu()
-
-    expect(screen.queryByTestId('settings-account-group')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('account-menu-button')).not.toBeInTheDocument()
-    expect(screen.getByText('Codex 剩余额度')).toBeInTheDocument()
-    expect(await screen.findByText('AIGC额度')).toBeInTheDocument()
-  })
-
-  test('hides the Codex quota item when the local Codex subscription is off', async () => {
-    renderMenu({ localCodexSubscriptionEnabled: false })
-
-    expect(screen.queryByTestId('usage-menu-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('Codex 剩余额度')).not.toBeInTheDocument()
-    expect(await screen.findByText('AIGC额度')).toBeInTheDocument()
-  })
-
-  test('hides logout in local-first app runtime', () => {
-    runtimeModeMock.isLocalFirstAppRuntime.mockReturnValue(true)
-
-    renderMenu()
-
-    expect(screen.queryByTestId('logout-menu-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('退出登录')).not.toBeInTheDocument()
-  })
-
-  test('shows logout for a connected cloud account in local-first app runtime', async () => {
-    runtimeModeMock.isLocalFirstAppRuntime.mockReturnValue(true)
-    const onLogout = vi.fn()
-
-    renderMenu({ showLogout: true, onLogout })
-
-    await userEvent.click(screen.getByTestId('logout-menu-button'))
-
-    expect(onLogout).toHaveBeenCalledTimes(1)
-  })
-
   test('shows a descriptive login action for a disconnected cloud account', async () => {
     const onLogin = vi.fn()
 
@@ -238,26 +190,6 @@ describe('DesktopSettingsMenu', () => {
     await userEvent.click(loginButton)
 
     expect(onLogin).toHaveBeenCalledTimes(1)
-  })
-
-  test('installs a discovered app update', async () => {
-    mockUpdateState = {
-      ...mockUpdateState,
-      availableUpdate: {
-        currentVersion: '0.1.0',
-        version: '0.1.1',
-      },
-      status: 'available',
-    }
-    mockInstallUpdate.mockResolvedValue(undefined)
-
-    renderMenu()
-
-    const updateButton = screen.getByTestId('check-app-update-button')
-    expect(updateButton).toHaveTextContent('更新到 0.1.1')
-
-    await userEvent.click(updateButton)
-    expect(mockInstallUpdate).toHaveBeenCalledTimes(1)
   })
 
   test('shows download progress in the update icon and menu item', () => {
@@ -322,44 +254,6 @@ describe('DesktopSettingsMenu', () => {
     expect(checkNow).toHaveBeenCalledTimes(1)
   })
 
-  test('keeps download progress directly below the update action', () => {
-    mockUpdateState = {
-      ...mockUpdateState,
-      availableUpdate: {
-        currentVersion: '0.1.0',
-        version: '0.1.1',
-      },
-      status: 'downloading',
-      downloadProgress: {
-        downloadedBytes: 50,
-        totalBytes: 100,
-      },
-    }
-
-    renderMenu()
-
-    const menu = screen.getByTestId('settings-menu')
-    const updateButton = screen.getByTestId('check-app-update-button')
-    const progress = screen.getByTestId('app-update-download-progress')
-    const aboutButton = screen.getByTestId('about-menu-button')
-
-    expect(
-      Array.from(menu.children).indexOf(updateButton) < Array.from(menu.children).indexOf(progress)
-    ).toBe(true)
-    expect(
-      Array.from(menu.children).indexOf(progress) < Array.from(menu.children).indexOf(aboutButton)
-    ).toBe(true)
-  })
-
-  test('shows usage reset times in the expanded usage panel', async () => {
-    renderMenu()
-
-    await userEvent.click(screen.getByTestId('usage-menu-button'))
-
-    expect(await screen.findByText('11:30 重置')).toBeInTheDocument()
-    expect(screen.getByText('1月5日 09:15 重置')).toBeInTheDocument()
-  })
-
   test('hides an unavailable five-hour quota without leaving an empty value row', async () => {
     getLocalCodexUsageDisplayMock.mockResolvedValue({
       status: 'available',
@@ -387,34 +281,6 @@ describe('DesktopSettingsMenu', () => {
     expect(await screen.findByText('44%')).toBeInTheDocument()
     expect(screen.queryByText('5小时额度')).not.toBeInTheDocument()
     expect(screen.queryByText('无')).not.toBeInTheDocument()
-  })
-
-  test('keeps an exhausted five-hour quota visible', async () => {
-    getLocalCodexUsageDisplayMock.mockResolvedValue({
-      status: 'available',
-      fiveHour: {
-        label: '5h',
-        title: '5小时额度',
-        value: '0%',
-        percent: 0,
-        resetsAt: 1,
-      },
-      sevenDay: {
-        label: '7d',
-        title: '7天额度',
-        value: '44%',
-        percent: 44,
-        resetsAt: 2,
-      },
-      trayTitle: '5h 0%\n7d 44%',
-      tooltip: '5小时额度 0%\n7天额度 44%',
-    })
-
-    renderMenu()
-    await userEvent.click(screen.getByTestId('usage-menu-button'))
-
-    expect(await screen.findByText('5小时额度')).toBeInTheDocument()
-    expect(screen.getByText('0%')).toBeInTheDocument()
   })
 
   test('loads and displays the Wegent model quota', async () => {

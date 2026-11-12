@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash, randomBytes } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
 import { Transform } from 'node:stream'
 
@@ -106,6 +107,7 @@ export class TransportFaultProxy {
     this.requests = []
     this.sockets = new Set()
     this.upstreams = new Set()
+    this.pausedRequests = new Set()
     this.websockets = new Set()
     this.deviceSockets = new Set()
     this.rule = () => null
@@ -114,7 +116,12 @@ export class TransportFaultProxy {
     this.preserveHost = preserveHost
     this.webSocketsDisconnected = false
     this.capabilitySyncGate = null
+    this.registrationFault = null
+    this.stopPromise = null
     this.server = createServer((request, response) => this.forward(request, response))
+    // Only configured faults may interrupt healthy traffic. Teardown closes
+    // tracked sockets; an idle timer must not race the next package request.
+    this.server.keepAliveTimeout = 0
     this.server.on('connection', socket => this.track(socket))
     this.server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head))
   }
@@ -141,31 +148,122 @@ export class TransportFaultProxy {
   forward(request, response) {
     const url = new URL(request.url, this.target)
     // Retain no headers, tokens, request bodies or device query strings.
-    const entry = { method: request.method, path: url.pathname, unscoped: !url.search }
+    const entry = {
+      method: request.method,
+      path: url.pathname,
+      unscoped: !url.search,
+      receivedAt: new Date().toISOString(),
+    }
+    const requestId = request.headers['x-request-id']
+    if (typeof requestId === 'string') {
+      entry.requestIdFingerprint = createHash('sha256').update(requestId).digest('hex')
+    }
     this.requests.push(entry)
+    response.once('finish', () => {
+      entry.responseCompleted = true
+      entry.completedAt = new Date().toISOString()
+    })
     const fault = this.rule(entry, request)
     entry.fault = fault
+    if (fault === 'disconnect') {
+      request.resume()
+      response.destroy()
+      return
+    }
     if (fault === 'hold-request') {
       request.resume()
       // A canceled destructive request must never be replayed when the fault is lifted.
       return
     }
+    if (fault === 'pause-request') {
+      // Hold the untouched request stream, then forward it exactly once on release.
+      // Unlike hold-request, a paused request is resumable because the real client
+      // is still waiting for a real reply.
+      let forwarded = false
+      this.pausedRequests.add(entry)
+      response.once('close', () => {
+        this.pausedRequests.delete(entry)
+        // A transport that closed without delivering a full reply was cancelled.
+        if (!entry.responseCompleted) entry.cancelled = true
+      })
+      entry.release = () => {
+        if (forwarded || entry.cancelled || response.destroyed || response.writableEnded)
+          return false
+        forwarded = true
+        entry.released = true
+        this.pausedRequests.delete(entry)
+        this.forwardUpstream(request, response, entry, null)
+        return true
+      }
+      entry.cancel = () => {
+        if (entry.cancelled || response.destroyed || response.writableEnded) return false
+        entry.cancelled = true
+        this.pausedRequests.delete(entry)
+        request.resume()
+        response.destroy()
+        return true
+      }
+      // Leave the original request stream paused; release forwards it once unchanged.
+      return
+    }
+    this.forwardUpstream(request, response, entry, fault)
+  }
+
+  forwardUpstream(request, response, entry, fault) {
     const upstream = httpRequest(this.options(request), incoming => {
       entry.status = incoming.statusCode
+      if (fault === 'drop-before-headers') {
+        // Native send() completes when headers arrive. Lose the acknowledgement
+        // itself after the real Backend commits, not merely its response body.
+        incoming.resume()
+        incoming.once('end', () => {
+          entry.committedResponseDropped = true
+          entry.dropped = true
+          response.destroy()
+        })
+        return
+      }
       if (fault === 'hold-response') {
         const chunks = []
         incoming.on('data', chunk => chunks.push(chunk))
         incoming.once('end', () => {
+          if (response.destroyed) return
+          let held = {
+            status: incoming.statusCode,
+            headers: incoming.headers,
+            body: Buffer.concat(chunks),
+          }
+          // Functions keep the real reply inspectable without serializing its bytes or headers.
+          entry.readHeldResponse = () => held
+          response.once('close', () => {
+            held = null
+          })
           entry.release = () =>
             new Promise(resolve => {
-              if (response.destroyed || response.writableEnded) {
-                resolve()
+              const reply = held
+              held = null
+              if (!reply || response.destroyed || response.writableEnded) {
+                resolve(false)
                 return
               }
-              response.once('finish', resolve)
-              response.once('close', resolve)
-              response.writeHead(incoming.statusCode, incoming.headers)
-              response.end(Buffer.concat(chunks))
+              response.once('finish', () => resolve(true))
+              response.once('close', () => resolve(entry.responseCompleted === true))
+              let headers = reply.headers
+              if (entry.responseTimingId) {
+                assert.match(entry.responseTimingId, /^[a-zA-Z0-9-]+$/)
+                headers = {
+                  ...headers,
+                  'server-timing': [
+                    headers['server-timing'],
+                    `wework-e2e-response;desc="${entry.responseTimingId}"`,
+                  ]
+                    .filter(Boolean)
+                    .join(', '),
+                  'timing-allow-origin': request.headers.origin ?? '*',
+                }
+              }
+              response.writeHead(reply.status, headers)
+              response.end(reply.body)
               entry.released = true
             })
           entry.committedResponseHeld = true
@@ -203,7 +301,7 @@ export class TransportFaultProxy {
       return
     }
     const options = this.options(request)
-    if (this.capabilitySyncGate) {
+    if (this.capabilitySyncGate || this.registrationFault) {
       // The frame gate must see original JSON messages. Negotiate a real
       // uncompressed connection instead of interpreting compressed payloads.
       delete options.headers['sec-websocket-extensions']
@@ -243,16 +341,25 @@ export class TransportFaultProxy {
       )
       if (head.length) socket.write(head)
       if (upstreamHead.length) socket.unshift(upstreamHead)
-      if (this.capabilitySyncGate) {
+      if (this.capabilitySyncGate || this.registrationFault) {
         const gate = this.capabilitySyncGate
-        const delivery = new WebSocketMessageFilter(gate.receive)
-        const acknowledgements = new WebSocketMessageFilter(gate.observeAcknowledgement)
+        const fault = this.registrationFault
+        const delivery = new WebSocketMessageFilter((text, frames, output) => {
+          fault?.observe(text)
+          return gate?.receive(text, frames, output) ?? false
+        })
+        const acknowledgements = new WebSocketMessageFilter((text, frames, output) => {
+          if (fault?.rewrite(text, output)) return true
+          return gate?.observeAcknowledgement(text, frames, output) ?? false
+        })
         delivery.on('error', error => {
-          gate.error = error
+          if (gate) gate.error = error
+          if (fault) fault.error = error
           downstream.destroy()
         })
         acknowledgements.on('error', error => {
-          gate.error = error
+          if (gate) gate.error = error
+          if (fault) fault.error = error
           socket.destroy()
         })
         downstream.pipe(acknowledgements).pipe(socket)
@@ -291,6 +398,54 @@ export class TransportFaultProxy {
       for (const socket of this.websockets) socket.destroy()
       for (const socket of this.deviceSockets) socket.destroy()
     }
+  }
+
+  rejectDeviceRegistration() {
+    assert.equal(this.registrationFault, null)
+    const requests = new Set()
+    const fault = {
+      submitted: 0,
+      rejected: 0,
+      error: null,
+      rewrite(text, output) {
+        const packet = text.match(/^42(\/[^,]+,)?(\d+)(\[.*)$/s)
+        if (!packet) return false
+        const data = JSON.parse(packet[3])
+        if (data[0] !== 'device:register') return false
+        // Send a schema-invalid ID to the real Backend. Its actual validator
+        // produces the rejection; Socket auth and unrelated packets stay real.
+        data[1].device_id = ''
+        const prefix = `${packet[1] ?? ''}${packet[2]}`
+        requests.add(prefix)
+        fault.submitted += 1
+        const payload = Buffer.from(`42${prefix}${JSON.stringify(data)}`)
+        assert.ok(payload.length <= 65535)
+        const wide = payload.length >= 126
+        const header = Buffer.alloc(wide ? 8 : 6)
+        header[0] = 129
+        header[1] = 128 | (wide ? 126 : payload.length)
+        if (wide) header.writeUInt16BE(payload.length, 2)
+        const mask = randomBytes(4)
+        mask.copy(header, wide ? 4 : 2)
+        for (let i = 0; i < payload.length; i += 1) payload[i] ^= mask[i % 4]
+        output.push(Buffer.concat([header, payload]))
+        return true
+      },
+      observe(text) {
+        for (const prefix of requests) {
+          if (!text.startsWith(`43${prefix}[`)) continue
+          const [ack] = JSON.parse(text.slice(2 + prefix.length))
+          if (
+            ack?.success === false ||
+            (typeof ack?.error === 'string' && ack.error.startsWith('Invalid payload:'))
+          )
+            fault.rejected += 1
+          requests.delete(prefix)
+        }
+      },
+    }
+    this.registrationFault = fault
+    return fault
   }
 
   holdNextCapabilitySync(matches) {
@@ -339,11 +494,16 @@ export class TransportFaultProxy {
   }
 
   async stop() {
-    this.capabilitySyncGate?.release()
-    for (const request of this.upstreams) request.destroy()
-    for (const socket of this.sockets) socket.destroy()
-    await new Promise((resolve, reject) =>
-      this.server.close(error => (error ? reject(error) : resolve()))
-    )
+    this.stopPromise ??= (async () => {
+      this.capabilitySyncGate?.release()
+      // Paused requests have no upstream yet; cancel them so clients settle.
+      for (const entry of [...this.pausedRequests]) entry.cancel?.()
+      for (const request of this.upstreams) request.destroy()
+      for (const socket of this.sockets) socket.destroy()
+      await new Promise((resolve, reject) =>
+        this.server.close(error => (error ? reject(error) : resolve()))
+      )
+    })()
+    return this.stopPromise
   }
 }

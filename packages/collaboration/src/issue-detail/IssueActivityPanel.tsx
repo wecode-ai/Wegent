@@ -105,14 +105,14 @@ export function IssueActivityPanel({
     async (sequence: number) => {
       if (!api.issues) return
       try {
-        const updated = await api.issues.markRead(issue.id, sequence)
+        const updated = await api.issues.markRead(issue.id, sequence, issue.content_revision)
         onTaskRead(updated)
       } catch (cause) {
         onError()
         throw cause
       }
     },
-    [api.issues, issue.id, onError, onTaskRead]
+    [api.issues, issue.id, issue.content_revision, onError, onTaskRead]
   )
   const scroll = useIssueActivityScroll({
     messages: chat.messages,
@@ -294,7 +294,9 @@ export function IssueActivityPanel({
                 entry.kind === 'comment'
                   ? entry.comment.author
                   : entry.kind === 'assignment'
-                    ? entry.assignment.created_by_user_name || translate('todo.someone', '项目成员')
+                    ? entry.assignment.automation?.rule_name ||
+                      entry.assignment.created_by_user_name ||
+                      translate('todo.someone', '项目成员')
                     : translate('todo.execution_run', '执行任务')
               const content =
                 entry.kind === 'comment'

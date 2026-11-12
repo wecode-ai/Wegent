@@ -6,7 +6,39 @@ sidebar_position: 8
 
 A Skill gives AI task-specific instructions and resources. A plugin can package Skills, commands, tools, and application entries.
 
-Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
+## Look up Wework documentation
+
+**Wework Docs** ships with the application and is installed by default, without a separate download or authorization. Ask questions such as “How do I configure a model in Wework?”, “How do projects differ from workspaces?”, or “How do I use the built-in browser?”. The agent can automatically use the `wework-docs` Skill, or you can select it explicitly in a conversation.
+
+The Skill includes the Chinese and English Wework documentation shipped with the build, supports offline reading, and cites its sources. Documentation describes product usage; actions available in a conversation still depend on its tools, device, and permissions. Latest release information and account availability require separate verification.
+
+You can also ask “Where are proxy settings?”, “How do I open a terminal?”, or “Why can't I find Worktrees?”. The Skill starts with [Interface navigation and feature locations](./interface-navigation.md) to give the starting region, click path and visibility conditions.
+
+## Use plugins
+
+### Local installation and synchronization to other devices
+
+On versions that support local execution, when the capability is enabled for your account, keep your account signed in, the network available and the local runtime running. You can install, remove, update and refresh/repair plugins even while this device is not connected to the cloud. Other cloud devices synchronize independently in the background; their offline state or sync failures do not delay local completion. Older versions retain their original connection requirements.
+
+An installed plugin can still require account authorization. Open its details and connect the required apps before using their protected capabilities. Refreshing does not authorize apps or switch accounts. After an interruption, reopen the plugin page and refresh to recover unfinished local work.
+
+<!-- ui-source: src/components/settings/PluginSettingsPage.tsx -->
+
+### Individual plugin operations
+
+| Goal                       | UI steps                                                                       | Conditions or limits                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Find and install           | Left sidebar → Plugins → search/filter source → details → Install              | Review trust confirmation for unofficial plugins; cancel leaves them uninstalled                                 |
+| Try a task                 | Details → example task / start conversation → review composer → send           | Filling the composer is not sending or authorizing                                                               |
+| Authorize an app           | Details → App authorizations → matching app → native login → return and verify | Authorization is app-, account- and execution-device-specific                                                    |
+| Enable, disable, uninstall | Plugin management list → plugin action                                         | Disable retains installation; uninstall is not deletion of created content                                       |
+| Import ZIP                 | Plugins → Create → Import plugin → choose ZIP → review → confirm               | Standard format and trust rules apply                                                                            |
+| Share, edit or delete      | Personal plugin details → Share or … menu                                      | Depends on ownership, publication state and version support; preserve implementation-status qualifications below |
+| Online Codex connectors    | Settings → Integrations → Plugins → Load online connectors                     | Codex runtime configuration; does not replace app login or plugin installation                                   |
+
+For inconsistent installation state, use management's refresh/repair entry and inspect errors. Repeated uninstall/reinstall does not resolve authorization, offline devices or permissions.
+
+Open **left sidebar → Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
 When installing an unofficial plugin from Enterprise, Personal, or an external marketplace, including public community submissions, the confirmation dialog warns that it may execute code, access local files, or send data to external services. Public visibility does not establish official provenance. Only continue if you trust its source. Focus starts on **Cancel**, and Escape closes the dialog. Trying an uninstalled unofficial plugin also requires confirmation before installation and placing the example in a new conversation. OpenAI official and Wework official plugins retain their existing installation flow. Personal ZIP imports show the same source warning in the preview dialog.
 
@@ -15,6 +47,10 @@ When installing an unofficial plugin from Enterprise, Personal, or an external m
 The marketplace, plugin manager, and conversation picker share the installed inventory for the current account and device. The picker retains all installed, enabled plugins; scroll or search when the visible list has a fixed height. Plugins awaiting authorization remain selectable. Disabled plugins stay in the management list but are excluded from new conversation pickers.
 
 Manage the matching app under **App authorizations** on the plugin detail page; authorization for one app cannot authorize another. GitHub uses GitHub CLI (`gh`) on the execution device: Wework checks existing authentication first, offers logout when connected, and starts GitHub login only when needed. That device's `gh` manages the credentials, without authorizing ChatGPT. Environment-provided credentials cannot be removed by logout; remove them from the execution device's configuration instead.
+
+The GitHub plugin, the GitHub.com check under **Settings → Git hosting**, and task execution use the same credential environment. Network, permission, and CLI execution errors are reported as detection failures rather than missing authentication. Open settings and plugin details refresh after login, logout, or returning to Wework. To change device-synchronized credentials, update the Git account and synchronize it again; interactive login and logout do not write to the synchronized store.
+
+For device authorization, enter the code shown on the card into GitHub's authorization page and complete confirmation. Wework offers the browser action only after obtaining a valid device code and GitHub authorization URL. Missing codes and authorization-prompt timeouts display an error and allow another attempt. Signing into the website alone does not complete CLI authorization. Ordinary Git commits, pushes, and GitLab operations do not require GitHub login.
 
 Other Codex apps use their own provided authorization entry. Complete that app's authorization in the browser, then return to Wework and choose **Authorization completed, verify connection**. Opening a browser does not establish a connection. A blocked, timed-out, or unavailable app catalog produces a short message and leaves the app disconnected, rather than displaying a raw HTML error page as an authorization result.
 
@@ -50,6 +86,35 @@ Wework validates the resulting DSH profile after each install, update, enable, d
 On the **Plugins** page, choose **Create → Import plugin** to import a standard ZIP package that follows the `wework-plugins` format. The ZIP root must contain `.codex-plugin/plugin.json`, and any Skills or MCP servers must be included in the same plugin package. Encrypted or password-protected ZIP files are not supported.
 
 If you do not have a package yet, choose **Download example plugin** in the import dialog and use it as the starting point for the manifest, Skills, and MCP configuration. After selecting a ZIP, Wework previews its name, version, and included capabilities. Packages with executable capabilities require an explicit trust confirmation before import and installation. When a package is invalid, the dialog identifies the missing file or unsupported ZIP type.
+
+## Managed local Python
+
+After startup, Wework asynchronously inspects locally installed, enabled plugins. Python adapters, commands, scripts, or runtime declarations request background preparation of the client-pinned Python 3.12.12. Installing or enabling a plugin also checks demand. Users without Python plugins do not automatically download Python; an existing healthy runtime is reused. Preparation does not block the main window or ordinary tasks. Chat execution, authorization, and background preparation share one installation. A failed automatic preparation is not retried repeatedly during the same application launch; users can retry from the notice or execution environment settings. The notice shows actual download progress and installation and verification stages. The interpreter and launchers remain under `managed-runtimes/python/` in application data without changing ordinary tasks' `PATH` or Python configuration.
+
+Plugin package installation is independent of Python preparation: packages can still be installed while Python is downloading or after preparation fails. Before actual execution, the host selects an interpreter, waiting for managed Python by default. Preparation failures return a runtime error while preserving previous task results. Open **Settings → Execution environments** to inspect the installation state or retry manually.
+
+During preparation, a validated local Python can temporarily run a plugin only when its `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json` explicitly declares a compatible local Python minor version and no externally installed dependencies:
+
+```json
+{
+  "runtimeRequirements": {
+    "python": {
+      "systemFallback": {
+        "version": "3.12",
+        "dependencies": []
+      }
+    }
+  }
+}
+```
+
+`version` is the accepted local interpreter major and minor version; ranges are unsupported. `dependencies` must explicitly be empty. The host searches its executable path and verifies the interpreter version and baseline standard library in isolation without executing plugin code. Temporary execution uses `-B -E -s -S` to ignore Python environment variables and user/global site-packages. Only that plugin child's interpreter and search path change; no dependencies are installed. Chat scripts, Python account adapters, and direct Python commands support this selection. Shell wrappers continue waiting for managed Python, as do plugins with missing declarations, unknown dependencies, or failed validation. Background installation continues, and the notice identifies the temporary local Python version. Running processes retain their interpreter; new invocations prefer managed Python once ready.
+
+Codex and ClaudeCode chats receive host-owned execution instructions that route plugin Skill examples using `python`, `python3`, or `uv` to `"$WEGENT_EXECUTOR_BINARY" plugin-python /absolute/plugin/path/scripts/example.py [script arguments]`; PowerShell uses `& $env:WEGENT_EXECUTOR_BINARY plugin-python <script-path> <arguments>`. The runner checks that the script belongs to a package with a valid plugin manifest, prepares managed Python on demand, and preserves the task working directory, script arguments, output, and exit code. Python environment cleanup and the host-selected interpreter apply only to the plugin child; ordinary project scripts keep their existing environment. This routing does not intercept arbitrary shell commands. Preparation failures stop the current plugin invocation; after retrying preparation, the user can ask to continue execution.
+
+Background account synchronization and revocation only check managed runtime readiness. Python connectors are deferred until background preparation or explicit preparation completes; maintenance then resumes before creating a migration intent or claiming a revocation lease. Python and non-Python connectors within the same plugin are also independent: waiting for Python or a preparation failure does not block other connectors. Each synchronization or revocation cycle runs at most four provider operations concurrently; preparation does not occupy an operation slot. Identity and plugin definitions are validated again when claiming an operation. External callers should create manual migration intents after Python is ready so downloading does not consume their five-minute lifetime. An intent that expires while waiting is rejected and must be created again.
+
+The managed runtime provides a shared interpreter and standard library. It does not create an application-wide virtual environment or automatically install third-party libraries for every plugin. Plugins own their dependencies: pure Python dependencies can be bundled directly; plugins that need an isolated environment should pin the complete dependency set and checksums, bundle installation artifacts for the target operating system and CPU architecture, and prepare those dependencies offline in a private plugin environment rather than installing into the shared interpreter. This is the plugin delivery contract, not a claim that every existing plugin has migrated.
 
 ## View, share, and request company-wide publishing
 
@@ -172,7 +237,41 @@ were created, so restarting Wework does not remove their plugin capabilities.
 
 Type `/` in the composer to choose a Skill, or name the Skill in your request. Wework supplies its instructions to AI for that task.
 
-Use **Settings → Coding → Skills** to manage local Skills. Unified management places Codex and Claude Code Skills under `~/.agents/skills`; name collisions are preserved with source suffixes.
+### Inspect and toggle individual Skills
+
+Open **left sidebar → Plugins → plugin details → included capabilities** and select a Skill to read its instructions and invocation. When installed and manageable, toggle individual components on their capability rows or use Disable/Restore at the bottom of Skill details. Disabling a component differs from disabling its whole plugin.
+
+**Run Skill** requires an installed, enabled Skill and no pending start request. Review the resulting task flow before continuing; running it does not authorize external services. Global settings currently has no **Coding → Skills** page; do not follow the obsolete unified-directory migration UI instructions.
+
+### Mini-program experience links and QR codes
+
+In **Applications → Mini Programs**, a row offers **View QR code** and copy-link actions only when experience access is supported and an experience URL exists. Open the code for scanning or copy the URL and inspect success feedback before sharing. Missing URLs/capabilities show an empty value; do not look in site-publishing menus for this code. Close a failed QR dialog and inspect the link; confirm audience and the mini-program's access restrictions before sharing.
+
+### Add a custom plugin marketplace
+
+Open **left sidebar → Plugins → Create → Add plugin marketplace**. Enter a GitHub shorthand, HTTPS/SSH Git URL or local directory as **Source**. Optionally set **Git reference** (otherwise the main branch) and **Sparse path** (currently also displayed as **稀疏路径**), then select **Add marketplace**. Leave optional fields empty unless you need a particular revision or subdirectory.
+
+Correct validation errors in the form; Cancel/Close adds nothing. Adding a source does not install every plugin in it. Still review contents, trust prompts and execution device before installation. Private repositories use that device's native authentication; do not paste access tokens into the source field.
+
+### Edit site information
+
+Open **Applications → Sites → row … → Edit site**, change the title/custom domain prefix and select **Save**; Cancel discards changes. Prefixes are lowercased and the field accepts lowercase letters, digits and hyphens. Resolve conflicts or save errors shown in the dialog rather than clicking repeatedly. Availability depends on edit capability, not collaborator-management or access-management rights.
+
+### Copy a shared plugin into personal plugins
+
+When viewing a plugin as a sharing recipient, **… → Copy to my plugins** is available only if copying is allowed. Success imports a personal copy and opens its details; this is not copying a name or link to the clipboard. The action is disabled while preparing the copy, and failures appear on the plugin page. If it is absent, check recipient status and copy permission: access to use a plugin does not imply permission to copy it.
+
+### Query site visit data
+
+<a id="site-analytics-controls"></a>
+
+Open **left sidebar → Applications → Sites → site-row … → View visit data**. The entry appears only when the site's capabilities allow it.
+
+1. Choose start/end dates and select **Query**, or choose **Last 7 days** / **Last 31 days**.
+2. Dates use Beijing time (UTC+8), include both endpoints, span at most 31 days and cannot be reversed or in the future.
+3. Inspect **Page views (PV)**, **Unique visitors in range (UV)**, daily trends and the daily table. Range UV is independently deduplicated, not a sum of daily UV.
+4. If today is included, note the incomplete-data warning. No visits differs from a failed query. Contact an administrator when reporting is unconfigured; follow retry guidance for rate limits, timeouts or loading errors.
+5. Close to return to the list. Querying statistics neither publishes the site nor changes access permissions, and does not imply visitor-identity details are available.
 
 ## Development and migration
 

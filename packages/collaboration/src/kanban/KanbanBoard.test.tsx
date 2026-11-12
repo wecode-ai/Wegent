@@ -9,6 +9,7 @@ import {
   KanbanBoard,
   KanbanColumn,
   KanbanColumnDropzone,
+  KanbanColumnEmptyState,
   type KanbanDndAdapter,
 } from "./KanbanBoard";
 
@@ -130,13 +131,15 @@ describe("KanbanColumn", () => {
     });
     const [header, dropzone] = elementChildren(element);
     const dropzoneChildren = Children.toArray(dropzone.props.children);
-    const emptyButton = dropzoneChildren.find(
+    const emptyComponent = dropzoneChildren.find(
       (child) =>
         typeof child === "object" &&
         child !== null &&
         "props" in child &&
-        child.props["data-testid"] === "cloud-todo-column-empty-add-inbox",
-    ) as ReactElement;
+        child.type === KanbanColumnEmptyState,
+    ) as ReactElement<Parameters<typeof KanbanColumnEmptyState>[0]>;
+    const emptyButton = KanbanColumnEmptyState(emptyComponent.props);
+    expect(emptyButton.props["data-testid"]).toBe("cloud-todo-column-empty-add-inbox");
 
     expect(element.props["data-testid"]).toBe("cloud-todo-column-inbox");
     expect(element.props.className).toContain(

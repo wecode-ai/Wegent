@@ -47,7 +47,9 @@ function smartAppContext(installation: HarnessAppInstallation): SmartAppIdentity
 }
 
 function assertValidPreview(preview: HarnessAppPreview): void {
-  if (!preview.valid || !preview.manifest) throw new Error('Invalid Smart App package')
+  if (!preview.valid || !preview.manifest) {
+    throw new Error(preview.issues[0] || 'Invalid Smart App package')
+  }
 }
 
 function notifyInstalled(installation: HarnessAppInstallation): void {
@@ -107,17 +109,19 @@ export async function installMarketplaceSmartApp(
     throw error
   }
 
+  const details = { context: { smartApp: smartAppContext(installation) } }
+  if (installation.state !== 'installed' && installation.state !== 'running') {
+    attempt.fail('confirm', details)
+    throw new Error(`Smart app installation ended in state "${installation.state}".`)
+  }
+
   try {
     notifyInstalled(installation)
   } catch (error) {
-    attempt.fail('confirm', { context: { smartApp: smartAppContext(installation) } })
+    attempt.fail('confirm', details)
     throw error
   }
-
-  const details = { context: { smartApp: smartAppContext(installation) } }
-  if (installation.state === 'installed' || installation.state === 'running')
-    attempt.succeed(details)
-  else attempt.fail('confirm', details)
+  attempt.succeed(details)
   return installation
 }
 

@@ -64,53 +64,36 @@ cp .env.example .env
 
 4. Initialize database
 ```bash
-# Create database
 mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
-# Run database migrations (development mode - automatic on startup)
-# Or manually run:
-alembic upgrade head
-```
+# The default hybrid launcher initializes MySQL through Rust on development startup.
+# To apply pending migrations manually from this directory:
+cargo run --manifest-path ../backend-rs/Cargo.toml -- --env-file .env db upgrade
 ```
 
 **Database Migration System:**
-- Wegent uses Alembic for database schema version control
-- In development mode (`ENVIRONMENT=development`), migrations run automatically on startup
-- In production mode, migrations must be run manually for safety
-- See `alembic/README` for detailed migration commands
+- The Rust executable manages MySQL in hybrid mode, preserving the existing Alembic revision IDs and version table.
+- Development startup applies pending migrations when `DB_AUTO_MIGRATE=True`.
+- Fresh databases use the complete current schema; existing databases follow the revision graph.
+- Production migrations are explicit. MySQL DDL may commit implicitly; rollback is not guaranteed after a failure.
+- Python-only debugging retains its Alembic startup path. The hybrid launcher sets `DB_INITIALIZATION_OWNER=rust` to prevent duplicate initialization.
+- See the [Rust MySQL migration guide](../docs/en/wegent/developer-guide/rust-database-migrations.md).
 
 **Initial Data Loading:**
-- Initial data (admin user, default resources) is loaded from YAML files in `init_data/`
-- See `init_data/README.md` for details on YAML-based initialization
-- User modifications are preserved across restarts (create-only mode)
+- Canonical YAML resources and Skills live in [backend-rs/init_data](../backend-rs/init_data/README.md).
+- Existing resources are preserved; versioned built-in Skills retain their update rules.
 
 ## Database Migrations
 
-Wegent uses Alembic for database schema management. This provides:
-- Version control for database schema changes
-- Safe upgrade and rollback capabilities
-- Automatic migration in development, manual control in production
-
-### Common Migration Commands
+Run the native database commands from `backend-rs`:
 
 ```bash
-# View current migration status
-alembic current
-
-# View migration history
-alembic history
-
-# Apply all pending migrations
-alembic upgrade head
-
-# Rollback one migration
-alembic downgrade -1
-
-# Create a new migration after model changes
-alembic revision --autogenerate -m "description"
+cargo run -- --env-file ../backend/.env db status
+cargo run -- --env-file ../backend/.env db upgrade
+cargo run -- --env-file ../backend/.env db downgrade -1
 ```
 
-For detailed migration documentation, see `alembic/README`.
+New native migrations must update the revision asset, embedded registration and latest complete schema together. Keep applied migrations immutable. The legacy Alembic files remain the compatibility reference for Python-only operation.
 
 5. Set PYTHONPATH and run development server
 ```bash

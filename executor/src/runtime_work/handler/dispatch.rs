@@ -7,7 +7,7 @@ use super::*;
 // Build the selected future outside the dispatcher: debug builds otherwise reserve
 // stack temporaries for every branch even though only one route executes.
 #[inline(never)]
-fn boxed_rpc<'a, F, Fut>(
+pub(super) fn boxed_rpc<'a, F, Fut>(
     operation: F,
 ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>>
 where
@@ -25,6 +25,16 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         match method {
+            "runtime.coordination.contexts"
+            | "runtime.coordination.snapshot"
+            | "runtime.coordination.commit"
+            | "runtime.coordination.wake"
+            | "runtime.coordination.status" => {
+                boxed_rpc(move || async move { self.coordination_rpc(method, payload).await })
+            }
+            "runtime.stand_in.assignment_tasks" => {
+                boxed_rpc(move || async move { self.stand_in_assignment_tasks(payload) })
+            }
             "runtime.stand_in.telemetry.configure"
             | "runtime.stand_in.telemetry.list"
             | "runtime.stand_in.telemetry.ack" => {
@@ -33,17 +43,55 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.list" => {
                 boxed_rpc(move || async move { self.list_stand_in_settings(payload).await })
             }
+            "runtime.stand_in.device_identity" => boxed_rpc(move || async move {
+                Ok(json!({"deviceId":self.device_id,"backendDeviceId":self.cloud_device_id()?}))
+            }),
             "runtime.stand_in.personal.get" => {
-                boxed_rpc(move || async move { self.personal_stand_in_settings(payload, false) })
+                boxed_rpc(
+                    move || async move { self.personal_stand_in_settings(payload, false).await },
+                )
             }
-            "runtime.stand_in.personal.agents" => {
-                boxed_rpc(move || async move { self.personal_stand_in_agents(payload).await })
+            "runtime.stand_in.binding" => {
+                boxed_rpc(move || async move { self.stand_in_binding(payload) })
+            }
+            "runtime.stand_in.personal.lifecycle" => {
+                boxed_rpc(move || async move { self.personal_stand_in_lifecycle(payload).await })
+            }
+            "runtime.stand_in.onboarding.get" | "runtime.stand_in.onboarding.complete" => {
+                boxed_rpc(
+                    move || async move { self.stand_in_onboarding_rpc(method, payload).await },
+                )
             }
             "runtime.stand_in.personal.save" => {
-                boxed_rpc(move || async move { self.personal_stand_in_settings(payload, true) })
+                boxed_rpc(
+                    move || async move { self.personal_stand_in_settings(payload, true).await },
+                )
             }
             "runtime.stand_in.conversation" => {
                 boxed_rpc(move || async move { self.stand_in_conversation(payload).await })
+            }
+            "runtime.project_coordinator.conversation" => {
+                boxed_rpc(
+                    move || async move { self.project_coordinator_conversation(payload).await },
+                )
+            }
+            "runtime.project_coordinator.binding.get"
+            | "runtime.project_coordinator.binding.save" => boxed_rpc(move || async move {
+                self.project_coordination_binding(method, payload).await
+            }),
+            "runtime.project_coordinator.command.get"
+            | "runtime.project_coordinator.command.dispatch" => boxed_rpc(move || async move {
+                self.project_coordination_command(method, payload).await
+            }),
+            "runtime.project_coordinator.processing.get"
+            | "runtime.project_coordinator.processing.check" => boxed_rpc(move || async move {
+                self.project_coordination_processing(method, payload).await
+            }),
+            "runtime.stand_in.processing.status" => {
+                boxed_rpc(move || async move { self.stand_in_processing_status(payload) })
+            }
+            "runtime.stand_in.processing.check" => {
+                boxed_rpc(move || async move { self.check_stand_in_processing(payload).await })
             }
             "runtime.stand_in.memory.list" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "list") })
@@ -54,11 +102,17 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.memory.delete" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "delete") })
             }
+            "runtime.stand_in.memory.rules.list" => {
+                boxed_rpc(move || async move { self.stand_in_memory(payload, "list_rules") })
+            }
+            "runtime.stand_in.memory.rules.delete" => {
+                boxed_rpc(move || async move { self.stand_in_memory(payload, "delete_rule") })
+            }
             "runtime.stand_in.proposal.get" => {
-                boxed_rpc(move || async move { self.stand_in_proposal(payload, false) })
+                boxed_rpc(move || async move { self.stand_in_proposal(payload, false).await })
             }
             "runtime.stand_in.proposal.resolve" => {
-                boxed_rpc(move || async move { self.stand_in_proposal(payload, true) })
+                boxed_rpc(move || async move { self.stand_in_proposal(payload, true).await })
             }
             "runtime.connections.host" => {
                 boxed_rpc(move || async move { self.configure_connection_host(payload) })
@@ -68,6 +122,15 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.connection_call("catalog", None, payload).await },
                 )
             }
+            "runtime.connections.git.read" => {
+                boxed_rpc(move || async move { super::super::git_connections::read(payload).await })
+            }
+            "runtime.connections.git.webhooks" => {
+                boxed_rpc(move || async move { self.git_connection_webhook(payload).await })
+            }
+            "runtime.connections.git.authTarget" => boxed_rpc(move || async move {
+                super::super::local_connector_auth::gitlab_cli::target(&payload)
+            }),
             "runtime.connections.dependencies.inventory" => boxed_rpc(move || async move {
                 {
                     self.handle_codex_app_server_rpc(
@@ -195,6 +258,10 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.create" => {
                 boxed_rpc(move || async move { self.create_task(payload).await })
             }
+            "runtime.tasks.create_from_intent" => boxed_rpc(move || async move {
+                let payload = self.compile_creation_intent(payload).await?;
+                self.create_task(payload).await
+            }),
             "runtime.collaboration.dispatch" => {
                 boxed_rpc(move || async move { self.create_collaboration_dispatch(payload).await })
             }
@@ -209,6 +276,12 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.tasks.fork_at_turn" => {
                 boxed_rpc(move || async move { self.fork_task_at_turn(payload).await })
+            }
+            "runtime.tasks.commands.get" => {
+                boxed_rpc(move || async move { self.review_command_receipt(payload).await })
+            }
+            "runtime.tasks.commands.resolve" => {
+                boxed_rpc(move || async move { self.resolve_command_owner(payload).await })
             }
             "runtime.tasks.send" => {
                 boxed_rpc(move || async move { self.send_message(payload).await })
@@ -341,6 +414,18 @@ impl RuntimeWorkRpcHandler {
             "runtime.runner.catalog" => {
                 boxed_rpc(move || async move { self.runner_catalog().await })
             }
+            "runtime.models.sync_creation_profiles" => {
+                boxed_rpc(move || async move { self.sync_creation_model_profiles(payload) })
+            }
+            "runtime.runner.local_models.replace" => {
+                boxed_rpc(move || async move { self.replace_local_runner_models(payload) })
+            }
+            "runtime.python.has_demand" => boxed_rpc(move || async move {
+                crate::python_runtime::prewarm::has_demand()
+                    .await
+                    .map(|demanded| json!({"demanded": demanded}))
+                    .map_err(|message| AppIpcError::new("python_demand_unavailable", message))
+            }),
             "runtime.codex.models.list" => {
                 boxed_rpc(move || async move { self.list_codex_models(payload).await })
             }

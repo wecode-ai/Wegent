@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod task_workspace;
 mod workspaces;
 pub(crate) use workspaces::workspace_response;
 
@@ -15,8 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    infer_workspace_kind, infer_worktree_id, now_ms, string_field, timestamp_ms_field,
-    workspace_group_path, workspace_label,
+    now_ms, string_field, timestamp_ms_field, workspace_group_path, workspace_label,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -220,7 +220,12 @@ impl RuntimeTaskLink {
             .cloned()
             .or_else(|| local_link.as_ref().and_then(|link| link.git_info.clone()));
         let local_completed_at = local_link.as_ref().and_then(|link| link.completed_at);
-        let created_at = timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms);
+        let created_at = local_link
+            .as_ref()
+            .filter(|link| super::conversation_sessions::is_identity_conversation(link))
+            .map(|link| link.created_at)
+            .or_else(|| timestamp_ms_field(thread, "createdAt"))
+            .unwrap_or_else(now_ms);
         let recency_at = timestamp_ms_field(thread, "recencyAt")
             .or_else(|| timestamp_ms_field(thread, "recency_at"))
             .or_else(|| local_link.as_ref().map(|link| link.recency_at))
@@ -396,7 +401,10 @@ fn git_workspace_info(workspace_path: &str) -> (Option<String>, Option<String>) 
     (branch, origin_url)
 }
 
-fn git_info_for_workspace(mut git_info: Option<Value>, workspace_path: &str) -> Option<Value> {
+pub(crate) fn git_info_for_workspace(
+    mut git_info: Option<Value>,
+    workspace_path: &str,
+) -> Option<Value> {
     let (current_branch, origin_url) = git_workspace_info(workspace_path);
     if current_branch.is_none() && origin_url.is_none() {
         return git_info;
@@ -654,6 +662,8 @@ pub(crate) fn search_result_item(
 }
 
 pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
+    let workspace_kind = link.workspace_kind();
+    let worktree_id = link.worktree_id();
     if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(&link) {
         crate::runtime_work::lifecycle::project_native_execution(&mut link, &state);
     }
@@ -677,9 +687,9 @@ pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
     task.insert("runtime".to_owned(), Value::String(link.runtime));
     task.insert(
         "workspaceKind".to_owned(),
-        Value::String(infer_workspace_kind(&link.workspace_path).to_owned()),
+        Value::String(workspace_kind.to_owned()),
     );
-    if let Some(worktree_id) = infer_worktree_id(&link.workspace_path) {
+    if let Some(worktree_id) = worktree_id {
         task.insert("worktreeId".to_owned(), Value::String(worktree_id));
     }
     if let Some(state) = native_state.as_ref() {
@@ -749,7 +759,11 @@ pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
         "recencyAt".to_owned(),
         Value::Number(link.recency_at.into()),
     );
-    if let Some(completed_at) = link.completed_at {
+    // Explicitly clear completion in patch-merged clients while retaining the
+    // historical timestamp internally for ordering and stale-provider recovery.
+    if link.running {
+        task.insert("completedAt".to_owned(), Value::Null);
+    } else if let Some(completed_at) = link.completed_at {
         task.insert("completedAt".to_owned(), Value::Number(completed_at.into()));
     }
     if let Some(parent) = link.parent {
@@ -769,7 +783,7 @@ fn archived_conversation_item(link: &RuntimeTaskLink, device_id: &str) -> Value 
         "projectKey": project_key,
         "projectName": project_name,
         "workspacePath": link.workspace_path,
-        "workspaceKind": infer_workspace_kind(&link.workspace_path),
+        "workspaceKind": link.workspace_kind(),
         "runtimeHandle": archived_cleanup_runtime_handle(link),
         "deviceId": device_id,
         "deviceName": device_id,
@@ -861,7 +875,7 @@ fn runtime_handle_with_thread_id(link: &RuntimeTaskLink) -> Map<String, Value> {
 }
 
 pub(crate) fn runtime_handle_list_summary_map(runtime_handle: &Value) -> Map<String, Value> {
-    runtime_handle
+    let mut summary: Map<String, Value> = runtime_handle
         .as_object()
         .map(|object| {
             object
@@ -870,7 +884,23 @@ pub(crate) fn runtime_handle_list_summary_map(runtime_handle: &Value) -> Map<Str
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Some(presentations) = runtime_handle["userMessagePresentations"].as_array() {
+        summary.remove("latestUserMessageSource");
+        if let Some(turn) = runtime_handle["lastTurnId"].as_str() {
+            if let Some(source) = presentations.iter().rev().find_map(|presentation| {
+                (presentation["turnId"] == turn)
+                    .then(|| presentation["source"]["source"].as_str())
+                    .flatten()
+            }) {
+                summary.insert(
+                    "latestUserMessageSource".into(),
+                    json!({"source":source,"turnId":turn}),
+                );
+            }
+        }
+    }
+    summary
 }
 
 fn runtime_handle_list_payload_key(key: &str) -> bool {
@@ -1012,7 +1042,7 @@ pub(super) fn runtime_status_is_running(status: &str) -> bool {
     )
 }
 
-fn codex_thread_status_type(thread: &Value) -> Option<String> {
+pub(super) fn codex_thread_status_type(thread: &Value) -> Option<String> {
     let status = thread.get("status")?;
     status.as_str().map(str::to_owned).or_else(|| {
         status

@@ -1,0 +1,9 @@
+{
+  "revision": "e6f1a2b3c4d5",
+  "parents": [
+    "d2b9e7c4a6f1"
+  ],
+  "source": "20260924_e6f1a2b3c4d5_migrate_cloud_project_permission_data.py",
+  "upgrade": null,
+  "downgrade": null
+}

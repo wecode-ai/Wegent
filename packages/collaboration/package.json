@@ -46,6 +46,10 @@
       "types": "./src/markdown/safeAnimationFrame.ts",
       "import": "./src/markdown/safeAnimationFrame.ts"
     },
+    "./markdown/preprocessCjkEmphasis": {
+      "types": "./src/markdown/preprocessCjkEmphasis.ts",
+      "import": "./src/markdown/preprocessCjkEmphasis.ts"
+    },
     "./markdown/MarkdownDiagramPreview": {
       "types": "./src/markdown/MarkdownDiagramPreview.tsx",
       "import": "./src/markdown/MarkdownDiagramPreview.tsx"
@@ -433,6 +437,14 @@
     "./controls/DialogForm": {
       "types": "./src/controls/DialogForm.tsx",
       "import": "./src/controls/DialogForm.tsx"
+    },
+    "./controls/Textarea": {
+      "types": "./src/controls/Textarea.tsx",
+      "import": "./src/controls/Textarea.tsx"
+    },
+    "./templates": {
+      "types": "./src/templates/index.ts",
+      "import": "./src/templates/index.ts"
     }
   },
   "scripts": {
@@ -453,6 +465,9 @@
     "@types/plantuml-encoder": "1.4.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "mdast-util-from-markdown": "2.0.3",
+    "mdast-util-math": "3.0.0",
+    "micromark-util-types": "2.0.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "typescript": "~6.0.2",
@@ -464,11 +479,12 @@
     "@radix-ui/react-popover": "^1.1.16",
     "@radix-ui/react-scroll-area": "^1.2.11",
     "@radix-ui/react-slot": "^1.2.5",
+    "@streamdown/math": "1.0.3",
     "@tanstack/react-virtual": "3.14.23",
     "@wegent/chat-core": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "dompurify": "3.4.13",
-    "highlight.js": "11.11.1",
+    "katex": "0.16.47",
     "mermaid": "11.15.0",
     "plantuml-encoder": "1.4.0",
     "prosemirror-commands": "^1.7.1",
@@ -486,6 +502,8 @@
     "remark-parse": "^11.0.0",
     "streamdown": "2.5.0",
     "tailwind-merge": "^3.6.0",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "yaml": "2.9.0",
+    "@pierre/highlights": "0.4.0"
   }
 }

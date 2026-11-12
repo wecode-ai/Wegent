@@ -110,19 +110,103 @@ describe('shared PC composer body', () => {
   async function enter() {
     await act(async () =>
       input.current!.element!.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     )
   }
   async function drop(target: 'surface' | 'editor' = 'surface') {
     const event = new Event('drop', { bubbles: true, cancelable: true })
     Object.defineProperty(event, 'dataTransfer', {
-      value: { types: ['Files'], files: [new File(['data'], 'context.txt')], getData: () => '' },
+      value: {
+        types: ['Files'],
+        files: [new File(['data'], 'context.txt')],
+        getData: () => '',
+      },
     })
     const element =
       target === 'surface' ? button('project-chat-composer-form') : input.current!.element!
     await act(async () => element.dispatchEvent(event))
   }
+  it('owns one chat surface with context before the editor and the home work bar outside it', async () => {
+    await mount({
+      workBar: <div data-testid="home-work-bar">Project</div>,
+      contextHeader: <div data-testid="thread-context">Task context</div>,
+      collapseWhenIdle: true,
+    })
+
+    const surface = button('project-chat-composer-form')
+    expect(surface.classList.contains('rounded-[20px]')).toBe(true)
+    expect(surface.classList.contains('px-3')).toBe(true)
+    expect(surface.classList.contains('font-normal')).toBe(false)
+    expect(surface.contains(button('thread-context'))).toBe(true)
+    expect(surface.contains(button('home-work-bar'))).toBe(false)
+    expect(surface.dataset.shortCollapse).toBeUndefined()
+    expect(input.current!.element!.classList.contains('text-chat')).toBe(true)
+    expect(input.current!.element!.classList.contains('font-normal')).toBe(false)
+    await setValue('Follow up with context')
+    await click('send')
+    expect(submit).toHaveBeenCalledWith('Follow up with context', undefined)
+  })
+
+  it('clears scroll fading after sending a Markdown draft', async () => {
+    let notifyResize = () => {}
+    const observed: Element[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          notifyResize = callback
+        }
+        observe(element: Element) {
+          observed.push(element)
+        }
+        disconnect() {}
+      }
+    )
+    await mount({
+      onSubmit: (value, options) => {
+        submit(value, options)
+        input.current!.setValue('')
+      },
+    })
+    const editor = input.current!.element!
+    const viewport = editor.closest<HTMLElement>('[data-composer-scroll-container]')!
+    expect(observed).toEqual([viewport, editor])
+    let scrollHeight = 400
+    Object.defineProperties(viewport, {
+      clientHeight: { get: () => 100 },
+      scrollHeight: { get: () => scrollHeight },
+    })
+    const markdown = '# Heading\n\n```text\n' + 'test line\n'.repeat(20) + '```'
+    await setValue(markdown)
+    expect(editor.querySelector('pre')).not.toBeNull()
+    viewport.scrollTop = 300
+    viewport.dispatchEvent(new Event('scroll'))
+    expect(viewport.hasAttribute('data-composer-scroll-overflow')).toBe(true)
+    expect(viewport.style.getPropertyValue('--composer-scroll-fade-top')).toBe('16px')
+
+    await enter()
+    expect(submit).toHaveBeenCalledOnce()
+    expect(editor.textContent).toBe('')
+    expect(editor.querySelector('pre')).toBeNull()
+    scrollHeight = 100
+    viewport.scrollTop = 0
+    notifyResize()
+    expect(viewport.hasAttribute('data-composer-scroll-overflow')).toBe(false)
+    expect(viewport.style.getPropertyValue('--composer-scroll-fade-top')).toBe('0px')
+
+    await setValue('测试文字 gjpqy')
+    notifyResize()
+    expect(input.current!.element).toBe(editor)
+    expect(viewport.hasAttribute('data-composer-scroll-overflow')).toBe(false)
+    expect(viewport.style.getPropertyValue('--composer-scroll-fade-top')).toBe('0px')
+    expect(viewport.style.getPropertyValue('--composer-scroll-fade-bottom')).toBe('0px')
+  })
+
   it('submits the visible ready composer while a model readiness transition suspends', async () => {
     const pending = new Promise<void>(() => {})
     const suspended = vi.fn()
@@ -254,7 +338,11 @@ describe('shared PC composer body', () => {
     }
     const file = new File(['data'], 'context.txt')
     const select = vi.fn()
-    await mount({ transferServices: services, onFileSelect: select, buffered: true })
+    await mount({
+      transferServices: services,
+      onFileSelect: select,
+      buffered: true,
+    })
     await drop()
     await setValue('Typed during drop')
     await act(async () =>

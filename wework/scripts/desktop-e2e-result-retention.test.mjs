@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -55,6 +57,49 @@ function gitBash() {
 }
 
 describe('desktop E2E result retention', () => {
+  test.each(['model-requests.jsonl', 'model-context-audit.json'])(
+    'retains independent model evidence %s through runner and CI cleanup',
+    async name => {
+      const resultRoot = await temporaryRoot()
+      const directory = join(resultRoot, '2026-11-09T00-00-00-000Z-123')
+      await mkdir(directory, { recursive: true })
+      const evidence = join(directory, name)
+      await writeFile(evidence, '{"synthetic":true}\n')
+      await compactDesktopE2EResult(directory)
+      await execFileAsync(gitBash(), [
+        resolve(
+          import.meta.dirname,
+          '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'
+        ).replaceAll('\\', '/'),
+        resultRoot.replaceAll('\\', '/'),
+      ])
+      await expectExists(evidence)
+    }
+  )
+
+  test.each(['electron-logs', 'release-logs'])(
+    'preserves %s through runner and CI cleanup',
+    async name => {
+      const resultRoot = await temporaryRoot()
+      const resultDirectory = join(resultRoot, '2026-11-01T00-00-00-000Z-123')
+      const logs = join(resultDirectory, name)
+      await mkdir(logs, { recursive: true })
+      const logPath = join(logs, 'executor.log')
+      await writeFile(logPath, 'target executor startup evidence\n')
+
+      await compactDesktopE2EResult(resultDirectory)
+      await execFileAsync(gitBash(), [
+        resolve(
+          import.meta.dirname,
+          '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'
+        ).replaceAll('\\', '/'),
+        resultRoot.replaceAll('\\', '/'),
+      ])
+
+      await expectExists(logPath)
+    }
+  )
+
   test('retains published recovery diagnostics but removes the recovery working directory', async () => {
     const resultRoot = await temporaryRoot()
     const resultDirectory = join(resultRoot, '2026-10-28T00-00-00-000Z-123')

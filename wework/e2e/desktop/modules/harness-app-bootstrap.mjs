@@ -3,6 +3,7 @@ import {
   MODEL_LABEL,
   setExperimentalFeatures,
   waitForElementCount,
+  ZIP_BACKPRESSURE_CONTENT,
 } from './harness-app-fixture.mjs'
 import assert from 'node:assert/strict'
 import { telemetryEvents } from './response-protocol.mjs'
@@ -13,11 +14,16 @@ import {
   legacyDshRuntimeIsPublished,
   verifyDownloadedDshRuntimeCache,
 } from './dsh-runtime-cache.mjs'
+import { fetchLocalRuntime } from './runtime-request.mjs'
+import { request } from 'node:http'
+import { SELECTED_DESKTOP_SEGMENT } from './shared.mjs'
+import { createPreparationObserver } from './preparation-progress.mjs'
 
 export async function prepareHarnessAppUi(
   control,
   { uiTimeoutMs, captureScreenshot, electronUserDataDirectory, resultDir, legacyPackagePath }
 ) {
+  const observe = createPreparationObserver({ checkpoint: SELECTED_DESKTOP_SEGMENT })
   await setExperimentalFeatures(control, false, uiTimeoutMs)
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
@@ -127,6 +133,19 @@ export async function prepareHarnessAppUi(
   await control.command('waitFor', '[data-testid="harness-app-start-market-1"]', {
     timeoutMs: uiTimeoutMs,
   })
+  const downloadedInstallations = JSON.parse(
+    await readFile(join(electronUserDataDirectory, 'harness-apps/installations.json'), 'utf8')
+  )
+  const installed = downloadedInstallations.find(item => item.id === 'market-1')
+  assert.ok(installed, 'Downloaded Smart App was not registered')
+  assert.equal(
+    await readFile(
+      join(installed.packagePath, 'packages/bundle/smoke-app/lib/zip-backpressure.txt'),
+      'utf8'
+    ),
+    ZIP_BACKPRESSURE_CONTENT,
+    'Electron truncated the downloaded Smart App asset during extraction'
+  )
   const officialManagementTabId = await control.command(
     'getAttribute',
     '[data-workspace-tab-content][aria-hidden="false"]',
@@ -184,21 +203,22 @@ export async function prepareHarnessAppUi(
   // publish it can exercise the rejection and verified archive cache.
   let legacyRuntimeCache = null
   if (legacyDshRuntimeIsPublished()) {
-    await verifyLegacyAppRejection(control, {
-      legacyPackagePath,
-      electronUserDataDirectory,
-      uiTimeoutMs,
-    })
-    legacyRuntimeCache = await verifyDownloadedDshRuntimeCache(
-      join(resultDir, 'harness-runtime'),
-      '0.1.0-rc.8'
+    await observe('legacy-app-verification', () =>
+      verifyLegacyAppLaunch(control, {
+        legacyPackagePath,
+        electronUserDataDirectory,
+        uiTimeoutMs,
+      })
+    )
+    legacyRuntimeCache = await observe('legacy-cache-verification', () =>
+      verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8')
     )
   }
 
   return { legacyRuntimeCache }
 }
 
-async function verifyLegacyAppRejection(
+async function verifyLegacyAppLaunch(
   control,
   { legacyPackagePath, electronUserDataDirectory, uiTimeoutMs }
 ) {
@@ -231,43 +251,99 @@ async function verifyLegacyAppRejection(
   await control.command('clickWhenEnabled', `[data-testid="harness-app-start-${id}"]`, {
     timeoutMs: uiTimeoutMs,
   })
-  await control.command('waitFor', `[data-testid="harness-app-launch-retry-${id}"]`, {
-    visible: true,
+  await control.command('waitFor', `[data-testid="app-iframe-harness-${id}"]`, {
     timeoutMs: 600_000,
   })
-  assert.equal(
-    Number(await control.command('getElementCount', `[data-testid="app-iframe-harness-${id}"]`)),
-    0,
-    'A legacy runtime must not expose the privileged Electron host bridge'
-  )
   const installations = JSON.parse(
     await readFile(join(electronUserDataDirectory, 'harness-apps', 'installations.json'), 'utf8')
   )
   const legacy = installations.find(item => item.id === id)
-  assert.equal(legacy?.state, 'failed')
-  assert.equal(legacy.error, 'The trusted Electron host bridge requires DSH 0.2.0-rc.2')
-  assert.equal(legacy.runtimeVersion, null)
-  assert.equal(legacy.webUrl, null)
+  assert.equal(legacy?.state, 'running')
+  assert.equal(legacy.error, null)
+  assert.equal(legacy.runtimeVersion, '0.1.0-rc.8')
+  assert.match(legacy.webUrl, /^http:\/\/127\.0\.0\.1:\d+\/?$/)
+  const page = await fetch(legacy.webUrl)
+  assert.equal(page.status, 401, 'An unauthenticated client could access the legacy runtime')
+  const api = await fetch(new URL('/api/settings.describe', legacy.webUrl))
+  assert.equal(api.status, 401, 'An unauthenticated client could access the legacy API')
+  await verifyLegacyWebSocketAuthentication(legacy.webUrl)
+  const authenticatedPage = await fetchLocalRuntime(
+    control,
+    new URL('/wework/legacy-compatibility-page', legacy.webUrl)
+  )
+  assert.equal(authenticatedPage.status, 200)
+  assert.match(
+    await authenticatedPage.text(),
+    /<html[\s>]/i,
+    'The legacy app did not serve its application'
+  )
+  const profile = JSON.parse(
+    await readFile(
+      join(
+        electronUserDataDirectory,
+        'harness-apps',
+        'instances',
+        id,
+        'profiles',
+        'smoke',
+        'package.json'
+      ),
+      'utf8'
+    )
+  )
+  assert.ok(
+    !Object.keys(profile.dependencies).some(name =>
+      ['@wegent/dsh-electron-host', '@wework/dsh-browser-auth'].includes(name)
+    ),
+    'A legacy runtime must not expose the privileged Electron host bridge'
+  )
+  const hostResponse = await fetchLocalRuntime(
+    control,
+    new URL('/wework/electron-host/v1/invoke', legacy.webUrl),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ capability: 'desktop.getInfo', params: {} }),
+    }
+  )
+  assert.equal(hostResponse.status, 405, 'A legacy app exposed the privileged invoke endpoint')
   await removeLegacyAppFixture(control, id, managementTabId, uiTimeoutMs)
 }
 
+async function verifyLegacyWebSocketAuthentication(baseUrl) {
+  const status = await new Promise((resolve, reject) => {
+    const outgoing = request(new URL('/api/events', baseUrl), {
+      headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
+      signal: AbortSignal.timeout(10_000),
+    })
+    outgoing.on('response', response => {
+      response.resume()
+      resolve(response.statusCode)
+    })
+    outgoing.on('upgrade', (response, socket) => {
+      socket.destroy()
+      resolve(response.statusCode)
+    })
+    outgoing.on('error', reject)
+    outgoing.end()
+  })
+  assert.equal(status, 401, 'An unauthenticated client could upgrade the legacy WebSocket')
+}
+
 async function removeLegacyAppFixture(control, id, managementTabId, uiTimeoutMs) {
-  const failedTabId = await control.command(
+  const legacyTabId = await control.command(
     'getAttribute',
     '[data-workspace-tab-content][aria-hidden="false"]',
     { value: 'data-workspace-tab-content' }
   )
-  assert.ok(failedTabId, 'The rejected Smart app did not expose its workspace tab ID')
-  await control.command('click', `[data-testid="workspace-tab-close-${failedTabId}"]`)
+  assert.ok(legacyTabId, 'The legacy Smart app did not expose its workspace tab ID')
+  await control.command('click', `[data-testid="workspace-tab-close-${legacyTabId}"]`)
   await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
   await control.command('waitFor', `[data-testid="smart-app-actions-${id}"]`, {
     timeoutMs: uiTimeoutMs,
   })
   await control.command('click', `[data-testid="smart-app-actions-${id}"]`)
-  await control.command('waitFor', `[data-testid="smart-app-remove-local-${id}"]`, {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('click', `[data-testid="smart-app-remove-local-${id}"]`)
+  await control.command('clickWhenEnabled', `[data-testid="smart-app-remove-local-${id}"]`)
   await control.command('waitFor', '[data-testid="smart-app-remove-local-confirm"]', {
     timeoutMs: uiTimeoutMs,
   })
@@ -277,6 +353,6 @@ async function removeLegacyAppFixture(control, id, managementTabId, uiTimeoutMs)
     `[data-testid="smart-app-created-item-${id}"]`,
     0,
     uiTimeoutMs,
-    'The rejected legacy Smart app fixture was not removed'
+    'The legacy Smart app fixture was not removed'
   )
 }

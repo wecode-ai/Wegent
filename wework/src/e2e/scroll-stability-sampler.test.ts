@@ -56,3 +56,41 @@ test('captures the first replacement-pane commit and follows the anchor-owned sc
   expect(sample.done).toBe(true)
   expect(sample.frames).toHaveLength(frameCount)
 })
+
+test('keeps delayed input in the sample until the interaction explicitly stops it', async () => {
+  vi.useFakeTimers()
+  const scroller = viewport(1000, 900)
+  const anchor = document.createElement('div')
+  scroller.append(anchor)
+  document.body.append(scroller)
+  vi.spyOn(anchor, 'getBoundingClientRect').mockImplementation(
+    () => ({ top: 900 - scroller.scrollTop }) as DOMRect
+  )
+  const sample = startScrollStabilitySampler(
+    () => anchor,
+    () => [scroller],
+    10_000
+  )
+
+  // Real host commands may outlast a short observation window before input finishes.
+  for (let index = 0; index < 6; index += 1) {
+    await vi.advanceTimersByTimeAsync(350)
+    scroller.scrollTop -= 24
+    scroller.dispatchEvent(new Event('scroll'))
+  }
+  await vi.advanceTimersByTimeAsync(1200)
+  expect(sample.done).toBe(false)
+  expect(sample.scrollEvents).toHaveLength(6)
+  expect(sample.frames.at(-1)).toMatchObject({ anchorTop: 144, scrollTop: 756 })
+  expect(sample.frames.at(-1)!.time).toBeGreaterThan(1200)
+
+  sample.stop()
+  const frameCount = sample.frames.length
+  scroller.scrollTop -= 24
+  scroller.dispatchEvent(new Event('scroll'))
+  await vi.advanceTimersByTimeAsync(1200)
+  expect(sample.done).toBe(true)
+  expect(sample.frames).toHaveLength(frameCount)
+  expect(sample.scrollEvents).toHaveLength(6)
+  expect(vi.getTimerCount()).toBe(0)
+})

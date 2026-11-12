@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
 import { assignment, runtimeItem } from './standInNotifications.fixtures'
 import { mergeStandInNotifications } from './standInNotifications'
 import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
+import { useStandInNotifications } from './useStandInNotifications'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import {
   RuntimeInteractionsContext,
@@ -77,6 +78,98 @@ beforeEach(() => {
   readTask.mockResolvedValue({ success: true, task: runtimeItem.task })
 })
 describe('notification inline handling', () => {
+  it('keeps a resolved delegation action clickable during same-inbox history refresh', async () => {
+    const assignmentTasks = vi.fn().mockResolvedValue({ items: [] })
+    const currentServices = {
+      ...services,
+      standInApi: { ...services.standInApi!, assignmentTasks },
+    }
+    const source: TaskSource = {
+      items: [],
+      unreadTaskKeys: new Set(),
+      markRuntimeTaskRead: vi.fn(),
+      userId: 1,
+      services: currentServices,
+    }
+    const inbox = { items: [assignment], unread_count: 0, next_offset: null }
+    function Inbox({ value }: { value: typeof inbox }) {
+      const notification = useStandInNotifications(value, source, 'refresh-race', true).items[0]
+      return (
+        <StandInNotificationProcessing
+          notification={notification}
+          rowProps={rowProps}
+          services={currentServices}
+          userId={1}
+          onChanged={onChanged}
+        />
+      )
+    }
+    const rendered = render(<Inbox value={inbox} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('notification-stand-in-start-assignment')).toBeEnabled()
+    )
+    let complete!: (value: { items: [] }) => void
+    assignmentTasks.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          complete = resolve
+        })
+    )
+    rendered.rerender(<Inbox value={{ ...inbox }} />)
+    await waitFor(() => expect(assignmentTasks).toHaveBeenCalledTimes(2))
+    try {
+      fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
+      await waitFor(() => expect(run).toHaveBeenCalledOnce())
+      expect(run).toHaveBeenCalledWith('12', 'ISSUE-1', 1, 'cloud', 'device', undefined)
+    } finally {
+      await act(async () => complete({ items: [] }))
+    }
+  })
+
+  it('shows archived completion without requesting an unavailable archived transcript', () => {
+    const archived = mergeStandInNotifications(
+      [assignment],
+      [
+        {
+          ...runtimeItem,
+          task: { ...runtimeItem.task, status: 'archived', running: false },
+        },
+      ]
+    )[0]
+    render(
+      <StandInNotificationProcessing
+        notification={archived}
+        rowProps={rowProps}
+        services={services}
+        userId={1}
+        onChanged={onChanged}
+      />
+    )
+    expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+      'notifications.stand_in_completed'
+    )
+    expect(screen.queryByTestId('notification-stand-in-start-assignment')).toBeNull()
+    expect(transcript).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+  it.each([{ standInLookupPending: true }, { standInLookupError: 'History unavailable' }])(
+    'never offers delegation before history is resolved: %j',
+    lookup => {
+      render(
+        <StandInNotificationProcessing
+          notification={{ ...assignment, payload: { ...assignment.payload, ...lookup } }}
+          rowProps={rowProps}
+          services={services}
+          userId={1}
+          onChanged={onChanged}
+        />
+      )
+      expect(screen.queryByTestId('notification-stand-in-start-assignment')).toBeNull()
+      expect(run).not.toHaveBeenCalled()
+      if ('standInLookupError' in lookup)
+        expect(screen.getByRole('alert')).toHaveTextContent(lookup.standInLookupError)
+    }
+  )
   it.each([undefined, 'turn-1'])(
     'accepts completed source state with second precision and turn %s',
     async turnId => {

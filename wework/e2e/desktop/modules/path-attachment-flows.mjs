@@ -502,7 +502,8 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.awaitScenarioRequestCount('pasted_workspace_paths', 1)
+  // Runtime preparation and model dispatch use the shared model-request deadline.
+  await control.awaitScenarioRequestCount('pasted_workspace_paths', 1, MODEL_REQUEST_TIMEOUT_MS)
   assertSourceAttachmentPath(control, 'pasted_workspace_paths', filePath)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: PASTED_PATH_COMPLETION_TEXT,
@@ -597,11 +598,11 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   await control.command('fill', composerSelector, { value: '' })
 
   await control.command('click', `[data-item-path="${SELECTED_TEXT_FILE_NAME}"]`)
-  await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+  await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
     text: SELECTED_TEXT_FILE_CONTENT.trim(),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('press', '[data-testid="workspace-file-editor"] .cm-content', {
+  await control.command('press', '[data-testid="workspace-file-editor-content"]', {
     key: process.platform === 'darwin' ? 'Meta+a' : 'Control+a',
   })
   await control.command('waitFor', '[data-testid="workspace-selection-actions"]', {
@@ -611,26 +612,23 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   assert.equal(
     await control.command('getSystemDragPanelVisibility', 'body'),
     'false',
-    'Selecting CodeMirror workspace text incorrectly opened the system drag panel'
+    'Selecting Pierre workspace text incorrectly opened the system drag panel'
   )
   await control.command('click', '[data-testid="add-workspace-selection-to-conversation-button"]')
   assert.equal(
     await control.command('getValue', composerSelector),
     SELECTED_TEXT_FILE_CONTENT.trim(),
-    'The CodeMirror selection action did not insert text into the composer'
+    'The Pierre selection action did not insert text into the composer'
   )
   await control.command('fill', composerSelector, { value: '' })
-  await control.command('press', '[data-testid="workspace-file-editor"] .cm-content', {
+  await control.command('press', '[data-testid="workspace-file-editor-content"]', {
     key: process.platform === 'darwin' ? 'Meta+a' : 'Control+a',
   })
-  await control.command(
-    'dragDataTransferStart',
-    '[data-testid="workspace-file-editor"] .cm-content'
-  )
+  await control.command('dragDataTransferStart', '[data-testid="workspace-file-editor-content"]')
   await waitForSystemDragPanelVisibility(
     control,
     true,
-    'Dragging CodeMirror workspace text did not show the system drag panel'
+    'Dragging Pierre workspace text did not show the system drag panel'
   )
   await control.command('dragDataTransferEnd', 'body', { target: composerSelector })
   await waitForSystemDragPanelVisibility(
@@ -644,7 +642,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
     'Dragging selected workspace editor text did not insert it into the composer'
   )
   assert.equal(
-    await control.command('getValue', '[data-testid="workspace-file-editor"] .cm-content'),
+    await control.command('getValue', '[data-testid="workspace-file-editor-content"]'),
     SELECTED_TEXT_FILE_CONTENT.trim(),
     'Dragging selected workspace editor text removed it from the source editor'
   )
@@ -946,6 +944,13 @@ async function verifySideChatAttachmentIsolation({
     'The side chat exposed a runtime busy error instead of queueing the follow-up'
   )
   await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
+  await control.command('setSelectionOffset', sideComposerSelector, { value: '0' })
+  assert.equal(
+    Number(await control.command('getSelectionOffset', sideComposerSelector)),
+    0,
+    'The same-value queued draft must start with its caret at the beginning'
+  )
   await control.command('click', `${sideChatSelector} [data-testid^="queue-more-button-"]`)
   await control.command('click', '[data-testid^="queue-edit-button-"]')
   await control.command('waitFor', sideComposerSelector, {
@@ -959,6 +964,13 @@ async function verifySideChatAttachmentIsolation({
     DEFAULT_STEP_TIMEOUT_MS,
     sideChatSelector
   )
+  await control.command('nativePress', sideComposerSelector, { key: 'Shift+Enter' })
+  assert.equal(
+    await control.command('getValue', sideComposerSelector),
+    `${SIDE_CHAT_QUEUE_FOLLOW_UP}\n`,
+    'Explicitly restoring the same queued draft must put the next line break after its text'
+  )
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
   await control.command('clickWhenEnabled', sideSendButtonSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

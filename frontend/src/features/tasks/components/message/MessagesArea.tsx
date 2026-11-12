@@ -70,7 +70,12 @@ import { SaveToKnowledgeDialog } from './SaveToKnowledgeDialog'
 import { DocumentDetailDialog } from '@/features/knowledge/document/components/DocumentDetailDialog'
 import { ToastAction } from '@/components/ui/toast'
 import { documentViewOf } from '@/types/knowledge'
-import type { KnowledgeBaseWithGroupInfo, KnowledgeDocument } from '@/types/knowledge'
+import type {
+  DocumentProtection,
+  KnowledgeBaseWithGroupInfo,
+  KnowledgeDocument,
+} from '@/types/knowledge'
+import { getDocumentProtection } from '@/apis/knowledge'
 
 type SendMessageOptions = {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
@@ -84,6 +89,16 @@ type SendMessageOptions = {
 interface KnowledgeDocumentViewTarget {
   document: KnowledgeDocument
   knowledgeBase: KnowledgeBaseWithGroupInfo
+}
+
+const failClosedDocumentProtection: DocumentProtection = {
+  original_download_allowed: false,
+  watermark_text: '',
+}
+
+interface DocumentProtectionState {
+  knowledgeBaseId: number | null
+  protection: DocumentProtection
 }
 
 export function deriveSaveToKnowledgeTitle(
@@ -346,6 +361,42 @@ function MessagesArea({
   } | null>(null)
   const [knowledgeDocumentToView, setKnowledgeDocumentToView] =
     useState<KnowledgeDocumentViewTarget | null>(null)
+  const viewedKnowledgeBaseId = knowledgeDocumentToView?.knowledgeBase.id ?? null
+  const [documentProtectionState, setDocumentProtectionState] = useState<DocumentProtectionState>({
+    knowledgeBaseId: null,
+    protection: failClosedDocumentProtection,
+  })
+  const documentProtection =
+    documentProtectionState.knowledgeBaseId === viewedKnowledgeBaseId
+      ? documentProtectionState.protection
+      : failClosedDocumentProtection
+
+  useEffect(() => {
+    setDocumentProtectionState({
+      knowledgeBaseId: null,
+      protection: failClosedDocumentProtection,
+    })
+    if (!viewedKnowledgeBaseId) return
+
+    let cancelled = false
+    void getDocumentProtection(viewedKnowledgeBaseId)
+      .then(protection => {
+        if (!cancelled) {
+          setDocumentProtectionState({ knowledgeBaseId: viewedKnowledgeBaseId, protection })
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDocumentProtectionState({
+            knowledgeBaseId: null,
+            protection: failClosedDocumentProtection,
+          })
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [viewedKnowledgeBaseId])
 
   // Correction mode state
   const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
@@ -962,6 +1013,7 @@ function MessagesArea({
               variant="outline"
               size="sm"
               className="flex items-center justify-center h-8 w-8 p-0 rounded-[7px]"
+              aria-label={t('common:actions.more_actions')}
             >
               <MoreHorizontal className="h-4 w-4" />
             </Button>
@@ -1485,6 +1537,8 @@ function MessagesArea({
           knowledgeBaseName={knowledgeDocumentToView.knowledgeBase.name}
           knowledgeBaseNamespace={knowledgeDocumentToView.knowledgeBase.namespace}
           isOrganization={knowledgeDocumentToView.knowledgeBase.group_type === 'organization'}
+          allowDownload={documentProtection.original_download_allowed}
+          watermarkText={documentProtection.watermark_text}
         />
       )}
 

@@ -1,4 +1,11 @@
-import { resolveThemeVariables } from '@wegent/collaboration/theme'
+import {
+  contrastForegroundColor,
+  DEFAULT_UI_THEME_ID,
+  getUiTheme,
+  resolveThemeVariables,
+  resolveUiThemeVariables,
+} from '@wegent/collaboration/theme'
+import { hexToRgbTriplet } from './color'
 import type { AppearanceConfig, ResolvedAppearanceMode } from './types'
 
 function luminance(rgb: number[]) {
@@ -63,12 +70,54 @@ export function applyAppearance(
   const root = document.documentElement
   root.dataset.theme = resolvedMode
   root.dataset.appearanceMode = appearance.mode
+  const themeId = resolvedMode === 'dark' ? appearance.darkThemeId : appearance.lightThemeId
+  root.dataset.appearanceTheme = themeId
+  root.dataset.uiThemeId = themeId
   root.dataset.sidebarTranslucent = String(appearance.sidebarTranslucent)
   root.classList.toggle('dark', resolvedMode === 'dark')
   root.style.colorScheme = resolvedMode
-  const variables = resolveThemeVariables(resolvedMode, appearance)
+  const variables = resolveAppearanceThemeVariables(appearance, resolvedMode)
   Object.entries(variables).forEach(([variable, value]) => {
     root.style.setProperty(variable, value)
   })
-  root.style.setProperty('--color-sidebar-attention', sidebarAttentionColor(variables))
+}
+
+export function resolveAppearanceThemeVariables(
+  appearance: AppearanceConfig,
+  mode: ResolvedAppearanceMode
+): Record<`--${string}`, string> {
+  const themeId = mode === 'dark' ? appearance.darkThemeId : appearance.lightThemeId
+  const theme = getUiTheme(themeId, mode).variant
+  const overrides = appearance.themeOverrides[mode]
+  const accentColor = overrides.accentColor ?? theme.accentColor
+  const palette = {
+    ...theme.palette,
+    ...overrides.palette,
+    primaryContrast:
+      overrides.palette?.primaryContrast ?? contrastForegroundColor(hexToRgbTriplet(accentColor)),
+  }
+  const sidebar = palette.sidebar.split('/')[0].trim()
+  const translucentSidebar = palette.sidebar.includes('/') ? palette.sidebar : `${sidebar} / 0.92`
+  palette.sidebar = appearance.sidebarTranslucent ? translucentSidebar : sidebar
+  const variables: Record<`--${string}`, string> = {
+    ...resolveThemeVariables(mode, { ...appearance, accentColor, [mode]: palette }),
+    ...resolveUiThemeVariables(mode, themeId),
+    '--color-titlebar': palette.bgSurface,
+  }
+  const accent = hexToRgbTriplet(accentColor)
+  for (const name of ['focus', 'focus-ring', 'link', 'info'] as const) {
+    variables[`--color-${name}`] = accent
+  }
+  if (themeId === DEFAULT_UI_THEME_ID) {
+    if (overrides.accentColor === undefined) {
+      for (const name of ['focus', 'focus-ring', 'link'] as const) {
+        variables[`--color-${name}`] = '51 156 255'
+      }
+    }
+    variables['--color-scrollbar-thumb'] = mode === 'light' ? '0 0 0 / 0.08' : '255 255 255 / 0.36'
+    variables['--color-scrollbar-thumb-hover'] =
+      mode === 'light' ? '0 0 0 / 0.12' : '255 255 255 / 0.5'
+  }
+  variables['--color-sidebar-attention'] = sidebarAttentionColor(variables)
+  return variables
 }

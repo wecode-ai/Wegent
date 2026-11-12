@@ -3,6 +3,7 @@ import {
   isRuntimeGoalExecutionActive,
   isRuntimeTaskAuthoritativeCompletion,
   isRuntimeTaskConfirmedActive,
+  normalizeRuntimeTaskSummary,
   isRuntimeTurnRunningStatus,
 } from './projection'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
@@ -40,7 +41,7 @@ export function reduceRuntimeTaskLifecycle(
   state: RuntimeTaskLifecycleState,
   event: RuntimeTaskLifecycleEvent
 ): RuntimeTaskLifecycleState {
-  // Content and RPC completion describe a response, never the native thread's lifetime.
+  // RPC completion cannot settle native execution or the task's aggregate pending inputs.
   if (
     state.task?.executionState &&
     [
@@ -49,6 +50,7 @@ export function reduceRuntimeTaskLifecycle(
       'turn_started',
       'turn_settled',
       'turn_recovered',
+      'user_input_responded',
     ].includes(event.type)
   ) {
     return state
@@ -374,6 +376,15 @@ export function reduceRuntimeTaskLifecycle(
       if (state.task?.executionState) {
         return { ...state, goalStatus: event.goalStatus, hasAuthoritativeGoalStatus: true }
       }
+      // Goal events also supersede the cached task's autonomous execution hint.
+      // Otherwise an idle transcript inherits that hint and cannot confirm completion.
+      const task = state.task
+        ? normalizeRuntimeTaskSummary({
+            ...state.task,
+            goalStatus: event.goalStatus,
+            ...(event.goalStatus !== 'active' ? { goalExecutionStatus: null } : {}),
+          })
+        : null
       const goalJustSettled =
         state.goalStatus === 'active' &&
         event.goalStatus !== null &&
@@ -382,6 +393,7 @@ export function reduceRuntimeTaskLifecycle(
       return goalJustSettled
         ? {
             ...state,
+            task,
             executionPhase: 'idle',
             turnPhase: 'idle',
             activeTurnId: null,
@@ -393,6 +405,7 @@ export function reduceRuntimeTaskLifecycle(
           }
         : {
             ...state,
+            task,
             goalStatus: event.goalStatus,
             hasAuthoritativeGoalStatus: true,
           }

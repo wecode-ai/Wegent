@@ -7,7 +7,7 @@ const PREFIX: &str = "WEWORK_PLUGIN_AUTH_DIAGNOSTIC:";
 const MAX_LINE: usize = 4096;
 const MAX_EVENTS: usize = 256;
 
-fn identifier(value: &str) -> bool {
+pub(super) fn identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && value

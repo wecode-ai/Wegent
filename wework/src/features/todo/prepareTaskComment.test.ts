@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import type { CloudLoopItemAttachment } from '@/api/deliveries'

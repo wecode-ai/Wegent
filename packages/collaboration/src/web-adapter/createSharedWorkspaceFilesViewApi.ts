@@ -108,10 +108,10 @@ export function createSharedWorkspaceFilesViewApi(
     previewTaskAttachment: attachments?.read,
     openTaskAttachment:
       attachments && host.saveTaskAttachment
-        ? async (attachmentId, filename) => {
+        ? async (attachmentId, filename, context) => {
             const blob = await readDownload(
-              () => attachments.access(attachmentId),
-              () => attachments.read(attachmentId),
+              () => attachments.access(attachmentId, context),
+              () => attachments.read(attachmentId, context),
               host,
             );
             await host.saveTaskAttachment!(blob, filename);

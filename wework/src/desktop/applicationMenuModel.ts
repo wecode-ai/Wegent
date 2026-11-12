@@ -16,7 +16,9 @@
 
 /** Actions the Electron host dispatches to the focused workbench window. */
 export const APPLICATION_MENU_ACTIONS = {
+  openAbout: 'open-about',
   openSettings: 'open-settings',
+  openFeedback: 'open-feedback',
   openTasks: 'open-tasks',
   openProjectSpaces: 'open-project-spaces',
   openPlugins: 'open-plugins',

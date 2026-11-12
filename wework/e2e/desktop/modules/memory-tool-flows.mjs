@@ -1,3 +1,4 @@
+import { readNativeMcpCallId, readNativeCommandCallId } from './native-tool-call-id.mjs'
 import {
   captureMemorySample,
   captureTotalMemorySample,
@@ -12,9 +13,6 @@ import {
   CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB,
   CONCURRENT_MEMORY_TASK_COUNT,
   DEFAULT_STEP_TIMEOUT_MS,
-  EARLIER_TOOL_BLOCK_ID,
-  GENERIC_MCP_TOOL_BLOCK_ID,
-  LATER_TOOL_BLOCK_ID,
   LOCAL_MARKDOWN_IMAGE_FILENAME,
   LOCAL_MARKDOWN_IMAGE_PROMPT,
   MEMORY_COMPLETION_TEXT,
@@ -30,7 +28,7 @@ import {
   MEMORY_PROMPT,
   MEMORY_SAMPLE_INTERVAL_MS,
   MEMORY_SAMPLE_WINDOW_SIZE,
-  NODE_REPL_TOOL_BLOCK_ID,
+  MODEL_REQUEST_TIMEOUT_MS,
   TOOL_BLOCK_ORDER_COMPLETION_TEXT,
   TOOL_BLOCK_ORDER_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
@@ -140,7 +138,16 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
     DEFAULT_STEP_TIMEOUT_MS,
     'The Node REPL output did not return to the real model request'
   )
-  const nodeReplSelector = `[data-processing-block-id="${NODE_REPL_TOOL_BLOCK_ID}"]`
+  const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+    .currentRuntimeTask
+  const nodeReplCallId = await readNativeMcpCallId(
+    control,
+    address,
+    'node_repl',
+    'js',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const nodeReplSelector = `[data-processing-block-id="${nodeReplCallId}"]`
   await control.command('waitFor', nodeReplSelector, {
     visible: true,
     stableMs: 500,
@@ -160,7 +167,14 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
     DEFAULT_STEP_TIMEOUT_MS,
     'The generic MCP output did not return to the real model request'
   )
-  const genericMcpSelector = `[data-processing-block-id="${GENERIC_MCP_TOOL_BLOCK_ID}"]`
+  const genericMcpCallId = await readNativeMcpCallId(
+    control,
+    address,
+    'github__issues',
+    'get_issue_details',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const genericMcpSelector = `[data-processing-block-id="${genericMcpCallId}"]`
   await control.command('waitFor', genericMcpSelector, {
     visible: true,
     stableMs: 500,
@@ -182,8 +196,20 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
   await ensureToggleExpanded(control, '[data-testid="final-processing-toggle"]')
   await ensureToggleExpanded(control, '[data-testid="processing-summary-toggle"]')
 
-  const earlierSelector = `[data-processing-block-id="${EARLIER_TOOL_BLOCK_ID}"]`
-  const laterSelector = `[data-processing-block-id="${LATER_TOOL_BLOCK_ID}"]`
+  const earlierCallId = await readNativeCommandCallId(
+    control,
+    address,
+    'earlier-created-tool',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const laterCallId = await readNativeCommandCallId(
+    control,
+    address,
+    'later-created-tool',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const earlierSelector = `[data-processing-block-id="${earlierCallId}"]`
+  const laterSelector = `[data-processing-block-id="${laterCallId}"]`
   await control.command('waitFor', earlierSelector, {
     visible: true,
     stableMs: 500,
@@ -246,15 +272,13 @@ async function verifyLocalMarkdownImage({ composerSelector, control }) {
       'local_markdown_image'
     )
     const imageSelector = '[data-testid="assistant-markdown-image"]'
-    await control.command('waitFor', imageSelector, {
-      visible: true,
-      stableMs: 500,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    const imageSrc = await control.command('getAttribute', imageSelector, { value: 'src' })
-    assert.ok(
-      imageSrc.startsWith('blob:'),
-      `The local Markdown image did not render through a Blob URL: ${imageSrc}`
+    await waitForAttributeValue(
+      control,
+      imageSelector,
+      'src',
+      value => typeof value === 'string' && value.startsWith('blob:'),
+      'The local Markdown image did not render through a Blob URL',
+      MODEL_REQUEST_TIMEOUT_MS
     )
     assert.equal(
       Number(
@@ -266,6 +290,24 @@ async function verifyLocalMarkdownImage({ composerSelector, control }) {
   } finally {
     await rm(imagePath, { force: true })
   }
+}
+
+async function waitForAttributeValue(control, selector, name, predicate, message, timeoutMs) {
+  const startedAt = Date.now()
+  let latest = null
+  let lookupError = null
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      latest = await control.command('getAttribute', selector, { value: name })
+      lookupError = null
+    } catch (error) {
+      if (!String(error).includes('Unable to find selector')) throw error
+      lookupError = error
+    }
+    if (predicate(latest)) return latest
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${message}: ${lookupError ? String(lookupError) : JSON.stringify(latest)}`)
 }
 
 async function waitForBlankConversation(control, composerSelector) {
@@ -531,6 +573,13 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent DOM retained ${settledDomNodeGrowth} additional nodes after rendering the long response`
   )
   for (const sample of settledWindow) {
+    const displayItems = sample.activeRuntimeAssistant?.displayItems
+    assert.ok(displayItems?.length, 'The settled reply has no native display items')
+    assert.equal(
+      new Set(displayItems.map(item => item.id)).size,
+      displayItems.length,
+      'The settled reply contains duplicate native item identities'
+    )
     const chunks = sample.assistantDom.markdownChunks
     if (chunks.length > 2) {
       assert.ok(

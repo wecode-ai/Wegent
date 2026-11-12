@@ -1,0 +1,12 @@
+{
+  "order": 83000,
+  "scenario": "./scenarios/archived-worktree-cleanup.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 122000,
+      "shard": 8,
+      "position": 11000
+    }
+  }
+}

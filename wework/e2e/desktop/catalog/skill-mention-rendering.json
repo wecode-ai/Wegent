@@ -1,0 +1,8 @@
+{
+  "pluginOrder": 6000,
+  "ci": {
+    "plugins": {
+      "order": 5000
+    }
+  }
+}

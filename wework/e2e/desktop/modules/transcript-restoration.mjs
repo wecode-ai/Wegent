@@ -9,7 +9,7 @@ export async function waitForTranscriptState(
   let latest = null
   while (Date.now() - startedAt < timeoutMs) {
     latest = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    const matched = predicate(latest)
+    const matched = await predicate(latest)
     await recordSample?.({ matched, snapshot: latest })
     if (matched) return latest
     await new Promise(resolve => setTimeout(resolve, 100))

@@ -1,0 +1,24 @@
+diff --git a/dist/pnpm.mjs b/dist/pnpm.mjs
+--- a/dist/pnpm.mjs
++++ b/dist/pnpm.mjs
+@@ -160305,6 +160305,7 @@ function createCloneFunction() {
+   if (_cloneFunction)
+     return _cloneFunction;
+-  if (process.platform === "darwin" || process.platform === "win32") {
++  // copy_on_write 0.1.3 aborts instead of returning Windows path errors.
++  if (process.platform === "darwin") {
+     const { reflinkFileSync } = __require("@reflink/reflink");
+     _cloneFunction = (fr, to) => {
+       try {
+diff --git a/dist/worker.js b/dist/worker.js
+--- a/dist/worker.js
++++ b/dist/worker.js
+@@ -8706,6 +8706,7 @@ function createCloneFunction() {
+   if (_cloneFunction)
+     return _cloneFunction;
+-  if (process.platform === "darwin" || process.platform === "win32") {
++  // copy_on_write 0.1.3 aborts instead of returning Windows path errors.
++  if (process.platform === "darwin") {
+     const { reflinkFileSync } = __require("@reflink/reflink");
+     _cloneFunction = (fr, to) => {
+       try {

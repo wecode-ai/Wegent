@@ -16,7 +16,7 @@ from app.services.skill_service import SkillValidator
 pytestmark = pytest.mark.unit
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-INIT_DATA_DIR = BACKEND_ROOT / "init_data"
+INIT_DATA_DIR = BACKEND_ROOT.parent / "backend-rs" / "init_data"
 PUBLIC_RESOURCES_PATH = INIT_DATA_DIR / "02-public-resources.yaml"
 SKILL_CREATOR_DIR = INIT_DATA_DIR / "skills" / "skill-creator"
 

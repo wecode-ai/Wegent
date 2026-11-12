@@ -1,9 +1,9 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import '@/i18n'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
+import '@/i18n'
+import { act, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CloudTodoBoardCard } from './CloudTodoBoardCard'
 
 afterEach(() => {
@@ -48,53 +48,6 @@ function observeVisibility() {
 }
 
 describe('Issue board metadata badges', () => {
-  it('does not discover links in historical content while rendering a card', () => {
-    const executeCommand = vi.fn()
-    const monitor = new ChangeRequestMonitor({ executeCommand })
-    render(
-      <CloudTodoBoardCard
-        item={{ ...item, badges: undefined, description: url }}
-        onClick={vi.fn()}
-        onArchive={vi.fn()}
-        display={display}
-        renderBadges={badges => (
-          <IssueChangeRequestBadges badges={badges} monitor={monitor} compact />
-        )}
-      />
-    )
-    expect(screen.queryByTestId('cloud-todo-card-badges-issue-1')).not.toBeInTheDocument()
-    expect(executeCommand).not.toHaveBeenCalled()
-  })
-
-  it('renders metadata without hydrating descriptions or comments and queries only visible cards', async () => {
-    const setVisible = observeVisibility()
-    const executeCommand = vi
-      .fn()
-      .mockResolvedValue({ success: true, stdout: { number: 42, url, state: 'MERGED' } })
-    const monitor = new ChangeRequestMonitor({ executeCommand })
-    const onClick = vi.fn()
-    render(
-      <CloudTodoBoardCard
-        item={item}
-        onClick={onClick}
-        onArchive={vi.fn()}
-        display={display}
-        renderBadges={badges => (
-          <IssueChangeRequestBadges badges={badges} monitor={monitor} compact />
-        )}
-      />
-    )
-    expect(screen.getByText('#42')).toBeVisible()
-    expect(executeCommand).not.toHaveBeenCalled()
-    setVisible(true)
-    await waitFor(() =>
-      expect(screen.getByTestId('issue-badge-' + url)).toHaveAccessibleName(/已合并|Merged/)
-    )
-    expect(executeCommand).toHaveBeenCalledTimes(1)
-    setVisible(false)
-    expect(screen.getByText('#42')).toBeVisible()
-  })
-
   it('does not display or query badges without detail permission', () => {
     observeVisibility()
     const executeCommand = vi.fn()

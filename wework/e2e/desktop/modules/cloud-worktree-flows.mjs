@@ -1,5 +1,6 @@
 import { openBottomWorkspaceTerminal } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
+import { assertMarkdownPreviewAndSource } from './markdown-file-preview.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -593,8 +594,7 @@ async function verifyFilePanel(control, task, markerName, markerText) {
     text: join(task.workspacePath, markerName).replaceAll('\\', '/'),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
-    text: markerText,
+  await assertMarkdownPreviewAndSource(control, markerText, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 }

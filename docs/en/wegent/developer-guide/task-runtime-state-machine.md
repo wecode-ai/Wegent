@@ -103,6 +103,22 @@ A Claude parent can return `end_turn` while its background subagents are still r
 
 A successful CLI exit alone does not establish task completion. If the stream ends with unfinished, failed, or stopped subagents, or the final `subagent_stats` reports system-terminated or unfinished subagents, the executor returns `runtime_error`; the existing error callback marks the task `FAILED`. Completed subagents and subsequent parent turns can still produce `COMPLETED`; explicit user cancellation remains `CANCELLED`.
 
+### Claude stdout Message Size Limit
+
+The executor limits each normalized Claude stdout JSON message by its UTF-8 byte count. `WEGENT_CLAUDE_STDOUT_MAX_BUFFER_BYTES` defaults to `10485760` (10 MiB) and accepts positive integers from `1` through `67108864`; the separate 64 MiB raw-message guard remains unchanged. An unset value uses the default. Blank, invalid, or out-of-range values log a warning and use the default.
+
+Messages above the configured limit first undergo removal of recognized duplicate task transcripts and fail only if they still exceed the limit. Messages within the limit retain their task transcript metadata.
+
+Set the variable in the executor container's launch environment, for example to allow 20 MiB:
+
+```yaml
+env:
+  - name: WEGENT_CLAUDE_STDOUT_MAX_BUFFER_BYTES
+    value: '20971520'
+```
+
+The value is cached within the process after its first read. After changing the launch environment, restart the executor or recreate the Pod / Docker container to apply it. Running `export` inside a container does not change the environment of an already running executor process.
+
 ### Cancellation And State Convergence
 
 Runtime task cancellation must converge two state surfaces:

@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { lstat, readFile, readlink, readdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { CLOUD_DEVICE_ID, CLOUD_PUBLIC_MODEL_NAME, CLOUD_PUBLIC_MODEL_OPTIONS } from './shared.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
+
+const { parse } = createRequire(join(import.meta.dirname, '../../../electron/package.json'))(
+  process.env.WEWORK_E2E_YAML_PARSER || 'yaml'
+)
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 
@@ -34,6 +39,11 @@ export function createSharedSkillRuntime({
       writeText(response, `${turn.callId}-done`, turn.completion)
       return true
     }
+    assert.equal(
+      serialized.includes(`**${NAME}** [USER SELECTED - PRIORITIZE]`),
+      Boolean(turn.bindShells),
+      'Native Claude did not receive the configured skill preload guidance'
+    )
     const output = (body.input ?? []).find(
       item => item.type === 'function_call_output' && item.call_id === turn.callId
     )
@@ -50,6 +60,15 @@ export function createSharedSkillRuntime({
         JSON.stringify(output).includes(turn.content),
         'Claude read the wrong skill version'
       )
+      if (turn.bindShells) {
+        const frontmatter = output.output.match(/^---\r?\n([\s\S]*?)\r?\n---/m)?.[1]
+        assert.ok(frontmatter, 'Claude did not read the skill frontmatter')
+        assert.deepEqual(
+          parse(frontmatter).bindShells,
+          turn.bindShells,
+          'Claude did not consume the skill with its original Shell declaration'
+        )
+      }
       const mcpOutput = (body.input ?? []).find(
         item => item.type === 'function_call_output' && item.call_id === `${turn.callId}-mcp`
       )
@@ -110,7 +129,7 @@ export function createSharedSkillRuntime({
       )
       return response
     }
-    const upload = async (version, id) => {
+    const upload = async (version, id, bindShells = ['ClaudeCode', 'Codex']) => {
       const archivePath = join(resultDir, `${NAME}-${version}.zip`)
       const mcps =
         !isCodex && version === 'V1'
@@ -130,7 +149,7 @@ export function createSharedSkillRuntime({
             }
           : {}
       await createZipFixture(archivePath, {
-        [`${NAME}/SKILL.md`]: `---\nname: ${NAME}\ndescription: Shared skill ${version}\nmcpServers: ${JSON.stringify(mcps)}\n---\nWEWORK_SHARED_SKILL_${version}\n`,
+        [`${NAME}/SKILL.md`]: `---\nname: ${NAME}\ndescription: Shared skill ${version}\nbindShells: [${bindShells.join(', ')}]\nmcpServers: ${JSON.stringify(mcps)}\n---\nWEWORK_SHARED_SKILL_${version}\n`,
       })
       const bytes = await readFile(archivePath)
       const form = new FormData()
@@ -180,9 +199,10 @@ export function createSharedSkillRuntime({
       options: CLOUD_PUBLIC_MODEL_OPTIONS,
     }
     let address
-    const runTurn = async (version, index) => {
+    const runTurn = async (version, index, bindShells) => {
       turn = {
         index,
+        bindShells,
         prompt: `${promptPrefix}_TURN_${index}`,
         content: `WEWORK_SHARED_SKILL_${version}`,
         callId: `shared-skill-${index}`,
@@ -257,8 +277,19 @@ export function createSharedSkillRuntime({
     assert.equal(owners.length, 1)
     assert.equal(owners[0].startsWith('user-'), false)
     const home = join(workbench, 'agents', owners[0], 'default', TEAM, 'bots', String(bot.id))
-    const mcpPath = join(home, 'mcp.json')
-    let mcpFirst, mcpBefore, firstProbe, secondProbe
+    const currentMcpPath = async () => {
+      const taskId = String(address.taskId)
+      const pointerPath = join(
+        home,
+        'runtime/runtime-task-executions',
+        `${digest(JSON.stringify(taskId))}.json`
+      )
+      const pointer = JSON.parse(await readFile(pointerPath, 'utf8'))
+      assert.equal(pointer.runtime_task_id, taskId)
+      return join(home, 'runtime/executions', pointer.snapshot, 'mcp.json')
+    }
+    const currentMcp = async () => readFile(await currentMcpPath(), 'utf8')
+    let mcpFirst, firstProbe, secondProbe
     const systemPath = join(home, 'skills', '.system')
     let systemBefore
     if (isCodex) {
@@ -266,7 +297,12 @@ export function createSharedSkillRuntime({
       assert.ok(systemBefore.isDirectory())
       assert.ok((await readdir(systemPath)).includes('skill-creator'))
     } else {
-      mcpFirst = await readFile(mcpPath, 'utf8')
+      mcpFirst = await currentMcp()
+      const previousSharedPath = join(home, 'mcp.json')
+      await assert.rejects(lstat(previousSharedPath), { code: 'ENOENT' })
+      console.log(
+        `[shared-skill-runtime] legacy MCP path: ENOENT (${previousSharedPath}); active config: ${await currentMcpPath()}`
+      )
       const retainedServers = Object.keys(JSON.parse(mcpFirst).mcpServers).filter(name =>
         name.endsWith('_retained-skill-mcp')
       )
@@ -276,9 +312,9 @@ export function createSharedSkillRuntime({
         !mcpFirst.includes(cloud.authToken),
         'Task credentials leaked to persisted MCP config'
       )
-      mcpBefore = await stat(mcpPath, { bigint: true })
       firstProbe = JSON.parse(await readFile(join(resultDir, 'claude-mcp-probe.json'), 'utf8'))
       assert.match(firstProbe.token, /^\d+$/)
+      assert.match(firstProbe.instanceId, /^[0-9a-f-]{36}$/)
     }
     const link = join(home, 'skills', NAME)
     const packagePath = skill =>
@@ -297,13 +333,14 @@ export function createSharedSkillRuntime({
       assert.equal((await stat(systemPath, { bigint: true })).ino, systemBefore.ino)
     } else {
       secondProbe = JSON.parse(await readFile(join(resultDir, 'claude-mcp-probe.json'), 'utf8'))
+      assert.match(secondProbe.instanceId, /^[0-9a-f-]{36}$/)
       assert.notEqual(
-        secondProbe.pid,
-        firstProbe.pid,
+        secondProbe.instanceId,
+        firstProbe.instanceId,
         'Omitted skill MCP was not started on continuation'
       )
       assert.notEqual(secondProbe.token, firstProbe.token, 'MCP task context was not refreshed')
-      assert.equal(await readFile(mcpPath, 'utf8'), mcpFirst)
+      assert.equal(await currentMcp(), mcpFirst)
     }
     await assertLayout(second)
     assert.ok(
@@ -321,9 +358,8 @@ export function createSharedSkillRuntime({
         await readFile(join(resultDir, 'claude-mcp-probe.json'), 'utf8')
       )
       assert.notEqual(thirdProbe.token, secondProbe.token)
-      const mcpAfter = await stat(mcpPath, { bigint: true })
-      assert.equal(mcpAfter.ino, mcpBefore.ino)
-      assert.equal(mcpAfter.mtimeNs, mcpBefore.mtimeNs)
+      assert.equal(await currentMcp(), mcpFirst)
+      await assert.rejects(lstat(join(home, 'mcp.json')), { code: 'ENOENT' })
       assert.ok(
         !(await readdir(join(home, 'runtime'))).some(name => name.startsWith('claude-mcp-'))
       )
@@ -331,24 +367,48 @@ export function createSharedSkillRuntime({
     const after = await stat(packagePath(second), { bigint: true })
     assert.equal(after.ino, before.ino)
     assert.equal(after.mtimeNs, before.mtimeNs)
+    let chatBoundPackage
+    if (!isCodex) {
+      const chatBound = await upload('V3', skillId, ['Chat'])
+      assert.deepEqual(chatBound.spec.bindShells, ['Chat'])
+      const updatedBot = await (
+        await request(`bots/${bot.id}`, 'PUT', {
+          preload_skills: [NAME],
+          preload_skill_refs: {
+            [NAME]: { skill_id: skillId, namespace: 'default', is_public: false },
+          },
+        })
+      ).json()
+      assert.equal(updatedBot.shell_type, 'ClaudeCode')
+      assert.deepEqual(updatedBot.preload_skills, [NAME])
+      assert.equal(updatedBot.preload_skill_refs[NAME].skill_id, skillId)
+      await runTurn('V3', 4, ['Chat'])
+      await assertLayout(chatBound)
+      chatBoundPackage = packagePath(chatBound)
+    }
     await writeFile(
       join(resultDir, isCodex ? 'codex-shared-skill-runtime.json' : 'shared-skill-runtime.json'),
       JSON.stringify(
         {
           home,
-          sharedPackages: [packagePath(first), packagePath(second)],
+          sharedPackages: [
+            packagePath(first),
+            packagePath(second),
+            ...(chatBoundPackage ? [chatBoundPackage] : []),
+          ],
           relativeLink: await readlink(link),
           taskId: address.taskId,
-          turns: 3,
+          turns: isCodex ? 3 : 4,
           metadataDiffersFromDownloadedZip: true,
           unchangedVersionReused: true,
           ...(isCodex
             ? { nativeSystemSkillsPreserved: true, systemSkillsPath: systemPath }
             : {
-                stableMcpPath: mcpPath,
+                snapshotMcpPath: await currentMcpPath(),
                 omittedSkillMcpRetained: true,
                 mcpContextRefreshed: true,
-                unchangedMcpFileReused: true,
+                unchangedMcpConfig: true,
+                chatBoundPreloadConsumedByClaude: true,
               }),
         },
         null,

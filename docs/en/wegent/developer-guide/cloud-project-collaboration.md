@@ -367,3 +367,13 @@ flowchart LR
 Historical execution outcomes and transcript availability are independent. A read failure must not appear as empty history or confirmed executor idleness. Initial loading uses a skeleton. An offline executor remains an explicit error with retry; clients must not switch to a member's similarly named device. The existing automation regression includes member reads of admin-owned history. Focused unit tests run by default; E2E requires an explicit request.
 
 HTTP transcript responses preserve the Runtime's `turns`, `running`, `origin`, `historyUnavailable`, and `turnNavigation`, matching the Socket.IO contract. Missing `turns` is a protocol error, not an empty-history fallback.
+
+## Project milestones
+
+Local and cloud projects with internally stored Issues support milestones. The Milestones project view manages a description, due date and manual open/closed state, and shows counts for Issues visible to the caller. Progress is completed Issues divided by linked Issues; empty milestones show 0%. Finishing an AI run does not complete an Issue.
+
+Each Issue can reference one milestone in the same project. Parent and child Issues are assigned independently. Issue creation and details offer a milestone selector. Creating an Issue from milestone details preselects that milestone and still allows changing or removing the association; boards and tables support filtering, and tables support bulk association and removal. Deleting a milestone only removes its associations and preserves every Issue. Cloud milestone management requires Maintainer or Owner; association changes retain the existing Issue content-edit policy. Counters apply the existing Issue visibility rules.
+
+Milestones reuse `loop_items` nodes with `resource_type=milestone`; Issue references live in `metadata.milestone_id`. Executor IPC and SQLite transactions own local persistence. Rust owns the new cloud milestone APIs, while existing Python Issue APIs create and update references. Association validation and deletion lock the same milestone row; updates and deletion check versions. No new table or migration is required. External GitHub, GitLab and DingTalk Issue providers are outside this feature's scope.
+
+Archived completed Issues remain in both total and completed counts, and archived unfinished Issues remain in the remaining count. Archiving and restoration do not change delivery progress. The UI identifies the archived count and links milestone details to the existing archive.

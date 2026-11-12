@@ -1,0 +1,36 @@
+{
+  "revision": "a8b9c0d1e2f3",
+  "parents": [
+    "f7a8b9c0d1e2"
+  ],
+  "source": "20260731_a8b9c0d1e2f3_add_marketplace_owner_user_id.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE marketplace_resources ADD COLUMN owner_user_id INTEGER NOT NULL COMMENT 'Owner user ID copied from the associated Kind resource' DEFAULT '0'"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE marketplace_resources\n            SET owner_user_id = (\n                SELECT kinds.user_id\n                FROM kinds\n                WHERE kinds.id = marketplace_resources.kind_id\n            )"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_marketplace_resources_owner_type_updated ON marketplace_resources (owner_user_id, resource_type, updated_at, kind_id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_marketplace_resources_owner_type_updated ON marketplace_resources"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE marketplace_resources DROP COLUMN owner_user_id"
+      ]
+    }
+  ]
+}

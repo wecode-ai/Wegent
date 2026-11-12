@@ -6,6 +6,16 @@ sidebar_position: 24
 
 The Wework desktop app follows the Codex App sidebar state model. Project and live task content comes from the Codex app-server, while sidebar metadata comes from `.codex-global-state.json` in the target device's `CODEX_HOME`. While a remote device is online, Wework also stores a local task-list summary for startup recovery after that device goes offline.
 
+## Hover detail lifetime
+
+Sidebar project and task details follow pointer hover. They close after the pointer leaves both the row and the popup, even if a popup button retains focus. `HoverCard.interactive` only enables actions inside the popup; callers that need focus-driven visibility must explicitly enable `openOnFocus`. Project pinning is independent of popup visibility.
+
+The desktop `running-sidebar-state` checkpoint covers entering project details from the row, focusing a popup button and moving outside, dismissal, reopening, and Escape dismissal. The scenario retains button focus in the background renderer and verifies that subsequent pointer movement cannot cancel dismissal, without letting native window blur hide the defect.
+
+Pointer transfers use the `target` option on `pointerLeave` to dispatch exit and entry events within one renderer turn, preventing control transport gaps from exceeding the actual dismissal delay. The production 120ms dismissal delay remains unchanged; longer waits and retries must not hide the defect.
+
+The shared `focus` control command establishes the focus prerequisite. In a background Electron window, DOM `focus()` updates `activeElement` without emitting `focusin`; the command also dispatches that event while the window is inactive, so React observes the focus transition without native window activation.
+
 ## State ownership
 
 | Data                                       | Source of truth                                | Notes                                                                              |
@@ -33,6 +43,14 @@ Executor merges three Codex project representations:
 3. `remote-projects` for projects on remote hosts.
 
 Thread grouping applies this precedence: exclusion through `projectless-thread-ids`, explicit `thread-project-assignments`, `thread-workspace-root-hints`, then longest-root path matching. Explicit metadata always wins over path inference.
+
+## Adding devices for remote projects
+
+Cloud connection settings and remote project creation share device onboarding. Wegent provisions and manages cloud devices; users run and manage remote Docker containers using generated commands. Commands are requested only after selecting Generate command. Neither entry offers a host installer script. The project device picker also allows adding another device when usable devices already exist.
+
+Remote project creation tracks the newly added device and selects it once it is usable and version compatible. Users can then open a directory, create an empty project, or clone a repository when Git support is available. Offline and incompatible devices remain visible but cannot be selected. Connection failures and version mismatches offer a status refresh. Returning to project selection after an accepted cloud creation does not allow duplicate creation.
+
+Closing device setup stops connection polling. Account or Backend changes clear commands and discovered devices; refreshing the same account's token preserves its generated command. The desktop `remote-device-onboarding` checkpoint covers command generation and copying through both entries, followed by real device registration and remote project creation.
 
 ## Project editing across devices
 
@@ -123,6 +141,12 @@ Async reminders survive successful execution completion, task switching, and
 task-list reloads. Executor clears them when it accepts the next message or
 in-turn guidance, or when execution fails or is cancelled. Completing a turn or
 the question's tool call does not constitute an answer.
+
+Consecutive async questions in one turn accumulate in the workbench's response form in arrival order. Newly arriving questions preserve existing drafts, and request identity distinguishes repeated question IDs across calls. Submission sends all answers together in question order. Reply attribution uses the entire question group, and answered questions stay settled after reload. Blocking approvals and authorization requests remain independent.
+
+Live events and historical projections identify async questions by call ID without the turn scope used by blocking requests. This keeps history refreshes from remounting the form and clearing drafts. Synchronous approvals retain their turn isolation.
+
+The desktop `runtime-input-answer-persistence` checkpoint also covers three consecutive questions, preservation of an in-progress draft, combined answer delivery through real Codex, and response state after reload.
 
 The desktop `priority-filter` checkpoint covers the async bell regression: wait
 for execution to finish, verify the bell in the current and background task,

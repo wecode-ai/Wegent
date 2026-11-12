@@ -31,6 +31,16 @@ export type LocalWorkspaceOpenerId = (typeof LOCAL_WORKSPACE_OPENERS)[number]['i
 
 export const DEFAULT_LOCAL_WORKSPACE_OPENER_ID: LocalWorkspaceOpenerId = 'vscode'
 
+export function prioritizeWorkspaceOpener<T extends { id: string }>(
+  openers: readonly T[],
+  preferred: LocalWorkspaceOpenerId | null
+): T[] {
+  return [
+    ...openers.filter(opener => opener.id === preferred),
+    ...openers.filter(opener => opener.id !== preferred),
+  ]
+}
+
 export function visibleOpenersForPlatform(platform: DesktopPlatform): LocalWorkspaceOpenerDef[] {
   return LOCAL_WORKSPACE_OPENERS.filter(opener => {
     if (opener.category === 'macOnly') return platform === 'mac'

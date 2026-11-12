@@ -1,4 +1,7 @@
-import { normalizeAbsoluteWorkspacePath } from '@/lib/workspace-file-contract'
+import {
+  normalizeAbsoluteWorkspacePath,
+  normalizeWorkspaceSeparators,
+} from '@/lib/workspace-file-contract'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
 export type WorkspaceFileTabId = `file:${string}`
@@ -24,5 +27,5 @@ export function workspaceFileTabId(target: WorkspaceTarget, path: string): Works
 }
 
 export function workspaceFileTabLabel(path: string): string {
-  return path.replace(/\\/g, '/').split('/').filter(Boolean).at(-1) ?? path
+  return normalizeWorkspaceSeparators(path).split('/').filter(Boolean).at(-1) ?? path
 }

@@ -14,7 +14,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering as AtomicOrdering},
-        Mutex as TestMutex, MutexGuard, OnceLock,
+        Mutex as TestMutex, MutexGuard,
     },
     time::Duration,
 };
@@ -162,7 +162,9 @@ impl RuntimeWorkHandler for BlockingCapacityRuntimeWorkHandler {
                         self.first_capacity_started.notify_one();
                         self.release_first_capacity.notified().await;
                     }
-                    Ok(json!({"limit": 1, "active": 0, "queued": 0}))
+                    Ok(
+                        json!({"limit": 1, "active": 1, "queued": 5, "categories": {"agent": {"limit": 1, "active": 0, "queued": 0}}}),
+                    )
                 }
                 Some("runtime.tasks.create") => {
                     self.create_calls.fetch_add(1, AtomicOrdering::AcqRel);
@@ -178,10 +180,7 @@ impl RuntimeWorkHandler for BlockingCapacityRuntimeWorkHandler {
 }
 
 fn env_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<TestMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| TestMutex::new(()))
-        .lock()
-        .expect("env lock should be available")
+    crate::test_env::lock()
 }
 
 fn restore_env(key: &str, value: Option<OsString>) {
@@ -547,7 +546,9 @@ impl RuntimeWorkHandler for RouteRegistrationRuntimeWorkHandler {
         Box::pin(async move {
             match data["method"].as_str() {
                 Some("runtime.runner.catalog") => Ok(json!({"models": []})),
-                Some("runtime.capacity.get") => Ok(json!({"limit": 1, "active": 0, "queued": 0})),
+                Some("runtime.capacity.get") => Ok(
+                    json!({"limit": 1, "active": 1, "queued": 5, "categories": {"agent": {"limit": 1, "active": 0, "queued": 0}}}),
+                ),
                 method => panic!("unexpected runtime method: {method:?}"),
             }
         })

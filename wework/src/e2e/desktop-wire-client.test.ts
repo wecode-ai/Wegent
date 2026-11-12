@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { execFile } from 'node:child_process'
 import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -26,6 +28,8 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
     )
     // CI reads these runtime files from its checkout without installing workspace packages.
     for (const runtimePath of [
+      'wework/electron/src/runtime/release-preparation-progress.mjs',
+      'wework/scripts/lib/extract-runtime-archive.mjs',
       'packages/chat-core/package.json',
       'packages/chat-core/src/runtime-user-message.js',
       'packages/chat-core/test-fixtures/conversation-search-contract.json',

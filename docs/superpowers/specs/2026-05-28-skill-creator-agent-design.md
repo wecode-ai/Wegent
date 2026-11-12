@@ -20,12 +20,12 @@ sidebar_position: 6
 
 项目已有以下基础能力：
 
-- `backend/init_data/skills/skill-creator/`：内置公开 Skill，包含 `SKILL.md`、初始化、校验、打包、导出和发布脚本。
-- `backend/init_data/skills/skill-creator/scripts/publish_skill.sh`：读取 `TASK_INFO` 中的任务 token，通过 `/api/v1/kinds/skills/upload` 上传到用户 Skill 库，支持 namespace 和 `--overwrite`。
-- `backend/init_data/skills/interactive-form-question/`：提供 `interactive_form_question` 工具，支持在 Chat、Agno、ClaudeCode 中渲染选择卡片。
+- `backend-rs/init_data/skills/skill-creator/`：内置公开 Skill，包含 `SKILL.md`、初始化、校验、打包、导出和发布脚本。
+- `backend-rs/init_data/skills/skill-creator/scripts/publish_skill.sh`：读取 `TASK_INFO` 中的任务 token，通过 `/api/v1/kinds/skills/upload` 上传到用户 Skill 库，支持 namespace 和 `--overwrite`。
+- `backend-rs/init_data/skills/interactive-form-question/`：提供 `interactive_form_question` 工具，支持在 Chat、Agno、ClaudeCode 中渲染选择卡片。
 - `/api/v1/kinds/skills/upload`：上传个人或群组 Skill。
 - `/api/groups`：返回当前用户参与的群组及 `my_role`，可用于筛选可写入目标。
-- `backend/init_data/02-public-resources.yaml`：内置公开 Ghost、Bot、Team 的初始化来源。
+- `backend-rs/init_data/02-public-resources.yaml`：内置公开 Ghost、Bot、Team 的初始化来源。
 
 因此本次不需要新增 Skill 上传 API 或新的前端卡片协议。
 
@@ -108,7 +108,7 @@ sidebar_position: 6
 
 ## 后端和初始化资源
 
-在 `backend/init_data/02-public-resources.yaml` 新增一组公开 CRD：
+在 `backend-rs/init_data/02-public-resources.yaml` 新增一组公开 CRD：
 
 - Ghost：包含 Skill 创建和发布流程提示词。
 - Bot：引用该 Ghost 和公开 `ClaudeCode` Shell。
@@ -118,7 +118,7 @@ sidebar_position: 6
 
 ## Skill 包调整
 
-更新 `backend/init_data/skills/skill-creator/SKILL.md`：
+更新 `backend-rs/init_data/skills/skill-creator/SKILL.md`：
 
 - 明确 Wegent 场景下创建完成后应使用交互卡片选择发布目标。
 - 引用 `scripts/list_publish_targets.sh`，指导智能体生成目标卡片选项。

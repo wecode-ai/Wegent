@@ -29,7 +29,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Dict, Generator, Optional
 from urllib.parse import urlsplit
@@ -94,7 +94,11 @@ from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.device.identity import record_route_id
-from app.services.device.record_operations import app_identity_lock
+from app.services.device.presence import (
+    PRESENCE_PERSIST_INTERVAL_SECONDS,
+    persist_device_presence,
+)
+from app.services.device.record_operations import device_identity_lock
 from app.services.device.terminal_metrics import record_terminal_event
 from app.services.device.terminal_protocol import (
     get_browser_socket_id,
@@ -420,15 +424,22 @@ def _registration_runtime_transfer_port(
     return payload.runtime_transfer_port
 
 
-def _update_device_heartbeat(user_id: int, device_id: str) -> None:
-    """
-    Update device heartbeat timestamp.
-
-    With CRD model, heartbeat is primarily tracked in Redis.
-    No MySQL update needed.
-    """
-    # Heartbeat is managed via Redis in the async handler
-    pass
+def _update_device_heartbeat(
+    user_id: int,
+    device_id: str,
+    runtime_instance_id: str | None = None,
+    last_heartbeat: str | None = None,
+    force: bool = False,
+) -> bool:
+    observed_at = (
+        datetime.fromisoformat(last_heartbeat)
+        if last_heartbeat
+        else datetime.now(timezone.utc)
+    )
+    with _db_session() as db:
+        return persist_device_presence(
+            db, user_id, device_id, runtime_instance_id, observed_at, force=force
+        )
 
 
 def _update_device_status(user_id: int, device_id: str, status: str) -> None:
@@ -513,6 +524,11 @@ def _match_cloud_device_sync(
                         or update_runtime_transfer_port
                     ):
                         device_json = copy.deepcopy(device.json)
+                        device_json.setdefault("status", {})["lastSeenAt"] = (
+                            datetime.now(timezone.utc).isoformat(
+                                timespec="microseconds"
+                            )
+                        )
                         device_spec = device_json.setdefault("spec", {})
                         if runtime_instance_id:
                             device_spec["runtimeInstanceId"] = runtime_instance_id
@@ -907,13 +923,15 @@ def _project_chat_runtime_event_sync(
     log_runtime_event = logger.info if projected_status is not None else logger.debug
     log_runtime_event(
         "[IssueTaskRuntimeSync] received user=%s device=%s task=%s event=%s "
-        "event_seq=%s workflow_status=%s",
+        "event_seq=%s workflow_status=%s turn=%s client_message=%s",
         user_id,
         device_id,
         runtime_task_id,
         event_name,
         payload.get("eventSeq") or payload.get("event_seq"),
         projected_status,
+        payload.get("subtaskId") or payload.get("subtask_id"),
+        payload.get("clientUserMessageId") or payload.get("client_user_message_id"),
     )
     with get_db_session() as db:
         # The LoopItemExecution is the aggregate root for Wework automation
@@ -1551,6 +1569,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     )
                     return
 
+                last_online_info = online_info
                 await asyncio.sleep(DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS)
                 online_info = await device_service.get_device_online_info(
                     user_id, device_id
@@ -1566,6 +1585,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
                         online_socket_id,
                     )
                     return
+
+                last_observation = online_info or last_online_info
+                if last_observation and last_observation.get("last_heartbeat"):
+                    await self._persist_device_presence(
+                        sid, session, last_observation["last_heartbeat"], force=True
+                    )
 
                 # Remove from Redis online status
                 await device_service.set_device_offline(user_id, device_id)
@@ -1603,24 +1628,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
     @trace_async("device.register", tracer_name="backend.device")
     async def on_device_register(self, sid: str, data: dict) -> dict:
-        if isinstance(data, dict) and data.get("device_type") == "app":
-            session = await self.get_session(sid)
-            if not session.get("user_id"):
-                return {"error": "Not authenticated"}
-            try:
-                async with app_identity_lock(session["user_id"]):
-                    return await self._register_device_session(sid, data)
-            except (RedisError, TimeoutError):
-                logger.warning(
-                    "[Device WS] App identity operation unavailable for user=%s",
-                    session["user_id"],
-                )
-                return {
-                    "error": "Device identity operation is temporarily unavailable; reconnect to retry"
-                }
-        return await self._register_device_session(sid, data)
-
-    async def _register_device_session(self, sid: str, data: dict) -> dict:
         """
         Handle device:register event.
 
@@ -1651,6 +1658,23 @@ class DeviceNamespace(socketio.AsyncNamespace):
         ):
             return {"error": "Runner credential is scoped to its registered device"}
 
+        try:
+            async with device_identity_lock(user_id):
+                return await self._register_device_online(sid, payload, session)
+        except (RedisError, TimeoutError):
+            logger.warning(
+                "[Device WS] Device identity operation unavailable for user=%s",
+                user_id,
+            )
+            return {
+                "error": "Device identity operation is temporarily unavailable; reconnect to retry"
+            }
+
+    async def _register_device_online(
+        self, sid: str, payload: DeviceRegisterPayload, session: dict
+    ) -> dict:
+        """Hold the identity lock across registration and online publication."""
+        user_id = session["user_id"]
         runtime_transfer_host = _normalize_runtime_transfer_host(
             payload.runtime_transfer_host or payload.client_ip
         )
@@ -2009,6 +2033,38 @@ class DeviceNamespace(socketio.AsyncNamespace):
         finally:
             self._runtime_auth_sync_inflight.discard(key)
 
+    @trace_async("device.presence.persist", tracer_name="backend.device")
+    async def _persist_device_presence(
+        self,
+        sid: str,
+        session: dict,
+        last_heartbeat: str | None = None,
+        *,
+        force: bool = False,
+    ) -> None:
+        now = time.monotonic()
+        if not force and now - session.get("presence_persisted_at", 0) < (
+            PRESENCE_PERSIST_INTERVAL_SECONDS
+        ):
+            return
+        try:
+            persisted = await run_sync_in_executor(
+                _update_device_heartbeat,
+                session["user_id"],
+                session.get("logical_device_id") or session["device_id"],
+                session.get("runtime_instance_id"),
+                last_heartbeat,
+                force,
+            )
+            if persisted:
+                session["presence_persisted_at"] = now
+        except Exception:
+            logger.exception(
+                "[Device WS] Failed to persist last online time: user=%s, device=%s",
+                session.get("user_id"),
+                session.get("device_id"),
+            )
+
     async def on_device_heartbeat(self, sid: str, data: dict) -> dict:
         """
         Handle device:heartbeat event.
@@ -2164,8 +2220,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
             runtime_auth_files=payload.runtime_auth_files,
         )
 
-        # Database operation: quick in, quick out
-        _update_device_heartbeat(user_id, payload.device_id)
+        await self._persist_device_presence(sid, session)
+        await self.save_session(sid, session)
 
         # Broadcast slot update to user
         await self._broadcast_device_slot_update(user_id, payload.device_id)

@@ -4,7 +4,8 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { ProcessExplorerView } from '@/features/process-explorer/ProcessExplorerView'
 
 const processExplorerClient: ProcessExplorerClient = {
-  snapshot: () => invokeDesktopHost<ProcessSnapshot>('diagnostics.processSnapshot'),
+  snapshot: options =>
+    invokeDesktopHost<ProcessSnapshot>('diagnostics.processSnapshot', { ...options }),
 }
 
 /**

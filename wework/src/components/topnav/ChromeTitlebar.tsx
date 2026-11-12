@@ -49,7 +49,7 @@ export function ChromeTitlebar({
     <div
       data-testid="chrome-titlebar"
       className={cn(
-        'z-titlebar flex h-[38px] shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none',
+        'relative z-titlebar flex h-[38px] shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none',
         className
       )}
     >

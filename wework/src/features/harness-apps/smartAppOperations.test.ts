@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+// @vitest-environment node
+
 import type { HarnessAppInstallation, HarnessAppPreview } from '@/api/local/harnessApps'
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
 import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   beginSmartAppPublication,
   importSmartAppPackage,
@@ -91,41 +93,27 @@ describe('smart app operations', () => {
     vi.clearAllMocks()
   })
 
-  test('reports install success only after the local installation is confirmed', async () => {
+  test('rejects an installation that does not reach an installed state', async () => {
+    mocks.install.mockResolvedValue({
+      ...installation,
+      state: 'failed',
+      error: 'runtime registration failed',
+    })
     const events = collectOperationResults()
     const prepared = await prepareMarketplaceSmartApp(marketplaceApi(), marketplaceItem, 'install')
 
-    await expect(installMarketplaceSmartApp(prepared, 'model-1')).resolves.toBe(installation)
+    await expect(installMarketplaceSmartApp(prepared, 'model-1')).rejects.toThrow(
+      'Smart app installation ended in state "failed".'
+    )
 
     expect(events.results).toEqual([
       expect.objectContaining({
-        context: {
-          smartApp: {
-            key: 'research-desk',
-            name: 'Research Desk',
-            source: 'market',
-            version: '1.2.0',
-          },
-        },
+        failureStage: 'confirm',
         key: 'smart_app.install',
-        outcome: 'succeeded',
+        outcome: 'failed',
       }),
     ])
-    expect(mocks.notify.mock.invocationCallOrder[0]).toBeLessThan(
-      events.listener.mock.invocationCallOrder[0]!
-    )
-    events.stop()
-  })
-
-  test('uses the update operation instead of installation', async () => {
-    const events = collectOperationResults()
-    const prepared = await prepareMarketplaceSmartApp(marketplaceApi(), marketplaceItem, 'update')
-
-    await installMarketplaceSmartApp(prepared, 'model-1')
-
-    expect(events.results).toEqual([
-      expect.objectContaining({ key: 'smart_app.update', outcome: 'succeeded' }),
-    ])
+    expect(mocks.notify).not.toHaveBeenCalled()
     events.stop()
   })
 
@@ -194,7 +182,7 @@ describe('smart app operations', () => {
     events.stop()
   })
 
-  test('maps an invalid ZIP preview to a validation failure without private details', async () => {
+  test('preserves the ZIP validation error without sending private details to telemetry', async () => {
     mocks.preview.mockResolvedValue({
       ...preview,
       issues: ['private validation detail'],
@@ -203,7 +191,7 @@ describe('smart app operations', () => {
     const events = collectOperationResults()
 
     await expect(importSmartAppPackage('/private/workbench.zip')).rejects.toThrow(
-      'Invalid Smart App package'
+      'private validation detail'
     )
 
     expect(events.results).toEqual([
@@ -211,6 +199,20 @@ describe('smart app operations', () => {
     ])
     expect(JSON.stringify(events.results)).not.toContain('private')
     events.stop()
+  })
+
+  test('preserves extraction timeouts for marketplace installs and updates', async () => {
+    mocks.download.mockResolvedValue({
+      ...preview,
+      issues: ['Smart app ZIP extraction timed out'],
+      valid: false,
+    })
+
+    for (const intent of ['install', 'update'] as const) {
+      await expect(
+        prepareMarketplaceSmartApp(marketplaceApi(), marketplaceItem, intent)
+      ).rejects.toThrow('Smart app ZIP extraction timed out')
+    }
   })
 
   test('maps ZIP preview failures to the preview stage', async () => {

@@ -7,16 +7,29 @@
 
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
+import { updateSessionState } from './ai-verify-session-state.mjs'
+import {
+  captureSessionAuthOwnership,
+  cleanupSessionAuth,
+  observeSessionAuthOwnership,
+  sessionExecutorHome,
+} from './ai-verify-auth-cleanup.mjs'
 import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
 import { WindowCommandQueue } from './desktop-control-queue.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { processIsAlive, windowsTaskkillArguments } from '../e2e/desktop/process-lifecycle.mjs'
+import {
+  createDevtoolsClient,
+  startPerformanceRecording,
+  stopPerformanceRecording,
+  writeDiagnosticFile,
+} from './ai-verify-devtools.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -69,6 +82,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'dismiss-popout': 'dismissPopoutWindow',
   drag: 'drag',
   'drop-file': 'dropFile',
+  'select-file': 'selectFile',
   'drop-paths': 'dropPaths',
   fill: 'fill',
   'get-attribute': 'getAttribute',
@@ -90,6 +104,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
   'wait-for': 'waitFor',
   'window-focus-snapshot': 'getWindowFocusSnapshot',
+  'window-size': 'setMainWindowSize',
   text: 'getText',
   value: 'getValue',
 })
@@ -136,16 +151,22 @@ function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
   pnpm --filter wework ai:verify start --packaged true
+  pnpm --filter wework ai:verify devtools --session PATH --value '{"action":"targets"}'
+  pnpm --filter wework ai:verify devtools --session PATH --value '{"action":"command","target":ID,"method":"Network.enable"}'
+  pnpm --filter wework ai:verify performance-start --session PATH --target ID
+  pnpm --filter wework ai:verify performance-stop --session PATH --target ID --output report.json
   pnpm --filter wework ai:verify <${Object.keys(AI_VERIFY_ACTIONS).join('|')}|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
                             Seed and verify isolated first-run Codex migration
   --executor-home PATH      Use an explicitly selected existing executor home
+  --device-id ID            Preserve that existing home's device identity
   --packaged true           Launch the packaged app instead of Electron source mode
   --rollout PATH            Copy a real JSONL history into the isolated Rollout replay project
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --window LABEL            Target window label (defaults to main)
+                            window-size uses --selector body --value '{"width":1280,"height":900}'
   --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
                             click-at, seed-local-project, archive-local-project,
                             paste-paths, or drop-paths
@@ -204,6 +225,7 @@ export function validateStartOptions(options) {
   const allowedOptions = new Set([
     'codex-home-initialization',
     'executor-home',
+    'device-id',
     'packaged',
     'timeout',
     'rollout',
@@ -213,6 +235,14 @@ export function validateStartOptions(options) {
     throw new Error(`Unexpected option for start: --${unexpectedOption}`)
   }
   resolveOptionalBoolean(options.packaged, 'packaged')
+  if (options['device-id'] !== undefined) {
+    if (!options['executor-home']) {
+      throw new Error('--device-id requires --executor-home')
+    }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(options['device-id'])) {
+      throw new Error('--device-id must be a valid nonempty device identifier')
+    }
+  }
   if (options['executor-home'] !== undefined) {
     const executorHome = options['executor-home'].trim()
     if (!executorHome || !isAbsolute(executorHome)) {
@@ -309,9 +339,9 @@ function signalProcessGroup(processGroupId, signal) {
   })
 }
 
-async function removeSessionAuthLink(session) {
+async function removeSessionAuthLink(session, sessionPath) {
   if (!session?.directory) return
-  await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
+  await updateSessionState(sessionPath, cleanupSessionAuth, session)
 }
 
 export async function readSessionForCleanup(sessionPath, timeoutMs = failedStartCleanupGraceMs) {
@@ -338,7 +368,7 @@ async function cleanupFailedStart(sessionPath, controllerPid) {
   const session = await readSessionForCleanup(sessionPath)
   await stopOwnedSessionProcesses(session)
   await signalProcessGroup(controllerPid, 'KILL')
-  await removeSessionAuthLink(session)
+  await removeSessionAuthLink(session, sessionPath)
 }
 
 export function appExitMessage(appExit) {
@@ -489,6 +519,17 @@ export function monitorAppProcess(app, pending, onExit) {
 
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
+  const executorHome = sessionExecutorHome(session)
+  const codexHome = join(executorHome, 'codex')
+  const nativeCodexHome = session.verifyCodexHomeInitialization
+    ? join(session.directory, 'native-codex')
+    : undefined
+  session.authCleanup = await captureSessionAuthOwnership(session, {
+    nativeCodexHome: nativeCodexHome ?? process.env.WEWORK_E2E_NATIVE_CODEX_HOME?.trim(),
+  })
+  const observeAuth = async () => {
+    await updateSessionState(sessionPath, observeSessionAuthOwnership)
+  }
   const queue = new WindowCommandQueue(corsHeaders)
   const pending = new Map()
   let ready = null
@@ -505,6 +546,7 @@ async function runServer(sessionPath, token) {
         return response.end()
       }
       if (!authorized(request, token)) return json(response, 401, { error: 'Unauthorized' })
+      if (['/ready', '/status', '/command', '/shutdown'].includes(url.pathname)) await observeAuth()
       if (request.method === 'POST' && url.pathname === '/ready') {
         ready = await readBody(request)
         queue.register(ready.clientId, ready.windowLabel)
@@ -592,16 +634,15 @@ async function runServer(sessionPath, token) {
   )
   const address = server.address()
   const controlUrl = `http://127.0.0.1:${address.port}`
-  const updated = {
-    ...session,
+  Object.assign(session, {
     controlUrl,
     status: 'starting',
-  }
+  })
   const shutdown = exitCode => {
     if (shutdownPromise) return shutdownPromise
     queue.close()
     shutdownPromise = stopOwnedSessionProcesses({ launcherPid: app?.pid })
-      .then(() => removeSessionAuthLink(session))
+      .then(() => removeSessionAuthLink(session, sessionPath))
       .finally(() => {
         server.close(() => process.exit(exitCode))
         server.closeAllConnections()
@@ -610,13 +651,10 @@ async function runServer(sessionPath, token) {
   }
   process.once('SIGINT', () => void shutdown(130))
   process.once('SIGTERM', () => void shutdown(143))
-  await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
+  await updateSessionState(sessionPath, latest => {
+    Object.assign(latest, { controlUrl, status: 'starting', authCleanup: session.authCleanup })
+  })
   const log = join(session.directory, 'app.log')
-  const executorHome = session.executorHomeOverride ?? join(session.directory, 'executor-home')
-  const codexHome = join(executorHome, 'codex')
-  const nativeCodexHome = session.verifyCodexHomeInitialization
-    ? join(session.directory, 'native-codex')
-    : undefined
   await mkdir(codexHome, { recursive: true })
   if (nativeCodexHome) {
     await mkdir(nativeCodexHome, { recursive: true })
@@ -634,6 +672,7 @@ async function runServer(sessionPath, token) {
     executorHome,
     sessionDirectory: session.directory,
   })
+  environment.WEWORK_AI_VERIFY_AUTH_OWNER = session.authCleanup.ownerId
   const sourceEnvironment =
     session.launchMode === 'source' ? await buildSourceRuntimeEnvironment() : {}
   const launch = resolveElectronLaunch({
@@ -660,7 +699,10 @@ async function runServer(sessionPath, token) {
       'data',
       chunk => void import('node:fs/promises').then(({ appendFile }) => appendFile(log, chunk))
     )
-  await writeFile(sessionPath, `${JSON.stringify({ ...updated, launcherPid: app.pid }, null, 2)}\n`)
+  session.launcherPid = app.pid
+  await updateSessionState(sessionPath, latest => {
+    latest.launcherPid = app.pid
+  })
 }
 
 async function request(session, token, path, method = 'GET', body) {
@@ -720,7 +762,7 @@ async function main() {
       `${JSON.stringify(
         {
           version: 1,
-          deviceId: `ai-verify-${randomUUID()}`,
+          deviceId: options['device-id'] ?? `ai-verify-${randomUUID()}`,
           directory,
           token,
           status: 'starting',
@@ -807,11 +849,44 @@ async function main() {
   if (command === 'stop') {
     await request(session, session.token, '/shutdown', 'POST')
     await stopOwnedSessionProcesses(session)
-    await removeSessionAuthLink(session)
+    await removeSessionAuthLink(session, options.session)
     return
   }
   if (command === 'status') {
     console.log(JSON.stringify(await request(session, session.token, '/status'), null, 2))
+    return
+  }
+  if (['devtools', 'performance-start', 'performance-stop'].includes(command)) {
+    const client = await createDevtoolsClient(
+      session.directory,
+      resolveCommandTimeout(options.timeout)
+    )
+    let result
+    if (command === 'devtools') {
+      const input = options.file ? await readFile(options.file, 'utf8') : options.value
+      if (!input) throw new Error('devtools requires --value JSON or --file PATH')
+      result = await client(JSON.parse(input))
+      if (options.output) {
+        await writeDiagnosticFile(resolve(options.output), result)
+        console.log(resolve(options.output))
+        return
+      }
+    } else {
+      const target = Number(options.target)
+      if (!Number.isSafeInteger(target) || target <= 0)
+        throw new Error('--target must be a webContents id')
+      if (command === 'performance-stop' && !options.output) throw new Error('--output is required')
+      result =
+        command === 'performance-start'
+          ? await startPerformanceRecording(client, session.directory, target)
+          : await stopPerformanceRecording(
+              client,
+              session.directory,
+              target,
+              resolve(options.output)
+            )
+    }
+    console.log(JSON.stringify(result, null, 2))
     return
   }
   const action = AI_VERIFY_ACTIONS[command]
@@ -822,8 +897,9 @@ async function main() {
   }
   const selector = options.selector ?? (SELECTOR_OPTIONAL_COMMANDS.has(command) ? 'body' : null)
   if (!selector) throw new Error('--selector is required')
-  const dropFilePath = command === 'drop-file' ? options.file : undefined
-  if (command === 'drop-file' && !dropFilePath) throw new Error('--file is required')
+  const fileCommand = command === 'drop-file' || command === 'select-file'
+  const dropFilePath = fileCommand ? options.file : undefined
+  if (fileCommand && !dropFilePath) throw new Error('--file is required')
   const dropFileExtension = dropFilePath ? extname(dropFilePath).toLowerCase() : ''
   const dropFileMimeType =
     dropFileExtension === '.png'

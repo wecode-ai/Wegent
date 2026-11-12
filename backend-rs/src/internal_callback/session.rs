@@ -25,6 +25,11 @@ const STREAMING_KEY_PREFIX: &str = "chat:streaming:";
 const TASK_STREAMING_KEY_PREFIX: &str = "chat:task_streaming:";
 const CONTEXT_METRICS_KEY_PREFIX: &str = "chat:context_metrics:";
 const CALLBACK_CHANNEL_PREFIX: &str = "callback:channel:";
+const TOUCH_TASK_STREAMING_ACTIVITY: &str = r#"
+if (redis.call('GET', KEYS[1]) or '') ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1
+"#;
 /// Internal field stored in block metadata and stripped before returning.
 pub(crate) const BLOCK_CONTENT_KEY_FIELD: &str = "_content_key";
 
@@ -38,6 +43,14 @@ pub(crate) struct LoadedBlocks {
 
 fn set_ex_options() -> SetOptions {
     SetOptions::default().with_expiration(SetExpiration::Seconds(STREAMING_TTL))
+}
+
+/// `settings.STREAMING_REDIS_TTL` (300 seconds): the context-metrics snapshot
+/// uses the shorter cache TTL, unlike the one-hour streaming state.
+pub(crate) const CONTEXT_METRICS_TTL: u64 = 300;
+
+fn context_metrics_options() -> SetOptions {
+    SetOptions::default().with_expiration(SetExpiration::Seconds(CONTEXT_METRICS_TTL))
 }
 
 pub(crate) fn streaming_key(subtask_id: i64) -> String {
@@ -99,32 +112,53 @@ pub(crate) async fn set_task_streaming_status<R: Redis>(
     Ok(())
 }
 
-/// `touch_task_streaming_activity`: refresh `last_activity_at` on an existing
-/// status object. A missing or non-object value is left untouched.
-///
-/// The source re-reads the stored dict and preserves every other field,
-/// including `started_at`, exactly as Redis returns it.
+/// Refresh this subtask's activity, recovering missing metadata after a failed
+/// START write or expiration. Compare raw bytes before writing so a concurrent
+/// START cannot be replaced by the previously read marker.
 pub(crate) async fn touch_task_streaming_activity<R: Redis>(
     redis: &R,
     task_id: i64,
+    subtask_id: i64,
+    observed_started_at: &str,
 ) -> RedisResult<bool> {
     let key = task_streaming_key(task_id);
-    let Some(raw) = redis.get::<_, String>(&key).await? else {
-        return Ok(false);
-    };
-    let Ok(Value::Object(mut value)) = serde_json::from_str::<Value>(&raw) else {
-        return Ok(false);
+    let raw = redis.get::<_, String>(&key).await?;
+    let mut value = match raw.as_deref() {
+        Some(raw) => {
+            let Ok(Value::Object(value)) = serde_json::from_str::<Value>(raw) else {
+                return Ok(false);
+            };
+            if value.get("subtask_id").and_then(Value::as_i64) != Some(subtask_id) {
+                return Ok(false);
+            }
+            value
+        }
+        None => Map::from_iter([
+            ("subtask_id".into(), json!(subtask_id)),
+            ("user_id".into(), json!(0)),
+            ("username".into(), json!("")),
+            ("started_at".into(), json!(observed_started_at)),
+        ]),
     };
     value.insert(
         "last_activity_at".into(),
         Value::String(utc_isoformat(chrono::Utc::now())),
     );
     let payload = orjson_dumps(&Value::Object(value));
-    redis.set_with(key, payload, set_ex_options()).await?;
-    Ok(true)
+    let updated: i64 = redis
+        .eval(
+            TOUCH_TASK_STREAMING_ACTIVITY,
+            [key],
+            [raw.unwrap_or_default(), payload, STREAMING_TTL.to_string()],
+        )
+        .await?;
+    Ok(updated == 1)
 }
 
 /// `save_context_metrics`: cache the latest context-metrics snapshot.
+///
+/// The source passes `settings.STREAMING_REDIS_TTL` (300 seconds), so this key
+/// expires earlier than the one-hour streaming state.
 pub(crate) async fn save_context_metrics<R: Redis>(
     redis: &R,
     subtask_id: i64,
@@ -132,9 +166,13 @@ pub(crate) async fn save_context_metrics<R: Redis>(
 ) -> RedisResult<()> {
     let payload = orjson_dumps(context_metrics);
     redis
-        .set_with(context_metrics_key(subtask_id), payload, set_ex_options())
-        .await?;
-    Ok(())
+        .set_with(
+            context_metrics_key(subtask_id),
+            payload,
+            context_metrics_options(),
+        )
+        .await
+        .map(|_| ())
 }
 
 /// `publish_callback_event`: publish the serialized event to the subtask's
@@ -683,6 +721,26 @@ pub(crate) async fn get_streaming_content<R: Redis>(redis: &R, subtask_id: i64) 
     std::str::from_utf8(&bytes).ok().map(str::to_string)
 }
 
+/// `get_context_metrics`: the latest cached snapshot, when the stored value is
+/// a JSON object (`session_manager.get_context_metrics`).
+///
+/// A missing key, an undecodable value, and a non-object value all yield
+/// `None`, exactly like the source's `isinstance(value, dict)` guard.
+pub(crate) async fn get_context_metrics<R: Redis>(
+    redis: &R,
+    subtask_id: i64,
+) -> Option<serde_json::Value> {
+    let bytes = redis
+        .get::<_, brz_redis::RedisBytes>(&context_metrics_key(subtask_id))
+        .await
+        .ok()
+        .flatten()?;
+    match serde_json::from_slice::<serde_json::Value>(bytes.as_ref()) {
+        Ok(value) if value.is_object() => Some(value),
+        _ => None,
+    }
+}
+
 /// `get_accumulated_content`: the streaming text, or an empty string.
 pub(crate) async fn get_accumulated_content<R: Redis>(redis: &R, subtask_id: i64) -> String {
     get_streaming_content(redis, subtask_id)
@@ -752,7 +810,9 @@ pub(crate) async fn cleanup_streaming_state<R: Redis>(
     Ok(())
 }
 
-/// Return each block's internal content key and its replay-offset key for cleanup.
+/// Return each block's internal content key for cleanup
+/// (`_extract_block_content_keys`). The Source deletes only the recorded
+/// content keys; it has no per-key `:offset` companion.
 fn extract_block_content_keys(blocks_raw: &[String]) -> Vec<String> {
     let mut keys = Vec::new();
     for entry in blocks_raw {
@@ -761,7 +821,6 @@ fn extract_block_content_keys(blocks_raw: &[String]) -> Vec<String> {
         };
         if let Some(Value::String(content_key)) = block.get(BLOCK_CONTENT_KEY_FIELD) {
             keys.push(content_key.clone());
-            keys.push(format!("{content_key}:offset"));
         }
     }
     keys
@@ -786,4 +845,29 @@ fn short_uuid() -> String {
     std::hash::Hash::hash(&std::process::id(), &mut hasher);
     let value = std::hash::Hasher::finish(&hasher);
     format!("{value:012x}")[..12].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_block_content_keys;
+
+    /// `_extract_block_content_keys` deletes only the content key recorded in
+    /// each block, never an appended `:offset` companion key.
+    #[test]
+    fn cleanup_deletes_only_the_content_keys() {
+        let blocks = vec![
+            r#"{"id":"text-1","_content_key":"chat:streaming:block_content:5:text-1"}"#.to_string(),
+            r#"{"id":"thinking-abc","_content_key":"chat:streaming:block_content:5:thinking-abc"}"#
+                .to_string(),
+            r#"{"id":"tool-1"}"#.to_string(),
+            "not json".to_string(),
+        ];
+        assert_eq!(
+            extract_block_content_keys(&blocks),
+            vec![
+                "chat:streaming:block_content:5:text-1".to_string(),
+                "chat:streaming:block_content:5:thinking-abc".to_string(),
+            ]
+        );
+    }
 }

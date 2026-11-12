@@ -16,6 +16,10 @@ The embedded browser has three layers:
 
 When Executor launches Codex, it injects the browser MCP server configuration. Browser tool calls from the model read the current bridge identity and send controlled requests to the Wework process's loopback bridge. The bridge then schedules Electron browser view navigation, page inspection, DOM actions, waits, and screenshots on the main thread.
 
+History reads, context compaction, and MCP App actions can also cold-resume a Codex session through `thread/resume`. These paths must reuse normal startup's task-scoped MCP configuration, including the browser's task label, authorization environment variables, and project-space context, while preserving the session's model settings. A native Goal can continue immediately after resume. Restoring only shell identity leaves the model without browser tools even though the panel may still display its page. The `embedded-browser` desktop checkpoint restarts the real app-server, refreshes history, and verifies that the same thread reconnects both browser and project-space MCP servers without another user message. The checkpoint creates an independent task on the browser-owning local Executor and waits until in-flight history reads permit an idle restart.
+
+Background-task inspection and DOM actions return their results through Chromium `Runtime.evaluate`, reusing the existing debugger-session leases. In a hidden guest, Electron `executeJavaScript` may run the script while its isolated-world reply Promise remains pending; never execute the original action again to wake the reply, as that can duplicate page mutations. Evaluation must await page Promises, return results by value, propagate exceptions, and preserve an existing inspector connection.
+
 Each Wework process binds an independent random local bridge port and atomically writes the bridge identity to `runtime/embedded-browser-bridge.json` under the active Executor home. The identity contains a schema version, process PID, loopback address, authentication token, and start time. Directory and file permissions should be restricted to the current user, and the token must not be logged. The MCP server reads the latest identity before each request and accepts only loopback addresses, so multiple Wework instances do not route browser requests to the wrong window.
 
 After starting the bridge, Electron must pass the runtime file path to the managed Executor. When the Executor builds the Codex browser MCP configuration, it must pass only that file path and must not pin the current bridge URL or token in the configuration. Otherwise, a random Electron port or a restarted bridge leaves the MCP server connected to stale coordinates and bypasses runtime identity refresh.
@@ -23,6 +27,18 @@ After starting the bridge, Electron must pass the runtime file path to the manag
 Bridge requests must include the authentication token. `open` and `navigate` allow only safe web schemes; do not allow `file:`, `javascript:`, or other URLs that could read local files or execute arbitrary script through the Agent navigation path.
 
 The bridge supports limited concurrency. A long `waitFor` request must not block independent `click`, `fill`, or `inspect` requests; when the concurrency limit is reached, return an explicit busy error instead of waiting forever.
+
+### Agent action approval
+
+A high-risk browser action suspends its original tool call before changing the page. Electron registers a pending approval for 60 seconds and displays Continue and Cancel in the browser panel. Continue executes that call's saved arguments once and returns the execution result to the same MCP call, so the AI does not need to invoke the action again. Rejection, expiry, page navigation, browser closure, or a disconnected original request ends the wait without executing. The former authorization-for-a-later-retry path has been removed. Subsequent inspect, wait, or other status updates must retain the pending approval. The embedded-browser desktop checkpoint uses a real MCP call to verify the pending state, inspection, completion of the original call after Continue, and exactly one page mutation.
+
+When several actions await approval in one browser, the panel displays the most recently registered request and keeps it selected during inspection. Resolving it reveals any remaining pending request; each approval still applies only to its own waiting operation.
+
+User takeover takes priority and displays the resume control. Inspection while paused must not clear takeover state. Resuming AI restores any unexpired pending approval; takeover neither approves nor rejects it.
+
+Failures from other operations retain their error status, message, and code, including `wait_timeout` reported as `needs_user`, while pending approve/reject controls remain available. Pending approval details replace activity details only for idle/running updates or an operation that itself requires approval. Desktop regression checks must confirm renderer delivery of the post-inspect host events before asserting approval controls; a stability window alone cannot prove delivery.
+
+Mutating browser requests reserve 60 seconds for human approval in addition to their existing 45-second action budget. Only the browser MCP tool budget is 120 seconds; observation requests retain their 45-second limit. Disconnecting must cancel the pending operation so it cannot execute after its tool call has ended.
 
 ### Multi-tab navigation connection graph
 
@@ -142,7 +158,11 @@ Structured inspect results should include at least the page URL, title, viewport
 - `frameId`, `selector`, or other diagnostic locator data: useful for debugging, but the model should not depend on fragile selectors.
 - `warnings`: occlusion, invisibility, sensitive input, cross-frame limits, or other risks.
 
+Inspect recursively enters same-origin iframes. A node's `rect` uses top-level viewport CSS pixels and includes iframe borders and parent transform scaling; an action result's `target.rect` uses the same coordinate space, while `localRect` is relative to the element's own document. Coordinate clicks descend through iframes with the same mapping and do not scroll the page to center the target, which would invalidate the coordinates between preview and dispatch. Cross-origin iframes remain unavailable, and rotated or skewed transforms can only be approximated, which returns a `frame_transform_approximate` warning.
+
 Action tools should prefer `ref` values produced by `inspect`. If page re-rendering invalidates a `ref`, return a recoverable error that asks the model to inspect again instead of silently guessing a selector. Action results should describe the observed effect, such as value change, DOM change, URL change, or only dispatching an event without an observed effect.
+
+Failed actions return the requested `inspectId`, `index`, and `ref` together with the available inspect identifiers. An index from an older inspect returns `stale_inspect`, while a present but non-actionable node returns `element_not_actionable`, instead of collapsing every targeting failure into `element_not_found`.
 
 ## Task Binding
 
@@ -161,6 +181,10 @@ Each pane/task label currently maps to one browser host. Wework can keep multipl
 
 A programmatic first open must treat "the panel was requested" and "the native WebView is ready for navigation" as separate phases. The bridge stores pending navigation with a request ID and executes it only after the browser host for that task has nonzero visible bounds and reaches the ready state. If the frontend listener registers after the request, it recovers the event from the pending-request snapshot. The tool may report success only after the native WebView has navigated to the requested URL, not merely because the right panel or a blank WebView was created.
 
+`state().url` includes navigation intent during loading and cannot prove completion. The Electron manager tracks `navigationCompletion`; a native loading promise can finish during bootstrap handoff, so readiness also requires the committed URL to match the current request target and the main frame to stop loading. A redirect replaces that target with its final committed URL, so a redirected open completes. Bridge `open` awaits that complete barrier and checks navigation failure before tools inspect the page.
+
+Browser guests share the platform background policy used by other workbench surfaces. Apply it on the common initialization path for both preload branches. Disable guest background throttling on macOS/Linux so hidden task pages continue executing scripts. Windows retains its default visibility lifecycle and the existing global background timer policy. Before inspecting a background task, the `embedded-browser` checkpoint reads and asserts the actual guest policy rather than checking only the main window.
+
 Close requests triggered by task switching or component unmounting must include the expected native label. A stale pane may close only the WebView it created; it must not close an instance that was relabeled or adopted by a replacement pane. An inactive task may prepare a hidden ready browser, but it cannot display that browser over the active task.
 
 ## Main-interface overlays and address synchronization
@@ -169,7 +193,7 @@ Electron embedded pages must be mounted as renderer-owned `<webview>` elements u
 
 Desktop implementations that still use a separate native WebView cannot rely on React `z-index`. When a main-interface overlay intersects such a browser region, the browser panel must hide the native WebView and restore it after the overlay is removed or no longer intersects. Add `data-embedded-browser-occlusion` when a custom overlay cannot be identified through a semantic role or shared layer class; do not duplicate native visibility calls across feature components.
 
-Page-state polling owns the browser's actual URL, while the address field owns the user's editing draft. While the address field is focused, polling may update page URL state, title, and favicon, but it must not overwrite the draft. Restore the actual URL after focus leaves the field. New navigation and page-state synchronization paths must preserve this boundary.
+Page-state polling owns the browser's actual URL, while the address field owns the user's editing draft. While the address field is focused, polling may update page URL state, title, and favicon, but it must not overwrite the draft. Restore the actual URL after focus leaves the field. Window deactivation may emit `blur` while the address input remains `document.activeElement`; preserve the editing state and draft in that case. New navigation and page-state synchronization paths must preserve this boundary.
 
 ## WebView Compatibility
 

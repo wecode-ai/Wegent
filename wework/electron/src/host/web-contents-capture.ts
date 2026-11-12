@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron'
 import { HostCapabilityError } from './capability-router.js'
+import { withDebuggerSession } from './debugger-session.js'
 
 const CAPTURE_ATTEMPT_TIMEOUT_MS = 10_000
 
@@ -60,10 +61,7 @@ async function captureDebugger(
   fromSurface: boolean,
   rect?: CaptureRect
 ): Promise<string> {
-  const debugSession = contents.debugger
-  const alreadyAttached = debugSession.isAttached()
-  try {
-    if (!alreadyAttached) debugSession.attach()
+  return withDebuggerSession(contents, async debugSession => {
     const result = (await withCaptureTimeout(
       debugSession.sendCommand('Page.captureScreenshot', {
         captureBeyondViewport: false,
@@ -77,9 +75,7 @@ async function captureDebugger(
       return `data:image/png;base64,${result.data}`
     }
     throw new Error('CDP returned an empty screenshot')
-  } finally {
-    if (!alreadyAttached && debugSession.isAttached()) debugSession.detach()
-  }
+  })
 }
 
 async function captureNative(

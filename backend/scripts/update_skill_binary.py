@@ -101,7 +101,9 @@ def main():
         sys.exit(1)
 
     skill_name = sys.argv[1]
-    skill_folder = backend_dir / "init_data" / "skills" / skill_name
+    skill_folder = (
+        backend_dir.parent / "backend-rs" / "init_data" / "skills" / skill_name
+    )
 
     if not skill_folder.exists():
         print(f"Error: Skill folder not found: {skill_folder}")

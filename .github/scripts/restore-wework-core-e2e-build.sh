@@ -16,7 +16,7 @@ sha256sum "$archive"
 
 rm -rf "$build_dir"
 restore_status=0
-tar -I zstd -xf "$archive" -C "$artifact_dir" || restore_status=$?
+zstd -dc "$archive" | tar -xf - -C "$artifact_dir" || restore_status=$?
 if ((restore_status != 0)); then
   # Diagnostic failures must not replace the extraction exit code.
   set +e
@@ -32,6 +32,7 @@ if ((restore_status != 0)); then
   fi
   exit "$restore_status"
 fi
+node .github/scripts/wework-core-e2e-transport.mjs materialize "$build_dir"
 chmod 0755 "$app_binary" "$executor_binary" "$codex_binary" "$backend_rs_binary"
 
 test -x "$app_binary"
@@ -39,4 +40,8 @@ test -x "$executor_binary"
 test -x "$codex_binary"
 test -x "$backend_rs_binary"
 test -s "$build_dir/e2e-client/socket.io-client.cjs"
+test -s "$build_dir/e2e-client/lz-string.cjs"
 test -s "$build_dir/e2e-client/yaml.cjs"
+
+# Consumers use the validated extracted build; retain failed archives for diagnostics.
+rm "$archive"

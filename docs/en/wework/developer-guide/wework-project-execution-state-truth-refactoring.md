@@ -35,7 +35,7 @@ flowchart LR
     USER["Approve / cancel / retry"]
   end
   subgraph Config["Existing configuration — no new table"]
-    DEVICE["Runtime Settings<br/>D = maxConcurrentTasks<br/>single device-wide limit"]
+    DEVICE["Runtime Settings<br/>Dpersonal / DstandIn / Dagent<br/>independent execution-owner limits"]
     OBS["Live Runtime observation<br/>limit / active / active_task_ids / queued<br/>Local IPC; Cloud Redis TTL"]
     DOMAIN["Capacity domain<br/>owner_user_id + runtime_instance_id<br/>multiple routes share one domain"]
     ROBOT["loop_items.metadata<br/>R = max_concurrent_executions<br/>global per robot, default 1"]
@@ -47,7 +47,7 @@ flowchart LR
   end
   subgraph Claim["Canonical claim path"]
     LOCK["owner lock → runtime_instance lock"]
-    DGATE{"Valid observation?<br/>O = Runtime active + durable reservations<br/>not present in active_task_ids<br/>O < D?"}
+    DGATE{"Valid observation?<br/>Oagent = categories.agent.active + durable reservations<br/>not present in categories.agent.active_task_ids<br/>Oagent < Dagent?"}
     RGATE{"Project-robot occupancy < R?<br/>manager has no agent gate"}
     SGATE{"execution_scope free?"}
     CAS["CAS queued → claimed<br/>write runtime_instance_id"]
@@ -55,7 +55,7 @@ flowchart LR
   end
   subgraph Runtime["Physical Runtime concurrency"]
     START["Persist start_requested_at<br/>Start fence"]
-    SCHED{"Runtime active tasks < D?"}
+    SCHED{"Owner active tasks < Dsubject?"}
     WAIT["Accepted but queued in Runtime<br/>waiting_runtime"]
     RUN["Actually running"]
     OTHER["Normal chat / other Runtime tasks"]
@@ -110,7 +110,13 @@ The direction is one-way: Execution → Message/Automation/Workflow projections.
 
 Executor pulls first probe for this Runtime's unconfirmed claim without locks, then lock and revalidate an existing claim by primary key. An empty probe proceeds directly to normal claiming without locking a queue range, avoiding deadlocks with the Issue-first claim lock order.
 
-`D` has one configuration source. Occupancy is neither the sum nor the maximum of two unrelated counters. It is merged by Runtime task identity: `O = Runtime active + durable capacity rows whose runtime_task_id is absent from active_task_ids`. A robot process visible to both layers is counted once, while manual Runtime work and claimed work not yet seen by Runtime are both retained. Runtime remains the hard physical limit for chat, robots, and automations together. “Run now” can only move a queued task to the front; it cannot start task D+1.
+Runtime uses three independent execution-owner limits: personal tasks (`maxConcurrentTasks`), stand-in tasks (`maxConcurrentStandInTasks`), and Agent tasks (`maxConcurrentAgentTasks`). Each accepts 1–20 and defaults to 10. Legacy single-limit settings seed all three categories once; subsequent updates persist them independently. Device settings from older Runtimes retain their single shared limit; absent stand-in and Agent limits remain omitted rather than implying independent capacity. Each category queues independently, and turns for the same task remain serial. Lowering a limit leaves active tasks running; increasing it immediately attempts to drain that category.
+
+Automatic Goal continuations retain the original task's concurrency slot, including Goals created during a running turn. Local request control may finish normally; native execution state owns capacity release. Stopping a Goal leaves its running native turn's slot reserved until native settlement. Release rechecks current ownership so an old completion cannot free a newer turn's slot. The `runtime-task-queue` desktop E2E uses real Electron, executor, and Codex with controlled model responses to check actual model requests and capacity ownership across native continuations and queued work.
+
+Classification uses the original task’s persisted `origin` and is saved as `taskKind` in queued turns, preserving the owner across restoration and follow-ups even when later message context changes. Stand-in conversations, coordination, email/IM work, human Issue assignments handled by stand-ins, and stand-in schedules use the stand-in category. Project coordination, bots, project automation, and cloud board executions carrying an Execution ID use Agent capacity. Personal conversations opened manually from an Issue use personal capacity. Scheduled and automated work inherits its execution owner.
+
+`runtime.capacity.get` reports `limit / active / active_task_ids / queued` for `categories.personal / standIn / agent`; top-level fields are totals, not an additional scheduling gate. Both local project claiming and cloud pulling use Agent capacity exclusively. Existing per-bot limits continue to apply.
 
 Capacity is live Runtime state and is never persisted into Device Kind as fact. Local claim reads it through App IPC. Cloud Runtime reports `limit/active/active_task_ids/queued/runtimeInstanceId` into the existing Redis online record under its TTL. Every active count must have one unique non-empty task ID. Missing, expired, incomplete, or mismatched observations stop claim. Claim APIs reject caller-supplied `deviceCapacity` and have no fixed-constant fallback.
 
@@ -195,7 +201,7 @@ sequenceDiagram
   C->>H: read instance + limit/active/active_task_ids
   H-->>C: fresh identity-matching observation
   C->>C: owner lock → runtime_instance lock
-  C->>DB: merge exact O; check O < D, agent < R, scope free
+  C->>DB: merge exact Agent occupancy Oagent; check Oagent < Dagent, agent < R, scope free
   C->>DB: CAS queued → claimed<br/>bind runtime_instance_id + codex-queue-{id}
   W->>DB: build just-in-time Runtime payload
   W->>DB: persist start_requested_at fence
@@ -231,7 +237,7 @@ sequenceDiagram
   IPC->>R: runtime.capacity.get
   R-->>IPC: limit/active/active_task_ids/queued
   IPC->>SQL: inject trusted capacity + runtime_instance_id
-  SQL->>SQL: check O < D, agent < R, scope free<br/>CAS queued → claimed
+  SQL->>SQL: check Oagent < Dagent, agent < R, scope free<br/>CAS queued → claimed
   APP->>API: createRuntimeTask(taskId, beforeDispatch)
   API->>API: prepare workspace, model identity and execution payload
   alt Preparation fails
@@ -386,8 +392,8 @@ flowchart TD
   SCAN["Scan all queued rows by owner/device<br/>no fixed 16/32 candidate window"] --> OBS["Read fresh Runtime capacity<br/>instance + active_task_ids"]
   OBS --> OL["Acquire owner lock"]
   OL --> DL["Acquire runtime_instance lock"]
-  DL --> MERGE["O = Runtime active<br/>+ durable task IDs absent from active_task_ids"]
-  MERGE --> CAP{"O < D?"}
+  DL --> MERGE["Oagent = categories.agent.active<br/>+ durable Agent task IDs absent from categories.agent.active_task_ids"]
+  MERGE --> CAP{"Oagent < Dagent?"}
   CAP -->|no| END["Do not claim"]
   CAP -->|yes| PRI["Partition by priority"]
   PRI --> RR["Round-robin agents within priority<br/>FIFO within each agent"]
@@ -401,7 +407,7 @@ flowchart TD
   GIT -->|not isolatable| NEXT
   GIT -->|isolatable| CAS
   CAS -->|lost| NEXT
-  CAS -->|won| SLOT["write runtime_instance_id<br/>claimed/running/cancel_requested/unknown occupy O and R"]
+  CAS -->|won| SLOT["write runtime_instance_id<br/>claimed/running/cancel_requested/unknown occupy Oagent and R"]
 ```
 
 The fixed order is fresh observation → owner lock → Runtime-instance lock → database CAS. A batch CAS must update every selected row or roll back the whole batch; Runtime identity is never written onto a row that was not claimed. Unknown retains capacity. Higher priority runs first, while agents round-robin within a priority and remain FIFO internally, so a 20-item queue for one robot cannot starve another robot.
@@ -439,31 +445,31 @@ Direct App dispatcher `complete`/`fail` entry points were removed. Heartbeat req
 
 ## 14. Acceptance matrix
 
-| Scenario                                                       | Required result                                       | Forbidden result                             |
-| -------------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------- |
-| Claimed, Start not sent                                        | `starting`                                            | `running`                                    |
-| Runtime accepted, no active turn yet                           | `waiting_runtime`                                     | `starting` or `running`                      |
-| Start response lost                                            | `unknown`, capacity held                              | Same-row redelivery or duplicate run         |
-| First Runtime event                                            | `running` with `observed_at/eventSeq`                 | Heartbeat-as-proof                           |
-| Missing-sequence, duplicate, reordered, or post-terminal event | Execution and every downstream projection ignore it   | Message/activity bypasses the truth gate     |
-| Cancel before Start                                            | Immediate `cancelled`                                 | Pointless Runtime cancel                     |
-| Cancel after Start                                             | `cancelling` until ACK/event                          | Immediate fake cancelled                     |
-| Lease expires before Start                                     | Same row queued, retry unchanged                      | Duplicate attempt                            |
-| Lease expires after possible Start                             | Unknown, reconcile, hold capacity                     | Automatic failure/redelivery                 |
-| Runtime failure and retry                                      | Old row failed, new row queued                        | Old row changed back to queued               |
-| GET/page refresh                                               | State unchanged                                       | Read-time mutation                           |
-| My Work/Queue/Detail/Automation                                | Same exact display state                              | Pending/claimed shown as running             |
-| Missing/expired/mismatched capacity heartbeat                  | Stop claiming and retain existing state               | Fixed or caller-supplied capacity fallback   |
-| Runtime active and durable claim share a task ID               | Count once                                            | False-full double count                      |
-| Manual Runtime task and not-yet-delivered durable claim differ | Count both in O                                       | `max()` undercount and over-claim            |
-| One robot reaches R                                            | Other robots remain claimable fairly                  | Hot-robot starvation or route-based R bypass |
-| Bound non-Git project requests R > 1                           | Reject at configuration and verify again at preflight | Concurrent execution in one shared directory |
-| “Run now” while Runtime is full                                | Move to queue front and wait                          | Start task D+1                               |
-| Migration                                                      | ALTER existing table and create index only            | Any new table                                |
+| Scenario                                                       | Required result                                       | Forbidden result                                |
+| -------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------- |
+| Claimed, Start not sent                                        | `starting`                                            | `running`                                       |
+| Runtime accepted, no active turn yet                           | `waiting_runtime`                                     | `starting` or `running`                         |
+| Start response lost                                            | `unknown`, capacity held                              | Same-row redelivery or duplicate run            |
+| First Runtime event                                            | `running` with `observed_at/eventSeq`                 | Heartbeat-as-proof                              |
+| Missing-sequence, duplicate, reordered, or post-terminal event | Execution and every downstream projection ignore it   | Message/activity bypasses the truth gate        |
+| Cancel before Start                                            | Immediate `cancelled`                                 | Pointless Runtime cancel                        |
+| Cancel after Start                                             | `cancelling` until ACK/event                          | Immediate fake cancelled                        |
+| Lease expires before Start                                     | Same row queued, retry unchanged                      | Duplicate attempt                               |
+| Lease expires after possible Start                             | Unknown, reconcile, hold capacity                     | Automatic failure/redelivery                    |
+| Runtime failure and retry                                      | Old row failed, new row queued                        | Old row changed back to queued                  |
+| GET/page refresh                                               | State unchanged                                       | Read-time mutation                              |
+| My Work/Queue/Detail/Automation                                | Same exact display state                              | Pending/claimed shown as running                |
+| Missing/expired/mismatched capacity heartbeat                  | Stop claiming and retain existing state               | Fixed or caller-supplied capacity fallback      |
+| Runtime active and durable claim share a task ID               | Count once                                            | False-full double count                         |
+| Agent Runtime task and not-yet-delivered Agent claim differ    | Count both in Oagent                                  | `max()` undercount and over-claim               |
+| One robot reaches R                                            | Other robots remain claimable fairly                  | Hot-robot starvation or route-based R bypass    |
+| Bound non-Git project requests R > 1                           | Reject at configuration and verify again at preflight | Concurrent execution in one shared directory    |
+| Ordinary start while its category is full                      | Wait in the owning category queue                     | Exceed Dsubject without an explicit force-start |
+| Migration                                                      | ALTER existing table and create index only            | Any new table                                   |
 
 ## 15. Automated and manual verification
 
-Automation must cover: no-`create_table` migration, capacity identity and heartbeat TTL, exact `active_task_ids` deduplication, D shared across device routes, global robot R, same-priority round-robin, no fixed candidate window, all-or-nothing batch CAS, non-Git concurrency rejection, Runtime hard limit and force-start, claim/identity/Start fence, event sequence, competing terminals, pre/post-Start cancellation, ambiguous dispatch, cloud/local recovery and reconciliation (including `running` plus `turnStatus`), new-attempt retry, same-transaction projections, pure GET, local IPC/store, UI mapping, and TypeScript/Rust compilation.
+Automation must cover: no-`create_table` migration, capacity identity and heartbeat TTL, exact `active_task_ids` deduplication, owner limits shared across device routes, global robot R, same-priority round-robin, no fixed candidate window, all-or-nothing batch CAS, non-Git concurrency rejection, Runtime hard limit and force-start, claim/identity/Start fence, event sequence, competing terminals, pre/post-Start cancellation, ambiguous dispatch, cloud/local recovery and reconciliation (including `running` plus `turnStatus`), new-attempt retry, same-transaction projections, pure GET, local IPC/store, UI mapping, and TypeScript/Rust compilation.
 
 Manual acceptance sequence:
 
@@ -473,6 +479,6 @@ Manual acceptance sequence:
 4. Produce a Runtime failure and verify retry preserves the old attempt and uses a new task ID.
 5. Open Queue, Task Activity, My Work, Automation, and Overlay together and compare states.
 6. Refresh and repeat GET requests; verify reads do not change state.
-7. Set D to 2, mix normal chat and robot work, and verify physical active count never exceeds 2 while accepted work shows waiting_runtime.
+7. Configure independent personal, stand-in, and Agent limits and mix all three task types. Verify normal starts stay within their category limit and queues do not block other categories. Explicit force-start retains its existing overcommit behavior and counts toward the owning category.
 8. Set one robot to R=2 and pull through two routes; verify it remains globally capped at 2 and another same-priority robot is not starved.
 9. Verify R > 1 creates distinct worktrees for a Git project and is rejected at save time for a plain directory.

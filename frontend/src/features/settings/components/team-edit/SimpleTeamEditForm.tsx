@@ -308,9 +308,6 @@ export default function SimpleTeamEditForm({
               onCustomShellChange={setCustomShellName}
               codingRuntime={codingRuntime}
               onCodingRuntimeChange={setCodingRuntime}
-              visibleModes={
-                executorMode === 'custom' ? ['simple', 'complex', 'custom'] : ['simple', 'complex']
-              }
               hideLabel
             />
           </AgentFormField>

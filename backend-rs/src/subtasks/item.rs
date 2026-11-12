@@ -28,7 +28,7 @@ use crate::json_compat::OptionalOpaqueJsonExt;
 use crate::state::AppState;
 use crate::task_detail_api::assembly::{extract_display_prompt, iso_timestamp};
 use crate::task_detail_api::repository::{ContextRow, list_contexts};
-use crate::task_detail_api::views::context_brief;
+use crate::task_detail_api::views::context_brief_fields;
 use brz_json::OpaqueJson;
 
 /// One `subtasks` row selected with the full projection.
@@ -124,11 +124,15 @@ impl SubtaskInDb {
         contexts: &[ContextRow],
         sender_names: &HashMap<i64, String>,
     ) -> Self {
+        // `app/schemas/subtask.py`'s own `SubtaskContextBrief` declares
+        // `context_type` as a plain string and does not validate it, so this
+        // projection uses the unvalidated renderer.
         let contexts = contexts
             .iter()
             .filter(|context| context.subtask_contexts_subtask_id == doc.id)
             .map(|context| {
-                brz_json::to_raw_value(&context_brief(context)).expect("context brief serializes")
+                let brief = context_brief_fields(context);
+                brz_json::to_raw_value(&brief).expect("context brief serializes")
             })
             .collect();
         Self {

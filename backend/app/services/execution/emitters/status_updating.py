@@ -20,6 +20,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from app.services.chat.storage.session import StreamContentType
@@ -127,6 +128,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         self._stream_storage_flush_task: Optional[asyncio.Task[None]] = None
         self._stream_storage_flush_in_progress = False
         self._last_task_activity_touch = 0.0
+        self._stream_observed_at = datetime.now(timezone.utc)
 
     @property
     def terminal_transition_lost(self) -> bool:
@@ -229,7 +231,11 @@ class StatusUpdatingEmitter(ResultEmitter):
         ):
             return
 
-        await session_manager.touch_task_streaming_activity(self._task_id)
+        await session_manager.touch_task_streaming_activity(
+            self._task_id,
+            self._subtask_id,
+            started_at=self._stream_observed_at,
+        )
         self._last_task_activity_touch = now
 
     async def _cancel_pending_storage_flush_task(self) -> None:
@@ -267,6 +273,7 @@ class StatusUpdatingEmitter(ResultEmitter):
 
         # Handle START event - set task streaming status for page refresh recovery
         if event.type == EventType.START.value:
+            self._stream_observed_at = datetime.now(timezone.utc)
             # Set task-level streaming status so get_active_streaming can find it
             await session_manager.set_task_streaming_status(
                 task_id=self._task_id,

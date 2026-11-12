@@ -4,12 +4,7 @@
 
 use std::{collections::BTreeMap, env, fs, io::Write as _, path::PathBuf, process::Stdio};
 
-use aes::Aes256;
 use base64::{engine::general_purpose, Engine as _};
-use cbc::{
-    cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit},
-    Decryptor,
-};
 use serde_json::Value;
 use tokio::{io::AsyncWriteExt, process::Command};
 
@@ -18,8 +13,6 @@ use crate::{
     process::CommandSpec,
     protocol::ExecutionRequest,
 };
-
-type Aes256CbcDecryptor = Decryptor<Aes256>;
 
 mod askpass;
 
@@ -607,14 +600,12 @@ fn decrypt_sensitive_data(token: &str) -> Option<String> {
     let Ok(encrypted) = general_purpose::STANDARD.decode(token.as_bytes()) else {
         return Some(token.to_owned());
     };
-    let mut buffer = encrypted;
-    let Ok(decryptor) = Aes256CbcDecryptor::new_from_slices(key.as_bytes(), iv.as_bytes()) else {
+    // This consumer has always accepted only AES-256 keys.
+    if key.len() != 32 {
         return None;
-    };
-    let Ok(decrypted) = decryptor.decrypt_padded_mut::<Pkcs7>(&mut buffer) else {
-        return None;
-    };
-    String::from_utf8(decrypted.to_vec()).ok()
+    }
+    let decrypted = wegent_crypto::decrypt_cbc(key.as_bytes(), iv.as_bytes(), &encrypted).ok()?;
+    String::from_utf8(decrypted).ok()
 }
 
 fn write_private_file(path: &std::path::Path, contents: &[u8], mode: u32) -> Result<(), String> {

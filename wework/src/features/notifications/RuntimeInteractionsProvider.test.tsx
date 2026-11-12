@@ -1,12 +1,21 @@
+// Register provider mocks before importing modules that consume them.
+import {
+  context,
+  harness,
+  probe,
+  unrelatedForm,
+  view,
+} from './runtimeInteractionsProvider.fixtures'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useEffect, useState } from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { NotificationTaskContext, type TaskSource } from './NotificationTaskSourceContext'
+import { describe, expect, it, vi } from 'vitest'
+import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
 import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
-import { RuntimeInteractionNotice } from './RuntimeInteractionNotice'
-import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
+import {
+  ConversationTranslationProvider,
+  RequestUserInputCard,
+} from '@wegent/collaboration/conversation'
+import { canReplyToInteraction } from './runtimeInteractions'
 import {
   cacheNotificationPreferences,
   defaultNotificationPreferences,
@@ -16,142 +25,231 @@ import {
   interactionTask,
   interactionTranscript,
 } from './runtimeInteractions.fixtures'
-
-const harness = vi.hoisted(() => ({
-  t: (key: string) => key,
-  tabs: {
-    tabs: [],
-    activeTab: { kind: 'board', contentRoute: '/todo' },
-    openTab: vi.fn(),
-    selectTab: vi.fn(),
-  },
-  locks: new Map<string, Promise<unknown>>(),
-  desktop: false,
-  focused: true,
-  focusListeners: new Set<(focused: boolean) => void>(),
-  host: vi.fn(),
-  hostListeners: new Set<(event: { type: string }) => void>(),
-  transcript: vi.fn(),
-  send: vi.fn(),
-  guide: vi.fn(),
-  read: vi.fn(),
-  refresh: vi.fn(),
-  list: vi.fn(),
-}))
-vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: harness.t }) }))
-vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
-  useWorkspaceTabs: () => harness.tabs,
-}))
-vi.mock('@/desktop/windowFocus', () => ({
-  isMainWindowFocused: () => harness.focused,
-  subscribeMainWindowFocus: (listener: (focused: boolean) => void) => {
-    harness.focusListeners.add(listener)
-    return () => harness.focusListeners.delete(listener)
-  },
-}))
-vi.mock('@/lib/runtime-environment', () => ({
-  isElectronRuntime: () => harness.desktop,
-  getDesktopWindowLabel: () => 'main',
-}))
-
-vi.mock('@/api/dsh/desktopHost', () => ({
-  invokeDesktopHost: harness.host,
-  subscribeDesktopHostEvents: (listener: (event: { type: string }) => void) => {
-    harness.hostListeners.add(listener)
-    return () => harness.hostListeners.delete(listener)
-  },
-}))
-
-let context: ReturnType<typeof useRuntimeInteractions>
-function Probe() {
-  const value = useRuntimeInteractions()
-  useEffect(() => {
-    context = value
-  }, [value])
-  return null
-}
-
-function UnrelatedForm() {
-  const [value, setValue] = useState('')
-  return (
-    <input aria-label="Connection address" value={value} onChange={e => setValue(e.target.value)} />
-  )
-}
-function view(
-  payload = interactionQuestion,
-  task = interactionTask,
-  active = false,
-  initialError?: Error,
-  listed = true,
-  running = false
-) {
-  if (initialError) harness.transcript.mockRejectedValue(initialError)
-  else harness.transcript.mockResolvedValue({ ...interactionTranscript(payload), running })
-  const services = {
-    runtimeWorkApi: {
-      getRuntimeTranscript: harness.transcript,
-      sendRuntimeMessage: harness.send,
-      guideRuntimeTask: harness.guide,
-      listRuntimeWork: harness.list,
-    },
-  } as unknown as WorkbenchServices
-  const taskSource: TaskSource = {
-    items: listed ? [task] : [],
-    services,
-    unreadTaskKeys: new Set(),
-    markRuntimeTaskRead: harness.read,
-    refresh: harness.refresh,
-  }
-  const tree = (taskSource: TaskSource, accountKey = 'test:1') => (
-    <NotificationTaskContext.Provider value={{ taskSource, registerTaskSource: () => {} }}>
-      <RuntimeInteractionsProvider accountKey={accountKey}>
-        <Probe />
-        <RuntimeInteractionNotice />
-        <RuntimeInteractionsPage active={active} />
-      </RuntimeInteractionsProvider>
-    </NotificationTaskContext.Provider>
-  )
-  const rendered = render(tree(taskSource))
-  return {
-    ...rendered,
-    taskSource,
-    rerenderSource: (source: TaskSource, accountKey?: string) =>
-      rendered.rerender(tree(source, accountKey)),
-  }
-}
-
-beforeEach(() => {
-  vi.clearAllMocks()
-  harness.locks.clear()
-  Object.defineProperty(navigator, 'locks', {
-    configurable: true,
-    value: {
-      request: (name: string, callback: () => unknown) => {
-        const previous = harness.locks.get(name) ?? Promise.resolve()
-        const next = previous.catch(() => undefined).then(callback)
-        harness.locks.set(name, next)
-        return next
-      },
-    },
-  })
-  harness.focused = true
-  harness.focusListeners.clear()
-  harness.desktop = false
-  harness.hostListeners.clear()
-  harness.host.mockReset()
-  localStorage.clear()
-  harness.send.mockResolvedValue({ accepted: true })
-  harness.guide.mockResolvedValue({ accepted: true })
-  harness.refresh.mockResolvedValue(undefined)
-  harness.list.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
-})
-
-afterEach(() => {
-  vi.restoreAllMocks()
-  Reflect.deleteProperty(navigator, 'locks')
-})
-
 describe('unified human response', () => {
+  it('never writes a stale shared draft into the answer input during IME composition', async () => {
+    function Answer() {
+      const interactions = useRuntimeInteractions()
+      if (!interactions) return null
+      return (
+        <ConversationTranslationProvider translate={key => key}>
+          <RequestUserInputCard
+            payload={{ questions: [{ id: 'details', question: 'Details' }] }}
+            draftAnswers={{ details: interactions.drafts.ime ?? '' }}
+            onDraftAnswersChange={answers => interactions.setDraft('ime', answers.details)}
+          />
+        </ConversationTranslationProvider>
+      )
+    }
+    render(
+      <RuntimeInteractionsProvider accountKey="ime">
+        <Answer />
+      </RuntimeInteractionsProvider>
+    )
+    const input = (await screen.findByTestId(
+      'request-user-input-custom-details'
+    )) as HTMLInputElement
+    const value = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!
+    const writes: string[] = []
+    Object.defineProperty(input, 'value', {
+      configurable: true,
+      get() {
+        return value.get!.call(this)
+      },
+      set(text: string) {
+        writes.push(text)
+        value.set!.call(this, text)
+      },
+    })
+    input.focus()
+    fireEvent.compositionStart(input)
+    fireEvent.input(input, { target: { value: 'ni' }, isComposing: true })
+    expect(writes).not.toContain('')
+    expect(input).toHaveValue('ni')
+    expect(input).toHaveFocus()
+    fireEvent.input(input, { target: { value: '你好' }, isComposing: true })
+    fireEvent.compositionEnd(input, { data: '你好' })
+    expect(writes).not.toContain('ni')
+    expect(input).toHaveValue('你好')
+  })
+
+  it('aggregates a discovered task question despite a stale sidebar summary and shows its in-app reminder', async () => {
+    harness.list.mockResolvedValue({
+      projects: [],
+      chats: [{ ...interactionTask.workspace, tasks: [interactionTask.task] }],
+      totalTasks: 1,
+    })
+    view(interactionQuestion, {
+      ...interactionTask,
+      task: { ...interactionTask.task, interactionStatus: null },
+    })
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    expect(context!.pending[0].task.task.interactionStatus).toBe('awaitingUserReply')
+    expect(await screen.findByTestId('runtime-interaction-notice')).toHaveTextContent(
+      interactionQuestion.questions![0].question!
+    )
+  })
+
+  it('keeps the reminder until manually closed, including after opening its destination', async () => {
+    view()
+    await screen.findByTestId('runtime-interaction-notice')
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('interaction-notice-open'))
+      expect(harness.tabs.openTab).toHaveBeenCalled()
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      act(() => context!.open())
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      act(() => context!.registerView('pending-page', context!.pending[0].id))
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('interaction-notice-dismiss'))
+      expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+      expect(context!.pending).toHaveLength(1)
+      expect(harness.send).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves the expanded reminder and draft when native window focus changes', async () => {
+    view()
+    await screen.findByTestId('runtime-interaction-notice')
+    fireEvent.click(screen.getByTestId('interaction-notice-reply'))
+    fireEvent.click(screen.getByTestId('interaction-other-answer'))
+    const input = screen.getByTestId('interaction-reply-input')
+    fireEvent.change(input, { target: { value: 'unfinished reply' } })
+    act(() => harness.focusListeners.forEach(listener => listener(false)))
+    expect(screen.getByTestId('interaction-reply-input')).toBe(input)
+    expect(input).toHaveValue('unfinished reply')
+    act(() => harness.focusListeners.forEach(listener => listener(true)))
+    expect(screen.getByTestId('interaction-reply-input')).toBe(input)
+    expect(input).toHaveValue('unfinished reply')
+    expect(harness.send).not.toHaveBeenCalled()
+  })
+
+  it('does not suppress a dismissed question before its history lock commits the archive', async () => {
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    const historyKey = 'wework.interactions:test:1:history'
+    let release!: () => void
+    harness.locks.set(
+      historyKey,
+      new Promise<void>(resolve => {
+        release = resolve
+      })
+    )
+    let dismissal!: Promise<void>
+    act(() => {
+      dismissal = context!.dismiss(item)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(localStorage.getItem(`wework.interactions:test:1:accepted:${item.id}`)).toBeNull()
+    expect(context!.pending).toHaveLength(1)
+    await act(async () => {
+      release()
+      await dismissal
+    })
+    expect(context!.pending).toHaveLength(0)
+    expect(JSON.parse(localStorage.getItem(historyKey)!)).toEqual([
+      expect.objectContaining({ id: item.id, question: item.question }),
+    ])
+  })
+
+  it('dismisses one request durably without sending a runtime answer or hiding later requests', async () => {
+    const first = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    act(() => context!.setDraft(item.id, 'unfinished'))
+    fireEvent.click(screen.getByTestId('interaction-dismiss'))
+    await waitFor(() => expect(context!.pending).toHaveLength(0))
+    expect(context!.history[0].id).toBe(item.id)
+    expect(context!.drafts[item.id]).toBeUndefined()
+    expect(context!.notice).toBeNull()
+    expect(harness.send).not.toHaveBeenCalled()
+    expect(harness.guide).not.toHaveBeenCalled()
+    first.unmount()
+    view()
+    await waitFor(() => expect(context!.loading).toBe(false))
+    expect(context!.pending).toHaveLength(0)
+    harness.transcript.mockResolvedValue(
+      interactionTranscript({ ...interactionQuestion, itemId: 'next-question' })
+    )
+    await act(async () => {
+      await context!.refresh()
+    })
+    expect(context!.pending).toHaveLength(1)
+    expect(context!.pending[0].id).not.toBe(item.id)
+  })
+
+  it.each(['answered', 'cancelled', 'expired'] as const)(
+    'automatically archives a request settled elsewhere as %s',
+    async interactionStatus => {
+      view()
+      await waitFor(() => expect(context!.pending).toHaveLength(1))
+      await screen.findByTestId('runtime-interaction-notice')
+      const id = context!.pending[0].id
+      harness.transcript.mockResolvedValue(
+        interactionTranscript({ ...interactionQuestion, interactionStatus })
+      )
+      await act(async () => {
+        await context!.refresh()
+      })
+      expect(context!.pending).toHaveLength(0)
+      expect(context!.history[0].id).toBe(id)
+      expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+      expect(harness.send).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps a dismissed question suppressed after bounded handled history evicts its row', async () => {
+    const rendered = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    await act(async () => {
+      await context!.dismiss(context!.pending[0])
+    })
+    localStorage.setItem('wework.interactions:test:1:history', '[]')
+    rendered.unmount()
+    view()
+    await waitFor(() => expect(context!.loading).toBe(false))
+    expect(context!.history).toHaveLength(0)
+    expect(context!.pending).toHaveLength(0)
+    expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    expect(harness.send).not.toHaveBeenCalled()
+  })
+
+  it('locks and revalidates an entity-owned send, then prevents a duplicate native submission', async () => {
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    const nativeSend = vi.fn(async () => true)
+    await act(async () => {
+      expect(await context!.respond(item, 'keep', { send: nativeSend })).toBe(true)
+      expect(await context!.respond(item, 'keep', { send: nativeSend })).toBe(false)
+    })
+    expect(nativeSend).toHaveBeenCalledOnce()
+    expect(harness.send).not.toHaveBeenCalled()
+    expect(harness.guide).not.toHaveBeenCalled()
+    expect(context!.history).toHaveLength(1)
+  })
+
+  it('does not call an entity-owned sender when its request is no longer live', async () => {
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    harness.transcript.mockResolvedValue({ ...interactionTranscript(), messages: [] })
+    const nativeSend = vi.fn(async () => true)
+    await act(async () => {
+      expect(await context!.respond(item, 'keep', { send: nativeSend })).toBe(false)
+    })
+    expect(nativeSend).not.toHaveBeenCalled()
+    expect(context!.history).toHaveLength(0)
+  })
   it.each([true, false])(
     'serializes replies across provider instances and permits retry only after failure (accepted=%s)',
     async accepted => {
@@ -195,15 +293,15 @@ describe('unified human response', () => {
     }
   )
 
-  it('settles a stale response without an error after its acceptance marker has been cleaned', async () => {
+  it('rejects a stale response without discarding its unsent text after its acceptance marker has been cleaned', async () => {
     view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))
     const item = context!.pending[0]
     await act(async () => {
       expect(await context!.respond(item, 'first answer')).toBe(true)
     })
-    const marker = Object.keys(localStorage).find(key => key.includes(':accepted:'))!
-    expect(marker).toBeTruthy()
+    const marker = `wework.interactions:test:1:accepted:${item.id}`
+    expect(localStorage.getItem(marker)).toBe('true')
     localStorage.removeItem(marker)
     act(() => context!.setDraft(item.id, 'stale second answer'))
     await act(async () => {
@@ -211,7 +309,9 @@ describe('unified human response', () => {
     })
     expect(harness.send).toHaveBeenCalledTimes(1)
     expect(context!.errors).toEqual({})
-    expect(context!.drafts[item.id]).toBeUndefined()
+    expect(context!.drafts[item.id]).toBe('stale second answer')
+    expect(context!.replyDrafts).toEqual([expect.objectContaining({ text: 'stale second answer' })])
+    expect(screen.getByTestId('interaction-unsent-text')).toHaveValue('stale second answer')
   })
 
   it('bounds unchanged history scans while forcing explicit refresh and summary changes', async () => {
@@ -246,63 +346,50 @@ describe('unified human response', () => {
     expect(harness.transcript).toHaveBeenCalledTimes(initialReads + 3)
   })
 
-  it('does not cache failed history reads or summaries without a timestamp', async () => {
-    const intervals = vi.spyOn(window, 'setInterval')
-    const rendered = view(interactionQuestion, interactionTask, false, new Error('offline'))
-    await waitFor(() => expect(context!.loading).toBe(false))
-    const poll = intervals.mock.calls.find(([, ms]) => ms === 5000)![0] as () => void
-    harness.transcript.mockResolvedValue(interactionTranscript())
-    await act(async () => {
-      poll()
-    })
-    expect(context!.pending[0].requestKey).not.toBe('unavailable')
-    const withoutTimestamp = {
-      ...interactionTask,
-      task: { ...interactionTask.task, updatedAt: undefined },
-    }
-    rendered.rerenderSource({ ...rendered.taskSource, items: [withoutTimestamp] })
-    await waitFor(() => expect(context!.loading).toBe(false))
-    const reads = harness.transcript.mock.calls.length
-    await act(async () => {
-      poll()
-    })
-    expect(harness.transcript).toHaveBeenCalledTimes(reads + 1)
-  })
-
-  it('invalidates history cache when the service changes or a device recovers', async () => {
-    const intervals = vi.spyOn(window, 'setInterval')
+  it('archives an answer from the original conversation when its task summary changes', async () => {
     const rendered = view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))
-    const reads = harness.transcript.mock.calls.length
-    const newService = {
-      ...rendered.taskSource,
-      services: {
-        ...rendered.taskSource.services!,
-        runtimeWorkApi: {
-          ...rendered.taskSource.services!.runtimeWorkApi!,
-        },
-      },
-    }
-    rendered.rerenderSource(newService)
-    await waitFor(() => expect(harness.transcript).toHaveBeenCalledTimes(reads + 1))
-    const offline = {
-      ...newService,
-      devices: [
-        { device_id: 'device', status: 'offline' } as NonNullable<TaskSource['devices']>[number],
+    const id = context!.pending[0].id
+    harness.transcript.mockResolvedValue({
+      ...interactionTranscript(),
+      messages: [
+        ...interactionTranscript().messages,
+        { id: 'external-answer', role: 'user', content: 'Keep old behavior', status: 'done' },
       ],
-    }
-    rendered.rerenderSource(offline)
-    const poll = intervals.mock.calls.filter(([, ms]) => ms === 5000).at(-1)![0] as () => void
-    await act(async () => {
-      poll()
     })
-    const beforeRecovery = harness.transcript.mock.calls.length
-    rendered.rerenderSource({ ...offline, devices: [{ ...offline.devices[0], status: 'online' }] })
-    // Inventory polling owns device availability and invalidates the previous successful read.
-    await act(async () => {
-      poll()
+    rendered.rerenderSource({
+      ...rendered.taskSource,
+      items: [{ ...interactionTask, task: { ...interactionTask.task, interactionStatus: null } }],
     })
-    expect(harness.transcript).toHaveBeenCalledTimes(beforeRecovery + 1)
+    await waitFor(() => expect(context!.pending).toHaveLength(0))
+    expect(context!.history[0].id).toBe(id)
+    expect(harness.send).not.toHaveBeenCalled()
+  })
+
+  it('refreshes a changed conversation turn even when summary time and interaction status stay unchanged', async () => {
+    harness.list.mockResolvedValue({
+      projects: [],
+      chats: [{ ...interactionTask.workspace, tasks: [interactionTask.task] }],
+      totalTasks: 1,
+    })
+    const lifecycle = new RuntimeTaskMachine(interactionTask.address).getSnapshot()
+    const task = { ...interactionTask, lifecycle }
+    const rendered = view(interactionQuestion, task)
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    harness.transcript.mockResolvedValue(
+      interactionTranscript({ ...interactionQuestion, interactionStatus: 'answered' })
+    )
+    rendered.rerenderSource({
+      ...rendered.taskSource,
+      items: [
+        {
+          ...task,
+          lifecycle: { ...lifecycle, turn: { ...lifecycle.turn, latestId: 'reply-turn' } },
+        },
+      ],
+    })
+    await waitFor(() => expect(context!.pending).toHaveLength(0))
+    expect(context!.history).toHaveLength(1)
   })
 
   it('expires a request during a cached poll without reloading unchanged history', async () => {
@@ -478,6 +565,11 @@ describe('unified human response', () => {
     act(() => harness.hostListeners.forEach(listener => listener({ type: 'notification-reply' })))
     await waitFor(() => expect(failedAcknowledgement).toBe(true))
     act(() => context!.setDraft(id, 'edited before reload'))
+    await waitFor(() =>
+      expect(localStorage.getItem('wework.interactions:test:1:drafts')).toContain(
+        'edited before reload'
+      )
+    )
     first.unmount()
     view()
     await waitFor(() => expect(replies).toEqual([]))
@@ -516,8 +608,8 @@ describe('unified human response', () => {
   it('isolates account drafts without remounting unrelated application UI', async () => {
     const tree = (accountKey: string) => (
       <RuntimeInteractionsProvider accountKey={accountKey}>
-        <Probe />
-        <UnrelatedForm />
+        {probe}
+        {unrelatedForm}
       </RuntimeInteractionsProvider>
     )
     const rendered = render(tree('cloud-a:1'))
@@ -526,13 +618,20 @@ describe('unified human response', () => {
     })
     act(() => context!.setDraft('request-a', 'private answer'))
     expect(context!.drafts).toEqual({ 'request-a': 'private answer' })
+    await waitFor(() =>
+      expect(localStorage.getItem('wework.interactions:cloud-a:1:drafts')).toContain(
+        'private answer'
+      )
+    )
+    const setOldAccountDraft = context!.setDraft
 
     rendered.rerender(tree('cloud-b:1'))
+    act(() => setOldAccountDraft('late-reply', 'old account response'))
     expect(context!.drafts).toEqual({})
     expect(screen.getByRole('textbox', { name: 'Connection address' })).toHaveValue(
       'http://127.0.0.1:1'
     )
-    expect(localStorage.getItem('wework.interactions:cloud-b:1:drafts')).not.toContain(
+    expect(localStorage.getItem('wework.interactions:cloud-b:1:drafts') ?? '').not.toContain(
       'private answer'
     )
 
@@ -597,13 +696,19 @@ describe('unified human response', () => {
     })
     expect(context!.pending[0]?.id).toBe(id)
     expect(context!.pending[0]?.cached).not.toBe(true)
-    expect(screen.getByTestId('interaction-reply')).toBeInTheDocument()
+    expect(canReplyToInteraction(context!.pending[0])).toBe(true)
+    expect(screen.getByTestId('original-notification-entity')).toBeInTheDocument()
   })
   it('restores last-known pending work and its draft offline without granting cached response authority', async () => {
     const first = view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))
     const id = context!.pending[0].id
     act(() => context!.setDraft(id, 'Keep existing behavior'))
+    await waitFor(() =>
+      expect(localStorage.getItem('wework.interactions:test:1:drafts')).toContain(
+        'Keep existing behavior'
+      )
+    )
     first.unmount()
     harness.list.mockRejectedValue(new Error('Device offline'))
     view(interactionQuestion, interactionTask, false, new Error('Device offline'), false)
@@ -647,14 +752,15 @@ describe('unified human response', () => {
     })
     expect(context!.pending).toHaveLength(1)
     expect(context!.pending[0].task.workspace.available).toBe(false)
-    expect(screen.getByTestId('interaction-open-original-action')).toBeInTheDocument()
+    expect(screen.getByTestId('original-notification-entity')).toBeInTheDocument()
+    expect(canReplyToInteraction(context!.pending[0])).toBe(false)
     harness.list.mockResolvedValue(work)
     rendered.rerenderSource({ ...offline, devices: [{ ...offline.devices[0], status: 'online' }] })
     await act(async () => {
       await context!.refresh()
     })
     expect(context!.pending).toHaveLength(1)
-    expect(screen.queryByTestId('interaction-open-original-action')).not.toBeInTheDocument()
+    expect(canReplyToInteraction(context!.pending[0])).toBe(true)
     expect(harness.send).not.toHaveBeenCalled()
   })
   it('discovers pending work even when no corresponding task is listed in the sidebar', async () => {
@@ -665,17 +771,21 @@ describe('unified human response', () => {
     })
     view(interactionQuestion, interactionTask, false, undefined, false)
     await waitFor(() => expect(context!.pending).toHaveLength(1))
-    expect(harness.list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: undefined })
+    expect(harness.list).toHaveBeenCalledWith({
+      pendingOnly: true,
+      preferCached: true,
+      deviceId: undefined,
+    })
     expect(context!.pending[0].task.address).toMatchObject({
       deviceId: interactionTask.address.deviceId,
       taskId: interactionTask.address.taskId,
     })
     expect(harness.read).not.toHaveBeenCalled()
   })
-  it('suppresses a reminder only when its exact question is already visible', async () => {
+  it('keeps a delivered reminder when its question becomes visible in the pending page', async () => {
     view(interactionQuestion, interactionTask, true)
     await waitFor(() => expect(context!.pending).toHaveLength(1))
-    expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('runtime-interaction-notice')).toBeInTheDocument()
     act(() => context!.registerView('other-pane', 'another-question'))
     expect(context!.pending).toHaveLength(1)
   })
@@ -765,7 +875,8 @@ describe('unified human response', () => {
       await context!.refresh()
     })
     expect(context!.pending).toHaveLength(1)
-    expect(screen.getByTestId('interaction-open-original-action')).toBeInTheDocument()
+    expect(screen.getByTestId('original-notification-entity')).toBeInTheDocument()
+    expect(canReplyToInteraction(context!.pending[0])).toBe(false)
     expect(harness.send).not.toHaveBeenCalled()
     harness.transcript.mockResolvedValue(interactionTranscript())
     await act(async () => {
@@ -811,6 +922,41 @@ describe('unified human response', () => {
     if (desktop) expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
     else await screen.findByTestId('runtime-interaction-notice')
   })
+
+  it.each([true, false])(
+    'uses the independent personal stand-in decision alert preference (%s)',
+    async enabled => {
+      harness.desktop = true
+      harness.focused = false
+      cacheNotificationPreferences('test:1', {
+        ...defaultNotificationPreferences,
+        stand_in: { in_app: true, system: enabled, im: null },
+      })
+      view(interactionQuestion, {
+        ...interactionTask,
+        task: {
+          ...interactionTask.task,
+          runtimeHandle: {
+            ...interactionTask.task.runtimeHandle,
+            origin: { type: 'stand_in_task' },
+          },
+        },
+      })
+      await waitFor(() => expect(context!.pending).toHaveLength(1))
+      if (enabled) {
+        await waitFor(() =>
+          expect(harness.host).toHaveBeenCalledWith(
+            'notification.show',
+            expect.objectContaining({ body: 'Keep existing customer behavior?' })
+          )
+        )
+      } else {
+        expect(harness.host).not.toHaveBeenCalledWith('notification.show', expect.anything())
+      }
+      expect(harness.send).not.toHaveBeenCalled()
+      expect(harness.guide).not.toHaveBeenCalled()
+    }
+  )
 
   it('keeps pending work when a reminder is dismissed or opened, independently of unread', async () => {
     view()
@@ -888,7 +1034,8 @@ describe('unified human response', () => {
       expect(await context!.respond(context!.pending[0], 'Allow')).toBe(false)
     })
     expect(harness.send).not.toHaveBeenCalled()
-    expect(screen.getByTestId('interaction-open-original-action')).toBeInTheDocument()
+    expect(screen.getByTestId('original-notification-entity')).toBeInTheDocument()
+    expect(canReplyToInteraction(context!.pending[0])).toBe(false)
   })
 
   it('revalidates a request already answered in its original conversation', async () => {

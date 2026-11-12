@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { createOfficePreviewFixtures } from '../modules/office-preview-fixtures.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import { createLocalProject } from '../modules/streaming-text-fixture.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import {
@@ -37,9 +38,9 @@ async function metrics(control, selector) {
 }
 
 async function openFromTree(control, filename) {
-  const tree = '[data-testid="workspace-file-tree-pierre"]'
-  if (Number(await control.command('getElementCount', tree, { visible: true })) === 0) {
-    await control.command('click', '[data-testid="workspace-file-toggle-tree-button"]')
+  const toggle = '[data-testid="workspace-file-toggle-tree-button"]'
+  if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) === 'false') {
+    await control.command('click', toggle)
   }
   const item = `button[data-type="item"][aria-label="${filename}"]`
   await control.command('waitFor', item, { visible: true })
@@ -59,9 +60,26 @@ async function assertLastContentVisible(control, scroller, content, timeoutMs) {
   )
 }
 
+async function waitForPresentationLayout(control, slideCount, timeoutMs) {
+  // The first slide is progressive output; the final scroll range needs every slot and a resize.
+  await control.command('waitFor', '.pptx-render-surface [data-render-state="ready"]')
+  const lastSlot = `.pptx-render-surface .flyfish-pptx-slide-slot[data-slide-number="${slideCount}"]`
+  await control.command('waitFor', lastSlot)
+  await waitForValue(
+    async () => ({
+      range: (await metrics(control, '.pptx-render-surface .flyfish-pptx-scale-box'))[0],
+      last: (await metrics(control, lastSlot))[0],
+    }),
+    ({ range, last }) => range?.height > 0 && last?.height > 0 && last.bottom <= range.bottom,
+    'The presentation scroll range must include the final parsed slide before scrolling',
+    timeoutMs
+  )
+}
+
 async function verifyPresentation(control, captureScreenshot, timeoutMs) {
   await openFromTree(control, 'slides.pptx')
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 8' })
+  await waitForPresentationLayout(control, 8, timeoutMs)
   assert.equal((await metrics(control, VIEWER))[0].scrollTop, 0)
   await control.command('nativePress', VIEWER, { key: 'PageDown' })
   await waitForValue(
@@ -70,9 +88,16 @@ async function verifyPresentation(control, captureScreenshot, timeoutMs) {
     'PageDown must scroll the presentation',
     timeoutMs
   )
+  // Windowed slides outside the preparation range deliberately unmount. Visit
+  // every page to verify its actual content instead of requiring all DOM at once.
+  for (let page = 1; page <= 8; page += 1) {
+    const slot = `.pptx-render-surface .flyfish-pptx-slide-slot[data-slide-number="${page}"]`
+    await control.command('scrollIntoViewAsUser', slot)
+    await control.command('waitFor', `${slot} .slide`, { text: `PPT PAGE ${page} OF 8` })
+  }
   await control.command('scrollToBottomAsUser', VIEWER)
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 8 OF 8' })
-  assert.equal((await metrics(control, '.pptx-render-surface .slide')).length, 8)
+  assert.equal((await metrics(control, '.pptx-render-surface .flyfish-pptx-slide-slot')).length, 8)
   await assertLastContentVisible(control, VIEWER, '.pptx-render-surface .slide', timeoutMs)
   await captureScreenshot(control, 'office-preview-ppt-last-slide.png')
   await control.command('scrollFromBottomAsUser', VIEWER, { value: '100000' })
@@ -83,6 +108,14 @@ async function verifyDocument(control, captureScreenshot, timeoutMs) {
   await openFromTree(control, 'document.docx')
   await control.command('waitFor', '.docx-wrapper', { text: 'WORD PARAGRAPH 180' })
   const scroller = `${VIEWER} .file-render`
+  // Progressive text appears before the renderer installs its scrolling layout.
+  await control.command('waitFor', `${scroller}.docx-fit-viewer`)
+  await waitForValue(
+    () => metrics(control, scroller),
+    ([viewport]) => viewport?.clientHeight > 0 && viewport.scrollHeight > viewport.clientHeight,
+    'The Word layout must establish a scrollable viewport before keyboard input',
+    timeoutMs
+  )
   await control.command('nativePress', scroller, { key: 'PageDown' })
   await waitForValue(
     () => metrics(control, scroller),
@@ -161,6 +194,7 @@ async function createTask(control, name, timeoutMs) {
 async function verifyTaskSwitch(control, originalTaskId, captureScreenshot, timeoutMs) {
   await openFromTree(control, 'long-slides.pptx')
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 32' })
+  await waitForPresentationLayout(control, 32, timeoutMs)
   await control.command('scrollToBottomAsUser', VIEWER)
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 32 OF 32' })
   await assertLastContentVisible(control, VIEWER, '.pptx-render-surface .slide', timeoutMs)
@@ -171,6 +205,7 @@ async function verifyTaskSwitch(control, originalTaskId, captureScreenshot, time
   assert.notEqual(otherTaskId, originalTaskId)
   await control.command('click', `[data-testid="runtime-local-task-row-${originalTaskId}"]`)
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 32' })
+  await waitForPresentationLayout(control, 32, timeoutMs)
   await control.command('scrollToBottomAsUser', VIEWER)
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 32 OF 32' })
   const slides = await metrics(control, '.pptx-render-surface .slide')
@@ -249,6 +284,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       return true
     },
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       await createOfficePreviewFixtures(workspacePath)
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       const originalTaskId = await createTask(control, 'A', uiTimeoutMs)

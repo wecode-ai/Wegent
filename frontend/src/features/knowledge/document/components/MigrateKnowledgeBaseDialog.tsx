@@ -109,7 +109,14 @@ export function MigrateKnowledgeBaseDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md" data-testid="migrate-kb-dialog">
+      <DialogContent
+        className="max-h-[90dvh] w-[calc(100%_-_1rem)] max-w-md min-w-0 grid-cols-[minmax(0,1fr)] overflow-y-auto"
+        data-testid="migrate-kb-dialog"
+        closeButtonProps={{
+          className: 'right-2 top-2 flex h-11 w-11 items-center justify-center',
+          'data-testid': 'close-migrate-kb',
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FolderOutput className="w-5 h-5 text-primary" />
@@ -130,7 +137,9 @@ export function MigrateKnowledgeBaseDialog({
               <div className="text-sm text-text-secondary">
                 {t('document.migrate.sourceKnowledgeBase', '待迁移知识库')}
               </div>
-              <div className="font-medium text-text-primary mt-1">{knowledgeBase.name}</div>
+              <div className="mt-1 break-words font-medium text-text-primary [overflow-wrap:anywhere]">
+                {knowledgeBase.name}
+              </div>
             </div>
           )}
 

@@ -509,6 +509,16 @@ docker exec <executor-container-id> tail -f /tmp/wegent-codex-stdout-<task_id>-<
 
 ---
 
+### Collaboration group assignment reports no matching project-authorized environment
+
+An online device in the project catalog does not prove that it matches every group member's configuration. Assignment checks each agent's environment and model policies and requires a common eligible device. Preserve the failing state and correlate these Backend warning events using the request trace identifier:
+
+- `group_member_routing_denied` includes `project_id`, `issue_id`, `group_id`, the agent's `agent_id` / `agent_name`, its group member reference, and the error code to identify the failing member.
+- `runner_environment_denied` includes the resolved `execution_policy`, `authorized_environment_ids`, device ID / name / routing key / namespace / active state, and raw space and project grants with their ID, scope, role, and status. Compare both grant scopes for the target device to distinguish missing consent, unapproved grants, insufficient roles, an unauthorized fixed device, or an invalid device record. `phase=configuration_validation` identifies agent creation or configuration validation; `phase=execution` identifies execution candidate selection. Legacy bindings also expose `agent_device_id`, `agent_authorization_version`, and `legacy_device_revocations` for historical consent checks.
+- `group_runner_intersection_empty` means all members passed individual validation but their `member_candidate_environment_ids` have no common device. Compare the members' environment and model policies.
+
+Diagnostics preserve authorization decisions and API error codes. Detailed grant queries run only after environment rejection. Logs exclude full device configurations, model credentials, and tokens. Deploy the Backend containing these diagnostics and reproduce the failure before drawing a conclusion; HTTP 422 access logs alone cannot establish the specific cause.
+
 ## ⚡ Performance Issues
 
 ### Issue 9: System Slow Response
@@ -629,6 +639,12 @@ pnpm install
 ```
 
 ---
+
+## Wework startup reports mkdir ENOENT
+
+If the legacy user-data directory is a symbolic link whose workbench data destination no longer exists, Wework removes that dangling link and its stale migration record, then creates the missing directory and starts. Existing directories and files are not overwritten, and data moved elsewhere is not deleted.
+
+The new directory does not automatically restore deleted or moved data. If local settings are empty after startup, retain the original data directory and quit Wework before restoring data. Do not delete the workbench data directory as a troubleshooting step.
 
 ## 🔍 Debugging Tips
 

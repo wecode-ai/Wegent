@@ -40,16 +40,9 @@ export async function verifyHarnessAppModels(
   await setExperimentalFeatures(control, true, uiTimeoutMs)
   await verifyCoreDshModels(control)
   const readyCountBeforeSeed = control.readyCount
-  await control.command('reloadMainWindow', 'body', {
-    value: JSON.stringify({
-      localStorage: {
-        key: LOCAL_MODEL_SETTINGS_STORAGE_KEY,
-        value: await withUnavailableModel(control),
-      },
-    }),
-    timeoutMs: 90_000,
-  })
+  await control.command('reloadMainWindow', 'body', { timeoutMs: 90_000 })
   await control.awaitReadyAfter(readyCountBeforeSeed)
+  await injectInvalidLegacyModelForRejectionTest(control)
   await openSmartAppsTab(control, uiTimeoutMs)
   await openOwnedApps(control, uiTimeoutMs)
 
@@ -135,6 +128,7 @@ export async function verifyHarnessAppModels(
   const failingPackagePath = await createHarnessPackage(resultDir, FAILING_APP_ID, '0.2.0-rc.2', {
     cordisPatch: '- id: [unterminated\n',
   })
+  await selectOwnedAppsTab(control, ownedTabId, uiTimeoutMs)
   await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
     value: JSON.stringify([
       {
@@ -209,15 +203,10 @@ export async function verifyHarnessAppModels(
   })
 
   const readyCountBeforeCleanup = control.readyCount
-  await control.command('reloadMainWindow', 'body', {
-    value: JSON.stringify({
-      localStorage: {
-        key: LOCAL_MODEL_SETTINGS_STORAGE_KEY,
-        value: await withoutUnavailableModel(control),
-      },
-    }),
-    timeoutMs: 90_000,
+  await control.command('removeLocalStorageItem', 'body', {
+    value: LOCAL_MODEL_SETTINGS_STORAGE_KEY,
   })
+  await control.command('reloadMainWindow', 'body', { timeoutMs: 90_000 })
   await control.awaitReadyAfter(readyCountBeforeCleanup)
   await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
     timeoutMs: uiTimeoutMs,
@@ -284,8 +273,13 @@ async function startWithCatalogRefresh(control, { gates, uiTimeoutMs, resultDir 
 }
 
 async function selectOwnedAppsTab(control, tabId, uiTimeoutMs) {
-  await control.command('click', `[data-testid="workspace-tab-select-${tabId}"]`)
+  const tabSelector = `[data-testid="workspace-tab-select-${tabId}"]`
+  await control.command('click', tabSelector)
+  await control.command('waitFor', `${tabSelector}[aria-selected="true"]`, {
+    timeoutMs: uiTimeoutMs,
+  })
   await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
+    visible: true,
     timeoutMs: uiTimeoutMs,
   })
 }
@@ -294,19 +288,7 @@ async function refreshModelCatalogDuringLaunch(control, uiTimeoutMs) {
   const refreshedLabel = `${UNAVAILABLE_MODEL_LABEL} Refreshed`
   const configs = await readLocalModelConfigs(control)
   assert.ok(configs.some(config => config.id === UNAVAILABLE_MODEL_ID))
-  await control.command('setLocalStorageItem', 'body', {
-    value: JSON.stringify({
-      key: LOCAL_MODEL_SETTINGS_STORAGE_KEY,
-      value: JSON.stringify(
-        configs.map(config =>
-          config.id === UNAVAILABLE_MODEL_ID
-            ? { ...config, displayName: refreshedLabel, updatedAt: new Date().toISOString() }
-            : config
-        )
-      ),
-    }),
-  })
-  await control.command('dispatchLocalModelSettingsChangedThenMacrotask', 'body')
+  await injectInvalidLegacyModelForRejectionTest(control, refreshedLabel)
   // Read the connected launcher's real catalog without navigating to Owned
   // Apps, whose independent provider can be disconnected by React Activity.
   const deadline = Date.now() + uiTimeoutMs
@@ -468,6 +450,7 @@ async function openSmartAppsTab(control, uiTimeoutMs) {
 async function selectHarnessAppModel(control, installationId, label, uiTimeoutMs) {
   const selector = `[data-testid="harness-app-model-${installationId}"]`
   await control.command('waitFor', selector, {
+    text: label,
     enabled: true,
     stableMs: 300,
     timeoutMs: uiTimeoutMs,
@@ -611,39 +594,39 @@ async function exerciseModelRoutes(
 }
 
 async function readLocalModelConfigs(control) {
-  const raw = await control.command('getLocalStorageItem', 'body', {
-    value: LOCAL_MODEL_SETTINGS_STORAGE_KEY,
-  })
-  if (!raw) return []
+  const raw = await control.command('getNativeModelFixtureConfigs', 'body')
   const parsed = JSON.parse(raw)
   assert.ok(Array.isArray(parsed), 'Local model settings are not an array')
   return parsed
 }
 
-async function withUnavailableModel(control) {
-  const configs = await readLocalModelConfigs(control)
-  return JSON.stringify([
-    ...configs.filter(config => config.id !== UNAVAILABLE_MODEL_ID),
-    {
-      id: UNAVAILABLE_MODEL_ID,
-      displayName: UNAVAILABLE_MODEL_LABEL,
-      modelId: UNAVAILABLE_MODEL_UPSTREAM,
-      // Route registration rejects an unusable URL, so listing this model
-      // exercises the per-model failure path without failing the launch.
-      baseUrl: '',
-      apiFormat: 'openai-chat-completions',
-      requestPath: '/chat/completions',
-      toolProfile: 'function',
-      enabled: true,
-      catalogReady: true,
-      updatedAt: new Date().toISOString(),
-    },
-  ])
-}
-
-async function withoutUnavailableModel(control) {
-  const configs = await readLocalModelConfigs(control)
-  return JSON.stringify(configs.filter(config => config.id !== UNAVAILABLE_MODEL_ID))
+/** Keep one malformed historical record to verify rejection, never to configure normal models. */
+async function injectInvalidLegacyModelForRejectionTest(
+  control,
+  displayName = UNAVAILABLE_MODEL_LABEL
+) {
+  await control.command('setLocalStorageItem', 'body', {
+    value: JSON.stringify({
+      key: LOCAL_MODEL_SETTINGS_STORAGE_KEY,
+      value: JSON.stringify([
+        {
+          id: UNAVAILABLE_MODEL_ID,
+          displayName,
+          modelId: UNAVAILABLE_MODEL_UPSTREAM,
+          // Native configuration correctly rejects this URL. A historical malformed
+          // record must also never become an executable Smart app route.
+          baseUrl: '',
+          apiFormat: 'openai-chat-completions',
+          requestPath: '/chat/completions',
+          toolProfile: 'function',
+          enabled: true,
+          catalogReady: true,
+          updatedAt: new Date().toISOString(),
+        },
+      ]),
+    }),
+  })
+  await control.command('dispatchLocalModelSettingsChangedThenMacrotask', 'body')
 }
 
 async function waitForRunningInstallation(userDataDirectory, installationId, timeoutMs) {

@@ -49,6 +49,7 @@ import {
   TOOL_DETAIL_PERSISTENCE_CALL_ID,
   TOOL_DETAIL_PERSISTENCE_OUTPUT,
   TOOL_DETAIL_PERSISTENCE_COMPLETION,
+  assertShimmerCopyTracksText,
 } from './streaming-text-fixture.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
@@ -64,6 +65,7 @@ export function createStreamingToolChecks({
   subagentToolRenderTimeoutMs,
   subagentPartialWritten,
   releaseSubagentCompletion,
+  beforeSubagentOutput,
   releasePhaseFlipCompletion,
   toolFollowUpReceived,
   releaseToolCompletion,
@@ -160,7 +162,10 @@ export function createStreamingToolChecks({
     )
     assert.ok(
       Number(
-        await control.command('getElementCount', `${LONG_CODE_SCROLL_SELECTOR} .hljs-keyword`)
+        await control.command(
+          'getElementCount',
+          `${LONG_CODE_SCROLL_SELECTOR} [data-syntax-token="keyword"]`
+        )
       ) > 0,
       'The completed long code block did not render highlighted keyword nodes'
     )
@@ -299,6 +304,11 @@ export function createStreamingToolChecks({
   }
 
   const verifySubagentStreamingPanel = async control => {
+    // X11 shrinks display-sized normal frames by one pixel. Capture a maximized
+    // baseline so cleanup can restore an attainable native window state.
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1280, height: 720, maximized: true }),
+    })
     const previousSize = JSON.parse(
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1600, height: 900 }),
@@ -359,6 +369,7 @@ export function createStreamingToolChecks({
       false,
       'The running child tool leaked into the root conversation'
     )
+    await beforeSubagentOutput?.(control)
     await subagentPartialWritten
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: SUBAGENT_CHILD_TOOL_MARKER,
@@ -649,6 +660,11 @@ export function createStreamingToolChecks({
       text: `正在思考 · ${REASONING_PREVIEW}`,
       timeoutMs: modelResponseTimeoutMs,
     })
+    await assertShimmerCopyTracksText(
+      control,
+      `${TOOL_THINKING_INDICATOR_SELECTOR} .activity-shimmer-text`,
+      'The streaming tool reasoning summary'
+    )
     await capture(control, 'streaming-text-01-live-reasoning-summary.png')
     releaseToolCompletion()
     await toolFinalTextStarted

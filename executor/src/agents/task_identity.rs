@@ -24,10 +24,14 @@ pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
     "WEWORK_PARENT_TITLE",
 ];
 
+pub(super) fn is_backend_task(request: &ExecutionRequest) -> bool {
+    request.task_id.trim().parse::<i64>().is_ok_and(|id| id > 0)
+}
+
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.extend(crate::plugin_account_auth::broker::environment());
-    if !request.task_id.trim().is_empty() {
+    if is_backend_task(request) {
         env.insert(
             "WEGENT_BACKEND_TASK_ID".to_owned(),
             request.task_id.trim().to_owned(),
@@ -137,7 +141,7 @@ mod tests {
         // SAFETY: the shared test environment lock serializes environment mutation.
         unsafe { std::env::set_var("WORKSPACE_ROOT", "/workspace") };
         let mut request = ExecutionRequest {
-            task_id: "execution-1".to_owned(),
+            task_id: "123".to_owned(),
             ..ExecutionRequest::default()
         };
         request.extra.insert(
@@ -158,10 +162,7 @@ mod tests {
             env.get("WEGENT_TASK_ID"),
             Some(&"conversation-1".to_owned())
         );
-        assert_eq!(
-            env.get("WEGENT_BACKEND_TASK_ID"),
-            Some(&"execution-1".to_owned())
-        );
+        assert_eq!(env.get("WEGENT_BACKEND_TASK_ID"), Some(&"123".to_owned()));
         assert!(TASK_SCOPED_ENV_KEYS.contains(&"WEGENT_BACKEND_TASK_ID"));
         assert_eq!(
             env.get("WEGENT_TASK_WORKSPACE"),
@@ -172,5 +173,17 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn runtime_only_task_does_not_claim_a_backend_identity() {
+        let request = ExecutionRequest {
+            task_id: "runtime-928710216".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let env = task_identity_env(&request);
+
+        assert_eq!(env.get("WEGENT_TASK_ID"), Some(&request.task_id));
+        assert!(!env.contains_key("WEGENT_BACKEND_TASK_ID"));
     }
 }

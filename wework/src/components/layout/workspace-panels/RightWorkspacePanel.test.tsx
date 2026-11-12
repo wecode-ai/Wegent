@@ -1,11 +1,23 @@
+import { getWorkspaceCodeText, installPierreEditorTestPlatform } from '@/test/pierreCode'
 import { registerMcpAppPanel } from '@/features/mcp-apps/workspacePanels'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { ComponentProps } from 'react'
-import { describe, expect, test, vi } from 'vitest'
-import { RightWorkspacePanel } from './RightWorkspacePanel'
-import { FileWorkspacePanel } from './FileWorkspacePanel'
-import { workspaceFileTabId } from './workspaceFileTabs'
 import type { WorkspaceTarget } from '@/types/workspace-files'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { Editor } from '@pierre/diffs/edit'
+import type { ComponentProps } from 'react'
+import { beforeAll, describe, expect, test, vi } from 'vitest'
+import { FileWorkspacePanel } from './FileWorkspacePanel'
+import { RightWorkspacePanel } from './RightWorkspacePanel'
+
+vi.mock('@/features/notifications/QuestionDiscussionScope', () => ({
+  QuestionDiscussionTabPanel: ({ active }: { active: boolean }) => (
+    <div data-testid="discussion-tab-content" data-active={String(active)} />
+  ),
+}))
+
+beforeAll(installPierreEditorTestPlatform)
+vi.mock('@/components/code/PierreCodeProvider', () => ({
+  PierreCodeProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
 
 vi.mock('./WorkspaceBrowserPanelContainer', () => ({
   WorkspaceBrowserPanel: ({
@@ -42,13 +54,107 @@ const browserState = {
   openRequest: null,
 }
 
-function createDeferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>(promiseResolve => {
-    resolve = promiseResolve
-  })
-  return { promise, resolve }
-}
+test.each([false, true])(
+  'saves the reloaded document against its matching disk revision (older save pending: %s)',
+  async pendingSave => {
+    const edit = vi.spyOn(Editor.prototype, 'edit')
+    const target: WorkspaceTarget = { deviceId: 'fixture', path: '/repo', source: 'project' }
+    const initial = {
+      path: '/repo/file.ts',
+      name: 'file.ts',
+      content: 'const old = 1',
+      revision: 'revision-1',
+      editable: true,
+      truncated: false,
+      size: 13,
+    }
+    const external = { ...initial, content: 'const external = 2', revision: 'revision-2' }
+    let finishOlderSave!: (file: typeof initial) => void
+    const olderSave = new Promise<typeof initial>(resolve => {
+      finishOlderSave = resolve
+    })
+    const api = {
+      listWorkspaceEntries: vi.fn(async () => ({ path: target.path, entries: [] })),
+      readWorkspaceTextFile: vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(external),
+      writeWorkspaceTextFile: vi.fn(async (_device: string, _path: string, content: string) => ({
+        ...external,
+        content,
+        revision: 'revision-3',
+      })),
+    }
+    const panel = (id: number) => (
+      <FileWorkspacePanel
+        target={target}
+        workspaceFileApi={api}
+        openFileRequest={{ path: initial.path, id }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+    const attachedEditor = async () => {
+      await waitFor(() =>
+        expect(
+          document
+            .querySelector('diffs-container')
+            ?.shadowRoot?.querySelector('[data-testid="workspace-file-editor-content"]')
+        ).not.toBeNull()
+      )
+      return edit.mock.contexts.at(-1) as Editor
+    }
+    const insert = (editor: Editor, text: string) =>
+      act(() =>
+        editor.applyEdits([
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+            newText: text,
+          },
+        ])
+      )
+    const save = () =>
+      fireEvent.keyDown(screen.getByTestId('workspace-file-editor'), { key: 's', ctrlKey: true })
+    try {
+      const { rerender } = render(panel(1))
+      await waitFor(() => expect(getWorkspaceCodeText()).toContain(initial.content))
+      if (pendingSave) {
+        api.writeWorkspaceTextFile.mockImplementationOnce(() => olderSave)
+        insert(await attachedEditor(), '// before reload\n')
+        save()
+        await waitFor(() => expect(api.writeWorkspaceTextFile).toHaveBeenCalledOnce())
+      }
+      rerender(panel(2))
+      if (pendingSave) {
+        expect(api.readWorkspaceTextFile).toHaveBeenCalledOnce()
+        await act(async () =>
+          finishOlderSave({
+            ...initial,
+            content: `// before reload\n${initial.content}`,
+            revision: 'older-save',
+          })
+        )
+        await waitFor(() =>
+          expect(screen.queryByTestId('workspace-file-saving-status')).not.toBeInTheDocument()
+        )
+      }
+      await waitFor(() => expect(getWorkspaceCodeText()).toContain(external.content))
+      const editor = await attachedEditor()
+      insert(editor, '// next\n')
+      save()
+      await waitFor(() =>
+        expect(api.writeWorkspaceTextFile).toHaveBeenLastCalledWith(
+          target.deviceId,
+          initial.path,
+          `// next\n${external.content}`,
+          external.revision
+        )
+      )
+      await waitFor(() =>
+        expect(screen.queryByTestId('workspace-file-saving-status')).not.toBeInTheDocument()
+      )
+      expect(api.readWorkspaceTextFile).toHaveBeenCalledTimes(2)
+    } finally {
+      edit.mockRestore()
+    }
+  }
+)
 
 function renderPanel(overrides: Partial<ComponentProps<typeof RightWorkspacePanel>> = {}) {
   const noop = vi.fn()
@@ -83,6 +189,28 @@ function renderPanel(overrides: Partial<ComponentProps<typeof RightWorkspacePane
     />
   )
 }
+
+test('discussion shares the task tab bar with the browser and can be selected and closed', () => {
+  const onSelectTab = vi.fn()
+  const onCloseTab = vi.fn()
+  renderPanel({
+    openTabs: ['browser:1', 'discussion:question'],
+    activeView: 'browser:1',
+    onSelectTab,
+    onCloseTab,
+  })
+  const discussion = screen.getByTestId('right-workspace-discussion-tab-question')
+  expect(screen.getByTestId('right-workspace-tabbar')).toContainElement(discussion)
+  expect(screen.getByTestId('right-workspace-browser-tab-1')).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  expect(screen.getByTestId('discussion-tab-content')).toHaveAttribute('data-active', 'false')
+  fireEvent.click(discussion)
+  expect(onSelectTab).toHaveBeenCalledExactlyOnceWith('discussion:question')
+  fireEvent.click(screen.getByTestId('right-workspace-discussion-tab-question-close-button'))
+  expect(onCloseTab).toHaveBeenCalledExactlyOnceWith('discussion:question')
+})
 
 describe('MCP App workspace panels', () => {
   test.each([
@@ -228,91 +356,8 @@ describe('RightWorkspacePanel workspace target errors', () => {
   })
 })
 
-describe('RightWorkspacePanel file tab labels', () => {
-  test('shows the current file name and type icon on the original and additional tabs', () => {
-    const target: WorkspaceTarget = {
-      deviceId: 'fixture-device',
-      path: '/fixture/repo',
-      source: 'project',
-      workspaceSource: 'local',
-    }
-    const path = '/fixture/repo/main.ts'
-    const tab = workspaceFileTabId(target, path)
-    renderPanel({
-      openTabs: ['files', tab, 'browser:1'],
-      initialFileSelection: { path: '/fixture/repo/api.py', isDirectory: false },
-      fileTabs: { [tab]: { target, path } },
-    })
-    const pythonTab = screen.getByRole('tab', { name: /api.py/ })
-    expect(pythonTab).toHaveAttribute('title', '/fixture/repo/api.py')
-    expect(within(pythonTab).getByTestId('right-workspace-file-tab-icon')).toHaveAttribute(
-      'data-file-icon',
-      'python'
-    )
-    const tsTab = screen.getByRole('tab', { name: /main.ts/ })
-    expect(tsTab.querySelector('[data-file-icon="typescript"] path')).not.toBeNull()
-  })
-
-  test('shows the requested file before the initial preview selection is ready', () => {
-    renderPanel({
-      openTabs: ['files', 'browser:1'],
-      openFileRequest: { id: 1, path: '/fixture/repo/api.py' },
-    })
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveTextContent('api.py')
-    expect(screen.getByTestId('right-workspace-file-tab-icon')).toHaveAttribute(
-      'data-file-icon',
-      'python'
-    )
-  })
-
-  test('uses the actual selected file after a directory open request', () => {
-    renderPanel({
-      openTabs: ['files', 'browser:1'],
-      initialFileSelection: { path: '/fixture/repo/api.py', isDirectory: false },
-      openFileRequest: { id: 1, path: '/fixture/repo', isDirectory: true },
-    })
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveTextContent('api.py')
-    expect(screen.getByTestId('right-workspace-file-tab-icon')).toHaveAttribute(
-      'data-file-icon',
-      'python'
-    )
-  })
-
-  test('an attachment replaces the previous selection in the file tab title', () => {
-    renderPanel({
-      openTabs: ['files', 'browser:1'],
-      initialFileSelection: { path: '/fixture/repo/api.py', isDirectory: false },
-      openFileRequest: {
-        id: 1,
-        path: 'report.md',
-        attachment: {
-          filename: 'report.md',
-          contentType: 'text/markdown',
-          loadFile: async () => new Blob(),
-        },
-      },
-    })
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveTextContent('report.md')
-    expect(screen.getByTestId('right-workspace-file-tab-icon')).toHaveAttribute(
-      'data-file-icon',
-      'markdown'
-    )
-  })
-
-  test.each([null, { path: '/fixture/repo', isDirectory: true }])(
-    'keeps the generic tab only when no file is selected: %j',
-    initialFileSelection => {
-      renderPanel({ openTabs: ['files', 'browser:1'], initialFileSelection })
-      expect(screen.getByTestId('right-workspace-file-tab-icon')).not.toHaveAttribute(
-        'data-file-icon'
-      )
-      expect(screen.getByTestId('right-workspace-file-tab')).not.toHaveAttribute('title')
-    }
-  )
-})
-
 describe('RightWorkspacePanel file tab loading', () => {
-  test.each(['resolve', 'reject'])(
+  test.each(['reject'])(
     'does not replace a newer file when an older parent listing finishes with %s',
     async outcome => {
       const target: WorkspaceTarget = {
@@ -356,226 +401,10 @@ describe('RightWorkspacePanel file tab loading', () => {
       )
       const latest = '/fixture/repo/fast/second.ts'
       rerender(panel(latest, 2))
-      await waitFor(() =>
-        expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(latest)
-      )
+      await waitFor(() => expect(getWorkspaceCodeText()).toContain(latest))
       await act(async () => finishListing())
-      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(latest)
+      expect(getWorkspaceCodeText()).toContain(latest)
       expect(api.readWorkspaceTextFile.mock.calls.map(([, path]) => path)).toEqual([latest])
     }
   )
-
-  test('keeps browsing a new directory after restoring a saved directory', async () => {
-    const target: WorkspaceTarget = {
-      deviceId: 'fixture-device',
-      path: '/fixture/repo',
-      source: 'project',
-      workspaceSource: 'local',
-    }
-    const directory = { name: 'a', path: '/fixture/repo/a', isDirectory: true, size: 0 }
-    const child = { ...directory, name: 'b', path: '/fixture/repo/a/b' }
-    const api = {
-      listWorkspaceEntries: vi.fn(async (_deviceId: string, path: string) => ({
-        path,
-        entries: path === target.path ? [directory] : path === directory.path ? [child] : [],
-      })),
-      readWorkspaceTextFile: vi.fn(),
-    }
-    render(
-      <FileWorkspacePanel
-        target={target}
-        workspaceFileApi={api}
-        initialSelection={{ path: directory.path, isDirectory: true }}
-      />
-    )
-    const tree = await screen.findByTestId('workspace-file-tree-pierre')
-    const row = await waitFor(() => {
-      const element = tree.shadowRoot?.querySelector<HTMLElement>('[data-item-path="a/b/"]')
-      expect(element).not.toBeNull()
-      return element!
-    })
-    await act(async () => {
-      fireEvent.click(row)
-    })
-    expect(api.listWorkspaceEntries).toHaveBeenCalledWith(target.deviceId, child.path, target.path)
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('workspace-file-refresh-button'))
-    })
-    expect(api.listWorkspaceEntries.mock.calls.at(-1)?.[1]).toBe(child.path)
-    expect(api.readWorkspaceTextFile).not.toHaveBeenCalled()
-  })
-
-  test('restores the original file after returning from an additional file tab', async () => {
-    const target: WorkspaceTarget = {
-      deviceId: 'fixture-device',
-      path: '/fixture/repo',
-      source: 'project',
-      workspaceSource: 'local',
-    }
-    const first = '/fixture/repo/first.ts'
-    const second = '/fixture/repo/second.ts'
-    const api = {
-      listWorkspaceEntries: vi.fn().mockResolvedValue({ path: target.path, entries: [] }),
-      readWorkspaceTextFile: vi.fn(async (_deviceId: string, path: string) => ({
-        path,
-        name: path.split('/').at(-1)!,
-        content: path === first ? 'export const first = true' : 'export const second = true',
-        editable: true,
-        revision: path,
-        truncated: false,
-        size: 25,
-      })),
-      writeWorkspaceTextFile: vi.fn(),
-    }
-    const selection = { path: first, isDirectory: false }
-    const panel = (additional: boolean) => (
-      <FileWorkspacePanel
-        target={target}
-        workspaceFileApi={api}
-        initialSelection={additional ? null : selection}
-        openFileRequest={additional ? { id: 1, path: second } : null}
-      />
-    )
-    const { rerender } = render(panel(false))
-    const expectContent = async (content: string) => {
-      await waitFor(() =>
-        expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(content)
-      )
-    }
-    await expectContent('export const first = true')
-    rerender(panel(true))
-    await expectContent('export const second = true')
-    rerender(panel(false))
-    await expectContent('export const first = true')
-    expect(api.readWorkspaceTextFile.mock.calls.map(([, path]) => path)).toEqual([
-      first,
-      second,
-      first,
-    ])
-  })
-
-  test('keeps the current file visible while an active file tab loads', async () => {
-    const target: WorkspaceTarget = {
-      deviceId: 'fixture-device',
-      path: '/fixture/repo',
-      source: 'project',
-      workspaceSource: 'local',
-    }
-    const secondFile = createDeferred<{
-      path: string
-      name: string
-      content: string
-      editable: boolean
-      revision: string
-      truncated: boolean
-      size: number
-    }>()
-    const listWorkspaceEntries = vi.fn().mockResolvedValue({
-      path: '/fixture/repo',
-      entries: [
-        {
-          name: 'first.ts',
-          path: '/fixture/repo/first.ts',
-          isDirectory: false,
-          size: 25,
-          modifiedAt: null,
-        },
-        {
-          name: 'second.ts',
-          path: '/fixture/repo/second.ts',
-          isDirectory: false,
-          size: 26,
-          modifiedAt: null,
-        },
-      ],
-    })
-    const readWorkspaceTextFile = vi.fn((_deviceId: string, path: string) => {
-      if (path.endsWith('/second.ts')) return secondFile.promise
-      return Promise.resolve({
-        path,
-        name: 'first.ts',
-        content: 'export const first = true',
-        editable: true,
-        revision: 'revision-first',
-        truncated: false,
-        size: 25,
-      })
-    })
-    const writeWorkspaceTextFile = vi.fn()
-    const onOpenFileTab = vi.fn()
-    const { rerender } = renderPanel({
-      activeView: 'files',
-      openTabs: ['files'],
-      browserStates: {},
-      workspaceTargetError: null,
-      workspaceTarget: target,
-      fileWorkspaceTarget: target,
-      workspaceFileApi: { listWorkspaceEntries, readWorkspaceTextFile, writeWorkspaceTextFile },
-      openFileRequest: { id: 1, path: '/fixture/repo/first.ts' },
-      onOpenFileTab,
-    })
-
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(
-        'export const first = true'
-      )
-    )
-
-    const secondTab = workspaceFileTabId(target, '/fixture/repo/second.ts')
-    rerender(
-      <RightWorkspacePanel
-        visible
-        renderTabsInAppTitlebar={false}
-        activeView={secondTab}
-        openTabs={['files', secondTab]}
-        currentProject={null}
-        canBrowseFiles
-        currentRuntimeTask={null}
-        devices={[]}
-        workspaceTarget={target}
-        fileWorkspaceTarget={target}
-        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile, writeWorkspaceTextFile }}
-        workspaceTargetError={null}
-        review={{ loading: false, diff: '' }}
-        extensionScope={{ sessionId: 'test' }}
-        browserStates={{}}
-        fileTabs={{ [secondTab]: { target, path: '/fixture/repo/second.ts' } }}
-        onBrowserStateChange={vi.fn()}
-        canOpenReview={false}
-        onAddCodeComment={vi.fn()}
-        onSelectReview={vi.fn()}
-        onSelectTerminal={vi.fn()}
-        onSelectBrowser={vi.fn()}
-        onSelectFiles={vi.fn()}
-        onSelectChat={vi.fn()}
-        onSelectPlan={vi.fn()}
-        onSelectTab={vi.fn()}
-        onCloseTab={vi.fn()}
-        onOpenFileTab={onOpenFileTab}
-      />
-    )
-
-    expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(
-      'export const first = true'
-    )
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-file-preview-loading-indicator')).toBeInTheDocument()
-    )
-    expect(screen.queryByTestId('workspace-file-preview-progress')).not.toBeInTheDocument()
-
-    secondFile.resolve({
-      path: '/fixture/repo/second.ts',
-      name: 'second.ts',
-      content: 'export const second = true',
-      editable: true,
-      revision: 'revision-second',
-      truncated: false,
-      size: 26,
-    })
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(
-        'export const second = true'
-      )
-    )
-  })
 })

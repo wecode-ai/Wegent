@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { requestExecutor } from './executor-rpc.mjs'
 
 export async function createGithubManageConnectionFixture(resultDir) {
   // Exercise the official GitHub route with a real local package, not a mocked
@@ -48,6 +49,29 @@ export async function verifyGithubManageConnectionConsent(control, previousSlug,
   )
   assert.equal(loggedOut.status, 'ok', 'Empty CLI logout must be idempotent')
   assert.equal(loggedOut.connected, false, 'Empty CLI configuration must remain disconnected')
+  const health = JSON.parse(
+    await control.command('localConnectorAuth', 'body', {
+      value: JSON.stringify({
+        pluginKey: 'github',
+        connectorSlug: 'wework-github-cli',
+        action: 'health',
+      }),
+    })
+  )
+  const hosting = await requestExecutor(control, 'device.execute_command', {
+    command_key: 'git_github_cli_status',
+    timeout_seconds: 15,
+    max_output_bytes: 8192,
+  })
+  assert.equal(health.status, 'need_login', 'Empty CLI profile must require plugin login')
+  assert.equal(hosting.success, true, 'Code hosting status probe must complete')
+  assert.equal(hosting.stdout.installed, true, 'Code hosting must resolve the same installed CLI')
+  assert.equal(hosting.stdout.authenticated, false, 'Code hosting must see the same empty profile')
+  assert.equal(
+    hosting.stdout.detectionError,
+    null,
+    'Missing login is distinct from a probe failure'
+  )
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-search-input"]')
   await control.command('click', '[data-testid="plugins-distribution-tab-official"]')

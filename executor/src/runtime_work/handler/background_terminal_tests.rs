@@ -5,6 +5,52 @@
 use super::*;
 
 #[tokio::test]
+async fn global_notification_route_preserves_current_async_questions() {
+    for (status, turn_id, expected) in [
+        ("done", "turn-1", true),
+        ("failed", "turn-1", false),
+        ("cancelled", "turn-1", false),
+        ("done", "previous-turn", false),
+    ] {
+        let label = format!("global-async-question-{status}-{turn_id}");
+        let (mut handler, root) = isolated_runtime_work_handler(&label);
+        let mut link =
+            RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
+        link.thread_id = Some("thread-1".into());
+        link.status = status.into();
+        link.runtime_handle = json!({"lastTurnId": "turn-1"});
+        handler.upsert_local_task(link);
+        handler.register_thread_event_route(
+            "thread-1",
+            "task-1".into(),
+            ExecutionRequest {
+                task_id: "task-1".into(),
+                subtask_id: "turn-1".into(),
+                ..ExecutionRequest::default()
+            },
+            false,
+        );
+        let params = json!({
+            "threadId": "thread-1", "turnId": turn_id,
+            "item": {"id": "question-1", "type": "agentMessage",
+                "questions": [{"title": "Continue?", "options": ["Yes", "No"]}]}
+        });
+        handler.route_codex_notification(json!({"method": "item/started", "params": params}));
+        let link = handler.local_task_link("task-1").unwrap();
+        assert!(link.interaction_status.is_none());
+        handler.route_codex_notification(json!({"method": "item/completed", "params": params}));
+        handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+        let link = handler.local_task_link("task-1").unwrap();
+        assert_eq!(
+            link.interaction_status.as_deref(),
+            expected.then_some(INTERACTION_AWAITING_USER_REPLY),
+            "status={status}, turn={turn_id}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[tokio::test]
 async fn background_terminal_prevents_idle_restart_until_native_exit() {
     let (handler, root) = isolated_runtime_work_handler("background-terminal-idle-restart");
     let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());

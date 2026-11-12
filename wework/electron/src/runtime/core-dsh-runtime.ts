@@ -4,6 +4,7 @@ import semver from 'semver'
 import { hashComponentPath } from './component-update-manager.js'
 import { copyManagedPlugin } from './managed-plugin-files.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
+import { recordReleaseDiagnostic } from './release-diagnostics.js'
 
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
@@ -17,8 +18,11 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
   ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
   ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
+  ['@wegent/dsh-connection-host', 'wework-connection-host'],
   ['@wegent/dsh-connection-runtime', 'wework-connection-runtime'],
+  ['@wegent/dsh-coordination-runtime', 'wework-coordination-runtime'],
   ['@wegent/dsh-connection-dingtalk', 'wework-connection-dingtalk'],
+  ['@wegent/dsh-connection-git', 'wework-connection-git'],
   ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
   ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
@@ -42,8 +46,11 @@ const CORE_HOST_BUNDLES = [
   '@wegent/dsh-secure-storage',
   '@wegent/dsh-terminal-runtime',
   '@wegent/dsh-plugin-runtime',
+  '@wegent/dsh-connection-host',
   '@wegent/dsh-connection-runtime',
+  '@wegent/dsh-coordination-runtime',
   '@wegent/dsh-connection-dingtalk',
+  '@wegent/dsh-connection-git',
   '@wegent/dsh-app-wework',
   '@deepseek-ai/dsh-web-app',
   '@wegent/dsh-executor-runtime',
@@ -67,7 +74,11 @@ const CORE_UI_BUNDLES = [
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 const CORE_UI_DEPENDENCIES: readonly string[] = CORE_UI_BUNDLES
-const OPTIONAL_CORE_BUNDLES = new Set(['@wegent/dsh-connection-dingtalk'])
+const OPTIONAL_CORE_BUNDLES = new Set([
+  '@wegent/dsh-connection-runtime',
+  '@wegent/dsh-connection-dingtalk',
+  '@wegent/dsh-connection-git',
+])
 
 // User plugin packages and their manifests must survive a runtime-only reset.
 export async function resetCoreDshRuntime(dataDirectory: string): Promise<void> {
@@ -155,19 +166,24 @@ export async function prepareCoreDshRuntime(
   if (!pluginsRoot) {
     throw new Error('WEWORK_CORE_PLUGIN_ROOT is required for the packaged Core DSH runtime')
   }
+  recordReleaseDiagnostic('core-preparation', { phase: 'runtime-select-start' }, true)
   const runtime = await selectCoreDshRuntime(options.runtimeRoot, pluginsRoot)
+  recordReleaseDiagnostic('core-preparation', { phase: 'runtime-select-finish' }, true)
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
   const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
+  recordReleaseDiagnostic('core-preparation', { phase: 'plugins-hash-start' }, true)
   const corePluginsFingerprint =
     options.environment.WEWORK_CORE_PLUGINS_SHA256?.trim() ||
     (await hashComponentPath(resolve(pluginsRoot)))
+  recordReleaseDiagnostic('core-preparation', { phase: 'profile-prepare-start' }, true)
   await prepareProfile({
     runtime,
     dshHome,
     managedUiPlugins,
     corePluginsFingerprint,
   })
+  recordReleaseDiagnostic('core-preparation', { phase: 'profile-prepare-finish' }, true)
   return {
     command: nodeCommand,
     entry: runtime.entry,

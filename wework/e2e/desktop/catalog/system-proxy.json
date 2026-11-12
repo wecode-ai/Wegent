@@ -1,0 +1,12 @@
+{
+  "order": 87000,
+  "scenario": "./scenarios/system-proxy.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 126000,
+      "shard": 1,
+      "position": 13000
+    }
+  }
+}

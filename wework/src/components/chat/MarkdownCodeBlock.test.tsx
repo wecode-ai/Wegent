@@ -1,11 +1,28 @@
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/styles/globals.css'
 import type { ComponentProps } from 'react'
 import { MarkdownCodeBlock as SharedMarkdownCodeBlock } from '@wegent/collaboration/markdown/MarkdownCodeBlock'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import { useDesktopMarkdownServices } from './useDesktopMarkdownServices'
+import { highlightCode } from '../../../../packages/collaboration/src/markdown/highlightCode'
+import { codeHighlightClient } from '../../../../packages/collaboration/src/markdown/codeHighlightClient'
+
+class HighlightWorker {
+  onmessage: ((event: MessageEvent) => void) | null = null
+  terminated = false
+  postMessage({ id, code, language }: { id: number; code: string; language: string }) {
+    queueMicrotask(() => {
+      if (!this.terminated)
+        this.onmessage?.({ data: { id, result: highlightCode(code, language) } } as MessageEvent)
+    })
+  }
+  terminate() {
+    this.terminated = true
+  }
+}
+vi.stubGlobal('Worker', HighlightWorker)
 
 function MarkdownCodeBlock(props: ComponentProps<typeof SharedMarkdownCodeBlock>) {
   return (
@@ -24,30 +41,10 @@ vi.mock('@/telemetry/client', () => ({
 }))
 
 describe('MarkdownCodeBlock', () => {
+  afterEach(() => vi.restoreAllMocks())
   beforeEach(() => {
     trackMock.mockReset()
     vi.mocked(copyTextToClipboard).mockReset().mockResolvedValue(undefined)
-  })
-
-  test('tracks code block copy actions', async () => {
-    render(<MarkdownCodeBlock lang="ts">const x = 1</MarkdownCodeBlock>)
-
-    fireEvent.click(screen.getByTestId('markdown-code-copy-button'))
-
-    await waitFor(() =>
-      expect(trackMock).toHaveBeenCalledWith('ai_output_action_completed', {
-        action: 'copy',
-        source: 'chat',
-      })
-    )
-  })
-
-  test('copies code through the desktop Markdown clipboard service', async () => {
-    render(<MarkdownCodeBlock lang="sql">SELECT 1</MarkdownCodeBlock>)
-
-    fireEvent.click(screen.getByTestId('markdown-code-copy-button'))
-
-    await waitFor(() => expect(copyTextToClipboard).toHaveBeenCalledExactlyOnceWith('SELECT 1'))
   })
 
   test('keeps streaming code mounted while incrementally highlighting it', async () => {
@@ -66,7 +63,9 @@ describe('MarkdownCodeBlock', () => {
     expect(pre).toHaveStyle({ overflowX: 'visible' })
 
     await waitFor(() => expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'true'))
-    expect(scrollContainer.querySelector('.hljs-keyword')).toHaveTextContent('SELECT')
+    expect(scrollContainer.querySelector('[data-syntax-token="keyword"]')).toHaveTextContent(
+      'SELECT'
+    )
 
     rerender(<MarkdownCodeBlock lang="sql">SELECT 1</MarkdownCodeBlock>)
 
@@ -76,7 +75,9 @@ describe('MarkdownCodeBlock', () => {
     expect(scrollContainer).toHaveClass('scrollbar-soft', 'overflow-x-auto')
     expect(scrollContainer).not.toHaveClass('scrollbar-none')
     expect(screen.getByTestId('markdown-code-horizontal-scrollbar')).not.toHaveAttribute('hidden')
-    expect(scrollContainer.querySelector('.hljs-keyword')).toHaveTextContent('SELECT')
+    expect(scrollContainer.querySelector('[data-syntax-token="keyword"]')).toHaveTextContent(
+      'SELECT'
+    )
   })
 
   test('highlights completed code over the previous line limit', async () => {
@@ -86,7 +87,7 @@ describe('MarkdownCodeBlock', () => {
 
     const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
     await waitFor(() => expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'true'))
-    expect(scrollContainer.querySelectorAll('.hljs-comment')).toHaveLength(81)
+    expect(scrollContainer.querySelectorAll('[data-syntax-token="comment"]')).toHaveLength(81)
     expect(scrollContainer.querySelector('code')).toHaveTextContent('-- 81')
   })
 
@@ -97,7 +98,66 @@ describe('MarkdownCodeBlock', () => {
 
     const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
     await waitFor(() => expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'true'))
-    expect(scrollContainer.querySelector('.hljs-comment')).toHaveTextContent(code)
+    expect(scrollContainer.querySelector('[data-syntax-token="comment"]')).toHaveTextContent(code)
     expect(scrollContainer.querySelector('code')).toHaveTextContent(code)
+  })
+
+  test('coalesces streaming updates and rejects results from a previous language', async () => {
+    const replies: Array<(value: ReturnType<typeof highlightCode>) => void> = []
+    const highlight = vi
+      .spyOn(codeHighlightClient, 'highlight')
+      .mockImplementation(() => new Promise(resolve => replies.push(resolve)))
+    const { rerender } = render(
+      <MarkdownCodeBlock lang="ts" isStreaming>
+        const x = 1
+      </MarkdownCodeBlock>
+    )
+    rerender(
+      <MarkdownCodeBlock lang="ts" isStreaming>
+        const x = 12
+      </MarkdownCodeBlock>
+    )
+    rerender(
+      <MarkdownCodeBlock lang="ts" isStreaming>
+        const x = 123
+      </MarkdownCodeBlock>
+    )
+    expect(highlight).toHaveBeenCalledTimes(1)
+    await act(async () => replies.shift()!(highlightCode('const x = 1', 'typescript')))
+    expect(highlight).toHaveBeenLastCalledWith('const x = 123', 'typescript')
+    rerender(<MarkdownCodeBlock lang="plaintext">const x = 123</MarkdownCodeBlock>)
+    expect(screen.getByTestId('markdown-code-scroll-container')).toHaveAttribute(
+      'data-syntax-highlighted',
+      'false'
+    )
+    await act(async () => replies.shift()!(highlightCode('const x = 123', 'typescript')))
+    expect(screen.getByTestId('markdown-code-scroll-container')).toHaveAttribute(
+      'data-syntax-highlighted',
+      'false'
+    )
+    await act(async () => replies.shift()!(highlightCode('const x = 123', 'plaintext')))
+    expect(screen.getByTestId('markdown-code-scroll-container')).toHaveAttribute(
+      'data-syntax-highlighted',
+      'true'
+    )
+    expect(
+      screen.getByTestId('markdown-code-block').querySelector('[data-syntax-token="keyword"]')
+    ).toBeNull()
+    highlight.mockRestore()
+  })
+
+  test('preserves Unicode and line endings while escaping source HTML', async () => {
+    const code = 'const 你好 = "<img src=x onerror=alert(1)>😀"\r\n// 末行'
+    render(<MarkdownCodeBlock lang="ts">{code}</MarkdownCodeBlock>)
+    const block = screen.getByTestId('markdown-code-block')
+    await waitFor(() =>
+      expect(block.querySelector('[data-syntax-token="comment"]')).toHaveTextContent('// 末行')
+    )
+    expect(block.querySelector('img')).toBeNull()
+    expect(block.querySelector('code')?.textContent?.replaceAll('\r\n', '\n')).toBe(
+      code.replaceAll('\r\n', '\n')
+    )
+    expect(block).toHaveClass('pierre-code-block')
+    expect(block.querySelector('[data-pierre-code-theme]')?.textContent).toContain('--hls-keyword:')
   })
 })

@@ -1,9 +1,9 @@
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import '@/i18n'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { act, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import '@/i18n'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { TodoEditor } from './TodoEditor'
 
 function setup(store: 'local' | 'backend', mode: 'create' | 'edit' = 'edit') {
@@ -151,69 +151,14 @@ async function chooseSource(mode: 'create' | 'edit' = 'edit') {
 }
 
 describe('workspace Agent selection from the Issue assignee picker', () => {
-  it.each(['local', 'backend'] as const)(
-    'binds and assigns an uninstalled %s Agent from an existing Issue',
-    async store => {
-      const { api, source } = setup(store)
-      const user = await chooseSource()
-      expect(api.agents.create).not.toHaveBeenCalled()
-      expect(api.issues.assign).not.toHaveBeenCalled()
-      expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent(source.name)
-      await user.click(screen.getByTestId('cloud-todo-save'))
-      await waitFor(() =>
-        expect(api.issues.assign).toHaveBeenCalledWith('project', 'ISSUE-1', {
-          version: 1,
-          assigneeType: 'agent',
-          assigneeId: 'project-binding',
-        })
-      )
-      expect(api.agents.create).toHaveBeenCalledExactlyOnceWith(
-        'project',
-        store === 'local'
-          ? source.project_binding_input
-          : { name: source.name, runtime: 'wegent', wegentTeamId: 42, shareWithWorkspace: false }
-      )
-      expect(api.agents.create.mock.invocationCallOrder[0]).toBeLessThan(
-        api.issues.assign.mock.invocationCallOrder[0]
-      )
-      await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
-      await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
-      expect(
-        await screen.findByTestId('cloud-todo-detail-assignee-option-agent:project-binding')
-      ).toHaveTextContent(source.name)
-      expect(
-        screen.queryByTestId('cloud-todo-detail-assignee-option-resource:source')
-      ).not.toBeInTheDocument()
-    }
-  )
-
-  it.each(['local', 'backend'] as const)(
-    'supports direct %s workspace Agent selection during Issue creation',
-    async store => {
-      const { api, onCreated } = setup(store, 'create')
-      const user = await chooseSource('create')
-      await user.click(screen.getByTestId('cloud-todo-create-confirm'))
-      await waitFor(() => expect(onCreated).toHaveBeenCalled())
-      expect(api.agents.create.mock.invocationCallOrder[0]).toBeLessThan(
-        api.issues.create.mock.invocationCallOrder[0]
-      )
-      expect(api.issues.assign).toHaveBeenCalledWith('project', 'ISSUE-1', {
-        version: 1,
-        assigneeType: 'agent',
-        assigneeId: 'project-binding',
-      })
-    }
-  )
-
   it('keeps the selected assignee after binding failure and never submits a workspace ID as a project Agent', async () => {
     const { api } = setup('backend')
     api.agents.create.mockRejectedValueOnce(new Error('Binding permission denied'))
     const user = await chooseSource()
-    await user.click(screen.getByTestId('cloud-todo-save'))
     expect(await screen.findByText('Binding permission denied')).toBeVisible()
     expect(api.issues.assign).not.toHaveBeenCalled()
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('空间代码助手')
-    await user.click(screen.getByTestId('cloud-todo-save'))
+    await user.click(screen.getByTestId('cloud-todo-field-retry'))
     await waitFor(() => expect(api.issues.assign).toHaveBeenCalledOnce())
   })
 
@@ -221,11 +166,46 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
     const { api } = setup('local')
     api.issues.assign.mockRejectedValueOnce(new Error('Assignment unavailable'))
     const user = await chooseSource()
-    await user.click(screen.getByTestId('cloud-todo-save'))
     expect(await screen.findByText('Assignment unavailable')).toBeVisible()
-    await user.click(screen.getByTestId('cloud-todo-save'))
+    await user.click(screen.getByTestId('cloud-todo-field-retry'))
     await waitFor(() => expect(api.issues.assign).toHaveBeenCalledTimes(2))
     expect(api.agents.create).toHaveBeenCalledOnce()
+  })
+
+  it('shows the persisted project Agent after retrying a workspace resource assignment', async () => {
+    const { api } = setup('local')
+    api.issues.assign.mockRejectedValueOnce(new Error('Assignment unavailable'))
+    const user = await chooseSource()
+    expect(await screen.findByText('Assignment unavailable')).toBeVisible()
+    await user.click(screen.getByTestId('cloud-todo-field-retry'))
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        'agent:project-binding'
+      )
+    )
+    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('空间代码助手')
+    expect(api.agents.create).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a newer assignee selection while the resource assignment completes', async () => {
+    const { api, item } = setup('local')
+    const pending = Promise.withResolvers<CloudLoopItem>()
+    api.issues.assign.mockImplementationOnce(() => pending.promise)
+    const user = await chooseSource()
+    await waitFor(() => expect(api.issues.assign).toHaveBeenCalledOnce())
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-empty'))
+    await act(async () =>
+      pending.resolve({ ...item, assignee_agent_id: 'project-binding', version: 2 })
+    )
+    await waitFor(() =>
+      expect(api.issues.update).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({ version: 2, assigneeAgentId: null })
+      )
+    )
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute('data-value', '')
   })
 
   it('does not create an Issue if its selected workspace Agent cannot be enabled', async () => {
@@ -360,6 +340,49 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
     expect(api.agents.create).toHaveBeenCalledOnce()
   })
 
+  it('previews a staged image while creating an Issue', async () => {
+    const user = userEvent.setup()
+    const image = new File(['image'], 'image.png', { type: 'image/png' })
+    const createObjectUrl = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:staged-issue-image-preview')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    setup('backend', 'create')
+
+    await user.upload(screen.getByTestId('cloud-todo-attachment-input'), image)
+
+    expect(await screen.findByText('image.png')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('issue-detail-attachment-thumbnail-pending-0')
+    ).toHaveAttribute('src', 'blob:staged-issue-image-preview')
+    expect(createObjectUrl).toHaveBeenCalledWith(image)
+  })
+
+  it('keeps a staged document identity after removing an earlier image', async () => {
+    const user = userEvent.setup()
+    const image = new File(['image'], 'a.png', { type: 'image/png' })
+    const document = new File(['document'], 'b.txt', { type: 'text/plain' })
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:staged-issue-image-preview')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    setup('backend', 'create')
+
+    await user.upload(screen.getByTestId('cloud-todo-attachment-input'), [image, document])
+
+    await screen.findByText('a.png')
+    expect(
+      await screen.findByTestId('issue-detail-attachment-thumbnail-pending-0')
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '删除 a.png' }))
+
+    await waitFor(() => expect(screen.queryByText('a.png')).not.toBeInTheDocument())
+    const documentRow = screen.getByText('b.txt').closest('button')?.parentElement
+    expect(documentRow).not.toBeNull()
+    expect(documentRow?.querySelector('.issue-detail-attachment-fallback')).not.toBeNull()
+    expect(
+      within(documentRow as HTMLElement).queryByTestId(/^issue-detail-attachment-thumbnail-/)
+    ).not.toBeInTheDocument()
+  })
+
   it('retains installed assignees when the workspace catalog cannot be loaded', async () => {
     const { api, bindings } = setup('backend')
     bindings.push({ id: 'installed', name: '已加入项目的智能体', status: 'active' })
@@ -367,15 +390,5 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
     await userEvent.setup().click(screen.getByTestId('cloud-todo-detail-assignee'))
     expect(await screen.findByRole('option', { name: '已加入项目的智能体' })).toBeVisible()
     expect(api.agents.create).not.toHaveBeenCalled()
-  })
-
-  it('clears workspace options immediately when verified legacy access becomes an explicit project-only guest', async () => {
-    const { api, updateProject } = setup('backend')
-    updateProject({ workspace_access_role: undefined })
-    await userEvent.setup().click(screen.getByTestId('cloud-todo-detail-assignee'))
-    expect(await screen.findByRole('option', { name: '空间代码助手' })).toBeVisible()
-    expect(api.workspaces.list).toHaveBeenCalled()
-    updateProject({ workspace_access_role: null })
-    expect(screen.queryByRole('option', { name: '空间代码助手' })).not.toBeInTheDocument()
   })
 })

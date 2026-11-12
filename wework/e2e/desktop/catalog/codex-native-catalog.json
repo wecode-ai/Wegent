@@ -1,0 +1,12 @@
+{
+  "order": 86000,
+  "scenario": "./scenarios/codex-native-catalog.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 125000,
+      "shard": 6,
+      "position": 11000
+    }
+  }
+}

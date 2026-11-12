@@ -47,7 +47,7 @@ const {
   materializedRoot,
   prepareLockPath,
 } = resolveHarnessRuntimeCachePaths(root)
-const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
+const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml', 'patches/pnpm@11.7.0.patch']
 const archiveFormatVersion = 'dsh-runtime-tar-gzip-v10'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'

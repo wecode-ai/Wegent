@@ -1,0 +1,22 @@
+{
+  "order": 186000,
+  "scenario": "./scenarios/streaming-text.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 133000,
+      "shard": 4,
+      "position": 12000
+    }
+  },
+  "paths": [
+    "packages/collaboration/src/theme/*",
+    "packages/collaboration/src/markdown/*",
+    "wework/src/features/appearance/*",
+    "wework/src/styles/*",
+    "wework/src/components/chat/CodexInlineVisualizationHost*",
+    "wework/src/lib/visualization-theme*",
+    "wework/e2e/desktop/modules/appearance-theme.mjs",
+    "wework/e2e/desktop/modules/streaming-interactive-visualization.mjs"
+  ]
+}

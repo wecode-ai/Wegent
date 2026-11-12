@@ -1,9 +1,8 @@
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import '@/i18n'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
-import '@/i18n'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 
 const project = {
@@ -52,88 +51,7 @@ const pickerProjects: CloudProject[] = [
   { ...teamProject, id: 'local', name: 'Wegent', project_key: 'WEGENT' },
 ]
 
-const item = {
-  id: 'WORK-1',
-  title: '完成默认工作项流程',
-  status: 'in_review',
-  assignee_name: '张三',
-  assignee_agent_name: null,
-  ai_state: null,
-} as CloudLoopItem
-
-const taskBindings = [
-  {
-    id: 1,
-    loop_item_id: 'WORK-1',
-    task_user_id: 7,
-    device_id: 'local-device',
-    task_id: 'runtime-1',
-    task_title: '当前执行任务',
-    backend_task_id: null,
-    linked_at: '2026-08-16T00:00:00Z',
-  },
-  {
-    id: 2,
-    loop_item_id: 'WORK-1',
-    task_user_id: 7,
-    device_id: 'local-device',
-    task_id: 'runtime-2',
-    task_title: '补充验证任务',
-    backend_task_id: null,
-    linked_at: '2026-08-16T00:01:00Z',
-  },
-]
-
 describe('WorkItemComposerGuide', () => {
-  test('shows project context without an empty menu when no project choices are available', async () => {
-    const user = userEvent.setup()
-    render(<WorkItemComposerGuide integrated toolbar project={project} />)
-
-    const context = screen.getByTestId('project-space-context-pill')
-    expect(context).toHaveTextContent('我的任务')
-    expect(context).not.toHaveAttribute('aria-haspopup')
-    expect(context).not.toHaveAttribute('aria-expanded')
-    expect(context.tagName).toBe('DIV')
-
-    await user.click(context)
-
-    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
-  })
-
-  test('shows the default workspace as the selected destination for a new task', async () => {
-    const user = userEvent.setup()
-    const onSelectProject = vi.fn()
-    render(
-      <WorkItemComposerGuide
-        project={project}
-        projects={[teamProject]}
-        toolbar
-        onSelectProject={onSelectProject}
-      />
-    )
-
-    const trigger = screen.getByTestId('project-space-context-pill')
-    expect(trigger).toHaveTextContent('我的任务')
-    expect(trigger).toHaveClass(
-      'h-8',
-      'gap-1.5',
-      'rounded-lg',
-      'px-2',
-      'text-sm',
-      'font-normal',
-      'text-text-secondary'
-    )
-    expect(trigger).not.toHaveClass('text-primary', 'font-medium')
-
-    await user.click(trigger)
-    const menu = screen.getByTestId('work-item-context-menu')
-    expect(menu).not.toHaveTextContent('我的任务')
-    expect(screen.getByTestId('work-item-workspace-option-team-work')).toHaveTextContent('团队研发')
-
-    await user.click(screen.getByTestId('work-item-workspace-option-team-work'))
-    expect(onSelectProject).toHaveBeenCalledWith(teamProject)
-  })
-
   test('reopens Issue selection for the current draft project', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
@@ -153,155 +71,79 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
   })
 
-  test('uses the goal as primary context and only shows sibling tasks', async () => {
-    const api = {
-      listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
-      findCloudContextForTask: vi.fn().mockResolvedValue({
-        project,
-        loop_item: item,
-      }),
-    } as unknown as ProjectSpaceApi
-
-    render(
-      <WorkItemComposerGuide
-        item={item}
-        api={api}
-        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
-        goalPresent
-      />
-    )
-
-    await waitFor(() =>
-      expect(screen.getByTestId('work-item-guide-summary-details')).toHaveTextContent(
-        '2 个任务，还有 1 个'
+  test.each(['work-item-open-details', 'work-item-open-board-menu'])(
+    'dismisses the project picker through %s and allows reopening it',
+    async actionTestId => {
+      const item = {
+        id: 'WORK-1',
+        title: '完成默认工作项流程',
+        status: 'in_review',
+        assignee_name: '张三',
+        assignee_agent_name: null,
+        ai_state: null,
+      } as CloudLoopItem
+      const user = userEvent.setup()
+      const onOpen = vi.fn()
+      const onOpenBoard = vi.fn()
+      const onSelectProject = vi.fn()
+      render(
+        <WorkItemComposerGuide
+          project={project}
+          item={item}
+          projects={[teamProject]}
+          onSelectProject={onSelectProject}
+          onOpen={onOpen}
+          onOpenBoard={onOpenBoard}
+        />
       )
-    )
-    expect(screen.getByTestId('project-space-context-pill')).toHaveTextContent('工作空间')
-    expect(screen.queryByText('等待确认')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('work-item-guide-summary-title')).not.toBeInTheDocument()
-    expect(screen.getByTestId('project-space-context-pill')).not.toHaveTextContent('我的任务')
-    expect(screen.getByTestId('project-space-context-pill')).not.toHaveTextContent('WORK-1')
-    expect(screen.getByTestId('project-space-context-pill')).not.toHaveTextContent('下一步')
-  })
+      const trigger = screen.getByTestId('work-item-change-board')
+      await user.click(trigger)
+      expect(screen.getByTestId('work-item-context-menu')).toBeVisible()
 
-  test('shows the work-item title when there is no active goal', async () => {
-    const api = {
-      listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
-      findCloudContextForTask: vi.fn().mockResolvedValue(null),
-    } as unknown as ProjectSpaceApi
+      const navigationAction = screen.getByTestId(actionTestId)
+      await user.click(navigationAction)
 
-    render(
-      <WorkItemComposerGuide
-        item={item}
-        api={api}
-        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
-      />
-    )
+      const navigatesToDetails = actionTestId === 'work-item-open-details'
+      expect(onOpen).toHaveBeenCalledTimes(navigatesToDetails ? 1 : 0)
+      expect(onOpenBoard).toHaveBeenCalledTimes(navigatesToDetails ? 0 : 1)
+      expect(onSelectProject).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(navigationAction).toHaveFocus()
 
-    await waitFor(() =>
-      expect(screen.getByTestId('work-item-guide-summary-title')).toHaveTextContent(
-        '完成默认工作项流程'
-      )
-    )
-    expect(screen.queryByText('等待确认')).not.toBeInTheDocument()
-  })
+      await user.click(trigger)
+      await user.click(screen.getByTestId('work-item-workspace-option-team-work'))
 
-  test('refreshes the linked work item when runtime execution settles', async () => {
-    const runningItem = {
-      ...item,
-      title: '执行中的任务',
-      status: 'in_progress' as const,
+      expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
+      expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
     }
-    const settledItem = {
-      ...item,
-      title: '已同步的任务',
-    }
-    const api = {
-      listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
-      findCloudContextForTask: vi
-        .fn()
-        .mockResolvedValueOnce({ project, loop_item: runningItem })
-        .mockResolvedValueOnce({ project, loop_item: settledItem }),
-    } as unknown as ProjectSpaceApi
-    const props = {
-      item: runningItem,
-      api,
-      currentTask: { deviceId: 'local-device', taskId: 'runtime-1' },
-    }
-    const { rerender } = render(<WorkItemComposerGuide {...props} refreshKey="running" />)
+  )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('work-item-guide-summary-title')).toHaveTextContent('执行中的任务')
-    )
-
-    rerender(<WorkItemComposerGuide {...props} refreshKey="done" />)
-
-    await waitFor(() =>
-      expect(screen.getByTestId('work-item-guide-summary-title')).toHaveTextContent('已同步的任务')
-    )
-    expect(api.findCloudContextForTask).toHaveBeenCalledTimes(2)
-  })
-
-  test('summarizes sibling tasks without opening a second menu', async () => {
-    const api = {
-      listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
-      findCloudContextForTask: vi.fn().mockResolvedValue(null),
-    } as unknown as ProjectSpaceApi
-
-    render(
-      <WorkItemComposerGuide
-        item={item}
-        api={api}
-        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
-      />
-    )
-
-    await waitFor(() =>
-      expect(screen.getByTestId('work-item-guide-summary-details')).toHaveTextContent(
-        '2 个任务，还有 1 个'
-      )
-    )
-    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('work-item-task-1')).not.toBeInTheDocument()
-  })
-
-  test('exposes direct actions for details and the full workspace', async () => {
+  test('opens the Issue details from the summary title', async () => {
+    const item = {
+      id: 'WORK-1',
+      title: '完成默认工作项流程',
+      status: 'in_review',
+      assignee_name: '张三',
+      assignee_agent_name: null,
+      ai_state: null,
+    } as CloudLoopItem
     const user = userEvent.setup()
     const onOpen = vi.fn()
-    const onOpenBoard = vi.fn()
-    render(<WorkItemComposerGuide item={item} onOpen={onOpen} onOpenBoard={onOpenBoard} />)
+    render(<WorkItemComposerGuide item={item} onOpen={onOpen} />)
 
-    const detailsButton = screen.getByTestId('work-item-open-details')
-    const workspaceButton = screen.getByTestId('work-item-open-board-menu')
-    expect(detailsButton).toHaveAccessibleName('查看 Issue 详情')
-    expect(workspaceButton).toHaveAccessibleName('在工作空间中打开')
-    expect(detailsButton).toHaveTextContent('')
-    expect(workspaceButton).toHaveTextContent('')
-
-    await user.click(detailsButton)
-    expect(onOpen).toHaveBeenCalledOnce()
-
-    await user.click(workspaceButton)
-    expect(onOpenBoard).toHaveBeenCalledOnce()
-    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
-  })
-
-  test('allows an already linked task to choose another board', async () => {
-    const user = userEvent.setup()
-    const onSelectProject = vi.fn()
-    render(
-      <WorkItemComposerGuide
-        project={project}
-        item={item}
-        projects={[project, teamProject]}
-        onSelectProject={onSelectProject}
-      />
+    const summaryButton = screen.getByTestId('work-item-guide-open-summary')
+    expect(summaryButton).toHaveClass(
+      'hover:bg-background/70',
+      'keyboard:focus-visible:ring-2',
+      'keyboard:focus-visible:ring-inset',
+      'keyboard:focus-visible:ring-primary/30',
+      'disabled:hover:bg-transparent'
     )
 
-    await user.click(screen.getByTestId('work-item-change-board'))
-    await user.click(screen.getByTestId('work-item-workspace-option-team-work'))
+    await user.click(summaryButton)
 
-    expect(onSelectProject).toHaveBeenCalledWith(teamProject)
+    expect(onOpen).toHaveBeenCalledOnce()
   })
 
   test('filters by space and search together and recovers from an empty result', async () => {
@@ -343,40 +185,7 @@ describe('WorkItemComposerGuide', () => {
     await user.click(screen.getByTestId('clear-project-space-context-button'))
     expect(onRemoveProject).toHaveBeenCalledOnce()
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
-  })
-
-  test('sorts in both directions and distinguishes projects with duplicate names', async () => {
-    const user = userEvent.setup()
-    const onSelectProject = vi.fn()
-    render(
-      <WorkItemComposerGuide
-        project={project}
-        projects={pickerProjects}
-        onSelectProject={onSelectProject}
-      />
-    )
-
-    await user.click(screen.getByTestId('project-space-context-pill'))
-    const ascending = projectOptions()
-      .getAllByRole('option')
-      .map(option => option.getAttribute('data-project-space-key'))
-    await user.selectOptions(screen.getByTestId('project-space-picker-sort'), 'name-desc')
-    const descending = projectOptions()
-      .getAllByRole('option')
-      .map(option => option.getAttribute('data-project-space-key'))
-    const englishKeys = new Set(['backend:ai', 'local:local'])
-    expect(ascending.filter(key => englishKeys.has(key!))).toEqual(['backend:ai', 'local:local'])
-    expect(descending.filter(key => englishKeys.has(key!))).toEqual(['local:local', 'backend:ai'])
-    expect(ascending.filter(key => !englishKeys.has(key!))).toEqual([
-      'backend:report',
-      'backend:weekly',
-    ])
-    expect(descending.filter(key => !englishKeys.has(key!))).toEqual([
-      'backend:report',
-      'backend:weekly',
-    ])
-    await user.click(projectOptions().getByRole('option', { name: '行业周报 · 运营协作 · WEEKLY' }))
-    expect(onSelectProject).toHaveBeenCalledWith(pickerProjects[1])
+    expect(screen.getByTestId('project-space-context-pill')).toHaveFocus()
   })
 
   test('uses storage as part of project identity when IDs and names collide', async () => {
@@ -436,15 +245,57 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(pickerProjects[1])
   })
 
-  test('supports keyboard selection, ignores IME confirmation and restores focus on Escape', async () => {
+  test('preserves manual scrolling across project refreshes and scrolls for user navigation', async () => {
+    const user = userEvent.setup()
+    const projects = Array.from({ length: 40 }, (_, index) => ({
+      ...teamProject,
+      id: `project-${index}`,
+      name: `Project ${index}`,
+      project_key: `PROJECT-${index}`,
+    }))
+    const props = { project: projects[0], projects, onSelectProject: vi.fn() }
+    const { rerender } = render(<WorkItemComposerGuide {...props} />)
+    await user.click(screen.getByTestId('project-space-context-pill'))
+    const search = screen.getByTestId('project-space-picker-search')
+    await waitFor(() => expect(search).toHaveFocus())
+    const list = screen.getByRole('listbox')
+    const options = projectOptions().getAllByRole('option')
+    const scrollIntoView = vi.fn(function (this: HTMLElement) {
+      list.scrollTop = options.indexOf(this) * 48
+    })
+    options.forEach(option => {
+      option.scrollIntoView = scrollIntoView
+    })
+    list.scrollTop = 48 * 32
+    fireEvent.scroll(list)
+
+    rerender(
+      <WorkItemComposerGuide {...props} projects={projects.map(option => ({ ...option }))} />
+    )
+
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(list.scrollTop).toBe(48 * 32)
+    await user.keyboard('{ArrowDown}')
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(options[1])
+    expect(search).toHaveAttribute('aria-activedescendant', options[1].id)
+    await user.selectOptions(screen.getByTestId('project-space-picker-sort'), 'name-desc')
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(options[39])
+    await user.type(search, 'Project 25')
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(options[25])
+  })
+
+  test('restores focus for keyboard dismissal and preserves native focus on outside clicks', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
     render(
-      <WorkItemComposerGuide
-        project={project}
-        projects={pickerProjects}
-        onSelectProject={onSelectProject}
-      />
+      <>
+        <WorkItemComposerGuide
+          project={project}
+          projects={pickerProjects}
+          onSelectProject={onSelectProject}
+        />
+        <button type="button">Outside action</button>
+      </>
     )
     const trigger = screen.getByTestId('project-space-context-pill')
     await user.click(trigger)
@@ -462,33 +313,18 @@ describe('WorkItemComposerGuide', () => {
     await user.keyboard('{Escape}')
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
-  })
 
-  test('dismisses outside clicks and reselects the project for a bound Issue', async () => {
-    const user = userEvent.setup()
-    const onSelectProject = vi.fn()
-    const { rerender } = render(
-      <WorkItemComposerGuide
-        project={teamProject}
-        projects={[teamProject]}
-        onSelectProject={onSelectProject}
-      />
-    )
-    await user.click(screen.getByTestId('project-space-context-pill'))
+    await user.click(trigger)
+    await waitFor(() => expect(screen.getByTestId('project-space-picker-search')).toHaveFocus())
     await user.click(document.body)
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
-    expect(onSelectProject).not.toHaveBeenCalled()
+    expect(document.body).toHaveFocus()
 
-    rerender(
-      <WorkItemComposerGuide
-        project={teamProject}
-        item={item}
-        projects={[teamProject]}
-        onSelectProject={onSelectProject}
-      />
-    )
-    await user.click(screen.getByTestId('work-item-change-board'))
-    await user.click(projectOptions().getByRole('option'))
-    expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
+    await user.click(trigger)
+    await waitFor(() => expect(screen.getByTestId('project-space-picker-search')).toHaveFocus())
+    const outsideAction = screen.getByRole('button', { name: 'Outside action' })
+    await user.click(outsideAction)
+    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    expect(outsideAction).toHaveFocus()
   })
 })

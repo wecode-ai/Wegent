@@ -2,7 +2,10 @@ import {
   dispatchTaskCommentReply,
   cardSessionAddress,
 } from '@wegent/collaboration/execution/taskCardReply'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import {
+  createExecutorClientForWorkbenchServices,
+  type WorkbenchServices,
+} from '@/features/workbench/workbenchServices'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { createWorkbenchDeviceResolver } from '@/lib/workbench-device'
 
@@ -13,12 +16,38 @@ async function ownsInteraction(
 ): Promise<boolean> {
   if (!owner || owner.taskId !== item.task.address.taskId) return false
   if (owner.deviceId === item.task.address.deviceId) return true
-  const devices = createWorkbenchDeviceResolver(await services.deviceApi.listDevices())
-  return Boolean(
-    devices.resolve(owner.deviceId) &&
-    devices.resolve(item.task.address.deviceId) &&
+  const { registry } = createExecutorClientForWorkbenchServices(services)
+  await registry.refresh()
+  try {
+    await registry.resolve(owner.deviceId)
+  } catch (error) {
+    if (!(error instanceof Error && error.message.startsWith('executor-not-found:'))) throw error
+    return false
+  }
+  const listed = registry.list().map(entry => entry.device)
+  const devices = createWorkbenchDeviceResolver(listed)
+  const ownerDevice = devices.resolve(owner.deviceId)
+  const interactionDevice = devices.resolve(item.task.address.deviceId)
+  const matches = Boolean(
+    ownerDevice &&
+    interactionDevice &&
     devices.identityKey(owner.deviceId) === devices.identityKey(item.task.address.deviceId)
   )
+  if (!matches)
+    console.warn('[RuntimeInteraction] Issue owner identity unavailable', {
+      ownerDeviceId: owner.deviceId,
+      interactionDeviceId: item.task.address.deviceId,
+      ownerResolved: Boolean(ownerDevice),
+      interactionResolved: Boolean(interactionDevice),
+      devices: listed.map(device => ({
+        id: device.id,
+        deviceId: device.device_id,
+        appDeviceId: device.app_device_id,
+        runtimeInstanceId: device.runtime_instance_id,
+        type: device.device_type,
+      })),
+    })
+  return matches
 }
 
 /** Persist the reply on its owning Issue thread before continuing its execution. */
@@ -34,6 +63,26 @@ export async function replyToInteractionProject(
     binding?.store === 'local' ? services.localProjectChatClient : services.projectChatClient
   if (!binding?.rootCommentId || !client?.executeTaskComment)
     throw new Error(`${failedText} [interaction_issue_client_unavailable]`)
+  if (item.sharedRequest) {
+    const result = await dispatchTaskCommentReply({
+      client,
+      projectId: binding.projectId,
+      taskId: binding.issueId,
+      rootMessageId: binding.rootCommentId,
+      humanRequestId: item.sharedRequest.id,
+      reply: {
+        id: clientMessageId,
+        content: text,
+        createdAt: new Date().toISOString(),
+        status: 'queued',
+      },
+      onMessages: () => undefined,
+      onError: () => undefined,
+      sendFailedText: failedText,
+    })
+    if (!result.ok) throw new Error(result.error || failedText)
+    return
+  }
   const subscription = await client.subscribe(
     binding.projectId,
     binding.issueId,

@@ -1,4 +1,5 @@
-import { APIRequestContext, expect, Page, test } from '@playwright/test'
+import { APIRequestContext, Page } from '@playwright/test'
+import { test, expect, executorMockUrl } from '../../fixtures/executor-test'
 import { PROVIDER_NATIVE_MARKERS } from '../../fixtures/provider-native-knowledge'
 import { ProviderNativeKnowledgePage } from '../../pages/tasks/provider-native-knowledge.page'
 import {
@@ -23,7 +24,9 @@ import {
 } from '../../utils/provider-native-test-support'
 
 const TEST_PREFIX = `e2e-provider-claude-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-const CLAUDE_MODEL_SERVER_URL = process.env.E2E_CLAUDE_MODEL_SERVER_URL || PROVIDER_NATIVE_MOCK_URL
+const CLAUDE_MODEL_SERVER_URL = executorMockUrl(
+  process.env.E2E_CLAUDE_MODEL_SERVER_URL || PROVIDER_NATIVE_MOCK_URL
+)
 const CLAUDE_MODEL_NAME = `${TEST_PREFIX}-claude-model`
 const CLAUDE_SHELL_NAME = `${TEST_PREFIX}-claude-shell`
 const CLAUDE_BOT_NAME = `${TEST_PREFIX}-claude-bot`

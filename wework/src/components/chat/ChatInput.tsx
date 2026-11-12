@@ -161,6 +161,7 @@ export interface ChatInputProps {
     options?: ChatSubmitOptions
   ) => void | boolean | Promise<void | boolean>
   disabled: boolean
+  showPluginPicker?: boolean
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   requireText?: boolean
@@ -318,6 +319,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     onCompositionEnd,
     onSubmit,
     disabled,
+    showPluginPicker = true,
     pluginPickerIconOnly = false,
     submitDisabled = false,
     requireText = false,
@@ -690,35 +692,11 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             onApplyRefinedPrompt={applyRefinedPrompt}
             onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
           />
-          {(contextHeader || (displayedGoal && !goalDraftActive)) && (
-            <div
-              data-testid="composer-context-rail"
-              className={[
-                'mb-2 min-w-0 items-center divide-x divide-border/70 overflow-hidden rounded-xl border border-border/60 bg-muted/45 px-1 [&>*]:min-w-0 [&>*]:overflow-hidden',
-                contextHeader && displayedGoal && !goalDraftActive
-                  ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
-                  : 'flex',
-              ].join(' ')}
-            >
-              {displayedGoal && !goalDraftActive && (
-                <GoalStatusBar
-                  integrated
-                  goal={displayedGoal}
-                  continuing={goalContinuing}
-                  executionStatus={goalExecutionStatus}
-                  onEditGoal={onEditGoal}
-                  onPauseGoal={onPauseGoal}
-                  onResumeGoal={onResumeGoal}
-                  onClearGoal={onClearGoal}
-                />
-              )}
-              {contextHeader}
-            </div>
-          )}
           <ProjectChatComposer
             composerScopeKey={controls.scopeKey}
             ref={composerRef}
             {...composerProps}
+            showPluginPicker={showPluginPicker}
             pluginPickerIconOnly={pluginPickerIconOnly}
             models={controls.models}
             selectedModel={controls.selectedModel}
@@ -788,6 +766,33 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             showWorkspaceMenu={showWorkspaceMenu}
             collapseWhenIdle={collapseWhenIdle}
             alwaysShowComposerToolbar={alwaysShowComposerToolbar}
+            contextHeader={
+              (contextHeader || (displayedGoal && !goalDraftActive)) && (
+                <div
+                  data-testid="composer-context-rail"
+                  className={[
+                    'mb-1 min-w-0 items-center text-sm text-text-secondary [&>*]:min-w-0 [&>*]:max-w-full',
+                    contextHeader && displayedGoal && !goalDraftActive
+                      ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
+                      : 'flex',
+                  ].join(' ')}
+                >
+                  {displayedGoal && !goalDraftActive && (
+                    <GoalStatusBar
+                      integrated
+                      goal={displayedGoal}
+                      continuing={goalContinuing}
+                      executionStatus={goalExecutionStatus}
+                      onEditGoal={onEditGoal}
+                      onPauseGoal={onPauseGoal}
+                      onResumeGoal={onResumeGoal}
+                      onClearGoal={onClearGoal}
+                    />
+                  )}
+                  {contextHeader}
+                </div>
+              )
+            }
             inputLeadingContext={inputLeadingContext}
             onDismissInputLeadingContext={onDismissInputLeadingContext}
             toolbarLeadingContext={toolbarLeadingContext}
@@ -953,7 +958,7 @@ function QueueResumeDialog({
             size="sm"
             data-testid="paused-queue-send-clear-button"
             onClick={onClear}
-            className="h-8 rounded-md border-red-200 bg-base px-3 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+            className="h-8 rounded-md border-destructive/30 bg-base px-3 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive wework:border-red-200 wework:text-red-600 wework:hover:bg-red-50 wework:hover:text-red-700"
           >
             {t('queue.send_with_paused_clear')}
           </Button>

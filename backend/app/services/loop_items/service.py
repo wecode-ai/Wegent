@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, bindparam, cast, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
@@ -68,14 +68,17 @@ from app.services.delivery.storage import (
 )
 from app.services.issue_badges import issue_badges
 from app.services.loop_item_executions.service import (
-    execution_ai_state,
     execution_ai_state_from_resources,
     execution_display_state,
+    execution_human_waiting_since,
+    execution_processing_actor,
     loop_item_execution_service,
 )
 from app.services.loop_item_executions.wake import wake_robot_creator
+from app.services.loop_item_history_actor import automation_history_actor
 from app.services.loop_item_status_history import (
     STATUS_HISTORY_KEY,
+    automatic_project_status,
     project_board_statuses,
     write_status_change,
 )
@@ -101,9 +104,18 @@ from app.services.loop_items.ordering import (
     sibling_items,
 )
 from app.services.loop_items.read_context import LoopItemReadContext
-from app.services.loop_items.task_bindings import active_task_binding_query
-from app.services.project_automation_domain import runnable_wegent_team
+from app.services.loop_items.task_bindings import (
+    active_task_binding_query,
+    owned_binding_cancellation_targets,
+    uncovered_binding_cancellation_targets,
+)
+from app.services.project_automation_domain import (
+    runnable_wegent_team,
+    status_automation_target,
+)
 from app.services.project_chat.service import ProjectChatService, bot_config
+from app.services.project_milestones import require_milestone
+from app.services.runtime_cancellation import emit_runtime_cancellations
 from app.stores.tasks import task_store
 from app.utils.schedule_time import normalize_schedule_datetime
 from shared.telemetry.decorators import trace_sync
@@ -168,6 +180,7 @@ def _task_binding_metadata(
         if allowed_context:
             metadata["execution_context"] = allowed_context
     for key in (
+        "stand_in_conversation_id",
         "human_assignment_id",
         "dispatch_id",
         "dispatch_round_id",
@@ -262,6 +275,8 @@ class LoopItemService:
         if item.assignee_user_id:
             assignee = context.users.get(item.assignee_user_id)
             values["assignee_name"] = assignee.user_name if assignee else None
+        creator = context.users.get(item.created_by_user_id)
+        values["created_by_user_name"] = creator.user_name if creator else None
         if item.assignee_agent_id:
             agent = context.agents.get(item.assignee_agent_id)
             values["assignee_agent_name"] = agent.name if agent else None
@@ -285,6 +300,7 @@ class LoopItemService:
         automation = metadata.get("automation")
         values["automation"] = automation if isinstance(automation, dict) else None
         ai_state = metadata.get(TASK_AI_STATE_KEY)
+        values["human_requests"] = metadata.get("human_requests", [])
         values["ai_state"] = self._present_cached_ai_state(
             db, item, ai_state, messages=context.messages
         )
@@ -332,6 +348,10 @@ class LoopItemService:
                 team=context.teams.get(execution.team_id),
             )
         projected_ai_state = values["ai_state"]
+        values["processing_actor"] = execution_processing_actor(
+            execution, projected_ai_state
+        )
+        values["human_waiting_since"] = execution_human_waiting_since(execution)
         if isinstance(projected_ai_state, dict):
             logger.info(
                 "[LoopItem] Response includes task AI state: "
@@ -600,6 +620,8 @@ class LoopItemService:
             if values.runner_selection is not None
             else (automation_context or {}).get("runner_selection")
         )
+        milestone_id = payload.pop("milestone_id", None)
+        require_milestone(db, project.id, milestone_id)
         tags = payload.pop("tags")
         explicit_workflow = values.workflow
         explicit_execution_config = values.execution_config
@@ -611,7 +633,9 @@ class LoopItemService:
         group_id = payload.pop("assignee_group_id", None)
         collaboration_group: dict[str, Any] | None = None
         payload["assignee_agent_id"] = agent_id or ""
-        task_metadata: dict = {}
+        task_metadata: dict[str, Any] = {}
+        if milestone_id is not None:
+            task_metadata["milestone_id"] = milestone_id
         task_metadata["security_level"] = default_issue_security(project)
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
@@ -691,6 +715,7 @@ class LoopItemService:
                 "agent",
                 agent.id,
                 agent.title or agent.name,
+                automation_context=automation_context,
             )
             if explicit_execution_config is None and automation_context is None:
                 from app.services.issue_execution_configuration import (
@@ -716,6 +741,7 @@ class LoopItemService:
                 "team",
                 str(team.id),
                 team.name,
+                automation_context=automation_context,
             )
         elif group_id:
             from app.services.workspaces import workspace_service
@@ -751,8 +777,8 @@ class LoopItemService:
                 "group",
                 str(collaboration_group["id"]),
                 str(collaboration_group["name"]),
+                automation_context=automation_context,
             )
-            payload["status"] = "in_progress"
         elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
             payload["assignee_user_id"] = user_id
             self.record_assignment_change(
@@ -761,6 +787,7 @@ class LoopItemService:
                 "user",
                 str(user_id),
                 None,
+                automation_context=automation_context,
             )
         elif payload.get("assignee_user_id"):
             self.record_assignment_change(
@@ -769,6 +796,7 @@ class LoopItemService:
                 "user",
                 str(payload["assignee_user_id"]),
                 None,
+                automation_context=automation_context,
             )
         configured_statuses = self._project_status_ids(project)
         requested_status = payload.get("status")
@@ -778,10 +806,12 @@ class LoopItemService:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
             )
-        if (agent_id or team_id) and requested_status is None:
-            started = self._robot_start_status(project, payload["status"])
-            if started is not None:
-                payload["status"] = started
+        if (agent_id or team_id or collaboration_group) and requested_status is None:
+            payload["status"] = automatic_project_status(
+                project,
+                current_status=payload["status"],
+                candidate_status="in_progress",
+            )
         if payload["status"]:
             write_status_change(
                 task_metadata,
@@ -790,6 +820,7 @@ class LoopItemService:
                 to_status=payload["status"],
                 trigger="create",
                 by_user_id=user_id,
+                automation_context=automation_context,
             )
         task_metadata = update_change_request_source(
             task_metadata, "issue", f"{values.title}\n{values.description}"
@@ -858,6 +889,7 @@ class LoopItemService:
                     and values.assignee_user_id is None
                     else "automation" if automation_context is not None else "manual"
                 ),
+                automation_context=automation_context,
             )
         if agent_id:
             db.flush()
@@ -1524,6 +1556,8 @@ class LoopItemService:
         values: LoopItemUpdate,
         *,
         commit: bool = True,
+        emit_status_event: bool = True,
+        automation_context: dict[str, Any] | None = None,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
         position_order = None
@@ -1600,6 +1634,7 @@ class LoopItemService:
                 "due_at",
                 "parent_id",
                 "tags",
+                "milestone_id",
                 "workflow",
                 "security_level",
             )
@@ -1659,6 +1694,7 @@ class LoopItemService:
             )
         if (
             "tags" in values.model_fields_set
+            or "milestone_id" in values.model_fields_set
             or "workflow" in values.model_fields_set
             or "execution_config" in values.model_fields_set
             or "security_level" in values.model_fields_set
@@ -1666,6 +1702,13 @@ class LoopItemService:
             # Tags live inside the metadata JSON column; merge so other
             # metadata keys survive the update.
             metadata = dict(item.metadata_json or {})
+            if "milestone_id" in values.model_fields_set:
+                require_milestone(db, item.cloud_project_id, values.milestone_id)
+                updates.pop("milestone_id")
+                if values.milestone_id is None:
+                    metadata.pop("milestone_id", None)
+                else:
+                    metadata["milestone_id"] = values.milestone_id
             if "tags" in values.model_fields_set:
                 metadata["tags"] = updates.pop("tags") or []
             if "security_level" in values.model_fields_set:
@@ -1737,6 +1780,7 @@ class LoopItemService:
                 "group" if collaboration_group else None,
                 str(collaboration_group["id"]) if collaboration_group else None,
                 collaboration_group["name"] if collaboration_group else None,
+                automation_context=automation_context,
             )
             updates["metadata_json"] = metadata
             if collaboration_group:
@@ -1744,26 +1788,21 @@ class LoopItemService:
                     assignee_user_id=None,
                     assignee_agent_id="",
                     assignee_team_id=None,
-                    status="in_progress",
-                    completed_at=None,
-                    sort_order=0,
                 )
-                if (
-                    item.status != "in_progress"
-                    and "status" not in values.model_fields_set
-                ):
+                if "status" not in values.model_fields_set:
                     project = db.get(CloudProject, item.cloud_project_id)
                     if project is None:
                         raise HTTPException(
                             status.HTTP_404_NOT_FOUND, "Cloud project not found"
                         )
-                    write_status_change(
-                        metadata,
+                    self._start_robot_assignment(
                         project=project,
-                        from_status=item.status,
-                        to_status="in_progress",
+                        item=item,
+                        user_id=user_id,
+                        metadata=metadata,
+                        updates=updates,
                         trigger="collaboration_group_assignment",
-                        by_user_id=user_id,
+                        automation_context=automation_context,
                     )
         if assignee_changed:
             # Legacy assignment path: record the chain and derive the queue
@@ -1809,7 +1848,14 @@ class LoopItemService:
                             assignment_id=assignment.id,
                             user_id=user_id,
                         )
-                self.record_assignment_change(metadata, user_id, None, None, None)
+                self.record_assignment_change(
+                    metadata,
+                    user_id,
+                    None,
+                    None,
+                    None,
+                    automation_context=automation_context,
+                )
             elif target_type == "agent":
                 agent = db.get(ProjectChatAgent, target_id)
                 self.record_assignment_change(
@@ -1818,6 +1864,7 @@ class LoopItemService:
                     "agent",
                     target_id,
                     agent.title or agent.name if agent is not None else None,
+                    automation_context=automation_context,
                 )
             elif target_type == "team":
                 team = db.get(Kind, int(target_id))
@@ -1827,6 +1874,7 @@ class LoopItemService:
                     "team",
                     target_id,
                     team.name if team is not None else None,
+                    automation_context=automation_context,
                 )
             else:
                 self.record_assignment_change(
@@ -1835,6 +1883,7 @@ class LoopItemService:
                     "user",
                     target_id,
                     None,
+                    automation_context=automation_context,
                 )
             updates["metadata_json"] = metadata
             assignment_created = False
@@ -1856,6 +1905,7 @@ class LoopItemService:
                     workflow_step=None,
                     notify=values.notify_assignee,
                     trigger="manual",
+                    automation_context=automation_context,
                 )
             if assignment_created:
                 if target_type in {"agent", "team"} and (
@@ -1867,6 +1917,7 @@ class LoopItemService:
                         user_id=user_id,
                         metadata=metadata,
                         updates=updates,
+                        automation_context=automation_context,
                     )
                 cancelled_runs = self._sync_execution_for_assignment(
                     db,
@@ -1908,6 +1959,7 @@ class LoopItemService:
                     to_status=updates["status"] or "",
                     trigger="user_update",
                     by_user_id=user_id,
+                    automation_context=automation_context,
                 )
                 updates["metadata_json"] = metadata
         previous_status = item.status
@@ -1981,9 +2033,27 @@ class LoopItemService:
                 item=item,
                 user_id=user_id,
                 group=collaboration_group,
+                runner_selection=(
+                    values.runner_selection.model_dump(exclude_none=True)
+                    if values.runner_selection is not None
+                    else (automation_context or {}).get("runner_selection")
+                ),
+                automatic=bool((automation_context or {}).get("run_id")),
+                automation_context=automation_context,
             )
         if position_order is not None:
             persist_sibling_order(position_order, updated_item_id=item.id)
+        if status_changed and emit_status_event:
+            from app.services.project_internal_events import queue_issue_status_changed
+
+            db.refresh(item)
+            queue_issue_status_changed(
+                db,
+                item=item,
+                previous_status=previous_status,
+                actor_user_id=user_id,
+                automation_run_id=(automation_context or {}).get("run_id"),
+            )
         if commit:
             db.commit()
         else:
@@ -2003,6 +2073,7 @@ class LoopItemService:
         item_id: str,
         user_id: int,
         activity_sequence: int | None = None,
+        observed_content_revision: int | None = None,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
         mark_loop_item_read(
@@ -2010,10 +2081,17 @@ class LoopItemService:
             item_id=item.id,
             user_id=user_id,
             activity_sequence=activity_sequence,
+            observed_content_revision=observed_content_revision,
         )
         from app.services.wework_notifications import mark_issue_notifications_read
 
-        mark_issue_notifications_read(db, item_id=item.id, user_id=user_id)
+        db.expire(item)
+        db.refresh(item)
+        if not is_unread(item.metadata_json, user_id) and (
+            observed_content_revision is None
+            or observed_content_revision >= content_revision(item.metadata_json)
+        ):
+            mark_issue_notifications_read(db, item_id=item.id, user_id=user_id)
         db.commit()
         db.expire(item)
         db.refresh(item)
@@ -2120,6 +2198,7 @@ class LoopItemService:
             user_id=user_id,
         )
         previous_assignee_user_id = item.assignee_user_id
+        automation_run_requested = bool((automation_context or {}).get("run_id"))
         metadata = dict(item.metadata_json or {})
         assignment_created = False
         if values.assignee_type == "agent":
@@ -2152,6 +2231,7 @@ class LoopItemService:
                 notify=values.notify_assignee,
                 trigger=values.trigger,
                 comment_id=assignment_comment_id,
+                automation_context=automation_context,
             )
             assignee_updates = {
                 "assignee_agent_id": agent.id,
@@ -2164,6 +2244,7 @@ class LoopItemService:
                 "agent",
                 agent.id,
                 agent.title or agent.name,
+                automation_context=automation_context,
             )
             self._start_robot_assignment(
                 project=project,
@@ -2171,6 +2252,7 @@ class LoopItemService:
                 user_id=user_id,
                 metadata=metadata,
                 updates=assignee_updates,
+                automation_context=automation_context,
             )
             effective_automation_context = automation_context
             if effective_automation_context is None:
@@ -2212,7 +2294,7 @@ class LoopItemService:
                     instruction=instruction,
                     cancel_existing=False,
                 )
-                if assignment_created
+                if assignment_created or automation_run_requested
                 else []
             )
         elif values.assignee_type == "user":
@@ -2244,6 +2326,7 @@ class LoopItemService:
                 notify=values.notify_assignee,
                 trigger=values.trigger,
                 comment_id=assignment_comment_id,
+                automation_context=automation_context,
             )
             assignee_updates = {
                 "assignee_user_id": target_user_id,
@@ -2257,6 +2340,7 @@ class LoopItemService:
                 "user",
                 str(target_user_id),
                 target.user_name if target else None,
+                automation_context=automation_context,
             )
             cancelled_runs = (
                 self._sync_execution_for_assignment(
@@ -2299,6 +2383,7 @@ class LoopItemService:
                 notify=values.notify_assignee,
                 trigger=values.trigger,
                 comment_id=assignment_comment_id,
+                automation_context=automation_context,
             )
             assignee_updates = {
                 "assignee_user_id": None,
@@ -2311,6 +2396,7 @@ class LoopItemService:
                 "team",
                 str(team.id),
                 team.name,
+                automation_context=automation_context,
             )
             self._start_robot_assignment(
                 project=project,
@@ -2318,6 +2404,7 @@ class LoopItemService:
                 user_id=user_id,
                 metadata=metadata,
                 updates=assignee_updates,
+                automation_context=automation_context,
             )
             cancelled_runs = (
                 self._sync_execution_for_assignment(
@@ -2333,7 +2420,7 @@ class LoopItemService:
                     instruction=instruction,
                     cancel_existing=False,
                 )
-                if assignment_created
+                if assignment_created or automation_run_requested
                 else []
             )
         elif values.assignee_type == "group":
@@ -2349,6 +2436,7 @@ class LoopItemService:
                     notify_assignee=values.notify_assignee,
                 ),
                 commit=commit,
+                automation_context=automation_context,
             )
         else:  # pragma: no cover - pydantic constrains assignee_type
             raise HTTPException(
@@ -2400,6 +2488,7 @@ class LoopItemService:
             values.version,
             metadata,
             commit=commit and position_order is None,
+            automation_run_id=(automation_context or {}).get("run_id"),
             **assignee_updates,
         )
         if position_order is not None:
@@ -2515,7 +2604,7 @@ class LoopItemService:
         return updated
 
     def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        """Archive a completed TODO subtree; rows are kept for restoration."""
+        """Archive an editable TODO subtree; rows are kept for restoration."""
 
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
@@ -2534,27 +2623,35 @@ class LoopItemService:
             )
             pending_parent_ids = [child.id for child in children]
             archived_items.extend(children)
-        incomplete = [
-            archived_item.id
-            for archived_item in archived_items
-            if archived_item.status != "completed"
-        ]
-        if incomplete:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Only completed TODO subtrees can be archived",
+        for descendant in archived_items[1:]:
+            self._require_item_access(
+                db, descendant, user_id, action=IssueAction.EDIT_CONTENT
             )
+        item_ids = [archived_item.id for archived_item in archived_items]
+        binding_targets = owned_binding_cancellation_targets(
+            db,
+            project_id=item.cloud_project_id,
+            item_ids=item_ids,
+            user_id=user_id,
+        )
+        for archived_item in archived_items:
+            archived_item.deleted_at = archived_at
+            archived_item.version += 1
+        # Terminal cancellation reloads the Issue before projecting its activity.
+        # Persist every tombstone first so that projection observes the archive
+        # and preserves the Issue's business status in this same transaction.
+        db.flush()
         # An archived Issue must not leave a Run owning a real process. Cancel
         # every cancellable Run of the archived subtree in the same transaction
         # so the recycle-bin rows never disagree with the execution queue.
         cancelled_runs = self._cancel_runs_for_items(
             db,
-            item_ids=[archived_item.id for archived_item in archived_items],
+            item_ids=item_ids,
             note="Issue was archived while the Run was active",
         )
-        for archived_item in archived_items:
-            archived_item.deleted_at = archived_at
-            archived_item.version += 1
+        binding_targets = uncovered_binding_cancellation_targets(
+            db, targets=binding_targets, executions=cancelled_runs
+        )
         db.commit()
         db.refresh(item)
         if cancelled_runs:
@@ -2563,6 +2660,7 @@ class LoopItemService:
             )
 
             request_execution_cancellations(cancelled_runs)
+        emit_runtime_cancellations(binding_targets)
         return item
 
     def _cancel_runs_for_items(
@@ -2623,6 +2721,10 @@ class LoopItemService:
             )
             pending_parent_ids = [child.id for child in children]
             restored_items.extend(children)
+        for descendant in restored_items[1:]:
+            self._require_item_access(
+                db, descendant, user_id, action=IssueAction.EDIT_CONTENT
+            )
         for restored_item in restored_items:
             restored_item.deleted_at = None
             restored_item.version += 1
@@ -2758,6 +2860,14 @@ class LoopItemService:
         commit: bool = True,
     ) -> LoopItemTaskBinding:
         item = self.get(db, item_id, user_id)
+        if values.stand_in_conversation_id:
+            from app.services.loop_items.stand_in_conversations import (
+                require_conversation_reservation,
+            )
+
+            require_conversation_reservation(
+                db, item=item, values=values, user_id=user_id
+            )
         self._require_item_access(db, item, user_id, action=IssueAction.EXECUTE)
         self._validate_backend_task(db, values.backend_task_id, user_id)
         logger.info(
@@ -3045,25 +3155,65 @@ class LoopItemService:
         *,
         limit: int = MY_WORK_ITEM_LIMIT,
     ) -> list[dict[str, object]]:
+        items, _ = self.list_my_work_page(db, user_id, limit=limit)
+        return items
+
+    @trace_sync("loop_items.my_work.page", tracer_name="backend")
+    def list_my_work_page(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        limit: int = MY_WORK_ITEM_LIMIT,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, object]], str | None]:
         if limit < 1 or limit > MY_WORK_ITEM_LIMIT:
             raise ValueError(f"limit must be between 1 and {MY_WORK_ITEM_LIMIT}")
         from app.services.cloud_project_visibility import accessible_cloud_projects
+        from app.services.loop_items.my_work_cursor import (
+            decode_my_work_cursor,
+            encode_my_work_cursor,
+        )
 
+        before = decode_my_work_cursor(cursor, user_id)
         projects = accessible_cloud_projects(db, user_id).all()
         if not projects:
-            return []
+            return [], None
         project_by_id = {project.id: project for project in projects}
         my_work_filters = [
             LoopItem.cloud_project_id.in_(project_by_id),
             loop_datetime_is_unset(LoopItem.deleted_at),
             related_item_filter(user_id),
         ]
-        items = (
-            db.query(LoopItem)
+        if before is not None:
+            updated_at, item_id = before
+            before_time = bindparam(
+                "my_work_before_updated_at", updated_at, type_=String()
+            )
+            my_work_filters.append(
+                or_(
+                    LoopItem.updated_at < before_time,
+                    (LoopItem.updated_at == before_time) & (LoopItem.id < item_id),
+                )
+            )
+        rows = (
+            db.query(
+                LoopItem, cast(LoopItem.updated_at, String).label("cursor_updated_at")
+            )
             .filter(*my_work_filters)
             .order_by(LoopItem.updated_at.desc(), LoopItem.id.desc())
-            .limit(limit)
+            .limit(limit + 1)
             .all()
+        )
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items = [item for item, _ in rows]
+        # Advance by database rows even if a provider cannot project this page.
+        # Preserve database precision; SQLite CURRENT_TIMESTAMP omits fractions.
+        next_cursor = (
+            encode_my_work_cursor(rows[-1][1], items[-1].id, user_id)
+            if has_more
+            else None
         )
         result: list[dict[str, object]] = []
         item_ids = [item.id for item in items]
@@ -3096,6 +3246,25 @@ class LoopItemService:
             )
             for execution in execution_rows:
                 executions_by_item.setdefault(execution.loop_item_id, execution)
+        agent_ids = {
+            row.agent_id for row in executions_by_item.values() if row.agent_id
+        }
+        team_ids = {row.team_id for row in executions_by_item.values() if row.team_id}
+        agents = (
+            {
+                row.id: row
+                for row in db.query(ProjectChatAgent).filter(
+                    ProjectChatAgent.id.in_(agent_ids)
+                )
+            }
+            if agent_ids
+            else {}
+        )
+        teams = (
+            {row.id: row for row in db.query(Kind).filter(Kind.id.in_(team_ids))}
+            if team_ids
+            else {}
+        )
         external_index_rows = [
             item
             for item in items
@@ -3140,6 +3309,7 @@ class LoopItemService:
                 )
 
         for item in items:
+            execution = executions_by_item.get(item.id)
             metadata = (
                 item.metadata_json if isinstance(item.metadata_json, dict) else {}
             )
@@ -3157,9 +3327,23 @@ class LoopItemService:
                     item.metadata_json if isinstance(item.metadata_json, dict) else {}
                 )
                 assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
+                projected_ai_state = (
+                    execution_ai_state_from_resources(
+                        execution,
+                        existing=view.get("ai_state"),
+                        agent=agents.get(execution.agent_id),
+                        team=teams.get(execution.team_id),
+                    )
+                    if execution is not None
+                    else view.get("ai_state")
+                )
                 result.append(
                     {
                         **view,
+                        "processing_actor": execution_processing_actor(
+                            execution, projected_ai_state
+                        ),
+                        "human_waiting_since": execution_human_waiting_since(execution),
                         "project_key": project.project_key,
                         "project_name": project.name,
                         "has_active_task": item.id in active_task_items,
@@ -3175,12 +3359,16 @@ class LoopItemService:
                 continue
             assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
             status_history = metadata.get(STATUS_HISTORY_KEY)
-            execution = executions_by_item.get(item.id)
             cached_ai_state = self._present_cached_ai_state(
                 db, item, metadata.get(TASK_AI_STATE_KEY)
             )
             projected_ai_state = (
-                execution_ai_state(db, execution, existing=cached_ai_state)
+                execution_ai_state_from_resources(
+                    execution,
+                    existing=cached_ai_state,
+                    agent=agents.get(execution.agent_id),
+                    team=teams.get(execution.team_id),
+                )
                 if execution is not None
                 else cached_ai_state
             )
@@ -3220,6 +3408,10 @@ class LoopItemService:
                         execution, "last_event_seq", None
                     ),
                     "ai_state": projected_ai_state,
+                    "processing_actor": execution_processing_actor(
+                        execution, projected_ai_state
+                    ),
+                    "human_waiting_since": execution_human_waiting_since(execution),
                     "queued_at": getattr(execution, "queued_at", None),
                     "execution_note": (
                         getattr(execution, "execution_note", "") or None
@@ -3233,7 +3425,7 @@ class LoopItemService:
                     "approval": self._approval_view(execution),
                 }
             )
-        return result
+        return result, next_cursor
 
     @staticmethod
     def _can_approve_run(
@@ -3285,11 +3477,13 @@ class LoopItemService:
         to_type: str | None,
         to_id: str | None,
         to_name: str | None,
+        *,
+        automation_context: dict[str, Any] | None = None,
     ) -> None:
         """Record who assigned to whom. Run state lives in the execution table."""
 
         history = metadata.get(ASSIGNMENT_HISTORY_KEY)
-        history = history if isinstance(history, list) else []
+        history = list(history) if isinstance(history, list) else []
         action = "assign" if not history else "reassign"
         if to_id is None:
             action = "unassign"
@@ -3297,6 +3491,7 @@ class LoopItemService:
         history.append(
             {
                 "by_user_id": user_id,
+                **automation_history_actor(automation_context),
                 "to_type": to_type,
                 "to_id": to_id,
                 "to_name": to_name,
@@ -3306,22 +3501,6 @@ class LoopItemService:
         )
         metadata[ASSIGNMENT_HISTORY_KEY] = history
 
-    def _robot_start_status(
-        self, project: CloudProject, current_status: str
-    ) -> str | None:
-        """Board status a robot-owned Issue advances into when work starts.
-
-        Assigning a robot starts its work immediately, so the Issue enters the
-        in-progress column unless it is already there, already completed, or
-        the board has no such column -- mirroring the executor's local project
-        space. Returns the status to move to, or ``None`` for no change.
-        """
-        if current_status in {"in_progress", "completed"}:
-            return None
-        if "in_progress" not in self._project_status_ids(project):
-            return None
-        return "in_progress"
-
     def _start_robot_assignment(
         self,
         *,
@@ -3330,23 +3509,27 @@ class LoopItemService:
         user_id: int,
         metadata: dict[str, Any],
         updates: dict[str, Any],
+        trigger: str = "robot_assignment",
+        automation_context: dict[str, Any] | None = None,
     ) -> None:
         """Advance a robot-owned Issue into the in-progress column.
 
-        Assigning a robot starts its work immediately, so an Issue parked
-        before the in-progress column is moved there, the transition is
-        recorded, and ``updates`` receives the resulting column values.
+        When the board has the standard column and the Issue is not completed,
+        record the actual transition in ``metadata`` and ``updates``.
         """
-        started = self._robot_start_status(project, item.status)
-        if started is None:
+        started = automatic_project_status(
+            project, current_status=item.status, candidate_status="in_progress"
+        )
+        if started == item.status:
             return
         write_status_change(
             metadata,
             project=project,
             from_status=item.status,
             to_status=started,
-            trigger="robot_assignment",
+            trigger=trigger,
             by_user_id=user_id,
+            automation_context=automation_context,
         )
         updates.update(status=started, completed_at=None, sort_order=0)
 
@@ -3393,7 +3576,10 @@ class LoopItemService:
                 )
                 if _execution_needs_runtime_cancellation(cancelled):
                     cancelled_runs.append(cancelled)
-        if item.status == "completed":
+        if (
+            item.status == "completed"
+            and status_automation_target(automation_context) != "completed"
+        ):
             return cancelled_runs
         if target_type == "agent" and agent is not None:
             config = bot_config(agent)
@@ -3507,8 +3693,10 @@ class LoopItemService:
         metadata: dict,
         *,
         commit: bool = True,
+        automation_run_id: str | None = None,
         **updates: object,
     ) -> LoopItem:
+        previous_status = item.status
         updates = {**updates, "metadata_json": metadata}
         connection = db.connection()
         updates = adapt_loop_node_values_for_dialect(
@@ -3524,6 +3712,16 @@ class LoopItemService:
         if updated != 1:
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
+        if updates.get("status") is not None and updates["status"] != previous_status:
+            from app.services.project_internal_events import queue_issue_status_changed
+
+            db.refresh(item)
+            queue_issue_status_changed(
+                db,
+                item=item,
+                previous_status=previous_status,
+                automation_run_id=automation_run_id,
+            )
         if commit:
             db.commit()
         else:

@@ -1,4 +1,7 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import * as localExecutor from '@/desktop/localExecutor'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import {
@@ -69,6 +72,36 @@ function installedItem(overrides: {
 }
 
 describe('pluginOwnerLocalPackage', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  test('excludes bundled personal plugins from package sharing and editing', () => {
+    vi.spyOn(localExecutor, 'getInitializedBundledPluginMarketplace').mockReturnValue({
+      id: 'wework-personal',
+      path: '/tmp/wework-personal',
+      pluginCount: 3,
+      contentHash: 'bundled-hash',
+      defaultPluginNames: ['wework-space', 'smart-app-builder', 'wework-plugin-developer'],
+    })
+    for (const pluginKey of ['wework-space', 'smart-app-builder', 'wework-plugin-developer']) {
+      const plugin = installedItem({ id: pluginKey, origin: 'created', pluginKey })
+      plugin.raw.spec.source.marketplace = 'wework-personal'
+      expect(isPackableCreatedPlugin(plugin)).toBe(false)
+      expect(findPackableCreatedPlugin([plugin], [pluginKey])).toBeNull()
+      expect(
+        resolveContinueEditingPluginKey({ packableCreated: null, currentPlugin: plugin })
+      ).toBeNull()
+    }
+    const created = installedItem({ id: 'user-plugin', origin: 'created', pluginKey: 'my-tools' })
+    created.raw.spec.source.marketplace = 'wework-personal'
+    expect(isPackableCreatedPlugin(created)).toBe(true)
+    const sameName = installedItem({
+      id: 'other-source',
+      origin: 'created',
+      pluginKey: 'wework-space',
+    })
+    expect(isPackableCreatedPlugin(sameName)).toBe(true)
+  })
+
   test('finds packable created install by slug even when another market row is selected', () => {
     const market = installedItem({
       id: '101',
@@ -92,24 +125,28 @@ describe('pluginOwnerLocalPackage', () => {
     expect(
       marketplaceItemOwnsLocalCreatedPackage({
         accessRole: 'recipient',
+        visibility: 'personal',
         latestReleaseId: 12,
       })
     ).toBe(false)
     expect(
       marketplaceItemOwnsLocalCreatedPackage({
         accessRole: 'catalog',
+        visibility: 'personal',
         latestReleaseId: 12,
       })
     ).toBe(false)
     expect(
       marketplaceItemOwnsLocalCreatedPackage({
         accessRole: 'owner',
+        visibility: 'personal',
         latestReleaseId: 12,
       })
     ).toBe(true)
     expect(
       marketplaceItemOwnsLocalCreatedPackage({
         latestReleaseId: null,
+        visibility: 'personal',
       })
     ).toBe(true)
   })
@@ -125,7 +162,7 @@ describe('pluginOwnerLocalPackage', () => {
         packableCreated: created,
         currentPlugin: null,
         ownedListingName: 'dev-tools',
-        isPersonalOwner: true,
+        listing: { accessRole: 'owner', visibility: 'personal', latestReleaseId: 12 },
       })
     ).toBe('Dev Tools')
 
@@ -138,7 +175,7 @@ describe('pluginOwnerLocalPackage', () => {
           pluginKey: 'dev-tools',
         }),
         ownedListingName: 'dev-tools',
-        isPersonalOwner: true,
+        listing: { accessRole: 'owner', visibility: 'personal', latestReleaseId: 12 },
       })
     ).toBe('dev-tools')
 
@@ -151,8 +188,47 @@ describe('pluginOwnerLocalPackage', () => {
           pluginKey: 'dev-tools',
         }),
         ownedListingName: 'dev-tools',
-        isPersonalOwner: false,
+        listing: { accessRole: 'recipient', visibility: 'personal', latestReleaseId: 12 },
       })
     ).toBeNull()
+  })
+
+  test('matches source keys before a common display name and rejects ambiguous display names', () => {
+    const a = installedItem({ id: 'a', origin: 'created', pluginKey: 'source-a', name: '助手' })
+    const b = installedItem({ id: 'b', origin: 'created', pluginKey: 'source-b', name: '助手' })
+    expect(findPackableCreatedPlugin([a, b], ['source-b', '助手'])).toBe(b)
+    expect(findPackableCreatedPlugin([a, b], ['助手'])).toBeNull()
+  })
+
+  test('explicit recipient and catalog listings override stale local source flags', () => {
+    const stale = installedItem({ id: 'stale', origin: 'created', pluginKey: 'shared' })
+    for (const accessRole of ['recipient', 'catalog'] as const) {
+      expect(
+        resolveContinueEditingPluginKey({
+          packableCreated: stale,
+          currentPlugin: stale,
+          listing: { accessRole, visibility: 'personal', latestReleaseId: 12 },
+        })
+      ).toBeNull()
+    }
+    stale.raw.spec.sourcePayload = { managedByWegent: true }
+    expect(isPackableCreatedPlugin(stale)).toBe(false)
+    expect(
+      resolveContinueEditingPluginKey({ packableCreated: stale, currentPlugin: stale })
+    ).toBeNull()
+    expect(findPackableCreatedPlugin([stale], ['shared'])).toBeNull()
+  })
+
+  test('keeps a legacy public owners independent local source editable', () => {
+    const created = installedItem({ id: 'legacy', origin: 'created', pluginKey: 'legacy-plugin' })
+    const listing = {
+      accessRole: 'owner' as const,
+      visibility: 'public' as const,
+      latestReleaseId: 12,
+    }
+    expect(marketplaceItemOwnsLocalCreatedPackage(listing)).toBe(true)
+    expect(
+      resolveContinueEditingPluginKey({ packableCreated: created, currentPlugin: created, listing })
+    ).toBe('legacy-plugin')
   })
 })

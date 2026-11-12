@@ -8,22 +8,25 @@ use serde_json::Value;
 
 mod agno;
 pub(crate) mod backend_url;
-mod cargo_cache;
+use wegent_workspace::cargo_cache;
 mod claude_code;
-mod claude_options;
+use wegent_claude_harness::claude_options;
 mod codex;
+#[cfg(test)]
+pub(crate) use codex::turn_context_for_test;
+mod completed_file_changes;
 #[cfg(test)]
 pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;
 mod codex_log_db;
 mod dify;
-pub(crate) mod environment_setup;
+pub(crate) use wegent_workspace::environment_setup;
 pub(crate) mod git_auth;
 pub(crate) mod git_workspace;
 mod image_validator;
-mod instance_home;
-pub(crate) use instance_home::{agent_homes, claude_session_transcript, validate_session};
-pub mod interactive_mcp;
-mod pnpm_worktree;
+pub(crate) use instance_home::{agent_homes, validate_session};
+pub use wegent_mcp_runtime::interactive_mcp;
+pub(crate) use wegent_native_home::instance_home;
+use wegent_workspace::pnpm_worktree;
 pub(crate) mod runtime_capabilities;
 mod skill_download;
 mod task_identity;
@@ -52,7 +55,7 @@ pub(crate) use codex::{
     configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, prepare_codex_runtime_notification,
     reload_skill_configuration, replace_config, select_wework_codex_user_instructions,
-    task_identity_thread_config, wework_codex_home, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+    wework_codex_home, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
     CODEX_READ_ONLY_PERMISSION_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE,
 };
 pub use codex::{
@@ -66,11 +69,9 @@ pub use codex::{
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
-pub(crate) use instance_home::{task_skills_directory, task_skills_directory_at};
-
-pub(crate) fn has_isolated_native_home(request: &ExecutionRequest) -> bool {
-    instance_home::request_home(request).is_some()
-}
+pub(crate) use instance_home::{
+    task_skills_directory, task_skills_directory_at, TaskSkillsDirectory,
+};
 
 /// Terminates every agent process owned by this executor.
 ///
@@ -81,15 +82,6 @@ pub async fn terminate_agent_processes() -> usize {
 }
 
 const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
-const MACOS_CODEX_APP_BINARIES: [&str; 2] = [
-    "/Applications/ChatGPT.app/Contents/Resources/codex",
-    "/Applications/Codex.app/Contents/Resources/codex",
-];
-const CLAUDE_USER_BINARY_SUFFIX: &str = ".local/bin/claude";
-
-#[cfg(target_os = "windows")]
-const WINDOWS_EXECUTABLE_EXTENSIONS: [&str; 4] = [".exe", ".cmd", ".bat", ".com"];
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCommandPlanner {
     claude_binary: String,
@@ -131,149 +123,13 @@ impl AgentCommandPlanner {
     }
 }
 
-pub fn resolve_codex_binary() -> String {
-    read_binary("CODEX_BINARY_PATH", "CODEX_BIN", "codex")
-}
-
-/// Resolve a codex binary name/path to an absolute executable path.
-///
-/// Explicit paths are returned unchanged. A bare `codex` name prefers the
-/// macOS app bundle when present, otherwise it is looked up on `PATH`.
-pub fn resolve_codex_binary_path(value: &str) -> String {
-    let app_candidates = if cfg!(target_os = "macos") {
-        MACOS_CODEX_APP_BINARIES
-            .iter()
-            .map(PathBuf::from)
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-    let mut search_paths = env::var_os("PATH")
-        .map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
-        .unwrap_or_default();
-    search_paths.extend(windows_fallback_search_paths());
-
-    resolve_codex_binary_path_from_candidates(value, &app_candidates, &search_paths)
-}
-
-fn resolve_codex_binary_path_from_candidates(
-    value: &str,
-    app_candidates: &[PathBuf],
-    search_paths: &[PathBuf],
-) -> String {
-    let trimmed = value.trim();
-    if trimmed.contains('/') || trimmed.contains('\\') {
-        return trimmed.to_owned();
-    }
-
-    if trimmed == "codex" {
-        if let Some(path) = app_candidates.iter().find(|path| path.is_file()) {
-            return path.display().to_string();
-        }
-    }
-
-    find_executable_in_paths(trimmed, search_paths)
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| trimmed.to_owned())
-}
+use wegent_runtime_config::executables::resolve_claude_binary;
+pub use wegent_runtime_config::executables::{
+    resolve_claude_binary_path, resolve_codex_binary, resolve_codex_binary_path,
+};
 
 pub fn build_codex_app_server_command(binary: &str) -> CommandSpec {
     CommandSpec::new(binary).arg("app-server")
-}
-
-fn resolve_claude_binary() -> String {
-    let binary = read_binary("CLAUDE_BINARY_PATH", "CLAUDE_BIN", "claude");
-    resolve_claude_binary_path(&binary)
-}
-
-/// Resolve a Claude Code binary name/path to an executable path.
-///
-/// GUI-launched local executors may not inherit a user's shell PATH.
-/// `~/.local/bin` is a common user-level Claude Code installation location,
-/// so check it before falling back to PATH lookup.
-pub fn resolve_claude_binary_path(value: &str) -> String {
-    let user_binary = dirs::home_dir().map(|home| home.join(CLAUDE_USER_BINARY_SUFFIX));
-    let mut search_paths = env::var_os("PATH")
-        .map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
-        .unwrap_or_default();
-    search_paths.extend(windows_fallback_search_paths());
-
-    resolve_claude_binary_path_from_candidates(value, user_binary.as_ref(), &search_paths)
-}
-
-fn resolve_claude_binary_path_from_candidates(
-    value: &str,
-    user_binary: Option<&PathBuf>,
-    search_paths: &[PathBuf],
-) -> String {
-    let trimmed = value.trim();
-    if trimmed.contains('/') || trimmed.contains('\\') {
-        return trimmed.to_owned();
-    }
-
-    if trimmed == "claude" {
-        if let Some(path) = user_binary.filter(|path| path.is_file()) {
-            return path.display().to_string();
-        }
-    }
-
-    find_executable_in_paths(trimmed, search_paths)
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| trimmed.to_owned())
-}
-
-fn read_binary(primary: &str, secondary: &str, default: &str) -> String {
-    env::var(primary)
-        .ok()
-        .or_else(|| env::var(secondary).ok())
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| default.to_owned())
-}
-
-/// Returns common user-level binary directories that GUI-launched processes may
-/// not have on PATH.
-#[cfg(target_os = "windows")]
-fn windows_fallback_search_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    if let Some(home) = dirs::home_dir() {
-        paths.push(home.join("AppData").join("Roaming").join("npm"));
-        paths.push(home.join(".cargo").join("bin"));
-    }
-    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
-        paths.push(PathBuf::from(local_app_data).join("npm"));
-    }
-    paths
-}
-
-#[cfg(not(target_os = "windows"))]
-fn windows_fallback_search_paths() -> Vec<PathBuf> {
-    Vec::new()
-}
-
-/// Looks for `name` in `search_paths`, respecting Windows executable
-/// extensions when no extension is provided.
-fn find_executable_in_paths(name: &str, search_paths: &[PathBuf]) -> Option<PathBuf> {
-    search_paths
-        .iter()
-        .flat_map(|path| executable_candidates(path.join(name)))
-        .find(|path| path.is_file())
-}
-
-#[cfg(target_os = "windows")]
-fn executable_candidates(path: PathBuf) -> Vec<PathBuf> {
-    if path.extension().is_some() {
-        return vec![path];
-    }
-    WINDOWS_EXECUTABLE_EXTENSIONS
-        .iter()
-        .map(|ext| path.with_extension(&ext[1..]))
-        .collect()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn executable_candidates(path: PathBuf) -> Vec<PathBuf> {
-    vec![path]
 }
 
 fn claude_code_process_timeout_seconds() -> u64 {
@@ -296,7 +152,12 @@ fn stream_process_engine_for(agent_kind: &AgentKind, spec: CommandSpec) -> Strea
                     timeout_seconds.saturating_mul(1000).to_string(),
                 )
                 .env("CLAUDE_CODE_BG_TASKS_REPORT_RUNNING", "1");
-            StreamProcessEngine::new(spec, timeout_seconds)
+            StreamProcessEngine::new(
+                spec,
+                timeout_seconds,
+                std::sync::Arc::new(crate::process_environment::CredentialEnvironment),
+                env!("CARGO_PKG_VERSION"),
+            )
         }
         agent_kind => unreachable!("unsupported process agent kind: {agent_kind:?}"),
     }
@@ -368,8 +229,8 @@ impl AgentEngine for AgentProcessEngine {
             } else {
                 None
             };
-            let _home_lease = if agent_kind == AgentKind::ClaudeCode {
-                match instance_home::acquire(&request) {
+            let mut execution_home = if agent_kind == AgentKind::ClaudeCode {
+                match instance_home::acquire_claude(&request).await {
                     Ok(lease) => lease,
                     Err(message) => {
                         let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -447,6 +308,14 @@ impl AgentEngine for AgentProcessEngine {
                             }
                             log_executor_event("command planned", &command_fields);
                             if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                                if let Some(home) = &mut execution_home {
+                                    spec = match home.configure(spec) {
+                                        Ok(spec) => spec,
+                                        Err(message) => {
+                                            return ExecutionOutcome::Failed { message }
+                                        }
+                                    };
+                                }
                                 spec = match runtime_capabilities::prepare_claude_runtime(
                                     &request, spec,
                                 )
@@ -484,6 +353,11 @@ impl AgentEngine for AgentProcessEngine {
                                     }
                                 };
                                 run_pre_execute_hook(&request, &spec).await;
+                                if let Some(home) = &mut execution_home {
+                                    if let Err(message) = home.activate() {
+                                        return ExecutionOutcome::Failed { message };
+                                    }
+                                }
                             }
                             drop(capability_lease);
                             stream_process_engine_for(&agent_kind, spec)
@@ -530,8 +404,8 @@ impl AgentEngine for AgentProcessEngine {
             } else {
                 None
             };
-            let _home_lease = if agent_kind == AgentKind::ClaudeCode {
-                match instance_home::acquire(&request) {
+            let mut execution_home = if agent_kind == AgentKind::ClaudeCode {
+                match instance_home::acquire_claude(&request).await {
                     Ok(lease) => lease,
                     Err(message) => {
                         let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -609,6 +483,14 @@ impl AgentEngine for AgentProcessEngine {
                             }
                             log_executor_event("command planned", &command_fields);
                             if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                                if let Some(home) = &mut execution_home {
+                                    spec = match home.configure(spec) {
+                                        Ok(spec) => spec,
+                                        Err(message) => {
+                                            return ExecutionOutcome::Failed { message }
+                                        }
+                                    };
+                                }
                                 spec = match runtime_capabilities::prepare_claude_runtime(
                                     &request, spec,
                                 )
@@ -646,11 +528,22 @@ impl AgentEngine for AgentProcessEngine {
                                     }
                                 };
                                 run_pre_execute_hook(&request, &spec).await;
+                                if let Some(home) = &mut execution_home {
+                                    if let Err(message) = home.activate() {
+                                        return ExecutionOutcome::Failed { message };
+                                    }
+                                }
                             }
                             drop(capability_lease);
-                            stream_process_engine_for(&agent_kind, spec)
-                                .run_with_events(request, sink, builder)
-                                .await
+                            let workspace = spec.current_dir().map(PathBuf::from);
+                            let engine = stream_process_engine_for(&agent_kind, spec);
+                            completed_file_changes::capture_completed_file_changes(
+                                &request,
+                                workspace,
+                                &builder,
+                                || engine.run_with_events(request.clone(), sink, builder.clone()),
+                            )
+                            .await
                         }
                         Err(message) => {
                             let mut failed_fields = fields;
@@ -667,7 +560,6 @@ impl AgentEngine for AgentProcessEngine {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     use super::*;
@@ -761,42 +653,20 @@ mod tests {
             );
         }
     }
+}
 
-    #[test]
-    fn codex_binary_resolver_prefers_available_macos_app_candidate() {
-        let available_binary = std::env::current_exe().expect("current test binary should exist");
-        let app_candidates = vec![
-            PathBuf::from("/missing/Codex.app/Contents/Resources/codex"),
-            available_binary.clone(),
-        ];
+/// Reload active Codex sessions after publishing a skill-only capability change.
+pub struct CodexSkillConfigurationReloader;
 
-        let resolved = resolve_codex_binary_path_from_candidates("codex", &app_candidates, &[]);
-
-        assert_eq!(resolved, available_binary.display().to_string());
-    }
-
-    #[test]
-    fn claude_binary_resolver_prefers_available_user_binary() {
-        let available_binary = std::env::current_exe().expect("current test binary should exist");
-
-        let resolved =
-            resolve_claude_binary_path_from_candidates("claude", Some(&available_binary), &[]);
-
-        assert_eq!(resolved, available_binary.display().to_string());
-    }
-
-    #[test]
-    fn claude_binary_resolver_keeps_explicit_path() {
-        let explicit_path = "/custom/bin/claude";
-
-        let resolved = resolve_claude_binary_path_from_candidates(explicit_path, None, &[]);
-
-        assert_eq!(resolved, explicit_path);
-    }
-
-    #[test]
-    fn macos_codex_app_candidates_include_current_chatgpt_bundle() {
-        assert!(MACOS_CODEX_APP_BINARIES
-            .contains(&"/Applications/ChatGPT.app/Contents/Resources/codex"));
+impl wegent_plugin_packages::SkillConfigurationReloader for CodexSkillConfigurationReloader {
+    fn reload<'a>(
+        &'a self,
+        home: &'a std::path::Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize, String>> + Send + 'a>>
+    {
+        Box::pin(reload_skill_configuration(home))
     }
 }
+
+#[cfg(all(test, unix))]
+mod pipeline_session_archive_tests;

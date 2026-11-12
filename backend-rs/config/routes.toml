@@ -1,6 +1,27 @@
 # Requests matching an active rule are handled by Rust; all other requests
 # are forwarded to the Python backend. Knowledge APIs stay Python-owned;
 # their Rust handlers remain registered without active cutover rules.
+
+# Personal Git connections are Rust-owned, including public signature-verified ingress.
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/git-connections/subscriptions"
+[[routes]]
+methods = ["PUT", "DELETE"]
+path = "/api/v1/git-connections/subscriptions/:id"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/git-connections/subscriptions/:id/events"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/git-connections/subscriptions/:id/ack"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/git-connections/subscriptions/:id/configuration"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/git-connections/hooks/:id"
+
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/me/available-channels"
@@ -40,6 +61,9 @@ path = "/api/users/me/git-accounts/sync-summary"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/wework-notifications"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/stand-in-issue-events"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/wework-notifications/preferences"
@@ -327,6 +351,9 @@ methods = ["GET"]
 path = "/api/plugins/marketplace"
 [[routes]]
 methods = ["GET"]
+path = "/api/plugins/marketplace/:plugin_id/owner"
+[[routes]]
+methods = ["GET"]
 path = "/api/models/unified"
 [[routes]]
 methods = ["GET", "POST"]
@@ -382,6 +409,11 @@ path = "/api/tasks/:task_id/skills"
 [[routes]]
 methods = ["GET"]
 path = "/api/tasks/:task_id"
+# The archived listing remains Python-owned; the detail template must not
+# interpret its literal path segment as a numeric task ID.
+[[exclude]]
+methods = ["GET"]
+path = "/api/tasks/archived"
 # `/api/tasks/bulk` is a literal sibling of `/api/tasks/:task_id`; the static
 # route wins dispatch, but the rule keeps the cutover inventory explicit.
 #[[routes]]
@@ -414,6 +446,15 @@ path = "/api/resource-library/listings"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/resource-library/listings/:listing_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/collaboration-templates"
+[[routes]]
+methods = ["GET", "DELETE"]
+path = "/api/v1/collaboration-templates/:template_id"
+[[routes]]
+methods = ["PUT"]
+path = "/api/v1/collaboration-templates/:name"
 [[routes]]
 methods = ["GET"]
 path = "/api/resource-library/tags"
@@ -943,6 +984,15 @@ path = "/api/utils/url-metadata" # app/api/endpoints/utils.py:17
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/attachments/upload" # app/api/endpoints/attachments_open.py:119
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id"
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id/commands/:command_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/me/project-coordinator-bindings"
 # `GET /api/v1/cloud-projects/{project_id}/collaboration-groups` — the
 # project collaboration-group listing
 # (`app/api/endpoints/project_automations.py:39`), implemented by
@@ -980,10 +1030,7 @@ path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/responses/:response_id/cancel" # app/api/endpoints/openapi_responses.py:1849
-# `POST /api/v1/responses` (`openapi_responses.py:440 create_response`) is
-# active in Rust (`responses::create::handler`): the created order/team/bot
-# resolution, `setup_chat_session`, the execution-request builder, and the
-# dispatch seam (executor `queued`, chat-shell sync 500, SSE framing).
+# `POST /api/v1/responses` is selected for Rust in the active entry below.
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/responses" # app/api/endpoints/openapi_responses.py:440
@@ -1014,14 +1061,18 @@ path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py
 #[[routes]]
 #methods = ["POST"]
 #path = "/mcp/subscription/sse" # app/mcp_server/server.py:1032
-#[[routes]]
-#methods = ["GET"]
-#path = "/socket.io/" # app/main.py:984
-#[[routes]]
-#methods = ["POST"]
-#path = "/socket.io/" # app/main.py:984
+[[routes]]
+methods = ["GET"]
+path = "/socket.io/" # app/main.py:984
+[[routes]]
+methods = ["POST"]
+path = "/socket.io/" # app/main.py:984
 
 # New APIs implemented directly in Rust.
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id/commands/:command_id/authorization"
+
 [[routes]]
 methods = ["POST"]
 path = "/api/runtime-work/transcript/search"
@@ -1060,11 +1111,47 @@ path = "/api/v1/loop-items/:item_id/assignments/:assignment_id/receipt"
 methods = ["PATCH"]
 path = "/api/v1/deliveries/:delivery_id"
 
-# Responses creation and executor callback migration.
+# Executor callback migration.
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/callback"
+
+# Authenticated, platform-specific Wework runtime artifact descriptors.
+[[routes]]
+methods = ["POST"]
+path = "/api/wework/runtime-downloads"
+
+# Responses creation is implemented and selected in Rust.
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/responses"
 
+# Project milestone management is Rust-owned.
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/cloud-projects/:project_id/milestones"
+[[routes]]
+methods = ["PATCH", "DELETE"]
+path = "/api/v1/cloud-projects/:project_id/milestones/:milestone_id"
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/loop-items/:item_id/human-requests"
+[[routes]]
+methods = ["PUT"]
+path = "/api/v1/loop-items/:item_id/human-requests/:request_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/wework-human-requests"
+
+[[routes]]
+methods = ["PUT"]
+path = "/api/im/private-sessions/:session_key/stand-in"
+
+# Account HTTP local plugin execution; independent of Device registration.
 [[routes]]
 methods = ["POST"]
-path = "/api/internal/callback"
+path = "/api/plugins/local-sync"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/native-auth/exchange"

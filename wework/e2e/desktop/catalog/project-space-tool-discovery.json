@@ -1,0 +1,12 @@
+{
+  "order": 2000,
+  "scenario": "./scenarios/project-space-tool-discovery.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 10000,
+      "shard": 2,
+      "position": 19000
+    }
+  }
+}

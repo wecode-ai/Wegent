@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
+import { openStandInActivity } from '../modules/stand-in-profile-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `分身项目启用-${process.pid}`
@@ -20,7 +22,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await createLocalCollaborationProject(control, CONTENT, OTHER_PROJECT)
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       const projects = await rpc('projects.list', {})
       const project = projects.find(row => row.name === PROJECT)
@@ -122,7 +124,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         text: '未开启',
       })
       await control.command('click', '[data-testid="stand-in-cancel"]')
-      await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-role-project-enable"]', {
         text: '项目启用分身',
       })
@@ -130,6 +133,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         text: '已开启',
       })
       await control.command('click', '[data-testid="stand-in-overview-role-project-enable"]')
+      await openStandInActivity(control)
       await control.command('waitFor', '[data-testid="stand-in-activity"]', {
         text: '尚无处理记录',
       })

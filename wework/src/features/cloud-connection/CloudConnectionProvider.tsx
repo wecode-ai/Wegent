@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
-import { ApiError, createHttpClient } from '@/api/http'
+import { ApiError } from '@/api/http'
 import { getConfiguredSocketBaseUrl, getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
-  claimDesktopCloudAuthorization,
+  commitDesktopCloudAuthorization,
   clearDesktopCloudCredentials,
+  discardDesktopCloudAuthorization,
   DesktopCloudCredentialError,
-  getDesktopDevicePublicKey,
+  prepareDesktopCloudAuthorization,
   refreshDesktopCloudAccessToken,
 } from '@/desktop/cloudCredentials'
 import { raceWithTimeout } from '@/lib/promise-timeout'
 import { getAppPreferences, updateAppPreferences } from '@/desktop/appPreferences'
 import { subscribeSystemResume } from '@/desktop/systemResume'
-import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
+import {
+  DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT,
+  getDesktopE2ERuntimeConfig,
+} from '@/e2e/runtime-config'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
@@ -23,6 +27,14 @@ import {
   type OpenCloudAuthorizationUrl,
 } from './CloudConnectionContext'
 import { track } from '@/telemetry/client'
+import {
+  checkCloudHealth,
+  createWeworkAuthSession,
+  fetchCloudConfig,
+  fetchCloudUser,
+  pollWeworkAuthSession,
+  rawErrorMessage,
+} from './cloudConnectionRequests'
 import {
   clearStoredCloudConnection,
   getJwtExpiry,
@@ -34,29 +46,6 @@ import {
   type CloudConnectionRuntimeConfig,
   type CloudConnectionSnapshot,
 } from './cloudConnectionStorage'
-
-interface WeworkAuthSessionCreateResponse {
-  session_id: string
-  poll_token: string
-  authorize_url: string
-  web_url: string
-  expires_at: number
-  poll_interval_seconds: number
-}
-
-interface WeworkAuthSessionPollResponse {
-  status: 'pending' | 'success' | 'declined' | 'failed'
-  accessToken?: string
-  tokenType?: string
-  username?: string
-  credentialMode?: CloudCredentialMode
-  error?: string
-}
-
-interface WeworkCloudConfigResponse {
-  web_url?: unknown
-  socket_url?: unknown
-}
 
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2000
 const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重新连接'
@@ -95,12 +84,12 @@ function isLocalBackendSocketMirror(backendUrl: string, socketUrl: string): bool
  * the renderer owns the "one refresh in flight" state, and a hang there blocks
  * every later trigger (expiry timer, system resume, `online`, retry interval).
  */
-async function requestDesktopCloudAccessToken(apiBaseUrl: string): Promise<string> {
+async function requestDesktopCloudAccessToken(apiBaseUrl: string, userId: number): Promise<string> {
   const startedAt = Date.now()
   console.info('[CloudConnection] access token refresh started', { apiBaseUrl })
   try {
     const refreshed = await raceWithTimeout(
-      refreshDesktopCloudAccessToken(apiBaseUrl),
+      refreshDesktopCloudAccessToken(apiBaseUrl, userId),
       ACCESS_TOKEN_REFRESH_TIMEOUT_MS,
       timeoutMs =>
         new DesktopCloudCredentialError(
@@ -127,10 +116,11 @@ async function requestDesktopCloudAccessToken(apiBaseUrl: string): Promise<strin
 async function resolveAccessToken(
   apiBaseUrl: string,
   credentialMode: CloudCredentialMode,
-  existingToken: string | null
+  existingToken: string | null,
+  userId: number
 ): Promise<string | null> {
   if (credentialMode === 'legacy_access_token') return existingToken
-  return requestDesktopCloudAccessToken(apiBaseUrl)
+  return requestDesktopCloudAccessToken(apiBaseUrl, userId)
 }
 
 function resolveCloudRuntimeConfig(
@@ -240,153 +230,6 @@ function snapshotFromStored(): CloudConnectionSnapshot {
   return snapshotFromConnection(readStoredCloudConnection())
 }
 
-function createCloudClient(config: CloudConnectionRuntimeConfig, token: string | null) {
-  return createHttpClient({
-    baseUrl: config.apiBaseUrl,
-    getToken: () => token,
-    redirectOnUnauthorized: false,
-  })
-}
-
-function cloudRequestUrl(config: CloudConnectionRuntimeConfig, endpoint: string): string {
-  return `${config.apiBaseUrl}${endpoint}`
-}
-
-function rawErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message || `HTTP ${error.status}`
-  if (error instanceof Error && error.message) return error.message
-  return 'Cloud connection failed'
-}
-
-function isDesktopHttpPermissionError(error: unknown): boolean {
-  const message = rawErrorMessage(error).toLowerCase()
-  return message.includes('scope') || message.includes('not allowed') || message.includes('denied')
-}
-
-function cloudStepErrorMessage(
-  stage: string,
-  config: CloudConnectionRuntimeConfig,
-  endpoint: string,
-  error: unknown
-): string {
-  const url = cloudRequestUrl(config, endpoint)
-  if (isDesktopHttpPermissionError(error)) {
-    return `${stage}失败（${url}）：桌面端 HTTP 权限拦截了这个 Backend 地址。请重启 App 后再试。`
-  }
-  return `${stage}失败（${url}）：${rawErrorMessage(error)}`
-}
-
-async function runCloudRequest<T>(
-  stage: string,
-  config: CloudConnectionRuntimeConfig,
-  endpoint: string,
-  request: () => Promise<T>,
-  options: {
-    preserveErrorCodes?: string[]
-    preserveStatuses?: number[]
-    timeoutMs?: number
-  } = {}
-): Promise<T> {
-  const url = cloudRequestUrl(config, endpoint)
-  console.info('[CloudConnection] request start', { stage, url })
-  try {
-    const response = await raceWithTimeout(request(), options.timeoutMs, timeoutMs => {
-      return new Error(`Request timed out after ${timeoutMs}ms`)
-    })
-    console.info('[CloudConnection] request success', { stage, url })
-    return response
-  } catch (error) {
-    console.error('[CloudConnection] request failed', { stage, url, error })
-    if (
-      error instanceof ApiError &&
-      ((typeof error.errorCode === 'string' &&
-        options.preserveErrorCodes?.includes(error.errorCode)) ||
-        options.preserveStatuses?.includes(error.status))
-    ) {
-      throw error
-    }
-    throw new Error(cloudStepErrorMessage(stage, config, endpoint, error), { cause: error })
-  }
-}
-
-async function checkCloudHealth(config: CloudConnectionRuntimeConfig): Promise<void> {
-  const client = createCloudClient(config, null)
-  await runCloudRequest('健康检查', config, '/health', () =>
-    client.get('/health', { redirectOnUnauthorized: false })
-  )
-}
-
-async function fetchCloudConfig(
-  config: CloudConnectionRuntimeConfig,
-  timeoutMs?: number
-): Promise<{ webUrl: string; socketUrl?: string }> {
-  const client = createCloudClient(config, null)
-  const metadata = await runCloudRequest(
-    '读取云端配置',
-    config,
-    '/auth/wework/config',
-    () =>
-      client.get<WeworkCloudConfigResponse>('/auth/wework/config', {
-        redirectOnUnauthorized: false,
-      }),
-    { timeoutMs }
-  )
-  if (typeof metadata.web_url !== 'string' || !metadata.web_url.trim()) {
-    throw new Error('Cloud Backend did not provide a Web URL')
-  }
-  const socketUrl =
-    typeof metadata.socket_url === 'string' && metadata.socket_url.trim()
-      ? metadata.socket_url.trim()
-      : undefined
-  return {
-    webUrl: metadata.web_url.replace(/\/+$/, ''),
-    socketUrl,
-  }
-}
-
-async function fetchCloudUser(
-  config: CloudConnectionRuntimeConfig,
-  token: string,
-  timeoutMs?: number
-): Promise<User> {
-  const client = createCloudClient(config, token)
-  return runCloudRequest(
-    '读取云端用户',
-    config,
-    '/users/me',
-    () => client.get<User>('/users/me', { redirectOnUnauthorized: false }),
-    { preserveStatuses: [401], timeoutMs }
-  )
-}
-
-async function createWeworkAuthSession(
-  config: CloudConnectionRuntimeConfig
-): Promise<WeworkAuthSessionCreateResponse> {
-  const devicePublicKey = await getDesktopDevicePublicKey()
-  const client = createCloudClient(config, null)
-  return runCloudRequest('创建云端授权会话', config, '/auth/wework/sessions', () =>
-    client.post<WeworkAuthSessionCreateResponse>('/auth/wework/sessions', {
-      device_public_key: devicePublicKey,
-    })
-  )
-}
-
-async function pollWeworkAuthSession(
-  config: CloudConnectionRuntimeConfig,
-  session: WeworkAuthSessionCreateResponse
-): Promise<WeworkAuthSessionPollResponse> {
-  const endpoint = `/auth/wework/sessions/${encodeURIComponent(
-    session.session_id
-  )}/poll?poll_token=${encodeURIComponent(session.poll_token)}`
-  return runCloudRequest('等待云端授权', config, endpoint, () =>
-    claimDesktopCloudAuthorization({
-      apiBaseUrl: config.apiBaseUrl,
-      sessionId: session.session_id,
-      pollToken: session.poll_token,
-    })
-  )
-}
-
 function connectionSnapshot(
   config: CloudConnectionRuntimeConfig,
   webUrl: string,
@@ -459,25 +302,65 @@ interface CloudConnectionProviderProps {
   children: ReactNode
 }
 
+interface CloudAuthorizationState {
+  generation: number
+}
+
 export function CloudConnectionProvider({ children }: CloudConnectionProviderProps) {
   const { t } = useTranslation('common')
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
+  const [authorization, setAuthorization] = useState<CloudAuthorizationState | null>(null)
   const [desktopRestoreSettled, setDesktopRestoreSettled] = useState(false)
+  const [e2eSessionRevision, setE2ESessionRevision] = useState(0)
   const initialRefreshStartedRef = useRef(false)
   const desktopRestoreStartedRef = useRef(false)
   const refreshPromiseRef = useRef<Promise<User | null> | null>(null)
   const refreshAttemptIdRef = useRef(0)
   const refreshGenerationRef = useRef(0)
+  const authorizationGenerationRef = useRef(0)
+  const disconnectRevisionRef = useRef(0)
+  const credentialCommitsRef = useRef(new Set<symbol>())
+  const nextCommitRevisionRef = useRef(0)
+  const publishedCommitRevisionRef = useRef(0)
   const disconnectRequestedRef = useRef(false)
   const terminalDesktopCredentialExpiryRef = useRef(false)
+
+  useEffect(() => {
+    if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+    const restoreSelectedSession = () => {
+      const config = getDesktopE2ERuntimeConfig()
+      if (!config.controlUrl || config.disabled || !config.cloudToken) return
+      // The controller has already verified /users/me and persisted the native
+      // profile. Reuse normal connection consumers without remounting the app.
+      refreshGenerationRef.current += 1
+      authorizationGenerationRef.current += 1
+      disconnectRevisionRef.current += 1
+      refreshAttemptIdRef.current += 1
+      refreshPromiseRef.current = null
+      disconnectRequestedRef.current = false
+      terminalDesktopCredentialExpiryRef.current = false
+      initialRefreshStartedRef.current = true
+      setAuthorization(null)
+      setSnapshot(snapshotFromStored())
+      setE2ESessionRevision(revision => revision + 1)
+    }
+    window.addEventListener(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT, restoreSelectedSession)
+    return () =>
+      window.removeEventListener(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT, restoreSelectedSession)
+  }, [])
 
   useEffect(() => {
     if (desktopRestoreStartedRef.current) return
     desktopRestoreStartedRef.current = true
     const restoreGeneration = refreshGenerationRef.current
+    const restoreAuthorizationGeneration = authorizationGenerationRef.current
     void getAppPreferences()
       .then(preferences => {
-        if (disconnectRequestedRef.current || refreshGenerationRef.current !== restoreGeneration) {
+        if (
+          disconnectRequestedRef.current ||
+          refreshGenerationRef.current !== restoreGeneration ||
+          authorizationGenerationRef.current !== restoreAuthorizationGeneration
+        ) {
           return
         }
         const stored = normalizeStoredCloudConnection(preferences.cloudConnection)
@@ -485,7 +368,8 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         setSnapshot(current => {
           if (
             disconnectRequestedRef.current ||
-            refreshGenerationRef.current !== restoreGeneration
+            refreshGenerationRef.current !== restoreGeneration ||
+            authorizationGenerationRef.current !== restoreAuthorizationGeneration
           ) {
             return current
           }
@@ -502,11 +386,11 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   }, [])
 
   const applyConnectedSnapshot = useCallback(
-    (nextSnapshot: CloudConnectionSnapshot, connectionGeneration: number) => {
+    (nextSnapshot: CloudConnectionSnapshot, commitRevision: number, disconnectRevision: number) => {
       setSnapshot(current => {
         if (
-          disconnectRequestedRef.current ||
-          refreshGenerationRef.current !== connectionGeneration
+          disconnectRevisionRef.current !== disconnectRevision ||
+          publishedCommitRevisionRef.current !== commitRevision
         ) {
           return current
         }
@@ -545,7 +429,13 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       .catch(error => {
         console.error('[CloudConnection] Failed to resolve cloud configuration', error)
       })
-  }, [desktopRestoreSettled, snapshot.backendUrl, snapshot.socketBaseUrlOverride, snapshot.status])
+  }, [
+    desktopRestoreSettled,
+    e2eSessionRevision,
+    snapshot.backendUrl,
+    snapshot.socketBaseUrlOverride,
+    snapshot.status,
+  ])
 
   const connectWithAuthorization = useCallback(
     async (
@@ -555,28 +445,33 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     ): Promise<User> => {
       disconnectRequestedRef.current = false
       terminalDesktopCredentialExpiryRef.current = false
-      const connectionGeneration = refreshGenerationRef.current + 1
-      refreshGenerationRef.current = connectionGeneration
+      const authorizationGeneration = authorizationGenerationRef.current + 1
+      authorizationGenerationRef.current = authorizationGeneration
+      const disconnectRevision = disconnectRevisionRef.current
+      let authorizationId: string | null = null
       let config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride)
-      setSnapshot(current => ({
-        ...current,
-        ...config,
-        status: 'connecting',
-        error: null,
-      }))
+      // Keep candidate endpoints request-local until their authenticated user is
+      // ready, so consumers never observe a new backend with the previous owner.
+      setAuthorization({
+        generation: authorizationGeneration,
+      })
 
       try {
+        const prepared = await prepareDesktopCloudAuthorization(config.apiBaseUrl)
+        authorizationId = prepared.authorizationId
+        if (authorizationGenerationRef.current !== authorizationGeneration) {
+          throw new Error('Cloud connection was cancelled')
+        }
         await checkCloudHealth(config)
         const metadata = await fetchCloudConfig(config)
-        if (refreshGenerationRef.current !== connectionGeneration) {
+        if (authorizationGenerationRef.current !== authorizationGeneration) {
           throw new Error('Cloud connection was cancelled')
         }
         config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride, metadata.socketUrl)
-        setSnapshot(current => ({
-          ...current,
-          ...config,
-        }))
-        const session = await createWeworkAuthSession(config)
+        const session = await createWeworkAuthSession(config, prepared.publicKey)
+        if (authorizationGenerationRef.current !== authorizationGeneration) {
+          throw new Error('Cloud connection was cancelled')
+        }
         const authorizationHandle = await openAuthorizationUrl?.(session.authorize_url)
         const windowClosed = authWindowClosedPromise(authorizationHandle)
 
@@ -587,14 +482,23 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         const expiresAtMs = session.expires_at * 1000
 
         while (Date.now() < expiresAtMs) {
+          if (authorizationGenerationRef.current !== authorizationGeneration) {
+            throw new Error('Cloud connection was cancelled')
+          }
           if (windowClosed) {
             await Promise.race([delay(pollIntervalMs), windowClosed])
           } else {
             await delay(pollIntervalMs)
           }
           const pollResult = windowClosed
-            ? await Promise.race([pollWeworkAuthSession(config, session), windowClosed])
-            : await pollWeworkAuthSession(config, session)
+            ? await Promise.race([
+                pollWeworkAuthSession(config, session, authorizationId),
+                windowClosed,
+              ])
+            : await pollWeworkAuthSession(config, session, authorizationId)
+          if (authorizationGenerationRef.current !== authorizationGeneration) {
+            throw new Error('Cloud connection was cancelled')
+          }
           if (pollResult.status === 'pending') continue
           if (pollResult.status === 'declined') {
             throw new Error('云端授权已取消')
@@ -609,17 +513,44 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
             console.warn('[CloudConnection] Failed to close authorization window', error)
           })
           const user = await fetchCloudUser(config, pollResult.accessToken)
-          initialRefreshStartedRef.current = true
-          applyConnectedSnapshot(
-            connectionSnapshot(
-              config,
-              session.web_url,
-              pollResult.accessToken,
-              user,
-              pollResult.credentialMode ?? 'desktop_refresh',
-              socketBaseUrlOverride
-            ),
-            connectionGeneration
+          if (authorizationGenerationRef.current !== authorizationGeneration) {
+            throw new Error('Cloud connection was cancelled')
+          }
+          const commit = Symbol('cloud-credential-commit')
+          const commitRevision = ++nextCommitRevisionRef.current
+          credentialCommitsRef.current.add(commit)
+          refreshGenerationRef.current += 1
+          refreshAttemptIdRef.current += 1
+          refreshPromiseRef.current = null
+          try {
+            await commitDesktopCloudAuthorization(authorizationId, user.id)
+            if (disconnectRevisionRef.current !== disconnectRevision) {
+              throw new Error('Cloud connection was cancelled')
+            }
+            // Native commit has linearized. A newer pending candidate cannot
+            // revoke this active owner; a later successful commit replaces it.
+            if (commitRevision > publishedCommitRevisionRef.current) {
+              publishedCommitRevisionRef.current = commitRevision
+              refreshGenerationRef.current += 1
+              initialRefreshStartedRef.current = true
+              applyConnectedSnapshot(
+                connectionSnapshot(
+                  config,
+                  session.web_url,
+                  pollResult.accessToken,
+                  user,
+                  pollResult.credentialMode ?? 'desktop_refresh',
+                  socketBaseUrlOverride
+                ),
+                commitRevision,
+                disconnectRevision
+              )
+            }
+          } finally {
+            credentialCommitsRef.current.delete(commit)
+          }
+          setAuthorization(current =>
+            current?.generation === authorizationGeneration ? null : current
           )
           track('cloud_connection_changed', { connected: true })
           return user
@@ -628,26 +559,32 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         throw new Error('云端授权已超时，请重新连接')
       } catch (error) {
         track('operation_failed', { operation: 'cloud_connect' })
+        setAuthorization(current =>
+          current?.generation === authorizationGeneration ? null : current
+        )
         setSnapshot(current =>
-          disconnectRequestedRef.current || refreshGenerationRef.current !== connectionGeneration
+          disconnectRequestedRef.current ||
+          authorizationGenerationRef.current !== authorizationGeneration ||
+          (current.status === 'connected' && current.token)
             ? current
-            : {
-                ...current,
-                ...config,
-                status: 'error',
-                token: null,
-                error: getCloudErrorMessage(error, t),
-              }
+            : { ...current, status: 'error', token: null, error: getCloudErrorMessage(error, t) }
         )
         throw error
+      } finally {
+        if (authorizationId) {
+          await discardDesktopCloudAuthorization(authorizationId).catch(error => {
+            console.warn('[CloudConnection] Failed to discard cloud authorization', error)
+          })
+        }
       }
     },
     [applyConnectedSnapshot, t]
   )
   const refreshUser = useCallback((): Promise<User | null> => {
     if (disconnectRequestedRef.current) return Promise.resolve(null)
+    if (credentialCommitsRef.current.size > 0) return Promise.resolve(null)
     if (refreshPromiseRef.current) return refreshPromiseRef.current
-    if (!snapshot.apiBaseUrl) return Promise.resolve(null)
+    if (!snapshot.apiBaseUrl || !snapshot.user) return Promise.resolve(null)
     const refreshGeneration = refreshGenerationRef.current
     const refreshAttemptId = refreshAttemptIdRef.current + 1
     refreshAttemptIdRef.current = refreshAttemptId
@@ -665,7 +602,8 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         const accessToken = await resolveAccessToken(
           config.apiBaseUrl,
           credentialMode,
-          snapshot.token
+          snapshot.token,
+          snapshot.user!.id
         )
         if (!accessToken) {
           throw new DesktopCloudCredentialError(
@@ -742,6 +680,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     snapshot.socketBaseUrl,
     snapshot.socketPath,
     snapshot.token,
+    snapshot.user,
     t,
   ])
 
@@ -754,17 +693,18 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     disconnectRequestedRef.current = true
     terminalDesktopCredentialExpiryRef.current = false
     refreshGenerationRef.current += 1
+    authorizationGenerationRef.current += 1
+    disconnectRevisionRef.current += 1
     refreshPromiseRef.current = null
     clearStoredCloudConnection()
+    setAuthorization(null)
     setSnapshot(DISCONNECTED_STATE)
     void updateAppPreferences({ cloudConnection: null }).catch(error => {
       console.error('[CloudConnection] Failed to clear desktop cloud connection', error)
     })
-    void Promise.resolve()
-      .then(clearDesktopCloudCredentials)
-      .catch(error => {
-        console.error('[CloudConnection] Failed to clear desktop cloud credentials', error)
-      })
+    void (async () => clearDesktopCloudCredentials())().catch(error => {
+      console.error('[CloudConnection] Failed to clear desktop cloud credentials', error)
+    })
     track('cloud_connection_changed', { connected: false })
   }, [])
 
@@ -873,10 +813,18 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   }, [refreshAutomatically, snapshot.apiBaseUrl, snapshot.credentialMode, snapshot.status])
 
   const value = useMemo<CloudConnectionContextValue>(() => {
-    const effectiveSnapshot =
+    const activeSnapshot =
       snapshot.status === 'connected' && !readStoredCloudConnection()
         ? DISCONNECTED_STATE
         : snapshot
+    const effectiveSnapshot =
+      authorization && activeSnapshot.status !== 'connected'
+        ? {
+            ...activeSnapshot,
+            status: 'connecting' as const,
+            error: null,
+          }
+        : activeSnapshot
     const isConnected = effectiveSnapshot.status === 'connected' && Boolean(effectiveSnapshot.token)
     return {
       ...effectiveSnapshot,
@@ -888,7 +836,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       refreshUser,
       disconnect,
     }
-  }, [connectWithAuthorization, disconnect, refreshUser, snapshot])
+  }, [authorization, connectWithAuthorization, disconnect, refreshUser, snapshot])
 
   return <CloudConnectionContext.Provider value={value}>{children}</CloudConnectionContext.Provider>
 }

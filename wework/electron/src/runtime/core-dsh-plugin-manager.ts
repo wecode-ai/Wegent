@@ -11,8 +11,10 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve, toNamespacedPath } from 'node:path'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
+import { recordReleaseDiagnostic } from './release-diagnostics.js'
+import { terminateProcessTree } from './runtime-supervisor.js'
 
 const PROFILE_NAME = 'wework-core'
 const STATE_FILE = '.wework-core-plugins.json'
@@ -33,7 +35,8 @@ export const IMMUTABLE_CORE_DSH_PLUGINS = new Set([
   '@wegent/dsh-executor-runtime',
   '@wegent/dsh-terminal-runtime',
   '@wegent/dsh-plugin-runtime',
-  '@wegent/dsh-connection-runtime',
+  '@wegent/dsh-connection-host',
+  '@wegent/dsh-coordination-runtime',
   '@wegent/dsh-wework-plugin-developer',
 ])
 
@@ -398,6 +401,8 @@ export class CoreDshPluginManager {
     const pnpmEntry = join(this.options.runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
     const commandArgs = runtimeNodeArgs(this.options.environment, [
       pnpmEntry,
+      '--dir',
+      this.profileRoot,
       '--store-dir',
       join(this.options.dshHome, 'pnpm-store'),
       ...args,
@@ -672,7 +677,10 @@ function errorMessage(error: unknown): string {
 }
 
 function logPluginCommand(environment: NodeJS.ProcessEnv, fields: Record<string, unknown>): void {
-  if (environment.VITE_WEWORK_E2E === 'true') console.info('[core-dsh-plugin-command]', fields)
+  if (environment.VITE_WEWORK_E2E === 'true') {
+    recordReleaseDiagnostic('core-plugin-command', fields, true)
+    console.info('[core-dsh-plugin-command]', fields)
+  }
 }
 
 function packageManagerProgress(output: string): Record<string, number | string[]> {
@@ -711,25 +719,29 @@ function runCommand(
   options: { cwd: string; env: NodeJS.ProcessEnv }
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now()
+    const phase = args.includes('--dump-config') ? 'profile-validation' : 'package-manager'
+    logPluginCommand(options.env, { stage: 'command-spawning', phase, command, cwd: options.cwd })
     const child = spawn(command, args, {
-      cwd: options.cwd,
+      cwd: toNamespacedPath(options.cwd),
       env: options.env,
       shell: false,
+      detached: process.platform !== 'win32',
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    const startedAt = Date.now()
-    const phase = args.includes('--dump-config') ? 'profile-validation' : 'package-manager'
     logPluginCommand(options.env, { stage: 'command-started', phase, pid: child.pid })
     let stdout = ''
     let stderr = ''
+    let settled = false
+    let streamError: Error | undefined
     const timeout = setTimeout(() => {
       logPluginCommand(options.env, {
         stage: 'command-timed-out',
         phase,
         elapsedMs: Date.now() - startedAt,
       })
-      child.kill()
+      fail(Object.assign(new Error(`${command} timed out`), { code: 'ETIMEDOUT' }), true)
     }, 120_000)
     timeout.unref()
     child.stdout.on('data', chunk => {
@@ -753,17 +765,52 @@ function runCommand(
         ...(phase === 'package-manager' ? packageManagerProgress(stderr) : {}),
       })
     })
-    child.once('error', error => {
+    const fail = (error: Error, stop = false): void => {
+      if (settled) return
+      settled = true
       clearTimeout(timeout)
       logPluginCommand(options.env, {
         stage: 'command-failed',
         phase,
         code: (error as NodeJS.ErrnoException).code,
+        message: error.message,
         elapsedMs: Date.now() - startedAt,
       })
-      reject(Object.assign(error, { stdout, stderr }))
-    })
-    child.once('exit', code => {
+      const failure = Object.assign(error, { stdout, stderr })
+      if (stop && child.pid) {
+        void terminateProcessTree(child, 1000).then(
+          () => reject(failure),
+          cleanupError =>
+            reject(
+              Object.assign(
+                new AggregateError(
+                  [failure, cleanupError],
+                  `${failure.message}; command cleanup failed: ${errorMessage(cleanupError)}`
+                ),
+                { stdout, stderr }
+              )
+            )
+        )
+      } else reject(failure)
+    }
+    const streamFailed = (error: Error) => {
+      const failure = (streamError ??= error)
+      // A failed Windows spawn also reports disconnected stdio pipes. Let the
+      // process error from the same tick preserve its original failure code.
+      queueMicrotask(() => {
+        fail(failure, true)
+      })
+    }
+    child.once('error', fail)
+    child.stdout.once('error', streamFailed)
+    child.stderr.once('error', streamFailed)
+    child.once('close', code => {
+      if (settled) return
+      if (streamError) {
+        fail(streamError)
+        return
+      }
+      settled = true
       clearTimeout(timeout)
       logPluginCommand(options.env, {
         stage: 'command-exited',

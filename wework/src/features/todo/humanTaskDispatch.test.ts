@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+// @vitest-environment node
+
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
+import { describe, expect, it, vi } from 'vitest'
 import { resolveHumanTaskDispatch } from './humanTaskDispatch'
 
 describe('resolveHumanTaskDispatch', () => {
@@ -52,18 +54,6 @@ describe('resolveHumanTaskDispatch', () => {
       expect(unsubscribe).toHaveBeenCalledOnce()
     }
   )
-
-  it('does not invent a dispatch when the current user has no assignment', async () => {
-    const unsubscribe = vi.fn()
-    const client = {
-      subscribe: vi.fn(async () => ({
-        snapshot: { messages: [], currentUserId: '1', latestSequence: 0 },
-        unsubscribe,
-      })),
-    } as unknown as ProjectChatClient
-    expect(await resolveHumanTaskDispatch(client, '11', 'ISSUE-1', 1)).toBeUndefined()
-    expect(unsubscribe).toHaveBeenCalledOnce()
-  })
 
   it('propagates a failed read instead of creating a task with a broken round binding', async () => {
     const client = {

@@ -4,38 +4,26 @@ import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import {
-  connectLocalExecutorToBackend,
   copyLocalExecutorDebugInfo,
-  disconnectLocalExecutorFromBackend,
   ensureLocalExecutorAvailable,
   readLocalExecutorLog,
 } from '@/desktop/localExecutor'
 import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
+import { LocalRuntimeNotice } from './LocalRuntimeNotice'
 
-const runtimeTokenPostMock = vi.hoisted(() => vi.fn())
 const desktopHostInvokeMock = vi.hoisted(() => vi.fn())
-
-vi.mock('@/api/http', () => ({
-  createHttpClient: vi.fn(() => ({
-    post: runtimeTokenPostMock,
-  })),
-}))
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: desktopHostInvokeMock,
 }))
 
 vi.mock('@/desktop/localExecutor', () => ({
-  connectLocalExecutorToBackend: vi.fn(),
   copyLocalExecutorDebugInfo: vi.fn(),
-  disconnectLocalExecutorFromBackend: vi.fn(),
   ensureLocalExecutorAvailable: vi.fn(),
   readLocalExecutorLog: vi.fn(),
 }))
 
 const copyDebugMock = vi.mocked(copyLocalExecutorDebugInfo)
-const connectMock = vi.mocked(connectLocalExecutorToBackend)
-const disconnectMock = vi.mocked(disconnectLocalExecutorFromBackend)
 const ensureMock = vi.mocked(ensureLocalExecutorAvailable)
 const readLogMock = vi.mocked(readLocalExecutorLog)
 const SLOW_STARTUP_WARNING_MS = 10000
@@ -55,19 +43,11 @@ describe('LocalRuntimeInitializer', () => {
       desktopHost: 'electron',
     }
     vi.stubEnv('DEV', false)
-    connectMock.mockReset()
     copyDebugMock.mockReset()
-    disconnectMock.mockReset()
     ensureMock.mockReset()
     readLogMock.mockReset()
     desktopHostInvokeMock.mockReset()
     desktopHostInvokeMock.mockResolvedValue(undefined)
-    runtimeTokenPostMock.mockReset()
-    runtimeTokenPostMock.mockResolvedValue({
-      auth_token: 'runtime-task-token',
-      token_type: 'bearer',
-      expires_in: 86400,
-    })
   })
 
   afterEach(() => {
@@ -80,6 +60,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -95,169 +76,12 @@ describe('LocalRuntimeInitializer', () => {
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
   })
 
-  test('starts the executor before applying the initial cloud connection', async () => {
-    connectMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
-    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
-
-    render(
-      <LocalRuntimeInitializer
-        initialCloudConnection={{
-          apiBaseUrl: 'https://backend.example.com/api',
-          backendUrl: 'https://backend.example.com',
-          socketBaseUrl: 'wss://socket.example.com',
-          isConnected: true,
-          token: 'token-a',
-        }}
-      >
-        <div data-testid="main-app">Main app</div>
-      </LocalRuntimeInitializer>
-    )
-
-    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(connectMock).toHaveBeenCalledWith({
-        backendUrl: 'https://backend.example.com',
-        socketBaseUrl: 'wss://socket.example.com',
-        authToken: 'token-a',
-        runtimeAuthToken: 'runtime-task-token',
-        deviceType: 'app',
-      })
-    )
-    expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
-      connectMock.mock.invocationCallOrder[0]
-    )
-  })
-
-  test('applies the latest cloud connection when startup finishes', async () => {
-    let resolveEnsure:
-      | ((value: { running: boolean; ready: boolean; deviceId: string }) => void)
-      | null = null
-    ensureMock.mockImplementation(
-      () =>
-        new Promise(resolve => {
-          resolveEnsure = resolve
-        })
-    )
-    connectMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
-
-    const { rerender } = render(
-      <LocalRuntimeInitializer
-        initialCloudConnection={{
-          apiBaseUrl: 'https://backend.example.com/api',
-          backendUrl: 'https://backend.example.com',
-          socketBaseUrl: 'https://backend.example.com',
-          isConnected: true,
-          token: 'token-a',
-        }}
-      >
-        <div data-testid="main-app">Main app</div>
-      </LocalRuntimeInitializer>
-    )
-
-    await waitFor(() => expect(ensureMock).toHaveBeenCalledTimes(1))
-    rerender(
-      <LocalRuntimeInitializer
-        initialCloudConnection={{
-          apiBaseUrl: 'https://backend.example.com/api',
-          backendUrl: 'https://backend.example.com',
-          socketBaseUrl: 'wss://socket.example.com',
-          isConnected: true,
-          token: 'token-a',
-        }}
-      >
-        <div data-testid="main-app">Main app</div>
-      </LocalRuntimeInitializer>
-    )
-    await act(async () => {
-      resolveEnsure?.({ running: true, ready: true, deviceId: 'local-device' })
-    })
-
-    await waitFor(() =>
-      expect(connectMock).toHaveBeenCalledWith({
-        backendUrl: 'https://backend.example.com',
-        socketBaseUrl: 'wss://socket.example.com',
-        authToken: 'token-a',
-        runtimeAuthToken: 'runtime-task-token',
-        deviceType: 'app',
-      })
-    )
-  })
-
-  test('starts the executor before applying disconnected local mode', async () => {
-    disconnectMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
-    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
-
-    render(
-      <LocalRuntimeInitializer
-        initialCloudConnection={{
-          isConnected: false,
-          token: null,
-        }}
-      >
-        <div data-testid="main-app">Main app</div>
-      </LocalRuntimeInitializer>
-    )
-
-    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
-    await waitFor(() => expect(disconnectMock).toHaveBeenCalledTimes(1))
-    expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
-      disconnectMock.mock.invocationCallOrder[0]
-    )
-  })
-
-  test('reveals the app without waiting for initial cloud connection setup', async () => {
-    connectMock.mockImplementation(() => new Promise(() => undefined))
-    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
-
-    render(
-      <LocalRuntimeInitializer
-        initialCloudConnection={{
-          apiBaseUrl: 'https://backend.example.com/api',
-          backendUrl: 'https://backend.example.com',
-          socketBaseUrl: 'wss://socket.example.com',
-          isConnected: true,
-          token: 'token-a',
-        }}
-      >
-        <div data-testid="main-app">Main app</div>
-      </LocalRuntimeInitializer>
-    )
-
-    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
-    expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
-    await waitFor(() => {
-      expect(connectMock).toHaveBeenCalledTimes(1)
-      expect(ensureMock).toHaveBeenCalledTimes(1)
-    })
-  })
-
-  test('keeps the app ready when initial cloud connection setup fails', async () => {
-    connectMock.mockRejectedValue(new Error('backend setup failed'))
-    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
-
-    render(
-      <LocalRuntimeInitializer
-        initialCloudConnection={{
-          apiBaseUrl: 'https://backend.example.com/api',
-          backendUrl: 'https://backend.example.com',
-          socketBaseUrl: 'wss://socket.example.com',
-          isConnected: true,
-          token: 'token-a',
-        }}
-      >
-        <div data-testid="main-app">Main app</div>
-      </LocalRuntimeInitializer>
-    )
-
-    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
-    expect(screen.queryByTestId('local-runtime-error')).not.toBeInTheDocument()
-  })
-
   test('reveals children once executor is ready even while app startup continues', async () => {
     ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
 
     render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -313,6 +137,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -416,6 +241,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -436,27 +262,13 @@ describe('LocalRuntimeInitializer', () => {
     expect(screen.getByTestId('local-runtime-copy-debug-button')).toHaveTextContent('已复制')
   })
 
-  test('keeps the startup screen titlebar draggable while executor is starting', async () => {
-    ensureMock.mockImplementation(() => new Promise(() => undefined))
-
-    render(
-      <LocalRuntimeInitializer startupReady={false}>
-        <div data-testid="main-app">Main app</div>
-      </LocalRuntimeInitializer>
-    )
-
-    const dragRegion = within(screen.getByTestId('local-runtime-titlebar-drag-region')).getByTestId(
-      'macos-titlebar-drag-region'
-    )
-    expect(dragRegion).toHaveClass('electron-titlebar-drag-region')
-  })
-
   test('does not remount children when the startup screen is dismissed', async () => {
     ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
     const onMount = vi.fn()
 
     const { rerender } = render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <MountProbe onMount={onMount} />
       </LocalRuntimeInitializer>
     )
@@ -466,6 +278,7 @@ describe('LocalRuntimeInitializer', () => {
 
     rerender(
       <LocalRuntimeInitializer startupReady>
+        <LocalRuntimeNotice />
         <MountProbe onMount={onMount} />
       </LocalRuntimeInitializer>
     )
@@ -483,6 +296,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -491,10 +305,17 @@ describe('LocalRuntimeInitializer', () => {
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
   })
 
-  test('shows startup error and retries initialization', async () => {
-    ensureMock
-      .mockRejectedValueOnce(new Error('stdio unavailable'))
-      .mockResolvedValueOnce({ running: true, ready: true, deviceId: 'local-device' })
+  test('keeps the workbench open during a local service failure and retry', async () => {
+    const startupError = new Error('stdio unavailable')
+    let finishRetry:
+      | ((value: { running: boolean; ready: boolean; deviceId: string }) => void)
+      | undefined
+    ensureMock.mockRejectedValueOnce(startupError).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishRetry = resolve
+        })
+    )
 
     Object.defineProperty(navigator, 'userAgent', {
       configurable: true,
@@ -503,17 +324,24 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
 
     expect(await screen.findByTestId('local-runtime-error')).toHaveTextContent('stdio unavailable')
-    expect(screen.getByText('~/.wework/logs/executor.log')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(desktopHostInvokeMock).toHaveBeenCalledWith('renderer.startupFailed')
+    expect(screen.getByTestId('main-app')).toBeVisible()
+    expect(desktopHostInvokeMock).not.toHaveBeenCalledWith(
+      'renderer.startupFailed',
+      expect.anything()
     )
 
     await userEvent.click(screen.getByTestId('local-runtime-retry-button'))
+    expect(screen.getByTestId('local-runtime-error')).toHaveTextContent('stdio unavailable')
+    expect(screen.getByTestId('local-runtime-retry-button')).toBeDisabled()
+    expect(screen.getByTestId('main-app')).toBeVisible()
+    await act(async () => finishRetry?.({ running: true, ready: true, deviceId: 'local-device' }))
+    await waitFor(() => expect(screen.queryByTestId('local-runtime-error')).not.toBeInTheDocument())
 
     await waitFor(() => expect(screen.getByTestId('main-app')).toBeInTheDocument())
   })
@@ -523,6 +351,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -540,6 +369,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )

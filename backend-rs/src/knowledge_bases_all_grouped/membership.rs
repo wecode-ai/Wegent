@@ -12,9 +12,8 @@ use brz_mysql::{Mysql, MysqlResult};
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
 
 use super::queries::{
-    NamespaceActiveForm, direct_namespace_memberships, direct_namespace_resource_ids, group_member,
-    kinds_by_filter_unordered, namespace_by_name_exact, namespace_entity_kb_members,
-    namespace_entity_resource_ids, namespace_entity_roles, namespaces_by_ids, namespaces_by_names,
+    NamespaceActiveForm, group_member, kinds_by_filter_unordered, namespace_by_name_exact,
+    namespace_entity_kb_members, namespace_entity_roles, namespaces_by_names,
 };
 use super::{
     APPROVED_STATUSES, EntityIdRow, EntityMemberRow, IdRow, KB_RESOURCE_TYPES, KindRow,
@@ -56,157 +55,9 @@ fn record_membership_invocation(
     );
 }
 
-#[derive(Debug, brz_mysql::FromMysqlRow)]
-struct ExternalBindingRow {
-    resource_members_resource_id: i64,
-    resource_members_entity_id: String,
-}
-
-async fn external_namespace_bindings<M: Mysql>(
-    mysql: &M,
-    entity_type: &str,
-) -> MysqlResult<Vec<(i64, String)>> {
-    let rows: Vec<ExternalBindingRow> = mysql
-        .fetch_all(
-            &format!(
-                "SELECT resource_members.resource_id AS resource_members_resource_id, \
-                 resource_members.entity_id AS resource_members_entity_id \
-                 FROM resource_members WHERE resource_members.resource_type = 'Namespace' \
-                 AND resource_members.entity_type = {} AND resource_members.status = 'approved'",
-                quote_literal(entity_type)
-            ),
-            (),
-        )
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            (
-                row.resource_members_resource_id,
-                row.resource_members_entity_id,
-            )
-        })
-        .collect())
-}
-
-/// `dept_ids = [b.entity_id for b in all_dept_bindings if b.entity_id]`: the
-/// source drops falsy entity ids, so the empty string never reaches the
-/// membership check or the entity-match query (`NULL` is already excluded by
-/// the query's `IS NOT NULL`). The filter stays out of the SQL so the rendered
-/// statement keeps matching the recorded one.
-fn non_empty_entity_ids(entity_ids: Vec<String>) -> Vec<String> {
-    entity_ids
-        .into_iter()
-        .filter(|entity_id| !entity_id.is_empty())
-        .collect()
-}
-
-/// `ErpEntityResolver.get_resource_ids_by_entity` step 1
-/// (`all_dept_bindings`) plus the source's `dept_ids` comprehension.
-async fn distinct_external_entity_ids<M: Mysql>(
-    mysql: &M,
-    entity_type: &str,
-) -> MysqlResult<Vec<String>> {
-    let rows: Vec<EntityIdRow> = mysql
-        .fetch_all(
-            &format!(
-                "SELECT DISTINCT resource_members.entity_id AS resource_members_entity_id \
-                 FROM resource_members WHERE resource_members.resource_type = 'Namespace' \
-                 AND resource_members.entity_type = {} AND resource_members.entity_id IS NOT NULL \
-                 AND resource_members.status = 'approved'",
-                quote_literal(entity_type)
-            ),
-            (),
-        )
-        .await?;
-    Ok(non_empty_entity_ids(
-        rows.into_iter()
-            .map(|row| row.resource_members_entity_id)
-            .collect(),
-    ))
-}
-
-/// `list_resources_by_entity_match` for Namespace resources: the `distinct()`
-/// namespace ids bound to the matched department ids
-/// (`ErpEntityResolver.get_resource_ids_by_entity(..., resource_type='Namespace')`).
-fn namespace_ids_for_external_ids_sql(entity_type: &str, ids: &str) -> String {
-    format!(
-        "SELECT DISTINCT resource_members.resource_id AS resource_members_resource_id \
-         FROM resource_members WHERE resource_members.resource_type = 'Namespace' \
-         AND resource_members.entity_type = {} \
-         AND resource_members.entity_id IN ({ids}) AND resource_members.status = 'approved'",
-        quote_literal(entity_type),
-    )
-}
-
-async fn namespace_ids_for_external_ids<M: Mysql>(
-    mysql: &M,
-    entity_type: &str,
-    entity_ids: &[String],
-) -> MysqlResult<Vec<i64>> {
-    if entity_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let ids = entity_ids
-        .iter()
-        .map(|id| quote_literal(id))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let rows: Vec<IdRow> = mysql
-        .fetch_all(&namespace_ids_for_external_ids_sql(entity_type, &ids), ())
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| row.resource_members_resource_id)
-        .collect())
-}
-
-async fn external_members_for_namespaces<M: Mysql>(
-    mysql: &M,
-    entity_type: &str,
-    namespace_ids: &[i64],
-) -> MysqlResult<Vec<MemberRow>> {
-    if namespace_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let ids = namespace_ids
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-    mysql
-        .fetch_all(
-            &format!(
-                "SELECT {MEMBER_COLUMNS} FROM resource_members \
-                 WHERE resource_members.resource_type = 'Namespace' \
-                 AND resource_members.entity_type = {} \
-                 AND resource_members.resource_id IN ({ids}) \
-                 AND resource_members.status = 'approved'",
-                quote_literal(entity_type),
-            ),
-            (),
-        )
-        .await
-}
 // ---------------------------------------------------------------------------
 // Membership resolution (entity resolvers)
 // ---------------------------------------------------------------------------
-
-/// The resolution purpose for the group-membership resolver calls of
-/// `iter_user_groups_with_roles` step 2 (through
-/// `NamespaceEntityResolver.get_resource_ids_by_entity`) and
-/// `ErpEntityResolver.get_resource_ids_by_entity`.
-///
-/// The source has exactly one membership path: `ErpEntityResolver`'s
-/// `_get_membership_with_cache`, which reads `erp:membership:{user_id}:{ssn}`
-/// and, on a cache miss or partial hit, calls
-/// `erp_client.batch_check_membership` and writes the rebuilt map back with
-/// `_cache_set`. The cache-only purpose (`CachedResourceAccess`, which the
-/// provider maps to `ErpProvider::cached_membership`) resolves no membership
-/// on a miss and performs no write, so it drops the groups those calls would
-/// have resolved and never issues the ERP membership requests the source
-/// performs.
-const GROUP_ENTITY_PURPOSE: ResolutionPurpose = ResolutionPurpose::ResourceAccess;
 
 /// Resolve the user's group memberships
 /// (`iter_user_groups_with_roles`): direct user memberships plus
@@ -214,12 +65,13 @@ const GROUP_ENTITY_PURPOSE: ResolutionPurpose = ResolutionPurpose::ResourceAcces
 /// (`namespace`, then registered external entity types).
 ///
 /// Returns `(group_name -> highest role)` in first-appearance order of the
-/// direct memberships.
-/// Returns `(group_name -> roles)` entries in the source
-/// `group_entries` dict insertion order: direct memberships first (member
-/// row order mapped through the namespace query), then entity-derived
-/// memberships (`get_user_groups_with_roles` preserves this order for the
-/// `groups` section rendering).
+/// direct memberships, then entity-derived memberships
+/// (`get_user_groups_with_roles` preserves this order for the `groups` section
+/// rendering). The Source's `group_member_helper.iter_user_groups_with_roles`
+/// is the shared implementation already used by the create flow; the
+/// all-grouped secondary group-role batch must not add
+/// `NamespaceEntityResolver.get_resource_ids_by_entity`'s namespace-grant
+/// read or any entity-resolver pass of its own.
 pub(crate) async fn user_group_role_map<M, R: brz_redis::Redis>(
     mysql: &M,
     redis: Option<&R>,
@@ -229,128 +81,12 @@ pub(crate) async fn user_group_role_map<M, R: brz_redis::Redis>(
 where
     M: Mysql,
 {
-    // 1) Direct user memberships.
-    let direct = direct_namespace_memberships(mysql, user_id).await?;
-    let namespace_ids: Vec<i64> = direct
-        .iter()
-        .map(|member| member.resource_members_resource_id)
-        .collect();
-    let namespaces = namespaces_by_ids(mysql, &namespace_ids).await?;
-    let name_by_id: HashMap<i64, String> = namespaces
-        .iter()
-        .map(|namespace| (namespace.namespace_id, namespace.namespace_name.clone()))
-        .collect();
-    let mut role_map: Vec<(String, Vec<String>)> = Vec::new();
-    let push_role = |role_map: &mut Vec<(String, Vec<String>)>, name: &str, role: &str| {
-        if let Some(entry) = role_map.iter_mut().find(|(key, _)| key == name) {
-            entry.1.push(role.to_string());
-        } else {
-            role_map.push((name.to_string(), vec![role.to_string()]));
-        }
-    };
-    for member in &direct {
-        if let Some(name) = name_by_id.get(&member.resource_members_resource_id) {
-            push_role(&mut role_map, name, &member.resource_members_role);
-        }
-    }
-
-    // 2a) NamespaceEntityResolver.get_resource_ids_by_entity.
-    let direct_ns_ids = direct_namespace_resource_ids(mysql, user_id).await?;
-    let mut entity_ns_ids: Vec<i64> = Vec::new();
-    for entity_type in resolvers.external_types() {
-        let bindings = external_namespace_bindings(mysql, entity_type).await?;
-        if bindings.is_empty() {
-            continue;
-        }
-        // `entity_ids = list(set(eid for _, eid in ns_with_entity))`:
-        // the deduplicated department list (deterministic order; the
-        // replay matcher compares the HTTP JSON arrays as multisets).
-        let mut department_ids: Vec<String> = bindings
-            .iter()
-            .map(|(_, entity_id)| entity_id.clone())
-            .collect();
-        department_ids.sort();
-        department_ids.dedup();
-        record_membership_invocation(
-            "user_group_role_map.step2a",
-            entity_type,
-            department_ids.len(),
-            GROUP_ENTITY_PURPOSE,
-        );
-        let matched = resolvers
-            .match_bindings(
-                redis,
-                user_id,
-                entity_type,
-                &department_ids,
-                GROUP_ENTITY_PURPOSE,
-            )
-            .await?;
-        if !matched.is_empty() {
-            let matched_set: HashSet<&str> = matched.iter().map(String::as_str).collect();
-            entity_ns_ids.extend(
-                bindings
-                    .iter()
-                    .filter(|(_, entity_id)| matched_set.contains(entity_id.as_str()))
-                    .map(|(resource_id, _)| *resource_id),
-            );
-        }
-    }
-    let mut all_ns_ids: Vec<i64> = direct_ns_ids;
-    all_ns_ids.extend(entity_ns_ids);
-    all_ns_ids.sort_unstable();
-    all_ns_ids.dedup();
-    let _grants = namespace_entity_resource_ids(mysql, &all_ns_ids).await?;
-
-    // 2b) Each registered external resolver contributes namespace grants.
-    for entity_type in resolvers.external_types() {
-        let bindings = distinct_external_entity_ids(mysql, entity_type).await?;
-        if bindings.is_empty() {
-            record_membership_invocation(
-                "user_group_role_map.step2b",
-                entity_type,
-                0,
-                GROUP_ENTITY_PURPOSE,
-            );
-            continue;
-        }
-        record_membership_invocation(
-            "user_group_role_map.step2b",
-            entity_type,
-            bindings.len(),
-            GROUP_ENTITY_PURPOSE,
-        );
-        let matched = resolvers
-            .match_bindings(redis, user_id, entity_type, &bindings, GROUP_ENTITY_PURPOSE)
-            .await?;
-        if !matched.is_empty() {
-            let namespace_ids =
-                namespace_ids_for_external_ids(mysql, entity_type, &matched).await?;
-            if !namespace_ids.is_empty() {
-                let members =
-                    external_members_for_namespaces(mysql, entity_type, &namespace_ids).await?;
-                let member_namespace_ids: Vec<i64> = members
-                    .iter()
-                    .map(|member| member.resource_members_resource_id)
-                    .collect();
-                let entity_namespaces = namespaces_by_ids(mysql, &member_namespace_ids).await?;
-                for member in &members {
-                    if let Some(namespace) = entity_namespaces
-                        .iter()
-                        .find(|row| row.namespace_id == member.resource_members_resource_id)
-                    {
-                        push_role(
-                            &mut role_map,
-                            &namespace.namespace_name,
-                            &member.resource_members_role,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(role_map)
+    let entries =
+        crate::permissions::iter_user_groups_with_roles(mysql, resolvers, redis, user_id).await?;
+    Ok(entries
+        .into_iter()
+        .map(|entry| (entry.group_name, vec![entry.role]))
+        .collect())
 }
 
 /// `get_effective_roles_in_groups`: direct/entity roles plus parent-group

@@ -37,6 +37,7 @@ from app.schemas.project_chat import (
     ProjectChatAgentStart,
     ProjectChatAgentUpdate,
     ProjectChatAgentView,
+    ProjectChatMention,
     ProjectChatMessageView,
     ProjectChatSend,
     ProjectChatSubscribe,
@@ -58,12 +59,16 @@ from app.services.device.identity import (
     resolve_owned_device_alias,
 )
 from app.services.device.runtime_route import runtime_device_route_id
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.ghost_capabilities import (
     load_ghost_chain,
     merge_ghost_capabilities,
 )
 from app.services.loop_item_events import publish_loop_item_changed
-from app.services.loop_item_status_history import write_status_change
+from app.services.loop_item_status_history import (
+    automatic_project_status,
+    write_status_change,
+)
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.access import can_view_item
 from app.services.loop_items.change_requests import update_change_request_source
@@ -261,6 +266,7 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
     }
 
 
+@execution_resource_scope()
 def compiled_bot_config(
     db: Session,
     row: ProjectChatAgent,
@@ -471,6 +477,22 @@ class ReplyContext:
 
 
 class ProjectChatService:
+    @staticmethod
+    def _queue_task_status_change(
+        db: Session,
+        task: LoopItem,
+        previous_status: str,
+        row: ProjectChatMessage,
+    ) -> None:
+        from app.services.project_internal_events import queue_issue_status_changed
+
+        queue_issue_status_changed(
+            db,
+            item=task,
+            previous_status=previous_status,
+            automation_run_id=(row.metadata_json or {}).get("automation_run_id"),
+        )
+
     @staticmethod
     def _queue_loop_item_change(db: Session, item: LoopItem) -> None:
         pending = db.info.setdefault(PENDING_LOOP_ITEM_CHANGES_KEY, set())
@@ -1001,6 +1023,29 @@ class ProjectChatService:
             task_id=request.task_id,
             reply_to_message_id=request.reply_to_message_id,
         )
+        if reply.reply_to_message_id:
+            from app.services.project_chat.stand_in_replies import (
+                stand_in_reply_recipient,
+            )
+
+            recipient = stand_in_reply_recipient(db, reply.reply_to_message_id)
+            if recipient is not None and not request.mentions:
+                request = request.model_copy(
+                    update={
+                        "mentions": [
+                            ProjectChatMention(
+                                type="user",
+                                id=str(recipient["user_id"]),
+                                label=recipient["name"],
+                            )
+                        ]
+                    }
+                )
+                metadata["mentions"] = [
+                    mention.model_dump(by_alias=True) for mention in request.mentions
+                ]
+                metadata["stand_in_reply_to"] = recipient
+                metadata["execution_dispatch"] = "comment_only"
         row = ProjectChatMessage(
             message_id=message_id,
             client_message_id=request.client_message_id,
@@ -1033,6 +1078,25 @@ class ProjectChatService:
             mentions=request.mentions,
             reply_preview=reply.preview,
         )
+        if request.task_id and request.mentions:
+            from app.services.project_chat.stand_in_events import enqueue_issue_wakeup
+
+            for recipient_id in sorted(
+                {
+                    int(mention.id)
+                    for mention in request.mentions
+                    if mention.type == "user"
+                }
+            ):
+                enqueue_issue_wakeup(
+                    db,
+                    user_id=recipient_id,
+                    payload={
+                        "projectId": request.project_id,
+                        "itemId": request.task_id,
+                        "commentId": message_id,
+                    },
+                )
         if request.task_id:
             if item is not None:
                 item.metadata_json = update_change_request_source(
@@ -1245,6 +1309,9 @@ class ProjectChatService:
         owner_user_id: int | None = None,
         accepted_terminal: bool = False,
     ) -> tuple[ProjectChatMessageView, str] | None:
+        from app.services.project_chat.execution_snapshot import runtime_event_sequence
+
+        sequence = runtime_event_sequence(payload)
         identities = [device_id]
         if owner_user_id is not None and record_id_from_route(device_id):
             device = resolve_owned_device_alias(
@@ -1262,7 +1329,7 @@ class ProjectChatService:
             from app.services.project_chat.execution_snapshot import (
                 can_restore_reconciled_completion,
                 completed_activity_for_turn,
-                runtime_event_sequence,
+                runtime_event_client_message_id,
             )
 
             completed = completed_activity_for_turn(
@@ -1270,7 +1337,24 @@ class ProjectChatService:
                 device_ids=identities,
                 task_id=runtime_task_id,
                 turn_id=turn_id,
+                client_user_message_id=runtime_event_client_message_id(payload),
+                lock=False,
+                completed_only=False,
             )
+            execution = None
+            if completed is not None:
+                # Discover by identity, then read current state under the root
+                # and activity locks. A REPEATABLE READ snapshot may predate
+                # history's terminal commit and still show this row streaming.
+                execution = self._execution_for_completed_activity(db, completed)
+                if (
+                    "execution_id" in (completed.metadata_json or {})
+                    and execution is None
+                ):
+                    return None
+                db.refresh(completed, with_for_update=True)
+                if completed.status != "completed":
+                    completed = None
             if completed is None:
                 from app.services.loop_item_executions.service import (
                     loop_item_execution_service,
@@ -1283,8 +1367,9 @@ class ProjectChatService:
                     turn_id=turn_id,
                     owner_user_id=owner_user_id,
                 )
+                if completed is not None:
+                    execution = self._execution_for_completed_activity(db, completed)
             if completed is not None:
-                execution = self._execution_for_completed_activity(db, completed)
                 if (
                     "execution_id" in (completed.metadata_json or {})
                     and execution is None
@@ -1302,9 +1387,40 @@ class ProjectChatService:
                     )
                 ):
                     return None
+                if execution is None or accepted_terminal:
+                    if execution is not None:
+                        db.refresh(execution, with_for_update=True)
+                    current = completed_activity_for_turn(
+                        db,
+                        device_ids=identities,
+                        task_id=runtime_task_id,
+                        turn_id=turn_id,
+                        client_user_message_id=runtime_event_client_message_id(payload),
+                    )
+                    if current is None or current.id != completed.id:
+                        return None
+                    completed = current
+                # The aggregate already records an elected terminal event's
+                # sequence before this same event projects its final text.
+                if self._runtime_event_is_stale(
+                    completed, sequence, allow_equal=accepted_terminal
+                ):
+                    return None
                 # History reports outcomes without text. A delayed final event
                 # must still save its full content without replaying workflow.
                 content = self._project_chat_final_text(data, payload)
+                logger.info(
+                    "[ProjectChat] Late final content repair message=%s execution=%s "
+                    "accepted_terminal=%s content_present=%s content_length=%s "
+                    "incoming_sequence=%s last_sequence=%s",
+                    completed.message_id,
+                    execution.id if execution is not None else None,
+                    accepted_terminal,
+                    content is not None,
+                    len(content) if content is not None else 0,
+                    runtime_event_sequence(payload),
+                    execution.last_event_seq if execution is not None else None,
+                )
                 if content is not None:
                     completed.content = content
                     if turn_id:
@@ -1313,7 +1429,6 @@ class ProjectChatService:
                             "runtime_turn_id": turn_id,
                         }
                     self._index_activity_change_requests(db, completed)
-                    sequence = runtime_event_sequence(payload)
                     if (
                         execution is not None
                         and sequence is not None
@@ -1322,6 +1437,7 @@ class ProjectChatService:
                         execution.last_event_seq = sequence
                 elif execution is not None and not accepted_terminal:
                     return None
+                self._record_runtime_sequence(completed, sequence)
                 self._commit(db)
                 db.refresh(completed)
                 return self.to_view(completed, db=db), "snapshot"
@@ -1333,8 +1449,12 @@ class ProjectChatService:
                 db,
                 runtime_device_id=device_id,
                 runtime_task_id=runtime_task_id,
+                device_ids=identities,
+                owner_user_id=owner_user_id,
             )
         if row is None:
+            return None
+        if self._runtime_event_is_stale(row, sequence):
             return None
         if self._project_automation_activity_is_terminal(db, row):
             logger.info(
@@ -1346,12 +1466,27 @@ class ProjectChatService:
                 runtime_task_id,
             )
             return None
-        subagent_result = self._handle_subagent_runtime_event(
-            db, parent=row, event_name=event_name, data=data
-        )
-        if subagent_result is not None:
-            return subagent_result
+        if "subagent" in event_name or any(
+            key in data for key in ("subagent_name", "subagentName", "executor_name")
+        ):
+            return self._handle_subagent_runtime_event(
+                db, parent=row, data=data, sequence=sequence
+            )
         terminal_status = self._project_chat_terminal_status(event_name, payload, data)
+        human_request_id = (row.metadata_json or {}).get("human_request_id")
+        if human_request_id:
+            from app.services.project_chat.execution_snapshot import (
+                runtime_event_client_message_id,
+            )
+            from app.services.project_chat.human_requests import settle_reply
+
+            if runtime_event_client_message_id(payload) == row.trigger_message_id:
+                settle_reply(
+                    db,
+                    issue_id=row.task_id,
+                    request_id=human_request_id,
+                    message_id=row.trigger_message_id,
+                )
         self._update_project_automation_run(db, row, terminal_status, event_name)
         if terminal_status is not None:
             logger.info(
@@ -1380,13 +1515,14 @@ class ProjectChatService:
                 agent=None,
                 status_value="running",
             )
+            self._record_runtime_sequence(row, sequence)
             self._commit(db)
             db.refresh(row)
             return (
                 self.to_view(row, db=db).model_copy(
                     update={
                         "content": delta,
-                        "metadata": {"contentMode": "delta"},
+                        "metadata": {**row.metadata_json, "contentMode": "delta"},
                     }
                 ),
                 "delta",
@@ -1428,9 +1564,44 @@ class ProjectChatService:
             )
         else:
             return None
+        self._record_runtime_sequence(row, sequence)
         self._commit(db)
         db.refresh(row)
         return self.to_view(row, db=db), "snapshot"
+
+    @staticmethod
+    def _runtime_event_is_stale(
+        row: ProjectChatMessage,
+        sequence: int | None,
+        *,
+        allow_equal: bool = False,
+    ) -> bool:
+        """Reject replayed events before mutating their durable projection."""
+        from app.services.project_chat.execution_snapshot import runtime_event_sequence
+
+        previous = runtime_event_sequence(
+            {"eventSeq": (row.metadata_json or {}).get("runtime_event_sequence")}
+        )
+        return (
+            sequence is not None
+            and previous is not None
+            and (sequence < previous or (sequence == previous and not allow_equal))
+        )
+
+    @classmethod
+    def _record_runtime_sequence(
+        cls, row: ProjectChatMessage, sequence: int | None
+    ) -> None:
+        """Preserve exact ordering beyond SQL timestamp and JavaScript precision."""
+        if (
+            sequence is not None
+            and sequence > 0
+            and not cls._runtime_event_is_stale(row, sequence)
+        ):
+            row.metadata_json = {
+                **dict(row.metadata_json or {}),
+                "runtime_event_sequence": str(sequence),
+            }
 
     @staticmethod
     def _execution_for_completed_activity(
@@ -1475,6 +1646,8 @@ class ProjectChatService:
         event_name: str,
     ) -> None:
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        if metadata.get("dispatch_role") in {"manager", "member"}:
+            return
         run_id = metadata.get("automation_run_id")
         if not isinstance(run_id, str) or not run_id:
             return
@@ -1514,6 +1687,11 @@ class ProjectChatService:
                 ),
                 ProjectChatMessage.runtime_task_id == runtime_task_id,
                 ProjectChatMessage.sender_type == "agent",
+                or_(
+                    ProjectChatMessage.metadata_json["kind"].as_string().is_(None),
+                    ProjectChatMessage.metadata_json["kind"].as_string()
+                    != "task_ai_subagent",
+                ),
                 ProjectChatMessage.status.in_(["pending", "streaming"]),
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
@@ -1542,6 +1720,8 @@ class ProjectChatService:
         *,
         runtime_device_id: str,
         runtime_task_id: str,
+        device_ids: list[str],
+        owner_user_id: int | None = None,
     ) -> ProjectChatMessage | None:
         """Open the activity message from the owning execution.
 
@@ -1558,6 +1738,8 @@ class ProjectChatService:
             db,
             runtime_device_id=runtime_device_id,
             runtime_task_id=runtime_task_id,
+            owner_user_id=owner_user_id,
+            include_initial_manager=True,
         )
         if execution is None:
             return None
@@ -1575,6 +1757,7 @@ class ProjectChatService:
             db,
             runtime_device_id,
             runtime_task_id,
+            device_ids=device_ids,
         )
 
     def finish_runtime_activity(
@@ -1744,15 +1927,10 @@ class ProjectChatService:
         db: Session,
         *,
         parent: ProjectChatMessage,
-        event_name: str,
         data: dict,
+        sequence: int | None,
     ) -> tuple[ProjectChatMessageView, str] | None:
         """Expose child-agent work as compact task activity messages."""
-
-        if "subagent" not in event_name and not any(
-            key in data for key in ("subagent_name", "subagentName", "executor_name")
-        ):
-            return None
 
         child_name = self._subagent_name(data)
         if not child_name:
@@ -1815,6 +1993,9 @@ class ProjectChatService:
             )
             db.add(existing)
         else:
+            if self._runtime_event_is_stale(existing, sequence):
+                return None
+            metadata = {**dict(existing.metadata_json or {}), **metadata}
             if existing.status in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
                 durable_status = self._normalized_terminal_status(existing.status)
                 existing.metadata_json = {
@@ -1830,6 +2011,7 @@ class ProjectChatService:
             existing.message_type = "text"
         if existing.status in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
             self._index_activity_change_requests(db, existing)
+        self._record_runtime_sequence(existing, sequence)
         self._commit(db)
         db.refresh(existing)
         return self.to_view(existing, db=db), "snapshot"
@@ -1974,6 +2156,7 @@ class ProjectChatService:
             return
 
         now = datetime.now(UTC).replace(tzinfo=None)
+        previous_board_status = task.status
         task_metadata = dict(task.metadata_json or {})
         external_index = (
             task_metadata.get("external_index") is True
@@ -2039,17 +2222,23 @@ class ProjectChatService:
             ):
                 project = db.get(CloudProject, task.cloud_project_id)
                 if project is not None:
-                    write_status_change(
-                        task_metadata,
-                        project=project,
-                        from_status=task.status,
-                        to_status="in_progress",
-                        trigger="ai_started",
-                        by_user_id=None,
+                    next_status = automatic_project_status(
+                        project,
+                        current_status=task.status,
+                        candidate_status="in_progress",
                     )
-                task.status = "in_progress"
-                task.completed_at = ProjectChatService._loop_unset_datetime(db)
-                task.sort_order = 0
+                    if next_status != task.status:
+                        write_status_change(
+                            task_metadata,
+                            project=project,
+                            from_status=task.status,
+                            to_status=next_status,
+                            trigger="ai_started",
+                            by_user_id=None,
+                        )
+                        task.status = next_status
+                        task.completed_at = ProjectChatService._loop_unset_datetime(db)
+                        task.sort_order = 0
         else:
             next_state["completed_at"] = now.isoformat()
             next_state["heartbeat_at"] = None
@@ -2071,6 +2260,7 @@ class ProjectChatService:
             self._queue_loop_item_change(db, task)
         task.metadata_json = task_metadata
         task.version += 1
+        self._queue_task_status_change(db, task, previous_board_status, row)
         if (
             status_value != "running"
             or previous_status != "running"
@@ -2102,6 +2292,8 @@ class ProjectChatService:
         if row.sender_type != "agent":
             return False
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        if metadata.get("activity_type") == "manager_assignment":
+            return False
         if row.status in {"completed", "failed"}:
             if metadata.get("run_status") == row.status:
                 return False
@@ -2209,21 +2401,29 @@ class ProjectChatService:
             or isinstance(task_metadata.get("workflow_plan"), dict)
         ):
             return
+        previous_status = task.status
         project = db.get(CloudProject, task.cloud_project_id)
-        if project is not None:
-            write_status_change(
-                task_metadata,
-                project=project,
-                from_status=task.status,
-                to_status="in_review",
-                trigger="ai_completed",
-                by_user_id=None,
-            )
+        if project is None:
+            return
+        next_status = automatic_project_status(
+            project, current_status=task.status, candidate_status="in_review"
+        )
+        if next_status == task.status:
+            return
+        write_status_change(
+            task_metadata,
+            project=project,
+            from_status=task.status,
+            to_status=next_status,
+            trigger="ai_completed",
+            by_user_id=None,
+        )
         task.metadata_json = task_metadata
-        task.status = "in_review"
+        task.status = next_status
         task.completed_at = ProjectChatService._loop_unset_datetime(db)
         task.sort_order = 0
         task.version += 1
+        ProjectChatService._queue_task_status_change(db, task, previous_status, row)
 
     def fail_agent_response(
         self,

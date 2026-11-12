@@ -1,49 +1,31 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { logRuntimeTaskCreateStage } from './runtime-create-diagnostics'
+import { describe, expect, it } from 'vitest'
+import { runtimeOriginDiagnostic } from './runtime-create-diagnostics'
 
-const infoMock = vi.spyOn(console, 'info').mockImplementation(() => undefined)
-
-describe('logRuntimeTaskCreateStage', () => {
-  beforeEach(() => infoMock.mockClear())
-
-  it('writes structured diagnostics to the frontend console', () => {
-    logRuntimeTaskCreateStage('hybrid-create-started', {
-      taskId: 'runtime-123',
-      deviceId: 'cloud-device',
+describe('runtime origin diagnostic privacy', () => {
+  it('classifies origin markers without exposing private source values', () => {
+    const details = runtimeOriginDiagnostic({
+      type: 'board_task',
+      initiatedBy: 'stand_in',
+      dispatchRole: '',
+      dispatch_role: 'executor',
+      dispatchId: 'private-dispatch-id',
+      dispatch_id: false,
+      auth_token: 'private-token',
     })
-    expect(infoMock).toHaveBeenCalledWith(
-      '[Wework] Runtime task create diagnostic',
-      expect.any(String)
-    )
-    expect(JSON.parse(infoMock.mock.calls[0][1] as string)).toEqual({
-      timestamp: expect.any(String),
-      stage: 'hybrid-create-started',
-      taskId: 'runtime-123',
-      deviceId: 'cloud-device',
+    expect(details).toEqual({
+      originPresent: true,
+      originMarkers: {
+        type: 'board_task',
+        initiatedBy: 'stand_in',
+        dispatchRole: 'empty_string',
+        dispatch_role: 'executor',
+        dispatchId: 'nonempty_string',
+        dispatch_id: 'non_string',
+      },
     })
-  })
-
-  it('does not reject circular diagnostic details', () => {
-    const circular: Record<string, unknown> = {}
-    circular.self = circular
-    expect(() => logRuntimeTaskCreateStage('local-payload-built', circular)).not.toThrow()
-  })
-
-  it('can retain control stages through debug-panel capture', () => {
-    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
-    try {
-      logRuntimeTaskCreateStage('desktop-control-executed', { commandId: 'click-1' }, 'debug')
-      expect(debug).toHaveBeenCalledWith(
-        '[Wework] Runtime task create diagnostic',
-        expect.any(String)
-      )
-      expect(JSON.parse(debug.mock.calls[0][1] as string)).toMatchObject({
-        stage: 'desktop-control-executed',
-        commandId: 'click-1',
-      })
-      expect(infoMock).not.toHaveBeenCalled()
-    } finally {
-      debug.mockRestore()
+    expect(JSON.stringify(details)).not.toContain('private-')
+    for (const missing of [undefined, null, false, [], 'private-token']) {
+      expect(runtimeOriginDiagnostic(missing)).toEqual({ originPresent: false })
     }
   })
 })

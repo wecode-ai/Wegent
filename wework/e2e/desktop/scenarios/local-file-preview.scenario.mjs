@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createWindowsMarkdownFileLinks } from '../modules/windows-markdown-file-links.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
+import { createTextAttachmentPreview } from '../modules/text-attachment-preview.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -91,8 +94,17 @@ async function waitForFileContent(filePath, expectedContent, timeoutMs) {
 }
 
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+  const windowsLinks = createWindowsMarkdownFileLinks({ workspacePath, uiTimeoutMs })
+  const textAttachments = createTextAttachmentPreview({ workspacePath, captureScreenshot })
   return {
+    async handleHttp(request, response, url) {
+      return (
+        (await textAttachments.handleHttp(request, response, url)) ||
+        windowsLinks.handleHttp(request, response, url)
+      )
+    },
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       const fileTabsSelector = '[role="tab"][data-testid^="right-workspace-file-tab"]'
       const breadcrumbDirectory = join(workspacePath, 'breadcrumb-fixture')
       await mkdir(breadcrumbDirectory, { recursive: true })
@@ -123,7 +135,19 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
 
       const readmeSelector = await findTreeItem(control, 'README.md', uiTimeoutMs)
       await control.command('click', readmeSelector)
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      const lineTargetSelector =
+        '[data-testid="workspace-markdown-preview"] [data-source-line="1"][data-source-line-target="true"]'
+      await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
+        text: 'Desktop E2E workspace',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', lineTargetSelector)),
+        0,
+        'Opening a Markdown file without a line target incorrectly highlighted a rendered block'
+      )
+      await control.command('click', '[data-testid="workspace-file-markdown-mode-button"]')
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'Desktop E2E workspace',
         timeoutMs: uiTimeoutMs,
       })
@@ -141,7 +165,9 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'Switching local files replaced the current preview with the full loading page'
       )
       assert.match(
-        switchingSnapshot.text,
+        await control.command('getText', '[data-testid="workspace-file-editor-content"]', {
+          visible: true,
+        }),
         /Desktop E2E workspace/,
         'Switching local files cleared the current preview before the next file loaded'
       )
@@ -149,10 +175,29 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('waitFor', '[data-testid="workspace-file-editor"][data-theme="dark"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'export const authenticated = true',
         timeoutMs: uiTimeoutMs,
       })
+      const keyword = '[data-content] span[style*="--diffs-token-keyword"]'
+      await control.command('waitFor', keyword)
+      assert.equal(
+        await control.command('getComputedStyleValue', keyword, { value: 'color' }),
+        'rgb(187, 154, 247)',
+        'The Pierre editor did not use Tokyo Night syntax colors'
+      )
+      for (const selector of [
+        '[data-testid="workspace-file-editor"]',
+        '[data-testid="workspace-file-preview-code-view"]',
+        '[data-code]',
+      ]) {
+        assert.equal(
+          await control.command('getComputedStyleValue', selector, { value: 'background-color' }),
+          'rgb(26, 27, 38)',
+          `The Pierre surface ${selector} reset the selected theme background`
+        )
+      }
+      await captureScreenshot(control, 'appearance-tokyo-pierre-editor.png', 'body')
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
         join(workspacePath, 'auth.ts').replaceAll('\\', '/'),
@@ -210,10 +255,40 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         0,
         'Writable text files exposed a manual save button instead of autosaving'
       )
-      await control.command('fill', '[data-testid="workspace-file-editor"] .cm-content', {
-        value: 'export const authenticated = false\n',
+      await control.command('fill', '[data-testid="workspace-file-editor-content"]', {
+        value: 'export const authenticated = false',
       })
-      await control.command('nativePress', '[data-testid="workspace-file-editor"] .cm-content', {
+      await waitForFileContent(
+        join(workspacePath, 'auth.ts'),
+        'export const authenticated = false',
+        uiTimeoutMs
+      )
+      await waitForMissing(control, '[data-testid="workspace-file-saving-status"]', uiTimeoutMs)
+      await control.command('nativePress', '[data-testid="workspace-file-editor-content"]', {
+        key: `${primary}+z`,
+      })
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        text: 'export const authenticated = true',
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForFileContent(
+        join(workspacePath, 'auth.ts'),
+        'export const authenticated = true',
+        uiTimeoutMs
+      )
+      await control.command('nativePress', '[data-testid="workspace-file-editor-content"]', {
+        key: `${primary}+Shift+z`,
+      })
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        text: 'export const authenticated = false',
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForFileContent(
+        join(workspacePath, 'auth.ts'),
+        'export const authenticated = false',
+        uiTimeoutMs
+      )
+      await control.command('nativePress', '[data-testid="workspace-file-editor-content"]', {
         key: `${primary}+T`,
       })
       await control.command('waitFor', BROWSER_URL_SELECTOR, { visible: true })
@@ -230,10 +305,11 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         '[data-testid="right-workspace-file-tab"][aria-selected="true"]'
       )
       await control.command('click', `${fileTabsSelector}[title$="auth.ts"]`)
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'export const authenticated = false',
       })
       await waitForMissing(control, '[data-testid="workspace-file-saving-status"]', uiTimeoutMs)
+
       assert.equal(
         Number(
           await control.command('getElementCount', '[data-testid="workspace-file-save-error"]')
@@ -252,7 +328,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       })
       await clickTreeItem(control, 'breadcrumb-fixture', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
       await clickTreeItem(control, 'first.ts', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'export const first = 1',
         timeoutMs: uiTimeoutMs,
       })
@@ -281,7 +357,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await control.command('click', '[data-testid="workspace-file-name-button"]')
       await clickTreeItem(control, 'second.ts', uiTimeoutMs, SIBLINGS_MENU_SELECTOR)
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'export const second = 2',
         timeoutMs: uiTimeoutMs,
       })
@@ -292,7 +368,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await control.command('click', rootBreadcrumb)
       await clickTreeItem(control, 'auth.ts', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'export const authenticated = false',
         timeoutMs: uiTimeoutMs,
       })
@@ -301,8 +377,30 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         4,
         'Selecting an already-open file must reuse its existing tab'
       )
+      const externallyChangedContent =
+        'export const authenticated = false\nexport const externalRevision = 1'
+      await writeFile(join(workspacePath, 'auth.ts'), externallyChangedContent)
+      await control.command('click', rootBreadcrumb)
+      await clickTreeItem(control, 'auth.ts', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        text: 'export const externalRevision = 1',
+        timeoutMs: uiTimeoutMs,
+      })
+      const editedReloadedContent = `${externallyChangedContent}\n// local edit after reload`
+      await control.command('fill', '[data-testid="workspace-file-editor-content"]', {
+        value: editedReloadedContent,
+      })
+      await waitForFileContent(join(workspacePath, 'auth.ts'), editedReloadedContent, uiTimeoutMs)
+      await waitForMissing(control, '[data-testid="workspace-file-saving-status"]', uiTimeoutMs)
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="workspace-file-save-error"]')
+        ),
+        0,
+        'Editing a reloaded file must preserve external content and use its new disk revision'
+      )
       await control.command('click', `${fileTabsSelector}[title$="first.ts"]`)
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'export const first = 1',
         timeoutMs: uiTimeoutMs,
       })
@@ -313,7 +411,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         { timeoutMs: uiTimeoutMs }
       )
       await control.command('click', `${fileTabsSelector}[title$="second.ts"]`)
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'export const second = 2',
         timeoutMs: uiTimeoutMs,
       })
@@ -343,6 +441,8 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         { timeoutMs: uiTimeoutMs }
       )
       await captureScreenshot(control, 'local-file-preview-03-dark-review.png', 'body')
+      await windowsLinks.verify(control)
+      await textAttachments.verify(control)
     },
   }
 }

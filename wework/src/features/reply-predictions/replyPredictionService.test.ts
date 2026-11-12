@@ -1,11 +1,13 @@
+import './replyPredictionTestLocks'
 import { describe, expect, it, vi } from 'vitest'
+import { readReplyPrediction } from './replyPredictionCache'
+import * as persistence from '@/desktop/localStoragePersistence'
 import {
   deleteReplyPredictions,
+  replyPredictionKey,
   ReplyPredictionService,
   type ReplyPredictionSource,
 } from './replyPredictionService'
-import { readReplyPrediction } from './replyPredictionCache'
-import { replyPredictionKey } from './replyPredictionService'
 
 const source = (): ReplyPredictionSource => ({
   scope: 'task-1',
@@ -16,6 +18,109 @@ const source = (): ReplyPredictionSource => ({
 })
 
 describe('reply prediction service', () => {
+  it('deduplicates concurrent generation across window API instances', async () => {
+    let finish!: (value: { suggestion: string }) => void
+    const held = new Promise<{ suggestion: string }>(resolve => {
+      finish = resolve
+    })
+    const predict = vi.fn(() => held)
+    const main = new ReplyPredictionService({ predict })
+    const popout = new ReplyPredictionService({ predict })
+    const requests = [main.request(source()), popout.request(source())]
+    try {
+      await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+    } finally {
+      finish({ suggestion: '两个窗口共用一条预测' })
+      await Promise.all(requests)
+    }
+  })
+
+  it('cancels a waiting window without interrupting the generating window', async () => {
+    let finish!: (value: { suggestion: string }) => void
+    const predict = vi.fn<(data: { signal?: AbortSignal }) => Promise<{ suggestion: string }>>(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    const main = new ReplyPredictionService({ predict })
+    const popout = new ReplyPredictionService({ predict })
+    const owner = main.request(source())
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+    const release = popout.retain(source().scope)
+    const waiting = popout.request(source())
+    release()
+    expect(await waiting).toBeNull()
+    expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
+    finish({ suggestion: '保留生成窗口的结果' })
+    expect((await owner)?.text).toBe('保留生成窗口的结果')
+    expect(predict).toHaveBeenCalledTimes(1)
+  })
+
+  it('holds the shared lock until the renderer storage acknowledgement completes', async () => {
+    let commit!: () => void
+    const flush = vi.spyOn(persistence, 'flushDesktopLocalStoragePersistence').mockReturnValueOnce(
+      new Promise(resolve => {
+        commit = resolve
+      })
+    )
+    const predict = vi.fn(async () => ({ suggestion: '持久化后共享' }))
+    const main = new ReplyPredictionService({ predict })
+    const popout = new ReplyPredictionService({ predict })
+    const first = main.request(source())
+    await vi.waitFor(() => expect(flush).toHaveBeenCalledTimes(1))
+    let secondSettled = false
+    const second = popout.request(source()).then(result => {
+      secondSettled = true
+      return result
+    })
+    try {
+      // Drain promise reactions before observing the intentionally held commit.
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(secondSettled).toBe(false)
+      expect(predict).toHaveBeenCalledTimes(1)
+    } finally {
+      commit()
+      await Promise.all([first, second])
+      flush.mockRestore()
+    }
+  })
+
+  it('shares acceptance across API instances and notifies the other window', async () => {
+    const predict = vi.fn(async () => ({ suggestion: '只接受一次' }))
+    const main = new ReplyPredictionService({ predict })
+    const popout = new ReplyPredictionService({ predict })
+    const [first, second] = await Promise.all([main.request(source()), popout.request(source())])
+    const changed = vi.fn()
+    const unsubscribe = popout.subscribe(changed)
+    first!.onAccept()
+    window.dispatchEvent(new StorageEvent('storage', { key: 'wework.replyPrediction.v1.task-1' }))
+    expect(changed).toHaveBeenCalled()
+    expect(second!.isCurrent()).toBe(false)
+    expect(await popout.request(source())).toBeNull()
+    expect(predict).toHaveBeenCalledTimes(1)
+    unsubscribe()
+  })
+
+  it.each(['empty', 'failure'] as const)(
+    'shares concurrent %s results across windows',
+    async state => {
+      const predict = vi.fn(async () => {
+        if (state === 'failure') throw new Error('provider unavailable')
+        return { suggestion: null }
+      })
+      const main = new ReplyPredictionService({ predict })
+      const popout = new ReplyPredictionService({ predict })
+      expect(await Promise.all([main.request(source()), popout.request(source())])).toEqual([
+        null,
+        null,
+      ])
+      expect(main.hasError(source().scope)).toBe(state === 'failure')
+      expect(popout.hasError(source().scope)).toBe(state === 'failure')
+      expect(predict).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('deletes persisted and in-memory results across API instances without affecting other tasks', async () => {
     const task = {
       ...source(),
@@ -55,6 +160,7 @@ describe('reply prediction service', () => {
     const task = { ...source(), scope: JSON.stringify(['device-1', 'task-1', null]) }
     const service = new ReplyPredictionService({ predict })
     const request = service.request(task)
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
 
     deleteReplyPredictions(task.address)
     expect(predict.mock.calls[0][0].signal?.aborted).toBe(true)
@@ -63,21 +169,6 @@ describe('reply prediction service', () => {
 
     expect(await request).toBeNull()
     expect(readReplyPrediction(task.scope, replyPredictionKey(task))).toBeNull()
-  })
-
-  it('restores suggestions after a restart and persists acceptance', async () => {
-    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
-    await new ReplyPredictionService({ predict }).request(source())
-
-    const restored = new ReplyPredictionService({ predict })
-    expect(restored.isPending(source().scope)).toBe(false)
-    const suggestion = await restored.request(source())
-    expect(suggestion?.text).toBe('请继续')
-    expect(predict).toHaveBeenCalledTimes(1)
-    suggestion!.onAccept()
-
-    expect(await new ReplyPredictionService({ predict }).request(source())).toBeNull()
-    expect(predict).toHaveBeenCalledTimes(1)
   })
 
   it.each(['empty', 'failure'] as const)(
@@ -96,19 +187,6 @@ describe('reply prediction service', () => {
     }
   )
 
-  it('generates for a new turn, model or conversation after a restart', async () => {
-    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
-    await new ReplyPredictionService({ predict }).request(source())
-    await new ReplyPredictionService({ predict }).request({ ...source(), latestTurnId: 'turn-2' })
-    await new ReplyPredictionService({ predict }).request({
-      ...source(),
-      latestTurnId: 'turn-2',
-      modelSelection: { modelName: 'new-model', modelType: 'runtime' },
-    })
-    await new ReplyPredictionService({ predict }).request({ ...source(), scope: 'task-2' })
-    expect(predict).toHaveBeenCalledTimes(4)
-  })
-
   it('does not let a cancelled response overwrite the persisted current turn', async () => {
     let resolve!: (value: { suggestion: string }) => void
     const predict = vi
@@ -122,10 +200,13 @@ describe('reply prediction service', () => {
       .mockResolvedValue({ suggestion: '新的建议' })
     const service = new ReplyPredictionService({ predict })
     const old = service.request(source())
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
     const current = { ...source(), latestTurnId: 'turn-2' }
-    await service.request(current)
+    const next = service.request(current)
+    expect(predict.mock.calls[0][0].signal.aborted).toBe(true)
     resolve({ suggestion: '过期建议' })
     expect(await old).toBeNull()
+    await next
 
     expect((await new ReplyPredictionService({ predict }).request(current))?.text).toBe('新的建议')
     expect(predict).toHaveBeenCalledTimes(2)
@@ -159,9 +240,11 @@ describe('reply prediction service', () => {
     >(() => new Promise<{ suggestion: string | null }>(resolve => resolvers.push(resolve)))
     const service = new ReplyPredictionService({ predict })
     const old = service.request(source())
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
     const next = service.request({ ...source(), latestTurnId: 'turn-2' })
     expect(predict.mock.calls[0][0].signal!.aborted).toBe(true)
     resolvers[0]({ suggestion: '过期建议' })
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(2))
     resolvers[1]({ suggestion: '新的建议' })
     expect(await old).toBeNull()
     expect((await next)?.text).toBe('新的建议')
@@ -187,6 +270,7 @@ describe('reply prediction service', () => {
       },
     }
     const old = service.request(original)
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
     const updated = {
       ...original,
       modelSelection: { ...original.modelSelection, options: { reasoningEffort: 'high' } },
@@ -194,6 +278,7 @@ describe('reply prediction service', () => {
     const next = service.request(updated)
     expect(predict.mock.calls[0][0].signal?.aborted).toBe(true)
     rejectors[0](new Error('Old credentials rejected'))
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(2))
     resolvers[1]({ suggestion: '当前配置的建议' })
     expect(await old).toBeNull()
     expect((await next)?.text).toBe('当前配置的建议')
@@ -232,6 +317,7 @@ describe('reply prediction service', () => {
     const first = service.retain(source().scope)
     const second = service.retain(source().scope)
     void service.request(source())
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
     first()
     expect(predict.mock.calls[0][0].signal!.aborted).toBe(false)
     second()

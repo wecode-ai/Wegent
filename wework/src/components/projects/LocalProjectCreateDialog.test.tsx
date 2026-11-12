@@ -1,7 +1,7 @@
+import '@/i18n'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
-import '@/i18n'
 import { LocalProjectCreateDialog } from './LocalProjectCreateDialog'
 
 const pickerMocks = vi.hoisted(() => ({ open: vi.fn() }))

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::symlink;
 
 struct Fixture {
     binary: String,
@@ -15,33 +15,10 @@ impl Fixture {
         let environment = LaunchEnvironment::new();
         let directory = tempfile::tempdir().unwrap();
         let binary = directory.path().join("codex");
-        fs::write(
-            &binary,
-            r#"#!/bin/sh
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$CODEX_HOME/requests.jsonl"
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
-    *'"method":"skills/config/write"'*)
-      printf '%s\n' written > "$CODEX_HOME/skill-written"
-      printf '{"id":%s,"result":{"effectiveEnabled":false}}\n' "$id" ;;
-    *'"method":"config/batchWrite"'*)
-      mode=success
-      if [ -f "$CODEX_HOME/reload-mode" ]; then
-        IFS= read -r mode < "$CODEX_HOME/reload-mode"
-      fi
-      case "$mode" in
-        failure) printf '{"id":%s,"error":{"code":-32603,"message":"skill reload rejected"}}\n' "$id" ;;
-        blocked) ;;
-        *) printf '{"id":%s,"result":{"status":"ok"}}\n' "$id" ;;
-      esac ;;
-  esac
-done
-"#,
-        )
-        .unwrap();
-        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        // A parallel fork can retain a freshly written script's writer and cause ETXTBSY.
+        let script =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex-skill-config.sh");
+        symlink(script, &binary).unwrap();
         Self {
             binary: resolve_codex_binary(&binary.to_string_lossy()),
             directory,
@@ -96,6 +73,25 @@ async fn pid(client: &CodexAppServerClient) -> u32 {
         .child
         .id()
         .unwrap()
+}
+
+#[tokio::test]
+async fn existing_requests_preserve_the_process_until_the_next_startup() {
+    let fixture = Fixture::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    let client = fixture.client("existing-request");
+    client.ensure_started().await.unwrap();
+    let original_pid = pid(&client).await;
+    client.state.lock().await.process_environment.insert(
+        "WEGENT_CAPABILITY_REVISION".to_owned(),
+        "stale-revision".to_owned(),
+    );
+
+    client.reload_user_skills().await.unwrap();
+
+    assert_eq!(pid(&client).await, original_pid);
+    client.ensure_started().await.unwrap();
+    assert_ne!(pid(&client).await, original_pid);
 }
 
 #[tokio::test]
@@ -222,4 +218,96 @@ async fn reload_only_visits_running_processes_in_the_matching_home() {
     );
     assert!(cold.state.lock().await.process.is_none());
     assert!(requests(cold.home.as_deref().unwrap()).is_empty());
+}
+
+#[tokio::test]
+async fn default_clients_keep_the_home_recorded_at_process_start() {
+    let fixture = Fixture::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    let previous = CodexAppServerClient::new(&fixture.binary);
+    previous.ensure_started().await.unwrap();
+    let previous_home = wework_codex_home();
+    let previous_pid = pid(&previous).await;
+    let _restore = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let home = fixture.directory.path().join("new-default-home");
+    env::set_var(WEGENT_CODEX_HOME_ENV, &home);
+    let binary = fixture.directory.path().join("new-codex");
+    fs::copy(&fixture.binary, &binary).unwrap();
+    let current = CodexAppServerClient::new(binary.to_string_lossy().to_string());
+    current.ensure_started().await.unwrap();
+    let current_pid = pid(&current).await;
+
+    assert_eq!(reload_skill_configuration(&home).await.unwrap(), 1);
+
+    assert_eq!(pid(&previous).await, previous_pid);
+    assert_eq!(pid(&current).await, current_pid);
+    assert!(!requests(&previous_home)
+        .iter()
+        .any(|call| call["method"] == "config/batchWrite"));
+    assert_eq!(
+        requests(&home)
+            .iter()
+            .filter(|call| call["method"] == "config/batchWrite")
+            .count(),
+        1
+    );
+    current.restart().await;
+}
+
+#[tokio::test]
+async fn cancelled_reload_cleans_only_its_own_pending_request_under_contention() {
+    let fixture = Fixture::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    let client = fixture.client("pending-cleanup");
+    client.ensure_started().await.unwrap();
+    let home = client.home.as_deref().unwrap();
+    fs::write(home.join("reload-mode"), "blocked\n").unwrap();
+    let other = client
+        .start_existing_request("thread/list", json!({}))
+        .await
+        .unwrap();
+    let mut reload = Box::pin(client.reload_user_skills());
+    tokio::select! {
+        result = &mut reload => panic!("Blocked reload completed: {result:?}"),
+        result = timeout(Duration::from_secs(5), async {
+            while !requests(home).iter().any(|call| call["method"] == "config/batchWrite") {
+                tokio::task::yield_now().await;
+            }
+        }) => result.unwrap(),
+    }
+    let pending = client
+        .state
+        .lock()
+        .await
+        .process
+        .as_ref()
+        .unwrap()
+        .pending
+        .clone();
+    let locked = pending.lock().await;
+    assert_eq!(locked.len(), 2);
+    drop(reload);
+    drop(locked);
+    timeout(Duration::from_secs(5), async {
+        while pending.lock().await.len() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Cancelled reload retained its pending request");
+    let other_id = requests(home)
+        .iter()
+        .find(|call| call["method"] == "thread/list")
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    pending
+        .lock()
+        .await
+        .remove(&other_id)
+        .expect("Unrelated request was removed")
+        .sender
+        .send(Ok(json!({"data":[]})))
+        .unwrap();
+    assert_eq!(other.await.unwrap().unwrap(), json!({"data":[]}));
 }

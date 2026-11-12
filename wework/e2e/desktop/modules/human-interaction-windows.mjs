@@ -32,10 +32,10 @@ export async function verifyHumanInteractionAcrossWindows({
   await detached.command('waitFor', page, { text: question })
   await detached.command(
     'waitFor',
-    `${page} [data-testid="interaction-reply-input"]:not(:disabled)`,
+    `${page} [data-testid="request-user-input-custom-question_1"]:not(:disabled)`,
     { visible: true }
   )
-  await detached.command('fill', `${page} [data-testid="interaction-reply-input"]`, {
+  await detached.command('fill', `${page} [data-testid="request-user-input-custom-question_1"]`, {
     value: answer,
   })
   const main = { command: (...args) => control.commandForWindow('main', ...args) }
@@ -53,19 +53,23 @@ export async function verifyHumanInteractionAcrossWindows({
     holdFollowing: true,
   })
   try {
-    await main.command('click', `${page} [data-testid="interaction-reply-send"]`)
+    await main.command('click', `${page} [data-testid="request-user-input-submit-button"]`)
     await gates.wait('human-window-revalidation')
     const first = JSON.parse(await main.command('getWebLocksSnapshot', 'body'))
     const requestLock = first.held.find(lock => lock.name.includes(':history:'))
     assert.ok(requestLock, 'The first renderer must hold the request lock during revalidation')
-    await detached.command('click', `${page} [data-testid="interaction-reply-send"]`)
-    await detached.command('waitFor', `${page} [data-testid="interaction-reply-send"]:disabled`)
+    await detached.command('click', `${page} [data-testid="request-user-input-submit-button"]`)
+    await detached.command(
+      'waitFor',
+      `${page} [data-testid="request-user-input-submit-button"]:disabled`
+    )
     const second = JSON.parse(await detached.command('getWebLocksSnapshot', 'body'))
     assert.ok(
       second.pending.some(lock => lock.name === requestLock.name),
       'The second renderer must wait on the same real browser lock'
     )
     assert.equal(second.held.filter(lock => lock.name === requestLock.name).length, 1)
+    await detached.command('waitFor', `${page} [data-testid="runtime-input-submitting"]`)
     await captureScreenshot(detached, '06b-second-window-waits-for-owner.png')
   } finally {
     await gates.reset()

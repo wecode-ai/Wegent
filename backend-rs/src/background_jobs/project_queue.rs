@@ -5,12 +5,14 @@
 //! Runtime V2 intent. Runtime remains the owner of claims and termination.
 
 use super::{authority, profile, routing, store::Node};
+use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
 use anyhow::{Context, Result, bail};
 use brz_mysql::{FromMysqlRow, MysqlResult, MysqlTransaction};
 use chrono::Utc;
 use serde_json::{Value, json};
 
+#[derive(Clone)]
 pub(crate) struct Admission {
     pub owner: i64,
     pub assigner: i64,
@@ -25,6 +27,7 @@ pub(crate) struct Admission {
     pub waiting_runtime: bool,
 }
 pub(crate) struct Execution {
+    pub runtime_task_id: String,
     pub id: i64,
     pub status: String,
     pub device_id: String,
@@ -37,10 +40,18 @@ struct Previous {
 }
 
 pub(crate) async fn prepare(state: &AppState, issue: &Node, input: &mut Admission) -> Result<()> {
-    authority::require(state, &issue.cloud_project_id, input.assigner).await?;
+    prepare_on(&mut &state.mysql, issue, input).await
+}
+
+pub(crate) async fn prepare_on(
+    query: &mut impl PluginQuery,
+    issue: &Node,
+    input: &mut Admission,
+) -> Result<()> {
+    authority::require_on(query, &issue.cloud_project_id, input.assigner).await?;
     if !input.agent_id.is_empty() {
-        authority::agent(
-            state,
+        authority::agent_on(
+            query,
             &issue.cloud_project_id,
             &input.agent_id,
             input.assigner,
@@ -49,29 +60,23 @@ pub(crate) async fn prepare(state: &AppState, issue: &Node, input: &mut Admissio
         .await?;
     }
     if input.team_id != 0 {
-        authority::team(state, &issue.cloud_project_id, input.team_id).await?;
+        authority::team_on(query, &issue.cloud_project_id, input.team_id).await?;
     }
     if !input.device_id.is_empty() {
-        let device = crate::device_identity::resolve_owned_device_alias(
-            &state.mysql,
+        let device = crate::device_identity::resolve_owned_device_alias_on(
+            query,
             input.owner,
             &input.device_id,
         )
         .await?
         .context("Execution device is unavailable")?;
-        if !routing::allowed_devices(state, &issue.cloud_project_id, &input.agent_id)
+        if !routing::allowed_devices_on(query, &issue.cloud_project_id, &input.agent_id)
             .await?
             .contains(&device.id)
         {
             bail!("Execution authorization is revoked or unavailable")
         }
-        if let Some(identity) = crate::device_identity::resolve_runtime_route_identity(
-            &state.mysql,
-            input.owner,
-            &input.device_id,
-        )
-        .await?
-        {
+        if let Some(identity) = crate::device_identity::identity_from_device(&device) {
             input.device_id = identity.runtime_device_id;
         }
     }
@@ -100,6 +105,37 @@ pub(crate) async fn enqueue_on(
             }
         )
     };
+    let execution = enqueue_intent_on(tx, issue, Some(&run.id), &scope, input).await?;
+    if !input.waiting_runtime
+        && input.team_id == 0
+        && !input.device_id.is_empty()
+        && input.runtime_selection["executor_kind"] != "collaboration_group_dispatch"
+    {
+        let request = profile::build(state, issue, execution.id, input)
+            .await
+            .map_err(|error| brz_mysql::MysqlError::InvalidQuery {
+                reason: error.to_string(),
+            })?;
+        validate_non_secret_plugins(&request["projectPlugins"]).map_err(|error| {
+            brz_mysql::MysqlError::InvalidQuery {
+                reason: error.to_string(),
+            }
+        })?;
+        let mut payload = json!({"schema_version":2,"runtime_selection":input.runtime_selection,"origin_context":input.context});
+        payload["runtime_request"] = request;
+        tx.execute("UPDATE loop_item_executions SET execution_payload=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(payload.to_string(),execution.id)).await?;
+    }
+    tx.execute("UPDATE loop_items SET status=?,device_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='automation_run'",(if input.waiting_runtime{"waiting_device"}else if input.requires_approval{"pending"}else{"queued"},input.device_id.as_str(),run.id.as_str())).await?;
+    Ok(execution)
+}
+
+pub(crate) async fn enqueue_intent_on(
+    tx: &mut impl MysqlTransaction,
+    issue: &Node,
+    automation_run_id: Option<&str>,
+    scope: &str,
+    input: &Admission,
+) -> MysqlResult<Execution> {
     let status = if input.waiting_runtime {
         "waiting_runtime"
     } else if input.requires_approval {
@@ -108,7 +144,7 @@ pub(crate) async fn enqueue_on(
         "queued"
     };
     let payload = json!({"schema_version":2,"runtime_selection":input.runtime_selection,"origin_context":input.context});
-    let previous:Option<Previous>=tx.fetch_optional("SELECT id,attempt_no FROM loop_item_executions WHERE execution_scope=? ORDER BY id DESC LIMIT 1 FOR UPDATE",(scope.as_str(),)).await?;
+    let previous:Option<Previous>=tx.fetch_optional("SELECT id,attempt_no FROM loop_item_executions WHERE execution_scope=? ORDER BY id DESC LIMIT 1 FOR UPDATE",(scope,)).await?;
     let attempt = previous
         .as_ref()
         .map_or(1, |previous| previous.attempt_no + 1);
@@ -125,7 +161,7 @@ pub(crate) async fn enqueue_on(
         crate::sql_support::StatementArg::Int(input.owner),
         crate::sql_support::StatementArg::Str(input.agent_id.clone()),
         crate::sql_support::StatementArg::Int(input.team_id),
-        crate::sql_support::StatementArg::Str(run.id.clone()),
+        crate::sql_support::StatementArg::Str(automation_run_id.unwrap_or_default().to_owned()),
         crate::sql_support::StatementArg::Str(input.environment.clone()),
         crate::sql_support::StatementArg::Str(input.device_id.clone()),
         crate::sql_support::StatementArg::Int(input.assigner),
@@ -134,7 +170,7 @@ pub(crate) async fn enqueue_on(
         crate::sql_support::StatementArg::DateTime(now),
         crate::sql_support::StatementArg::Int(attempt),
         crate::sql_support::StatementArg::Int(previous_id),
-        crate::sql_support::StatementArg::Str(scope.clone()),
+        crate::sql_support::StatementArg::Str(scope.to_owned()),
         crate::sql_support::StatementArg::Str(note.into()),
         crate::sql_support::StatementArg::Str(
             if input.requires_approval {
@@ -155,30 +191,11 @@ pub(crate) async fn enqueue_on(
         .unwrap_or_else(|| format!("codex-queue-{id}"));
     tx.execute(
         "UPDATE loop_item_executions SET runtime_task_id=? WHERE id=?",
-        (runtime_task_id, id),
+        (runtime_task_id.as_str(), id),
     )
     .await?;
-    if !input.waiting_runtime
-        && input.team_id == 0
-        && !input.device_id.is_empty()
-        && input.runtime_selection["executor_kind"] != "collaboration_group_dispatch"
-    {
-        let request = profile::build(state, issue, id, input)
-            .await
-            .map_err(|error| brz_mysql::MysqlError::InvalidQuery {
-                reason: error.to_string(),
-            })?;
-        validate_non_secret_plugins(&request["projectPlugins"]).map_err(|error| {
-            brz_mysql::MysqlError::InvalidQuery {
-                reason: error.to_string(),
-            }
-        })?;
-        let mut payload = payload.clone();
-        payload["runtime_request"] = request;
-        tx.execute("UPDATE loop_item_executions SET execution_payload=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(payload.to_string(),id)).await?;
-    }
-    tx.execute("UPDATE loop_items SET status=?,device_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='automation_run'",(if input.waiting_runtime{"waiting_device"}else if input.requires_approval{"pending"}else{"queued"},input.device_id.as_str(),run.id.as_str())).await?;
     Ok(Execution {
+        runtime_task_id,
         id,
         status: status.into(),
         device_id: input.device_id.clone(),
@@ -195,7 +212,7 @@ fn priority(value: &str) -> i64 {
     }
 }
 
-fn validate_non_secret_plugins(plugins: &Value) -> Result<()> {
+pub(crate) fn validate_non_secret_plugins(plugins: &Value) -> Result<()> {
     if plugins.is_null() {
         return Ok(());
     }

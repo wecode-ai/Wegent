@@ -136,6 +136,29 @@ impl DeviceType {
     }
 }
 
+/// Source `app/services/device/identity.py::device_kind_type`.
+pub(crate) fn is_app_device(device: &DeviceKindRow) -> bool {
+    DeviceType::from_spec(&device.spec()) == DeviceType::App
+}
+
+/// `device_connection_route_id`: the transport identity used by the device's
+/// heartbeat connection (`app/services/device/identity.py:57`).
+pub(crate) fn device_connection_route_id(device: &DeviceKindRow) -> String {
+    if DeviceType::from_spec(&device.spec()) == DeviceType::Cloud {
+        let spec = device.spec();
+        let cloud = spec
+            .cloud_config
+            .as_ref()
+            .and_then(|config| config.device_id.clone());
+        return spec
+            .device_id
+            .filter(|value| !value.is_empty())
+            .or_else(|| cloud.filter(|value| !value.is_empty()))
+            .unwrap_or_else(|| device.name.clone());
+    }
+    record_route_id(device)
+}
+
 /// Source `app/services/device/identity.py::record_route_id`.
 pub(crate) fn record_route_id(device: &DeviceKindRow) -> String {
     if DeviceType::from_spec(&device.spec()) == DeviceType::App {
@@ -146,7 +169,7 @@ pub(crate) fn record_route_id(device: &DeviceKindRow) -> String {
 }
 
 /// Source `app/services/device/identity.py::device_identity_ids`.
-fn device_identity_ids(device: &DeviceKindRow) -> Vec<String> {
+pub(crate) fn device_identity_ids(device: &DeviceKindRow) -> Vec<String> {
     let spec = device.spec();
     let mut candidates: Vec<String> = Vec::new();
     let route = record_route_id(device);
@@ -173,7 +196,7 @@ fn device_identity_ids(device: &DeviceKindRow) -> Vec<String> {
 }
 
 /// Resolve aliases inside the already owner-scoped set of active devices.
-fn resolve_device_alias<'a>(
+pub(crate) fn resolve_device_alias<'a>(
     devices: &'a [DeviceKindRow],
     device_id: &str,
 ) -> Option<&'a DeviceKindRow> {
@@ -259,7 +282,10 @@ where
     Ok(unambiguous_device_identity_ids(&devices, device_id))
 }
 
-fn unambiguous_device_identity_ids(devices: &[DeviceKindRow], device_id: &str) -> Vec<String> {
+pub(crate) fn unambiguous_device_identity_ids(
+    devices: &[DeviceKindRow],
+    device_id: &str,
+) -> Vec<String> {
     let mut aliases = vec![device_id.to_owned()];
     let Some(device) = resolve_device_alias(devices, device_id) else {
         return aliases;
@@ -480,8 +506,7 @@ where
 
 /// Full `plugin_device_installations` row used by `reconcile_plugin_device_rows`
 /// (`app/models/plugin_marketplace.py::PluginDeviceInstallation`). The aliases
-/// mirror SQLAlchemy's `db.query(...).with_for_update()` projection so the
-/// prepared statement matches the recorded `FOR UPDATE` exchange.
+/// mirror SQLAlchemy's mapped-column projection.
 #[derive(Debug, Clone, FromMysqlRow)]
 pub struct PluginDeviceInstallationRow {
     #[mysql(rename = "plugin_device_installations_id")]
@@ -544,8 +569,10 @@ impl ReconcileRow for PluginDeviceInstallationRow {
     }
 }
 
-/// `db.query(PluginDeviceInstallation).filter(user_id=...).with_for_update()`:
-/// every mapped column with its SQLAlchemy alias.
+/// `db.query(PluginDeviceInstallation).filter(user_id=...).all()`: every
+/// mapped column with its SQLAlchemy alias. The source does not lock these
+/// rows; `reconcile_plugin_device_rows` serializes writers with the account
+/// lease instead.
 const RECONCILE_SELECT_QUERY: &str = "SELECT plugin_device_installations.id AS plugin_device_installations_id, \
      plugin_device_installations.installed_kind_id AS plugin_device_installations_installed_kind_id, \
      plugin_device_installations.user_id AS plugin_device_installations_user_id, \
@@ -559,7 +586,7 @@ const RECONCILE_SELECT_QUERY: &str = "SELECT plugin_device_installations.id AS p
      plugin_device_installations.last_sync_at AS plugin_device_installations_last_sync_at, \
      plugin_device_installations.updated_at AS plugin_device_installations_updated_at \
      FROM plugin_device_installations \
-     WHERE plugin_device_installations.user_id = ? FOR UPDATE";
+     WHERE plugin_device_installations.user_id = ?";
 
 /// `db.delete(row)`: SQLAlchemy deletes by primary key.
 const DELETE_ROW_QUERY: &str =
@@ -571,15 +598,15 @@ const UPDATE_DEVICE_ID_QUERY: &str =
 
 /// Source `app/services/plugin_device_identity.py::reconcile_plugin_device_rows`.
 ///
-/// Converges legacy alias rows within the caller's write transaction. It locks
-/// the user's rows `FOR UPDATE`, coalesces them to one row per
+/// Converges legacy alias rows within the caller's write transaction. It reads
+/// the user's rows, coalesces them to one row per
 /// `(installed_kind_id, canonical device)`, deletes the superseded alias rows,
 /// then rewrites each retained row's `device_id` to its canonical id. Identity
 /// reads go through the pooled handle (`mysql`) because
 /// `coalesce_plugin_device_rows` resolves `plugin_device_id` per unique
 /// `(user_id, device_id)` pair, exactly like the source.
 ///
-/// Returns the retained rows in `FOR UPDATE` load order. The source session's
+/// Returns the retained rows in primary-key load order. The source session's
 /// identity map keeps exactly these rows in that order, and a later
 /// `db.commit()` flush (e.g. `ensure_pending_for_device`'s pending UPDATEs)
 /// emits its UPDATE statements in this order, not in the caller's iteration
@@ -598,17 +625,24 @@ where
         .fetch_all(RECONCILE_SELECT_QUERY, (user_id,))
         .await?;
     let selected = coalesce_plugin_device_rows(mysql, rows.clone()).await?;
-    converge_plugin_device_rows(&mut transaction, rows, &selected).await
+    converge_plugin_device_rows(&mut transaction, rows, &selected, None).await
 }
 
 /// `reconcile_plugin_device_rows` on one borrowed session handle.
 ///
-/// The source locks, resolves, and rewrites the rows inside one request
-/// session; callers that already own that session's transaction pass it here
+/// The source resolves and rewrites the rows inside one request session;
+/// callers that already own that session's transaction pass it here
 /// so the identity reads stay on the pinned connection.
+pub(crate) trait LeaseCheck: Sync {
+    fn check<'a>(
+        &'a self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = MysqlResult<()>> + Send + 'a>>;
+}
+
 pub(crate) async fn reconcile_plugin_device_rows_on<Q, R>(
     query: &mut Q,
     user_id: i64,
+    guard: Option<&dyn LeaseCheck>,
 ) -> MysqlResult<Vec<R>>
 where
     Q: PluginQuery,
@@ -616,15 +650,16 @@ where
 {
     let rows: Vec<R> = query.fetch_all(RECONCILE_SELECT_QUERY, (user_id,)).await?;
     let selected = coalesce_plugin_device_rows_on(query, rows.clone()).await?;
-    converge_plugin_device_rows(query, rows, &selected).await
+    converge_plugin_device_rows(query, rows, &selected, guard).await
 }
 
 /// Delete the superseded alias rows and rewrite each retained row's
-/// `device_id`, then return the retained rows in `FOR UPDATE` load order.
+/// `device_id`, then return the retained rows in primary-key load order.
 async fn converge_plugin_device_rows<Q, R>(
     query: &mut Q,
     rows: Vec<R>,
     selected: &[((i64, String), R)],
+    guard: Option<&dyn LeaseCheck>,
 ) -> MysqlResult<Vec<R>>
 where
     Q: PluginQuery,
@@ -632,10 +667,23 @@ where
 {
     let retained: std::collections::HashSet<i64> =
         selected.iter().map(|(_, row)| row.id()).collect();
+    // First flush boundary: the alias DELETE batch.
+    if let Some(guard) = guard
+        && rows.iter().any(|row| !retained.contains(&row.id()))
+    {
+        guard.check().await?;
+    }
     for row in &rows {
         if !retained.contains(&row.id()) {
             query.execute(DELETE_ROW_QUERY, (row.id(),)).await?;
         }
+    }
+    // Second flush boundary: the canonical `device_id` assignment, which marks
+    // every selected row dirty even when the value does not change.
+    if let Some(guard) = guard
+        && !selected.is_empty()
+    {
+        guard.check().await?;
     }
     for ((_, canonical_id), row) in selected {
         if row.device_id() != canonical_id {
@@ -645,7 +693,7 @@ where
         }
     }
     // Identity-map order after the deletes and rewrites: the retained rows in
-    // `FOR UPDATE` load order (primary key ascending).
+    // primary-key load order.
     Ok(rows
         .into_iter()
         .filter(|row| retained.contains(&row.id()))
@@ -655,6 +703,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brz_mysql::MysqlError;
 
     #[test]
     fn record_id_from_route_matches_source() {
@@ -848,5 +897,72 @@ mod tests {
             json: serde_json::json!({"spec": {"deviceType": "local"}}),
         };
         assert!(identity_from_device(&unroutable).is_none());
+    }
+
+    fn installation_row(id: i64, device_id: &str) -> PluginDeviceInstallationRow {
+        PluginDeviceInstallationRow {
+            id,
+            installed_kind_id: 9,
+            user_id: 3,
+            device_id: device_id.to_string(),
+            desired_release_id: 4,
+            actual_release_id: 0,
+            state: "pending".into(),
+            error_code: String::new(),
+            error_message: String::new(),
+            attempt_count: 0,
+            last_sync_at: NaiveDateTime::default(),
+            updated_at: NaiveDateTime::default(),
+        }
+    }
+
+    struct SecondCheckFails {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl LeaseCheck for SecondCheckFails {
+        fn check<'a>(
+            &'a self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = MysqlResult<()>> + Send + 'a>>
+        {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            Box::pin(async move {
+                if call >= 2 {
+                    Err(MysqlError::InvalidQuery {
+                        reason: "plugin_write_lease_lost".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    /// The alias DELETE runs under the first guard; the canonical `device_id`
+    /// assignment is not executed when the second guard rejects.
+    #[tokio::test]
+    async fn a_rejected_post_delete_guard_skips_the_canonical_update() {
+        // The retained row still carries a legacy alias, so a successful run
+        // must issue the canonical UPDATE.
+        let retained = installation_row(1, "retained-legacy");
+        let alias = installation_row(2, "legacy-alias");
+        let rows = vec![retained.clone(), alias];
+        let selected = vec![((1_i64, "canonical".to_string()), retained)];
+        let guard = SecondCheckFails {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        let mut session = &capture;
+        let error = converge_plugin_device_rows(&mut session, rows, &selected, Some(&guard))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, MysqlError::InvalidQuery { .. }));
+        let writes = capture.writes();
+        assert_eq!(writes.len(), 1, "only the DELETE ran");
+        assert!(
+            writes[0]
+                .sql
+                .starts_with("DELETE FROM plugin_device_installations")
+        );
     }
 }

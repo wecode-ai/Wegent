@@ -234,7 +234,11 @@ pub(super) async fn create(
         continuation,
         team_id: data.team.id,
         bot_ids: bots,
+        create_assistant: true,
+        model_override_type: None,
+        model_options: None,
         input_text: &data.execution.prompt,
+        additional_skills: &[],
         crd: TaskCrdInput {
             task_id: 0,
             team_name: &data.team.name,
@@ -270,9 +274,20 @@ pub(super) async fn create(
         updated_at: &now,
         completed_at: "1970-01-01 00:00:00",
     };
-    let setup = session::setup_chat_session(app.task_store.as_ref(), &mut setup_sql, &input)
-        .await
-        .map_err(|e| anyhow::anyhow!("Subscription task creation failed: {e:?}"))?;
+    // The Source's `SessionLocal` runs the whole session setup in one
+    // transaction and commits it when setup returns; `brz-mysql` owns the
+    // savepoints, so that transaction is explicit here.
+    let setup = crate::transaction_outcome::run(
+        &app.mysql,
+        async |transaction| {
+            session::setup_chat_session(app.task_store.as_ref(), transaction, &input)
+                .await
+                .map(crate::transaction_outcome::Completion::Commit)
+        },
+        crate::http_compat::FastApiError::internal,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Subscription task creation failed: {e:?}"))?;
     let tables = app.task_store.table_templates();
     let mysql = app
         .mysql
@@ -326,6 +341,8 @@ pub(super) async fn pending_session(
         user_subtask_id: user.get_at(0)?,
         assistant_subtask_id: assistant.get_at(0)?,
         assistant_message_id: assistant.get_at(1)?,
+        // The assistant row's parent is the user subtask's message id.
+        user_message_id: parent,
         assistant_executor_name: assistant.get_at(3)?,
         assistant_executor_namespace: assistant.get_at(4)?,
         // The projection does not read `executor_deleted_at`; the follow-up

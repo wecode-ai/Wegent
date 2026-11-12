@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { fetchLocalRuntime } from './runtime-request.mjs'
 
 export const testId = value => `[data-testid="${value}"]`
 
@@ -58,6 +59,7 @@ export async function pathExists(path) {
 
 export async function openPlugin(control, fixture) {
   await control.command('click', testId('plugins-button'))
+  await control.command('clickIfPresent', testId('plugin-detail-back-button'))
   await control.command('waitFor', testId('plugins-search-input'))
   await control.command('click', testId('plugins-distribution-tab-all'))
   await control.command('fill', testId('plugins-search-input'), { value: fixture.slug })
@@ -80,8 +82,53 @@ export async function assertInstallButton(control, fixture, timeoutMs = 10_000) 
   assert.match(label.trim(), /^(Install|安装)$/)
 }
 
-export async function inventory(control) {
-  return JSON.parse(await control.command('getComposerPluginInventoryDiagnostics', 'body'))
+export async function inventory(control, timeoutMs) {
+  return JSON.parse(
+    await control.command('getComposerPluginInventoryDiagnostics', 'body', { timeoutMs })
+  )
+}
+
+export async function completedApiResourceTimings(control, path) {
+  assert.ok(path.startsWith('/api/') && !/[?#]/.test(path), 'Expected an API pathname')
+  const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  assert.ok(Number.isFinite(snapshot.timeOrigin), 'Missing renderer performance time origin')
+  return snapshot.network
+    .filter(
+      resource =>
+        ['fetch', 'xmlhttprequest'].includes(resource.initiatorType) && resource.path === path
+    )
+    .map(resource => {
+      const marker = resource.serverTiming?.find(timing => timing.name === 'wework-e2e-response')
+      return {
+        path,
+        startedAt: snapshot.timeOrigin + resource.startTime,
+        completedAt: snapshot.timeOrigin + resource.startTime + resource.duration,
+        durationMs: resource.duration,
+        ...(marker ? { responseTimingId: marker.description } : {}),
+      }
+    })
+}
+
+export async function requestPluginExecutor(control, method, params = {}) {
+  const origin = await control.command('getLocationOrigin', 'body')
+  const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'plugin-regression', method, params }),
+    timeoutMs: 10_000,
+  })
+  return { status: response.status, payload: await response.json() }
+}
+
+export async function openComposerPluginPicker(control) {
+  const button = testId('composer-plugin-picker-button')
+  await control.command('waitFor', button, { visible: true, enabled: true, stableMs: 250 })
+  const expanded = await control.command('getAttribute', button, {
+    value: 'aria-expanded',
+    visible: true,
+  })
+  if (expanded !== 'true') await control.command('click', button, { visible: true })
+  await control.command('waitFor', testId('composer-plugin-picker'), { visible: true })
 }
 
 export async function assertInventory(control, slug, present, timeoutMs = 10_000) {
@@ -89,7 +136,7 @@ export async function assertInventory(control, slug, present, timeoutMs = 10_000
   try {
     await until(
       async () => {
-        lastState = await inventory(control)
+        lastState = await inventory(control, timeoutMs)
         return lastState
       },
       state =>
@@ -127,23 +174,24 @@ export async function assertSurfaces(control, fixture, present, timeoutMs = 10_0
     'Manager disagrees with account membership'
   )
   await control.command('click', testId('new-chat-button'))
-  await control.command('click', testId('composer-plugin-picker-button'))
-  await control.command('waitFor', testId('composer-plugin-picker'))
+  await openComposerPluginPicker(control)
   await control.command('fill', testId('composer-plugin-picker-search'), { value: fixture.slug })
   const picker = JSON.parse(await control.command('snapshot', testId('composer-plugin-picker')))
   assert.equal(
     picker.testIds.includes(`composer-plugin-picker-item-plugin:${fixture.slug}`),
     present
   )
-  await control.command('click', testId('composer-plugin-picker-button'))
+  await control.command('click', testId('composer-plugin-picker-button'), { visible: true })
 }
 
-export async function installFixture(cloud, control, slug, deviceId, timeoutMs) {
-  const release = await cloud.publishPluginRelease({
-    slug,
-    version: '1.0.0',
-    skills: { [slug]: `Use ${slug} for desktop regression verification` },
-  })
+export async function installFixture(cloud, control, slug, deviceId, timeoutMs, providedRelease) {
+  const release =
+    providedRelease ??
+    (await cloud.publishPluginRelease({
+      slug,
+      version: '1.0.0',
+      skills: { [slug]: `Use ${slug} for desktop regression verification` },
+    }))
   await pluginApi(
     cloud,
     `/plugins/marketplace/${release.pluginId}/install?device_id=${encodeURIComponent(deviceId)}`,
@@ -153,21 +201,20 @@ export async function installFixture(cloud, control, slug, deviceId, timeoutMs) 
   assert.ok(installed, 'Real install did not create account membership')
   const fixture = { ...release, slug, installedId: Number(installed.metadata.labels.id) }
   await openPlugin(control, fixture)
-  await control.command('click', testId('plugins-refresh-button'))
+  await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
   await control.command('waitFor', testId(`plugin-marketplace-actions-${fixture.pluginId}`), {
     timeoutMs,
   })
   // Composer plugin catalogs load on demand. Exercise the real picker path
   // before asserting that the installed plugin reached the composer projection.
   await control.command('click', testId('new-chat-button'))
-  await control.command('click', testId('composer-plugin-picker-button'))
-  await control.command('waitFor', testId('composer-plugin-picker'), { timeoutMs })
+  await openComposerPluginPicker(control)
   await until(
     () => inventory(control),
     state => state.composerApps.some(item => item.pluginKey === slug),
     'Installed fixture is missing from composer',
     timeoutMs
   )
-  await control.command('click', testId('composer-plugin-picker-button'))
+  await control.command('click', testId('composer-plugin-picker-button'), { visible: true })
   return fixture
 }

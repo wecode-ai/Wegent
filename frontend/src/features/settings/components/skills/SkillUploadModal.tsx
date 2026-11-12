@@ -76,6 +76,9 @@ interface SkillUploadModalProps {
   isPublic?: boolean // Whether this is for public skill management (admin)
   createTarget?: ResourceCreateTarget
   writableGroups?: Group[]
+  writableGroupsError?: Error | null
+  writableGroupsLoading?: boolean
+  onRetryWritableGroups?: () => void
   publishAfterCreate?: boolean
   onCreateOptionsChange?: (
     target: ResourceCreateTarget,
@@ -130,6 +133,9 @@ export default function SkillUploadModal({
   isPublic = false,
   createTarget = { scope: 'personal' },
   writableGroups = [],
+  writableGroupsError = null,
+  writableGroupsLoading = false,
+  onRetryWritableGroups,
   publishAfterCreate = false,
   onCreateOptionsChange,
 }: SkillUploadModalProps) {
@@ -319,6 +325,10 @@ export default function SkillUploadModal({
       setError(t('resource-library:states.select_groups'))
       return
     }
+    if (!isEditMode && publishTarget === 'team' && writableGroupsError) {
+      setError(t('resource-library:messages.groups_load_failed'))
+      return
+    }
     if (!isEditMode && publishTarget === 'marketplace' && marketplaceTags.length === 0) {
       setError(t('resource-library:marketplace_tags.required'))
       return
@@ -477,6 +487,10 @@ export default function SkillUploadModal({
       setGitError(t('resource-library:states.select_groups'))
       return
     }
+    if (!isEditMode && publishTarget === 'team' && writableGroupsError) {
+      setGitError(t('resource-library:messages.groups_load_failed'))
+      return
+    }
     if (!isEditMode && publishTarget === 'marketplace' && marketplaceTags.length === 0) {
       setGitError(t('resource-library:marketplace_tags.required'))
       return
@@ -528,6 +542,11 @@ export default function SkillUploadModal({
   }
 
   const handleConflictConfirm = async () => {
+    if (!isEditMode && publishTarget === 'team' && writableGroupsError) {
+      setConflictDialogOpen(false)
+      setGitError(t('resource-library:messages.groups_load_failed'))
+      return
+    }
     setConflictDialogOpen(false)
     setImporting(true)
 
@@ -676,6 +695,9 @@ export default function SkillUploadModal({
                         groupNames={targetGroupNames}
                         onChange={handlePublishTargetChange}
                         multipleGroups
+                        groupsError={writableGroupsError}
+                        groupsLoading={writableGroupsLoading}
+                        onRetryGroups={onRetryWritableGroups}
                       />
                       {publishTarget === 'marketplace' && (
                         <MarketplaceTagSelector
@@ -728,6 +750,9 @@ export default function SkillUploadModal({
                           groupNames={targetGroupNames}
                           onChange={handlePublishTargetChange}
                           multipleGroups
+                          groupsError={writableGroupsError}
+                          groupsLoading={writableGroupsLoading}
+                          onRetryGroups={onRetryWritableGroups}
                         />
                         {publishTarget === 'marketplace' && (
                           <MarketplaceTagSelector

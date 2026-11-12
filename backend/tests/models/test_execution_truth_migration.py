@@ -16,7 +16,14 @@ pytestmark = pytest.mark.unit
 def _load_migration(
     filename: str = "20260815_d9e0f1a2b3c4_add_execution_truth_columns.py",
 ) -> ModuleType:
-    path = Path(__file__).parents[2] / "alembic" / "versions" / filename
+    path = (
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
+        / "versions"
+        / filename
+    )
     spec = importlib.util.spec_from_file_location("execution_truth_migration", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

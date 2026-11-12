@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type { CollaborationExecutionEnvironment } from "../types";
 
@@ -66,6 +66,7 @@ export function projectCreateErrorMessage(
   );
 }
 
+/** Keep template submission and its default device selection on the same readiness boundary. */
 export function useProjectCreateController({
   targets,
   defaultLocation,
@@ -73,13 +74,18 @@ export function useProjectCreateController({
   labels,
   onCreated,
   resourceSetup,
+  initialTemplate,
 }: ProjectCreateDialogProps) {
   const initialLocation =
     targets.find((target) => target.location === defaultLocation)?.location ??
     targets[0]?.location ??
     "cloud";
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [name, setName] = useState(
+    initialTemplate?.spec.resources.collaboration.project.name ?? "",
+  );
+  const [description, setDescription] = useState(
+    initialTemplate?.spec.resources.collaboration.project.description ?? "",
+  );
   const [location, setLocation] =
     useState<ProjectCreateLocation>(initialLocation);
   const [taskProvider, setTaskProvider] =
@@ -95,16 +101,30 @@ export function useProjectCreateController({
   const [memberUserIds, setMemberUserIds] = useState<number[]>([]);
   const [agentResourceIds, setAgentResourceIds] = useState<string[]>([]);
   const defaultAgentResourceIds = resourceSetup?.defaultAgentResourceIds ?? [];
-  const [executionEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
-    useState<number[]>(() =>
-      defaultExecutionEnvironmentDeviceIds(
-        resourceSetup?.executionEnvironments ?? [],
-      ),
+  const [selectedEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
+    useState<number[] | null>(null);
+  const executionEnvironmentDeviceIds =
+    selectedEnvironmentDeviceIds ??
+    defaultExecutionEnvironmentDeviceIds(
+      resourceSetup?.executionEnvironments ?? [],
     );
-  const executionEnvironmentSelectionChanged = useRef(false);
-  const [collaborationGroupDraft, setCollaborationGroupDraft] = useState<
-    import("./types").ProjectCreateCollaborationGroupDraft | null
+  const [collaborationGroupDrafts, setCollaborationGroupDrafts] = useState<
+    import("./types").ProjectCreateCollaborationGroupDraft[]
+  >([]);
+  const [templatePending, setTemplatePending] = useState(
+    Boolean(initialTemplate?.spec.resources.collaboration.groups.length),
+  );
+  const [templateDocument, setTemplateDocument] = useState(
+    initialTemplate ?? null,
+  );
+  const collaborationGroupDraft = collaborationGroupDrafts[0] ?? null;
+  const setCollaborationGroupDraft = (
+    draft: import("./types").ProjectCreateCollaborationGroupDraft | null,
+  ) => setCollaborationGroupDrafts(draft ? [draft] : []);
+  const [createdProject, setCreatedProject] = useState<
+    import("../types").CollaborationProject | null
   >(null);
+  const createdProjectLocation = useRef(location);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
@@ -117,24 +137,28 @@ export function useProjectCreateController({
         : null,
     [aitableUrl, host, isAITableProvider],
   );
-  const canSubmit = Boolean(
-    name.trim() &&
-    (!repositoryProvider || repositoryAddress.trim()) &&
-    (!isAITableProvider || aitableLink) &&
-    !saving,
-  );
-
-  useEffect(() => {
-    if (executionEnvironmentSelectionChanged.current) return;
-    setExecutionEnvironmentDeviceIds(
-      defaultExecutionEnvironmentDeviceIds(
-        resourceSetup?.executionEnvironments ?? [],
-      ),
-    );
-  }, [resourceSetup?.executionEnvironments]);
+  const templateEnvironmentUnavailable =
+    location === "cloud" &&
+    (templateDocument?.spec.resources.collaboration.agents?.length ?? 0) > 0 &&
+    (resourceSetup?.executionEnvironmentLoading ||
+      resourceSetup?.executionEnvironmentError);
+  const canSubmit =
+    Boolean(
+      createdProject ||
+      (name.trim() &&
+        !templatePending &&
+        !templateEnvironmentUnavailable &&
+        (!repositoryProvider || repositoryAddress.trim()) &&
+        (!isAITableProvider || aitableLink) &&
+        !saving),
+    ) && !saving;
 
   async function submit() {
     if (!canSubmit) return;
+    if (createdProject) {
+      onCreated(createdProject, createdProjectLocation.current);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -155,7 +179,15 @@ export function useProjectCreateController({
               ...(token.trim() ? { token: token.trim() } : {}),
             }
           : {};
-      const project = await target.create({
+      const selection = {
+        memberUserIds,
+        agentResourceIds,
+        executionEnvironmentDeviceIds,
+        collaborationGroupDrafts,
+        ...(templateDocument ? { template: templateDocument } : {}),
+      };
+      await resourceSetup?.validate?.(selection);
+      let project = await target.create({
         name: name.trim(),
         description: description.trim(),
         taskProvider,
@@ -178,12 +210,32 @@ export function useProjectCreateController({
           : {}),
       });
       if (resourceSetup) {
-        await resourceSetup.configure(project, {
-          memberUserIds,
-          agentResourceIds,
-          executionEnvironmentDeviceIds,
-          collaborationGroupDraft,
-        });
+        try {
+          const configuredProject = await resourceSetup.configure(
+            project,
+            selection,
+          );
+          if (configuredProject) project = configuredProject;
+        } catch (cause) {
+          console.warn("[collaboration] Project configuration failed", {
+            projectId: project.id,
+            executionEnvironmentDeviceIds,
+            environmentLoading: resourceSetup.executionEnvironmentLoading,
+            environmentLoadFailed: Boolean(
+              resourceSetup.executionEnvironmentError,
+            ),
+            currentDeviceIds: resourceSetup.executionEnvironments
+              ?.filter((environment) => environment.is_current_device)
+              .map((environment) => environment.device_id),
+          });
+          createdProjectLocation.current = location;
+          setCreatedProject(project);
+          throw new Error(
+            labels.partialConfiguration +
+              projectCreateErrorMessage(cause, labels, host),
+            { cause },
+          );
+        }
       }
       host?.track?.("created");
       onCreated(project, location);
@@ -211,14 +263,17 @@ export function useProjectCreateController({
       repositoryProvider,
       isAITableProvider,
       saving,
+      createdProject,
       error,
       canSubmit,
       memberUserIds,
       agentResourceIds,
       executionEnvironmentDeviceIds,
       collaborationGroupDraft,
+      collaborationGroupDrafts,
     },
     commands: {
+      setTemplateDocument,
       setName,
       setDescription,
       setLocation,
@@ -231,11 +286,10 @@ export function useProjectCreateController({
       setAitableUrl,
       setMemberUserIds,
       setAgentResourceIds,
-      setExecutionEnvironmentDeviceIds: (deviceIds: number[]) => {
-        executionEnvironmentSelectionChanged.current = true;
-        setExecutionEnvironmentDeviceIds(deviceIds);
-      },
+      setExecutionEnvironmentDeviceIds,
       setCollaborationGroupDraft,
+      setCollaborationGroupDrafts,
+      setTemplatePending,
       clearError: () => setError(null),
       submit,
     },

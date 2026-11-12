@@ -190,6 +190,17 @@ describe('runtime input identity', () => {
 })
 
 describe('async request user input', () => {
+  test.each(['pending', 'streaming', 'failed'] as const)(
+    'does not settle a question from an undelivered %s message',
+    status => {
+      const messages = [assistantMessage(ASYNC_PAYLOAD), { ...userMessage('Reading'), status }]
+      expect(resolveAsyncRequestUserInputAnswers(messages)).toBe(messages)
+      expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
+      const delivered = [messages[0], { ...messages[1], status: 'done' as const }]
+      expect(resolveAsyncRequestUserInputReplies(delivered).size).toBe(1)
+      expect(resolveAsyncRequestUserInputAnswers(delivered)).not.toBe(delivered)
+    }
+  )
   test('treats only async delivery payloads as non-blocking', () => {
     expect(isAsyncRequestUserInputPayload(ASYNC_PAYLOAD)).toBe(true)
     expect(isAsyncRequestUserInputPayload({ kind: 'request_user_input' })).toBe(false)
@@ -305,4 +316,29 @@ describe('async request user input', () => {
       ).toBe(0)
     })
   })
+})
+
+test('attributes a combined reply across consecutive async calls, including repeated question IDs', () => {
+  const first = assistantMessage(ASYNC_PAYLOAD)
+  const second = assistantMessage({
+    ...ASYNC_PAYLOAD,
+    itemId: 'second',
+    questions: [{ id: 'question_1', question: 'Second question?' }],
+  })
+  second.id = 'assistant-2'
+  const messages = [first, second, userMessage('Reading\nSecond answer')]
+  expect(resolveAsyncRequestUserInputReplies(messages).get('user-1')).toEqual([
+    { question: 'Which state jitters?', answer: 'Reading' },
+    { question: 'Second question?', answer: 'Second answer' },
+  ])
+  const resolved = resolveAsyncRequestUserInputAnswers(messages)
+  expect(
+    (resolved[0].blocks?.[0] as RequestUserInputBlock).renderPayload.response?.answers
+  ).toEqual({ question_1: { answers: ['Reading'] } })
+  expect(
+    (resolved[1].blocks?.[0] as RequestUserInputBlock).renderPayload.response?.answers
+  ).toEqual({ question_1: { answers: ['Second answer'] } })
+  expect(resolveAsyncRequestUserInputReplies([first, second, userMessage('Ambiguous')]).size).toBe(
+    0
+  )
 })

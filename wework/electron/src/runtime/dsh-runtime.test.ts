@@ -1,4 +1,6 @@
 import { createServer } from 'node:http'
+import { createHash } from 'node:crypto'
+import type { Cookie } from 'electron'
 import { createInterface } from 'node:readline'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -6,13 +8,31 @@ import { HostCapabilityRouter } from '../host/capability-router.js'
 import { HostPipeServer } from '../host/host-pipe.js'
 import { DshRuntime } from './dsh-runtime.js'
 
-const { browserFetch } = vi.hoisted(() => ({ browserFetch: vi.fn() }))
-vi.mock('electron', () => ({ session: { defaultSession: { fetch: browserFetch } } }))
+const { browserFetch, cookies, cookieJar } = vi.hoisted(() => {
+  const cookieJar: Cookie[] = []
+  return {
+    browserFetch: vi.fn(),
+    cookieJar,
+    cookies: {
+      get: vi.fn(async (filter: { name?: string }) =>
+        cookieJar.filter(cookie => !filter.name || cookie.name === filter.name)
+      ),
+      remove: vi.fn(async (_url: string, name: string) => {
+        const index = cookieJar.findIndex(cookie => cookie.name === name)
+        if (index !== -1) cookieJar.splice(index, 1)
+      }),
+    },
+  }
+})
+vi.mock('electron', () => ({ session: { defaultSession: { fetch: browserFetch, cookies } } }))
 
 const servers: Array<ReturnType<typeof createServer>> = []
 
 afterEach(async () => {
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  cookieJar.splice(0)
+  browserFetch.mockReset()
   await Promise.all(
     servers.splice(0).map(
       server =>
@@ -24,6 +44,120 @@ afterEach(async () => {
 })
 
 describe('DSH runtime readiness', () => {
+  test.each(['stop', 'failed-start', 'crash'])(
+    'reclaims authentication on %s while preserving another running runtime',
+    async outcome => {
+      browserFetch.mockImplementation(async (input: string) => {
+        const url = new URL(input)
+        if (url.searchParams.has('token')) {
+          cookieJar.push({
+            name: `dsh-auth-${createHash('sha256').update(url.host).digest('base64url')}`,
+            value: 'test-session',
+            domain: url.hostname,
+            path: '/',
+            secure: false,
+            httpOnly: true,
+            session: false,
+            sameSite: 'strict',
+          })
+        }
+        return fetch(input)
+      })
+      const managedRuntime = (fail: boolean) =>
+        new DshRuntime({
+          url: 'http://127.0.0.1:0/',
+          command: process.execPath,
+          args: [
+            '-e',
+            `
+              const server = require('node:http').createServer((req, res) => {
+                if (req.url === '/crash') res.once('finish', () => process.exit(1))
+                res.writeHead(${fail} && req.url.includes('?token=') ? 503 : 200)
+                res.end()
+              })
+              server.listen(0, '127.0.0.1', () => {
+                const url = 'http://127.0.0.1:' + server.address().port
+                console.log('dsh web: ' + url)
+                require('node:fs').writeSync(5, JSON.stringify({ url: url + '/?token=test' }) + '\\n')
+              })
+            `,
+          ],
+          env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: '1' },
+          startTimeoutMs: 2_000,
+        })
+      const survivor = managedRuntime(false)
+      const runtime = managedRuntime(outcome === 'failed-start')
+      try {
+        await survivor.start()
+        const survivorCookie = cookieJar[0]
+        if (outcome === 'failed-start') {
+          await expect(runtime.start()).rejects.toThrow('browser authentication failed')
+        } else {
+          await runtime.start()
+          expect(cookieJar).toHaveLength(2)
+          if (outcome === 'crash') {
+            const previousPid = runtime.pid()
+            await fetch(`${runtime.url()}/crash`)
+            // A logical runtime retains its authentication while the supervisor recovers it.
+            await vi.waitFor(() => {
+              expect(runtime.pid()).not.toBeNull()
+              expect(runtime.pid()).not.toBe(previousPid)
+              expect(cookieJar).toHaveLength(2)
+            })
+          }
+        }
+        await runtime.stop()
+        expect(cookieJar).toEqual([survivorCookie])
+        expect((await fetch(survivor.url())).status).toBe(200)
+      } finally {
+        await runtime.stop()
+        await survivor.stop()
+      }
+      expect(cookieJar).toEqual([])
+    }
+  )
+
+  test.each(['inherited', 'overridden', 'omitted'] as const)(
+    'preserves %s child environment semantics',
+    async mode => {
+      vi.stubEnv('WEWORK_DSH_TEST_ENVIRONMENT', 'parent-value')
+      const explicitEnvironment = { ...process.env }
+      if (mode === 'overridden') explicitEnvironment.WEWORK_DSH_TEST_ENVIRONMENT = 'child-value'
+      else delete explicitEnvironment.WEWORK_DSH_TEST_ENVIRONMENT
+      const env = mode === 'inherited' ? undefined : explicitEnvironment
+      const expected =
+        mode === 'inherited' ? 'parent-value' : mode === 'overridden' ? 'child-value' : ''
+      const runtime = new DshRuntime({
+        url: 'http://127.0.0.1:0',
+        command: process.execPath,
+        args: [
+          '-e',
+          `
+          const http = require('node:http')
+          const server = http.createServer((request, response) => {
+            if (request.url === '/observe') response.once('finish', () => server.close())
+            response.end(process.env.WEWORK_DSH_TEST_ENVIRONMENT || '')
+          })
+          server.listen(0, '127.0.0.1', () => {
+            console.log('dsh web: http://127.0.0.1:' + server.address().port)
+          })
+        `,
+        ],
+        env,
+        startTimeoutMs: 2_000,
+      })
+      let observed
+      try {
+        await runtime.start()
+        observed = await (await fetch(`${runtime.url()}/observe`)).text()
+        await vi.waitFor(() => expect(runtime.pid()).toBeNull())
+      } finally {
+        await runtime.stop()
+      }
+      expect(observed).toBe(expected)
+    }
+  )
+
   test.each(['before', 'after'])(
     'authenticates a dynamically bound port with credentials sent %s its announcement',
     async order => {
@@ -72,30 +206,33 @@ describe('DSH runtime readiness', () => {
     }
   )
 
-  test('exchanges a private pipe credential before probing with the Electron session', async () => {
-    browserFetch.mockResolvedValue(new Response('', { status: 200 }))
-    const url = 'http://127.0.0.1:12345/'
-    const runtime = new DshRuntime({
-      url,
-      command: process.execPath,
-      args: [
-        '-e',
-        "require('node:fs').writeSync(5, JSON.stringify({url:'http://127.0.0.1:12345/?token=private-test-token'}) + '\\n'); setInterval(() => {}, 1000)",
-      ],
-      env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: '1' },
-    })
-    try {
-      await runtime.start()
-      expect(browserFetch.mock.calls.map(([input]) => input)).toEqual([
-        url + '?token=private-test-token',
+  test.each(['1', 'legacy'])(
+    'exchanges a private pipe credential in %s mode before probing with the Electron session',
+    async authentication => {
+      browserFetch.mockResolvedValue(new Response('', { status: 200 }))
+      const url = 'http://127.0.0.1:12345/'
+      const runtime = new DshRuntime({
         url,
-      ])
-      expect(runtime.url()).toBe(url)
-    } finally {
-      await runtime.stop()
-      browserFetch.mockReset()
+        command: process.execPath,
+        args: [
+          '-e',
+          "require('node:fs').writeSync(5, JSON.stringify({url:'http://127.0.0.1:12345/?token=private-test-token'}) + '\\n'); setInterval(() => {}, 1000)",
+        ],
+        env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: authentication },
+      })
+      try {
+        await runtime.start()
+        expect(browserFetch.mock.calls.map(([input]) => input)).toEqual([
+          url + '?token=private-test-token',
+          url,
+        ])
+        expect(runtime.url()).toBe(url)
+      } finally {
+        await runtime.stop()
+        browserFetch.mockReset()
+      }
     }
-  })
+  )
 
   test('rejects a pipe credential for a different origin before any browser request', async () => {
     const runtime = new DshRuntime({
@@ -239,6 +376,59 @@ describe('DSH runtime readiness', () => {
     await expect(
       new DshRuntime({ url: `http://127.0.0.1:${address.port}/missing` }).start(100)
     ).rejects.toThrow('DSH startup timed out')
+  })
+
+  test('reports the last HTTP status and endpoint without exposing its query', async () => {
+    const endpoint = 'http://127.0.0.1:12345/pending'
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const pending = new DshRuntime({ url: `${endpoint}?token=private-test-token` })
+        .start(100)
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+      const failure = await pending
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${endpoint}?token=private-test-token`,
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message).toBe(`DSH startup timed out: ${endpoint} (HTTP 503)`)
+      expect((failure as Error).message).not.toContain('private-test-token')
+      expect((failure as Error).cause).toEqual(new Error('DSH startup timed out'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test.each([
+    {
+      name: 'listening URL announcement',
+      url: 'http://127.0.0.1:0/',
+      script: 'setInterval(() => {}, 1000)',
+      env: { ...process.env },
+    },
+    {
+      name: 'browser authentication',
+      url: 'http://127.0.0.1:12345/',
+      script: 'setInterval(() => {}, 1000)',
+      env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: '1' },
+    },
+  ])('identifies a timeout in $name', async ({ name, url, script, env }) => {
+    const runtime = new DshRuntime({
+      url,
+      command: process.execPath,
+      args: ['-e', script],
+      env,
+      startTimeoutMs: 100,
+    })
+    try {
+      await expect(runtime.start()).rejects.toThrow(`DSH ${name} failed: dsh-web startup timed out`)
+    } finally {
+      await runtime.stop()
+    }
   })
 
   test('requires every configured Core DSH endpoint', async () => {

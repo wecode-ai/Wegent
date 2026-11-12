@@ -1,0 +1,66 @@
+import { timingSafeEqual } from 'node:crypto'
+const PERMANENT_ERRORS = new Set([
+  'connector_auth_required',
+  'connection_response_invalid',
+  'invalid_connection',
+  'forbidden',
+  'connection_tool_denied',
+  'connection_cli_request_failed',
+  'connection_cli_response_invalid',
+])
+export async function handleConnectionRpc(req, res, token, request) {
+  const authorization = req.headers.authorization
+  const expected = Buffer.from(`Bearer ${token}`)
+  const actual = Buffer.from(typeof authorization === 'string' ? authorization : '')
+  const loopback = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket?.remoteAddress)
+  let status = 200
+  let response
+  let collection = false
+  try {
+    if (!loopback || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+      status = 403
+      throw connectionError('forbidden', 'Forbidden')
+    }
+    if (req.method !== 'POST') {
+      status = 405
+      throw connectionError('invalid_method', 'POST is required')
+    }
+    let size = 0
+    const chunks = []
+    for await (const chunk of req) {
+      size += Buffer.byteLength(chunk)
+      if (size > 1024 * 1024)
+        throw connectionError('request_too_large', 'Connection request is too large')
+      chunks.push(Buffer.from(chunk))
+    }
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    collection = body.method === 'collect'
+    response = { ok: true, result: await request(body) }
+  } catch (error) {
+    if (status === 200) status = 400
+    response = {
+      ok: false,
+      error: {
+        code: error.code ?? 'connection_failed',
+        message: error.message,
+        ...(typeof error.providerCode === 'string' &&
+        /^[A-Za-z0-9_.:-]{1,64}$/.test(error.providerCode)
+          ? { providerCode: error.providerCode }
+          : {}),
+        ...(collection &&
+        !PERMANENT_ERRORS.has(error.code) &&
+        Number.isSafeInteger(error.retryAfterMs) &&
+        error.retryAfterMs >= 1 &&
+        error.retryAfterMs <= 3600000
+          ? { retryAfterMs: error.retryAfterMs }
+          : {}),
+      },
+    }
+  }
+  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+  res.end(JSON.stringify(response))
+}
+
+function connectionError(code, message) {
+  return Object.assign(new Error(message), { code })
+}

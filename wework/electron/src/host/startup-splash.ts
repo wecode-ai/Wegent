@@ -1,7 +1,20 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-export type StartupSplashEventName = 'created' | 'shown' | 'animation-ready' | 'closed'
+import { STARTUP_PROGRESS_CHANNEL, type StartupProgressUpdate } from './startup-progress.js'
+import type { StartupWindowBounds } from './startup-window-handoff.js'
+import { finishStartupAnimation } from './startup-tasks.js'
+
+export type StartupSplashEventName =
+  | 'created'
+  | 'shown'
+  | 'animation-ready'
+  | 'completion-started'
+  | 'completed'
+  | 'main-prepared'
+  | 'fade-started'
+  | 'fade-completed'
+  | 'closed'
 export type StartupSplashTheme = 'light' | 'dark'
 
 export interface StartupSplashEvent {
@@ -10,9 +23,15 @@ export interface StartupSplashEvent {
 }
 
 export interface StartupSplashSnapshot {
-  state: 'idle' | 'loading' | 'visible' | 'closed'
+  state: 'idle' | 'loading' | 'visible' | 'completing' | 'fading' | 'closed'
   theme: StartupSplashTheme
   events: StartupSplashEvent[]
+  handoff?: {
+    fadeDurationMs: number
+    reducedMotion: boolean
+    completion: StartupSplashCompletion
+    bounds: StartupWindowBounds
+  }
   window: {
     exists: boolean
     destroyed: boolean
@@ -28,6 +47,7 @@ interface SplashWebContents {
   capturePage: () => Promise<SplashImage>
   executeJavaScript: (code: string) => Promise<unknown>
   isDestroyed: () => boolean
+  send: (channel: string, payload: unknown) => void
 }
 
 export interface StartupSplashWindow {
@@ -36,7 +56,8 @@ export interface StartupSplashWindow {
   isVisible: () => boolean
   on: (event: 'close', listener: (event: StartupSplashCloseEvent) => void) => void
   once: (event: 'closed', listener: () => void) => void
-  show: () => void
+  show: () => void | Promise<void>
+  setOpacity: (opacity: number) => void
   webContents: SplashWebContents
 }
 
@@ -59,6 +80,30 @@ export interface StartupSplashOptions {
 export interface CloseStartupSplashOptions {
   capturePath?: string
 }
+
+export interface StartupSplashCompletion {
+  reducedMotion: boolean
+  progressNow: number
+  fillEnd: number
+  trackEnd: number
+  wordmarkVisible: boolean
+  appearance: {
+    theme: StartupSplashTheme
+    colorScheme: string
+    background: string
+    footerBackground: string
+  }
+  canvas: { x: number; y: number; width: number; height: number }
+  viewport: { width: number; height: number }
+}
+
+export interface StartupSplashHandoffOptions extends CloseStartupSplashOptions {
+  update: StartupProgressUpdate
+  prepareMainWindow: () => Promise<StartupWindowBounds>
+  shouldContinue: () => boolean
+}
+
+export const STARTUP_SPLASH_FADE_MS = 600
 
 const WAIT_FOR_ANIMATION_READY = `
   new Promise((resolve) => {
@@ -137,6 +182,10 @@ export class StartupSplash {
   private closePromise: Promise<StartupSplashSnapshot> | null = null
   private showErrorPromise: Promise<void> | null = null
   private controlledClose = false
+  private latestProgress: StartupProgressUpdate | null = null
+  private handoffPromise: Promise<StartupSplashSnapshot> | null = null
+  private handoffEvidence: StartupSplashSnapshot['handoff']
+  private handoffGeneration = 0
 
   constructor(private readonly options: StartupSplashOptions) {
     this.now = options.now ?? Date.now
@@ -162,6 +211,7 @@ export class StartupSplash {
   close(options: CloseStartupSplashOptions = {}): Promise<StartupSplashSnapshot> {
     if (this.state === 'closed') return Promise.resolve(this.snapshot())
     if (this.closePromise) return this.closePromise
+    this.handoffGeneration += 1
 
     const operation = this.closeOnce(options)
     this.closePromise = operation.finally(() => {
@@ -170,10 +220,44 @@ export class StartupSplash {
     return this.closePromise
   }
 
+  handoff(options: StartupSplashHandoffOptions): Promise<StartupSplashSnapshot> {
+    if (this.handoffPromise) return this.handoffPromise
+    if (!options.update.completed) {
+      return Promise.reject(new Error('Startup handoff requires completed startup progress'))
+    }
+    if (this.state !== 'visible') {
+      return Promise.reject(new Error('Startup splash must be visible before handing off'))
+    }
+    const generation = ++this.handoffGeneration
+    this.handoffPromise = this.performHandoff(options, generation)
+      .catch(error => {
+        this.restoreAfterInterruptedHandoff()
+        throw error
+      })
+      .finally(() => {
+        this.handoffPromise = null
+      })
+    return this.handoffPromise
+  }
+
+  /**
+   * Mirrors the host startup stage into the splash. The latest update is kept
+   * so a splash that becomes visible after the stage started still shows it.
+   */
+  updateProgress(update: StartupProgressUpdate): void {
+    this.latestProgress = update
+    if (this.state !== 'visible') return
+    const contents = this.options.window.webContents
+    if (contents.isDestroyed()) return
+    contents.send(STARTUP_PROGRESS_CHANNEL, update)
+  }
+
   showError(pluginName: string | null = null): Promise<void> {
     if (this.showErrorPromise) return this.showErrorPromise
     const target = this.options.window
     if (target.webContents.isDestroyed()) return Promise.resolve()
+    this.handoffGeneration += 1
+    this.restoreAfterInterruptedHandoff()
     this.showErrorPromise = target.webContents
       .executeJavaScript(
         `window.dispatchEvent(new CustomEvent('wework-startup-error', { detail: { pluginName: ${JSON.stringify(
@@ -187,6 +271,82 @@ export class StartupSplash {
     return this.showErrorPromise
   }
 
+  private async performHandoff(
+    options: StartupSplashHandoffOptions,
+    generation: number
+  ): Promise<StartupSplashSnapshot> {
+    const active = () =>
+      generation === this.handoffGeneration &&
+      !this.options.window.isDestroyed() &&
+      options.shouldContinue()
+    this.state = 'completing'
+    this.record('completion-started')
+    const completion = (await finishStartupAnimation(() =>
+      this.options.window.webContents.executeJavaScript(
+        `window.weworkStartupSplash.complete(${JSON.stringify(options.update)})`
+      )
+    )) as StartupSplashCompletion
+    if (!active()) return this.interruptedHandoff()
+    this.record('completed')
+    await finishStartupAnimation(() => this.capture(options.capturePath))
+    if (!active()) return this.interruptedHandoff()
+    // Native window preparation has its own bounds/capture deadlines. It must
+    // not consume the subsequent fade's independent animation budget.
+    const bounds = await options.prepareMainWindow()
+    if (!active()) return this.interruptedHandoff()
+    this.handoffEvidence = {
+      fadeDurationMs: STARTUP_SPLASH_FADE_MS,
+      reducedMotion: completion.reducedMotion,
+      completion,
+      bounds,
+    }
+    this.record('main-prepared')
+    if (!(await finishStartupAnimation(() => this.fadeOut(completion.reducedMotion, active)))) {
+      return this.interruptedHandoff()
+    }
+    return this.close()
+  }
+
+  private async fadeOut(reducedMotion: boolean, active: () => boolean): Promise<boolean> {
+    this.state = 'fading'
+    this.record('fade-started')
+    const startedAt = performance.now()
+    const finished = await new Promise<boolean>((resolve, reject) => {
+      const step = () => {
+        try {
+          if (!active()) return resolve(false)
+          const elapsed = performance.now() - startedAt
+          const amount = reducedMotion ? 1 : Math.min(1, elapsed / STARTUP_SPLASH_FADE_MS)
+          this.options.window.setOpacity(1 - amount * amount * (3 - 2 * amount))
+          if (amount === 1) resolve(true)
+          else setTimeout(step, Math.min(16, STARTUP_SPLASH_FADE_MS - elapsed))
+        } catch (error) {
+          reject(error)
+        }
+      }
+      step()
+    })
+    if (finished) this.record('fade-completed')
+    return finished
+  }
+
+  private interruptedHandoff(): StartupSplashSnapshot {
+    this.restoreAfterInterruptedHandoff()
+    return this.snapshot()
+  }
+
+  private restoreAfterInterruptedHandoff(): void {
+    if (this.state !== 'completing' && this.state !== 'fading') return
+    if (!this.options.window.isDestroyed()) this.options.window.setOpacity(1)
+    this.state = 'visible'
+  }
+
+  private async capture(path?: string): Promise<void> {
+    if (!path) return
+    const image = await this.options.window.webContents.capturePage()
+    await this.persistPng(path, image.toPNG())
+  }
+
   private async closeOnce(options: CloseStartupSplashOptions): Promise<StartupSplashSnapshot> {
     const target = this.options.window
     if (target.isDestroyed()) {
@@ -195,10 +355,7 @@ export class StartupSplash {
     }
 
     try {
-      if (options.capturePath) {
-        const image = await target.webContents.capturePage()
-        await this.persistPng(options.capturePath, image.toPNG())
-      }
+      await this.capture(options.capturePath)
     } finally {
       if (!target.isDestroyed()) {
         this.controlledClose = true
@@ -217,6 +374,7 @@ export class StartupSplash {
       state: this.state,
       theme: this.options.theme,
       events: this.events.map(event => ({ ...event })),
+      ...(this.handoffEvidence ? { handoff: structuredClone(this.handoffEvidence) } : {}),
       window: {
         exists: true,
         destroyed,
@@ -231,13 +389,23 @@ export class StartupSplash {
     target.once('closed', () => this.markClosed())
 
     if (!target.webContents.isDestroyed()) {
-      await target.webContents.executeJavaScript(WAIT_FOR_ANIMATION_READY)
-      this.record('animation-ready')
+      void target.webContents
+        .executeJavaScript(WAIT_FOR_ANIMATION_READY)
+        .then(() => {
+          this.record('animation-ready')
+        })
+        .catch(error => {
+          console.warn('[startup-splash] animation initialization failed', error)
+        })
     }
     if (!target.isDestroyed()) {
-      target.show()
+      await target.show()
+      if (target.isDestroyed()) return this.snapshot()
       this.state = 'visible'
       this.record('shown')
+      if (this.latestProgress && !target.webContents.isDestroyed()) {
+        target.webContents.send(STARTUP_PROGRESS_CHANNEL, this.latestProgress)
+      }
     }
     return this.snapshot()
   }

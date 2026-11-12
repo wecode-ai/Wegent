@@ -201,11 +201,15 @@ pub(crate) async fn request_for_task(
         .await?
         .context("Managed project automation Team is unavailable")?;
     let user = load_user(&state.mysql, input.user_id).await?;
+    let resolvers = state.entity_resolvers.for_execution();
+    let directory = state
+        .entity_resolvers
+        .execution_directory(state.erp.as_ref());
     let cache = crate::task_skills::kinds::KindCacheStore {
         mysql: &state.mysql,
         redis: state.redis.as_ref(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
+        erp: Some(directory),
+        resolvers: Some(&resolvers),
     };
     let bots = resolution::resolve_team_bots(&cache, team.user_id, &team.json.0).await?;
     let bot = resolution::resolve_bot(
@@ -257,6 +261,8 @@ pub(crate) async fn request_for_task(
             new_session: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
+            web_runtime_guidance: false,
+            subtask_bot_resolved: false,
         },
     )
     .await
@@ -299,12 +305,13 @@ fn add_board_capabilities(request: &mut ExecutionRequest) {
 
 pub(crate) async fn dispatch(state: &AppState, request: &ExecutionRequest) -> Result<()> {
     let shell = routing::shell_type(request);
-    let chat =
-        std::env::var("CHAT_SHELL_URL").unwrap_or_else(|_| routing::DEFAULT_CHAT_SHELL_URL.into());
+    let chat = create::seam::chat_shell_url();
+    let chat_shell_mode = routing::chat_shell_mode();
     let manager = std::env::var("EXECUTOR_MANAGER_URL")
         .unwrap_or_else(|_| create::executor_client::DEFAULT_EXECUTOR_MANAGER_URL.into());
     let target = routing::route(&RouteInputs {
         shell_type: &shell,
+        chat_shell_mode: &chat_shell_mode,
         chat_shell_url: &chat,
         executor_manager_url: &manager,
         device_id: None,
@@ -312,8 +319,9 @@ pub(crate) async fn dispatch(state: &AppState, request: &ExecutionRequest) -> Re
         model_protocol: request.model_config["protocol"].as_str(),
     });
     match target.mode {
-        CommunicationMode::Sse => {
-            let consumer = create::sse_sync::ConsumerContext::from_app(state);
+        CommunicationMode::Sse | CommunicationMode::Inprocess => {
+            let mut consumer = create::sse_sync::ConsumerContext::from_app(state);
+            consumer.package_mode = target.mode == CommunicationMode::Inprocess;
             create::sse_sync::collect(
                 &consumer,
                 target

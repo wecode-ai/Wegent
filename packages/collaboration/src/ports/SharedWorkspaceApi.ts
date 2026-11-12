@@ -141,6 +141,7 @@ export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
 }
 
 export interface WorkspaceIssueCreateInput {
+  milestoneId?: string | null;
   title: string;
   description?: string;
   status?: string;
@@ -158,6 +159,7 @@ export interface WorkspaceIssueCreateInput {
 }
 
 export interface WorkspaceIssueUpdateInput {
+  milestoneId?: string | null;
   position?: { beforeItemId: string | null };
   version: number;
   securityLevel?: "open" | "related";
@@ -540,6 +542,7 @@ export interface SharedWorkspaceIssuesApi {
   markRead(
     issueId: string,
     activitySequence?: number,
+    contentRevision?: number,
   ): Promise<CollaborationIssue>;
 }
 
@@ -592,6 +595,11 @@ export interface SharedCollaborationWorkspacesApi {
     input: WorkspaceMemberUpdateInput,
   ): Promise<CollaborationWorkspaceMember>;
   removeMember(workspaceId: string, userId: number): Promise<void>;
+  createTemplateAgent?(
+    workspaceId: string,
+    agent: import("../templates/types").TemplateAgent,
+    routing: import("../templates/types").TemplateAgentRouting,
+  ): Promise<WorkspaceProjectAgent>;
   listAgents(
     workspaceId: string,
     options?: { forceRefresh?: boolean },
@@ -639,6 +647,7 @@ export interface SharedCollaborationResourcesApi {
     cloud?(): Promise<CollaborationExecutionEnvironment[]>;
   };
   removeAgent?(agent: CollaborationOwnedAgent): Promise<void>;
+  removeDevice?(device: CollaborationExecutionEnvironment): Promise<void>;
 }
 
 /**
@@ -675,6 +684,11 @@ export interface SharedWorkspaceGitRepositoriesApi {
   ): Promise<WorkspaceGitBranch[]>;
 }
 
+export interface IssueAttachmentContext {
+  projectId: string;
+  issueId: string;
+}
+
 export interface SharedWorkspaceAttachmentsApi {
   list(issueId: string): Promise<CollaborationAttachment[]>;
   listProjectTaskAttachments(
@@ -685,10 +699,17 @@ export interface SharedWorkspaceAttachmentsApi {
     issueId: string,
     contextIds: number[],
   ): Promise<CollaborationAttachment[]>;
-  access(attachmentId: string): Promise<WorkspaceBinaryAccess>;
-  read(attachmentId: string): Promise<Blob>;
-  download?(attachmentId: string, filename: string): Promise<void>;
-  remove(attachmentId: string): Promise<void>;
+  access(
+    attachmentId: string,
+    context?: IssueAttachmentContext,
+  ): Promise<WorkspaceBinaryAccess>;
+  read(attachmentId: string, context?: IssueAttachmentContext): Promise<Blob>;
+  download?(
+    attachmentId: string,
+    filename: string,
+    context?: IssueAttachmentContext,
+  ): Promise<void>;
+  remove(attachmentId: string, context?: IssueAttachmentContext): Promise<void>;
 }
 
 export interface SharedWorkspaceCollaboratorsApi {
@@ -960,7 +981,6 @@ export interface WorkspaceStandInSettings {
   id?: string;
   name?: string;
   tags?: string[];
-  agentId?: string | null;
   enabled: boolean;
   prompt: string;
   executionDeviceId: string;
@@ -968,6 +988,7 @@ export interface WorkspaceStandInSettings {
 }
 
 export interface SharedWorkspaceApi {
+  milestones?: import("../milestones/types").MilestonesApi;
   standIn?: {
     run?(
       projectId: string,

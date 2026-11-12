@@ -1,0 +1,9 @@
+{
+  "revision": "d5e6f7a8b9c0",
+  "parents": [
+    "c4d5e6f7a8b9"
+  ],
+  "source": "20260612_d5e6f7a8b9c0_add_task_subtask_bigint_ids.py",
+  "upgrade": null,
+  "downgrade": null
+}

@@ -1,11 +1,51 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
 import {
+  waitForElementInsideScroller,
   waitForElementTop,
   waitForElementWidth,
 } from '../e2e/desktop/modules/conversation-layout.mjs'
 
 afterEach(() => vi.useRealTimers())
+
+test('context readiness rejects composer occlusion, missing composer, and an opening offscreen drawer', async () => {
+  const samples = [
+    { bottom: 230, right: 460, composer: true },
+    { bottom: 160, right: 460, composer: false },
+    { bottom: 160, right: 700, composer: true },
+    { bottom: 160, right: 460, composer: true },
+  ]
+  let sample = 0
+  const control = {
+    async command(action, selector) {
+      assert.equal(action, 'getElementMetrics')
+      const current = samples[sample]
+      assert.ok(current, 'Only fully readable context may finish the wait')
+      if (selector === '.reading')
+        return JSON.stringify([
+          { top: 80, bottom: 400, left: 0, right: 600, viewportWidth: 480, viewportHeight: 760 },
+        ])
+      if (selector === '.context')
+        return JSON.stringify([{ top: 100, left: 20, height: 60, ...current }])
+      assert.equal(selector, '.composer')
+      sample += 1
+      return JSON.stringify(current.composer ? [{ top: 180, height: 220 }] : [])
+    },
+  }
+  const result = await withPollingClock(
+    () =>
+      waitForElementInsideScroller(control, '.context', '.reading', 'Original context', 500, {
+        clipToViewport: true,
+        occluderSelector: '.composer',
+      }),
+    250
+  )
+  assert.equal(sample, 4)
+  assert.equal(result.element.right, 460)
+  assert.equal(result.occluder.top, 180)
+})
 
 async function withPollingClock(run, elapsedMs = 150) {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] })

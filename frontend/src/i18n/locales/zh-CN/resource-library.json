@@ -21,12 +21,14 @@
     "shell": "执行器",
     "skill": "技能",
     "retriever": "检索器",
-    "mcp": "MCP"
+    "mcp": "MCP",
+    "template": "协作模板"
   },
   "market_filters": {
     "agent": "智能体市场",
     "skill": "技能市场",
-    "mcp": "MCP 市场"
+    "mcp": "MCP 市场",
+    "template": "协作模板"
   },
   "mcp_market": {
     "unknown_error": "MCP 市场发生未知错误",
@@ -344,5 +346,6 @@
       "published": "公开展示，供用户添加",
       "team": "群组成员共同使用"
     }
-  }
+  },
+  "template_description": "发现并共享项目的角色分工、工作流和验收标准。"
 }

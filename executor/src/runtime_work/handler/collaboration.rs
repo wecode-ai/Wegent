@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::runtime_work::lifecycle::{native_execution_state, NativeExecutionPhase};
 use crate::task_runtime::{
     collaboration_member_profile_instructions, collaboration_member_system_prompt,
     mcp::{CloudCollaborationRoundCommand, CloudCollaborationRoundDispatcher},
@@ -821,6 +822,10 @@ fn update_collaboration_member_origin(
 }
 
 fn collaboration_member_status(link: &RuntimeTaskLink) -> &'static str {
+    // A completed native turn is not completion of a starting or continuing request.
+    if native_execution_state(link).is_some_and(|state| state.phase != NativeExecutionPhase::Idle) {
+        return "running";
+    }
     if link.status == "cancelled"
         || link.turn_status.as_deref() == Some("cancelled")
         || link.interaction_status.as_deref() == Some("cancelled")

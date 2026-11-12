@@ -7,6 +7,7 @@ export type {
   ProcessOwnerRef,
   ProcessRecord,
   ProcessSnapshot,
+  ProcessSnapshotOptions,
   ProcessSource,
 } from './contract.js'
 export {

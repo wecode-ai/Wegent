@@ -269,7 +269,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                 "notification_webhooks": [
                     {
                         "type": "custom",
-                        "url": f"{self.stub_url}/webhook",
+                        "url": f"{self.stub_url}/webhook/{suffix}",
                         "enabled": True,
                     }
                 ],
@@ -419,7 +419,11 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         while time.monotonic() < deadline:
             requests = list(_DingTalkStub.requests)
             execution["requests"] = requests
-            hooks = [entry for entry in requests if entry["path"] == "/webhook"]
+            hooks = [
+                entry
+                for entry in requests
+                if entry["path"] == f"/webhook/{self.suffix}"
+            ]
             if hooks:
                 return hooks
             time.sleep(0.1)
@@ -492,6 +496,8 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
             "只输出两行：第一行“测试，现在时间：{{time}}”，最后一行【@列表：900101】",
             "Chat",
         )
+        # Webhooks run after channel delivery, including failed group requests.
+        self.assertEqual(len(self._wait_webhook(result)), 1)
         self.assertEqual(result["status"], "COMPLETED")
         self.assertEqual(_cards(result["requests"], "IM_GROUP"), [])
         self.assertEqual(len(_cards(result["requests"], "IM_ROBOT")), 1)

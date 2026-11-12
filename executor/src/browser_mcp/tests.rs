@@ -14,6 +14,19 @@ use super::{
     BrowserMcpRequestContext,
 };
 
+#[test]
+fn reserves_approval_time_only_for_mutating_browser_requests() {
+    assert_eq!(
+        super::bridge_request_timeout(&json!({ "action": "inspect" })).as_secs(),
+        45
+    );
+    assert_eq!(
+        super::bridge_request_timeout(&json!({ "action": "fill" })).as_secs(),
+        105
+    );
+    assert_eq!(super::BROWSER_TOOL_TIMEOUT_SECONDS, 120);
+}
+
 #[tokio::test]
 async fn exposes_expected_browser_tools() {
     let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });

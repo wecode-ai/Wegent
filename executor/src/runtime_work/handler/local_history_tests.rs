@@ -20,6 +20,9 @@ fn history_resume_restores_task_shell_identity_before_the_next_turn() {
                 fs::create_dir_all(&directory).unwrap();
                 ScalarEnv::set(key, directory.to_str().unwrap())
             }).collect();
+            let _browser_url = ScalarEnv::set(
+                "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL", "http://127.0.0.1:9",
+            );
             let binary = root.path().join("codex-history.sh");
             let log = root.path().join("requests.jsonl");
             fs::write(&binary, format!(r#"#!/bin/sh
@@ -56,6 +59,18 @@ done
             assert_eq!(config["shell_environment_policy.set.AUTH_TOKEN"], "current-user-token");
             assert_eq!(config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"], "current-runtime-token");
             assert_eq!(resume["params"]["excludeTurns"], true);
+            // Native resume can start an active Goal before a regular turn restores MCP.
+            assert_eq!(config["mcp_servers.wework_browser.enabled"], true);
+            assert!(config["mcp_servers.wework_browser.url"].as_str().unwrap().ends_with("/mcp"));
+            assert_eq!(config["mcp_servers.wework_browser.http_headers.X-Wework-Browser-Label"],
+                "workspace-browser-restored-task");
+            assert_eq!(config["mcp_servers.wework_browser.env_http_headers.Authorization"],
+                "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION");
+            assert!(config["mcp_servers.wework_space.url"].is_string());
+            assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
+            for field in ["model", "modelProvider", "developerInstructions", "effort"] {
+                assert!(resume["params"].get(field).is_none(), "History must preserve {field}");
+            }
             assert!(link.runtime_handle.get("executionRequest").is_none());
         });
 }

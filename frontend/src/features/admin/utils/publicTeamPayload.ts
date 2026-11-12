@@ -43,6 +43,27 @@ export const buildPublicTeamJson = (data: {
     baseSpec.capability && typeof baseSpec.capability === 'object'
       ? (baseSpec.capability as Record<string, unknown>)
       : null
+  // The basic editor rebuilds members from its bot list and has no role control, so
+  // roles it never rendered would otherwise be dropped on save: a Code Wiki team's
+  // reviewer/writer would silently become ordinary members. Leadership is excluded
+  // because the form decides it; keeping it here would leave two leaders after the
+  // admin moves the role to another bot.
+  const baseMemberRoles = new Map<string, string>()
+  for (const member of Array.isArray(baseSpec.members) ? baseSpec.members : []) {
+    if (!member || typeof member !== 'object') continue
+    const record = member as Record<string, unknown>
+    // botRef is an object in current teams and a bare name in legacy ones.
+    const botName =
+      typeof record.botRef === 'string'
+        ? record.botRef
+        : record.botRef && typeof record.botRef === 'object'
+          ? ((record.botRef as Record<string, unknown>).name as string | undefined)
+          : undefined
+    const role = record.role
+    if (typeof botName === 'string' && typeof role === 'string' && role && role !== 'leader') {
+      baseMemberRoles.set(botName, role)
+    }
+  }
 
   return {
     ...baseJson,
@@ -75,7 +96,7 @@ export const buildPublicTeamJson = (data: {
           namespace: 'default',
         },
         botPrompt: member.botPrompt || undefined,
-        role: member.role || undefined,
+        role: member.role || baseMemberRoles.get(member.botName) || undefined,
         requireConfirmation: member.requireConfirmation || undefined,
         contextPassing:
           member.contextPassing && member.contextPassing !== 'none'
@@ -135,6 +156,31 @@ export const resolvePublicTeamName = (
   fallback: string
 ): string => {
   return name.trim() || getMetadataName(teamJson) || fallback
+}
+
+/**
+ * The JSON the basic editor rebuilds from: the advanced editor's text when it holds
+ * a team object, otherwise the team as it was opened. The advanced editor is the only
+ * place member roles can change, so the basic tab must not rebuild from stale data.
+ *
+ * Empty, malformed, or non-object editor text falls back to the opened team rather
+ * than failing a save the basic form can still produce.
+ */
+export const resolvePublicTeamBaseJson = (
+  jsonConfig: string,
+  openedTeamJson?: Record<string, unknown>
+): Record<string, unknown> | undefined => {
+  if (!jsonConfig || jsonConfig === '{}') {
+    return openedTeamJson
+  }
+  try {
+    const parsed = JSON.parse(jsonConfig) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : openedTeamJson
+  } catch {
+    return openedTeamJson
+  }
 }
 
 export const buildPublicTeamUpdateData = ({

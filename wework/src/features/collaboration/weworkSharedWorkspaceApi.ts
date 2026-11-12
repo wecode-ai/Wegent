@@ -67,6 +67,7 @@ export interface WeworkDeliverySharedWorkspaceApi {
   projects: Pick<SharedWorkspaceApi['projects'], ProjectMethod>
   myWork: NonNullable<SharedWorkspaceApi['myWork']>
   assignmentReceipts: NonNullable<SharedWorkspaceApi['assignmentReceipts']>
+  milestones: NonNullable<SharedWorkspaceApi['milestones']>
   issues: SharedWorkspaceApi['issues']
   attachments: SharedWorkspaceApi['attachments']
   collaborators: SharedWorkspaceApi['collaborators']
@@ -81,6 +82,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
   projects: ['list', 'get', 'create', 'update', 'archive'],
   myWork: ['list'],
   assignmentReceipts: ['list', 'acknowledge'],
+  milestones: ['getCacheScope', 'list', 'create', 'update', 'remove'],
   issues: [
     'list',
     'listPage',
@@ -478,6 +480,13 @@ export function createWeworkDeliverySharedWorkspaceApi(
         return (await deliveryApi.listMyWork()).items.map(toMyWorkItem)
       },
     },
+    milestones: {
+      getCacheScope: deliveryApi.getMilestonesCacheScope,
+      list: projectId => deliveryApi.listMilestones(projectId),
+      create: (projectId, input) => deliveryApi.createMilestone(projectId, input),
+      update: (projectId, id, input) => deliveryApi.updateMilestone(projectId, id, input),
+      remove: (projectId, id, version) => deliveryApi.deleteMilestone(projectId, id, version),
+    },
     issues: {
       async list(projectId, filters) {
         return (await deliveryApi.listLoopItems(projectId, filters)).items.map(toIssue)
@@ -514,6 +523,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               priority: input.priority,
               start_at: input.startAt,
               due_at: input.dueAt,
+              milestone_id: input.milestoneId,
               parent_id: input.parentId,
               tags: input.tags,
               local_project_id: input.localProjectId,
@@ -536,6 +546,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               description: input.description,
               status: input.status,
               priority: input.priority,
+              milestone_id: input.milestoneId,
               parent_id: input.parentId,
               assignee_user_id: input.assigneeUserId,
               assignee_group_id: input.assigneeGroupId,
@@ -581,8 +592,10 @@ export function createWeworkDeliverySharedWorkspaceApi(
           })
         ).items.map(toIssue)
       },
-      markRead(issueId, activitySequence) {
-        return deliveryApi.markLoopItemRead(issueId, activitySequence).then(toIssue)
+      markRead(issueId, activitySequence, contentRevision) {
+        return deliveryApi
+          .markLoopItemRead(issueId, activitySequence, contentRevision)
+          .then(toIssue)
       },
     },
     attachments: {
@@ -599,18 +612,18 @@ export function createWeworkDeliverySharedWorkspaceApi(
         const attachments = contextIds.map(id => ({ id }) as Attachment)
         return (await deliveryApi.importLoopItemAttachments(issueId, attachments)).map(toAttachment)
       },
-      async access(attachmentId) {
-        const access = await deliveryApi.accessLoopItemAttachment(attachmentId)
+      async access(attachmentId, context) {
+        const access = await deliveryApi.accessLoopItemAttachment(attachmentId, context)
         return { url: access.url, expiresInSeconds: access.expires_in_seconds }
       },
-      read(attachmentId) {
-        return deliveryApi.readLoopItemAttachment(attachmentId)
+      read(attachmentId, context) {
+        return deliveryApi.readLoopItemAttachment(attachmentId, context)
       },
-      download(attachmentId, filename) {
-        return deliveryApi.downloadLoopItemAttachment(attachmentId, filename)
+      download(attachmentId, filename, context) {
+        return deliveryApi.downloadLoopItemAttachment(attachmentId, filename, context)
       },
-      remove(attachmentId) {
-        return deliveryApi.deleteLoopItemAttachment(attachmentId)
+      remove(attachmentId, context) {
+        return deliveryApi.deleteLoopItemAttachment(attachmentId, context)
       },
     },
     collaborators: {

@@ -12,13 +12,18 @@ that can be used across different services (bot_kinds, executor_kinds, etc.).
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember
 from app.schemas.kind import Shell
 from app.services.capability_lookup import ExecutionCapabilityLookup
-from app.services.capability_reference_service import get_referenced_capability
+from app.services.capability_reference_service import (
+    get_referenced_capability,
+    list_referenced_capabilities_by_namespace,
+)
+from app.services.resource_lookup_queries import lookup_batches, named_kind_rows
 
 logger = logging.getLogger(__name__)
 
@@ -408,10 +413,9 @@ def get_shells_by_names_batch(
     user_id: int,
 ) -> Dict[Tuple[str, str], Kind]:
     """
-    Batch-fetch shells by (name, namespace) keys.
-
-    First queries user's custom shells from kinds table, then queries public shells
-    for any missing keys.
+    Batch-fetch shells by (name, namespace) keys using the same precedence as
+    ``get_shell_by_name``: user-owned direct Shell, referenced Shell, direct
+    group Shell, then public Shell fallback.
 
     Args:
         db: Database session
@@ -421,68 +425,154 @@ def get_shells_by_names_batch(
     Returns:
         Dict mapping (name, namespace) to Kind objects
     """
-    if not shell_keys:
-        return {}
+    resolved = get_shells_by_owners_batch(
+        db, {(user_id, name, namespace) for name, namespace in shell_keys}
+    )
+    return {
+        (name, namespace): shell for (_, name, namespace), shell in resolved.items()
+    }
 
-    shell_map: Dict[Tuple[str, str], Kind] = {}
 
-    # Build OR filter for user shells
-    def build_user_shell_or_filters(keys: Set[Tuple[str, str]]):
-        return (
-            or_(*[and_(Kind.name == n, Kind.namespace == ns) for (n, ns) in keys])
-            if keys
-            else None
-        )
-
-    # Query user's custom shells first
-    user_shell_filter = build_user_shell_or_filters(shell_keys)
-    if user_shell_filter is not None:
-        user_shells = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Shell",
-                Kind.is_active == True,
+def _direct_shells_by_keys(
+    db: Session,
+    shell_keys: Set[Tuple[int, str, str]],
+    *,
+    match_owner: bool,
+) -> Dict[Tuple[int, str, str], Kind]:
+    """Let SQL compare names and namespaces while retaining the full request key."""
+    result = {}
+    rows = [
+        {"owner_id": owner_id, "name": name, "namespace": namespace}
+        for owner_id, name, namespace in sorted(shell_keys)
+    ]
+    for requested in lookup_batches(rows):
+        conditions = [
+            Kind.name == requested.c.name,
+            Kind.namespace == requested.c.namespace,
+        ]
+        if match_owner:
+            conditions.append(Kind.user_id == requested.c.owner_id)
+        matches = (
+            db.query(
+                requested.c.owner_id, requested.c.name, requested.c.namespace, Kind
             )
-            .filter(user_shell_filter)
+            .select_from(requested)
+            .join(Kind, and_(*conditions))
+            .filter(Kind.kind == "Shell", Kind.is_active.is_(True))
+            .order_by(Kind.id)
             .all()
         )
+        for owner_id, name, namespace, shell in matches:
+            result.setdefault((owner_id, name, namespace), shell)
+    return result
 
-        for shell in user_shells:
-            shell_map[(shell.name, shell.namespace)] = shell
 
-    # Find missing keys and query public shells
-    found_keys = set(shell_map.keys())
-    missing_keys = shell_keys - found_keys
-
-    if missing_keys:
-
-        def build_public_shell_or_filters(keys: Set[Tuple[str, str]]):
-            return (
-                or_(*[and_(Kind.name == n, Kind.namespace == ns) for (n, ns) in keys])
-                if keys
-                else None
+def _personal_shell_references(
+    db: Session, owner_ids: Set[int]
+) -> Dict[Tuple[int, str], Kind]:
+    """Read approved personal references for all requested identities together."""
+    result = {}
+    rows = [
+        {"owner_id": owner_id, "entity_id": str(owner_id)}
+        for owner_id in sorted(owner_ids)
+    ]
+    for requested in lookup_batches(rows):
+        matches = (
+            db.query(requested.c.owner_id, Kind)
+            .select_from(requested)
+            .join(ResourceMember, ResourceMember.entity_id == requested.c.entity_id)
+            .join(Kind, Kind.id == ResourceMember.resource_id)
+            .filter(
+                ResourceMember.resource_type == "Shell",
+                ResourceMember.entity_type == "user",
+                ResourceMember.status == MemberStatus.APPROVED.value,
+                Kind.kind == "Shell",
+                Kind.user_id != 0,
+                Kind.is_active.is_(True),
             )
+            .order_by(Kind.id)
+            .all()
+        )
+        for owner_id, shell in matches:
+            result.setdefault((owner_id, shell.name), shell)
+    return result
 
-        public_shell_filter = build_public_shell_or_filters(missing_keys)
-        if public_shell_filter is not None:
-            public_shells = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Shell",
-                    Kind.is_active == True,
-                )
-                .filter(public_shell_filter)
-                .all()
-            )
 
-            for shell in public_shells:
-                shell_map[(shell.name, shell.namespace)] = shell
-
-    logger.debug(
-        f"Batch fetched {len(shell_map)} shells for {len(shell_keys)} keys "
-        f"(user: {len(shell_map) - len(missing_keys) + len(found_keys)}, "
-        f"public: {len(shell_map) - len(found_keys)})"
+def _referenced_shells_by_keys(
+    db: Session, shell_keys: Set[Tuple[int, str, str]]
+) -> Dict[Tuple[int, str, str], Kind]:
+    """Share group references while keeping personal references owner-scoped."""
+    personal = _personal_shell_references(
+        db,
+        {owner_id for owner_id, _, namespace in shell_keys if namespace == "default"},
     )
+    group_names = {
+        namespace for _, _, namespace in shell_keys if namespace != "default"
+    }
+    groups = (
+        list_referenced_capabilities_by_namespace(
+            db, kind="Shell", user_id=0, namespaces=sorted(group_names)
+        )
+        if group_names
+        else {}
+    )
+    group_index = {}
+    for namespace, shells in groups.items():
+        for shell in shells:
+            group_index.setdefault((shell.name, namespace), shell)
+    result = {}
+    for key in shell_keys:
+        owner_id, name, namespace = key
+        shell = (
+            personal.get((owner_id, name))
+            if namespace == "default"
+            else group_index.get((name, namespace))
+        )
+        if shell is not None:
+            result[key] = shell
+    return result
 
+
+def get_shells_by_owners_batch(
+    db: Session,
+    shell_keys: Set[Tuple[int, str, str]],
+) -> Dict[Tuple[int, str, str], Kind]:
+    """
+    Batch-fetch shells by (owner_id, name, namespace) keys, resolving each
+    owner's references with that owner's identity.
+
+    Args:
+        db: Database session
+        shell_keys: Set of (owner_id, name, namespace) tuples to query
+
+    Returns:
+        Dict mapping (owner_id, name, namespace) to Kind objects
+    """
+    shell_map = _direct_shells_by_keys(db, shell_keys, match_owner=True)
+    missing = shell_keys - shell_map.keys()
+    shell_map.update(_referenced_shells_by_keys(db, missing))
+
+    missing = shell_keys - shell_map.keys()
+    group_owners = {
+        owner_id for owner_id, _, namespace in missing if namespace != "default"
+    }
+    authorized = set()
+    for owner_id in group_owners:
+        groups = ExecutionCapabilityLookup(db, owner_id).groups
+        authorized.update(
+            key for key in missing if key[0] == owner_id and key[2] in groups
+        )
+    shell_map.update(_direct_shells_by_keys(db, authorized, match_owner=False))
+
+    missing = shell_keys - shell_map.keys()
+    public_by_name = {}
+    for requested, shell in named_kind_rows(
+        db,
+        {name for _, name, _ in missing},
+        [Kind.kind == "Shell", Kind.user_id == 0, Kind.namespace == "default"],
+    ):
+        public_by_name.setdefault(requested, shell)
+    for key in missing:
+        if (shell := public_by_name.get(key[1])) is not None:
+            shell_map[key] = shell
     return shell_map

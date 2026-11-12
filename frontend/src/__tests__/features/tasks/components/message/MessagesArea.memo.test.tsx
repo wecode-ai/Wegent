@@ -9,13 +9,20 @@ import MessagesArea, {
 } from '@/features/tasks/components/message/MessagesArea'
 import type { DisplayMessage } from '@/features/tasks/presentation/useMessagePresenter'
 import type { TaskStateSnapshot } from '@wegent/chat-core'
-import type { KnowledgeBaseWithGroupInfo, KnowledgeDocument } from '@/types/knowledge'
+import type {
+  DocumentProtection,
+  KnowledgeBaseWithGroupInfo,
+  KnowledgeDocument,
+} from '@/types/knowledge'
 import type { InteractiveFormAnswerPayload } from '@/types/api'
 
 const messageBubbleRenderSpy = jest.fn()
 const saveToKnowledgeDialogRenderSpy = jest.fn()
 const documentDetailDialogRenderSpy = jest.fn()
 const mockToast = jest.fn()
+const mockGetDocumentProtection = jest.fn(
+  (_knowledgeBaseId: number) => new Promise<DocumentProtection>(() => {})
+)
 
 let mockMessages: DisplayMessage[] = [
   {
@@ -195,6 +202,10 @@ jest.mock('@/features/knowledge/document/components/DocumentDetailDialog', () =>
   },
 }))
 
+jest.mock('@/apis/knowledge', () => ({
+  getDocumentProtection: (knowledgeBaseId: number) => mockGetDocumentProtection(knowledgeBaseId),
+}))
+
 describe('deriveSaveToKnowledgeTitle', () => {
   it('uses the nearest previous user message first line', () => {
     const messages: DisplayMessage[] = [
@@ -360,7 +371,14 @@ describe('MessagesArea memoization', () => {
     expect(getLatestAiBubbleProps().onSaveToKnowledge).toEqual(expect.any(Function))
   })
 
-  it('binds each success toast to the document created by that save', () => {
+  it('binds each success toast to the document and resolves its protection policy', async () => {
+    let resolveProtection!: (value: {
+      original_download_allowed: boolean
+      watermark_text: string
+    }) => void
+    mockGetDocumentProtection.mockImplementationOnce(
+      () => new Promise(resolve => (resolveProtection = resolve))
+    )
     render(
       <MessagesArea
         selectedTeam={null}
@@ -406,6 +424,21 @@ describe('MessagesArea memoization', () => {
         document: documentA,
         knowledgeBaseId: knowledgeBase.id,
         open: true,
+        allowDownload: false,
+      })
+    )
+    expect(mockGetDocumentProtection).toHaveBeenCalledWith(knowledgeBase.id)
+
+    await act(async () => {
+      resolveProtection({
+        original_download_allowed: true,
+        watermark_text: 'reader 220750',
+      })
+    })
+    expect(documentDetailDialogRenderSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        document: documentA,
+        allowDownload: true,
       })
     )
   })

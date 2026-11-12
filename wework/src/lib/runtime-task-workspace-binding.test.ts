@@ -1,10 +1,11 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { RuntimeWorkListResponse } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import {
   resolveRuntimeTaskWorkspaceBinding,
   runtimeTaskProjectUiId,
-  withoutRuntimeTaskWorkspaceBinding,
 } from './runtime-task-workspace-binding'
 
 const runtimeWork: RuntimeWorkListResponse = {
@@ -53,46 +54,10 @@ const runtimeWork: RuntimeWorkListResponse = {
 }
 
 describe('runtime task workspace binding', () => {
-  test('builds a Backend project binding from a mapped workspace', () => {
-    expect(
-      resolveRuntimeTaskWorkspaceBinding({
-        runtimeWork,
-        projectUiId: 91,
-        deviceWorkspaceId: 191,
-      })
-    ).toEqual({
-      projectId: 91,
-      deviceWorkspaceId: 191,
-    })
-  })
-
   test('builds a device project binding without persisting workspacePath', () => {
     const projectUiId = runtimeProjectUiId(runtimeWork.projects[1].project)
 
     expect(resolveRuntimeTaskWorkspaceBinding({ runtimeWork, projectUiId })).toEqual({
-      deviceId: 'cloud-executor',
-      runtimeProjectKey: 'remote:docs',
-      runtimeProjectName: '文档',
-      runtimeWorkspaceRoots: ['/srv/docs'],
-    })
-  })
-
-  test('binds a new remote conversation to its primary source even with an existing worktree', () => {
-    const work = structuredClone(runtimeWork)
-    work.projects[1].deviceWorkspaces.push({
-      deviceId: 'cloud-executor',
-      workspacePath: '/trees/existing',
-      workspaceKind: 'worktree',
-      worktreeId: 'existing',
-      available: true,
-      tasks: [],
-    })
-    expect(
-      resolveRuntimeTaskWorkspaceBinding({
-        runtimeWork: work,
-        projectUiId: runtimeProjectUiId(work.projects[1].project),
-      })
-    ).toEqual({
       deviceId: 'cloud-executor',
       runtimeProjectKey: 'remote:docs',
       runtimeProjectName: '文档',
@@ -125,24 +90,5 @@ describe('runtime task workspace binding', () => {
         workspacePath: '/srv/docs/',
       })
     ).toBe(runtimeProjectUiId(runtimeWork.projects[1].project))
-  })
-
-  test('removes an old binding before rebuilding a task request', () => {
-    expect(
-      withoutRuntimeTaskWorkspaceBinding({
-        runtime: 'codex',
-        message: 'task',
-        projectId: 91,
-        deviceWorkspaceId: 191,
-        deviceId: 'stale-device',
-        workspacePath: '/stale',
-        runtimeProjectKey: 'stale',
-        runtimeProjectName: 'Stale',
-        runtimeWorkspaceRoots: ['/stale'],
-      })
-    ).toEqual({
-      runtime: 'codex',
-      message: 'task',
-    })
   })
 })

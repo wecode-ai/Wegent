@@ -5,6 +5,10 @@
 import type { CollaborationPriority } from '../types'
 
 export interface CollaborationIssueCardItem {
+  assignee_user_id?: number | null
+  created_by_user_id?: number
+  created_by_user_name?: string | null
+  human_requests?: readonly import('../issueParticipation').IssueHumanRequest[]
   status?: string
   id: string
   title: string
@@ -14,12 +18,16 @@ export interface CollaborationIssueCardItem {
   updated_at?: string | null
   tags?: readonly string[] | null
   is_unread?: boolean
+  assignee_group_id?: string | null
+  assignee_group_name?: string | null
   assignee_name?: string | null
   assignee_agent_id?: string | null
   assignee_agent_name?: string | null
   assignee_team_id?: number | null
   assignee_team_name?: string | null
   execution_state?: string | null
+  ai_state?: { status?: string | null; agent_name?: string | null } | null
+  processing_actor?: { kind: 'agent' | 'stand_in'; name: string } | null
 }
 
 /**
@@ -40,6 +48,7 @@ export interface CollaborationIssueCardDisplay {
 }
 
 export interface CollaborationIssueCardLabels {
+  participation?: { agent: string; standIn: string; human: (name: string) => string }
   statuses?: Readonly<Record<string, string>>
   assignee: string
   createdAt: string
@@ -48,7 +57,7 @@ export interface CollaborationIssueCardLabels {
 }
 
 export interface CollaborationIssueCardModel {
-  assigneeKind: 'agent' | 'team' | 'user' | null
+  assigneeKind: 'agent' | 'team' | 'group' | 'user' | null
   assigneeName: string | null
   date: {
     value: string
@@ -68,6 +77,12 @@ export function resolveIssueCardAssignee(
   item: CollaborationIssueCardItem,
   agentNames?: Readonly<Record<string, string>>
 ): Pick<CollaborationIssueCardModel, 'assigneeKind' | 'assigneeName'> {
+  if (item.assignee_group_id) {
+    return {
+      assigneeKind: 'group',
+      assigneeName: item.assignee_group_name ?? null,
+    }
+  }
   if (item.assignee_name) {
     return { assigneeKind: 'user', assigneeName: item.assignee_name }
   }

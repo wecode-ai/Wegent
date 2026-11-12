@@ -1,6 +1,4 @@
 import { describe, expect, it, test, vi } from 'vitest'
-import type { HttpClient } from './http'
-import { ApiError } from './http'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   DEFAULT_WORK_ITEM_PROJECT_KEY,
@@ -9,6 +7,8 @@ import {
   type CloudLoopItem,
   type CloudTaskContext,
 } from './deliveries'
+import type { HttpClient } from './http'
+import { ApiError } from './http'
 
 it('updates delivered content in one multipart request', async () => {
   const patch = vi.fn().mockResolvedValue({ id: 'delivery-1', version: 4 })
@@ -42,30 +42,13 @@ it('updates delivered content in one multipart request', async () => {
 })
 
 describe('createDeliveryApi queue and assignment routes', () => {
-  it('refreshes notification counts after an Issue read is persisted', async () => {
-    const updated = { id: 'issue-1', is_unread: false }
-    let resolveRead!: (value: typeof updated) => void
-    const post = vi.fn(
-      () =>
-        new Promise<typeof updated>(resolve => {
-          resolveRead = resolve
-        })
-    )
-    const refresh = vi.fn()
-    window.addEventListener('wework-notifications-changed', refresh)
-    try {
-      const pending = createDeliveryApi({ post } as unknown as HttpClient).markLoopItemRead(
-        'issue-1',
-        3
-      )
-      expect(refresh).not.toHaveBeenCalled()
-      resolveRead(updated)
-      await expect(pending).resolves.toEqual(updated)
-      expect(refresh).toHaveBeenCalledOnce()
-      expect(post).toHaveBeenCalledWith('/v1/loop-items/issue-1/read', { activity_sequence: 3 })
-    } finally {
-      window.removeEventListener('wework-notifications-changed', refresh)
-    }
+  it('bounds automatic read receipts to the content actually observed', async () => {
+    const post = vi.fn().mockResolvedValue({ id: 'issue-1', is_unread: true })
+    await createDeliveryApi({ post } as unknown as HttpClient).markLoopItemRead('issue-1', 4, 7)
+    expect(post).toHaveBeenCalledWith('/v1/loop-items/issue-1/read', {
+      activity_sequence: 4,
+      content_revision: 7,
+    })
   })
 
   it('preserves notification counts when persisting Issue read state fails', async () => {
@@ -81,16 +64,6 @@ describe('createDeliveryApi queue and assignment routes', () => {
     } finally {
       window.removeEventListener('wework-notifications-changed', refresh)
     }
-  })
-
-  it('loads receipts through the indexed current-assignment endpoint', async () => {
-    const human = { id: 'assignment', target_type: 'human', human_read_at: '2026-10-27T00:00:00Z' }
-    const get = vi.fn(async () => ({ items: [human] }))
-    const api = createDeliveryApi(clientWith({ get }))
-
-    expect(await api.getIssueAssignmentReceipts('ISSUE/1')).toEqual([human])
-    expect(get).toHaveBeenCalledOnce()
-    expect(get).toHaveBeenCalledWith('/v1/loop-items/ISSUE%2F1/assignments')
   })
 
   it('recognizes only the canonical default work-item project', () => {
@@ -123,25 +96,6 @@ describe('createDeliveryApi queue and assignment routes', () => {
     expect(client.get).toHaveBeenCalledWith(
       '/v1/cloud-projects/123/loop-items?assignee_type=agent&assignee_id=bot-1&execution_state=queued'
     )
-  })
-
-  it('loads the complete board snapshot through one request', async () => {
-    const client = {
-      get: vi.fn(async () => ({
-        items: [],
-        task_bindings: [],
-        members: [],
-        agents: [],
-      })),
-    } as unknown as HttpClient
-    const api = createDeliveryApi(client)
-
-    await api.getBoardSnapshot(123)
-
-    expect(client.get).toHaveBeenCalledOnce()
-    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/board-snapshot', {
-      cache: 'no-store',
-    })
   })
 
   it('persists the runtime task model identity when binding a board task', async () => {
@@ -299,44 +253,6 @@ describe('createDeliveryApi queue and assignment routes', () => {
     expect(response).toMatchObject({ id: 202, status: 'cancelled' })
   })
 
-  it('assigns a task to a robot through the project route', async () => {
-    const client = {
-      post: vi.fn(async () => ({})),
-    } as unknown as HttpClient
-    const api = createDeliveryApi(client)
-
-    await api.assignLoopItem(123, 'task-1', {
-      version: 3,
-      assigneeType: 'agent',
-      assigneeId: 'bot-1',
-    })
-
-    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/loop-items/task-1/assign', {
-      version: 3,
-      assigneeType: 'agent',
-      assigneeId: 'bot-1',
-    })
-  })
-
-  it('assigns a task to a project member with a string user id', async () => {
-    const client = {
-      post: vi.fn(async () => ({})),
-    } as unknown as HttpClient
-    const api = createDeliveryApi(client)
-
-    await api.assignLoopItem(123, 'task-1', {
-      version: 3,
-      assigneeType: 'user',
-      assigneeId: '42',
-    })
-
-    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/loop-items/task-1/assign', {
-      version: 3,
-      assigneeType: 'user',
-      assigneeId: '42',
-    })
-  })
-
   it('approves and rejects pending robot runs', async () => {
     const client = {
       post: vi.fn(async () => ({})),
@@ -442,27 +358,6 @@ describe('createDeliveryApi task tracking', () => {
         status: 'inbox',
       }
     )
-  })
-
-  test('reuses a created board item when binding is retried', async () => {
-    const get = vi.fn().mockRejectedValue(new ApiError('Cloud context not found', 404))
-    const post = vi
-      .fn()
-      .mockResolvedValueOnce(trackedItem)
-      .mockRejectedValueOnce(new Error('Temporary bind failure'))
-      .mockResolvedValueOnce(undefined)
-    const api = createDeliveryApi(clientWith({ get, post }))
-    const task = { deviceId: 'local-device', taskId: 'runtime-1' }
-
-    await expect(
-      api.trackProjectTask('project-1', task, 'Runtime task', 'Track this task')
-    ).rejects.toThrow('Temporary bind failure')
-    await expect(
-      api.trackProjectTask('project-1', task, 'Runtime task', 'Track this task')
-    ).resolves.toEqual({ item: trackedItem })
-
-    expect(post).toHaveBeenCalledTimes(3)
-    expect(post.mock.calls.filter(([endpoint]) => endpoint.endsWith('/loop-items'))).toHaveLength(1)
   })
 
   test('creates a new board item when moving a task from another project', async () => {

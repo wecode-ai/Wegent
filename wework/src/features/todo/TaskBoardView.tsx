@@ -28,6 +28,7 @@ import { getRuntimeTaskReminderKey } from '@/features/workbench/runtimeTaskRemin
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import { useTranslation } from '@/hooks/useTranslation'
+import { createCollaborationTranslator } from '@wegent/collaboration'
 import { Tooltip } from '@/components/ui/tooltip'
 import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
@@ -138,7 +139,11 @@ export function TaskBoardView({
   onMarkRuntimeTaskRead,
   onOpenRuntimeTask,
 }: TaskBoardViewProps) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const boardTranslate = useMemo(
+    () => createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
+    [i18n.language]
+  )
   const [activeLocalProjectFilter, setActiveLocalProjectFilter] = useState('all')
   const [taskContexts, setTaskContexts] = useState<Map<string, RuntimeTaskContextSource>>(
     () => new Map()
@@ -218,35 +223,39 @@ export function TaskBoardView({
   useEffect(() => {
     if (projectSpaceApis.length === 0 || reviewItems.length === 0) return
     const lookupApis = projectSpaceApis
-    const unresolvedItems = reviewItems.filter(item => {
+    const unresolvedItems = reviewItems.flatMap(item => {
       const key = runtimeTaskKey(item.runtime_address)
       const existing = taskContexts.get(key)
       if (
         (existing && lookupApis.includes(existing.api)) ||
         sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)
       ) {
-        return false
+        return []
       }
-      pendingTaskContextLookups.current.set(key, lookupApis)
-      return true
-    })
-    if (unresolvedItems.length === 0) return
-    void allSettledWithConcurrency(unresolvedItems, BULK_TASK_CONCURRENCY, async item => {
-      const key = runtimeTaskKey(item.runtime_address)
+      // Version the whole queue before workers start so confirmation invalidates it.
       const lookupVersion = (taskContextLookupVersions.current.get(key) ?? 0) + 1
       taskContextLookupVersions.current.set(key, lookupVersion)
-      try {
-        return {
-          key,
-          lookupVersion,
-          source: await findProjectSpaceContextSourceForTask(lookupApis, item.runtime_address),
-        }
-      } finally {
-        if (sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)) {
-          pendingTaskContextLookups.current.delete(key)
+      pendingTaskContextLookups.current.set(key, lookupApis)
+      return [{ item, key, lookupVersion }]
+    })
+    if (unresolvedItems.length === 0) return
+    void allSettledWithConcurrency(
+      unresolvedItems,
+      BULK_TASK_CONCURRENCY,
+      async ({ item, key, lookupVersion }) => {
+        try {
+          return {
+            key,
+            lookupVersion,
+            source: await findProjectSpaceContextSourceForTask(lookupApis, item.runtime_address),
+          }
+        } finally {
+          if (sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)) {
+            pendingTaskContextLookups.current.delete(key)
+          }
         }
       }
-    }).then(results => {
+    ).then(results => {
       if (!mountedRef.current || !sameProjectSpaceApis(projectSpaceApisRef.current, lookupApis)) {
         return
       }
@@ -283,8 +292,8 @@ export function TaskBoardView({
       createStandardCloudBoardColumns({
         getDotClass: (nextGroupBy, value) =>
           nextGroupBy === 'status' || nextGroupBy === 'priority'
-            ? (columnDotClasses[value] ?? 'bg-zinc-400')
-            : 'bg-zinc-400',
+            ? (columnDotClasses[value] ?? 'bg-text-muted wework:bg-zinc-400')
+            : 'bg-text-muted wework:bg-zinc-400',
         groupBy,
         items,
         labels: {
@@ -446,6 +455,7 @@ export function TaskBoardView({
   return (
     <div className="contents" data-testid="task-board-surface">
       <ProjectBoardBody<RuntimeMyWorkItem>
+        translate={boardTranslate}
         state={board.state}
         activeDragItemId={board.activeDragItemId}
         boardError={null}
@@ -732,7 +742,7 @@ export function TaskBoardView({
                 data-testid="task-board-batch-archive-completed-confirm"
                 disabled={batchArchiveBusy}
                 onClick={() => void archiveCompletedTasks(batchArchiveItems)}
-                className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-50 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
               >
                 {batchArchiveBusy
                   ? t('todo.archiving', '归档中…')

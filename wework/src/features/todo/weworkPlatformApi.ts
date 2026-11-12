@@ -23,8 +23,10 @@ export function mergeExecutionEnvironmentResources(
   const seen = new Set<string>()
   return cloudEnvironments.flatMap(environment => {
     const identity = executionEnvironmentIdentity(environment)
-    if (seen.has(identity)) return []
-    seen.add(identity)
+    // Historical records can share a desktop alias without being the same resource.
+    const resourceId = String(environment.device_id ?? environment.id)
+    if (seen.has(resourceId)) return []
+    seen.add(resourceId)
     return [
       currentLocalDeviceKeys.has(identity)
         ? { ...environment, is_current_device: true }
@@ -131,6 +133,11 @@ export function createWeworkPlatformApi(
         return isLocalWorkspace(workspaceId)
           ? localApi.workspaces!.removeMember(workspaceId, memberUserId)
           : cloudApi.workspaces!.removeMember(workspaceId, memberUserId)
+      },
+      async createTemplateAgent(workspaceId, agent, routing) {
+        if (!isLocalWorkspace(workspaceId) || !localApi.workspaces!.createTemplateAgent)
+          throw new Error('Local template Agent storage is unavailable')
+        return localApi.workspaces!.createTemplateAgent(workspaceId, agent, routing)
       },
       listAgents(workspaceId, options) {
         const api = isLocalWorkspace(workspaceId) ? localApi : cloudApi
@@ -417,13 +424,19 @@ export function createWeworkPlatformApi(
           ? localApi.issues.reorder(projectId, input)
           : cloudApi.issues.reorder(projectId, input)
       },
-      async markRead(issueId, activitySequence) {
+      async markRead(issueId, activitySequence, contentRevision) {
         return (await issueLocation(issueId)) === 'local'
-          ? localApi.issues.markRead(issueId, activitySequence)
-          : cloudApi.issues.markRead(issueId, activitySequence)
+          ? localApi.issues.markRead(issueId, activitySequence, contentRevision)
+          : cloudApi.issues.markRead(issueId, activitySequence, contentRevision)
       },
     },
     resources: {
+      async removeDevice(device) {
+        if (!cloudApi.resources?.removeDevice) {
+          throw new Error('Device deletion is unavailable')
+        }
+        await cloudApi.resources.removeDevice(device)
+      },
       devices: {
         ...localApi.resources?.devices,
         ...cloudApi.resources?.devices,

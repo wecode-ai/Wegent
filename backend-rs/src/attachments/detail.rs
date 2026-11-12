@@ -286,6 +286,9 @@ async fn create_attachment_download_token(
 }
 
 #[cfg(test)]
+mod download_contract_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::attachments::context_store::SubtaskContextRow;

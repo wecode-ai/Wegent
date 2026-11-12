@@ -19,7 +19,7 @@
 //! * model by name/namespace — `WHERE kinds.kind = 'Model' AND kinds.name = ?
 //!   AND kinds.namespace = ? AND kinds.is_active IS true ORDER BY kinds.id ASC
 //!   LIMIT 1`.
-use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlService};
+use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlRow, MysqlService};
 use brz_redis::Redis;
 use serde_json::Value;
 
@@ -29,104 +29,7 @@ use crate::task_skills::kinds::KindCacheStore;
 use crate::task_store_statements::StatementArg;
 use crate::teams::teams_repository::placeholders;
 
-/// `kinds` columns as rendered by `db.query(Kind)`.
-pub(crate) const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
-     kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
-     kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
-     kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
-     kinds.updated_at AS kinds_updated_at";
-
-/// One `kinds` row, decoded from [`KIND_COLUMNS`].
-#[derive(Debug, FromMysqlRow)]
-pub struct KindRow {
-    #[mysql(rename = "kinds_id")]
-    pub id: i64,
-    #[mysql(rename = "kinds_user_id")]
-    pub user_id: i64,
-    #[mysql(rename = "kinds_kind")]
-    pub kind: String,
-    #[mysql(rename = "kinds_name")]
-    pub name: String,
-    #[mysql(rename = "kinds_namespace")]
-    pub namespace: String,
-    #[mysql(rename = "kinds_json")]
-    pub json: Json<serde_json::Value>,
-    #[mysql(rename = "kinds_is_active")]
-    pub is_active: i8,
-    #[mysql(rename = "kinds_created_at")]
-    pub created_at: Option<chrono::NaiveDateTime>,
-    #[mysql(rename = "kinds_updated_at")]
-    pub updated_at: Option<chrono::NaiveDateTime>,
-}
-
-/// `KindReader.get_by_id` for a Team (`kinds.id` + `kind = 'Team'`).
-pub fn team_by_id_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.id = ? \
-         AND kinds.kind = 'Team' AND kinds.is_active IS true \n LIMIT 1"
-    )
-}
-
-/// `_get_team_by_share_permission`'s candidate read: one owner's Team by
-/// name/namespace (`is_active = true`).
-pub fn team_by_owner_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = ? \
-         AND kinds.kind = 'Team' AND kinds.namespace = ? AND kinds.name = ? \
-         AND kinds.is_active = true \n LIMIT 1"
-    )
-}
-
-/// The name-first variant recorded for the group path: one owner's Team by
-/// name/namespace with `is_active IS true`.
-pub fn team_by_owner_name_first_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = ? \
-         AND kinds.kind = 'Team' AND kinds.name = ? AND kinds.namespace = ? \
-         AND kinds.is_active IS true \n LIMIT 1"
-    )
-}
-
-/// `resolve_model_kind`'s direct read (`shared/db/capability_reference.py`):
-/// the requested Model by name/namespace. A non-`default` namespace orders by
-/// `id ASC` (oldest duplicate wins); the `default` namespace restricts to the
-/// caller's own or the public (`user_id = 0`) Model, newest owner first.
-pub fn model_by_name_namespace_statement(namespace: &str) -> String {
-    let scope = if namespace == "default" {
-        " AND (kinds.user_id = ? OR kinds.user_id = 0) \
-         \nORDER BY kinds.user_id DESC, kinds.id ASC"
-    } else {
-        "\nORDER BY kinds.id ASC"
-    };
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'Model' \
-         AND kinds.name = ? AND kinds.namespace = ? AND kinds.is_active IS true{scope} \
-         LIMIT 1"
-    )
-}
-
-/// `_reference_scope`'s namespace id read (`capability_reference.py`): the
-/// scalar `namespace.id` for the referenced-capability scope of a non-default
-/// namespace. A missing namespace ends the referenced resolution.
-pub fn namespace_id_statement() -> String {
-    "SELECT namespace.id \nFROM namespace \nWHERE namespace.name = ? \
-     AND namespace.is_active IS true"
-        .to_string()
-}
-
-/// `resolve_referenced_model_kind` (`capability_reference.py`): the
-/// smallest-id approved Model shared into the caller-visible scope.
-pub fn referenced_model_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.id IN \
-         (SELECT resource_members.resource_id \nFROM resource_members \
-         \nWHERE resource_members.resource_type = 'Model' \
-         AND resource_members.entity_type = ? AND resource_members.entity_id = ? \
-         AND resource_members.status = 'approved') \
-         AND kinds.kind = 'Model' AND kinds.name = ? AND kinds.user_id != 0 \
-         AND kinds.is_active IS true \nORDER BY kinds.id ASC LIMIT 1"
-    )
-}
+pub(crate) use wegent_resource_store::kind_rows::*;
 
 /// `KindReader.get_by_id(kind=Team)`: one Team row.
 pub async fn team_by_id<M: Mysql>(mysql: &M, team_id: i64) -> MysqlResult<Option<KindRow>> {
@@ -169,7 +72,11 @@ pub fn bot_refs(team_json: &serde_json::Value) -> Vec<BotRef> {
         .filter_map(|member| {
             let bot_ref = member.get("botRef")?;
             let name = bot_ref.get("name")?.as_str()?.to_string();
-            let namespace = bot_ref.get("namespace")?.as_str()?.to_string();
+            let namespace = match bot_ref.get("namespace") {
+                Some(namespace) => namespace.as_str()?,
+                None => "default",
+            }
+            .to_string();
             Some(BotRef { namespace, name })
         })
         .collect()
@@ -467,32 +374,95 @@ pub fn namespace_member_statement() -> String {
     )
 }
 
-/// `_find_model_with_namespace`'s private read: the caller's own Model by name.
-pub fn model_private_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'Model' \
-         AND kinds.user_id = ? AND kinds.name = ? AND kinds.is_active = true \n LIMIT 1"
+/// `_find_model_with_namespace`'s private read: the caller's own Model by
+/// name, through the Source's requested-names relation.
+pub fn model_named_personal_statement(name_count: usize) -> String {
+    named_kind_rows_statement(name_count, "kinds.kind = 'Model' AND kinds.user_id = ?")
+}
+
+/// `_find_model_with_namespace`'s group read: Models by name in the caller's
+/// group namespaces, through the requested-names relation.
+pub fn model_named_group_statement(name_count: usize, group_count: usize) -> String {
+    named_kind_rows_statement(
+        name_count,
+        &format!(
+            "kinds.kind = 'Model' AND kinds.namespace IN ({})",
+            placeholders(group_count)
+        ),
     )
 }
 
-/// `_find_model_with_namespace`'s group read: a Model by name in the caller's
-/// groups.
-pub fn model_group_statement(group_count: usize) -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'Model' \
-         AND kinds.name = ? AND kinds.namespace IN ({}) \
-         AND kinds.is_active = true \n LIMIT 1",
-        placeholders(group_count)
+/// `_find_model_with_namespace`'s public read (`user_id = 0`, `default`),
+/// through the requested-names relation.
+pub fn model_named_public_statement(name_count: usize) -> String {
+    named_kind_rows_statement(
+        name_count,
+        "kinds.kind = 'Model' AND kinds.user_id = 0 AND kinds.namespace = 'default'",
     )
 }
 
-/// `_find_model_with_namespace`'s public read (`user_id = 0`, `default`).
-pub fn model_public_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = 0 \
-         AND kinds.kind = 'Model' AND kinds.name = ? AND kinds.namespace = 'default' \
-         AND kinds.is_active = true \n LIMIT 1"
+/// `ExecutionCapabilityLookup.referenced` for Model
+/// (`capability_lookup.py:71-141`): the scope's approved-reference listing
+/// (all rows, ordered by `Kind.id`), then `_match_model_reference_names` — the
+/// pending names read through the named relation and restricted to the listed
+/// source ids. The listing's trailing rows also contribute `bind_model`
+/// pointers to the pending-name set.
+async fn referenced_model_lookup<M: Mysql>(
+    mysql: &M,
+    user_id: i64,
+    name: &str,
+    group_names: &[String],
+    pending: &mut Vec<String>,
+) -> MysqlResult<Option<KindRow>> {
+    let (statement, arguments) = if group_names.is_empty() {
+        (
+            referenced_user_listing_statement("Model"),
+            vec![StatementArg::Str(user_id.to_string())],
+        )
+    } else {
+        // `capability_reference_service.py:115-120`: the group reference
+        // targets' namespace ids, in the caller's group order.
+        let ids = mysql
+            .fetch_all::<_, _, MysqlRow>(
+                &namespace_ids_by_names_statement(group_names.len()),
+                group_names
+                    .iter()
+                    .cloned()
+                    .map(StatementArg::Str)
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+        let mut target_ids = Vec::with_capacity(ids.len());
+        for row in &ids {
+            target_ids.push(row.get_at::<i64>(0)?.to_string());
+        }
+        if target_ids.is_empty() {
+            return Ok(None);
+        }
+        (
+            referenced_namespace_listing_statement("Model", target_ids.len()),
+            target_ids.into_iter().map(StatementArg::Str).collect(),
+        )
+    };
+    let rows = referenced_listing(mysql, &statement, arguments).await?;
+    extend_pending(pending, referenced_bind_model_pointers(&rows));
+    if rows.is_empty() {
+        // `_match_model_reference_names` has no target id to restrict to.
+        return Ok(None);
+    }
+    let mut target_ids: Vec<i64> = Vec::new();
+    for row in &rows {
+        if !target_ids.contains(&row.kind.id) {
+            target_ids.push(row.kind.id);
+        }
+    }
+    let matches = named_kind_rows(
+        mysql,
+        &named_reference_match_statement(pending.len(), target_ids.len()),
+        named_rows_arguments(pending, target_ids.into_iter().map(StatementArg::Int)),
     )
+    .await?;
+    Ok(first_requested_row(matches, name))
 }
 
 /// `_find_model_with_namespace`: the caller's private Model, then a referenced
@@ -519,62 +489,73 @@ async fn find_model_with_namespace<R: Redis>(
     name: &str,
     enforce_public_whitelist: bool,
 ) -> MysqlResult<Option<KindRow>> {
-    if user_id != 0
-        && let Some(model) = mysql
-            .fetch_optional::<_, _, KindRow>(model_private_statement(), (user_id, name))
-            .await?
-    {
-        return Ok(Some(model));
-    }
-    // `get_referenced_capability(kind="Model", namespace="default")`: the
-    // approved Model shared with the caller.
-    if let Some(model) = mysql
-        .fetch_optional::<_, _, KindRow>(
-            referenced_model_statement(),
-            ("user", user_id.to_string(), name),
+    // `_read_direct` keeps one pending-name set per kind
+    // (`capability_lookup.py:135-148`): the requested name plus any
+    // `bind_model` targets the previous scope's rows contributed.
+    let mut pending: Vec<String> = vec![name.to_string()];
+    if user_id != 0 {
+        let rows = named_kind_rows(
+            mysql,
+            &model_named_personal_statement(pending.len()),
+            named_rows_arguments(&pending, [StatementArg::Int(user_id)]),
         )
-        .await?
-    {
+        .await?;
+        extend_pending(&mut pending, bind_model_pointers(&rows));
+        if let Some(model) = first_requested_row(rows, name) {
+            return Ok(Some(model));
+        }
+    }
+    // `lookup.referenced("Model", name, "default")`: the approved Model shared
+    // with the caller's user target.
+    if let Some(model) = referenced_model_lookup(mysql, user_id, name, &[], &mut pending).await? {
         return Ok(Some(model));
     }
     // `Search group models`: `get_user_groups(db, user_id)`.
-    let user_groups = user_groups(mysql, resolvers, redis, user_id).await?;
+    let user_groups = user_groups(mysql, &resolvers.for_execution(), redis, user_id).await?;
     if !user_groups.is_empty() {
-        let mut args: Vec<String> = vec![name.to_string()];
-        args.extend(user_groups.iter().cloned());
-        if let Some(model) = mysql
-            .fetch_optional::<_, _, KindRow>(model_group_statement(user_groups.len()), args)
-            .await?
+        let rows = named_kind_rows(
+            mysql,
+            &model_named_group_statement(pending.len(), user_groups.len()),
+            named_rows_arguments(&pending, user_groups.iter().cloned().map(StatementArg::Str)),
+        )
+        .await?;
+        extend_pending(&mut pending, bind_model_pointers(&rows));
+        if let Some(model) = first_requested_row(rows, name) {
+            return Ok(Some(model));
+        }
+        // `for group_name in user_groups: lookup.referenced("Model", name,
+        // group_name)` (`model_resolver.py:901-906`): the first group's call
+        // covers every group namespace in one listing, and later group calls
+        // only re-match the pending names.
+        if let Some(model) =
+            referenced_model_lookup(mysql, user_id, name, &user_groups, &mut pending).await?
         {
             return Ok(Some(model));
         }
-        // `for group_name in user_groups: get_referenced_capability(namespace=
-        // group_name)` (model_resolver.py:901-906): the namespace-id scope,
-        // then the referenced-Model read for that scope.
-        for group in &user_groups {
-            if let Some(model) = resolve_referenced_model(mysql, user_id, name, group).await? {
-                return Ok(Some(model));
-            }
-        }
     }
-    let public: Option<KindRow> = mysql
-        .fetch_optional(model_public_statement(), (name,))
-        .await?;
-    let Some(model) = public else {
+    let public_rows = named_kind_rows(
+        mysql,
+        &model_named_public_statement(pending.len()),
+        named_rows_arguments(&pending, []),
+    )
+    .await?;
+    let Some(model) = first_requested_row(public_rows, name) else {
         return Ok(None);
     };
     // `is_public_model_allowed_for_user`: the caller's row, then the
-    // `allowedUsers` whitelist. A denied public Model is reported as not found
-    // (`_resolve_model_for_bot` treats `PublicModelAccessDeniedError` that way
-    // for a Bot-bound Model).
-    let user_name = crate::teams::team_union_lookups::user_by_id(mysql, user_id)
+    // `allowedUsers` whitelist. The caller read is the Source's direct
+    // session primary-key lookup (`db.get(User, user_id)`,
+    // `model_lookup.py:376`), not the `userReader`/`.first()` shape. A denied
+    // public Model is reported as not found (`_resolve_model_for_bot` treats
+    // `PublicModelAccessDeniedError` that way for a Bot-bound Model).
+    let user_name = crate::user_reader::user_entity_by_id(mysql, user_id)
         .await?
-        .map(|user| user.users_user_name);
+        .map(|user| user.user_name);
     if !enforce_public_whitelist {
         return Ok(Some(model));
     }
     let model_json = brz_json::OpaqueJson::from(model.json.0.clone());
-    if crate::teams::public_model_access::allowed_for_user_name(&model_json, user_name.as_deref()) {
+    if wegent_access::public_models::allowed_for_user_name(&model_json, user_name.as_deref()) {
         Ok(Some(model))
     } else {
         Ok(None)
@@ -647,6 +628,30 @@ pub async fn resolve_model_for_bot_with_override<R: Redis>(
     bot_name: &str,
     override_model_name: Option<&str>,
 ) -> Result<Option<KindRow>, ModelResolutionError> {
+    check_model_override(
+        mysql,
+        resolvers,
+        redis,
+        user_id,
+        bot_spec,
+        bot_name,
+        override_model_name,
+    )
+    .await?;
+    find_model_with_namespace(mysql, resolvers, redis, user_id, name, true)
+        .await
+        .map_err(ModelResolutionError::Mysql)
+}
+
+pub(super) async fn check_model_override<R: Redis>(
+    mysql: &MysqlService,
+    resolvers: &EntityResolvers<R>,
+    redis: Option<&R>,
+    user_id: i64,
+    bot_spec: &Value,
+    bot_name: &str,
+    override_model_name: Option<&str>,
+) -> Result<(), ModelResolutionError> {
     if let Some(override_name) = override_model_name.filter(|value| !value.is_empty())
         && let Some(allowed) =
             resolve_allowed_model_names(mysql, resolvers, redis, user_id, bot_spec).await?
@@ -656,9 +661,7 @@ pub async fn resolve_model_for_bot_with_override<R: Redis>(
             "Model '{override_name}' is not in the allowed models list for bot '{bot_name}'"
         )));
     }
-    find_model_with_namespace(mysql, resolvers, redis, user_id, name, true)
-        .await
-        .map_err(ModelResolutionError::Mysql)
+    Ok(())
 }
 
 /// `_resolve_allowed_model_names` (`model_resolver.py:569-614`): the bot's

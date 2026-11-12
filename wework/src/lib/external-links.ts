@@ -5,6 +5,7 @@ import { isElectronRuntime } from './runtime-environment'
 import { requestEmbeddedBrowserOpen } from './embedded-browser'
 import { browserDiagnosticOrigin } from './browser-url'
 import { getAppPreferences, type BrowserLinkTarget } from '@/desktop/appPreferences'
+import { openWeworkScheme } from '@/features/notifications/schemeEvents'
 
 interface OpenExternalUrlOptions {
   target?: BrowserLinkTarget
@@ -50,11 +51,30 @@ async function openWithSystemBrowser(value: string): Promise<void> {
   await invokeDesktopHost<void>('shell.openExternal', { url: value })
 }
 
+/** Explicit browser-toolbar action; does not broaden document link handling. */
+export async function openInExternalBrowser(value: string): Promise<void> {
+  const url = new URL(value)
+  if (!['http:', 'https:', 'file:'].includes(url.protocol)) {
+    throw new Error('Unsupported external browser URL')
+  }
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.openExternal', { url: url.href })
+    return
+  }
+  if (url.protocol === 'file:') throw new Error('Local browser opening requires the desktop app')
+  window.open(url.href, '_blank', 'noopener,noreferrer')
+}
+
 export async function openExternalUrl(
   value: string,
   options: OpenExternalUrlOptions = {}
 ): Promise<boolean> {
   const source = options.source ?? 'unknown'
+  if (value.startsWith('wework:')) {
+    const opened = openWeworkScheme(value)
+    logExternalLink(opened ? 'opened' : 'rejected', value, source, { target: 'wework' })
+    return opened
+  }
   if (!isHttpUrl(value)) {
     logExternalLink('rejected', value, source, { reason: 'unsupported-protocol' })
     return false

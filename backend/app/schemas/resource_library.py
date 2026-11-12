@@ -10,7 +10,9 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
-ResourceLibraryResourceType = Literal["agent", "skill", "model", "shell", "retriever"]
+ResourceLibraryResourceType = Literal[
+    "agent", "skill", "model", "shell", "retriever", "template"
+]
 ResourceLibraryListingStatus = Literal["published", "archived"]
 
 

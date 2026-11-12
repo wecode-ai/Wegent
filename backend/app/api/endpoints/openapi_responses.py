@@ -427,7 +427,6 @@ async def _resolve_continuation_device_id(
     return device_id
 
 
-# MIGRATION-CANDIDATE(api="POST /api/v1/responses"): remove after final confirmation.
 # @router.post("")
 @limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)
 @trace_async(

@@ -1,5 +1,6 @@
 import { decodeRuntimeSkills } from '@wegent/chat-core/runtime-composer-api'
 import type {
+  DeviceCommandRequest,
   DeviceCommandResponse,
   LocalDeviceSkill,
   SkillDirectorySetupResult,
@@ -31,7 +32,7 @@ import {
   normalizeWorkspaceTree,
   splitAbsoluteWorkspaceFilePath,
 } from '@/lib/workspace-file-contract'
-import type { HttpClient, HttpRequestOptions } from './http'
+import { ApiError, type HttpClient, type HttpRequestOptions } from './http'
 
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 
@@ -66,6 +67,25 @@ function parseJsonOutput(output: string): unknown {
 }
 
 export function createDeviceApi(client: HttpClient) {
+  async function executeCommand(
+    deviceId: string,
+    data: DeviceCommandRequest
+  ): Promise<DeviceCommandResponse> {
+    try {
+      return await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        data
+      )
+    } catch (error) {
+      // This endpoint returns 404 only when the owned device is unavailable.
+      // Command and filesystem failures are carried by the command response.
+      if (error instanceof ApiError && error.status === 404) {
+        throw new Error(`executor-not-found:${deviceId}`, { cause: error })
+      }
+      throw error
+    }
+  }
+
   async function fetchDevices(
     requestOptions?: Pick<HttpRequestOptions, 'signal'>
   ): Promise<DeviceInfo[]> {
@@ -96,36 +116,33 @@ export function createDeviceApi(client: HttpClient) {
 
     updateRuntimeSettings(
       deviceId: string,
-      maxConcurrentTasks: number
+      settings: Partial<
+        Pick<
+          DeviceRuntimeSettingsResponse,
+          'max_concurrent_tasks' | 'max_concurrent_stand_in_tasks' | 'max_concurrent_agent_tasks'
+        >
+      >
     ): Promise<DeviceRuntimeSettingsResponse> {
-      return client.put(`/devices/${encodeURIComponent(deviceId)}/runtime-settings`, {
-        max_concurrent_tasks: maxConcurrentTasks,
-      })
+      return client.put(`/devices/${encodeURIComponent(deviceId)}/runtime-settings`, settings)
     },
 
     async getHomeDirectory(deviceId: string): Promise<string> {
-      const response = await client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        {
-          command_key: 'home_dir',
-          timeout_seconds: 10,
-          max_output_bytes: 4096,
-        }
-      )
+      const response = await executeCommand(deviceId, {
+        command_key: 'home_dir',
+        timeout_seconds: 10,
+        max_output_bytes: 4096,
+      })
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to resolve home directory')
       }
       return getCommandText(response)
     },
     async getProjectWorkspaceRoot(deviceId: string): Promise<string> {
-      const response = await client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        {
-          command_key: 'project_workspace_root',
-          timeout_seconds: 10,
-          max_output_bytes: 4096,
-        }
-      )
+      const response = await executeCommand(deviceId, {
+        command_key: 'project_workspace_root',
+        timeout_seconds: 10,
+        max_output_bytes: 4096,
+      })
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to resolve project directory')
       }
@@ -133,15 +150,12 @@ export function createDeviceApi(client: HttpClient) {
     },
 
     async listDirectories(deviceId: string, path: string): Promise<string[]> {
-      const response = await client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        {
-          command_key: 'ls_dirs',
-          path,
-          timeout_seconds: 15,
-          max_output_bytes: 1024 * 64,
-        }
-      )
+      const response = await executeCommand(deviceId, {
+        command_key: 'ls_dirs',
+        path,
+        timeout_seconds: 15,
+        max_output_bytes: 1024 * 64,
+      })
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to list directories')
       }
@@ -149,14 +163,11 @@ export function createDeviceApi(client: HttpClient) {
     },
 
     async listSkills(deviceId: string): Promise<LocalDeviceSkill[]> {
-      const response = await client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        {
-          command_key: 'ls_skills',
-          timeout_seconds: 15,
-          max_output_bytes: 1024 * 256,
-        }
-      )
+      const response = await executeCommand(deviceId, {
+        command_key: 'ls_skills',
+        timeout_seconds: 15,
+        max_output_bytes: 1024 * 256,
+      })
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to list skills')
       }
@@ -165,15 +176,12 @@ export function createDeviceApi(client: HttpClient) {
 
     async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
       const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
-      const response = await client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        {
-          command_key: 'workspace_tree',
-          path: normalizedPath,
-          timeout_seconds: 15,
-          max_output_bytes: 1024 * 512,
-        }
-      )
+      const response = await executeCommand(deviceId, {
+        command_key: 'workspace_tree',
+        path: normalizedPath,
+        timeout_seconds: 15,
+        max_output_bytes: 1024 * 512,
+      })
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to list workspace files')
       }
@@ -185,16 +193,13 @@ export function createDeviceApi(client: HttpClient) {
       filePath: string
     ): Promise<WorkspaceTextFileResponse> {
       const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-      const response = await client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        {
-          command_key: 'workspace_read_text_file',
-          path: parentPath,
-          args: [fileName],
-          timeout_seconds: 15,
-          max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
-        }
-      )
+      const response = await executeCommand(deviceId, {
+        command_key: 'workspace_read_text_file',
+        path: parentPath,
+        args: [fileName],
+        timeout_seconds: 15,
+        max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
+      })
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to read workspace file')
       }
@@ -207,16 +212,13 @@ export function createDeviceApi(client: HttpClient) {
       offset: number
     ): Promise<WorkspaceFileChunkResponse> {
       const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-      const response = await client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        {
-          command_key: 'workspace_read_file_chunk',
-          path: parentPath,
-          args: [fileName, String(offset)],
-          timeout_seconds: 30,
-          max_output_bytes: 1024 * 1024 * 2,
-        }
-      )
+      const response = await executeCommand(deviceId, {
+        command_key: 'workspace_read_file_chunk',
+        path: parentPath,
+        args: [fileName, String(offset)],
+        timeout_seconds: 30,
+        max_output_bytes: 1024 * 1024 * 2,
+      })
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to read workspace file')
       }
@@ -224,14 +226,11 @@ export function createDeviceApi(client: HttpClient) {
     },
 
     async setupSharedSkills(deviceId: string): Promise<SkillDirectorySetupResult> {
-      const response = await client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        {
-          command_key: 'setup_shared_skills',
-          timeout_seconds: 60,
-          max_output_bytes: 1024 * 256,
-        }
-      )
+      const response = await executeCommand(deviceId, {
+        command_key: 'setup_shared_skills',
+        timeout_seconds: 60,
+        max_output_bytes: 1024 * 256,
+      })
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to configure shared skills')
       }
@@ -249,37 +248,18 @@ export function createDeviceApi(client: HttpClient) {
         throw new Error('Directory path is required')
       }
 
-      const response = await client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        {
-          command_key: 'mkdir_p',
-          args: [normalizedPath],
-          timeout_seconds: 15,
-          max_output_bytes: 4096,
-        }
-      )
+      const response = await executeCommand(deviceId, {
+        command_key: 'mkdir_p',
+        args: [normalizedPath],
+        timeout_seconds: 15,
+        max_output_bytes: 4096,
+      })
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to create directory')
       }
     },
 
-    executeCommand(
-      deviceId: string,
-      data: {
-        command_key: string
-        path?: string
-        cwd?: string
-        args?: string[]
-        env?: Record<string, unknown>
-        timeout_seconds?: number
-        max_output_bytes?: number
-      }
-    ): Promise<DeviceCommandResponse> {
-      return client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        data
-      )
-    },
+    executeCommand,
 
     async startTerminal(deviceId: string, cwd?: string): Promise<DeviceSessionResponse> {
       const path = cwd?.trim()
@@ -321,15 +301,12 @@ export function createDeviceApi(client: HttpClient) {
 
     async openLocalTerminal(deviceId: string, cwd?: string): Promise<void> {
       const args = cwd?.trim() ? [cwd.trim()] : []
-      const response = await client.post<DeviceCommandResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/commands`,
-        {
-          command_key: 'open_terminal',
-          args,
-          timeout_seconds: 10,
-          max_output_bytes: 4096,
-        }
-      )
+      const response = await executeCommand(deviceId, {
+        command_key: 'open_terminal',
+        args,
+        timeout_seconds: 10,
+        max_output_bytes: 4096,
+      })
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to open terminal')
       }

@@ -22,6 +22,7 @@ use super::models::{
 };
 use super::repository::{ContextRow, SubtaskRow};
 use crate::remote_workspace_tree::kinds::KindStore;
+use crate::responses::create::shell::resolve_shells;
 use crate::state::AppState;
 
 /// The public user projection (`model_to_dict(User)` with datetimes rendered
@@ -355,7 +356,6 @@ pub(crate) async fn build_team_response(
     team: &crate::remote_workspace_tree::kinds::KindRecord,
     user_id: i64,
 ) -> Result<TeamResponse, crate::remote_workspace_tree::error::ApiError> {
-    let _ = state;
     let team_crd = crate::crd::CrdDocument::project(&team.json.0);
     let spec = team_crd
         .spec
@@ -365,9 +365,7 @@ pub(crate) async fn build_team_response(
         .unwrap_or_default();
     let is_group_resource = !team.namespace.is_empty() && team.namespace != "default";
 
-    let mut bots = Vec::new();
-    let mut shell_types: Vec<String> = Vec::new();
-    let mut first_bot_id: Option<i64> = None;
+    let mut members_with_bots = Vec::new();
     if let Some(members) = spec.members.as_ref() {
         for member in members.iter().filter_map(|member| member.as_ref()) {
             let Some(bot_ref) = member.bot_ref.as_ref() else {
@@ -391,62 +389,56 @@ pub(crate) async fn build_team_response(
             } else {
                 user_id
             };
-            let bot_summary = build_bot_summary(kinds, &bot, summary_user_id).await?;
-            if first_bot_id.is_none() {
-                first_bot_id = Some(bot.id);
-            }
-            if !bot_summary.shell_type.is_empty() && !shell_types.contains(&bot_summary.shell_type)
-            {
-                shell_types.push(bot_summary.shell_type.clone());
-            }
-            bots.push(TeamBotResponse {
-                bot_id: bot.id,
-                bot_prompt: member.prompt.clone().unwrap_or_default(),
-                role: member.role.clone().unwrap_or_default(),
-                require_confirmation: member.require_confirmation.unwrap_or(false),
-                context_passing: normalize_context_passing(member.context_passing.as_deref())
-                    .to_owned(),
-                bot: bot_summary,
-            });
+            members_with_bots.push((member, bot, summary_user_id));
         }
     }
-    let _ = shell_types;
-
-    // Agent type from the first bot's shell.
-    let mut agent_type = raw_null();
-    if let Some(first_bot_id) = first_bot_id
-        && let Some(first_bot) = kinds.get_by_id("Bot", first_bot_id).await?
-    {
-        let bot_crd = crate::crd::CrdDocument::project(&first_bot.json.0);
-        if let Some(shell_ref) = bot_crd
-            .spec
-            .as_ref()
-            .and_then(|spec| spec.shell_ref.as_ref())
-        {
-            let shell_user_id = if is_group_resource {
-                first_bot.user_id
-            } else {
-                user_id
-            };
-            let shell = kinds
-                .get_by_name_and_namespace(
-                    shell_user_id,
-                    "Shell",
-                    shell_ref.namespace(),
-                    shell_ref.name(),
-                )
-                .await?;
-            if let Some(shell_type) = shell.as_ref().and_then(shell_type_of) {
-                agent_type = brz_json::to_raw_value(&match shell_type {
-                    "Agno" => "agno".to_owned(),
-                    "ClaudeCode" => "claude".to_owned(),
-                    "Dify" => "dify".to_owned(),
-                    other => other.to_lowercase(),
-                })
-                .unwrap();
-            }
-        }
+    let shell_refs: Vec<_> = members_with_bots
+        .iter()
+        .filter_map(|(_, bot, owner)| bot_shell_key(bot, *owner))
+        .collect();
+    let shells = resolve_shells(
+        &state.mysql,
+        &state.entity_resolvers,
+        state.redis.as_ref(),
+        &shell_refs,
+    )
+    .await
+    .map_err(|error| {
+        tracing::warn!(%error, "[task_detail] shell query failed");
+        crate::remote_workspace_tree::error::ApiError::internal("kind query failed")
+    })?;
+    let mut bots = Vec::new();
+    for (member, bot, owner) in members_with_bots {
+        let shell_type = bot_shell_key(&bot, owner)
+            .and_then(|key| shells.get(&key))
+            .and_then(|shell| shell_type_of(&shell.json.0))
+            .unwrap_or_default()
+            .to_owned();
+        let bot_summary = build_bot_summary(kinds, &bot, owner, shell_type).await?;
+        bots.push(TeamBotResponse {
+            bot_id: bot.id,
+            bot_prompt: member.prompt.clone().unwrap_or_default(),
+            role: member.role.clone().unwrap_or_default(),
+            require_confirmation: member.require_confirmation.unwrap_or(false),
+            context_passing: normalize_context_passing(member.context_passing.as_deref())
+                .to_owned(),
+            bot: bot_summary,
+        });
     }
+    let agent_type = bots
+        .first()
+        .map(|first| first.bot.shell_type.as_str())
+        .filter(|shell_type| !shell_type.is_empty())
+        .map(|shell_type| {
+            brz_json::to_raw_value(&match shell_type {
+                "Agno" => "agno".to_owned(),
+                "ClaudeCode" => "claude".to_owned(),
+                "Dify" => "dify".to_owned(),
+                other => other.to_lowercase(),
+            })
+            .expect("agent type serializes")
+        })
+        .unwrap_or_else(raw_null);
 
     Ok(team_response(team, &team_crd, &spec, bots, agent_type))
 }
@@ -550,35 +542,31 @@ fn normalize_context_passing(value: Option<&str>) -> &str {
 /// model without whitelist-only mode stays selectable; an active
 /// `allowedUsers` list admits only the listed user names.
 fn public_model_admitted(model_json: &Value, user_name: Option<&str>) -> bool {
-    crate::teams::public_model_access::allowed_for_user_name(
+    wegent_access::public_models::allowed_for_user_name(
         &OpaqueJson::from_serializable(model_json),
         user_name,
     )
 }
 
-/// `_get_bot_summary`.
-pub(crate) async fn build_bot_summary(
+/// Preserve the caller's lookup identity and the Bot's reference namespace.
+fn bot_shell_key(
+    bot: &crate::remote_workspace_tree::kinds::KindRecord,
+    owner: i64,
+) -> Option<(i64, String, String)> {
+    let crd = crate::crd::CrdDocument::project(&bot.json.0);
+    let (name, namespace) = crd.spec.as_ref()?.shell_ref.as_ref()?.nonempty_parts()?;
+    Some((owner, name, namespace))
+}
+
+/// `_get_bot_summary`, consuming the team's already-resolved Shell type.
+async fn build_bot_summary(
     kinds: &KindStore<'_, brz_mysql::MysqlService, impl brz_redis::Redis>,
     bot: &crate::remote_workspace_tree::kinds::KindRecord,
     user_id: i64,
+    shell_type: String,
 ) -> Result<BotSummaryResponse, crate::remote_workspace_tree::error::ApiError> {
     let bot_crd = crate::crd::CrdDocument::project(&bot.json.0);
     let bot_spec = bot_crd.spec.as_ref();
-
-    let shell_type = match bot_spec
-        .and_then(|spec| spec.shell_ref.as_ref())
-        .and_then(|reference| reference.nonempty_parts())
-    {
-        Some((name, namespace)) => {
-            let shell = kinds
-                .get_by_name_and_namespace(user_id, "Shell", &namespace, &name)
-                .await?;
-            shell
-                .and_then(|shell| shell_type_of(&shell).map(str::to_owned))
-                .unwrap_or_default()
-        }
-        None => String::new(),
-    };
 
     let mut agent_config = serde_json::Map::new();
     if let Some((name, namespace)) = bot_spec
@@ -643,7 +631,7 @@ pub(crate) fn subtask_responses(
     contexts: &[ContextRow],
     bots: &[SubtaskBotResponse],
     inherited_task_ids: &[i64],
-) -> Vec<SubtaskResponse> {
+) -> Result<Vec<SubtaskResponse>, String> {
     subtasks
         .iter()
         .map(|subtask| {
@@ -662,8 +650,8 @@ pub(crate) fn subtask_responses(
                 .iter()
                 .filter(|context| context.subtask_contexts_subtask_id == subtask.id)
                 .map(context_brief)
-                .collect();
-            SubtaskResponse {
+                .collect::<Result<_, _>>()?;
+            Ok(SubtaskResponse {
                 id: subtask.id,
                 task_id: subtask.task_id,
                 inherited,
@@ -700,7 +688,7 @@ pub(crate) fn subtask_responses(
                 sender_user_id: subtask.sender_user_id,
                 sender_user_name: None,
                 reply_to_subtask_id: subtask.reply_to_subtask_id,
-            }
+            })
         })
         .collect()
 }
@@ -751,8 +739,31 @@ fn selected_document_count(document_ids: &Option<OpaqueJson>) -> i64 {
         .map_or(0, |ids| ids.len() as i64)
 }
 
-/// `SubtaskContextBrief.from_model` + `build_context_display_fields`.
-pub(crate) fn context_brief(context: &ContextRow) -> ContextBriefResponse {
+/// The current Python model's `ContextType` values (`shared/models/db/enums.py`).
+pub(crate) const CONTEXT_TYPES: [&str; 6] = [
+    "attachment",
+    "knowledge_base",
+    "selected_documents",
+    "external_knowledge",
+    "remote_workspace_artifact",
+    "conversation",
+];
+
+/// Validate `SubtaskContextBrief.from_model` and preserve its current fields.
+pub(crate) fn context_brief(context: &ContextRow) -> Result<ContextBriefResponse, String> {
+    let context_type = context.subtask_contexts_context_type.as_str();
+    if !CONTEXT_TYPES.contains(&context_type) {
+        return Err(format!(
+            "context_type: Input should be one of {CONTEXT_TYPES:?}, got {context_type:?}"
+        ));
+    }
+    Ok(context_brief_fields(context))
+}
+
+/// `ctx_dict` + `build_context_display_fields` without the `from_model`
+/// enum validation. Callers that build the context dictionary directly
+/// use this renderer; `context_brief` validates the model conversion first.
+pub(crate) fn context_brief_fields(context: &ContextRow) -> ContextBriefResponse {
     let data = context
         .subtask_contexts_type_data
         .as_ref()
@@ -848,6 +859,9 @@ mod json_contract_tests {
     #[test]
     fn context_json_baseline() {
         let mut output = Vec::new();
+        // The baseline asserts the field projection for every recorded shape;
+        // enum validation is covered separately because `from_model` rejects
+        // unknown types before rendering.
         for kind in [
             "attachment",
             "knowledge_base",
@@ -898,8 +912,8 @@ mod json_contract_tests {
                         Value::Object(data),
                     ))),
                 };
-                output
-                    .push(crate::json_contract_tests::serialized(context_brief(&context)).unwrap());
+                let brief = context_brief_fields(&context);
+                output.push(crate::json_contract_tests::serialized(brief).unwrap());
             }
         }
         crate::json_contract_tests::assert_fixture("task_contexts", output);
@@ -934,12 +948,10 @@ mod json_contract_tests {
                 reply_to_subtask_id: populated.then_some(0),
             };
             output.push(
-                crate::json_contract_tests::serialized(subtask_responses(
-                    &[subtask],
-                    &[],
-                    &[],
-                    if populated { &[2] } else { &[] },
-                ))
+                crate::json_contract_tests::serialized(
+                    subtask_responses(&[subtask], &[], &[], if populated { &[2] } else { &[] })
+                        .unwrap(),
+                )
                 .unwrap(),
             );
         }

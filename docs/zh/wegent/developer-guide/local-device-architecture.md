@@ -36,17 +36,21 @@ flowchart LR
 
 ### 设备产物声明与下载
 
-关联 Backend Task 的 Claude Code 或 Wegent executor 可以声明最终交付文件：
+Claude Code 和 Codex 可以通过 Wegent executor 声明最终交付文件：
 
 ```bash
 $WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
 ```
 
-声明仅发送文件名、相对路径、规范化工作区根目录、大小、修改时间和 SHA-256，不上传文件内容。`WEGENT_BACKEND_TASK_ID` 用于 Backend API 路径；`WEGENT_TASK_ID` 保留本地会话身份并用于工作区定位。认证只使用该轮执行的 `AUTH_TOKEN`（Task Token），不能使用独立的 runtime credential。
+声明先校验文件真实路径位于当前任务工作区内，并计算文件名、相对路径、规范化工作区根目录、大小、修改时间和 SHA-256。
+
+本地 Runtime 会话没有 Backend Task。Executor 不为它设置 `WEGENT_BACKEND_TASK_ID`；声明直接返回元数据和 `local_path`，不请求 Backend，也不需要云端凭据。最终回复使用指向 `local_path` 的 Markdown 文件链接，复用桌面的文件卡片和本地预览；链接随会话记录保留，文件仍在原工作区。
+
+关联 Backend Task 时，`WEGENT_BACKEND_TASK_ID` 必须是正整数，用于 Backend API 路径；`WEGENT_TASK_ID` 保留本地会话身份并用于工作区定位。声明仅发送上述元数据，不上传文件内容。认证只使用该轮执行的 `AUTH_TOKEN`（Task Token），不能使用独立的 runtime credential。非法 Backend ID 会在发出请求前明确报错，不能将 `runtime-*` 会话 ID 传给云端 Task 接口。
 
 Executor 工作目录、`WEGENT_TASK_WORKSPACE` 和声明命令复用同一套工作区路径解析。本地设备配置 `LOCAL_WORKSPACE_ROOT` 时，不得把逻辑别名 `/workspace` 当作物理工作区目录。
 
-新版默认 `Ghost/default/wegent-wework` 要求先成功声明最终交付文件，再引导用户使用对话文件卡片，不能用本地路径或 `computer://` 链接代替。初始化 YAML 不覆盖已存在的 Ghost；Claude Code（启用工具时）和 Codex 在执行时注入产物声明规则，因此旧 Ghost 无需数据库改写也能使用这条交付链路。原提示词数据迁移及其空操作 revision 均已删除，不读写业务数据；已记录 `a9c4e7b2d610` 的环境需在部署前单独处理版本兼容，配置不会被自动恢复。版本链处理见[迁移撤回说明](./device-artifact-prompt-migration.md)。
+新版默认 `Ghost/default/wegent-wework` 要求关联 Backend Task 的交付先成功声明，再引导用户使用对话文件卡片；本地 Runtime 会话使用执行时注入的本地声明规则。初始化 YAML 不覆盖已存在的 Ghost；Claude Code（启用工具时）和 Codex 在执行时注入产物声明规则，因此旧 Ghost 无需数据库改写也能使用这条交付链路。原提示词数据迁移及其空操作 revision 均已删除，不读写业务数据；已记录 `a9c4e7b2d610` 的环境需在部署前单独处理版本兼容，配置不会被自动恢复。版本链处理见[迁移撤回说明](./device-artifact-prompt-migration.md)。
 
 Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 namespace，并与工作区根目录一起保存为产物来源。下载始终使用这份来源快照，不选择任务最新的 executor；即使原 subtask 后续发生恢复重绑，也不能把旧卡片改指向新设备。原来源不可用时返回不可用，分享和复制任务不会携带这些设备产物。
 
@@ -149,6 +153,10 @@ Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时�
 Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。 Electron 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
 
 Electron 启动主窗口时必须保持主窗口隐藏，并由独立的 startup splash 窗口持续展示启动动画。`wework/electron/src/shell/index.html` 只承载 Core DSH 启动宿主和失败诊断，不得模拟工作台布局、任务列表、输入框或其他骨架屏。Renderer 通过 `renderer.startupReady` 报告首个可操作工作台后，Electron 才显示主窗口并关闭 startup splash；启动失败时继续由 startup splash 提供重试和恢复操作。这样启动期间始终只有一条可见反馈路径，不会由未就绪的主窗口覆盖动画或在动画与真实界面之间闪现占位内容。
+
+启动画面沿用用户选择的亮色、暗色或系统外观，原生窗口底色与页面首帧使用同一主题。亮色采用浅灰背景、清晰的状态文字和蓝色标志；底部状态区与背景融合，正常启动与失败恢复控件都必须适配两种主题。
+
+Logo 轮廓由 `wework/electron/scripts/generate-startup-brand.py` 从原始透明通道离线拟合为连续三次曲线，并检查曲线字形与原图的偏差不超过 3 个源像素；底部短横使用水平直边和圆头，避免平滑拟合将其弯曲。拟合依赖只用于开发阶段，应用启动时直接读取生成的数据。入场采用密度 2.5、速度 1.0 的 60 条流星，从四周向内汇聚，亮头在首次接触字形前消失。光条在物理像素画布上绘制，不得先绘制低分辨率位图再放大。成形和等待阶段复用同一个矢量标志，成形后立即从标志左缘向右扫光，不替换图层或额外淡入；等待阶段不运行 Canvas 绘制循环。启用“减少动态效果”时显示静态标志；窗口隐藏或启动失败时暂停动画。工作台就绪后沿用已有收尾和窗口交接，不为完整播放动画增加启动等待。
 
 ### 运行时任务与目标状态
 

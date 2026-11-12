@@ -3,46 +3,14 @@
   overflow-y: auto;
 }
 
-@property --composer-scroll-fade-top {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
-
-@property --composer-scroll-fade-bottom {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
-
-@keyframes composerScrollFade {
-  0%,
-  1% {
-    --composer-scroll-fade-top: 0px;
-    --composer-scroll-fade-bottom: 1rem;
-  }
-
-  99%,
-  100% {
-    --composer-scroll-fade-top: 1rem;
-    --composer-scroll-fade-bottom: 0px;
-  }
-}
-
-@supports (animation-timeline: scroll(self y)) {
-  .inputViewport {
-    mask-image: linear-gradient(
-      to bottom,
-      transparent,
-      black var(--composer-scroll-fade-top)
-        calc(100% - var(--composer-scroll-fade-bottom)),
-      transparent
-    );
-    animation-name: composerScrollFade;
-    animation-timing-function: linear;
-    animation-fill-mode: both;
-    animation-timeline: scroll(self y);
-  }
+.inputViewport[data-composer-scroll-overflow] {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--composer-scroll-fade-top, 0px)
+      calc(100% - var(--composer-scroll-fade-bottom, 0px)),
+    transparent
+  );
 }
 
 @container workbench-pane (max-height: 34rem) {
@@ -75,7 +43,7 @@
     position: absolute;
     right: 8px;
     bottom: 4px;
-    left: 16px;
+    left: 12px;
     width: auto;
     min-height: 32px;
     margin: 0;
@@ -216,7 +184,7 @@
   position: absolute;
   right: 8px;
   bottom: 6px;
-  left: 16px;
+  left: 12px;
   width: auto;
   height: 24px;
   min-height: 24px;

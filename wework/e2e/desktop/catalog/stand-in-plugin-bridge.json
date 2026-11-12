@@ -1,0 +1,12 @@
+{
+  "order": 46000,
+  "scenario": "./scenarios/stand-in-plugin-bridge.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 35000,
+      "shard": 3,
+      "position": 6000
+    }
+  }
+}

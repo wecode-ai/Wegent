@@ -7,6 +7,8 @@
 
 use serde_json::{Map, Value};
 
+use crate::json_compat::python_strip;
+
 use super::{python_str, python_truthy};
 
 /// `CommandPostProcessorError`: a configured post-processor is unknown.
@@ -176,15 +178,6 @@ fn python_splitlines(value: &str) -> Vec<&str> {
         lines.push(&value[start..]);
     }
     lines
-}
-
-/// Python `str.strip()` for the whitespace characters the executor emits.
-fn python_strip(value: &str) -> String {
-    value
-        .trim_matches(|character: char| {
-            character.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&character)
-        })
-        .to_string()
 }
 
 #[cfg(test)]

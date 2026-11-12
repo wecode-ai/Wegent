@@ -714,6 +714,137 @@ def test_new_version_preserves_existing_recipients(test_db, test_user, monkeypat
     )
 
 
+def test_new_version_without_images_keeps_the_current_icon_and_screenshots(
+    test_db, test_user, monkeypatch
+):
+    recipient = _user(test_db, "kept-images-recipient")
+    first_package = _package(version="1.0.0")
+    _mock_storage(monkeypatch)
+    first_request = _submission(first_package, recipient)
+    first_request.screenshotDataUrls = [_image_data_url()]
+    first = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=first_request
+    )
+    _upload_submission(
+        test_db,
+        submission_id=first.submissionId,
+        user_id=test_user.id,
+        package=first_package,
+    )
+    published = smart_app_marketplace_service.complete_submission(
+        test_db, submission_id=first.submissionId, user_id=test_user.id
+    )
+    assert published.item is not None
+    app = test_db.get(SmartApp, published.item.id)
+    assert app is not None
+    icon_key = app.icon_storage_key
+    screenshot_keys = list(app.screenshots_json or [])
+    assert icon_key
+    assert screenshot_keys
+
+    second_package = _package(version="1.1.0")
+    _mock_storage(monkeypatch)
+    second_request = _submission(second_package, recipient, version="1.1.0")
+    second_request.smartAppId = published.item.id
+    second_request.iconDataUrl = None
+    second_request.screenshotDataUrls = None
+    second = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=second_request
+    )
+    submission = test_db.get(SmartAppSubmission, second.submissionId)
+    assert submission is not None
+    assert "icon" not in (submission.metadata_json or {})
+    assert "screenshots" not in (submission.metadata_json or {})
+    _upload_submission(
+        test_db,
+        submission_id=second.submissionId,
+        user_id=test_user.id,
+        package=second_package,
+    )
+    smart_app_marketplace_service.complete_submission(
+        test_db, submission_id=second.submissionId, user_id=test_user.id
+    )
+
+    test_db.refresh(app)
+    assert app.icon_storage_key == icon_key
+    assert list(app.screenshots_json or []) == screenshot_keys
+
+
+def test_draft_app_cannot_be_published_without_an_icon(test_db, test_user, monkeypatch):
+    recipient = _user(test_db, "draft-icon-recipient")
+    package = _package()
+    _mock_storage(monkeypatch)
+    first = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=_submission(package, recipient)
+    )
+    smart_app_marketplace_service.cancel_submission(
+        test_db, submission_id=first.submissionId, user_id=test_user.id
+    )
+
+    next_package = _package(version="1.1.0")
+    request = _submission(next_package, recipient, version="1.1.0")
+    request.smartAppId = first.smartAppId
+    request.iconDataUrl = None
+
+    with pytest.raises(HTTPException) as error:
+        smart_app_marketplace_service.init_submission(
+            test_db, user_id=test_user.id, request=request
+        )
+
+    assert error.value.status_code == 422
+
+
+def test_explicit_empty_screenshot_list_clears_existing_screenshots(
+    test_db, test_user, monkeypatch
+):
+    recipient = _user(test_db, "cleared-images-recipient")
+    first_package = _package(version="1.0.0")
+    _mock_storage(monkeypatch)
+    first_request = _submission(first_package, recipient)
+    first_request.screenshotDataUrls = [_image_data_url()]
+    first = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=first_request
+    )
+    _upload_submission(
+        test_db,
+        submission_id=first.submissionId,
+        user_id=test_user.id,
+        package=first_package,
+    )
+    published = smart_app_marketplace_service.complete_submission(
+        test_db, submission_id=first.submissionId, user_id=test_user.id
+    )
+    assert published.item is not None
+    app = test_db.get(SmartApp, published.item.id)
+    assert app is not None
+    icon_key = app.icon_storage_key
+    assert icon_key
+    assert app.screenshots_json
+
+    second_package = _package(version="1.1.0")
+    _mock_storage(monkeypatch)
+    second_request = _submission(second_package, recipient, version="1.1.0")
+    second_request.smartAppId = published.item.id
+    second_request.iconDataUrl = None
+    second_request.screenshotDataUrls = []
+    second = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=second_request
+    )
+    _upload_submission(
+        test_db,
+        submission_id=second.submissionId,
+        user_id=test_user.id,
+        package=second_package,
+    )
+    smart_app_marketplace_service.complete_submission(
+        test_db, submission_id=second.submissionId, user_id=test_user.id
+    )
+
+    test_db.refresh(app)
+    assert app.icon_storage_key == icon_key
+    assert app.screenshots_json == []
+
+
 def test_uploaded_package_hash_must_match_submission(test_db, test_user, monkeypatch):
     recipient = _user(test_db, "hash-recipient")
     package = _package()

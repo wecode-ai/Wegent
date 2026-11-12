@@ -163,7 +163,7 @@ Here's a typical workflow for adding a new model field:
    alembic revision --autogenerate -m "add new_field to user table"
    ```
 
-3. **Review the generated migration** in `backend/alembic/versions/`:
+3. **Review the generated migration** in `backend-rs/migrations/reference/versions/`:
    - Check that the changes match your expectations
    - Verify data type conversions
    - Ensure nullable/default values are correct
@@ -182,7 +182,7 @@ Here's a typical workflow for adding a new model field:
 
 5. **Commit the migration**:
    ```bash
-   git add backend/alembic/versions/<new_migration>.py
+   git add backend-rs/migrations/reference/versions/<new_migration>.py
    git commit -m "feat(backend): add new_field to user table"
    ```
 

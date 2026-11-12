@@ -3,13 +3,22 @@ import type { WorkbenchMessage } from '@wegent/chat-core'
 import type { RuntimeTurnNavigationItem } from '@wegent/chat-core/runtime'
 import type { CollaborationTranslate } from '../i18n'
 
-export type NavigationMessage = Pick<WorkbenchMessage, 'id' | 'role' | 'content' | 'blocks'> & {
+export type NavigationMessage = Pick<
+  WorkbenchMessage,
+  'id' | 'role' | 'content' | 'blocks' | 'source'
+> & {
   turnId?: string | null
   runtimeGuidance?: boolean | null
   runtimeMessageIndex?: number | null
 }
 
+export interface ConversationMessageTarget {
+  messageId: string
+  requestKey: string
+}
+
 export interface MessageTurnNavigationProps {
+  messageTarget?: ConversationMessageTarget
   translate: CollaborationTranslate
   messages: NavigationMessage[]
   turnNavigation?: RuntimeTurnNavigationItem[]
@@ -20,6 +29,8 @@ export interface MessageTurnNavigationProps {
   onNavigationLoadStateChange?: (loading: boolean) => void
   onNavigationScrollTargetChange?: (messageId: string | null) => void
   portalTarget?: Element | null
+  /** Height of a bottom overlay, such as a sticky composer, that hides part of the scroll viewport. */
+  bottomInsetPx?: number
 }
 
 export interface UserTurn {

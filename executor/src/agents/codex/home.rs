@@ -4,7 +4,6 @@
 
 use std::{
     env, fs,
-    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -12,33 +11,50 @@ use super::strip_wework_browser_instructions;
 
 pub(super) const CODEX_HOME_ENV: &str = "CODEX_HOME";
 pub(super) const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
+pub(super) const WEGENT_NATIVE_CODEX_HOME_ENV: &str = "WEGENT_NATIVE_CODEX_HOME";
 pub(super) const WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV: &str = "WEWORK_CODEX_SUBSCRIPTION_ENABLED";
+
+#[path = "home_auth.rs"]
+mod auth;
+pub(super) use auth::acquire_shared_auth;
+
+#[cfg(test)]
+#[path = "home_auth_tests.rs"]
+mod auth_tests;
 
 /// Returns whether the local Codex subscription is opted in via the desktop
 /// preference threaded through the executor environment.
-fn codex_subscription_enabled() -> bool {
+pub(super) fn codex_subscription_enabled() -> bool {
     env::var_os(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV)
-        .map(|value| value != "false")
+        .map(|value| value != "false" && value != "unavailable")
         .unwrap_or(true)
 }
 
-/// Resolves the isolated Codex home owned by the Wework executor.
-pub(crate) fn wework_codex_home() -> PathBuf {
-    env::var_os(WEGENT_CODEX_HOME_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| executor_home().join("codex"))
-}
+pub(crate) use wegent_runtime_config::paths::wework_codex_home;
 
 /// Creates and normalizes the isolated Codex home before app-server startup.
+#[cfg(test)]
 pub(super) fn prepare_wework_codex_home(codex_home: &Path) -> Result<(), String> {
+    prepare_wework_codex_home_with_auth(codex_home, codex_subscription_enabled())
+}
+
+/// Creates and normalizes the isolated Codex home with an explicit auth mode.
+///
+/// The shared app-server can outlive a transient ChatGPT cloud-config failure.
+/// When that happens the executor restarts the app-server in router-only mode,
+/// removing the managed ChatGPT auth link so WeWork and local models remain
+/// usable while the subscription account is offline.
+pub(super) fn prepare_wework_codex_home_with_auth(
+    codex_home: &Path,
+    auth_enabled: bool,
+) -> Result<(), String> {
     fs::create_dir_all(codex_home).map_err(|error| {
         format!(
             "failed to create Codex home {}: {error}",
             codex_home.display()
         )
     })?;
-    link_user_codex_auth(codex_home)?;
+    sync_user_codex_auth(codex_home, auth_enabled)?;
     normalize_wework_codex_config(codex_home)?;
     crate::local::plugin_creator::install(codex_home)
 }
@@ -132,136 +148,15 @@ pub(crate) fn select_wework_codex_user_instructions(
     strip_wework_browser_instructions(developer_instructions).to_owned()
 }
 
-#[track_caller]
-pub(crate) fn replace_config(config_path: &Path, content: String) -> Result<(), String> {
-    let caller = std::panic::Location::caller();
-    crate::logging::log_executor_event(
-        "codex config replacement requested",
-        &[
-            ("caller", format!("{}:{}", caller.file(), caller.line())),
-            ("config_path", config_path.display().to_string()),
-        ],
-    );
-    log_config_state("codex config replacement content", config_path, &content);
-    let parent = config_path
-        .parent()
-        .ok_or_else(|| format!("Codex config has no parent: {}", config_path.display()))?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("failed to create Codex config directory: {error}"))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|error| format!("failed to create Codex config temp file: {error}"))?;
-    temporary
-        .write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write Codex config temp file: {error}"))?;
-    if let Ok(metadata) = fs::metadata(config_path) {
-        fs::set_permissions(temporary.path(), metadata.permissions()).map_err(|error| {
-            format!(
-                "failed to preserve Codex config permissions {}: {error}",
-                temporary.path().display()
-            )
-        })?;
-    }
-    #[cfg(unix)]
-    if !config_path.exists() {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o600)).map_err(
-            |error| {
-                format!(
-                    "failed to secure Codex config permissions {}: {error}",
-                    temporary.path().display()
-                )
-            },
-        )?;
-    }
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|error| format!("failed to sync Codex config temp file: {error}"))?;
-    temporary.persist(config_path).map_err(|error| {
-        format!(
-            "failed to replace Codex config {}: {}",
-            config_path.display(),
-            error.error
-        )
-    })?;
-    sync_parent_directory(parent)
-        .map_err(|error| format!("failed to sync Codex config directory: {error}"))?;
-    Ok(())
-}
+pub(crate) use wegent_plugin_packages::codex_configuration::{log_config_state, replace_config};
 
-fn log_config_state(event: &str, path: &Path, content: &str) {
-    let document = content.parse::<toml_edit::DocumentMut>().ok();
-    crate::logging::log_executor_event(
-        event,
-        &[
-            ("config_path", path.display().to_string()),
-            ("bytes", content.len().to_string()),
-            (
-                "model_present",
-                document
-                    .as_ref()
-                    .is_some_and(|doc| doc.contains_key("model"))
-                    .to_string(),
-            ),
-            (
-                "openai_base_url_present",
-                document
-                    .as_ref()
-                    .is_some_and(|doc| doc.contains_key("openai_base_url"))
-                    .to_string(),
-            ),
-        ],
-    );
-}
-
-#[cfg(unix)]
-fn sync_parent_directory(parent: &Path) -> std::io::Result<()> {
-    fs::File::open(parent)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_parent_directory(_parent: &Path) -> std::io::Result<()> {
-    Ok(())
-}
-
-fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
+fn sync_user_codex_auth(codex_home: &Path, auth_enabled: bool) -> Result<(), String> {
+    require_known_auth_preference()?;
     let target = codex_home.join("auth.json");
     let native_source = user_codex_auth_path();
 
-    if !codex_subscription_enabled() {
-        if let Ok(metadata) = fs::symlink_metadata(&target) {
-            if metadata.file_type().is_symlink() {
-                let linked_source = fs::read_link(&target).ok().map(|path| {
-                    if path.is_absolute() {
-                        path
-                    } else {
-                        codex_home.join(path)
-                    }
-                });
-                let managed = has_managed_auth_marker(codex_home)
-                    || native_source
-                        .as_ref()
-                        .is_some_and(|source| linked_source.as_ref() == Some(source));
-                if managed {
-                    fs::remove_file(&target).map_err(|error| {
-                        format!(
-                            "failed to remove disabled Codex auth link {}: {error}",
-                            target.display()
-                        )
-                    })?;
-                    remove_managed_auth_marker(codex_home)?;
-                }
-            } else if has_managed_auth_marker(codex_home) {
-                fs::remove_file(&target).map_err(|error| {
-                    format!(
-                        "failed to remove disabled Codex auth copy {}: {error}",
-                        target.display()
-                    )
-                })?;
-                remove_managed_auth_marker(codex_home)?;
-            }
-        }
-        return Ok(());
+    if !auth_enabled {
+        return remove_managed_codex_auth(codex_home);
     }
 
     let Some(source) = native_source.filter(|path| path.is_file()) else {
@@ -307,9 +202,61 @@ fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
     write_managed_auth_marker(codex_home)
 }
 
+fn require_known_auth_preference() -> Result<(), String> {
+    if env::var_os(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV)
+        .is_some_and(|value| value == "unavailable")
+    {
+        return Err("Codex credential preference is unreadable; repair application settings and restart Wework before accessing Codex credentials".to_owned());
+    }
+    Ok(())
+}
+
+/// Removes only the auth link/copy managed by Wework. A user-managed auth file
+/// is intentionally preserved.
+pub(super) fn remove_managed_codex_auth(codex_home: &Path) -> Result<(), String> {
+    let target = codex_home.join("auth.json");
+    let native_source = user_codex_auth_path();
+    let Ok(metadata) = fs::symlink_metadata(&target) else {
+        return remove_managed_auth_marker(codex_home);
+    };
+
+    if metadata.file_type().is_symlink() {
+        let linked_source = fs::read_link(&target).ok().map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                codex_home.join(path)
+            }
+        });
+        let managed = has_managed_auth_marker(codex_home)
+            || native_source
+                .as_ref()
+                .is_some_and(|source| linked_source.as_ref() == Some(source));
+        if managed {
+            fs::remove_file(&target).map_err(|error| {
+                format!(
+                    "failed to remove disabled Codex auth link {}: {error}",
+                    target.display()
+                )
+            })?;
+            remove_managed_auth_marker(codex_home)?;
+        }
+    } else if has_managed_auth_marker(codex_home) {
+        fs::remove_file(&target).map_err(|error| {
+            format!(
+                "failed to remove disabled Codex auth copy {}: {error}",
+                target.display()
+            )
+        })?;
+        remove_managed_auth_marker(codex_home)?;
+    }
+    Ok(())
+}
+
 fn user_codex_auth_path() -> Option<PathBuf> {
-    env::var_os(CODEX_HOME_ENV)
+    env::var_os(WEGENT_NATIVE_CODEX_HOME_ENV)
         .filter(|value| !value.is_empty())
+        .or_else(|| env::var_os(CODEX_HOME_ENV).filter(|value| !value.is_empty()))
         .map(PathBuf::from)
         .map(|home| home.join("auth.json"))
         .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("auth.json")))

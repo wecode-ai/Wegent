@@ -4,6 +4,7 @@ import { navigateTo } from '@/lib/navigation'
 import i18n from '@/i18n'
 import { openDeveloperCommandMenu } from '@/lib/developerCommandMenu'
 import { requestOpenTaskSearch } from '@/components/layout/workbenchShellEvents'
+import { openFeedbackDialog } from '@/features/feedback/feedbackDialogStore'
 import {
   DECREASE_FONT_SIZE_COMMAND,
   INCREASE_FONT_SIZE_COMMAND,
@@ -31,7 +32,11 @@ export function installApplicationMenuNavigation(): () => void {
     if (event.type !== 'application-menu.action') return
     if (event.payload.windowLabel !== getDesktopWindowLabel()) return
     const action = event.payload.action
-    if (action === APPLICATION_MENU_ACTIONS.openSettings) {
+    if (action === APPLICATION_MENU_ACTIONS.openAbout) {
+      navigateTo('/settings/about')
+    } else if (action === APPLICATION_MENU_ACTIONS.openFeedback) {
+      openFeedbackDialog()
+    } else if (action === APPLICATION_MENU_ACTIONS.openSettings) {
       navigateTo('/settings')
     } else if (action === APPLICATION_MENU_ACTIONS.developerCommands) {
       openDeveloperCommandMenu()

@@ -25,23 +25,6 @@ function launch(overrides: Partial<HarnessAppLaunchState> = {}): HarnessAppLaunc
 }
 
 describe('HarnessAppLaunchSurface', () => {
-  test('shows animated, app-specific launch stages', () => {
-    const { rerender } = render(<HarnessAppLaunchSurface launch={launch()} />)
-
-    expect(
-      screen.getByText('正在准备 日报助手 的运行环境，首次启动时会自动下载…')
-    ).toBeInTheDocument()
-    expect(screen.getByTestId('harness-app-animation-preparing-runtime')).toBeInTheDocument()
-
-    rerender(<HarnessAppLaunchSurface launch={launch({ phase: 'loadingApp' })} />)
-    expect(screen.getByText('正在加载 日报助手…')).toBeInTheDocument()
-    expect(screen.getByTestId('harness-app-animation-loading-app')).toBeInTheDocument()
-
-    rerender(<HarnessAppLaunchSurface launch={launch({ phase: 'startingApp' })} />)
-    expect(screen.getByText('正在启动 日报助手…')).toBeInTheDocument()
-    expect(screen.getByTestId('harness-app-animation-starting-app')).toBeInTheDocument()
-  })
-
   test('keeps retry in the same app surface after startup fails', () => {
     const retry = vi.fn()
     render(

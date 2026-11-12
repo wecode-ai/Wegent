@@ -1,0 +1,31 @@
+{
+  "revision": "b4c5d6e7f8a9",
+  "parents": [
+    "e58ee381a7c2"
+  ],
+  "source": "20260821_b4c5d6e7f8a9_optimize_device_queue_index.py",
+  "upgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_exec_device_status_order ON loop_item_executions"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_exec_device_status_order ON loop_item_executions (executor_owner_user_id, execution_device_id, execution_environment, status, priority_weight, queued_at, id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_exec_device_status_order ON loop_item_executions"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_exec_device_status_order ON loop_item_executions (execution_device_id, status, priority_weight, queued_at)"
+      ]
+    }
+  ]
+}

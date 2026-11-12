@@ -1,0 +1,10 @@
+{
+  "order": 79000,
+  "ci": {
+    "cloud": {
+      "order": 14000,
+      "shard": 4,
+      "position": 6000
+    }
+  }
+}

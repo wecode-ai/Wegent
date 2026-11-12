@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
@@ -30,6 +32,62 @@ function task(
 }
 
 describe('native lifecycle ownership', () => {
+  test.each(['waitingForUserInput', 'awaitingUserReply'] as const)(
+    'one accepted answer cannot clear native aggregate %s before its revision advances',
+    interactionStatus => {
+      const store = new RuntimeTaskLifecycleStore('native-concurrent-inputs')
+      const pending = { ...task('2', 'running', 'turn-1'), interactionStatus }
+      store.syncRuntimeTask(address, pending)
+      store.userInputResponded(address)
+      expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+      store.syncRuntimeTask(address, pending)
+      expect(store.getTask(address)?.interactionStatus).toBe(interactionStatus)
+      expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+
+      store.syncRuntimeTask(address, {
+        ...task('3', 'running', 'turn-1'),
+        interactionStatus: null,
+      })
+      expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
+      expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+      store.syncRuntimeTask(address, pending)
+      expect(store.getTask(address)?.interactionStatus).toBeNull()
+      expect(store.getTask(address)?.turn.id).toBe('turn-1')
+    }
+  )
+
+  test('accepts versioned turn updates after history arrives before the native starting snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('native-startup-history-race')
+    const initial = task('1', 'starting', null)
+    delete initial.executionState
+    store.syncRuntimeTask(address, initial)
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.syncTranscript(address, {
+      taskId: address.taskId,
+      messages: [],
+      turns: [{ id: 'turn-1', status: 'streaming', items: [] }],
+      running: true,
+    })
+    expect(store.getTask(address)?.turn.id).toBe('turn-1')
+
+    store.syncRuntimeTask(address, task('2', 'starting', null))
+    const running = {
+      ...task('3', 'running', 'turn-1'),
+      runtimeHandle: { lastTurnId: 'turn-1' },
+    }
+    store.syncRuntimeTask(address, running)
+    expect(store.getTask(address)?.turn.id).toBe('turn-1')
+    store.stopRequested(address)
+    store.syncRuntimeTask(address, {
+      ...task('4', 'idle', null, 'turn-1'),
+      runtimeHandle: { lastTurnId: 'turn-1' },
+    })
+    expect(store.getTask(address)?.derived.canSend).toBe(true)
+    store.syncRuntimeTask(address, running)
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+  })
+
   test('keeps queued Goal recovery owned without inventing a running model turn', () => {
     const store = new RuntimeTaskLifecycleStore('native-goal-recovery-admission')
     store.syncRuntimeTask(address, {

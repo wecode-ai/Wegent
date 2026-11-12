@@ -25,8 +25,8 @@ use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     codex_user_input::async_question_payload_from_item,
     notification_mapping::{
-        codex_stream_debug_enabled, log_dropped_notification, map_text_chunk,
-        map_tool_output_delta, notification_item_id, TextChunkMapping,
+        codex_stream_debug_enabled, log_agent_message_completion, log_dropped_notification,
+        map_text_chunk, map_tool_output_delta, notification_item_id, TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -581,6 +581,12 @@ impl CodexNotificationEventMapper {
                 let output_item_id_fallback = can_reuse_active_output_id
                     .then(|| self.active_output_item_id.clone())
                     .flatten();
+                log_agent_message_completion(
+                    local_task_id,
+                    &request.subtask_id,
+                    notification.params,
+                    resolved_phase.as_deref(),
+                );
                 if is_context_compaction_notification(notification.params) {
                     self.emit_context_compaction_once(&emit_context, notification.params);
                     return;
@@ -670,6 +676,13 @@ impl CodexNotificationEventMapper {
             }
             "thread/started" => {
                 self.observe_root_thread(notification.params);
+            }
+            "turn/started" if !self.is_subagent_delta(notification.params) => {
+                // Reset in native event order, before any item in the new turn.
+                // A later turn/start response must preserve already observed phases.
+                let root_thread_id = self.root_thread_id.clone();
+                *self = Self::default();
+                self.root_thread_id = root_thread_id;
             }
             "turn/started" | "turn/completed" | "thread/status/changed" => {}
             "thread/goal/updated" => {
@@ -1997,7 +2010,11 @@ fn emit_request_user_input_block(
     block_id: String,
     mut render_payload: Value,
 ) {
-    if let Some(payload) = render_payload.as_object_mut() {
+    // Async call IDs must retain the same identity in live events and history.
+    if let Some(payload) = render_payload
+        .as_object_mut()
+        .filter(|payload| payload.get("delivery").and_then(Value::as_str) != Some("async"))
+    {
         payload
             .entry("interactionScope".to_owned())
             .or_insert_with(|| json!(request.subtask_id));
@@ -5279,6 +5296,7 @@ mod tests {
         assert_eq!(block["status"], "pending");
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["questions"][0]["id"], "goal");
+        assert_eq!(block["render_payload"]["interactionScope"], "8");
     }
 
     #[test]
@@ -5327,6 +5345,10 @@ mod tests {
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["delivery"], "async");
         assert_eq!(block["render_payload"]["itemId"], "call-question");
+        assert!(
+            block["render_payload"].get("interactionScope").is_none(),
+            "Async call identity must match the unscoped transcript payload"
+        );
         assert_eq!(
             block["render_payload"]["questions"][0]["question"],
             "Which state jitters?"

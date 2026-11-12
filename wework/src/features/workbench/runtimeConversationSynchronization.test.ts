@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, expect, test, vi } from 'vitest'
 import type { RuntimeTranscriptResponse } from '@/types/api'
 import {
@@ -42,6 +44,39 @@ function deferred<T>() {
   return { promise, resolve }
 }
 afterEach(clearRuntimeConversationCacheForTests)
+
+test.each([
+  undefined,
+  { projectId: 'project', issueId: 'another-issue' },
+  { projectId: 'another-project', issueId: 'issue' },
+])('keeps a scoped Issue read independent from an in-flight read in %j', async firstScope => {
+  const pending = deferred<RuntimeTranscriptResponse>()
+  const firstRead = vi.fn(() => pending.promise)
+  const first = synchronizeRuntimeConversation(firstRead, {
+    ...address,
+    ...(firstScope ? { projectSession: firstScope } : {}),
+  })
+  await vi.waitFor(() => expect(firstRead).toHaveBeenCalledTimes(1))
+  const issueRead = vi.fn().mockRejectedValue(new Error('Scoped history read failed'))
+  const issue = synchronizeRuntimeConversation(issueRead, {
+    ...address,
+    projectSession: { projectId: 'project', issueId: 'issue' },
+  })
+  const failed = expect(issue).rejects.toThrow('Scoped history read failed')
+  pending.resolve(response('The cached transcript is retained'))
+  await first
+  await failed
+  expect(issueRead).toHaveBeenCalledExactlyOnceWith(
+    {
+      ...address,
+      projectSession: { projectId: 'project', issueId: 'issue' },
+    },
+    { signal: expect.any(AbortSignal) }
+  )
+  expect(getRuntimeConversationTurns(address)[0].items[0]).toMatchObject({
+    content: 'The cached transcript is retained',
+  })
+})
 
 test('keeps the started native turn when an earlier user-only snapshot resolves', async () => {
   const user = { id: 'user', role: 'user' as const, content: 'Start a child agent' }

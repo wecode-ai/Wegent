@@ -60,6 +60,7 @@ RESOURCE_KIND_BY_TYPE = {
     "model": "Model",
     "shell": "Shell",
     "retriever": "Retriever",
+    "template": "Template",
 }
 RESOURCE_TYPE_BY_KIND = {value: key for key, value in RESOURCE_KIND_BY_TYPE.items()}
 FEATURED_RECOMMENDATION_SCORE = 80
@@ -115,6 +116,8 @@ def _marketplace_examples(source: Kind) -> list[dict[str, str]]:
 
 
 def _is_visible_discovery_resource(source: Kind) -> bool:
+    if source.kind == "Template":
+        return source.json.get("spec", {}).get("category") == "collaboration"
     if source.user_id != 0 or source.kind != "Skill":
         return True
     spec = source.json.get("spec", {}) if isinstance(source.json, dict) else {}
@@ -194,6 +197,11 @@ class ResourceLibraryService:
             literal(0).label("install_count"),
             system_recommendation_score.label("recommendation_score"),
         ).filter(Kind.user_id == 0, Kind.kind.in_(system_kinds), Kind.is_active == True)
+        template_filter = or_(
+            Kind.kind != "Template",
+            _resource_json_text(db, "$.spec.category") == "collaboration",
+        )
+        system_query = system_query.filter(template_filter)
         if featured_only:
             system_query = system_query.filter(
                 system_recommendation_score >= FEATURED_RECOMMENDATION_SCORE
@@ -220,6 +228,7 @@ class ResourceLibraryService:
             published_query = published_query.filter(
                 MarketplaceResource.resource_type == resource_type
             )
+        published_query = published_query.filter(template_filter)
         if featured_only:
             published_query = published_query.filter(
                 MarketplaceResource.recommendation_score
@@ -442,6 +451,15 @@ class ResourceLibraryService:
         expected_kind = RESOURCE_KIND_BY_TYPE[request.resource_type]
         if source.kind != expected_kind:
             raise HTTPException(status_code=400, detail="Resource type does not match")
+        if source.kind == "Template":
+            if self._spec(source).get("category") != "collaboration":
+                raise HTTPException(
+                    status_code=404, detail="Capability resource not found"
+                )
+            if request.version != self._spec(source).get("version"):
+                raise HTTPException(
+                    status_code=409, detail="Template version does not match"
+                )
         self._require_publish_permission(db, source, current_user)
         if source.kind == "Team":
             self._validate_agent_dependencies(db, source)
@@ -458,7 +476,7 @@ class ResourceLibraryService:
             if request.allow_group_install is not None
             else bool(options.get("allow_group_install", True))
         )
-        if source.kind in {"Model", "Shell", "Retriever"}:
+        if source.kind in REFERENCE_KINDS:
             for group_name in target_groups:
                 self._require_target_namespace_permission(
                     db,
@@ -547,6 +565,14 @@ class ResourceLibraryService:
         capability.pop("listingName", None)
 
         updates = request.model_dump(exclude_unset=True)
+        if (
+            source.kind == "Template"
+            and "version" in updates
+            and updates["version"] != self._spec(source).get("version")
+        ):
+            raise HTTPException(
+                status_code=409, detail="Template version does not match"
+            )
         field_map = {
             "display_name": "displayName",
             "description": "description",
@@ -1023,7 +1049,7 @@ class ResourceLibraryService:
         resource_type = RESOURCE_TYPE_BY_KIND[source.kind]
         version = (
             self._source_version(source)
-            if source.kind == "Skill"
+            if source.kind in {"Skill", "Template"}
             else str(capability.get("version") or self._source_version(source))
         )
         status = capability.get("publishStatus", "published")
@@ -1910,7 +1936,18 @@ class ResourceLibraryService:
             if resource_type
             else list(RESOURCE_TYPE_BY_KIND)
         )
-        return db.query(Kind).filter(Kind.kind.in_(kinds), Kind.is_active == True).all()
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.kind.in_(kinds),
+                Kind.is_active == True,
+                or_(
+                    Kind.kind != "Template",
+                    _resource_json_text(db, "$.spec.category") == "collaboration",
+                ),
+            )
+            .all()
+        )
 
     def _validate_agent_dependencies(self, db: Session, source: Kind) -> None:
         members = self._spec(source).get("members", [])
@@ -2062,6 +2099,12 @@ class ResourceLibraryService:
             return source.id in skill_binding_service.list_user_default_skill_ids(
                 db, user_id
             )
+        if (
+            source.kind == "Template"
+            and source.namespace == "default"
+            and source.user_id == user_id
+        ):
+            return True
         if source.kind in REFERENCE_KINDS and source.user_id == 0:
             return True
         if source.kind in REFERENCE_KINDS:
@@ -2182,6 +2225,11 @@ class ResourceLibraryService:
         source = query.first()
         if not source:
             raise HTTPException(status_code=404, detail="Capability resource not found")
+        if (
+            source.kind == "Template"
+            and self._spec(source).get("category") != "collaboration"
+        ):
+            raise HTTPException(status_code=404, detail="Capability resource not found")
         return source
 
     def _resolve_publish_source(
@@ -2217,7 +2265,9 @@ class ResourceLibraryService:
             Kind.namespace == source_namespace,
             Kind.is_active == True,
         )
-        if source_namespace == "default" and current_user.role != "admin":
+        if source_namespace == "default" and (
+            current_user.role != "admin" or resource_type == "template"
+        ):
             query = query.filter(Kind.user_id == current_user.id)
         source = query.order_by(Kind.id.desc()).first()
         if not source:
@@ -2228,7 +2278,7 @@ class ResourceLibraryService:
         payload = source.json if isinstance(source.json, dict) else {}
         metadata = payload.get("metadata", {})
         spec = payload.get("spec", {})
-        if source.kind == "Skill":
+        if source.kind in {"Skill", "Template"}:
             return str(
                 spec.get("displayName") or metadata.get("displayName") or source.name
             )

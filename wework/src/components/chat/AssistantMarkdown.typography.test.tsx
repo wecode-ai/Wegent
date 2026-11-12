@@ -1,62 +1,63 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import { expect, test } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { render } from '@testing-library/react'
+import { readMessageLayoutTypography } from '@wegent/collaboration/conversation/messagePretextLayout'
+import postcss from 'postcss'
+import tailwindcss from 'tailwindcss'
+import loadConfig from 'tailwindcss/loadConfig'
+import { afterAll, afterEach, beforeAll, expect, test } from 'vitest'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import '@/i18n'
 
-test('uses document typography for every Markdown heading level', () => {
-  render(
-    <AssistantMarkdown
-      content={[
-        '# Heading 1',
-        '## Heading 2',
-        '### Heading 3',
-        '#### Heading 4',
-        '##### Heading 5',
-        '###### Heading 6',
-      ].join('\n\n')}
-      variant="document"
-    />
+const style = document.createElement('style')
+const originalRootStyle = document.documentElement.getAttribute('style')
+
+beforeAll(async () => {
+  const config = loadConfig(resolve(process.cwd(), 'tailwind.config.js'))
+  const source = readFileSync(
+    resolve(process.cwd(), '../packages/collaboration/src/markdown/AssistantMarkdown.tsx'),
+    'utf8'
   )
+  const result = await postcss([
+    tailwindcss({
+      ...config,
+      corePlugins: ['lineHeight'],
+      content: [{ raw: source, extension: 'tsx' }],
+    }),
+  ]).process('@tailwind utilities;', { from: undefined })
+  style.textContent = result.css
+  document.head.append(style)
+})
 
-  expect(screen.getByRole('heading', { level: 1 })).toHaveClass('text-heading-lg')
-  expect(screen.getByRole('heading', { level: 2 })).toHaveClass('text-heading-md')
-  expect(screen.getByRole('heading', { level: 3 })).toHaveClass('text-heading-sm')
-  expect(screen.getByRole('heading', { level: 4 })).toHaveClass('text-lg')
-  expect(screen.getByRole('heading', { level: 5 })).toHaveClass('text-base')
-  expect(screen.getByRole('heading', { level: 6 })).toHaveClass('text-sm')
-}, 15_000)
+afterEach(() => {
+  if (originalRootStyle === null) document.documentElement.removeAttribute('style')
+  else document.documentElement.setAttribute('style', originalRootStyle)
+})
+afterAll(() => style.remove())
 
-test('shows the horizontal scrollbar for completed code blocks in document previews', async () => {
-  render(
-    <AssistantMarkdown
-      content={[
-        '```sql',
-        "SELECT 'a completed document preview line that is wider than its code block';",
-        '```',
-      ].join('\n')}
-      variant="document"
-    />
-  )
-
-  expect(screen.getByTestId('markdown-code-scroll-container')).toHaveClass('overflow-x-auto')
-  expect(screen.getByTestId('markdown-code-horizontal-scrollbar')).toBeInTheDocument()
-  await waitFor(() =>
-    expect(screen.getByTestId('markdown-code-scroll-container')).toHaveAttribute(
-      'data-syntax-highlighted',
-      'true'
+test.each(['user', 'default', 'document', 'process'] as const)(
+  'keeps %s paragraphs and list items consistent with virtual message typography',
+  variant => {
+    const { container } = render(
+      <AssistantMarkdown
+        variant={variant}
+        content={
+          'Follow-up\n\n7. First requirement\n8. Second requirement\n\n- Another requirement'
+        }
+      />
     )
-  )
-})
-
-test('allows long Markdown links to wrap within narrow message cards', () => {
-  const url =
-    'http://127.0.0.1:58617/v1/codex-router/task-3fd8b50e7d269add73aff1114746a4a9fab19a10b9b97e19/result'
-
-  render(<AssistantMarkdown content={`[${url}](${url})`} />)
-
-  expect(screen.getByTestId('assistant-markdown-link')).toHaveClass('min-w-0', 'max-w-full')
-  expect(screen.getByTestId('assistant-markdown-link-label')).toHaveClass(
-    'min-w-0',
-    'whitespace-normal',
-    '[overflow-wrap:anywhere]'
-  )
-})
+    expect(container.querySelector('ol')).toHaveAttribute('start', '7')
+    const lines = container.querySelectorAll('p, li')
+    expect(lines).toHaveLength(4)
+    for (const rootSize of [16, 20]) {
+      document.documentElement.style.setProperty('font-size', `${rootSize}px`)
+      const typography = readMessageLayoutTypography(container)
+      const expected = variant === 'user' ? typography.userLineHeight : typography.lineHeight
+      for (const line of lines) {
+        const lineHeight = getComputedStyle(line).lineHeight
+        const pixels = Number.parseFloat(lineHeight) * (lineHeight.endsWith('rem') ? rootSize : 1)
+        expect(pixels, `${variant} ${line.tagName} at root size ${rootSize}`).toBe(expected)
+      }
+    }
+  }
+)

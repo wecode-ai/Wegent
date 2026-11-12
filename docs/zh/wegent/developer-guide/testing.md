@@ -17,6 +17,13 @@ sidebar_position: 4
 - **执行器管理器** (任务管理): pytest + pytest-mock + pytest-cov
 - **共享模块** (工具库): pytest + pytest-cov
 - **前端** (Next.js + React 19): Jest + @testing-library/react
+- **Wework** (Electron + React): Vitest + @testing-library/react，以及 Node.js 测试运行器
+
+## Wework 单元测试维护
+
+使用 `pnpm --filter wework test <测试文件>` 运行相关测试。测试清理按参数化展开后的用例数统计，不以文件数或 `test()` 声明数代替，也不通过跳过用例、合并测试或改变发现规则减少数量。
+
+优先保留任务创建与发送、权限和资源归属、持久化、故障恢复、状态机及升级回滚的行为覆盖。重复的输入、操作和断言可以删除；纯颜色、间距、图标和普通显示格式的独立测试可按维护需求裁剪。代码覆盖证据用于检查遗漏，不能单独证明两个用例的行为等价。清理后运行受影响的测试并核对断言，保留安全断言及独立的关键边界场景。
 
 ## 当前测试覆盖率
 
@@ -231,6 +238,11 @@ frontend/src/__tests__/
 
 ## Wework 单元测试
 
+单元测试聚焦任务状态与消息一致性、账号和权限边界、持久化、设备与运行时路由、
+输入提交及失败恢复。不要为 CSS 类名、图标、文案排列、源码关键词、固定元数据
+或诊断日志格式单独增加用例；混合场景只保留对实际业务结果有约束的断言。
+遥测保留授权、拒绝收集、脱敏与账号隔离覆盖，不为统计标签和调试快照单独建测试。
+
 从仓库根目录运行全部 Wework 单元测试：
 
 ```bash
@@ -248,6 +260,19 @@ pnpm --dir wework test -- runtimePaneMessages.test.ts
 测试脚本会兼容性地移除参数开头的一个独立 `--`，再把其余文件过滤条件和 Vitest
 选项原样传递给测试运行器。运行聚焦测试时，应确认输出中的 `Test Files` 数量符合
 预期，避免误跑全量测试。
+
+不依赖 DOM 的纯逻辑测试应在文件顶部声明 `// @vitest-environment node`。
+这类测试不加载 `src/test/setup.dom.ts` 中的浏览器模拟、存储和插件 UI 初始化；
+需要浏览器行为的测试保留默认 jsdom 环境。组件测试所需的插件 UI 辅助函数
+从 `@/test/setup.dom` 导入。
+
+Wework CI 执行测试但不再默认采集覆盖率，避免 Istanbul 插桩开销。
+需要排查覆盖率时可定向执行 `pnpm --dir wework exec vitest run <测试文件> --coverage`。
+完整 renderer push 检查每 15 秒输出当前 shard 的通过文件数，完整诊断仍保留在日志中。
+
+运行中的 Executor 会并发写入 `tasks.sqlite`。直接写入该数据库的桌面 E2E fixture
+应在独立连接上设置 `PRAGMA busy_timeout = 10000`，等待正常写事务释放锁。
+锁等待仅作用于 fixture 数据库连接；业务断言与全局 UI 超时保持原有约束。
 
 ### 异步提问模型桩
 
@@ -372,6 +397,11 @@ CI 稳定性依赖以下约束：
   build cache tag，不占用 GitHub Actions dependency cache 配额。
 - 非 Wework E2E 的 Executor 和 Electron 系统依赖安装前先检查 runner 已安装的软件包；
   APT 下载缓存只有 `main` 写入，PR 只恢复。
+- Linux 上的真实 Electron 更新传输探针同时隔离 Xvfb 和 D-Bus 会话，避免继承无效的
+  会话总线地址干扰原生启动或退出。保留原有启动次数、生命周期断言和超时。
+- 并发桌面检查点由父运行器先准备共享 X11 Unix socket 目录，再启动各自的 Xvfb，
+  避免多个 X server 同时创建目录时发生 `EEXIST` 竞态。Redis 就绪失败保留最后输出、
+  日志读取错误和进程状态，不延长就绪超时来掩盖启动问题。
 
 `.github/workflows/ci-cache-warmup.yml` 在相关源码、依赖锁文件或缓存实现合入
 `main` 后运行，并拒绝非 `main` 的手动预热。它只下载依赖或编译缓存，不重复执行
@@ -671,3 +701,34 @@ Milvus 和 etcd 由 shard 4 的知识库测试入口按需启动，复用现有�
 首次集成运行 [40558717377](https://github.com/wecode-ai/Wegent/actions/runs/40558717377) 中，五个测试 job 的累计 runner 执行时间为 44 分 20 秒，两次七个 job 的基线分别为 48 分 18 秒与 51 分 53 秒，均从 job 首个步骤开始计时、排除排队。该轮 Provider-native 的逻辑分片 1 用时 120 秒，逻辑分片 3 基本为空，因此将它们分别交给物理 shard 3 与 shard 1；其他 Provider-native 分片不变，普通浏览器分片和各机器的用户身份也不变。矩阵契约检查保证仍只有四个物理分片，所有四个 Provider-native 逻辑分片恰好执行一次。
 
 插件安装或卸载尚未结束时，后台设备补同步与显式刷新对账共用前台操作的 busy 状态，不能把过程中可见的 pending 记录当成缺包而触发第二次全量下发。前台操作结束后，真正未完成的设备同步仍会恢复。组件回归覆盖“安装请求挂起时收到 pending 目录”和“请求结束后恢复补同步”；原多 Runtime 隔离 E2E 的逐设备一次下发断言保持不变。
+
+插件重装与旧卸载清理并发时，更新快照可能在重装回执持久化前推进设备版本水位。单插件同步只有在成功回执被更新水位取代、且设备安装记录仍未确认时才重新同步最新期望状态，最多三次；持续冲突返回 `plugin_write_conflict`，设备执行失败不会立即重试。`test_plugin_sync_recording.py` 使用真实数据库记录和版本水位覆盖收敛、持续冲突、设备失败及更新回执已确认四条路径；桌面 `plugin-write-coordination` 保留重装响应必须包含已安装设备状态的断言。
+
+Windows 桌面运行器在创建普通测试账户前准备 1920×1080 显示模式，并检查工作区至少为 1440×960，避免默认 1024×768 显示器把 Electron 主窗口压缩到紧凑布局。目录发布故障注入通过不共享删除权限的原生目录句柄占用待发布目录；占用子文件不能证明其父目录重命名必定失败。回归运行 [42033008185](https://github.com/wecode-ai/Wegent/actions/runs/42033008185) 保存了紧凑布局和错误目录占用假设的失败证据。Claude 配置发布同时覆盖超过 Windows `MAX_PATH` 的隔离目录；历史搜索组件回归验证原生滚动事件到达前，虚拟列表已读到搜索写入的新偏移。
+
+分身列表和独立预览的操作确认场景共用 `shell-command-response.mjs`，直接工具调用与 `code_mode` 都必须保留相同的单次提权确认参数。[42048584579](https://github.com/wecode-ai/Wegent/actions/runs/42048584579) 的独立预览夹具仅识别直接 shell 工具，协议回归用 `code_mode` 输入精确复现了相同异常。公共工具生成逻辑覆盖两种场景，未知工具声明仍直接失败，并保存工具 schema、请求类型和输入角色诊断，不保存请求正文或认证头。
+
+同轮 Windows 日志还记录了两个后续问题。项目详情请求晚于切换任务标签返回时，更新所属协作标签的标题与路由，只有它仍为当前标签时才同步地址栏；已关闭的标签不恢复。标签页组件测试覆盖后台完成、重新选择和关闭后的迟到回调，通知导航 E2E 保留完整路由断言。缓存历史搜索的基线必须取自底部布局完成后、分页不再加载的同一份快照；不能把仍为 `loadingMoreBefore=true` 的中间态与搜索后的已完成分页比较，原有消息与分页一致性断言保持不变。
+
+后续运行 [42061132998](https://github.com/wecode-ai/Wegent/actions/runs/42061132998) 的执行器重启日志显示，历史丢失事件在 RPC 协议协商完成前交付，导致唯一一次恢复请求失败。事件 HTTP 入口在事件连接认证后检查 RPC 就绪状态，未就绪时返回 503 并关闭该连接；已有 SSE 重连机制携带原序号重新读取执行器日志，不能提前消费恢复事件。协议测试覆盖未就绪时不交付事件、就绪后从原游标恢复。人工交互日志同时证明，忽略标记已写入但归档尚未保存时刷新页面会丢失历史；忽略操作必须先在历史锁内保存归档，再写处理标记。组件测试阻塞历史锁，验证归档提交前不会抑制问题。Windows 目录占用夹具使用 PowerShell 原生格式化构造扩展路径前缀，避免 `String.Concat` 重载绑定失败。
+
+异步项目回调还必须在调用时读取当前标签状态，不能依赖启动请求时闭包中的标签列表和活动标签。回归保留旧回调后切换或关闭标签，验证它不会改变当前任务 URL 或重建已关闭标签。插件成功回执被取代后，再次下发若抛出异常，必须返回明确的失败响应并停止本次循环，不能复用旧成功响应；数据库回归验证只发起两次调用并返回 `plugin_device_sync_failed`。
+
+指派回执的控件与活动时间必须在同一次 DOM 读取中比较。[42072191562](https://github.com/wecode-ai/Wegent/actions/runs/42072191562) 的 Windows 日志记录了两次读取分别发生于 17:42:02.912 与 .977，期间 Issue 状态更新使版本绑定的控件回执重新加载，第二次读到空文本；随后页面快照中的两处接收时间一致。该断言现在等待两个回执在同一份快照中加载，再精确比较时间。协议测试同时覆盖版本刷新中间态与真实时间不一致，后者必须仍然失败。
+
+分身 Beta 按钮开放后，项目头部仍按可用宽度切换完整页签和紧凑下拉导航。
+[CI 42196630424](https://github.com/wecode-ai/Wegent/actions/runs/42196630424)
+的 Cloud 第 1 分片中，`plugin-source-continuation-evidence.json` 与
+`plugin-detail-resilience-evidence.json` 均记录找不到 `collaboration-tab-manage`；
+`plugin-detail-resilience-healthy-before-fault.png` 显示真实页面处于“执行环境”，
+顶部已使用“项目设置”下拉框。`ProjectViewSwitcher` 在紧凑模式只渲染
+`collaboration-project-view-select`，因此两处固定页签点击改为复用
+`selectCollaborationProjectView`，兼容两种真实导航形态。故障前健康基线、插件绑定
+持久化、故障注入、权限和恢复断言全部保留，不扩大超时或跳过场景。
+
+长对话切换的原断言和等待窗口保持不变。[CI 42199573796](https://github.com/wecode-ai/Wegent/actions/runs/42199573796/job/127832839476)
+在 520 条进度消息的初始正文处超时；执行器历史已包含正文，渲染器的 CPU 采样
+`conversation-switching-initial.cpuprofile` 经对应构建的 source map 定位到
+`MessageList` 布局回调反复读取共享页脚高度，累计约 1.9 秒同步布局开销。
+页脚测量改为由滚动控制器提交和尺寸观察触发，虚拟行更新继续执行原定位逻辑。
+组件回归验证 520 次行更新不会重复测量页脚，同时保留尺寸变化和页脚移除、重新挂载时的高度更新。

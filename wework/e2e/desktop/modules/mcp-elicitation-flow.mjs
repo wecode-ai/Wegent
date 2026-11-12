@@ -290,6 +290,9 @@ async function revealElicitationSummary(control, round) {
 
 async function verifyAnsweredElicitationReload(control, taskId, original, round) {
   await reloadMainWindow(control, 'The WebView did not reconnect after answering the MCP form')
+  await control.command('ensureLocalModelCatalogReady', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await waitForWorkbenchDebugState(
     control,
     state =>
@@ -414,6 +417,9 @@ async function verifyElicitationTimeout(control, taskId, evidencePath, scenario,
   assert.equal(response.success, false, 'The real executor accepted a late response')
   assert.ok(['missing_request_user_input', 'stale_request_user_input'].includes(response.code))
   await reloadMainWindow(control, `Reload failed after ${scenario}`)
+  await control.command('ensureLocalModelCatalogReady', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await assertExpiredElicitation(control, taskId, original, round)
   assert.deepEqual(
     await readElicitationEvidence(evidencePath),

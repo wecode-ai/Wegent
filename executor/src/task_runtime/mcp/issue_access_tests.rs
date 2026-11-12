@@ -122,6 +122,7 @@ async fn assert_local_issue_access(cross_project: bool) {
                 .create_task(
                     project_id,
                     TaskCreate {
+                        milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
                         status: "inbox".to_owned(),
