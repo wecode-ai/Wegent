@@ -38,6 +38,7 @@ import {
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
 import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
+import { createMcpElicitationModel } from './mcp-elicitation-model.mjs'
 
 import {
   assistantMessage,
@@ -205,13 +206,6 @@ import {
   MODEL_PROXY_RESTART_INITIAL_PROMPT,
   MODEL_SERVICE_CONNECTION_ERROR,
   MODEL_SERVICE_CONNECTION_PROMPT,
-  MCP_ELICITATION_ACCEPTED_MARKER,
-  MCP_ELICITATION_CALL_ID,
-  MCP_ELICITATION_COMPLETION_TEXT,
-  MCP_ELICITATION_NAMESPACE,
-  MCP_ELICITATION_PROMPT,
-  MCP_ELICITATION_SEARCH_ID,
-  MCP_ELICITATION_TOOL_NAME,
   MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
   MESSAGE_EDIT_ORIGINAL_PROMPT,
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
@@ -562,6 +556,7 @@ class DesktopE2EServer {
     this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
+    this.mcpElicitationModel = createMcpElicitationModel()
     this.viewImageStage = 'initial'
     this.memoryStage = 'initial'
     this.concurrentMemoryResponses = []
@@ -4176,61 +4171,7 @@ class DesktopE2EServer {
 
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
-      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
-      assert.ok(requestNumber <= 12, `Unexpected MCP elicitation request ${requestNumber}`)
-      const round = Math.ceil(requestNumber / 3)
-      const stage = ((requestNumber - 1) % 3) + 1
-      const callId = `${MCP_ELICITATION_CALL_ID}-${round}`
-      const requestText = JSON.stringify(body)
-      const timeoutScenario = round === 3 ? 'url_timeout' : round === 4 ? 'form_timeout' : null
-
-      if (stage === 1) {
-        assert.ok(
-          requestText.includes(MCP_ELICITATION_PROMPT),
-          'The real Codex request did not contain the MCP elicitation prompt'
-        )
-        const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...toolSearchResponseEvents(`${MCP_ELICITATION_SEARCH_ID}-${round}`, search),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (stage === 2) {
-        const tool = selectMcpTool(
-          body,
-          MCP_ELICITATION_NAMESPACE,
-          MCP_ELICITATION_TOOL_NAME,
-          timeoutScenario ? { scenario: timeoutScenario } : {},
-          `${MCP_ELICITATION_SEARCH_ID}-${round}`
-        )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(callId, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      assert.ok(
-        requestContainsToolOutput(body, callId),
-        'The MCP elicitation tool output did not return to the real model request'
-      )
-      assert.ok(
-        requestText.includes(
-          timeoutScenario
-            ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
-            : MCP_ELICITATION_ACCEPTED_MARKER
-        ),
-        'The MCP server did not return the expected answer or timeout cancellation to the model'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`${MCP_ELICITATION_COMPLETION_TEXT}:${round}`),
-        responseCompleted(responseId),
-      ])
+      this.writeSse(response, this.mcpElicitationModel(body, responseId))
       return
     }
 
