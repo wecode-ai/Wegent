@@ -1,4 +1,4 @@
-import type { BrowserWindow, WebContents } from 'electron'
+import type { BrowserWindow, WebContents, WebFrameMain } from 'electron'
 import type { WorkbenchService } from './workbench-application-contract.js'
 import { pendingWorkbenchInstallationWindow } from './workbench-installation.js'
 import { evaluateWorkbenchPage } from './e2e-workbench-page.js'
@@ -190,6 +190,204 @@ function clickWorkbenchElement(contents: WebContents, selector: string): Promise
   )
 }
 
+function navigationUrlMetadata(url: string): unknown {
+  if (url === 'about:blank' || url === 'about:srcdoc') return url
+  try {
+    const parsed = new URL(url)
+    return {
+      protocol: parsed.protocol.slice(0, 32),
+      origin: parsed.origin === 'null' ? null : parsed.origin.slice(0, 256),
+    }
+  } catch {
+    return { protocol: null, origin: null }
+  }
+}
+
+class WorkbenchNavigationDiagnostics {
+  private readonly references = new WeakMap<WebFrameMain, number>()
+  private referenceCount = 0
+  private readonly startedAt = Date.now()
+  private readonly observations: Record<string, unknown>[] = []
+  private omittedObservations = 0
+  private readonly initialFrame: unknown
+
+  constructor(
+    private readonly contents: WebContents,
+    private readonly expectedFrame: WebFrameMain,
+    private readonly expectedUrl: string
+  ) {
+    this.initialFrame = this.frame(expectedFrame)
+  }
+
+  start(): void {
+    this.contents.on('did-start-navigation', this.onStart)
+    this.contents.on('did-frame-navigate', this.onCommit)
+    this.contents.on('did-fail-load', this.onFailure)
+    this.contents.on('did-fail-provisional-load', this.onProvisionalFailure)
+    this.contents.on('console-message', this.onConsole)
+  }
+
+  dispose(): void {
+    this.contents.removeListener('did-start-navigation', this.onStart)
+    this.contents.removeListener('did-frame-navigate', this.onCommit)
+    this.contents.removeListener('did-fail-load', this.onFailure)
+    this.contents.removeListener('did-fail-provisional-load', this.onProvisionalFailure)
+    this.contents.removeListener('console-message', this.onConsole)
+  }
+
+  navigation(
+    type: string,
+    event: Electron.WebContentsWillFrameNavigateEventParams & {
+      defaultPrevented: boolean
+    }
+  ): void {
+    this.record({
+      type,
+      url: navigationUrlMetadata(event.url),
+      urlMatchesExpected: event.url === this.expectedUrl,
+      frameMatchesExpected: event.frame === this.expectedFrame,
+      frame: this.frame(event.frame),
+      initiator: this.frame(event.initiator),
+      isMainFrame: event.isMainFrame,
+      isSameDocument: event.isSameDocument,
+      defaultPrevented: event.defaultPrevented,
+    })
+  }
+
+  error(reason: string): Error {
+    let currentFrames: unknown = 'unavailable'
+    let omittedFrames = 0
+    try {
+      const frames = this.contents.mainFrame.frames
+      currentFrames = frames.slice(0, 8).map(frame => this.frame(frame))
+      omittedFrames = Math.max(0, frames.length - 8)
+    } catch {
+      // A destroyed WebContents cannot expose its current frame tree.
+    }
+    const metadata = {
+      expectedUrl: navigationUrlMetadata(this.expectedUrl),
+      initialFrame: this.initialFrame,
+      currentFrame: this.frame(this.expectedFrame),
+      currentFrames,
+      omittedFrames,
+      observations: this.observations,
+      omittedObservations: this.omittedObservations,
+    }
+    return new Error(
+      `Workbench navigation was ${reason}: ${JSON.stringify(metadata.expectedUrl)}\nNavigation diagnostics: ${JSON.stringify(metadata)}`
+    )
+  }
+
+  private frame(frame: WebFrameMain | null | undefined): unknown {
+    if (!frame) return null
+    let referenceId = this.references.get(frame)
+    if (referenceId === undefined) {
+      referenceId = ++this.referenceCount
+      this.references.set(frame, referenceId)
+    }
+    const metadata: Record<string, unknown> = { referenceId }
+    for (const key of [
+      'processId',
+      'routingId',
+      'frameTreeNodeId',
+      'name',
+      'url',
+      'detached',
+    ] as const) {
+      try {
+        metadata[key] =
+          key === 'url'
+            ? navigationUrlMetadata(frame.url)
+            : key === 'name'
+              ? frame.name === LIGHTWEIGHT_WORKBENCH_FRAME_NAME
+                ? LIGHTWEIGHT_WORKBENCH_FRAME_NAME
+                : frame.name
+                  ? 'other'
+                  : 'empty'
+              : frame[key]
+      } catch {
+        metadata[key] = 'unavailable'
+      }
+    }
+    try {
+      metadata.destroyed = frame.isDestroyed()
+    } catch {
+      metadata.destroyed = 'unavailable'
+    }
+    return metadata
+  }
+
+  private record(metadata: Record<string, unknown>): void {
+    if (this.observations.length === 32) {
+      this.observations.shift()
+      this.omittedObservations += 1
+    }
+    this.observations.push({ ...metadata, elapsedMs: Date.now() - this.startedAt })
+  }
+
+  private readonly onStart = (
+    event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>
+  ) => this.navigation('did-start-navigation', event)
+
+  private readonly onCommit = (
+    _event: Electron.Event,
+    url: string,
+    httpResponseCode: number,
+    _httpStatusText: string,
+    isMainFrame: boolean,
+    frameProcessId: number,
+    frameRoutingId: number
+  ) =>
+    this.record({
+      type: 'did-frame-navigate',
+      url: navigationUrlMetadata(url),
+      httpResponseCode,
+      isMainFrame,
+      frameProcessId,
+      frameRoutingId,
+    })
+
+  private loadFailureObserver(type: string) {
+    return (
+      _event: Electron.Event,
+      errorCode: number,
+      _errorDescription: string,
+      url: string,
+      isMainFrame: boolean,
+      frameProcessId: number,
+      frameRoutingId: number
+    ) =>
+      this.record({
+        type,
+        url: navigationUrlMetadata(url),
+        errorCode,
+        isMainFrame,
+        frameProcessId,
+        frameRoutingId,
+      })
+  }
+
+  private readonly onFailure = this.loadFailureObserver('did-fail-load')
+  private readonly onProvisionalFailure = this.loadFailureObserver('did-fail-provisional-load')
+
+  private readonly onConsole = (
+    event: Electron.Event<Electron.WebContentsConsoleMessageEventParams>
+  ) => {
+    const classification = /\bSecurityError\b/.test(event.message)
+      ? 'SecurityError'
+      : /content.security.policy/i.test(event.message)
+        ? 'CSP'
+        : null
+    if (classification)
+      this.record({
+        type: 'console-message',
+        classification,
+        level: event.level,
+        frame: this.frame(event.frame),
+      })
+  }
+}
+
 async function clickAndWaitForBlockedNavigation(
   contents: WebContents,
   selector: string,
@@ -199,24 +397,29 @@ async function clickAndWaitForBlockedNavigation(
     candidate => candidate.name === LIGHTWEIGHT_WORKBENCH_FRAME_NAME
   )
   if (!frame) throw new Error('Lightweight Workbench frame is unavailable')
+  const diagnostics = new WorkbenchNavigationDiagnostics(contents, frame, url)
   let cleanup = () => {}
   const blocked = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error(`Workbench navigation was not observed: ${url}`)),
-      STEP_TIMEOUT_MS
-    )
-    const observe = (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
-      if (event.frame !== frame || event.url !== url) return
-      if (!event.defaultPrevented) reject(new Error(`Workbench navigation was not blocked: ${url}`))
-      else resolve()
-    }
-    contents.on('will-frame-navigate', observe)
-    contents.on('will-redirect', observe)
+    const timeout = setTimeout(() => reject(diagnostics.error('not observed')), STEP_TIMEOUT_MS)
+    const observe =
+      (type: string) =>
+      (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
+        diagnostics.navigation(type, event)
+        if (event.frame !== frame || event.url !== url) return
+        if (!event.defaultPrevented) reject(diagnostics.error('not blocked'))
+        else resolve()
+      }
+    const navigate = observe('will-frame-navigate')
+    const redirect = observe('will-redirect')
     cleanup = () => {
       clearTimeout(timeout)
-      contents.removeListener('will-frame-navigate', observe)
-      contents.removeListener('will-redirect', observe)
+      contents.removeListener('will-frame-navigate', navigate)
+      contents.removeListener('will-redirect', redirect)
+      diagnostics.dispose()
     }
+    contents.on('will-frame-navigate', navigate)
+    contents.on('will-redirect', redirect)
+    diagnostics.start()
   })
   try {
     await Promise.all([blocked, clickWorkbenchElement(contents, selector)])

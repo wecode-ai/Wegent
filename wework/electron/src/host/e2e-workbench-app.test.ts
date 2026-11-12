@@ -53,7 +53,16 @@ function navigationFixture(protectedFrame = true) {
   vi.stubEnv('VITE_WEWORK_E2E', 'true')
   vi.stubEnv('WEWORK_E2E_CONTROL_URL', 'http://127.0.0.1:1234')
   vi.mocked(evaluateWorkbenchPage).mockReset()
-  const frame = { name: LIGHTWEIGHT_WORKBENCH_FRAME_NAME, url: 'about:srcdoc', parent: null }
+  const frame = {
+    name: LIGHTWEIGHT_WORKBENCH_FRAME_NAME,
+    url: 'about:srcdoc',
+    parent: null,
+    processId: 7,
+    routingId: 11,
+    frameTreeNodeId: 13,
+    detached: false,
+    isDestroyed: vi.fn(() => false),
+  }
   const contents = Object.assign(new EventEmitter(), {
     isDestroyed: () => false,
     mainFrame: { frames: [frame] },
@@ -68,13 +77,18 @@ function navigationFixture(protectedFrame = true) {
     list: async () => [],
   }
   const url = 'https://replacement.invalid/workbench'
-  const run = () =>
+  const run = (destination = url) =>
     controlWorkbenchApp(
       host as never,
-      { action: 'clickAndWaitForBlockedNavigation', id: 'todo', selector: '#replace', url },
+      {
+        action: 'clickAndWaitForBlockedNavigation',
+        id: 'todo',
+        selector: '#replace',
+        url: destination,
+      },
       vi.fn()
     )
-  const emit = (name: string, target = frame, destination = url) => {
+  const emit = (name: string, target: unknown = frame, destination = url) => {
     const event = {
       frame: target,
       url: destination,
@@ -91,6 +105,15 @@ function navigationFixture(protectedFrame = true) {
   const expectCleaned = () => {
     expect(contents.listenerCount('will-frame-navigate')).toBe(protectedFrame ? 1 : 0)
     expect(contents.listenerCount('will-redirect')).toBe(protectedFrame ? 1 : 0)
+    for (const name of [
+      'did-start-navigation',
+      'did-frame-navigate',
+      'did-fail-load',
+      'did-fail-provisional-load',
+      'console-message',
+    ]) {
+      expect(contents.listenerCount(name)).toBe(0)
+    }
   }
   return { contents, frame, url, run, emit, expectCleaned }
 }
@@ -444,7 +467,15 @@ describe('isolated workbench E2E controls', () => {
       app.emit('will-frame-navigate')
       return true
     })
-    await expect(app.run()).rejects.toThrow('navigation was not blocked')
+    const error = (await app.run().catch((failure: Error) => failure)) as Error
+    expect(error.message).toContain('navigation was not blocked')
+    expect(JSON.parse(error.message.split('\nNavigation diagnostics: ')[1]).observations).toEqual([
+      expect.objectContaining({
+        frameMatchesExpected: true,
+        urlMatchesExpected: true,
+        defaultPrevented: false,
+      }),
+    ])
     app.expectCleaned()
   })
 
@@ -474,6 +505,183 @@ describe('isolated workbench E2E controls', () => {
     const failure = expect(app.run()).rejects.toThrow('navigation was not observed')
     await vi.advanceTimersByTimeAsync(10_000)
     await failure
+    app.expectCleaned()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('diagnoses differing frame wrappers without accepting their equal native identities', async () => {
+    vi.useFakeTimers()
+    const app = navigationFixture()
+    const replacement = { ...app.frame }
+    vi.mocked(evaluateWorkbenchPage).mockImplementation(async () => {
+      const event = app.emit('will-frame-navigate', replacement)
+      expect(event.defaultPrevented).toBe(true)
+      Object.assign(event, { initiator: app.frame })
+      app.contents.emit('will-redirect', event)
+      app.contents.mainFrame.frames = [replacement]
+      return true
+    })
+    let completed = false
+    const result = app.run().catch((error: Error) => {
+      completed = true
+      return error
+    })
+    await vi.advanceTimersByTimeAsync(9_999)
+    expect(completed).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    const error = (await result) as Error
+    expect(error.message).toContain('navigation was not observed')
+    const diagnostics = JSON.parse(error.message.split('\nNavigation diagnostics: ')[1])
+    expect(diagnostics.initialFrame).toMatchObject({
+      referenceId: 1,
+      processId: 7,
+      routingId: 11,
+      frameTreeNodeId: 13,
+      name: LIGHTWEIGHT_WORKBENCH_FRAME_NAME,
+      url: 'about:srcdoc',
+    })
+    expect(diagnostics.currentFrames).toEqual([
+      expect.objectContaining({ referenceId: 2, processId: 7, routingId: 11 }),
+    ])
+    expect(diagnostics.observations).toEqual([
+      expect.objectContaining({
+        type: 'will-frame-navigate',
+        frameMatchesExpected: false,
+        urlMatchesExpected: true,
+        defaultPrevented: true,
+        frame: expect.objectContaining({ referenceId: 2 }),
+        initiator: null,
+      }),
+      expect.objectContaining({
+        type: 'will-redirect',
+        frameMatchesExpected: false,
+        initiator: expect.objectContaining({ referenceId: 1 }),
+      }),
+    ])
+    expect(evaluateWorkbenchPage).toHaveBeenCalledOnce()
+    app.expectCleaned()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('reports load lifecycle and classified security errors without private URL or page content', async () => {
+    vi.useFakeTimers()
+    const app = navigationFixture()
+    const privateUrl = 'https://user:password@proxy.invalid/secret-path?token=private#private'
+    vi.mocked(evaluateWorkbenchPage).mockImplementation(async () => {
+      app.emit('did-start-navigation', app.frame, privateUrl)
+      app.contents.emit('did-frame-navigate', {}, privateUrl, 200, 'private status', false, 7, 11)
+      app.contents.emit('did-fail-load', {}, -3, 'private failure', privateUrl, false, 7, 11)
+      app.contents.emit(
+        'did-fail-provisional-load',
+        {},
+        -3,
+        'private cancellation',
+        privateUrl,
+        false,
+        7,
+        11
+      )
+      app.contents.emit('console-message', {
+        message: `SecurityError: private page body ${privateUrl}`,
+        level: 'error',
+        frame: app.frame,
+      })
+      app.contents.emit('console-message', {
+        message: `Refused by Content Security Policy: private page body ${privateUrl}`,
+        level: 'warning',
+        frame: app.frame,
+      })
+      app.contents.emit('console-message', {
+        message: 'unrelated private page body',
+        level: 'info',
+        frame: app.frame,
+      })
+      app.frame.url = privateUrl
+      app.frame.name = 'private-frame-name'
+      return true
+    })
+    const result = app.run(privateUrl).catch((error: Error) => error)
+    await vi.advanceTimersByTimeAsync(10_000)
+    const error = (await result) as Error
+    const diagnostics = JSON.parse(error.message.split('\nNavigation diagnostics: ')[1])
+    expect(diagnostics.expectedUrl).toEqual({ protocol: 'https:', origin: 'https://proxy.invalid' })
+    expect(diagnostics.currentFrame.url).toEqual(diagnostics.expectedUrl)
+    expect(diagnostics.currentFrame.name).toBe('other')
+    expect(diagnostics.observations).toEqual([
+      expect.objectContaining({ type: 'did-start-navigation', url: diagnostics.expectedUrl }),
+      expect.objectContaining({
+        type: 'did-frame-navigate',
+        url: diagnostics.expectedUrl,
+        frameProcessId: 7,
+        frameRoutingId: 11,
+      }),
+      expect.objectContaining({
+        type: 'did-fail-load',
+        errorCode: -3,
+        url: diagnostics.expectedUrl,
+      }),
+      expect.objectContaining({
+        type: 'did-fail-provisional-load',
+        errorCode: -3,
+        url: diagnostics.expectedUrl,
+      }),
+      expect.objectContaining({
+        type: 'console-message',
+        classification: 'SecurityError',
+        level: 'error',
+      }),
+      expect.objectContaining({ type: 'console-message', classification: 'CSP', level: 'warning' }),
+    ])
+    for (const privateText of [
+      'secret-path',
+      'token',
+      'private',
+      'password',
+      'user:',
+      'unrelated',
+    ]) {
+      expect(error.message).not.toContain(privateText)
+    }
+    app.expectCleaned()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('bounds diagnostics and tolerates frames destroyed before timeout', async () => {
+    vi.useFakeTimers()
+    const app = navigationFixture()
+    vi.mocked(evaluateWorkbenchPage).mockImplementation(async () => {
+      for (let index = 0; index < 40; index += 1) {
+        app.emit('will-frame-navigate', app.frame, 'data:text/plain,private-content')
+      }
+      app.contents.mainFrame.frames = Array.from({ length: 12 }, (_, index) => ({
+        ...app.frame,
+        name: 'other-frame'.repeat(20),
+        routingId: index,
+      }))
+      Object.defineProperty(app.frame, 'url', {
+        get: () => {
+          throw new Error('private destroyed-frame detail')
+        },
+      })
+      app.frame.isDestroyed.mockReturnValue(true)
+      return true
+    })
+    const result = app.run().catch((error: Error) => error)
+    await vi.advanceTimersByTimeAsync(10_000)
+    const error = (await result) as Error
+    const diagnostics = JSON.parse(error.message.split('\nNavigation diagnostics: ')[1])
+    expect(diagnostics.observations).toHaveLength(32)
+    expect(diagnostics.omittedObservations).toBe(8)
+    expect(diagnostics.currentFrames).toHaveLength(8)
+    expect(diagnostics.omittedFrames).toBe(4)
+    expect(diagnostics.currentFrames[0].name).toBe('other')
+    expect(diagnostics.currentFrame).toMatchObject({
+      referenceId: 1,
+      destroyed: true,
+      url: 'unavailable',
+    })
+    expect(diagnostics.observations[0].url).toEqual({ protocol: 'data:', origin: null })
+    expect(error.message).not.toContain('private')
     app.expectCleaned()
     expect(vi.getTimerCount()).toBe(0)
   })
