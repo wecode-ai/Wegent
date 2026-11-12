@@ -251,6 +251,12 @@ describe('stand-in execution model fixture', () => {
       ],
     }
     const pending = executionModelEvents(body, context)
+    expect(() =>
+      executionModelEvents(
+        { ...body, input: [{ type: 'additional_tools', tools: [] }, ...body.input] },
+        context
+      )
+    ).toThrow('An in-place API retry must not forward the previous native Lite tool catalog')
     const call = pending.events.find(
       event => event.type === 'response.output_item.done' && event.item?.type === 'function_call'
     ).item

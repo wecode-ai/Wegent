@@ -50,6 +50,12 @@ export function executionModelEvents(body, context) {
       [...cases.values()].some(testCase => testCase.upstream === body.model),
       'The selected upstream model must receive the call'
     )
+  if (retry && context.retrySameNativeThread)
+    assert.equal(
+      (body.input ?? []).some(item => item.type === 'additional_tools'),
+      false,
+      'An in-place API retry must not forward the previous native Lite tool catalog'
+    )
   const history = retry ? retryConversationHistory(body, context) : undefined
   const delegatedTaskId = message.match(/Wework delegated task result:.*?taskId=([^,\s]+)/)?.[1]
   const candidates = [...cases.keys()].filter(name =>
