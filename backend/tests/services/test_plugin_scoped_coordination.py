@@ -614,3 +614,128 @@ def test_catalog_rename_keeps_retired_receipts_and_the_live_identity(scoped_db):
         ]
         == "old-request"
     )
+
+
+@pytest.mark.parametrize(
+    "legacy_watermark,revision,expected",
+    [(None, 11, True), (None, 12, False), (9999, 12, False)],
+)
+def test_requesting_device_recovery_compares_its_scoped_acknowledgement(
+    scoped_db, legacy_watermark, revision, expected
+):
+    from app.schemas.device import DeviceCapabilitySyncResponse
+    from app.services.plugin_device_sync import _plugin_ack_needs_reconciliation
+
+    PluginDeviceInstallation.__table__.create(scoped_db.get_bind())
+    installed_id = installation(scoped_db, "scoped-recovery")
+    state = lock_installed_plugin_state(scoped_db, 913, installed_id)
+    document = deepcopy(state.json)
+    document["spec"].update(
+        generation=12, devices={"device": {"plugins": {str(installed_id): 12}}}
+    )
+    state.json = document
+    scoped_db.add(
+        PluginDeviceInstallation(
+            user_id=913,
+            installed_kind_id=installed_id,
+            device_id="device",
+            state="pending",
+        )
+    )
+    if legacy_watermark is not None:
+        legacy = lock_plugin_sync_state(scoped_db, 913)
+        document = deepcopy(legacy.json)
+        document["spec"]["devices"] = {
+            "device": {"complete_generation": legacy_watermark}
+        }
+        legacy.json = document
+    scoped_db.commit()
+    payload = {
+        "plugins": [{"installed_plugin_id": installed_id}],
+        "plugin_sync": {
+            "version": 3,
+            "generation": 100,
+            "complete": False,
+            "revisions": {str(installed_id): revision},
+            "intentRevisions": {str(installed_id): 7},
+        },
+    }
+    result = DeviceCapabilitySyncResult(
+        device_id="device", success=True, desired_plugin_snapshot=payload
+    )
+    assert (
+        _plugin_ack_needs_reconciliation(
+            scoped_db,
+            user_id=913,
+            device_id="device",
+            installed_id=installed_id,
+            response=DeviceCapabilitySyncResponse(results=[result]),
+        )
+        is expected
+    )
+    if legacy_watermark is None:
+        assert (
+            scoped_db.query(PluginState).filter_by(plugin_key="@legacy-v2").count() == 0
+        )
+
+
+@pytest.mark.parametrize("aggregate", [False, True])
+def test_scoped_ack_recording_never_initializes_account_metadata(
+    scoped_db, monkeypatch, aggregate
+):
+    from app.schemas.device import DeviceCapabilitySyncResponse
+    from app.services.device.capability_sync_service import (
+        device_capability_sync_service,
+    )
+    from app.services.plugin_kind_revision import kind_revision
+
+    PluginDeviceInstallation.__table__.create(scoped_db.get_bind())
+    installed_id = installation(scoped_db, "scoped-record")
+    acquire_plugin_write_lock(scoped_db, 913, installed_id=installed_id)
+    parent = scoped_db.get(Kind, installed_id)
+    replace_installed_kind(
+        scoped_db, parent, {"spec": {**parent.json["spec"], "releaseId": 1}}
+    )
+    scoped_db.commit()
+    desired = {
+        "installed_plugin_id": installed_id,
+        "name": "scoped-record",
+        "version": "1.0",
+    }
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "_load_installed_plugins",
+        lambda *args, **kwargs: [desired],
+    )
+    payload = {
+        "plugins": [desired],
+        "plugin_sync": {
+            "version": 3,
+            "generation": 1,
+            "complete": False,
+            "revisions": {str(installed_id): 1},
+            "intentRevisions": {str(installed_id): kind_revision(parent)},
+        },
+    }
+    result = DeviceCapabilitySyncResult(
+        device_id="device",
+        success=True,
+        desired_plugin_snapshot=payload,
+        plugins=[{"id": installed_id, "status": "synced", "generation": 1}],
+    )
+    service = PluginDeviceInstallationService()
+    if aggregate:
+        service.record_sync_response(
+            scoped_db,
+            user_id=913,
+            response=DeviceCapabilitySyncResponse(results=[result]),
+        )
+    else:
+        service.record_device_sync_result(scoped_db, user_id=913, result=result)
+    assert scoped_db.query(PluginDeviceInstallation).one().state == "installed"
+    assert (
+        scoped_db.query(PluginState)
+        .filter_by(user_id=913, plugin_key="@legacy-v2")
+        .count()
+        == 0
+    )

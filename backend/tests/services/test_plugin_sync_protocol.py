@@ -22,8 +22,8 @@ from app.services.device.plugin_sync_protocol import (
     load_versioned_plugin_payload,
     lock_plugin_sync_state,
     plugin_snapshot_watermark,
+    plugin_sync_version,
     register_plugin_snapshot_intent,
-    supports_plugin_sync_v2,
 )
 from app.services.plugin_write_errors import PluginWriteError
 
@@ -57,11 +57,11 @@ def _load_empty(_db):
     + [{"pluginSync": {"protocolVersion": value}} for value in (None, True, "2", 1, 4)],
 )
 def test_legacy_and_malformed_features_never_enable_new_wire_protocol(features):
-    assert supports_plugin_sync_v2(features) is False
+    assert plugin_sync_version(features) is None
 
 
 def test_explicit_plugin_sync_feature_enables_new_wire_protocol():
-    assert supports_plugin_sync_v2({"pluginSync": {"protocolVersion": 2}}) is True
+    assert plugin_sync_version({"pluginSync": {"protocolVersion": 2}}) == 2
 
 
 def test_concurrent_snapshot_generations_are_durable_and_unique(snapshot_sessions):

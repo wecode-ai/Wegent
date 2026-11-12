@@ -308,10 +308,13 @@ async function verifyUncertainRecovery({ request, invoke, apiProxy, journal, clo
     'The original operation was not confirmed after response recovery'
   )
   const rows = await cloud.queryDatabase(
-    "SELECT json FROM kinds WHERE user_id=1 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'"
+    'SELECT installed_kind_id,json FROM plugin_states WHERE user_id=1'
   )
-  const accountState = typeof rows[0].json === 'string' ? JSON.parse(rows[0].json) : rows[0].json
-  const slots = Object.values(accountState.spec.localIntents).flatMap(Object.values)
+  assert.equal(rows.filter(row => Number(row.installed_kind_id) === id).length, 1)
+  const slots = rows.flatMap(row => {
+    const state = typeof row.json === 'string' ? JSON.parse(row.json) : row.json
+    return Object.values(state.spec.localIntents ?? {}).flatMap(Object.values)
+  })
   assert.equal(slots.filter(slot => slot.operationId === original.operationId).length, 1)
   const ledger = await cloud.queryDatabase(
     "SELECT COUNT(*) AS n FROM kinds WHERE namespace='plugin-local-sync'"

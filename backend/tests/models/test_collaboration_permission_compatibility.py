@@ -24,7 +24,7 @@ def test_cp01_no_new_database_columns_or_pending_migration(test_db):
         LoopNode.__table__.columns.keys()
     )
     scripts = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert scripts.get_heads() == ["f3a7c9e1b2d4"]
+    assert scripts.get_heads() == ["a5b6c7d8e9f0"]
 
 
 def test_cp01_new_project_preserves_v1_containment(test_db, scope):

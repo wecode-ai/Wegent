@@ -23,13 +23,6 @@ from app.services.plugin_write_coordination import configure_plugin_session
 from shared.telemetry.decorators import trace_sync
 
 PLUGIN_SYNC_VERSION = 2
-PLUGIN_SYNC_STATE_KIND = "PluginSyncState"
-PLUGIN_SYNC_STATE_NAMESPACE = "plugin-sync"
-PLUGIN_SYNC_STATE_NAME = "account"
-
-
-def supports_plugin_sync_v2(runtime_features: Any) -> bool:
-    return plugin_sync_version(runtime_features) is not None
 
 
 def plugin_sync_version(runtime_features: Any) -> int | None:

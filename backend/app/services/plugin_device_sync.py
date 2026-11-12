@@ -23,6 +23,7 @@ from app.services.device.plugin_removal_sync import (
     sync_pending_plugin_removals,
 )
 from app.services.device.plugin_sync_protocol import (
+    lock_installed_plugin_state,
     lock_plugin_sync_state,
     plugin_snapshot_watermark,
 )
@@ -480,8 +481,18 @@ def _plugin_ack_needs_reconciliation(
             or plugin_device_id(db, user_id, result.device_id) != canonical_id
         ):
             continue
-        state = lock_plugin_sync_state(db, user_id)
-        generation = snapshot["plugin_sync"]["generation"]
+        metadata = snapshot["plugin_sync"]
+        scoped = metadata["version"] == 3
+        state = (
+            lock_installed_plugin_state(db, user_id, installed_id)
+            if scoped
+            else lock_plugin_sync_state(db, user_id)
+        )
+        generation = (
+            metadata["revisions"][str(installed_id)]
+            if scoped
+            else metadata["generation"]
+        )
         return generation < plugin_snapshot_watermark(state, canonical_id, installed_id)
     return False
 
