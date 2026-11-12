@@ -861,7 +861,11 @@ class SqlAlchemySubtaskStore:
                 return []
             query = (
                 query.order_by(None)
-                .order_by(Subtask.message_id.desc(), Subtask.created_at.desc())
+                .order_by(
+                    Subtask.message_id.desc(),
+                    Subtask.created_at.desc(),
+                    Subtask.id.desc(),
+                )
                 .limit(recent_limit)
             )
             recent_rows = query.all()

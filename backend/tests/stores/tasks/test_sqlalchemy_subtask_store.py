@@ -157,6 +157,33 @@ def test_list_by_task_ordered_can_load_only_recent_rows(test_db: Session) -> Non
     )
 
 
+def test_list_by_task_ordered_recent_limit_uses_id_tie_breaker(
+    test_db: Session,
+) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(8, owner_id=10))
+    first_message = _subtask(subtask_id=81, task_id=8, user_id=10, message_id=1)
+    second_message = _subtask(subtask_id=82, task_id=8, user_id=10, message_id=1)
+    second_message.created_at = first_message.created_at
+    test_db.add_all(
+        [
+            first_message,
+            second_message,
+            _subtask(subtask_id=83, task_id=8, user_id=10, message_id=2),
+        ]
+    )
+    test_db.commit()
+
+    subtasks = store.list_by_task_ordered(
+        test_db,
+        task_id=8,
+        owner_user_id=10,
+        recent_limit=2,
+    )
+
+    assert [subtask.id for subtask in subtasks] == [82, 83]
+
+
 def test_get_basic_by_id_returns_subtask(test_db: Session) -> None:
     store = SqlAlchemySubtaskStore()
     test_db.add(_task(1, owner_id=10))
