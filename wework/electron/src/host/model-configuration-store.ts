@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { isMap, isSeq, type Document, type YAMLMap, type YAMLSeq } from 'yaml'
 import {
   MAX_MODEL_CONFIGURATION_BYTES,
@@ -67,18 +67,62 @@ export class ModelConfigurationStore {
 
   /** Resolve the explicit file binding or the default per-user configuration file. */
   private async boundPath(): Promise<string> {
+    let binding: { path?: unknown }
     try {
-      const binding = JSON.parse(
-        await readFile(join(this.directory, 'model-binding.json'), 'utf8')
-      ) as { path?: unknown }
+      binding = JSON.parse(await readFile(join(this.directory, 'model-binding.json'), 'utf8')) as {
+        path?: unknown
+      }
       if (typeof binding.path !== 'string' || !binding.path)
         throw new Error('Invalid model file binding')
-      return binding.path
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       if (this.legacyDirectory) await this.importLegacyConfiguration()
       return join(this.directory, 'model.yml')
     }
+    const path = binding.path as string
+    const destination = await this.bindingDestination(path)
+    return destination === path ? path : (await this.selectFile(path, destination)).path
+  }
+
+  /** Keep every file owned by the previous release outside the new store's write boundary. */
+  private async bindingDestination(path: string): Promise<string> {
+    if (!this.legacyDirectory) return path
+    const canonical = async (value: string): Promise<string | null> => {
+      try {
+        return await realpath(value)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        return null
+      }
+    }
+    const selected = await canonical(path)
+    if (!selected) return path
+    const legacy = await canonical(this.legacyDirectory)
+    if (legacy) {
+      const offset = relative(legacy, selected)
+      if (!isAbsolute(offset) && offset !== '..' && !offset.startsWith(`..${sep}`))
+        return join(this.directory, 'model.yml')
+    }
+    let binding: { path?: unknown } | null = null
+    try {
+      binding = JSON.parse(await readFile(join(this.legacyDirectory, 'model-binding.json'), 'utf8'))
+    } catch (error) {
+      if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== 'ENOENT')
+        throw error
+    }
+    return typeof binding?.path === 'string' && (await canonical(binding.path)) === selected
+      ? join(this.directory, 'model.yml')
+      : path
+  }
+
+  /** Validate and secure a selected file before committing its current-release binding. */
+  private async selectFile(path: string, destination: string): Promise<LoadedConfiguration> {
+    const loaded = await this.protectInlineCredentials(await this.load(path, false), destination)
+    await atomicWrite(
+      join(this.directory, 'model-binding.json'),
+      JSON.stringify({ path: destination })
+    )
+    return loaded
   }
 
   /** Copy the selected legacy file once; old releases keep their file and binding unchanged. */
@@ -264,11 +308,7 @@ export class ModelConfigurationStore {
   async bind(path: string): Promise<ModelConfigurationSnapshot> {
     return this.serial(async () => {
       const canonical = await realpath(path)
-      const loaded = await this.protectInlineCredentials(await this.load(canonical, false))
-      await atomicWrite(
-        join(this.directory, 'model-binding.json'),
-        JSON.stringify({ path: canonical })
-      )
+      const loaded = await this.selectFile(canonical, await this.bindingDestination(canonical))
       await this.accept(loaded)
       return this.publicSnapshot(loaded)
     })

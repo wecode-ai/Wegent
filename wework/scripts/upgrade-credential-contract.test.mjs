@@ -92,18 +92,23 @@ test('isolated migration preserves rollback files and keeps subsequent writes in
       storageMode: 'isolated-copy-once',
       writeAuthenticated: true,
       legacyFilesPreserved: true,
+      legacyModelBindingsPreserved: true,
       newStoreIndependent: true,
     })
   }
   assert.equal(credentialRoundTripPassed(value), true)
   for (const [index, field] of [
     [1, 'legacyFilesPreserved'],
+    [1, 'legacyModelBindingsPreserved'],
     [1, 'writeAuthenticated'],
     [3, 'newStoreIndependent'],
   ]) {
-    const invalid = structuredClone(value)
-    invalid.credentials[index][field] = false
-    assert.equal(credentialRoundTripPassed(invalid), false)
+    for (const missing of [false, true]) {
+      const invalid = structuredClone(value)
+      if (missing) delete invalid.credentials[index][field]
+      else invalid.credentials[index][field] = false
+      assert.equal(credentialRoundTripPassed(invalid), false)
+    }
   }
   const invalid = structuredClone(value)
   invalid.credentials[3].storageMode = 'unknown'

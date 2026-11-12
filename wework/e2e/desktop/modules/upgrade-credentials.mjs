@@ -3,6 +3,7 @@ import { createCipheriv, createHash, generateKeyPairSync, randomBytes } from 'no
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { inspectRunningApp, readConnectedApplicationPid } from './inspect-before-start.mjs'
+import { verifyLegacyModelBindings } from './upgrade-model-binding.mjs'
 
 const KEY = 'upgrade-credential-fixture'
 const SECRET = 'wework-upgrade-synthetic-model-secret'
@@ -108,6 +109,7 @@ export function upgradeCredentials() {
         cloudDeviceSignature: true,
         ...(result.writeAuthenticated ? { writeAuthenticated: true } : {}),
         ...(result.legacyFilesPreserved ? { legacyFilesPreserved: true } : {}),
+        ...(result.legacyModelBindingsPreserved ? { legacyModelBindingsPreserved: true } : {}),
         ...(result.newStoreIndependent ? { newStoreIndependent: true } : {}),
       })
     },
@@ -188,6 +190,9 @@ export function credentialAssertionScript(input) {
           digest, 'The security target changed a legacy rollback credential file')
       }
     }
+    const legacyModelBindingsPreserved = isolated && input.stage === 'upgraded'
+      ? await (${verifyLegacyModelBindings.toString()})({nativeRequire: require, directory, host})
+      : false
     mark('verified')
     const legacyDigests = ['source', 'rolled-back'].includes(input.stage) ? Object.fromEntries(await Promise.all(
       Object.keys(input.legacyDigests).map(async name => [name,
@@ -196,6 +201,7 @@ export function credentialAssertionScript(input) {
     return {
       format: expectedFormat, storageVersion, storageMode, writeAuthenticated: write,
       legacyDigests,
+      legacyModelBindingsPreserved,
       legacyFilesPreserved: isolated && input.stage === 'upgraded',
       newStoreIndependent: isolated && input.stage === 're-upgraded'
     }
