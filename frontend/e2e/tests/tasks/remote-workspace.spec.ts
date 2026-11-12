@@ -51,7 +51,7 @@ test.describe('Remote Workspace', () => {
     }
   })
 
-  test('desktop chat shows a disabled workspace entry when the sandbox is unavailable', async ({
+  test('desktop code task shows a disabled workspace entry when the sandbox is unavailable', async ({
     page,
   }) => {
     const teamsResponse = await apiClient.get<TeamListResponse>(
@@ -74,8 +74,9 @@ test.describe('Remote Workspace', () => {
       prompt: 'e2e remote workspace unavailable state',
       team_id: teamWithBots?.id,
       type: 'offline',
-      // This endpoint leaves device-mode tasks pending for an external callback.
-      task_type: 'task',
+      task_type: 'code',
+      // Fail model resolution before the scheduler can provision a sandbox.
+      model_id: `e2e-unavailable-workspace-model-${taskId}`,
       git_url: '',
       git_repo: '',
       git_repo_id: 0,
@@ -91,19 +92,22 @@ test.describe('Remote Workspace', () => {
 
     const subtasks = taskDetailResponse.data?.subtasks ?? []
     const assistantSubtask = subtasks.find(subtask => String(subtask.role) === 'ASSISTANT')
-    expect(assistantSubtask?.status).toBe('PENDING')
+    expect(assistantSubtask).toBeTruthy()
+    const subtaskPath = `/api/subtasks/${assistantSubtask!.id}`
+    await expect
+      .poll(async () => {
+        const response = await apiClient.get<TaskDetailSubtask>(subtaskPath)
+        expect(response.status).toBe(200)
+        return response.data?.status
+      })
+      .toBe('FAILED')
 
-    const callbackResponse = await apiClient.post('/api/internal/callback', {
-      event_type: 'error',
-      task_id: taskId,
-      subtask_id: assistantSubtask?.id,
+    // Record the executor reference of a failed round with no live sandbox.
+    const binding = await apiClient.put(subtaskPath, {
       executor_name: `executor-${taskId}`,
       executor_namespace: 'default',
-      data: {
-        message: 'force unavailable state for e2e',
-      },
     })
-    expect(callbackResponse.status).toBe(200)
+    expect(binding.status).toBe(200)
 
     const statusResponse = await apiClient.get<RemoteWorkspaceStatusResponse>(
       `/api/tasks/${taskId}/remote-workspace/status`
@@ -111,10 +115,11 @@ test.describe('Remote Workspace', () => {
     expect(statusResponse.status).toBe(200)
     expect(statusResponse.data?.connected).toBe(true)
     expect(statusResponse.data?.available).toBe(false)
+    expect(statusResponse.data?.reason).toBe('sandbox_not_running')
     // root_path is task-scoped: /workspace/{task_id} when sandbox is unavailable
     expect(statusResponse.data?.root_path).toBe(`/workspace/${taskId}`)
 
-    await page.goto(`/chat?taskId=${taskId}`, {
+    await page.goto(`/chat?agent=code&taskId=${taskId}`, {
       waitUntil: 'domcontentloaded',
     })
     const remoteWorkspaceButton = page.getByTestId('remote-workspace-button')
