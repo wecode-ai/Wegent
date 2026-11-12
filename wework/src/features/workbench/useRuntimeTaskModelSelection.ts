@@ -94,13 +94,24 @@ export function useRuntimeTaskModelSelection({
       return {
         taskSelection,
         activeModel: taskModel,
+        ...((resolveTask(address)?.runtimeHandle ?? address.runtimeHandle)?.modelProviderRouting ===
+        'thread'
+          ? { supportsModelProviderSwitch: true }
+          : {}),
         selectedModel: hasScopedSelection ? (selectedModelByScope[scopeKey] ?? null) : taskModel,
         selectedModelOptions: hasScopedSelection
           ? (selectedModelOptionsByScope[scopeKey] ?? {})
           : (taskSelection?.options ?? {}),
       }
     },
-    [models, selectedModelByScope, selectedModelOptionsByScope, taskSelectionConfig, userId]
+    [
+      models,
+      resolveTask,
+      selectedModelByScope,
+      selectedModelOptionsByScope,
+      taskSelectionConfig,
+      userId,
+    ]
   )
   const ensureTaskSelection = useCallback(
     (address: RuntimeTaskAddress) => {

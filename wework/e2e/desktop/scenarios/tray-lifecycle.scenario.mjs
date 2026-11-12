@@ -22,6 +22,11 @@ export async function createDesktopScenario({ appIdentifier, captureScreenshot, 
     },
     async verify(control) {
       await waitForClosedStartupSplash(control, uiTimeoutMs)
+      // Native fixture sizes must work even on a shorter macOS display.
+      const originalWindowSize = await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1280, height: 1200 }),
+      })
+      await control.command('setMainWindowSize', 'body', { value: originalWindowSize })
       const tray = JSON.parse(await control.command('getTraySnapshot', 'body'))
       assert.equal(tray.created, true, 'The Electron Tray was not created')
       assert.match(

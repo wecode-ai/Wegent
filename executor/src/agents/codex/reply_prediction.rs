@@ -418,7 +418,7 @@ done
 "#;
             fs::write(
                 &binary,
-                script
+                crate::test_env::with_codex_bundled_catalog(script)
                     .replace("__LOG__", &log.to_string_lossy())
                     .replace("__MODE__", mode),
             )

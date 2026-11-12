@@ -7,6 +7,7 @@
   "author": "Wecode",
   "type": "module",
   "main": "dist/bootstrap.js",
+  "weworkAfterStopPreparation": 1,
   "scripts": {
     "stage:process-explorer": "node scripts/stage-process-explorer.mjs",
     "build": "pnpm run stage:process-explorer && tsc -p tsconfig.json && node scripts/copy-static.mjs",
