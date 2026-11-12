@@ -169,6 +169,10 @@ export function createDesktopScenario({
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
       await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
+      // Exercise the bounded settlement check when the terminal notification is lost.
+      await control.command('dropNextRuntimeEvent', 'body', {
+        value: 'response.completed',
+      })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await Promise.race([
         requestStarted,
