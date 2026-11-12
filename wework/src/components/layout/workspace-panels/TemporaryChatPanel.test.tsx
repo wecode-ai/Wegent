@@ -465,6 +465,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
           taskSelection: selection,
           selectedModel: model,
           activeModel: model,
+          supportsModelProviderSwitch: taskAddress.runtimeHandle?.modelProviderRouting === 'thread',
           selectedModelOptions: selection?.options ?? {},
         }
       },
@@ -1095,6 +1096,8 @@ describe('TemporaryChatPanel', () => {
 
   it.each([
     { existing: false, target: 'cloud', role: 'primary' },
+    { existing: true, target: 'cloud', role: 'primary', threadRouting: true },
+    { existing: true, target: 'custom', role: 'role-sales', threadRouting: true },
     { existing: true, target: 'cloud', role: 'primary' },
     { existing: false, target: 'custom', role: 'role-sales' },
     { existing: true, target: 'custom', role: 'role-sales' },
@@ -1127,6 +1130,7 @@ describe('TemporaryChatPanel', () => {
       existing,
       target,
       role,
+      threadRouting = false,
       busy = false,
       globalCatalogEmpty = false,
       oldModelRemoved = false,
@@ -1209,6 +1213,7 @@ describe('TemporaryChatPanel', () => {
         ...address,
         taskId: `stand-in-chat-7-${role}`,
         threadId: 'original-thread',
+        ...(threadRouting ? { runtimeHandle: { modelProviderRouting: 'thread' } } : {}),
       }
       mocks.runtimeModels = [
         official,
@@ -1346,7 +1351,9 @@ describe('TemporaryChatPanel', () => {
         await userEvent.click(await screen.findByTestId(`model-option-${modelName}`))
         if (existing) {
           expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
-            'Your next message will start a new session here.'
+            threadRouting
+              ? 'The new model will be used for the next message.'
+              : 'Your next message will start a new session here.'
           )
           if (
             (target === 'cloud' || providerFailure || providerPending) &&
@@ -1419,13 +1426,13 @@ describe('TemporaryChatPanel', () => {
                 ? expect.stringContaining(RUNTIME_RETRY_CONTINUATION_PROMPT)
                 : 'Keep this stand-in draft',
               ...execution,
-              ...(!revertBeforeSend && !changeTargetRoundtrip
+              ...(!threadRouting && !revertBeforeSend && !changeTargetRoundtrip
                 ? { startNewSession: true, expectedThreadId: taskAddress.threadId }
                 : {}),
             }),
             expect.any(Object)
           )
-          if (revertBeforeSend || changeTargetRoundtrip) {
+          if (threadRouting || revertBeforeSend || changeTargetRoundtrip) {
             expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
               'startNewSession'
             )
@@ -1495,7 +1502,7 @@ describe('TemporaryChatPanel', () => {
           // Runtime owns the latest thread even while the parent's address is unchanged.
           mocks.lifecycleSnapshot = {
             task: {
-              threadId: 'new-cloud-thread',
+              threadId: threadRouting ? 'original-thread' : 'new-cloud-thread',
               modelSelection: { modelName, modelType: 'public' },
             },
             derived: { isRunning: false, isTurnActive: false },
@@ -1517,9 +1524,21 @@ describe('TemporaryChatPanel', () => {
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(3))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).toMatchObject({
             modelId: official.name,
-            startNewSession: true,
-            expectedThreadId: 'new-cloud-thread',
+            ...(threadRouting
+              ? {}
+              : { startNewSession: true, expectedThreadId: 'new-cloud-thread' }),
           })
+          if (threadRouting) {
+            expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
+              'startNewSession'
+            )
+            expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
+              'expectedThreadId'
+            )
+            expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0].address.threadId).toBe(
+              'original-thread'
+            )
+          }
           expect(profile).toEqual(before)
           expect(mocks.continueInNewConversation).not.toHaveBeenCalled()
           expect(mocks.setGlobalModel).not.toHaveBeenCalled()

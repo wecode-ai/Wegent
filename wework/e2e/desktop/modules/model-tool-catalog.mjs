@@ -3,11 +3,9 @@ import { wireDeclarations } from './model-wire-contract.mjs'
 
 export function programmaticExecTools(request) {
   const declarations = new Map()
-  // Lite history is incremental; current top-level declarations take precedence.
-  for (const tool of [
-    ...wireDeclarations({ input: request.input }, 'responses'),
-    ...wireDeclarations({ tools: request.tools }, 'responses'),
-  ])
+  // Current declarations are authoritative; only Lite reconstructs its incremental history.
+  const catalog = request.tools === undefined ? { input: request.input } : { tools: request.tools }
+  for (const tool of wireDeclarations(catalog, 'responses'))
     declarations.set(JSON.stringify([tool.namespace ?? null, tool.name]), tool)
   return [...declarations.values()].filter(
     tool =>
@@ -43,7 +41,22 @@ export function programmaticInput(name, args) {
 
 export function discoverySelection(request, query) {
   const entries = programmaticExecTools(request)
-  assert.equal(entries.length, 1)
+  assert.equal(
+    entries.length,
+    1,
+    `Expected exactly one native Code Mode discovery declaration: ${JSON.stringify({
+      current: wireDeclarations({ tools: request.tools }, 'responses').map(tool => ({
+        name: tool.name,
+        namespace: tool.namespace,
+        type: tool.type,
+      })),
+      historical: wireDeclarations({ input: request.input }, 'responses').map(tool => ({
+        name: tool.name,
+        namespace: tool.namespace,
+        type: tool.type,
+      })),
+    })}`
+  )
   const input = [
     `const query = ${JSON.stringify(query.toLowerCase())}`,
     'const words = query.split(/[^a-z0-9_]+/).filter(Boolean)',

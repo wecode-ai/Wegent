@@ -11,5 +11,10 @@
       "shard": 4,
       "position": 5000
     }
-  }
+  },
+  "paths": [
+    "packages/collaboration/src/markdown/AssistantMarkdown.tsx",
+    "packages/collaboration/src/markdown/MarkdownServices.tsx",
+    "wework/e2e/desktop/modules/markdown-file-preview.mjs"
+  ]
 }

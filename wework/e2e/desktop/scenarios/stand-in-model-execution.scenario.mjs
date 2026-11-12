@@ -50,6 +50,12 @@ export function executionModelEvents(body, context) {
       [...cases.values()].some(testCase => testCase.upstream === body.model),
       'The selected upstream model must receive the call'
     )
+  if (retry && context.retrySameNativeThread)
+    assert.equal(
+      (body.input ?? []).some(item => item.type === 'additional_tools'),
+      false,
+      'An in-place API retry must not forward the previous native Lite tool catalog'
+    )
   const history = retry ? retryConversationHistory(body, context) : undefined
   const delegatedTaskId = message.match(/Wework delegated task result:.*?taskId=([^,\s]+)/)?.[1]
   const candidates = [...cases.keys()].filter(name =>
@@ -168,7 +174,7 @@ export function createDesktopScenario(options) {
   let officialCalls = 0
   let officialFailures = 0
   let cloudRetryCalls = 0
-  let retryTaskId, retryThreadId, retryMessageIds, recoveredHistory
+  let retryTaskId, retryThreadId, retryMessageIds, retrySameNativeThread, recoveredHistory
   return {
     ...catalog,
     appEnvironment,
@@ -250,6 +256,7 @@ export function createDesktopScenario(options) {
         retryTaskId,
         retryThreadId,
         retryMessageIds,
+        retrySameNativeThread,
       })
       if (retryEvidence) recoveredHistory = retryEvidence
       calls.set(name, (calls.get(name) ?? 0) + 1)
@@ -419,13 +426,15 @@ export function createDesktopScenario(options) {
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', CHAT)
         const { task: resolved } = await until(
-          () => rpc('runtime.tasks.get', { taskId: primaryTaskId }),
+          () => rpc('runtime.tasks.get', { taskId: primaryTaskId, resolveActiveProvider: true }),
           result => result.task?.runtimeHandle.activeModelProvider?.threadId === primaryThreadId,
-          'Opening the same legacy chat must resolve its provider through the owning Runtime'
+          'An explicit legacy provider lookup must resolve through the owning Runtime'
         )
+        assert.equal(resolved.runtimeHandle.modelProviderRouting, 'thread')
+        retrySameNativeThread = true
         assert.deepEqual(resolved.runtimeHandle.activeModelProvider, {
           threadId: primaryThreadId,
-          provider: 'openai',
+          provider: '~',
         })
         assert.equal(resolved.modelSelection, null)
         await control.command('waitFor', `${CHAT} [data-testid="assistant-error-retry"]`)
@@ -510,17 +519,14 @@ export function createDesktopScenario(options) {
             assert.equal(previous.modelSelection, null)
             assert.deepEqual(previous.runtimeHandle.activeModelProvider, {
               threadId: primaryThreadId,
-              provider: 'openai',
+              provider: '~',
             })
             await control.command('clickWhenEnabled', selector(`model-option-${testCase.model}`))
             await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
-              text: '下一条消息将在这里开启新会话',
+              visible: false,
             })
-            await control.command(
-              'clickWhenEnabled',
-              '[data-testid="model-switch-warning-confirm-button"]'
-            )
-            await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
+            await control.command('press', 'body', { key: 'Escape' })
+            await control.command('waitFor', '[data-testid="model-selector-menu"]', {
               visible: false,
             })
             await control.command('waitFor', CHAT)
@@ -624,10 +630,10 @@ export function createDesktopScenario(options) {
           assert.equal(primary.taskId, primaryTaskId)
           assert.ok(primary.threadId, 'The primary conversation must retain its native session')
           if (testCase.name === 'cloud') {
-            assert.notEqual(
+            assert.equal(
               primary.threadId,
               primaryThreadId,
-              'A cross-provider retry must create a new native session in the same stand-in'
+              'A cross-provider retry must preserve the original native session'
             )
             assert.ok(cloudRetryCalls > 0, 'UI retry must reach the selected cloud model')
             assert.equal(recoveredHistory?.taskId, primaryTaskId)
@@ -641,11 +647,10 @@ export function createDesktopScenario(options) {
             })
             const activeProvider = rebound.task.runtimeHandle.activeModelProvider
             assert.equal(activeProvider.threadId, primary.threadId)
-            assert.ok(activeProvider.provider)
-            assert.notEqual(
+            assert.equal(
               activeProvider.provider,
-              'openai',
-              'The new native thread must not reuse cached official-provider metadata'
+              '~',
+              'The same native thread must retain its shared router provider'
             )
             assert.equal(
               (
@@ -887,12 +892,10 @@ async function verifyCloudModelRecovery({
     await openExplicitModelMenu(control, trigger)
     await control.command('clickWhenEnabled', selector(`model-option-${modelName}`))
     await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
-      text: '下一条消息将在这里开启新会话',
-    })
-    await control.command('clickWhenEnabled', '[data-testid="model-switch-warning-confirm-button"]')
-    await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
       visible: false,
     })
+    await control.command('press', 'body', { key: 'Escape' })
+    await control.command('waitFor', '[data-testid="model-selector-menu"]', { visible: false })
     await waitForDeliveredCloudCatalog(control, catalogProxy)
     const updatedLabel = `${model.json.metadata.displayName} · updated limits`
     const updated = withModelLimits(model.json, UPDATED_LIMITS)

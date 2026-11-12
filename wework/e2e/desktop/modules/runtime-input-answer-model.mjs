@@ -13,11 +13,31 @@ export function assertElicitationToolResult(body, callId, cancelled) {
   }
 }
 
+function isUserPrompt(item) {
+  if (item?.role !== 'user') return false
+  const content = typeof item.content === 'string' ? [{ text: item.content }] : item.content
+  // Codex may append an environment delta after the prompt when the date changes.
+  return (
+    !Array.isArray(content) ||
+    !content.length ||
+    !content.every(part => {
+      const text = part.text?.trim()
+      return text?.startsWith('<environment_context>') && text.endsWith('</environment_context>')
+    })
+  )
+}
+
+export function lastUserMessageBody(body) {
+  const input = Array.isArray(body.input) ? body.input : body.messages
+  if (!Array.isArray(input)) return ''
+  return JSON.stringify(input.findLast(isUserPrompt) ?? '')
+}
+
 export function currentTurnHasToolOutput(body, callId) {
   const input = Array.isArray(body.input) ? body.input : []
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = input[index]
-    if (item?.role === 'user') return false
+    if (isUserPrompt(item)) return false
     if (
       ['function_call_output', 'custom_tool_call_output'].includes(item?.type) &&
       item.call_id === callId
@@ -31,7 +51,7 @@ export function currentTurnHasToolSearchResult(body, namespaceName) {
   const input = Array.isArray(body.input) ? body.input : []
   let turnStart = 0
   for (let index = input.length - 1; index >= 0; index -= 1) {
-    if (input[index]?.role === 'user') {
+    if (isUserPrompt(input[index])) {
       turnStart = index + 1
       break
     }

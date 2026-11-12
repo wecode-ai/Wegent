@@ -784,6 +784,31 @@ describe('MessageList', () => {
     )
   })
 
+  test('previews an HTML workspace link through the file panel', async () => {
+    runtimeMock.electron = true
+    requestEmbeddedBrowserOpenMock.mockClear()
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-html-file',
+            role: 'assistant',
+            content: '写好了：[agreement.html](/home/ubuntu/agreement.html)',
+            status: 'done',
+            createdAt: '2026-11-11T10:47:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/home/ubuntu/agreement.html')
+    expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
+  })
+
   test('downloads local path image attachments from Electron file bytes', async () => {
     runtimeMock.electron = true
     vi.stubGlobal('fetch', vi.fn())
