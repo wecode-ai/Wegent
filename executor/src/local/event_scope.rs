@@ -118,6 +118,12 @@ mod tests {
         };
         let a = account(&connection(7, 100, "https://backend.example"));
         assert_eq!(a, account(&connection(7, 200, "https://backend.example")));
+        let mut renamed = connection(7, 300, "https://backend.example");
+        renamed.auth_token = format!(
+            "header.{}.signature",
+            URL_SAFE_NO_PAD.encode(json!({"user_id":7,"sub":"renamed-user","exp":300}).to_string())
+        );
+        assert_eq!(a, account(&renamed));
         assert_ne!(a, account(&connection(8, 100, "https://backend.example")));
         assert_ne!(a, account(&connection(7, 100, "https://other.example")));
     }

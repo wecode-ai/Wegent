@@ -15,14 +15,25 @@ use std::{
 };
 
 pub(crate) fn account_scope(connection: &ConnectionConfig) -> String {
-    // This is only a local cancellation key, never an authorization decision.
+    // This is a local routing/cancellation key, never an authorization decision.
     let identity = connection
         .auth_token
         .split('.')
         .nth(1)
         .and_then(|p| URL_SAFE_NO_PAD.decode(p).ok())
         .and_then(|p| serde_json::from_slice::<Value>(&p).ok())
-        .map(|v| json!([v["user_id"], v["sub"]]).to_string())
+        .and_then(|claims| {
+            claims["user_id"]
+                .as_i64()
+                .map(|id| json!(["user_id", id]))
+                .or_else(|| {
+                    claims["sub"]
+                        .as_str()
+                        .filter(|subject| !subject.is_empty())
+                        .map(|subject| json!(["sub", subject]))
+                })
+        })
+        .map(|identity| identity.to_string())
         .unwrap_or_else(|| format!("{:x}", Sha256::digest(connection.auth_token.as_bytes())));
     format!("{}:{identity}", connection.backend_url)
 }
@@ -332,5 +343,31 @@ mod tests {
         assert_eq!(old, account_scope(&profile));
         profile.auth_token = token("b", 2);
         assert_ne!(old, account_scope(&profile));
+    }
+
+    #[test]
+    fn account_scope_uses_stable_ids_and_isolates_tokens_without_identity_claims() {
+        let profile = |claims: Value| ConnectionConfig {
+            backend_url: "http://backend".into(),
+            auth_token: format!(
+                "header.{}.signature",
+                URL_SAFE_NO_PAD.encode(claims.to_string())
+            ),
+            ..Default::default()
+        };
+        let original = account_scope(&profile(json!({"user_id":7,"sub":"original"})));
+        assert_eq!(
+            original,
+            account_scope(&profile(json!({"user_id":7,"sub":"renamed"})))
+        );
+        assert_ne!(
+            original,
+            account_scope(&profile(json!({"user_id":8,"sub":"original"})))
+        );
+        assert_ne!(original, account_scope(&profile(json!({"sub":"7"}))));
+        assert_ne!(
+            account_scope(&profile(json!({"exp":1}))),
+            account_scope(&profile(json!({"exp":2})))
+        );
     }
 }
