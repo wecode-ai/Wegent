@@ -20,6 +20,74 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
+test("native writer observation is opt-in and reaches the shared package runner", () => {
+  const input =
+    workflow.true.workflow_dispatch.inputs.verification_writer_wait_seconds;
+  assert.equal(input.type, "number");
+  assert.equal(input.default, 0);
+  assert.equal(input.required, false);
+  const verification = jobs["verify-upgrades"].steps.find(
+    (step) =>
+      step.name ===
+      "Verify declared upgrade and rollback edges on real release packages",
+  );
+  assert.equal(
+    verification.env.WEWORK_E2E_UPGRADE_WRITER_WAIT_SECONDS,
+    "${{ inputs.verification_writer_wait_seconds || 0 }}",
+  );
+  assert.match(
+    verification.run,
+    /wework\/scripts\/verify-release-upgrades\.mjs/,
+  );
+});
+
+test("non-publishing artifact builds cannot be cancelled by another release branch queue", () => {
+  assert.match(
+    workflow.concurrency.group,
+    /inputs.build_only && !inputs.publish_release/,
+  );
+  assert.match(workflow.concurrency.group, /github.ref/);
+  assert.equal(workflow.concurrency["cancel-in-progress"], false);
+});
+
+test("full unpublished source pairs cannot replace a pending formal release", () => {
+  const evaluate = new Function(
+    "inputs",
+    "github",
+    "format",
+    `return ${workflow.concurrency.group.slice(3, -2)}`,
+  );
+  const inputs = {
+    build_only: false,
+    publish_release: false,
+    verification_run_id: "",
+    verification_source_run_id: "",
+    verification_checkpoint: "all",
+  };
+  const github = { workflow: "Wework App", ref: "refs/heads/target" };
+  const format = (pattern, ...values) =>
+    pattern.replace(/\{(\d+)\}/g, (_, index) => values[Number(index)]);
+  const release = evaluate(
+    { ...inputs, publish_release: true },
+    github,
+    format,
+  );
+  const diagnostic = evaluate(
+    { ...inputs, verification_source_run_id: "source-run" },
+    github,
+    format,
+  );
+  assert.notEqual(diagnostic, release);
+  assert.notEqual(
+    diagnostic,
+    evaluate(
+      { ...inputs, verification_source_run_id: "source-run" },
+      { ...github, ref: "refs/heads/other" },
+      format,
+    ),
+  );
+});
+
 function sparseCheckout(t, checkout, trackedOnly = false) {
   const root = mkdtempSync(join(tmpdir(), "wework-upgrade-resolver-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -341,7 +409,14 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
   assert.match(
     workflow.concurrency.group,
-    /app-update-refresh.*app-update-retry.*!inputs.publish_release/,
+    /inputs.verification_source_run_id != '' && !inputs.publish_release/,
+  );
+  const sourceGuard = jobs["prepare-release"].steps.find(
+    (step) => step.name === "Reject publishing an unpublished source pair",
+  );
+  assert.equal(
+    sourceGuard.if,
+    "inputs.verification_source_run_id != '' && inputs.publish_release",
   );
   assert.ok(
     workflow.true.workflow_dispatch.inputs.verification_checkpoint.options.includes(

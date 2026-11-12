@@ -20,6 +20,8 @@ import {
 import {
   assistantMessage,
   createSse,
+  handleEmptyReplyPrediction,
+  handleModelMaintenanceRequest,
   readRequestBody,
   responseCompleted,
   responseCreated,
@@ -88,6 +90,8 @@ export function createDesktopScenario({
       )
         return false
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
+      if (handleModelMaintenanceRequest(body, response)) return true
       subscriptionRegression.acceptsModelRequest(request, url, body)
       if (failureRegression.handleHttp(body, response)) return true
       const id = `notification-${Date.now()}`
@@ -299,6 +303,9 @@ export function createDesktopScenario({
           text: issue.id,
         })
         await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
+        await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
+          visible: false,
+        })
       }
       await control.command('activateSystemNotification', 'body', { value: completionAlert.url })
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {

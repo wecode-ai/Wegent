@@ -63,6 +63,22 @@ export function resolveWorkbenchPaths(options: WorkbenchEnvironmentOptions): Wor
   }
 }
 
+function defaultExecutorHome(options: WorkbenchEnvironmentOptions): string {
+  const home = resolveWorkbenchUserHome(options)
+  const namespace = options.metadata.weworkExecutorNamespace?.trim()
+  return namespace ? join(home, '.wework', 'apps', namespace) : join(home, '.wework')
+}
+
+/** Resolve the post-layout Home without opening or migrating any runtime data. */
+export function resolveWorkbenchCodexHome(options: WorkbenchEnvironmentOptions): string {
+  const explicit = options.environment.WEGENT_CODEX_HOME?.trim()
+  if (explicit) return explicit
+  const executorHome = options.environment.WEGENT_EXECUTOR_HOME?.trim()
+  return executorHome && resolve(executorHome) !== resolve(defaultExecutorHome(options))
+    ? join(executorHome, 'codex')
+    : resolveWorkbenchPaths(options).codexHome
+}
+
 // Call before starting the managed executor, never while its Home is in use.
 export async function prepareWorkbenchEnvironment(
   options: WorkbenchEnvironmentOptions
@@ -72,11 +88,9 @@ export async function prepareWorkbenchEnvironment(
   const branded = applyBrandRuntimeEnvironment(environment, metadata, homeDirectory)
 
   const paths = resolveWorkbenchPaths(options)
-  const defaultExecutorHome = metadata.weworkExecutorNamespace?.trim()
-    ? join(homeDirectory, '.wework', 'apps', metadata.weworkExecutorNamespace.trim())
-    : join(homeDirectory, '.wework')
-  const executorHome = branded.WEGENT_EXECUTOR_HOME?.trim() || defaultExecutorHome
-  if (resolve(executorHome) !== resolve(defaultExecutorHome)) return branded
+  const defaultHome = defaultExecutorHome(options)
+  const executorHome = branded.WEGENT_EXECUTOR_HOME?.trim() || defaultHome
+  if (resolve(executorHome) !== resolve(defaultHome)) return branded
   if (
     ![
       'WORKSPACE_ROOT',
@@ -154,7 +168,7 @@ export async function prepareWorkbenchEnvironment(
     ...branded,
     WEGENT_EXECUTOR_HOME: paths.desktop,
     WEGENT_WORKBENCH_HOME: paths.root,
-    WEGENT_CODEX_HOME: environment.WEGENT_CODEX_HOME?.trim() || paths.codexHome,
+    WEGENT_CODEX_HOME: resolveWorkbenchCodexHome(options),
     WEGENT_CAPABILITIES_HOME: environment.WEGENT_CAPABILITIES_HOME?.trim() || paths.capabilities,
     WEGENT_CLAUDE_HOME: claudeHome,
   }

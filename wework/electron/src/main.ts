@@ -131,6 +131,10 @@ import {
   type StartupSplashTheme,
 } from './host/startup-splash.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
+import {
+  focusStartupRecoveryIfActive,
+  showStartupRecovery,
+} from './host/startup-recovery-window.js'
 import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
 import { activateTrayAction, ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon, trayIconFilename } from './host/tray-icon.js'
@@ -149,6 +153,7 @@ import { AppUpdateService } from './host/app-update-service.js'
 import { ReleaseStore } from './runtime/release-store.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
+import { PluginNativeAuthorization } from './host/plugin-native-authorization.js'
 import { cloudFetch } from './host/cloud-http.js'
 import { installE2eDshReleaseRedirect } from './host/e2e-dsh-release-redirect.js'
 import {
@@ -184,7 +189,7 @@ import { migrateDesktopControlRegistry } from './runtime/workbench-desktop-data.
 import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-startup.js'
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
-import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import { desktopE2EWindowOptions, keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import {
   applyWorkbenchBackgroundPolicy,
   workbenchBackgroundThrottling,
@@ -347,8 +352,6 @@ if (desktopDataPaths) {
     }
   } catch (error) {
     console.error('[startup] application data migration failed', error)
-    dialog.showErrorBox('Wework', error instanceof Error ? error.message : String(error))
-    app.exit(1)
     throw error
   }
 } else {
@@ -419,6 +422,13 @@ let desktopPreferences: DesktopPreferencesController | null = null
 let performanceRecorder: PerformanceRecorder | null = null
 let rendererStorage: RendererStorageStore | null = null
 let cloudCredentials: CloudCredentialService | null = null
+const pluginNativeAuthorization = new PluginNativeAuthorization(
+  requiredCloudCredentials,
+  (method, params) =>
+    desktopRuntime
+      ? desktopRuntime.requestExecutor(method, params)
+      : Promise.reject(new Error('Desktop runtime is unavailable'))
+)
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
 let startupSplashObserver: ReturnType<typeof observeStartupSplash> | null = null
@@ -691,9 +701,9 @@ const appUpdates = new AppUpdateService({
   },
   onInstallFailure: (error, stopping) => {
     if (!stopping) return
-    dialog.showErrorBox('Wework', error instanceof Error ? error.message : 'Update failed')
-    app.relaunch()
-    app.exit(1)
+    void showStartupRecovery(error).catch(recoveryError =>
+      console.error('[app-update] recovery window failed', recoveryError)
+    )
   },
   updateBaseUrl,
 })
@@ -730,6 +740,7 @@ app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
   }
   if (workspaceOpenRequest) queueWorkspaceOpenRequest(workspaceOpenRequest)
   if (keepE2EWindowInBackground) return
+  if (focusStartupRecoveryIfActive()) return
   if (focusStartupSplashIfActive()) return
   if (!mainWindow) return
   if (mainWindow.isMinimized()) mainWindow.restore()
@@ -1029,15 +1040,22 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     })
   })
   try {
-    await rendererStorage?.prepareOrigin(new URL(dshUrl).origin, {
-      clearAll: () => contents.session.clearData({ dataTypes: ['localStorage'] }),
-      clearOrigin: origin =>
-        contents.session.clearData({
-          dataTypes: ['localStorage'],
-          origins: [origin],
-          originMatchingMode: 'origin-in-all-contexts',
-        }),
-    })
+    await rendererStorage
+      ?.prepareOrigin(new URL(dshUrl).origin, {
+        clearAll: () => contents.session.clearData({ dataTypes: ['localStorage'] }),
+        clearOrigin: origin =>
+          contents.session.clearData({
+            dataTypes: ['localStorage'],
+            origins: [origin],
+            originMatchingMode: 'origin-in-all-contexts',
+          }),
+      })
+      .catch(error => {
+        console.warn(
+          '[renderer-storage] Origin cleanup failed; opening with browser state preserved',
+          error
+        )
+      })
     const targetUrl = new URL(dshUrl)
     if (pluginDevelopmentInstance) {
       targetUrl.searchParams.set(
@@ -1463,7 +1481,8 @@ async function togglePopoutWindow(): Promise<void> {
 }
 
 async function updateDesktopPreferences(
-  patch: Record<string, unknown>
+  patch: Record<string, unknown>,
+  expectedTelemetryConsentRevision?: number
 ): Promise<Record<string, unknown>> {
   if (!desktopPreferences) throw new Error('Desktop preferences are unavailable')
   if (Object.hasOwn(patch, 'appearanceThemeSnapshot') && patch.appearanceThemeSnapshot !== null) {
@@ -1471,7 +1490,7 @@ async function updateDesktopPreferences(
     if (!snapshot) throw new Error('appearanceThemeSnapshot is invalid')
     patch = { ...patch, appearanceThemeSnapshot: snapshot }
   }
-  const updated = await desktopPreferences.update(patch)
+  const updated = await desktopPreferences.update(patch, expectedTelemetryConsentRevision)
   if (Object.hasOwn(patch, 'appearanceMode') || Object.hasOwn(patch, 'appearanceThemeSnapshot')) {
     desktopAppearance.update(updated)
   }
@@ -1496,6 +1515,7 @@ async function createWindow(
       : (developmentDockIdentity?.displayName ?? 'Wework')
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
+    ...desktopE2EWindowOptions(process.env, process.platform),
     ...startupLayout.bounds,
     title: windowTitle,
     backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
@@ -1786,6 +1806,7 @@ const rendererStartupReady = createStartupReadyHandler(async (source: string) =>
 })
 
 async function reactivateMainWindow(): Promise<void> {
+  if (focusStartupRecoveryIfActive()) return
   if (focusStartupSplashIfActive()) return
   if (quitting) return
   const target = mainWindow
@@ -2113,7 +2134,24 @@ function installIpc(): void {
       }
     }
   )
-  ipcMain.handle('cloud-credentials:clear', () => requiredCloudCredentials().clear())
+  ipcMain.handle(
+    'plugin-auth:configure',
+    async (_event, apiBaseUrl: unknown, accountToken: unknown) => {
+      try {
+        const value = await pluginNativeAuthorization.configure(
+          requiredText(apiBaseUrl, 'apiBaseUrl'),
+          requiredText(accountToken, 'accountToken')
+        )
+        return { ok: true, value }
+      } catch (error) {
+        return cloudCredentialFailure(error)
+      }
+    }
+  )
+  ipcMain.handle('cloud-credentials:clear', async () => {
+    const clear = requiredCloudCredentials().clear()
+    await Promise.all([clear, pluginNativeAuthorization.clear()])
+  })
   ipcMain.handle('runtime:get-state', () => ({
     ...(desktopRuntime?.state() ?? {
       coreDshUrl: null,
@@ -2332,7 +2370,8 @@ async function configureDesktopRuntime(): Promise<void> {
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
   logStartupStep('runtime-preferences-read', 'started')
-  const codexSubscriptionPreferences = await preferences.read()
+  const { preferences: codexSubscriptionPreferences, readable: codexPreferenceReadable } =
+    await preferences.readSnapshot()
   logStartupStep('runtime-preferences-read', 'completed')
   // The Electron PreferencesStore returns raw JSON without normalization, so an
   // absent field (e.g. a fresh install or a user who never toggled it) must fall
@@ -2344,7 +2383,11 @@ async function configureDesktopRuntime(): Promise<void> {
   const codexSubscriptionEnabled = hasCodexSubscriptionField
     ? codexSubscriptionPreferences.localCodexSubscriptionEnabled === true
     : true
-  environment.WEWORK_CODEX_SUBSCRIPTION_ENABLED = codexSubscriptionEnabled ? 'true' : 'false'
+  environment.WEWORK_CODEX_SUBSCRIPTION_ENABLED = codexPreferenceReadable
+    ? codexSubscriptionEnabled
+      ? 'true'
+      : 'false'
+    : 'unavailable'
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
@@ -2379,9 +2422,14 @@ async function configureDesktopRuntime(): Promise<void> {
   )
   startupProgress.report('services')
   logStartupStep('embedded-browser-bridge', 'started')
-  environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
-  logStartupStep('embedded-browser-bridge', 'completed')
-  Object.assign(environment, embeddedBrowserBridge.environment())
+  try {
+    environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
+    Object.assign(environment, embeddedBrowserBridge.environment())
+    logStartupStep('embedded-browser-bridge', 'completed')
+  } catch (error) {
+    console.warn('[browser] Browser bridge is unavailable', error)
+    logStartupStep('embedded-browser-bridge', 'failed')
+  }
   desktopControlBridge = new WeworkDesktopControlBridge({
     instanceId: desktopControlInstanceId(),
     instanceKind: pluginDevelopmentInstance ? 'core-dsh-plugin-development' : 'main',
@@ -2418,9 +2466,14 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('desktop-control-bridge', 'started')
   if (pythonRuntimeEnabled) {
     // Executors inherit the Python capability only after its listener is ready.
-    await desktopControlBridge.start()
-    Object.assign(environment, desktopControlBridge.environment())
-    logStartupStep('desktop-control-bridge', 'completed')
+    try {
+      await desktopControlBridge.start()
+      Object.assign(environment, desktopControlBridge.environment())
+      logStartupStep('desktop-control-bridge', 'completed')
+    } catch (error) {
+      console.warn('[desktop-control] Desktop control and plugin Python are unavailable', error)
+      logStartupStep('desktop-control-bridge', 'failed')
+    }
   } else {
     startStartupMaintenance('desktop control bridge', async () => {
       await desktopControlBridge!.start()
@@ -2807,7 +2860,9 @@ function startDesktopRuntime(): Promise<void> {
   runtimePhase = 'initializing'
   runtimeError = null
   lastStartupFailure = null
-  void pluginDevelopmentChildRuntime?.writeState('starting')
+  startStartupMaintenance('development status', () =>
+    pluginDevelopmentChildRuntime?.writeState('starting')
+  )
   notifyRuntimeChanged()
   runtimeStartPromise = (async () => {
     await configureDesktopRuntime()
@@ -2815,6 +2870,13 @@ function startDesktopRuntime(): Promise<void> {
     startupProgress.report('core-dsh')
     await desktopRuntime?.start()
     logStartupStep('core-dsh-start', 'completed')
+    if (packagedApplication && process.platform === 'win32')
+      startStartupMaintenance('installed release registration', async () => {
+        const installed = await appUpdates.reconcileInstalledRelease(
+          (await runningDesktopComponents()).paths
+        )
+        if (installed) process.env.WEWORK_ACTIVE_RELEASE_ID = installed.id
+      })
     startStartupMaintenance('tray status', () => trayNativeStatus?.start())
     await loadPrimaryDshView()
     startStartupMaintenance('workspace window restoration', restoreFixedWorkspaceWindows)
@@ -2823,7 +2885,9 @@ function startDesktopRuntime(): Promise<void> {
     )
     runtimePhase = lastStartupFailure ? 'failed' : 'ready'
     if (lastStartupFailure) return
-    pluginDevelopmentChildRuntime?.startWatcher()
+    startStartupMaintenance('development watcher', () =>
+      pluginDevelopmentChildRuntime?.startWatcher()
+    )
     startStartupMaintenance('development status', () =>
       pluginDevelopmentChildRuntime?.writeState('ready')
     )
@@ -2853,9 +2917,11 @@ function startDesktopRuntime(): Promise<void> {
         error = rollbackError
       }
       recordStartupFailure(error, 'desktop_runtime')
-      await pluginDevelopmentChildRuntime?.writeState(
-        'error',
-        error instanceof Error ? error : new Error(String(error))
+      startStartupMaintenance('development error status', () =>
+        pluginDevelopmentChildRuntime?.writeState(
+          'error',
+          error instanceof Error ? error : new Error(String(error))
+        )
       )
       logStartupStep('desktop-runtime-start', 'failed', {
         errorType: error instanceof Error ? error.name : typeof error,
@@ -3018,7 +3084,12 @@ if (hasSingleInstanceLock) {
     })
     .catch(error => {
       console.error('[startup] failed to initialize desktop host', error)
-      dialog.showErrorBox('Wework', error instanceof Error ? error.message : String(error))
+      void showStartupRecovery(error)
+        .then(() => {
+          mainWindow?.hide()
+          startupSplashWindow?.hide()
+        })
+        .catch(recoveryError => console.error('[startup] recovery window failed', recoveryError))
     })
 }
 

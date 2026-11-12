@@ -157,11 +157,11 @@ import {
   useResizableRightSplitChat,
 } from './workspace-panels/useResizableWorkspacePanel'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
+import { LocalRuntimeNotice } from '@/features/local-runtime/LocalRuntimeNotice'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
-  TitlebarFeedbackPortal,
   WORKBENCH_MAIN_HEADER_PORTAL_ID,
   WORKBENCH_SPLIT_ACTIONS_PORTAL_ID,
   WorkbenchMainHeaderPortal,
@@ -1252,16 +1252,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
   const startupSurfaceReady =
-    state.runtimeWork !== null && paneActive && paneVisible && workbenchVisible
+    (state.runtimeWork !== null || state.runtimeWorkLoad.phase === 'error') &&
+    paneActive &&
+    paneVisible &&
+    workbenchVisible
+  const startupSurfaceSource = state.runtimeWork !== null ? 'task-list' : 'task-list-error'
   useEffect(() => {
     if (!startupSurfaceReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
       return
     }
     console.info('[startup][renderer]', {
-      step: 'task-list-ready',
+      step: 'workbench-surface-ready',
       status: 'completed',
     })
-    void invokeDesktopHost<void>('renderer.startupReady', { source: 'task-list' })
+    void invokeDesktopHost<void>('renderer.startupReady', { source: startupSurfaceSource })
       .then(() => {
         console.info('[startup][renderer]', {
           step: 'startup-ready-notification',
@@ -1271,7 +1275,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       .catch(error => {
         console.error('[Wework] Failed to reveal the ready workbench', error)
       })
-  }, [startupSurfaceReady])
+  }, [startupSurfaceReady, startupSurfaceSource])
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
     project: currentProject,
@@ -5245,13 +5249,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           {paneHeaderActions}
         </WorkbenchPaneHeaderActionsPortal>
       ) : null}
-      {feedbackInChromeTitlebar &&
-      !activeLocalHarnessSession &&
-      paneActive &&
-      workbenchVisible &&
-      !splitMode ? (
-        <TitlebarFeedbackPortal>{feedbackButton}</TitlebarFeedbackPortal>
-      ) : null}
       <>
         {!isDesktop && presentation !== 'popout' && (
           <div
@@ -5277,6 +5274,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         )}
         {paneTaskTitle}
       </>
+      {paneActive && paneVisible && workbenchVisible && <LocalRuntimeNotice />}
       <div className="relative flex min-h-0 flex-1 overflow-visible">
         <div
           ref={setTurnNavigationPortalTarget}

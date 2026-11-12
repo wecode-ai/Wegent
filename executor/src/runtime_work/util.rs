@@ -11,6 +11,14 @@ use serde_json::{json, Value};
 
 use crate::protocol::ExecutionRequest;
 
+pub(crate) fn is_codex_runtime(runtime: &str) -> bool {
+    runtime.eq_ignore_ascii_case("codex")
+}
+
+pub(crate) fn model_provider_routing(runtime: &str) -> Option<&'static str> {
+    is_codex_runtime(runtime).then_some("thread")
+}
+
 pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
     payload
         .get("executionRequest")
@@ -442,6 +450,25 @@ pub(crate) fn runtime_task_id(payload: &Value) -> Option<String> {
                 id_field(address, "taskId").or_else(|| id_field(address, "task_id"))
             })
         })
+}
+
+pub(crate) fn replace_runtime_task_id(payload: &mut Value, task_id: &str) {
+    let Some(object) = payload.as_object_mut() else {
+        return;
+    };
+    for key in ["taskId", "task_id"] {
+        if object.contains_key(key) {
+            object.insert(key.to_owned(), Value::String(task_id.to_owned()));
+        }
+    }
+    let Some(address) = object.get_mut("address").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for key in ["taskId", "task_id"] {
+        if address.contains_key(key) {
+            address.insert(key.to_owned(), Value::String(task_id.to_owned()));
+        }
+    }
 }
 
 pub(crate) fn workspace_path(payload: &Value) -> Option<String> {
@@ -1038,6 +1065,23 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn replaces_runtime_task_id_aliases_without_dropping_address_metadata() {
+        let mut payload = json!({
+            "task_id": "thread-1",
+            "address": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project"
+            }
+        });
+
+        replace_runtime_task_id(&mut payload, "local-1");
+
+        assert_eq!(payload["task_id"], "local-1");
+        assert_eq!(payload["address"]["taskId"], "local-1");
+        assert_eq!(payload["address"]["workspacePath"], "/tmp/project");
+    }
 
     #[test]
     fn copies_cloud_project_id_from_runtime_payload() {

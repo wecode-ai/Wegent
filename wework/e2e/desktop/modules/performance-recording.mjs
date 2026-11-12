@@ -114,8 +114,8 @@ export async function verifyPerformanceRecording(
 
   // Use the product's preview and local export flow, without sending feedback.
   await control.command('navigate', 'body', { value: '/' })
-  await control.command('waitFor', '[data-testid="task-feedback-button"]')
-  await control.command('click', '[data-testid="task-feedback-button"]')
+  await control.command('waitFor', '[data-testid="topnav-feedback-button"]')
+  await control.command('click', '[data-testid="topnav-feedback-button"]')
   await control.command('fill', '[data-testid="task-feedback-note"]', {
     value: 'Performance recording E2E: inspect the resources recorded before restart.',
   })

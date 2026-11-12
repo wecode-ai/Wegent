@@ -4,6 +4,8 @@ sidebar_position: 36
 
 # 协作权限架构与不可破坏的规则
 
+人工回答的精确接收确认可能晚于执行完成。Rust Socket.IO 原投影事务仅在设备归属、持久回答 ID、原执行、项目、Issue 及已完成活动的 Runtime 轮次全部匹配时结算原问题；依次锁定 Issue、执行和活动，提交后发布问题变化，不重复完成通知。执行状态、版本和事件序号不变，不重发输入。已有后续执行也不丢失原回答确认；旧消息、错误轮次与其他所有者不能结算。回归复用现有隔离 MySQL 迁移验收，覆盖乱序、重复确认、身份拒绝及重试轮次边界；该迟到确认行为仅由 Rust 事件主路径负责。CP01–CP20 不变。
+
 云端手动启动继续复用持久派发队列，临时失败和执行器重启不能丢失已接收的请求。恢复手动请求不要求指派、项目订阅或接收开关，但仍验证当前账号、角色和 Issue 权限；已启动或已删除的工作不因恢复而重复执行。自动派发继续验证当前指派及自动接收策略。`manual_issue_startup_intent_survives_restart_without_assignment_or_intake` 和既有真实数据库故障与重启 E2E 覆盖恢复事务，CP 不变量不变。
 
 分身 Issue 消息从排队进入执行时，重新读取服务端当前 Issue 的 `permissions.execute`；角色降为只读或缺少执行权限信息时不启动模型。该检查不依赖负责人或接收开关，权限恢复后原会话仍可使用。`queued_stand_in_turns_recheck_current_issue_execution_permission` 覆盖权限撤销、缺失和恢复，CP15 不变。
@@ -130,6 +132,10 @@ Issue 中已精确指派的业务回答只续接可信持久原执行的授权�
 GitHub/GitLab 仓库与个人来源使用更严格的原生边界：本地工作区分析和修改继承 `:workspace`，模型 Shell 默认不能联网；账号绑定的只读 MCP 工具在宿主执行，外部写入逐次人工原生确认。不能通过关闭角色确认设置放宽此边界。合并需明确交办并绑定 head SHA。接收、读取、确认和接管均校验用户及设备代次；Webhook 验签不授予执行权限。此扩展不改变 CP01–CP20。Executor 的 Git 权限契约测试覆盖网络、审核器和工具审批，`stand-in-git` CI 场景覆盖真实内部服务的协议边界，不声称验证真实平台登录。
 
 ## 授权与执行
+
+Issue 创建和自动化事件派发不扫描或准备全局执行队列。派发提交后只读取本次运行对应的执行记录，并异步通知这些记录的目标执行器；共享执行器使用其实际所有者的设备地址。通知不携带任务，也不授予执行权限，队列准备与领取仍由消费者和独立维护任务处理。
+
+执行资源解析和资源发现使用独立作用域，解析器可声明是否参与执行校验，默认保持既有行为。请求内权限组缓存按作用域隔离，避免资源发现的结果直接成为执行授权；扩展仍须检查项目、Issue、资源绑定、白名单和授权撤销。
 
 ```mermaid
 sequenceDiagram
@@ -285,7 +291,9 @@ Issue 关联的个人 Runtime 任务仅向任务所有者返回，变更请求�
 
 回复公开分身评论时，Socket.IO 仅从同一项目、同一 Issue 的已保存代理消息中恢复分身身份；调用方未显式提及其他接收人时，沿用该分身的用户和角色作为续聊目标。隐式目标与显式提及经过相同的成员及 Issue 读取校验，并在评论事务内写入唤醒事件；不从调用方元数据推测身份，也不覆盖显式接收人。`socketio::project_chat_events::reply` 定向测试保护身份来源及显式提及优先级，现有 `stand-in-assignment-notifications` E2E 验证子代理运行期间排队补充和无须再次 @ 的续聊。CP01–CP20 不变。
 
-Rust Socket.IO 的 Issue 评论在同一事务内写入评论、通知和分身唤醒事件。提及接收人继续通过项目成员及 Issue 读取权限校验；自提及不产生人类通知，但保留本人分身的持久唤醒。写入按 Issue、接收人、收件箱的顺序加锁，按接收人和评论内容生成与 Python 一致的去重键，事务失败时全部回滚。CP01–CP20 不变。CI 已注册的 `project_coordination::mysql_tests::issue_mention_wakeups_are_atomic_deduplicated_and_recipient_owned` 覆盖真实 MySQL 的接收人隔离、并发序号、去重及回滚；`stand-in-assignment-notifications` 桌面 E2E 覆盖实际评论唤醒与公开回执。
+Rust Socket.IO 的 Issue 评论在同一事务内写入评论、通知和分身唤醒事件。提及接收人继续通过项目成员及 Issue 读取权限校验；自提及不产生人类通知，但保留本人分身的持久唤醒。写入按 Issue、接收人、收件箱的顺序加锁，按接收人和评论内容生成与 Python 一致的去重键，事务失败时全部回滚。收件箱和事件均先执行幂等插入，再读取当前行，避免不同接收人首次建箱时争用缺失行的间隙锁。CP01–CP20 不变。CI 已注册的 `project_coordination::mysql_tests::issue_mention_wakeups_are_atomic_deduplicated_and_recipient_owned` 覆盖真实 MySQL 的不同接收人首次并发建箱、接收人隔离、并发序号、去重及回滚；`stand-in-assignment-notifications` 桌面 E2E 覆盖实际评论唤醒与公开回执。
+
+首次创建收件箱和去重事件时，不对不存在的主键范围加锁。接收人行锁继续串行化同一人的序号分配；旧事务快照遗漏并发创建的行时，由唯一键裁决，并读取当前收件箱或保留已存在事件，重复投递不递增序号。相同 MySQL 回归固定持有一个人的首次收件箱事务，验证另一人的首次写入仍能提交，并验证旧快照下的创建和去重。评论、通知和唤醒事件的事务边界及 CP01–CP20 均不变。
 
 `collaboration_permissions.py` 统一提供角色、来源及拒绝原因；`cloud_project_visibility.py` 提供同样规则的列表查询。`collaboration_revocation.py` 检查当前 Issue、智能体、小组、Runtime 配置和设备授权，并处理撤权后的持久化队列。
 

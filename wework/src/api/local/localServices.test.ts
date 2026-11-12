@@ -1722,6 +1722,59 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.codex.models.list', { includeHidden: true })
   })
 
+  test.each(['loaded', 'idle'])(
+    'reconciles a deferred catalog immediately when the runtime becomes %s',
+    async recovery => {
+      const catalogEntry = createDefaultLocalModelCatalogEntry({
+        id: 'busy-pending-model',
+        displayName: 'Busy pending model',
+        toolProfile: 'native',
+      })
+      saveLocalModelConfig({
+        id: 'busy-pending-model',
+        displayName: 'Busy pending model',
+        modelId: 'busy-pending-model',
+        baseUrl: 'http://localhost:11434/v1',
+        catalogEntry,
+        codexCatalogModelId: String(catalogEntry.slug),
+        catalogReady: false,
+      })
+      let recovered = false
+      const request = vi.fn().mockImplementation(async (method: string) => {
+        if (method === 'runtime.codex.app_server.restart') {
+          return { restarted: recovered && recovery === 'idle', activeTaskCount: 1 }
+        }
+        if (method === 'runtime.codex.models.list') {
+          return { data: recovered ? [{ id: catalogEntry.slug }] : [] }
+        }
+        return {}
+      })
+      const services = createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({
+          running: true,
+          ready: true,
+          deviceId: 'local-device',
+          runtimeInstanceId: 'runtime-1',
+        }),
+        request,
+        subscribe: vi.fn(),
+      })
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(1000)
+      try {
+        await services.deviceApi.listDevices()
+        expect(findLocalModelConfigByModelName(String(catalogEntry.slug))?.catalogReady).toBe(false)
+        recovered = true
+        await services.deviceApi.listDevices()
+        expect(findLocalModelConfigByModelName(String(catalogEntry.slug))?.catalogReady).toBe(true)
+        expect(
+          request.mock.calls.filter(([method]) => method === 'runtime.codex.app_server.restart')
+        ).toHaveLength(2)
+      } finally {
+        clock.mockRestore()
+      }
+    }
+  )
+
   test('retries an idle catalog restart after startup requests drain', async () => {
     const catalogEntry = createDefaultLocalModelCatalogEntry({
       id: 'startup-pending-model',
@@ -4461,6 +4514,44 @@ describe('createLocalAppServices', () => {
     expect(sendPayload.executionRequest.model_config).toEqual(
       createPayload.executionRequest.model_config
     )
+  })
+
+  test.each([
+    undefined,
+    { startNewSession: true, expectedThreadId: 'previous-thread' },
+    { startNewSession: false, expectedThreadId: 'previous-thread' },
+  ])('preserves a session boundary in the final Runtime IPC payload: %j', async boundary => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi!.sendRuntimeMessage({
+      address: { deviceId: 'local-device', taskId: 'stand-in-chat-9-primary' },
+      message: 'Continue with the selected model',
+      modelId: 'gpt-6.1-sol',
+      modelType: 'runtime',
+      modelOptions: { codexProviderId: 'openai', codexProviderType: 'official' },
+      ...boundary,
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    expect(payload).toMatchObject({
+      taskId: 'stand-in-chat-9-primary',
+      modelSelection: { modelName: 'gpt-6.1-sol', modelType: 'runtime' },
+      executionRequest: {
+        prompt: 'Continue with the selected model',
+        model_config: { model_id: 'gpt-6.1-sol' },
+      },
+    })
+    if (boundary) {
+      expect(payload).toMatchObject(boundary)
+    } else {
+      expect(payload).not.toHaveProperty('startNewSession')
+      expect(payload).not.toHaveProperty('expectedThreadId')
+    }
   })
 
   test('keeps official Codex classification when OpenAI provider metadata is present', async () => {

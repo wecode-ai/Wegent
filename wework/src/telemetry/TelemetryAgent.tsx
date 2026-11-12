@@ -16,6 +16,7 @@ import { getTelemetryConfig } from './config'
 import { setTelemetryUser } from './identity'
 import { useAuth } from '@/features/auth/useAuth'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useSessionTelemetryConsent } from './sessionConsent'
 import { trackEvent, useTelemetryEnabled } from './client'
 import { createTelemetryDispatcher } from './dispatcher'
 import type { AnalyticsEvent, AnalyticsEventName } from './events'
@@ -140,14 +141,16 @@ export function TelemetryAgent() {
     }
   }, [telemetryUser])
   const appPreferences = useAppPreferencesState()
+  const sessionConsent = useSessionTelemetryConsent()
   const { pathname, search } = useTelemetryLocation()
   const routes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
   const feature = routes.find(route => route.path === pathname)?.telemetryFeature
   const telemetryEnabled = useTelemetryEnabled()
   const telemetryExplicitlyDisabled =
-    appPreferences?.loaded === true &&
-    appPreferences.preferences.telemetryConsentAsked === true &&
-    appPreferences.preferences.telemetryEnabled !== true
+    sessionConsent === false ||
+    (appPreferences?.loaded === true &&
+      appPreferences.preferences.telemetryConsentAsked === true &&
+      appPreferences.preferences.telemetryEnabled !== true)
   const electronRuntime = isElectronRuntime()
   const lastRouteKeyRef = useRef<string | null>(null)
   const pendingDesktopStartupEventsRef = useRef<DesktopStartupAnalyticsEvent[]>([])
@@ -163,7 +166,7 @@ export function TelemetryAgent() {
     [telemetryEnabled, telemetryExplicitlyDisabled]
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     telemetryEnabledRef.current = telemetryEnabled
     telemetryExplicitlyDisabledRef.current = telemetryExplicitlyDisabled
     if (telemetryExplicitlyDisabled) {
@@ -254,7 +257,12 @@ export function TelemetryAgent() {
       .list()
       .then(installations => {
         const installation = installations.find(item => item.id === installationId)
-        if (!telemetryEnabledRef.current || telemetryUserRef.current !== observedUser) return
+        if (
+          telemetryExplicitlyDisabledRef.current ||
+          !telemetryEnabledRef.current ||
+          telemetryUserRef.current !== observedUser
+        )
+          return
         dispatcher.publish({
           ...routeFact,
           ...(installation
@@ -273,7 +281,11 @@ export function TelemetryAgent() {
       })
       .catch(() => {
         console.warn('[Wework telemetry] App metadata unavailable')
-        if (telemetryEnabledRef.current && telemetryUserRef.current === observedUser)
+        if (
+          !telemetryExplicitlyDisabledRef.current &&
+          telemetryEnabledRef.current &&
+          telemetryUserRef.current === observedUser
+        )
           dispatcher.publish(routeFact)
       })
   }, [dispatcher, feature, isLoading, pathname, telemetryEnabled, search])

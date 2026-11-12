@@ -72,7 +72,8 @@ export async function setE2EWindowSize(
   target: ResizableWindow,
   width: number,
   height: number,
-  maximized = false
+  maximized = false,
+  platform: NodeJS.Platform = process.platform
 ): Promise<{ width: number; height: number; maximized: boolean }> {
   if (target.isDestroyed()) throw new Error('The E2E window is unavailable for resizing')
   const [previousWidth, previousHeight] = target.getContentSize()
@@ -86,7 +87,7 @@ export async function setE2EWindowSize(
     )
     return previous
   }
-  if (target.isMaximized()) {
+  if (target.isMaximized() && platform !== 'darwin') {
     await waitForNativeSizeState(
       target,
       () => target.unmaximize(),
@@ -96,7 +97,12 @@ export async function setE2EWindowSize(
   }
   await waitForNativeSizeState(
     target,
-    () => target.setContentSize(width, height),
+    () => {
+      // macOS refuses unmaximize when its saved bounds already fill the display.
+      // An explicit frame change establishes the new normal bounds in that case.
+      if (platform === 'darwin' && target.isMaximized()) target.unmaximize()
+      target.setContentSize(width, height)
+    },
     () => {
       const [actualWidth, actualHeight] = target.getContentSize()
       return !target.isMaximized() && actualWidth === width && actualHeight === height

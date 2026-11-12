@@ -3,6 +3,7 @@ import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { normalizeCloudBackendUrl } from '@/features/cloud-connection/cloudConnectionStorage'
 import i18n from '@/i18n'
+import { createLocalFirstPluginApi } from './pluginLocalSync'
 import { acquirePluginDeviceSync } from './pluginDeviceAutoSync'
 import type {
   DeviceCapabilitySyncResponse,
@@ -100,8 +101,9 @@ function localInstallResponse(response: PluginMarketplaceInstallResponse, scope:
 /** Address the Runtime record on the wire; retain stable identity in plugin state. */
 export function createLocalDevicePluginApi(
   api: PluginApi,
-  resolveDeviceRouteId: (deviceId: string) => Promise<string>
-): PluginApi {
+  resolveDeviceRouteId: (deviceId: string) => Promise<string>,
+  profile?: PluginRuntimeProfile
+) {
   const deviceScope = async (
     deviceId = '',
     context: 'required' | 'optional' = 'required'
@@ -137,7 +139,7 @@ export function createLocalDevicePluginApi(
       release()
     }
   }
-  return {
+  const legacy: PluginApi = {
     ...api,
     async listInstalledPlugins(deviceId) {
       const scope = await deviceScope(deviceId, 'optional')
@@ -201,4 +203,7 @@ export function createLocalDevicePluginApi(
       return { ...response, deviceId: localDeviceId(response.deviceId, scope) }
     },
   }
+  return profile
+    ? createLocalFirstPluginApi(api, legacy, profile)
+    : { ...legacy, supportsLocalSync: async () => false }
 }

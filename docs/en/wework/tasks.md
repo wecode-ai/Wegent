@@ -26,14 +26,17 @@ After creating a Goal, inspect its status bar near the composer. Hover or focus 
 
 Goals may be active, paused, blocked, budget/usage-limited or complete. Exhausted budgets, tool failures and disconnections are not completion evidence. Resolve the reported condition before continuing. Deleting a goal differs from deleting its conversation.
 
+<a id="sidebar-task-management"></a>
+
 ### Sidebar task management
 
-| Feature                          | Steps and limits                                                                                                                                      |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Search                           | Click the magnifying glass, enter keywords, select with arrow keys and Enter or click a result; close with X                                          |
-| Priority / collapse read / board | Use the task-view dropdown to choose an action, then click the main icon to execute it; expand read conversations from the menu after collapsing them |
-| Queued executions                | Hover for up/down actions; use the right-click menu to move to the front. Force-start requests immediate execution, so consider resource usage        |
-| Pin, unread and archive          | Use the task-row actions to pin/unpin, mark read/unread or archive; restore from Archived tasks in settings                                           |
+| Feature                          | Steps and limits                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search                           | Click the magnifying glass, enter keywords, select with arrow keys and Enter or click a result; close with X                                                                                                                                                                                                                                                                                                                                                              |
+| Show more / Show less            | Expand a project, then use **Show more** at the bottom of its task list to reveal up to 10 more tasks per click, or **Show less** to return to the default list. **Show more** appears only while eligible tasks remain hidden; **Show less** appears after the visible limit is expanded beyond the initial five. Running and queued tasks remain visible outside the five-task limit, and pinned tasks also remain visible. Neither action changes task execution state |
+| Priority / collapse read / board | Use the task-view dropdown to choose an action, then click the main icon to execute it; expand read conversations from the menu after collapsing them                                                                                                                                                                                                                                                                                                                     |
+| Queued executions                | Hover for up/down actions; use the right-click menu to move to the front. Force-start requests immediate execution, so consider resource usage                                                                                                                                                                                                                                                                                                                            |
+| Pin, unread and archive          | Use the task-row actions to pin/unpin, mark read/unread or archive; restore from Archived tasks in settings                                                                                                                                                                                                                                                                                                                                                               |
 
 ### Personal scheduled tasks
 
@@ -45,6 +48,8 @@ Goals may be active, paused, blocked, budget/usage-limited or complete. Exhauste
 4. Choose weekdays, daily, weekly, custom or once; set execution time and custom intervals. Notifications support every run, attention-only or none.
 5. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
 6. Disable to suspend future scheduling or delete after confirmation. Personal schedules, project-board automation and stand-in calendars are separate flows.
+
+Personal schedules using a cloud model revalidate model access and read the current cloud connection credentials on each trigger, including manual runs. Renewing your login token does not require recreating a schedule; both new tasks and existing-task continuations use current credentials. If login has expired, the model was removed or access was revoked, the run fails. Check your cloud connection and model access before retrying.
 
 ## Write a useful request
 

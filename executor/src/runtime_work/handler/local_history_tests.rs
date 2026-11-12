@@ -1,5 +1,50 @@
 use super::*;
 
+#[tokio::test]
+async fn server_created_user_identity_survives_native_transcript_recovery() {
+    let (handler, root) = isolated_runtime_work_handler("server-user-identity");
+    for (task_id, client_id) in [
+        ("server-created", None),
+        ("composer-created", Some("composer-user")),
+    ] {
+        let mut payload = json!({
+            "taskId": task_id,
+            "workspacePath": root.join(task_id),
+            "message": "The same prompt may be sent more than once",
+            "executionRequest": ExecutionRequest {
+                subtask_id: "request-subtask".into(),
+                ..ExecutionRequest::default()
+            },
+        });
+        if let Some(client_id) = client_id {
+            payload["clientUserMessageId"] = json!(client_id);
+        }
+        handler.create_task(payload).await.unwrap();
+        let link = handler.local_task_link(task_id).unwrap();
+        let cached = cached_messages(&link);
+        let expected = client_id
+            .map(str::to_owned)
+            .unwrap_or_else(|| cached[0]["id"].as_str().unwrap().to_owned());
+        assert_eq!(cached[0]["clientUserMessageId"], expected);
+        assert_eq!(
+            link.runtime_handle["executionRequest"]["client_user_message_id"],
+            expected
+        );
+        handler.record_runtime_turn_id(task_id, "request-subtask", "native-turn", Some(&expected));
+        let link = handler.local_task_link(task_id).unwrap();
+        let presentations = user_message_presentations(&link);
+        let mut native = vec![json!({
+            "id": "native-user-item", "role": "user", "turnId": "native-turn",
+            "content": "The same prompt may be sent more than once",
+        })];
+        bind_native_user_presentations(&mut native, &presentations);
+        attach_user_message_presentations(&mut native, presentations);
+        assert_eq!(native.len(), 1);
+        assert_eq!(native[0]["clientUserMessageId"], expected);
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn history_resume_restores_task_shell_identity_before_the_next_turn() {
@@ -25,7 +70,7 @@ fn history_resume_restores_task_shell_identity_before_the_next_turn() {
             );
             let binary = root.path().join("codex-history.sh");
             let log = root.path().join("requests.jsonl");
-            fs::write(&binary, format!(r#"#!/bin/sh
+            fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> '{}'
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -33,7 +78,7 @@ while IFS= read -r line; do
   printf '{{"id":%s,"result":{{"thread":{{"id":"thread-1","turns":[]}},"data":[],"nextCursor":null}}}}\n' "$id"
   case "$line" in *'"method":"test/stop"'*) exit 0;; esac
 done
-"#, log.display())).unwrap();
+"#, log.display()))).unwrap();
             fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
             let handler = RuntimeWorkRpcHandler::new("device-1", binary.to_str().unwrap())
                 .with_backend_connection(Arc::new(Mutex::new(Some(ConnectionConfig {
@@ -194,7 +239,7 @@ fn named_home_transcript_refresh_does_not_acquire_a_writer() {
     .collect();
     let binary = root.path().join("codex-reader.sh");
     let log = root.path().join("requests.jsonl");
-    fs::write(&binary, format!(r#"#!/bin/sh
+    fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> '{}'
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -202,7 +247,7 @@ while IFS= read -r line; do
   printf '{{"id":%s,"result":{{"thread":{{"id":"thread-1","turns":[]}},"data":[],"nextCursor":null}}}}\n' "$id"
   case "$line" in *'"method":"test/stop"'*) exit 0;; esac
 done
-"#, log.display())).unwrap();
+"#, log.display()))).unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("device-1", binary.to_str().unwrap());
     handler.store = RuntimeWorkStore::new(root.path().join("index.json"));

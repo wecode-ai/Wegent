@@ -1,6 +1,7 @@
+import { setNativeCatalogOverride } from '../modules/model-catalog-recovery.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -28,6 +29,7 @@ import {
   verifyNativeReplyRecoveryAfterReload,
 } from '../modules/native-reply-recovery.mjs'
 import { openInteractionDraftWindow } from '../modules/interaction-draft-windows.mjs'
+import { waitForRestoredTranscript } from '../modules/transcript-restoration.mjs'
 
 const PROMPT = 'WEWORK_CONSECUTIVE_ASYNC_QUESTIONS'
 const COMPLETE = 'WEWORK_CONSECUTIVE_ANSWERS_ACCEPTED'
@@ -39,7 +41,6 @@ const CARD = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-card
 const INPUT = `${CARD} [data-testid="request-user-input-custom-question_1"]`
 
 export function createDesktopScenario({
-  executorHome,
   workspacePath,
   resultDir,
   workbenchReadyTimeoutMs,
@@ -100,18 +101,14 @@ export function createDesktopScenario({
     },
     async verify(control) {
       active = true
-      const capabilities = join(executorHome, 'capabilities')
-      await mkdir(capabilities, { recursive: true })
-      await writeFile(
-        join(capabilities, 'model-catalog-overrides.json'),
-        JSON.stringify([
-          {
-            slug: DEFAULT_MODEL_ID,
-            fields: { experimental_supported_tools: ['request_user_input_async'] },
-          },
-        ])
+      await setNativeCatalogOverride(
+        control,
+        DEFAULT_MODEL_ID,
+        {
+          experimental_supported_tools: ['request_user_input_async'],
+        },
+        workbenchReadyTimeoutMs
       )
-      await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
       await control.command('waitFor', '[data-testid="new-chat-button"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
@@ -234,15 +231,18 @@ export function createDesktopScenario({
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
           { text: COMPLETE, visible: true }
         )
-        await waitForWorkbenchDebugState(
+        const settled = await waitForWorkbenchDebugState(
           control,
           snapshot => snapshot.pane?.status?.isBusy === false,
           'The combined answer must complete the turn'
         )
+        const taskId = settled.workbench?.currentRuntimeTask?.taskId
+        assert.ok(taskId, 'The answered conversation must retain its Runtime task')
         assert.equal(Number(await control.command('getElementCount', CARD)), 0)
         const readyCount = control.readyCount
         await control.command('reloadMainWindow', 'body')
         await control.awaitReadyAfter(readyCount)
+        await waitForRestoredTranscript(control, taskId, workbenchReadyTimeoutMs)
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-question-reply"]`,

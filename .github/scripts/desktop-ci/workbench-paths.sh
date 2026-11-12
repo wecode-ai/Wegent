@@ -433,6 +433,11 @@ classify_workbench_path() {
       return
       ;;
 
+    wework/e2e/desktop/modules/harness-tool-result-order.*)
+      select_target "core:local-harness"
+      return
+      ;;
+
     # Local PTY-backed coding harnesses have dedicated desktop scenarios.
     wework/electron/src/host/local-terminal* | \
       wework/src/lib/local-harness* | \
@@ -448,17 +453,26 @@ classify_workbench_path() {
       return
       ;;
 
-    # File editing and Office previews have independently bootstrapped checkpoints.
+    # File editing, Cloud HTML links, and Office previews have independently
+    # bootstrapped checkpoints.
     wework/electron/src/host/local-workspace-files* | \
       wework/src/desktop/localWorkspaceFiles* | \
       wework/src/components/layout/workspace-panels/FileWorkspacePanel* | \
       wework/src/components/layout/workspace-panels/WorkspaceFilePreview* | \
       wework/src/components/layout/workspace-panels/WorkspaceFileTree* | \
       wework/src/components/layout/workspace-panels/WorkspaceTextFileEditor* | \
+      wework/src/components/layout/workspace-panels/workspaceFileTypes* | \
+      wework/src/components/chat/useDesktopMarkdownServices* | \
       wework/src/components/chat/FileChangesReviewPanel* | \
       wework/e2e/desktop/scenarios/local-file-preview.scenario.mjs)
       select_target "core:local-file-preview"
       select_target "core:office-file-preview"
+      if [[ "$path" == wework/src/components/layout/workspace-panels/FileWorkspacePanel* || \
+        "$path" == wework/src/components/layout/workspace-panels/WorkspaceFilePreview* || \
+        "$path" == wework/src/components/layout/workspace-panels/workspaceFileTypes* || \
+        "$path" == wework/src/components/chat/useDesktopMarkdownServices* ]]; then
+        select_target "cloud:rendering-extensions"
+      fi
       return
       ;;
     wework/e2e/desktop/scenarios/office-file-preview.scenario.mjs | \

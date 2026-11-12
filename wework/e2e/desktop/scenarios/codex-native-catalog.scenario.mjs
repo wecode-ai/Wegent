@@ -9,6 +9,7 @@ import { createCodexProtocolGate } from '../modules/codex-protocol-gate.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { startModelRequestCapture } from '../modules/model-request-capture.mjs'
 import { assertNativeModelContext } from '../modules/model-context-audit.mjs'
+import { verifyLargeNativeCatalog } from '../modules/native-catalog-size.mjs'
 import {
   createCatalogContextVerification,
   saveCatalogAndWaitForRestart,
@@ -200,6 +201,11 @@ export function createDesktopScenario(options) {
           null,
           2
         )
+      )
+      await verifyLargeNativeCatalog(
+        control,
+        [baseline, entries.find(entry => entry.slug !== MODEL_ID).baseline],
+        options.uiTimeoutMs
       )
     },
   }

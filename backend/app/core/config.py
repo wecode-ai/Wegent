@@ -667,6 +667,7 @@ class Settings(BaseSettings):
     EXTERNAL_WIKI_DOWNLOAD_TIMEOUT_SECONDS: int = Field(default=300, ge=1)
 
     # Plugin marketplace package storage and controlled publishing.
+    PLUGIN_LOCAL_SYNC_ENABLED: bool = False
     PLUGIN_STORAGE_BUCKET: str = "plugins"
     PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
     PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS: int = 1200

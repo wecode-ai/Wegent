@@ -84,7 +84,7 @@ class PluginAuthTransferService:
             .populate_existing()
             .all()
         )
-        matching = [row for row in rows if row.json["spec"]["device_id"] == logical]
+        matching = [row for row in rows if row.json["spec"].get("device_id") == logical]
         if not matching:
             return None
         if len(matching) != 1 or request.operation != "export":
@@ -329,6 +329,8 @@ class PluginAuthTransferService:
         allow_aborted: bool = False,
     ):
         spec = row.json["spec"]
+        if spec.get("localPrincipal") is not None:
+            raise PluginAccountAuthError("plugin_auth_migration_device_mismatch", 403)
         logical, binding = self.connections._device_binding(db, user_id, device_id)
         if logical != spec["device_id"] or binding != spec["binding"]:
             raise PluginAccountAuthError("plugin_auth_migration_device_mismatch", 403)

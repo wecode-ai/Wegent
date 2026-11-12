@@ -45,6 +45,27 @@ variants.push({
 const inputOf = event =>
   event.item.type === 'custom_tool_call' ? event.item.input : JSON.parse(event.item.arguments).input
 const finalCall = events => events.find(event => event.type === 'response.output_item.done')
+
+test.each(['function_call_output', 'custom_tool_call_output'])(
+  'reads the bound Issue success marker from %s without confusing another call',
+  type => {
+    const marker = 'REMOTE_AGENT_DISPATCH_BOARD_READ_OK'
+    const output = type === 'function_call_output' ? marker : [{ type: 'input_text', text: marker }]
+    expect(
+      toolOutputText(
+        {
+          input: [
+            { type, call_id: 'other-call', output: 'Bound Issue read failed' },
+            { type, call_id: 'bound-issue-read', output },
+          ],
+        },
+        'bound-issue-read'
+      )
+    ).toBe(marker)
+    expect(toolOutputText({ input: [] }, 'bound-issue-read')).toBeNull()
+  }
+)
+
 const metadata = {
   name: 'mcp__wework_space__get_current_context',
   description:
@@ -206,7 +227,34 @@ test('uses the latest native exec definition across incremental Lite catalog upd
   expect(discoverySelection({ ...request, tools: [top] }, 'get_goal').codeMode.description).toBe(
     'current'
   )
-  expect(() => discoverySelection({ ...request, tools: [entry] }, 'get_goal')).toThrow()
+  expect(discoverySelection({ ...request, tools: [entry] }, 'get_goal').codeMode).toEqual({
+    ...entry,
+    input: expect.any(String),
+  })
+})
+
+test('selects the current API exec after a native Lite conversation changes provider', () => {
+  const current = {
+    type: 'function',
+    name: 'exec',
+    parameters: { properties: { input: { type: 'string' } } },
+  }
+  const input = variants[1].input
+  const request = { input, tools: [current] }
+  expect(discoverySelection(request, 'read_task').codeMode).toEqual({
+    ...current,
+    input: expect.any(String),
+  })
+  expect(programmaticSelection(request, 'get_goal', {}).codeMode).toEqual({
+    ...current,
+    targetName: 'get_goal',
+  })
+  expect(() => discoverySelection({ input, tools: [] }, 'read_task')).toThrow(
+    'Expected exactly one native Code Mode discovery declaration'
+  )
+  expect(() =>
+    discoverySelection({ input, tools: [current, ...variants[1].input[0].tools] }, 'read_task')
+  ).toThrow('Expected exactly one native Code Mode discovery declaration')
 })
 
 test('keeps actual structured results and native permission-denial text', async () => {

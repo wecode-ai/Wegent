@@ -7,7 +7,10 @@ use std::sync::atomic::Ordering;
 
 use super::{AppIpcError, LocalBackendConnectionController};
 
-fn required_profile_field<'a>(params: &'a Value, name: &str) -> Result<&'a str, AppIpcError> {
+pub(super) fn required_profile_field<'a>(
+    params: &'a Value,
+    name: &str,
+) -> Result<&'a str, AppIpcError> {
     params
         .get(name)
         .and_then(Value::as_str)

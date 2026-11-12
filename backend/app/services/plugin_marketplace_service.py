@@ -473,12 +473,21 @@ class PluginMarketplaceService:
         user_id: int,
         plugin_id: int,
         release_id: int | None = None,
+        commit: bool = True,
     ) -> InstalledPlugin:
-        self.reconcile_stale_installed_catalog_refs(db, user_id=user_id)
+        if commit:
+            self.reconcile_stale_installed_catalog_refs(db, user_id=user_id)
         # Catalog repair may have committed its own transaction.
         acquire_plugin_write_lock(db, user_id)
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
+        kind_name = self._kind_name(plugin.catalog_namespace, plugin.slug)
         existing = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
+        if existing is None:
+            # Catalog rebuilds can leave inactive installs whose pluginId no longer
+            # resolves. Their canonical Kind name is still the catalog identity.
+            existing = self._find_installed_kind_by_name(
+                db, user_id=user_id, kind_name=kind_name
+            )
         if release_id is not None:
             if not existing and release_id != plugin.latest_release_id:
                 raise HTTPException(
@@ -503,13 +512,16 @@ class PluginMarketplaceService:
             installed = Kind(
                 user_id=user_id,
                 kind="InstalledPlugin",
-                name=self._kind_name(plugin.catalog_namespace, plugin.slug),
+                name=kind_name,
                 namespace="default",
                 json=payload,
                 is_active=True,
             )
             db.add(installed)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(installed)
         return self._kind_to_installed(installed)
 
@@ -520,6 +532,7 @@ class PluginMarketplaceService:
         user_id: int,
         installed_id: int,
         release_id: int,
+        commit: bool = True,
     ) -> InstalledPlugin:
         acquire_plugin_write_lock(db, user_id)
         installed = self._owned_install(db, user_id=user_id, installed_id=installed_id)
@@ -535,7 +548,10 @@ class PluginMarketplaceService:
             installed, plugin=plugin, release=release
         )
         replace_installed_kind(db, installed, payload)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(installed)
         return self._kind_to_installed(installed)
 
@@ -559,10 +575,17 @@ class PluginMarketplaceService:
         return payload
 
     def release_package_for_install(
-        self, db: Session, *, user_id: int, installed_id: int
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        installed_id: int,
+        expected_release_id: int | None = None,
     ) -> tuple[bytes, str]:
         installed = self._owned_install(db, user_id=user_id, installed_id=installed_id)
         release_id = installed.json.get("spec", {}).get("releaseId")
+        if expected_release_id is not None and release_id != expected_release_id:
+            raise HTTPException(status_code=409, detail="RELEASE_CHANGED")
         if not isinstance(release_id, int):
             raise HTTPException(status_code=404, detail="Plugin release not found")
         release = db.get(PluginRelease, release_id)
@@ -2941,6 +2964,22 @@ class PluginMarketplaceService:
     def _find_installed(self, db, *, user_id, plugin_id):
         return self._load_installed_kinds_by_plugin_id(db, user_id=user_id).get(
             plugin_id
+        )
+
+    def _find_installed_kind_by_name(
+        self, db: Session, *, user_id: int, kind_name: str
+    ) -> Kind | None:
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "InstalledPlugin",
+                Kind.namespace == "default",
+                Kind.name == kind_name,
+            )
+            .order_by(Kind.is_active.desc(), Kind.id.asc())
+            .with_for_update()
+            .first()
         )
 
     def _published_plugin_by_key(

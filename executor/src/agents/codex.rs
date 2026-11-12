@@ -17,7 +17,7 @@ use serde_json::Map;
 use serde_json::{json, Value};
 use tokio::{
     io::AsyncWriteExt,
-    process::{Child, ChildStdin, Command},
+    process::{ChildStdin, Command},
     sync::{broadcast, mpsc, oneshot, Mutex},
     time::{timeout, timeout_at, Instant},
 };
@@ -132,8 +132,12 @@ mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
 mod memory_review;
+mod native_provider;
+mod provider_migration;
 mod stand_in_approval;
 mod stand_in_plugin_cli;
+#[path = "codex/writer_diagnostics.rs"]
+mod writer_diagnostics;
 use stand_in_approval::stand_in_mcp_approval_overrides;
 #[path = "codex/child.rs"]
 mod child;
@@ -141,6 +145,9 @@ mod child;
 mod overload_recovery;
 #[path = "codex/plugin_skills.rs"]
 mod plugin_skills;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "codex/process_exit.rs"]
+mod process_exit;
 mod startup;
 use child::CodexAppServerChild;
 #[path = "codex/thread_action.rs"]
@@ -157,7 +164,8 @@ use home::WEGENT_CODEX_HOME_ENV;
 #[cfg(test)]
 use home::WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV;
 pub(crate) use home::{
-    executor_home, replace_config, select_wework_codex_user_instructions, wework_codex_home,
+    executor_home, prepare_provider_migration, replace_config,
+    select_wework_codex_user_instructions, wework_codex_home,
 };
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
@@ -311,6 +319,9 @@ mod mcp_config;
 mod mcp_reload;
 #[cfg(test)]
 use mcp_reload::config_reload_resume_thread_id;
+
+#[path = "codex/provider_routing.rs"]
+mod provider_routing;
 
 pub use interaction::CodexRequestUserInputReceiver;
 use interaction::{interaction_value_key, InteractionAnswerRouter};
@@ -1831,8 +1842,18 @@ async fn start_persistent_codex_app_server(
     auth_mode: CodexAuthMode,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 ) -> Result<(CodexAppServerProcess, u64), String> {
-    let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
-    let mut child = spawn_codex_app_server(binary, &launch_config, Some(auth_mode))?;
+    let mut launch_config = persistent_codex_app_server_launch_config(request_launch_config);
+    let (home, auth_lease) = acquire_codex_app_server_home(&launch_config, Some(auth_mode))?;
+    let catalog =
+        codex_model_catalog::prepare_process_catalog(&resolve_codex_binary(binary), &home).await?;
+    if let Some(catalog) = &catalog {
+        launch_config.config_overrides.push(format!(
+            "model_catalog_json={}",
+            toml_json_value(&json!(catalog.path()))
+        ));
+    }
+    let mut child = spawn_codex_app_server_with_home(binary, &launch_config, &home, auth_lease)?;
+    child.hold_catalog(catalog);
     let process_id = child.id().map(|id| id.to_string()).unwrap_or_default();
     log_executor_event(
         "codex shared app-server process starting",
@@ -1913,9 +1934,11 @@ fn persistent_codex_app_server_launch_config(
         env: request_launch_config.env.clone(),
         ..CodexLaunchConfig::default()
     };
+    // Account RPCs retain native auth while model discovery uses the local
+    // merged catalog. Threads replace this whole table with their own profile.
     launch_config
         .config_overrides
-        .extend(codex_router_provider_overrides());
+        .extend(native_provider::process_overrides());
     launch_config
         .config_overrides
         .push("features.goals=true".to_owned());
@@ -1937,24 +1960,14 @@ fn codex_tool_orchestration_overrides() -> Vec<String> {
 }
 
 fn codex_router_provider_overrides() -> Vec<String> {
+    let (auth_command, auth_args) = codex_router_auth_command();
+    native_provider::api_overrides(codex_router_base_url(), auth_command, auth_args)
+}
+
+fn codex_router_base_url() -> String {
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
-    let provider = codex_model_catalog::PROVIDER_ID;
-    let (auth_command, auth_args) = codex_router_auth_command();
-    vec![
-        format!("model_provider={provider}"),
-        format!("model_providers.{provider}.name=\"Wework model router\""),
-        format!("model_providers.{provider}.base_url=\"{local_base_url}/v1/codex-router\""),
-        format!("model_providers.{provider}.wire_api=\"responses\""),
-        format!(
-            "model_providers.{provider}.auth.command={}",
-            toml_value(auth_command)
-        ),
-        format!(
-            "model_providers.{provider}.auth.args={}",
-            serde_json::to_string(&auth_args).expect("router auth args must serialize")
-        ),
-    ]
+    format!("{local_base_url}/v1/codex-router")
 }
 
 #[cfg(unix)]
@@ -2352,6 +2365,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             .prepare_thread_admission(&thread_plan, request, &launch_config)
             .await?;
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            // Native resume may start an active Goal before returning its RPC
+            // response. Both its route and notification listener must exist first.
+            bind_local_proxy_thread(&launch_config, thread_id)?;
             subscribed_thread_id = Some(thread_id.to_owned());
             early_request_context = Some(CodexTurnRequestContext::new(
                 client
@@ -2793,6 +2809,10 @@ async fn run_codex_app_server_turn_with_runtime(
             request,
             &launch_config,
         );
+        if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            bind_local_proxy_thread(&launch_config, thread_id)?;
+            state.set_root_thread_id(thread_id.to_owned());
+        }
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -4072,6 +4092,33 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
     auth_mode: Option<CodexAuthMode>,
 ) -> Result<CodexAppServerChild, String> {
+    let (home, auth_lease) = acquire_codex_app_server_home(launch_config, auth_mode)?;
+    spawn_codex_app_server_with_home(binary, launch_config, &home, auth_lease)
+}
+
+fn acquire_codex_app_server_home(
+    launch_config: &CodexLaunchConfig,
+    auth_mode: Option<CodexAuthMode>,
+) -> Result<(PathBuf, Option<crate::file_lease::FileLease>), String> {
+    let codex_home = launch_config
+        .env
+        .get(CODEX_HOME_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(wework_codex_home);
+    let auth_lease = if launch_config.env.contains_key(CODEX_HOME_ENV) {
+        Some(home::acquire_named_home(&codex_home)?)
+    } else {
+        Some(home::acquire_shared_auth(&codex_home, auth_mode)?)
+    };
+    Ok((codex_home, auth_lease))
+}
+
+fn spawn_codex_app_server_with_home(
+    binary: &str,
+    launch_config: &CodexLaunchConfig,
+    codex_home: &Path,
+    auth_lease: Option<crate::file_lease::FileLease>,
+) -> Result<CodexAppServerChild, String> {
     let resolved_binary = resolve_codex_binary(binary);
     // Preserve the extended-length Windows path for binaries in component caches.
     #[cfg(windows)]
@@ -4081,19 +4128,7 @@ fn spawn_codex_app_server(
         })?
         .to_string_lossy()
         .into_owned();
-    let codex_home = launch_config
-        .env
-        .get(CODEX_HOME_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(wework_codex_home);
-    let auth_lease = if launch_config.env.contains_key(CODEX_HOME_ENV) {
-        fs::create_dir_all(&codex_home)
-            .map_err(|error| format!("create agent Codex Home: {error}"))?;
-        None
-    } else {
-        Some(home::acquire_shared_auth(&codex_home, auth_mode)?)
-    };
-    codex_app_server_command(&resolved_binary, &codex_home, launch_config)
+    codex_app_server_command(&resolved_binary, codex_home, launch_config)
         .spawn()
         .map(|child| CodexAppServerChild::new(child, auth_lease))
         .map_err(|error| {
@@ -4245,22 +4280,23 @@ fn configure_codex_windows_no_window(command: &mut Command) {
 #[cfg(not(windows))]
 fn configure_codex_windows_no_window(_command: &mut Command) {}
 
-async fn terminate_codex_app_server_child(child: &mut Child) {
-    signal_codex_app_server_child(child);
-    let _ = child.wait().await;
+async fn terminate_codex_app_server_child(child: &mut CodexAppServerChild) {
+    let _ = child.kill().await;
 }
 
-fn signal_codex_app_server_child(child: &mut Child) {
-    if matches!(child.try_wait(), Ok(Some(_))) {
-        return;
-    }
-
+fn signal_codex_app_server_child(child: &mut CodexAppServerChild) {
     #[cfg(unix)]
     if let Some(process_group_id) = child.id() {
+        // Signal the group before reaping its leader. The app-server can
+        // exit on stdin EOF while its tool children are still running.
         unsafe {
             let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGTERM);
             let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGKILL);
         }
+        return;
+    }
+
+    if matches!(child.try_wait(), Ok(Some(_))) {
         return;
     }
 
@@ -4395,55 +4431,6 @@ fn bind_local_proxy_thread(
     Ok(())
 }
 
-/// Registers the local model route that serves a Codex thread and binds it to
-/// that thread.
-///
-/// A Codex thread reaches its model through the local `codex-router` route, and
-/// that route only exists while a turn that registered it is alive. Actions that
-/// drive an existing thread without spawning a turn must establish the route
-/// themselves, otherwise the thread cannot reach any model at all.
-///
-/// Returns `None` when the task talks to its provider directly instead of going
-/// through the local route, and a registration that must stay alive for as long
-/// as the thread needs the model otherwise.
-pub(crate) fn bind_codex_thread_model_route(
-    request: &ExecutionRequest,
-    thread_id: &str,
-) -> Result<Option<LocalProxyRegistration>, String> {
-    // Mirrors the launch-config decision so an existing thread resolves the same
-    // upstream it was started with.
-    let upstream = if use_user_runtime_config(&request.model_config) {
-        configured_codex_provider(
-            &inference_model_provider(&request.model_config),
-            runtime_proxy_url(&request.model_config),
-        )
-    } else {
-        local_model_proxy::upstream_from_model_config(&request.model_config)?
-    };
-    let Some(upstream) = upstream else {
-        return Ok(None);
-    };
-    let mut upstream = upstream;
-    upstream.routing_model_id = codex_request_model(request);
-    inject_session_headers(&mut upstream.default_headers, &request.task_id);
-    let vision_sidecar =
-        vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?;
-    let registration = LocalProxyRegistration(local_model_proxy::register_with_vision_sidecar(
-        &request.task_id,
-        upstream,
-        vision_sidecar,
-    ));
-    registration.bind_thread(thread_id)?;
-    log_executor_event(
-        "codex thread model route bound",
-        &[
-            ("task_id", request.task_id.clone()),
-            ("thread_id", thread_id.to_owned()),
-        ],
-    );
-    Ok(Some(registration))
-}
-
 struct PreparedCodexExecutionRequest {
     request: ExecutionRequest,
     generated_files: Vec<PathBuf>,
@@ -4481,9 +4468,6 @@ fn build_codex_launch_config_with_route_scope(
     route_scope: &str,
 ) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
-    let configured_base_url = non_empty_config(&request.model_config, "base_url")
-        .or_else(|| non_empty_config(&request.model_config, "baseUrl"));
-    let configured_auth_present = api_key(&request.model_config).is_some();
     let reasoning = normalize_reasoning(codex_reasoning_config(&request.model_config));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
@@ -4555,112 +4539,7 @@ fn build_codex_launch_config_with_route_scope(
             .push(format!("model={model}"));
     }
 
-    let use_user_config = use_user_runtime_config(&request.model_config);
-    let project_id = project_id(request);
-    if use_user_config {
-        let inference_provider = inference_model_provider(&request.model_config);
-        if let Some(upstream) = configured_codex_provider(
-            &inference_provider,
-            runtime_proxy_url(&request.model_config),
-        ) {
-            let mut upstream = upstream;
-            inject_session_headers(&mut upstream.default_headers, &request.task_id);
-            log_executor_event(
-                "codex model route selected",
-                &[
-                    ("task_id", request.task_id.clone()),
-                    ("route", "local_proxy_user_provider".to_owned()),
-                    ("provider", inference_provider.clone()),
-                    ("model", model.clone().unwrap_or_default()),
-                    (
-                        "payload_base_url_present",
-                        configured_base_url.is_some().to_string(),
-                    ),
-                    ("payload_auth_present", configured_auth_present.to_string()),
-                ],
-            );
-            configure_codex_router(
-                &mut launch_config,
-                route_scope,
-                upstream,
-                model.clone(),
-                request_model_switched(request),
-                vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
-            );
-        } else {
-            log_executor_event(
-                "codex model route selected",
-                &[
-                    ("task_id", request.task_id.clone()),
-                    ("route", "direct_user_provider".to_owned()),
-                    ("provider", inference_provider.clone()),
-                    ("model", model.clone().unwrap_or_default()),
-                    (
-                        "payload_base_url_present",
-                        configured_base_url.is_some().to_string(),
-                    ),
-                    ("payload_auth_present", configured_auth_present.to_string()),
-                ],
-            );
-            launch_config.model_provider = Some(inference_provider.clone());
-            launch_config.config_overrides.extend(header_overrides(
-                &inference_provider,
-                request.model_config.get("default_headers"),
-                project_id.as_deref(),
-                &request.task_id,
-            ));
-        }
-    } else if let Some(upstream) =
-        local_model_proxy::upstream_from_model_config(&request.model_config)?
-    {
-        let mut upstream = upstream;
-        inject_session_headers(&mut upstream.default_headers, &request.task_id);
-        log_executor_event(
-            "codex model route selected",
-            &[
-                ("task_id", request.task_id.clone()),
-                ("route", "local_proxy_payload".to_owned()),
-                ("provider", inference_model_provider(&request.model_config)),
-                ("model", model.clone().unwrap_or_default()),
-                (
-                    "payload_base_url_present",
-                    configured_base_url.is_some().to_string(),
-                ),
-                ("payload_auth_present", configured_auth_present.to_string()),
-            ],
-        );
-        configure_codex_router(
-            &mut launch_config,
-            route_scope,
-            upstream,
-            model.clone(),
-            request_model_switched(request),
-            vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
-        );
-    } else {
-        let inference_provider = inference_model_provider(&request.model_config);
-        log_executor_event(
-            "codex model route selected",
-            &[
-                ("task_id", request.task_id.clone()),
-                ("route", "direct_payload_provider".to_owned()),
-                ("provider", inference_provider.clone()),
-                ("model", model.clone().unwrap_or_default()),
-                (
-                    "payload_base_url_present",
-                    configured_base_url.is_some().to_string(),
-                ),
-                ("payload_auth_present", configured_auth_present.to_string()),
-            ],
-        );
-        launch_config.model_provider = Some(inference_provider.clone());
-        launch_config.config_overrides.extend(header_overrides(
-            &inference_provider,
-            request.model_config.get("default_headers"),
-            project_id.as_deref(),
-            &request.task_id,
-        ));
-    }
+    provider_routing::configure_request_provider(&mut launch_config, request, route_scope)?;
 
     mcp_config::configure_task_mcp(request, &mut launch_config)?;
 
@@ -5011,6 +4890,19 @@ fn project_plugin_config_overrides(request: &ExecutionRequest) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn codex_request_inherits_wework_default(request: &ExecutionRequest) -> bool {
+    codex_request_model(request).is_none()
+        && super::instance_home::request_home(request).is_none()
+        && explicit_model_provider(&request.model_config)
+            .map_or(true, |provider| provider == "openai")
+        && (use_user_runtime_config(&request.model_config)
+            || (api_key(&request.model_config).is_none()
+                && matches!(
+                    local_model_proxy::upstream_from_model_config(&request.model_config),
+                    Ok(None)
+                )))
+}
+
 fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
     let compat_proxy = bool_value(
         request
@@ -5097,10 +4989,11 @@ fn codex_auto_compact_token_limit(model_config: &Value, context_window: i64) -> 
 fn configured_codex_provider(
     provider: &str,
     proxy_url: Option<&str>,
+    codex_home: &Path,
 ) -> Option<LocalModelProxyUpstream> {
     use toml_edit::DocumentMut;
 
-    let document = fs::read_to_string(wework_codex_home().join("config.toml"))
+    let document = fs::read_to_string(codex_home.join("config.toml"))
         .ok()?
         .parse::<DocumentMut>()
         .ok()?;
@@ -5417,10 +5310,6 @@ fn bool_value(value: Option<&Value>) -> Option<bool> {
     }
 }
 
-fn inference_model_provider(model_config: &Value) -> String {
-    explicit_model_provider(model_config).unwrap_or_else(configured_inference_model_provider)
-}
-
 pub(crate) fn configured_inference_model_provider() -> String {
     configured_inference_model_provider_from_path(&wework_codex_home().join("config.toml"))
 }
@@ -5435,6 +5324,7 @@ fn configured_inference_model_provider_from_path(config_path: &Path) -> String {
             document
                 .get("model_provider")
                 .and_then(|item| item.as_str())
+                .filter(|provider| !is_internal_codex_provider(provider))
                 .map(sanitize_provider_id)
         })
         .filter(|provider| !is_internal_codex_provider(provider))
@@ -5445,18 +5335,21 @@ fn explicit_model_provider(model_config: &Value) -> Option<String> {
     non_empty_config(model_config, "codex_model_provider")
         .or_else(|| non_empty_config(model_config, "model_provider"))
         .or_else(|| non_empty_config(model_config, "provider"))
+        .filter(|value| !is_internal_codex_provider(value))
         .map(|value| sanitize_provider_id(&value))
         .filter(|provider| !is_internal_codex_provider(provider))
 }
 
 fn is_internal_codex_provider(provider: &str) -> bool {
-    provider == codex_model_catalog::PROVIDER_ID || provider == "wework-catalog"
+    provider == codex_model_catalog::PROVIDER_ID
+        || provider == codex_model_catalog::LEGACY_PROVIDER_ID
+        || provider == "wework-catalog"
 }
 
 fn is_builtin_codex_provider(provider: &str) -> bool {
     matches!(
         provider,
-        "openai" | "amazon-bedrock" | "ollama" | "lmstudio"
+        "openai" | "amazon-bedrock" | "amazon-bedrock-runtime" | "gcp" | "ollama" | "lmstudio"
     )
 }
 
@@ -5505,54 +5398,22 @@ fn non_empty_config(value: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn header_overrides(
-    model_provider: &str,
+fn task_provider_headers(
     default_headers: Option<&Value>,
     project_id: Option<&str>,
     task_id: &str,
-) -> Vec<String> {
-    // Codex owns its built-in providers and rejects any
-    // `model_providers.<builtin>.*` override as a reserved provider conflict.
-    if is_builtin_codex_provider(model_provider) {
-        return Vec::new();
-    }
-
-    let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        let mut headers = parse_header_map(default_headers);
-        inject_session_headers(&mut headers, task_id);
-        return if headers.is_empty() {
-            Vec::new()
-        } else {
-            headers
-                .into_iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
-                        toml_value(&value)
-                    )
-                })
-                .collect()
-        };
-    };
-
+) -> Vec<(String, String)> {
     let mut headers = parse_header_map(default_headers);
-    insert_missing_header(&mut headers, "wecode-action", "wegent");
-    insert_missing_header(&mut headers, "wecode-source", "wegent-local");
-    insert_missing_header(&mut headers, "wecode-executor", "codex");
-    inject_session_headers(&mut headers, task_id);
-    insert_header(&mut headers, "wecode-project", project_id);
-
+    if let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) {
+        insert_missing_header(&mut headers, "wecode-action", "wegent");
+        insert_missing_header(&mut headers, "wecode-source", "wegent-local");
+        insert_missing_header(&mut headers, "wecode-executor", "codex");
+        inject_session_headers(&mut headers, task_id);
+        insert_header(&mut headers, "wecode-project", project_id);
+    } else {
+        inject_session_headers(&mut headers, task_id);
+    }
     headers
-        .into_iter()
-        .map(|(key, value)| {
-            format!(
-                "{}={}",
-                toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
-                toml_value(&value)
-            )
-        })
-        .collect()
 }
 
 fn parse_header_map(value: Option<&Value>) -> Vec<(String, String)> {
@@ -5674,13 +5535,21 @@ fn normalize_reasoning(value: Option<&Value>) -> NormalizedReasoning {
 }
 
 fn normalize_reasoning_effort(value: Option<&str>) -> String {
-    let normalized = value
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .replace(' ', "_");
-    let aliased = match normalized.as_str() {
-        "" | "none" | "off" | "false" | "disabled" | "关闭" => DEFAULT_REASONING_EFFORT,
+    let aliased = normalize_reasoning_effort_alias(value.unwrap_or_default());
+    if matches!(
+        aliased.as_str(),
+        "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    ) {
+        aliased
+    } else {
+        DEFAULT_REASONING_EFFORT.to_owned()
+    }
+}
+
+/// Canonicalize aliases without replacing unsupported or disabled values with a default.
+pub(crate) fn normalize_reasoning_effort_alias(value: &str) -> String {
+    let normalized = value.trim().to_ascii_lowercase().replace(' ', "_");
+    match normalized.as_str() {
         "minimal" | "低" | "轻度" | "最低" => "low",
         "中" | "中等" => "medium",
         "高" => "high",
@@ -5688,15 +5557,8 @@ fn normalize_reasoning_effort(value: Option<&str>) -> String {
         "最大" | "最高" | "maximum" => "max",
         "极高" => "ultra",
         value => value,
-    };
-    if matches!(
-        aliased,
-        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
-    ) {
-        aliased.to_owned()
-    } else {
-        DEFAULT_REASONING_EFFORT.to_owned()
     }
+    .to_owned()
 }
 
 fn normalize_service_tier(value: Option<&Value>) -> Option<String> {
@@ -5831,7 +5693,6 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
             format!("Bearer {}", endpoint.token),
         );
     }
-    environment.extend(computer_use_mcp_config_overrides().1);
     // Auxiliary RPCs and turns must compare the same effective CLI directories.
     environment.extend(
         process_environment::process_env(&[])
@@ -5846,91 +5707,54 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
     environment
 }
 
-fn computer_use_mcp_config_overrides() -> (Vec<String>, BTreeMap<String, String>) {
+fn computer_use_mcp_config_overrides() -> Vec<String> {
     let path = executor_home().join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
-    let Ok(contents) = fs::read_to_string(path) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    let Ok(record) = serde_json::from_str::<Value>(&contents) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    let Some(address) = record.get("address").and_then(Value::as_str) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    let Some(token) = record.get("token").and_then(Value::as_str) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    if address.trim().is_empty() || token.trim().is_empty() {
-        return (Vec::new(), BTreeMap::new());
+    if crate::computer_use_mcp::read_bridge_record(&path).is_err() {
+        return Vec::new();
     }
     let command =
         env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
-    let env = BTreeMap::from([
-        (
-            "WEWORK_COMPUTER_USE_BRIDGE_URL".to_owned(),
-            format!("http://{}", address.trim()),
+    vec![
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "command"
+            ]),
+            toml_value(&command.display().to_string())
         ),
-        (
-            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN".to_owned(),
-            token.trim().to_owned(),
+        format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
+            toml_json_value(&json!(["computer-use-mcp-server", path]))
         ),
-    ]);
-    (
-        vec![
-            format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "command"
-                ]),
-                toml_value(&command.display().to_string())
-            ),
-            format!(
-                "{}={}",
-                toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
-                toml_json_value(&json!(["computer-use-mcp-server"]))
-            ),
-            format!(
-                "{}=15",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "startup_timeout_sec"
-                ])
-            ),
-            format!(
-                "{}=120",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "tool_timeout_sec"
-                ])
-            ),
-            format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "default_tools_approval_mode"
-                ]),
-                toml_value("writes")
-            ),
-            format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "env_vars"
-                ]),
-                toml_json_value(&json!([
-                    "WEWORK_COMPUTER_USE_BRIDGE_URL",
-                    "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
-                ]))
-            ),
-        ],
-        env,
-    )
+        format!(
+            "{}=15",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "startup_timeout_sec"
+            ])
+        ),
+        format!(
+            "{}=120",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "tool_timeout_sec"
+            ])
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "default_tools_approval_mode"
+            ]),
+            toml_value("writes")
+        ),
+    ]
 }
 
 fn managed_wework_mcp_config_overrides(
