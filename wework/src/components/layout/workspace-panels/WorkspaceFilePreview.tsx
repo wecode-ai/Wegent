@@ -786,7 +786,11 @@ export function WorkspaceFilePreview({
 
   if (error) {
     return (
-      <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-destructive wework:text-red-500">
+      <section
+        className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-destructive wework:text-red-500"
+        data-testid="workspace-file-preview-error"
+        role="alert"
+      >
         <p>{error}</p>
         <button
           type="button"

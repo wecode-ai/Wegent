@@ -10,13 +10,6 @@
     }
   },
   "paths": [
-    "packages/collaboration/src/markdown/AssistantMarkdown.tsx",
-    "packages/collaboration/src/markdown/MarkdownServices.tsx",
-    "wework/src/components/chat/useDesktopMarkdownServices.ts",
-    "wework/src/components/layout/workspace-panels/FileWorkspacePanel.tsx",
-    "wework/src/components/layout/workspace-panels/WorkspaceFilePreview.tsx",
-    "wework/src/components/layout/workspace-panels/workspaceFileTypes.ts",
-    "wework/e2e/desktop/modules/markdown-file-preview.mjs",
     "packages/collaboration/src/theme/*",
     "wework/src/features/appearance/*",
     "wework/src/styles/*",
