@@ -19,7 +19,10 @@ afterEach(() => {
 test('delegates secret protection to the native credential service', async () => {
   const encrypted = await systemSecretProtection.encrypt('private-value')
   expect(storage.encryptStringAsync).toHaveBeenCalledWith('private-value')
-  await expect(systemSecretProtection.decrypt(encrypted)).resolves.toBe('private-value')
+  await expect(systemSecretProtection.decrypt(encrypted)).resolves.toEqual({
+    result: 'private-value',
+    shouldReEncrypt: false,
+  })
   expect(storage.decryptStringAsync).toHaveBeenCalledWith(Buffer.from('protected:private-value'))
 })
 
@@ -79,4 +82,14 @@ test('propagates native protection failures without substituting a weaker format
   await expect(systemSecretProtection.encrypt('private-value')).rejects.toBe(error)
   storage.decryptStringAsync.mockRejectedValueOnce(error)
   await expect(systemSecretProtection.decrypt('ciphertext')).rejects.toBe(error)
+})
+
+test('preserves native key rotation metadata', async () => {
+  storage.decryptStringAsync.mockResolvedValueOnce({
+    result: 'rotating-value',
+    shouldReEncrypt: true,
+  })
+  await expect(
+    systemSecretProtection.decrypt(Buffer.from('protected:old').toString('base64'))
+  ).resolves.toEqual({ result: 'rotating-value', shouldReEncrypt: true })
 })

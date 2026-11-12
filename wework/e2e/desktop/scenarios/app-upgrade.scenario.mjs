@@ -853,6 +853,17 @@ export async function createDesktopScenario(options) {
             'Rollback did not preserve the newer local data'
           )
         }
+        if (checkpoint === 'app-rollback') {
+          rollbackProtection = await verifyRollbackProtection({
+            control,
+            root,
+            target: pair.to,
+            preparedTarget,
+            requests,
+            about,
+            route: () => routeRunningUpgradeRequests(inspectorPorts, control, origin),
+          })
+        }
         if (checkpoint === 'app-rollback' && credentialsRequireReupgrade(credentials.stages)) {
           await reupgradeAfterRollback({
             control,
@@ -866,16 +877,7 @@ export async function createDesktopScenario(options) {
             verifyCredentials: () => verifyCredentials('re-upgraded'),
             timeoutMs: workbenchReadyTimeoutMs,
           })
-        } else if (checkpoint === 'app-rollback') {
-          rollbackProtection = await verifyRollbackProtection({
-            control,
-            root,
-            target: pair.to,
-            preparedTarget,
-            requests,
-            about,
-            route: () => routeRunningUpgradeRequests(inspectorPorts, control, origin),
-          })
+          rollbackProtection.retryConfirmed = true
         }
       }
       const evidence = JSON.stringify({

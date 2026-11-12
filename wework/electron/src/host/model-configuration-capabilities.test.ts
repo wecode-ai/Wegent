@@ -65,7 +65,7 @@ test('probes through the native host and never exposes remote errors containing 
   vi.stubGlobal('fetch', fetcher)
   const draft = { ...provider, api_key: undefined }
   const result = await router.invoke(principal, 'modelConfiguration.test', { provider: draft })
-  expect(result).toEqual([{ model: 'Assistant', error: 'Connection test failed' }])
+  expect(result).toEqual([{ model: 'Assistant', error: 'connection_test_failed' }])
   expect(fetcher).toHaveBeenCalledWith(
     'https://model.example/v1/messages',
     expect.objectContaining({
@@ -132,7 +132,7 @@ test('uses each model protocol override and isolates a failed model probe', asyn
     ],
   }
   expect(await router.invoke(principal, 'modelConfiguration.test', { provider: draft })).toEqual([
-    { model: 'Assistant', error: 'Connection test failed' },
+    { model: 'Assistant', error: 'connection_test_failed' },
     { model: 'completion' },
     { model: 'responses' },
     { model: 'custom' },
@@ -169,7 +169,7 @@ test.each(['not-json', '{}', '{"input":" "}'])(
         models: [{ ...provider.models[0], api_format: 'openai-responses' }],
       },
     })
-    expect(result).toEqual([{ model: 'Assistant', error: 'Connection test failed' }])
+    expect(result).toEqual([{ model: 'Assistant', error: 'connection_test_failed' }])
     expect(fetcher).toHaveBeenCalledWith(
       'https://model.example/v1/responses',
       expect.objectContaining({

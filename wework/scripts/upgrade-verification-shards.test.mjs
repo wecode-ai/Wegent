@@ -82,6 +82,14 @@ function fixture(required = []) {
       upgrade: 'passed',
       rollback: 'passed',
       reupgrade: 'passed',
+      rollbackProtection: {
+        version: target.version,
+        packageSha256: target.sha256,
+        kind: 'confirmation-required',
+        historyPreserved: true,
+        downloadPrevented: true,
+        retryConfirmed: true,
+      },
       credentials: ['source', 'upgraded', 'rolled-back', 're-upgraded'].map((stage, index) => ({
         stage,
         format: index === 0 ? 2 : 3,

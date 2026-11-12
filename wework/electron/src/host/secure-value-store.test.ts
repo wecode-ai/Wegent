@@ -27,6 +27,37 @@ async function legacyFixture(directory: string) {
 }
 
 describe('SecureValueStore', () => {
+  test('rotates one native ciphertext atomically without changing unrelated values', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-key-rotation-'))
+    try {
+      const old = new SecureValueStore(directory, protection)
+      await old.set('first', 'first-secret')
+      await old.set('second', 'second-secret')
+      const path = join(protectedCredentialDirectory(directory), 'secure-values.json')
+      const before = JSON.parse(await readFile(path, 'utf8'))
+      const next = createTestSecretProtection()
+      const rotating = new SecureValueStore(directory, {
+        encrypt: next.encrypt,
+        decrypt: async value => ({ ...(await protection.decrypt(value)), shouldReEncrypt: true }),
+      })
+      await expect(rotating.get('first')).resolves.toBe('first-secret')
+      const after = JSON.parse(await readFile(path, 'utf8'))
+      expect(after.values.second).toBe(before.values.second)
+      expect(after.values.first).not.toBe(before.values.first)
+      await expect(new SecureValueStore(directory, next).get('first')).resolves.toBe('first-secret')
+      await expect(protection.decrypt(after.values.first)).rejects.toThrow()
+      const failing = new SecureValueStore(directory, {
+        decrypt: async value => ({ ...(await protection.decrypt(value)), shouldReEncrypt: true }),
+        encrypt: async () => {
+          throw new Error('Rotation unavailable')
+        },
+      })
+      await expect(failing.get('second')).rejects.toThrow('Rotation unavailable')
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(after)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   test('persists a new prototype-named key when reopening an existing store', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-secure-values-'))
     try {

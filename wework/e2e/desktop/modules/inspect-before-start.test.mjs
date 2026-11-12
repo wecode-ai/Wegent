@@ -43,6 +43,33 @@ test('registered handoff endpoints select the exact host without mutating other 
       inspectRunningApp(ports, process.pid, 'globalThis.visited = true', () => {}),
       /exactly one registered inspector/
     )
+    const request = globalThis.fetch
+    const events = []
+    let closed = false
+    globalThis.fetch = async (...args) => {
+      const response = await request(...args)
+      if (!closed && String(args[0]) === `http://127.0.0.1:${old.port}/json/list`) {
+        const targets = await response.json()
+        old.child.kill('SIGKILL')
+        await old.exited
+        closed = true
+        return Response.json(targets)
+      }
+      return response
+    }
+    try {
+      assert.equal(
+        await inspectRunningApp(ports, current.child.pid, 'true', (...event) => events.push(event)),
+        true
+      )
+      assert.ok(
+        events.some(
+          event => event[0] === '[desktop-e2e-inspector] endpoint closed during identity check'
+        )
+      )
+    } finally {
+      globalThis.fetch = request
+    }
     old.child.kill('SIGKILL')
     await old.exited
     assert.equal(

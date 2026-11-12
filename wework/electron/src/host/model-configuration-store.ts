@@ -213,51 +213,41 @@ export class ModelConfigurationStore {
     }
   }
 
-  /** Load the selected configuration or retain its last valid snapshot with a visible file error. */
+  private async restoreLastGood(path: string): Promise<void> {
+    if (this.lastGood) return
+    const saved = await this.secrets.get(LAST_GOOD_KEY)
+    if (!saved) return
+    const recovery = JSON.parse(saved) as { path: string; source: string }
+    if (recovery.path !== path) return
+    this.lastGood = {
+      path,
+      source: recovery.source,
+      revision: digest(path, recovery.source),
+      config: parseModelConfiguration(recovery.source).config,
+    }
+  }
+
+  private configurationError(error: unknown): string {
+    return error instanceof Error && error.message.startsWith('model.yml')
+      ? error.message
+      : 'model.yml could not be read; choose or repair the file, then reload'
+  }
+
+  /** Keep configuration repair available even when importing the previous release fails. */
   async read(): Promise<ModelConfigurationSnapshot> {
     return this.serial(async () => {
-      const path = await this.boundPath()
-      if (!this.lastGood) {
-        const saved = await this.secrets.get(LAST_GOOD_KEY)
-        if (saved) {
-          const recovery = JSON.parse(saved) as { path: string; source: string }
-          if (recovery.path === path) {
-            this.lastGood = {
-              path,
-              source: recovery.source,
-              revision: digest(path, recovery.source),
-              config: parseModelConfiguration(recovery.source).config,
-            }
-          }
-        }
-      }
+      let path = join(this.directory, 'model.yml')
       try {
-        let loaded = await this.load(
+        path = await this.boundPath()
+        await this.restoreLastGood(path)
+        const loaded = await this.load(
           path,
           (!this.lastGood || this.lastGood.config.providers.length === 0) &&
             path === join(this.directory, 'model.yml')
         )
-        loaded = await this.accept(loaded)
-        return this.publicSnapshot(loaded)
+        return this.publicSnapshot(await this.accept(loaded))
       } catch (error) {
-        this.lastError =
-          error instanceof Error && error.message.startsWith('model.yml')
-            ? error.message
-            : 'model.yml could not be read; the previous valid configuration is retained'
-        if (!this.lastGood) {
-          const saved = await this.secrets.get(LAST_GOOD_KEY)
-          if (saved) {
-            const recovery = JSON.parse(saved) as { path: string; source: string }
-            if (recovery.path === path) {
-              this.lastGood = {
-                path,
-                source: recovery.source,
-                revision: digest(path, recovery.source),
-                config: parseModelConfiguration(recovery.source).config,
-              }
-            }
-          }
-        }
+        this.lastError = this.configurationError(error)
         return this.publicSnapshot(
           this.lastGood ?? {
             path,
@@ -287,7 +277,13 @@ export class ModelConfigurationStore {
   /** Create only a fresh default file; never recreate a missing populated configuration. */
   async ensureFile(): Promise<string> {
     return this.serial(async () => {
-      const path = await this.boundPath()
+      let path: string
+      try {
+        path = await this.boundPath()
+      } catch (error) {
+        this.lastError = this.configurationError(error)
+        throw new Error(this.lastError, { cause: error })
+      }
       try {
         await stat(path)
       } catch (error) {

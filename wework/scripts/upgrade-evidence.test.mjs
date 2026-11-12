@@ -349,6 +349,11 @@ test('generated policies keep the previous client upgradeable and carry X into t
         toVersion: target.version,
         fromSourceSha: source.sourceSha,
         toSourceSha: target.sourceSha,
+        rollbackProtection: {
+          ...input().evidence.rollbackProtection,
+          version: target.version,
+          packageSha256: target.sha256,
+        },
       }
       return verifiedUpgradeEdge({
         ...input(),
@@ -398,6 +403,14 @@ function input() {
     upgrade: 'passed',
     rollback: 'passed',
     reupgrade: 'passed',
+    rollbackProtection: {
+      version: to.version,
+      packageSha256: to.sha256,
+      kind: 'confirmation-required',
+      historyPreserved: true,
+      downloadPrevented: true,
+      retryConfirmed: true,
+    },
     credentials: ['source', 'upgraded', 'rolled-back', 're-upgraded'].map((stage, index) => ({
       stage,
       format: index === 0 ? 2 : 3,

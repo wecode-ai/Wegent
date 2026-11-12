@@ -20,10 +20,13 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
-test('non-publishing artifact builds cannot be cancelled by another release branch queue', () => {
-  assert.match(workflow.concurrency.group, /inputs.build_only && !inputs.publish_release/);
+test("non-publishing artifact builds cannot be cancelled by another release branch queue", () => {
+  assert.match(
+    workflow.concurrency.group,
+    /inputs.build_only && !inputs.publish_release/,
+  );
   assert.match(workflow.concurrency.group, /github.ref/);
-  assert.equal(workflow.concurrency['cancel-in-progress'], false);
+  assert.equal(workflow.concurrency["cancel-in-progress"], false);
 });
 
 test("full unpublished source pairs cannot replace a pending formal release", () => {
@@ -539,7 +542,10 @@ test("dry runs certify security boundaries and x64 identities before any publica
     download.with["run-id"],
     "${{ needs.prepare-upgrade-inputs.outputs.run_id }}",
   );
-  assert.match(download.with.name, /wework-upgrade-metadata-/);
+  assert.equal(
+    download.with.name,
+    "wework-upgrade-metadata-${{ needs.prepare-upgrade-inputs.outputs.version }}-macos-x64",
+  );
   const mirror = steps.find(
     (step) =>
       step.name === "Verify macOS architecture equivalence before publication",

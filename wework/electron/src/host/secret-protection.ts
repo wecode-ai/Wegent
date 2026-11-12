@@ -2,7 +2,7 @@ import { HostCapabilityError } from './capability-router.js'
 
 export interface SecretProtection {
   encrypt(value: string): Promise<string>
-  decrypt(value: string): Promise<string>
+  decrypt(value: string): Promise<{ result: string; shouldReEncrypt: boolean }>
 }
 
 function requireProtectedCiphertext(value: Buffer): Buffer {
@@ -38,8 +38,6 @@ export const systemSecretProtection: SecretProtection = {
   },
   async decrypt(value) {
     const storage = await nativeStorage()
-    return (
-      await storage.decryptStringAsync(requireProtectedCiphertext(Buffer.from(value, 'base64')))
-    ).result
+    return storage.decryptStringAsync(requireProtectedCiphertext(Buffer.from(value, 'base64')))
   },
 }

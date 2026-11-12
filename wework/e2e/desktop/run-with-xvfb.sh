@@ -50,9 +50,11 @@ xvfb_pid=$!
 xvfb_attempt=0
 while [ ! -s "$xvfb_root/display" ]; do
   if ! kill -0 "$xvfb_pid" 2>/dev/null; then
-    wait "$xvfb_pid"
+    xvfb_status=0
+    wait "$xvfb_pid" || xvfb_status=$?
     printf '%s\n' 'Xvfb exited before publishing its display' >&2
-    exit 1
+    if [ "$xvfb_status" -eq 0 ]; then xvfb_status=1; fi
+    exit "$xvfb_status"
   fi
   if [ "$xvfb_attempt" -ge 100 ]; then
     printf '%s\n' 'Xvfb did not publish its display within 5 seconds' >&2

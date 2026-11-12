@@ -71,6 +71,34 @@ describe('Provider YAML schema', () => {
 })
 
 describe('Provider configuration file store', () => {
+  test.each(['binding', 'deleted', 'oversized'])(
+    'keeps legacy import failures visible and repairable (%s)',
+    async failure => {
+      const legacy = join(directory, 'legacy')
+      const target = join(directory, 'protected')
+      await mkdir(legacy)
+      const legacyPath = join(legacy, 'selected.yml')
+      const binding = failure === 'binding' ? '{broken' : JSON.stringify({ path: legacyPath })
+      await writeFile(join(legacy, 'model-binding.json'), binding)
+      if (failure === 'oversized') await writeFile(legacyPath, '#'.repeat(2 * 1024 * 1024 + 1))
+      const store = new ModelConfigurationStore(target, secrets, legacy)
+      const snapshot = await store.read()
+      expect(snapshot.error).toBeTruthy()
+      expect(snapshot.providers).toEqual([])
+      await expect(store.save(snapshot.revision, [])).rejects.toThrow('Fix and reload')
+      await expect(store.ensureFile()).rejects.toThrow(/model.yml/)
+      await expect(readFile(join(target, 'model-binding.json'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      expect(await readFile(join(legacy, 'model-binding.json'), 'utf8')).toBe(binding)
+      await writeFile(legacyPath, YAML)
+      await writeFile(join(legacy, 'model-binding.json'), JSON.stringify({ path: legacyPath }))
+      const recovered = await store.read()
+      expect(recovered.error).toBeUndefined()
+      expect(recovered.providers).toHaveLength(1)
+      expect(await readFile(legacyPath, 'utf8')).toBe(YAML)
+    }
+  )
   test.each([false, true])(
     'imports legacy configuration once and preserves rollback data (bound: %s)',
     async bound => {

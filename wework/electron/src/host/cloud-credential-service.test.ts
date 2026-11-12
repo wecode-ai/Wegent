@@ -19,6 +19,89 @@ afterEach(async () => {
 })
 
 describe('CloudCredentialService', () => {
+  test('invalid legacy credentials stay repairable without publishing an import marker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-invalid-'))
+    roots.push(root)
+    const path = join(root, 'cloud-credentials.json')
+    const value = {
+      version: 2,
+      apiBaseUrl: 'https://cloud.example/api',
+      publicKey: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+      privateKey: 'legacy-key',
+    }
+    const source = JSON.stringify(value)
+    await writeFile(path, source)
+    const service = new CloudCredentialService(root, vi.fn(), protection)
+    await expect(service.prepareAuthorization(value.apiBaseUrl)).rejects.toMatchObject({
+      code: 'credentials_unavailable',
+    })
+    expect(await readFile(path, 'utf8')).toBe(source)
+    await expect(
+      readFile(join(protectedCredentialDirectory(root), 'cloud-credentials.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await writeFile(path, JSON.stringify({ ...value, refreshToken: 'repaired-token' }))
+    await expect(service.prepareAuthorization(value.apiBaseUrl)).resolves.toMatchObject({
+      publicKey: value.publicKey,
+    })
+  })
+
+  test('rotates cloud ciphertext and preserves it when replacement encryption fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-rotation-'))
+    roots.push(root)
+    const value = {
+      version: 2,
+      apiBaseUrl: 'https://cloud.example/api',
+      publicKey: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+      privateKey: 'key',
+      refreshToken: 'token',
+    }
+    await mkdir(protectedCredentialDirectory(root))
+    const path = join(protectedCredentialDirectory(root), 'cloud-credentials.json')
+    const source = JSON.stringify({
+      version: 3,
+      ciphertext: await protection.encrypt(JSON.stringify(value)),
+    })
+    await writeFile(path, source)
+    const decrypt = async (ciphertext: string) => ({
+      ...(await protection.decrypt(ciphertext)),
+      shouldReEncrypt: true,
+    })
+    const failing = new CloudCredentialService(root, vi.fn(), {
+      decrypt,
+      encrypt: async () => {
+        throw new Error('Rotation unavailable')
+      },
+    })
+    await expect(failing.prepareAuthorization(value.apiBaseUrl)).rejects.toThrow(
+      'Rotation unavailable'
+    )
+    expect(await readFile(path, 'utf8')).toBe(source)
+    const next = createTestSecretProtection()
+    await new CloudCredentialService(root, vi.fn(), {
+      decrypt,
+      encrypt: next.encrypt,
+    }).prepareAuthorization(value.apiBaseUrl)
+    const envelope = JSON.parse(await readFile(path, 'utf8'))
+    expect(JSON.parse((await next.decrypt(envelope.ciphertext)).result)).toEqual(value)
+    await expect(protection.decrypt(envelope.ciphertext)).rejects.toThrow()
+  })
+
+  test('explicit disconnect repairs a damaged protected credential before a new sign-in', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-repair-'))
+    roots.push(root)
+    await mkdir(protectedCredentialDirectory(root))
+    const path = join(protectedCredentialDirectory(root), 'cloud-credentials.json')
+    const damaged = JSON.stringify({ version: 3, ciphertext: 'damaged-ciphertext' })
+    await writeFile(path, damaged)
+    const service = new CloudCredentialService(root, vi.fn(), protection)
+    await expect(service.prepareAuthorization('https://cloud.example/api')).rejects.toThrow()
+    expect(await readFile(path, 'utf8')).toBe(damaged)
+    await service.clear()
+    await expect(service.prepareAuthorization('https://cloud.example/api')).resolves.toMatchObject({
+      publicKey: { kty: 'EC' },
+    })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ version: 3, ciphertext: null })
+  })
   test('clears credentials without OS access while retaining v3 for compatible rollback', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
     roots.push(root)
@@ -84,7 +167,7 @@ describe('CloudCredentialService', () => {
     expect(raw).not.toContain('legacy-refresh-token')
     const envelope = JSON.parse(raw)
     expect(envelope.version).toBe(3)
-    expect(await protection.decrypt(envelope.ciphertext)).toBe(source)
+    expect((await protection.decrypt(envelope.ciphertext)).result).toBe(source)
     await writeFile(path, 'unreadable legacy credential')
     await expect(
       new CloudCredentialService(root, request, protection).prepareAuthorization(
@@ -233,7 +316,7 @@ describe('CloudCredentialService', () => {
     expect(raw).not.toContain('PRIVATE KEY')
     const envelope = JSON.parse(raw)
     expect(envelope.version).toBe(3)
-    const stored = JSON.parse(await protection.decrypt(envelope.ciphertext))
+    const stored = JSON.parse((await protection.decrypt(envelope.ciphertext)).result)
     expect(stored).toMatchObject({
       version: 2,
       apiBaseUrl: 'https://cloud.example.com/api',

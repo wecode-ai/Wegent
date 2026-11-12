@@ -89,7 +89,7 @@ export function registerModelConfigurationCapabilities(
           return { model: model.display_name || model.model_id }
         } catch {
           // Remote error bodies may echo credentials. Expose only a stable local failure.
-          return { model: model.display_name || model.model_id, error: 'Connection test failed' }
+          return { model: model.display_name || model.model_id, error: 'connection_test_failed' }
         }
       })
     )

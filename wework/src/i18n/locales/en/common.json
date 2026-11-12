@@ -4323,7 +4323,9 @@
     "plugins_local_sync_unconfirmed": "The submission result is not confirmed. Refresh to check the installation state first.",
     "plugins_local_sync_journal_error": "Local operation records could not be read or saved. Check disk space and permissions, then retry.",
     "plugins_local_sync_superseded": "Another operation changed the plugin target. Refresh and use the latest state.",
-    "plugins_local_sync_disabled": "New local plugin operations are temporarily disabled. Try again later."
+    "plugins_local_sync_disabled": "New local plugin operations are temporarily disabled. Try again later.",
+    "core_dsh_plugins_native_update_title": "Confirm Core plugin update",
+    "core_dsh_plugins_update_confirm_description": "The updated plugin and its dependencies may execute local code and access files and networks with your user permissions. Continue only if you trust this source. This decision applies to this update only; other operations still require their own approvals."
   },
   "delivery": {
     "action": "Deliver",

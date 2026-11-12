@@ -1,8 +1,36 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, realpath } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { lstat, mkdir, realpath } from 'node:fs/promises'
+import { userInfo } from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
+
+/** Resolve existing ancestors too, so first launch shares the identity of every alias. */
+async function canonicalReleaseRoot(root: string): Promise<string> {
+  let existing = resolve(root)
+  const missing: string[] = []
+  for (;;) {
+    try {
+      return join(await realpath(existing), ...missing)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      const parent = dirname(existing)
+      if (parent === existing) throw error
+      missing.unshift(basename(existing))
+      existing = parent
+    }
+  }
+}
+
+async function privateLockDirectory(path: string, uid: number): Promise<void> {
+  await mkdir(path, { recursive: true, mode: 0o700 })
+  const info = await lstat(path)
+  if (
+    !info.isDirectory() ||
+    (process.platform !== 'win32' && (info.uid !== uid || (info.mode & 0o077) !== 0))
+  ) {
+    throw new Error('The release startup lock directory must be private and user-owned')
+  }
+}
 
 /** Serialize bootstrap transactions without consuming application launch requests. */
 export async function acquireReleaseStartup(
@@ -10,15 +38,14 @@ export async function acquireReleaseStartup(
   launcher: string,
   onLost: (error: Error) => void
 ): Promise<() => Promise<void>> {
-  let identity = resolve(root)
-  try {
-    identity = await realpath(identity)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
+  const identity = await canonicalReleaseRoot(root)
   const key = createHash('sha256').update(identity).digest('hex')
-  const profile = join(tmpdir(), 'wework-release-startup', key)
-  await mkdir(profile, { recursive: true, mode: 0o700 })
+  // Native account metadata is independent of per-process HOME/TMPDIR overrides.
+  const account = userInfo()
+  const namespace = join(account.homedir, '.wegent', 'release-startup')
+  await privateLockDirectory(namespace, account.uid)
+  const profile = join(namespace, key)
+  await privateLockDirectory(profile, account.uid)
   return acquireNativeLock(launcher, join(profile, 'startup.lock'), onLost)
 }
 

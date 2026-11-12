@@ -94,7 +94,7 @@ export function upgradeCredentials() {
         modelUrl: `http://127.0.0.1:${process.env.WEWORK_E2E_MODEL_SERVER_PORT}${MODEL_PATH}`,
       }
       const result = await inspectRunningApp(port, applicationPid, credentialAssertionScript(input))
-      if (stage === 'source') legacyDigests = result.legacyDigests
+      if (stage === 'source' || stage === 'rolled-back') legacyDigests = result.legacyDigests
       assert.ok([2, 3].includes(result.format))
       const domain = result.storageMode === 'isolated-copy-once' ? 'isolated' : 'shared'
       if (result.writeAuthenticated) expectedSecrets[domain] = authenticationSecrets[domain]
@@ -182,14 +182,14 @@ export function credentialAssertionScript(input) {
       assert.ok(!JSON.stringify(values).includes(authenticationSecret), 'Model secret remains readable on disk')
       assert.ok(!JSON.stringify(cloudEnvelope).includes('synthetic-upgrade-refresh-token'), 'Cloud credential remains plaintext')
     }
-    if (isolated && input.stage === 'upgraded') {
+    if (isolated && ['upgraded', 're-upgraded'].includes(input.stage)) {
       for (const [name, digest] of Object.entries(input.legacyDigests)) {
         assert.equal(crypto.createHash('sha256').update(await fs.readFile(path.join(directory, name))).digest('hex'),
           digest, 'The security target changed a legacy rollback credential file')
       }
     }
     mark('verified')
-    const legacyDigests = input.stage === 'source' ? Object.fromEntries(await Promise.all(
+    const legacyDigests = ['source', 'rolled-back'].includes(input.stage) ? Object.fromEntries(await Promise.all(
       Object.keys(input.legacyDigests).map(async name => [name,
         crypto.createHash('sha256').update(await fs.readFile(path.join(directory, name))).digest('hex')])
     )) : undefined

@@ -22,7 +22,11 @@ export async function reupgradeAfterRollback({
     await control.command('waitFor', '[data-testid="about-update-status"]', { text: version })
     await control.command('clickWhenEnabled', button)
   }
-  await confirmPendingUpdateRetry(control, version)
+  assert.equal(
+    await confirmPendingUpdateRetry(control, version),
+    true,
+    'Re-upgrade requires explicit consent for the quarantined release'
+  )
   await waitForUpdatePreparation(async () =>
     JSON.parse(await control.command('getAppUpdateProgress', 'body'))
   )

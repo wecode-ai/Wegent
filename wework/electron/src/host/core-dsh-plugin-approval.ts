@@ -14,14 +14,14 @@ export function coreDshPluginInstallDialog(
   const updating = request.action === 'update'
   // Escape bidi controls as well as newlines so source text cannot impersonate the warning.
   const source = JSON.stringify(request.spec).replace(
-    /[\u202a-\u202e\u2066-\u2069]/g,
-    character => `\\u${character.charCodeAt(0).toString(16)}`
+    /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
+    character => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
   )
   return {
     type: 'warning',
-    title: text('native_title'),
+    title: text(updating ? 'native_update_title' : 'native_title'),
     message: text(updating ? 'update_confirm_title' : 'install_confirm_title'),
-    detail: `${text('source')}: ${source}\n\n${text('install_confirm_description')}`,
+    detail: `${text('source')}: ${source}\n\n${text(updating ? 'update_confirm_description' : 'install_confirm_description')}`,
     buttons: [text('cancel'), text(updating ? 'allow_update' : 'allow_install')],
     defaultId: 0,
     cancelId: 0,

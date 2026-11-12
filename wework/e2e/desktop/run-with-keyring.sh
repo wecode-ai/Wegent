@@ -15,6 +15,9 @@ cleanup() {
   exit "$keyring_status"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 export XDG_DATA_HOME="$keyring_root/data"
 export XDG_CONFIG_HOME="$keyring_root/config"

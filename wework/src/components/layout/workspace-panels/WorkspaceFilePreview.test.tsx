@@ -292,6 +292,39 @@ test('keeps an invalid DOCX out of the document renderer', async () => {
   expect(fileViewerMocks.render).not.toHaveBeenCalled()
 })
 
+test('retries DOCX preparation on the same file without exposing unprepared bytes', async () => {
+  const zip = new JSZip()
+  zip.file(
+    'word/_rels/document.xml.rels',
+    '<Relationships><Relationship Id="rId1" Type="image" TargetMode="External" Target="javascript:alert(1)"/></Relationships>'
+  )
+  const bytes = await zip.generateAsync({ type: 'arraybuffer' })
+  const source = new File([bytes], 'retry.docx')
+  source.arrayBuffer = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Temporary read failure'))
+    .mockResolvedValue(bytes)
+  render(
+    <WorkspaceFilePreview
+      file={null}
+      binaryFile={{
+        path: '/workspace/retry.docx',
+        name: source.name,
+        size: source.size,
+        file: source,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+    />
+  )
+  const retry = await screen.findByTestId('workspace-office-preview-retry-button')
+  expect(fileViewerMocks.render).not.toHaveBeenCalled()
+  fireEvent.click(retry)
+  await waitFor(() => expect(fileViewerMocks.render).toHaveBeenCalled())
+  expect(source.arrayBuffer).toHaveBeenCalledTimes(2)
+  for (const [props] of fileViewerMocks.render.mock.calls) expect(props.file).not.toBe(source)
+})
+
 test.each([
   ['architecture.mmd', 'mermaid'],
   ['architecture.puml', 'plantuml'],

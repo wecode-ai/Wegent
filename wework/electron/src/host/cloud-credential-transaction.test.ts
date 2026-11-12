@@ -33,7 +33,7 @@ async function fixture() {
       await readFile(join(protectedCredentialDirectory(root), 'cloud-credentials.json'), 'utf8')
     )
     return envelope.version === 3
-      ? protection.decrypt(envelope.ciphertext)
+      ? (await protection.decrypt(envelope.ciphertext)).result
       : JSON.stringify(envelope)
   }
   async function stage(apiBaseUrl = backend, refreshToken: string | null = 'candidate-refresh') {

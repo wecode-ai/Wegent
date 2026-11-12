@@ -111,6 +111,7 @@ it('does not start the checkpoint when the display exits before readiness', () =
     expect(result.error).toBeUndefined()
     expect(result.status, result.stderr).toBe(23)
     expect(result.stderr).toContain('Xvfb fixture diagnostic')
+    expect(result.stderr).toContain('Xvfb exited before publishing its display')
     expect(existsSync(marker)).toBe(false)
     expect(existsSync(readFileSync(join(directory, 'auth-path'), 'utf8'))).toBe(false)
   } finally {

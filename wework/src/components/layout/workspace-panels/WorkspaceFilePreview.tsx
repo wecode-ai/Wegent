@@ -21,6 +21,7 @@ import {
 } from 'react'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
+import { Button } from '@/components/ui/button'
 import { captureDiagramArtifact } from '@/components/chat/diagramImageExport'
 import { getRuntimeConfig } from '@/config/runtime'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
@@ -184,6 +185,7 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
 }) {
   const containerRef = useRef<HTMLElement>(null)
   const { t } = useTranslation('common')
+  const [preparationAttempt, setPreparationAttempt] = useState(0)
   const [prepared, setPrepared] = useState<{ source: File; file?: File; error?: boolean } | null>(
     null
   )
@@ -202,7 +204,7 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
     return () => {
       active = false
     }
-  }, [file.file, requiresPreparation])
+  }, [file.file, requiresPreparation, preparationAttempt])
   const preparedFile = requiresPreparation
     ? prepared?.source === file.file
       ? prepared.file
@@ -261,11 +263,25 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
     return (
       <section
         data-testid="workspace-office-preview-preparing"
-        className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-secondary"
+        className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-text-secondary"
       >
         {prepared?.source === file.file && prepared.error
           ? t('workbench.workspace_file_preview_failed')
           : t('workbench.workspace_file_preview_loading', '正在加载文件...')}
+        {prepared?.source === file.file && prepared.error && (
+          <Button
+            type="button"
+            data-testid="workspace-office-preview-retry-button"
+            variant="link"
+            size="sm"
+            onClick={() => {
+              setPrepared(null)
+              setPreparationAttempt(attempt => attempt + 1)
+            }}
+          >
+            {t('workbench.workspace_file_retry', '重试')}
+          </Button>
+        )}
       </section>
     )
   }

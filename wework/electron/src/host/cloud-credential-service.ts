@@ -348,14 +348,20 @@ export class CloudCredentialService {
         await this.writeCredential(null, () => {})
         return null
       }
+      const decrypted =
+        envelope.version === 3 && envelope.ciphertext !== null
+          ? await this.protection.decrypt(envelope.ciphertext ?? '')
+          : null
       const value =
-        envelope.version === 3
-          ? envelope.ciphertext === null
-            ? null
-            : JSON.parse(await this.protection.decrypt(envelope.ciphertext ?? ''))
-          : envelope
+        envelope.version === 3 ? (decrypted ? JSON.parse(decrypted.result) : null) : envelope
       const credential = normalizeStoredCredential(value)
-      if (importing) {
+      if (value !== null && !credential) {
+        throw new CloudCredentialError(
+          'credentials_unavailable',
+          'Cloud credential format is invalid'
+        )
+      }
+      if (importing || decrypted?.shouldReEncrypt) {
         await this.writeCredential(credential, () => {})
       }
       return credential

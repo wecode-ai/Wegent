@@ -98,7 +98,14 @@ async function currentInspectorPort(ports, expectedPid, log) {
   for (const port of new Set(ports)) {
     const target = await inspectorTarget(port, true)
     if (!target) continue
-    const pid = await withInspector(target, command => evaluate(command, 'process.pid'), log)
+    let pid
+    try {
+      pid = await withInspector(target, command => evaluate(command, 'process.pid'), log)
+    } catch (error) {
+      if (await inspectorTarget(port, true)) throw error
+      log('[desktop-e2e-inspector] endpoint closed during identity check', { port })
+      continue
+    }
     log('[desktop-e2e-inspector] endpoint identity', { port, pid, expectedPid })
     if (pid === expectedPid) matches.push(port)
   }

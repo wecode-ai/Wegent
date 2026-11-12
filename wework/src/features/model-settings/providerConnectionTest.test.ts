@@ -30,7 +30,7 @@ test('tests the draft using resolved credentials without saving or requiring exa
 })
 test('uses model overrides and reports each failed model without discarding successful results', async () => {
   invoke.mockResolvedValueOnce([
-    { model: 'upstream-a', error: 'Connection test failed' },
+    { model: 'upstream-a', error: 'connection_test_failed' },
     { model: 'upstream-b' },
   ])
   const draft = {
@@ -46,7 +46,7 @@ test('uses model overrides and reports each failed model without discarding succ
     ],
   }
   await expect(testProviderConnection(draft)).resolves.toEqual([
-    { model: 'upstream-a', error: 'Connection test failed' },
+    { model: 'upstream-a', error: 'connection_test_failed' },
     { model: 'upstream-b' },
   ])
   expect(probe).not.toHaveBeenCalled()

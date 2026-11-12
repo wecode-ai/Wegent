@@ -19,9 +19,10 @@ function evidence(protectedTarget) {
     rollbackProtection: {
       version: '1.1.0',
       packageSha256: 'a'.repeat(64),
-      kind: 'blocked',
+      kind: protectedTarget ? 'confirmation-required' : 'blocked',
       historyPreserved: true,
       downloadPrevented: true,
+      ...(protectedTarget ? { retryConfirmed: true } : {}),
     },
   }
 }
@@ -47,6 +48,14 @@ test('format-preserving packages require authenticated writes and exact rollback
 
 test('protected credentials always require the complete authenticated round trip', () => {
   assert.equal(credentialRoundTripPassed(evidence(true)), true)
+  for (const field of ['historyPreserved', 'downloadPrevented', 'retryConfirmed']) {
+    const missing = evidence(true)
+    delete missing.rollbackProtection[field]
+    assert.equal(credentialRoundTripPassed(missing), false)
+  }
+  const absent = evidence(true)
+  delete absent.rollbackProtection
+  assert.equal(credentialRoundTripPassed(absent), false)
   const short = evidence(true)
   short.credentials.pop()
   short.reupgrade = 'not-run'

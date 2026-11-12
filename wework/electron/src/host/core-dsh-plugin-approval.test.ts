@@ -25,12 +25,27 @@ vi.mocked(readFile).mockImplementation(async path =>
 )
 
 describe('native Core plugin approval', () => {
-  test('escapes source direction controls without changing the installation request', () => {
-    const request = { action: 'install' as const, spec: 'plugin\u202etgz' }
-    const options = coreDshPluginInstallDialog(request, copy('en'))
-    expect(options.detail).toContain('plugin\\u202etgz')
-    expect(options.detail).not.toContain('\u202e')
-    expect(request.spec).toBe('plugin\u202etgz')
+  test.each(['\u061c', '\u200e', '\u200f', '\u202e', '\u2067'])(
+    'escapes source direction controls without changing the installation request (%s)',
+    mark => {
+      const request = { action: 'install' as const, spec: `plugin${mark}tgz` }
+      const options = coreDshPluginInstallDialog(request, copy('en'))
+      expect(options.detail).toContain(
+        `plugin\\u${mark.charCodeAt(0).toString(16).padStart(4, '0')}tgz`
+      )
+      expect(options.detail).not.toContain(mark)
+      expect(request.spec).toBe(`plugin${mark}tgz`)
+    }
+  )
+  test.each(['en', 'zh-CN'])('names the update consent scope in %s', language => {
+    const translations = copy(language)
+    const options = coreDshPluginInstallDialog(
+      { action: 'update', spec: 'package@next' },
+      translations
+    )
+    expect(options.title).toBe(translations.core_dsh_plugins_native_update_title)
+    expect(options.detail).toContain(translations.core_dsh_plugins_update_confirm_description)
+    expect(options.detail).not.toContain(translations.core_dsh_plugins_install_confirm_description)
   })
   test.each(['en', 'zh-CN'])(
     'uses a safe default and displays the literal source in %s',

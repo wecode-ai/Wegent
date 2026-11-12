@@ -25,7 +25,13 @@ export class SecureValueStore {
     validateKey(key)
     return this.serial(async () => {
       const values = await this.read()
-      return Object.hasOwn(values, key) ? this.protection.decrypt(values[key]) : null
+      if (!Object.hasOwn(values, key)) return null
+      const decrypted = await this.protection.decrypt(values[key])
+      if (decrypted.shouldReEncrypt) {
+        values[key] = await this.protection.encrypt(decrypted.result)
+        await this.write(values)
+      }
+      return decrypted.result
     })
   }
 

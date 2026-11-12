@@ -9,6 +9,7 @@ import { createLinkedDocumentFixture } from '../modules/office-preview-fixtures.
 import { fetchLocalRuntime, invokeLocalHost } from '../modules/runtime-request.mjs'
 import { createLocalProject } from '../modules/streaming-text-fixture.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
+import { sendPrompt } from '../modules/conversation-navigation.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import {
   assistantMessage,
@@ -118,8 +119,7 @@ export function createDesktopScenario({
       await createLinkedDocumentFixture(join(workspacePath, 'security-links.docx'), links)
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await selectE2EModel(control)
-      await control.command('fill', COMPOSER, { value: 'SECURITY_PREVIEW_TASK' })
-      await control.command('press', COMPOSER, { key: 'Enter' })
+      await sendPrompt(control, COMPOSER, 'SECURITY_PREVIEW_TASK')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: 'SECURITY_PREVIEW_READY',
         timeoutMs: uiTimeoutMs,

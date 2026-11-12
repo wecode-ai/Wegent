@@ -1,6 +1,6 @@
 // Increment when the upgrade/rollback acceptance contract changes. Release proof
 // from an older suite cannot authorize a new edge under the current contract.
-export const UPGRADE_SUITE_VERSION = 21
+export const UPGRADE_SUITE_VERSION = 22
 export { RELEASE_PREPARATION_PHASE_TIMEOUT_MS as UPGRADE_PREPARATION_PHASE_TIMEOUT_MS } from '../../electron/src/runtime/release-preparation-progress.mjs'
 export const UPGRADE_CHECKPOINTS = ['app-rollback', 'app-rollback-recovery', 'app-upgrade-recovery']
 export const UPGRADE_PACKAGE_CHECKPOINTS = UPGRADE_CHECKPOINTS
@@ -24,13 +24,17 @@ export function credentialRoundTripPassed(evidence) {
   const protection = evidence.rollbackProtection
   if (reupgrade ? evidence.reupgrade !== 'passed' : evidence.reupgrade !== 'not-run') return false
   if (
-    !reupgrade &&
-    (!protection ||
-      protection.version !== evidence.toVersion ||
-      protection.packageSha256 !== evidence.target ||
-      !['blocked', 'confirmation-required'].includes(protection.kind) ||
-      protection.historyPreserved !== true ||
-      protection.downloadPrevented !== true)
+    !protection ||
+    protection.version !== evidence.toVersion ||
+    protection.packageSha256 !== evidence.target ||
+    !['blocked', 'confirmation-required'].includes(protection.kind) ||
+    protection.historyPreserved !== true ||
+    protection.downloadPrevented !== true
+  )
+    return false
+  if (
+    reupgrade &&
+    (protection.kind !== 'confirmation-required' || protection.retryConfirmed !== true)
   )
     return false
   const formats = { shared: 2, 'isolated-copy-once': 3 }
