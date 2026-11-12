@@ -4,7 +4,10 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test, vi } from 'vitest'
-import { createDesktopScenario } from '../e2e/desktop/scenarios/workbench-apps.scenario.mjs'
+import {
+  createDesktopScenario,
+  verifyWorkbenchRemoval,
+} from '../e2e/desktop/scenarios/workbench-apps.scenario.mjs'
 
 vi.mock('node:fs/promises', async importOriginal => ({
   ...(await importOriginal()),
@@ -206,4 +209,103 @@ test('preserves the lightweight registry assertion before querying native state'
   assert.equal(error.expected, 'lightweight')
   assert.equal(app.events.includes('snapshot'), false)
   assert.equal(app.events.includes('card:ready'), false)
+})
+
+function removalFixture({ retainedFile = null } = {}) {
+  const dataPath = '/isolated-e2e/user-data/harness-apps/instances/todo-protocol/wework-app.json'
+  const shortcutPath = '/isolated-e2e/desktop/todo-protocol.desktop'
+  const readRegistry = vi.fn(async () => [])
+  const state = vi.fn(async () => ({ running: false }))
+  let confirmationOpen = true
+  let finished = false
+  vi.mocked(readFile).mockImplementation(async path => {
+    assert.ok([dataPath, shortcutPath].includes(path), String(path))
+    if (path === retainedFile) return JSON.stringify({ state: ['retained TODO'] })
+    throw Object.assign(new Error('The owned file was deleted'), { code: 'ENOENT' })
+  })
+  const control = {
+    async command(action, selector) {
+      assert.equal(action, 'getElementCount')
+      assert.equal(selector, '[data-testid="smart-app-remove-local-confirm"]')
+      return String(Number(confirmationOpen))
+    },
+  }
+  const result = verifyWorkbenchRemoval({
+    control,
+    readRegistry,
+    state,
+    installationId: installation.id,
+    dataPath,
+    shortcutPath,
+  })
+    .then(
+      () => null,
+      error => error
+    )
+    .finally(() => {
+      finished = true
+    })
+  return {
+    dataPath,
+    shortcutPath,
+    readRegistry,
+    state,
+    result,
+    get finished() {
+      return finished
+    },
+    complete() {
+      confirmationOpen = false
+    },
+  }
+}
+
+test('waits for removal completion before checking results even when registry and runtime are already absent', async () => {
+  const app = removalFixture()
+  await vi.advanceTimersByTimeAsync(500)
+  assert.equal(app.finished, false)
+  assert.equal(app.readRegistry.mock.calls.length, 0)
+  assert.equal(app.state.mock.calls.length, 0)
+  assert.equal(vi.mocked(readFile).mock.calls.length, 0)
+  app.complete()
+  await vi.advanceTimersByTimeAsync(100)
+  assert.equal(await app.result, null)
+  assert.equal(app.readRegistry.mock.calls.length, 1)
+  assert.equal(app.state.mock.calls.length, 1)
+  assert.deepEqual(vi.mocked(readFile).mock.calls, [[app.dataPath], [app.shortcutPath]])
+  assert.equal(vi.getTimerCount(), 0)
+})
+
+test('retains the strict data deletion assertion after Host completion without retrying file reads', async () => {
+  const dataPath = '/isolated-e2e/user-data/harness-apps/instances/todo-protocol/wework-app.json'
+  const app = removalFixture({ retainedFile: dataPath })
+  app.complete()
+  await vi.advanceTimersByTimeAsync(100)
+  const error = await app.result
+  assert.ok(error instanceof assert.AssertionError)
+  assert.match(error.message, /Missing expected rejection/)
+  assert.deepEqual(vi.mocked(readFile).mock.calls, [[app.dataPath]])
+  assert.equal(vi.getTimerCount(), 0)
+})
+
+test('retains the strict desktop shortcut deletion assertion after Host completion', async () => {
+  const shortcutPath = '/isolated-e2e/desktop/todo-protocol.desktop'
+  const app = removalFixture({ retainedFile: shortcutPath })
+  app.complete()
+  await vi.advanceTimersByTimeAsync(100)
+  const error = await app.result
+  assert.ok(error instanceof assert.AssertionError)
+  assert.match(error.message, /Missing expected rejection/)
+  assert.deepEqual(vi.mocked(readFile).mock.calls, [[app.dataPath], [app.shortcutPath]])
+  assert.equal(vi.getTimerCount(), 0)
+})
+
+test('fails a pending removal at the shared UI budget without treating partial cleanup as completion', async () => {
+  const app = removalFixture()
+  await vi.advanceTimersByTimeAsync(10_000)
+  assert.match((await app.result).message, /Removal confirmation stayed open/)
+  assert.equal(app.readRegistry.mock.calls.length, 0)
+  assert.equal(app.state.mock.calls.length, 0)
+  assert.equal(vi.mocked(readFile).mock.calls.length, 0)
+  assert.equal(vi.getTimerCount(), 0)
 })

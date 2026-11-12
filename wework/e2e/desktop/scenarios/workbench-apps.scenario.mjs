@@ -4,6 +4,7 @@ import { readFile, readdir, writeFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { waitForElementCount } from '../modules/harness-app-fixture.mjs'
 import { verifyWorkbenchAppColdLaunch } from '../modules/workbench-app-cold-launch.mjs'
 import { createWorkbenchAppTaskFixture } from '../modules/workbench-app-task-fixture.mjs'
 
@@ -30,6 +31,31 @@ async function until(read, predicate, description, timeoutMs = STEP_TIMEOUT_MS) 
     await new Promise(resolve => setTimeout(resolve, 100))
   } while (Date.now() < deadline)
   assert.fail(`${description}: ${JSON.stringify(observed)}`)
+}
+
+export async function verifyWorkbenchRemoval({
+  control,
+  readRegistry,
+  state,
+  installationId,
+  dataPath,
+  shortcutPath,
+}) {
+  await waitForElementCount(
+    control,
+    '[data-testid="smart-app-remove-local-confirm"]',
+    0,
+    STEP_TIMEOUT_MS,
+    'Removal confirmation stayed open before Host cleanup completed'
+  )
+  await until(
+    readRegistry,
+    values => !values.some(app => app.id === installationId),
+    'Removal retained the installation'
+  )
+  await until(state, value => !value.running, 'Removal retained the runtime')
+  await assert.rejects(readFile(dataPath), { code: 'ENOENT' })
+  await assert.rejects(readFile(shortcutPath), { code: 'ENOENT' })
 }
 
 export async function createDesktopScenario({
@@ -412,14 +438,14 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="smart-app-remove-local-confirm"]')
       assert.equal((await state()).running, true, 'Remove stopped the app before confirmation')
       await control.command('click', '[data-testid="smart-app-remove-local-confirm"]')
-      await until(
+      await verifyWorkbenchRemoval({
+        control,
         readRegistry,
-        values => !values.some(app => app.id === installationId),
-        'Removal retained the installation'
-      )
-      await until(state, value => !value.running, 'Removal retained the runtime')
-      await assert.rejects(readFile(dataPath), { code: 'ENOENT' })
-      await assert.rejects(readFile(join(desktopDirectory, filename)), { code: 'ENOENT' })
+        state,
+        installationId,
+        dataPath,
+        shortcutPath,
+      })
 
       // Extended workbenches share the same DSH lifecycle and movable surface.
       const extendedPath = join(workspacePath, 'extended workbench')

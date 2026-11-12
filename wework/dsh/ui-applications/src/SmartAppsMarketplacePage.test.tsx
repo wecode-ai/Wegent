@@ -103,7 +103,7 @@ vi.mock('@/api/local/harnessApps', () => ({
     download: (value: unknown) => downloadPackage(value),
     preview: (path: string) => previewPackage(path),
     install: (...args: unknown[]) => installPackage(...args),
-    delete: (id: string) => deleteInstalled(id),
+    delete: (...args: unknown[]) => deleteInstalled(...args),
     stop: (id: string) => stopInstalled(id),
     open: (id: string, presentation?: string) => openInstalled(id, presentation),
     update: (id: string, updates: unknown) => updateInstalled(id, updates),
@@ -823,7 +823,7 @@ describe('SmartAppsMarketplacePage', () => {
       expect(model).toBeEnabled()
       expect(model).toHaveValue(installation.modelKey)
       fireEvent.click(submit)
-      await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(installation.id))
+      await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(installation.id, true))
     }
   )
 
@@ -946,6 +946,73 @@ describe('SmartAppsMarketplacePage', () => {
     }
   )
 
+  test.each(['managed', 'linked', 'market'] as const)(
+    'confirmed %s removal deletes owned data while cancellation preserves the installation',
+    async source => {
+      const installation = { ...importedInstallation, id: `removal-confirm-${source}`, source }
+      listInstalled.mockResolvedValue([installation])
+      window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+      render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+      const openRemoval = async () => {
+        fireEvent.click(await screen.findByTestId(`smart-app-actions-${installation.id}`))
+        fireEvent.pointerDown(screen.getByTestId(`smart-app-remove-local-${installation.id}`))
+        return screen.getByRole('dialog', { name: '从本机移除工作台？' })
+      }
+
+      const confirmation = await openRemoval()
+      expect(confirmation).toHaveTextContent('删除本机应用数据')
+      if (source === 'linked') expect(confirmation).toHaveTextContent('不会删除工作台文件夹')
+      fireEvent.click(within(confirmation).getByRole('button', { name: '取消' }))
+      expect(deleteInstalled).not.toHaveBeenCalled()
+      expect(stopInstalled).not.toHaveBeenCalled()
+
+      await openRemoval()
+      fireEvent.click(screen.getByTestId('smart-app-remove-local-confirm'))
+      await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(installation.id, true))
+      expect(deleteInstalled).toHaveBeenCalledOnce()
+    }
+  )
+
+  test.each(['resolve', 'reject'] as const)(
+    'keeps removal pending until owned data cleanup %ss',
+    async outcome => {
+      const installation = { ...importedInstallation, id: `removal-pending-${outcome}` }
+      const removal = deferred<void>()
+      onTestFinished(async () => {
+        await act(async () => removal.resolve())
+      })
+      deleteInstalled.mockReturnValueOnce(removal.promise)
+      listInstalled.mockResolvedValue([installation])
+      window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+      render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+      fireEvent.click(await screen.findByTestId(`smart-app-actions-${installation.id}`))
+      fireEvent.pointerDown(screen.getByTestId(`smart-app-remove-local-${installation.id}`))
+      fireEvent.click(screen.getByTestId('smart-app-remove-local-confirm'))
+      await waitFor(() => expect(deleteInstalled).toHaveBeenCalledOnce())
+
+      const submit = screen.getByTestId('smart-app-remove-local-confirm')
+      expect(submit).toBeDisabled()
+      expect(screen.getByTestId('smart-app-remove-local-confirm-cancel-button')).toBeDisabled()
+      fireEvent.click(submit)
+      expect(deleteInstalled).toHaveBeenCalledOnce()
+
+      if (outcome === 'resolve') {
+        await act(async () => removal.resolve())
+        await waitFor(() =>
+          expect(screen.queryByTestId('smart-app-remove-local-confirm')).not.toBeInTheDocument()
+        )
+      } else {
+        await act(async () => removal.reject(new Error('Owned data cleanup failed')))
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('卸载工作台失败。'))
+        expect(submit).toBeEnabled()
+        expect(screen.getByTestId(`smart-app-actions-${installation.id}`)).toBeInTheDocument()
+        fireEvent.click(submit)
+        await waitFor(() => expect(deleteInstalled).toHaveBeenCalledTimes(2))
+        expect(deleteInstalled).toHaveBeenLastCalledWith(installation.id, true)
+      }
+    }
+  )
+
   test('fully removes an imported app card while preserving its published cloud version', async () => {
     const publishedImport = {
       ...importedInstallation,
@@ -979,7 +1046,7 @@ describe('SmartAppsMarketplacePage', () => {
     )
     fireEvent.click(screen.getByTestId('smart-app-remove-local-confirm'))
 
-    await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(publishedImport.id))
+    await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(publishedImport.id, true))
     expect(screen.queryByText('研究工作台')).not.toBeInTheDocument()
     rerender(<SmartAppsMarketplacePage api={refreshedApi} mode="owned" />)
     await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(2))

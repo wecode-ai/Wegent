@@ -1188,8 +1188,8 @@ export function SmartAppsMarketplacePage({
       setBusy(installationId)
       invalidateRefresh()
       notifyHarnessAppInstallationsChanged({ type: 'removed', installationId })
+      await harnessAppsApi.delete(installationId, true)
       setPendingDelete(null)
-      await harnessAppsApi.delete(installationId)
       await refresh()
     } catch (deleteError) {
       notifyHarnessAppInstallationsChanged({
@@ -1998,11 +1998,11 @@ export function SmartAppsMarketplacePage({
           pendingDelete?.source === 'linked'
             ? t(
                 'workbench.smart_apps_unlink_local_description',
-                '将停止运行并从列表中移除，但不会删除工作台文件夹。'
+                '将停止运行、从列表中移除并删除本机应用数据，但不会删除工作台文件夹。'
               )
             : t(
                 'workbench.smart_apps_remove_local_description',
-                '将停止运行并删除本机文件。已发布版本和分享范围不会受到影响。'
+                '将停止运行并删除本机应用数据和安装文件。已发布版本和分享范围不会受到影响。'
               )
         }
         cancelLabel={t('common.cancel', '取消')}
