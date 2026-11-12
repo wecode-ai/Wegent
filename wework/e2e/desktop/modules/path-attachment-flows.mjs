@@ -466,7 +466,10 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
         !snapshot.testIds.includes('uploading-attachment-badge') &&
         !snapshot.testIds.includes('attachment-error-badge'),
       'A generated local attachment above 100 MiB did not recover after its finish response was dropped',
-      120_000,
+      // Staging this file requires over 260 sequential renderer-to-host
+      // chunks. Under four parallel checkpoints the renderer can be CPU-starved,
+      // so allow more than the observed ~90s worst-case staging time.
+      180_000,
       ACTIVE_WORKBENCH_SELECTOR
     )
     const droppedFinish = await transportGates.wait(finishGateId)
