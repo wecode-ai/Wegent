@@ -188,6 +188,7 @@ export function createDesktopScenario({
       // emits no new startup failure notification for this connection.
       const beforeExit = await starts(NAMES[1])
       const disconnectedPid = retainedProcesses.get(NAMES[1]).pid
+      retainedProcesses.delete(NAMES[1])
       process.kill(disconnectedPid, 'SIGTERM')
       await waitForValue(
         () => collectProcessInstanceIdentity(disconnectedPid),
@@ -199,11 +200,16 @@ export function createDesktopScenario({
       assert.equal(await processId(), pid)
       await assertRetained([NAMES[0], NAMES[2]])
       const restarted = await starts(NAMES[1])
-      const replacement = restarted.find(value => !beforeExit.includes(value))
-      assert.ok(replacement, 'The disconnected MCP did not start a replacement process')
-      await retain(NAMES[1], replacement)
+      assert.ok(
+        restarted.some(value => !beforeExit.includes(value)),
+        'The disconnected MCP did not start a replacement process'
+      )
+      // The model-visible catalog proves the replacement connection is ready.
+      // Startup records also contain short-lived prediction clients, whose PID
+      // cannot identify the recovered parent connection. Keep identity checks
+      // scoped to the unaffected clients and bound recovery by native reloads.
       await run(control, 'transport-stable')
-      await assertRetained(NAMES.slice(0, 3))
+      await assertRetained([NAMES[0], NAMES[2]])
       assert.equal(
         (await readFile(log, 'utf8'))
           .split('\n')
