@@ -70,6 +70,10 @@ fork 引用的位置。缺少 provider 的老格式保留原字节，使用原�
 统一身份不等于统一凭证。API-key 路由与原生账号路由分别覆盖完整的线程 provider 定义，
 进程级账号 RPC 保留 Codex 原生鉴权；合并模型目录由本机 router 提供，仅使用非秘密目录凭据，
 不携带账号令牌或任务 API Key。线程不得继承目录凭据或另一个线程的 bearer 命令。
+支持共享路由的 Runtime 在任务及身份会话地址的公开 `runtimeHandle` 中报告
+`modelProviderRouting: "thread"`。该能力由当前执行设备生成，不信任持久化或调用方提供的值。
+输入框据此允许在原线程切换 API 模型和原生账号模型，不再按逻辑 provider 名称强制新建会话；
+未报告该能力的旧设备继续沿用原有的 provider 边界确认。权限和凭据校验仍由执行设备负责。
 编辑持久化会话的最后一条消息时，`thread/revert` 后仍需走正常推理恢复流程，
 在 `turn/start` 前重新配置该请求的 provider、认证和 MCP。冷恢复历史的控制上下文不能直接用于替换回答；
 原生 OpenAI 线程保留自身的 WebSocket 与账号认证，公开 API 线程使用其 HTTP provider。

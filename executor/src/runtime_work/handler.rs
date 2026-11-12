@@ -140,6 +140,7 @@ mod connections;
 mod context_compaction;
 mod control;
 mod control_metadata;
+mod conversation_provider;
 mod conversation_sessions;
 mod creation;
 mod execution_control;
@@ -258,12 +259,12 @@ use super::{
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
-        infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
-        item_type, normalize_device_id, normalize_runtime_goal_timestamps,
-        normalize_workspace_path, now_ms, prompt_text, raw_string_field, replace_runtime_task_id,
-        restore_cloud_project_id, restore_origin, runtime_task_id, runtime_task_title,
-        set_runtime_task_title, string_field, timestamp_ms_field, workspace_group_path,
-        workspace_path,
+        infer_workspace_kind, integer_field, is_codex_context_compaction_item_type,
+        is_codex_runtime, item_id, item_type, model_provider_routing, normalize_device_id,
+        normalize_runtime_goal_timestamps, normalize_workspace_path, now_ms, prompt_text,
+        raw_string_field, replace_runtime_task_id, restore_cloud_project_id, restore_origin,
+        runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
+        timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };

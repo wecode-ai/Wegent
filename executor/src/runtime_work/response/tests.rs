@@ -7,6 +7,26 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn task_projection_reports_thread_routing_from_runtime_capability_not_saved_input() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "routing-capability".into(),
+        "/tmp/routing-capability".into(),
+        "Routing capability".into(),
+    );
+    link.runtime_handle["modelProviderRouting"] = json!("stale");
+    let projected = local_task_json(link.clone());
+    assert_eq!(projected["runtimeHandle"]["modelProviderRouting"], "thread");
+    assert_eq!(link.runtime_handle["modelProviderRouting"], "stale");
+
+    link.runtime = "claude_code".into();
+    link.runtime_handle["modelProviderRouting"] = json!("thread");
+    let projected = local_task_json(link);
+    assert!(projected["runtimeHandle"]
+        .get("modelProviderRouting")
+        .is_none());
+}
+
+#[test]
 fn list_summary_projects_only_the_current_turn_source_without_private_content() {
     let mut handle = json!({"lastTurnId":"turn-2","userMessagePresentations":[
         {"turnId":"turn-1","source":{"source":"stand_in_activity"},"content":"old finding"},

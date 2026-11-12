@@ -59,6 +59,11 @@ A shared identity never implies shared credentials. API-key and native-account t
 the complete provider definition independently. Unscoped account RPCs keep native Codex authentication.
 The local router serves the merged catalog using a non-secret catalog credential, never an account
 token or task API key. Threads must not inherit that credential or another route's bearer command.
+Runtimes with shared routing report `modelProviderRouting: "thread"` in public task and identity
+conversation address handles. The owning runtime generates this capability rather than trusting
+persisted or caller-supplied values. Composers can switch API and native-account models in the same
+thread instead of splitting by logical provider name. Older runtimes without this capability retain
+their existing provider-boundary confirmation. The executor still enforces permissions and credentials.
 Local catalog discovery has process-owned settings. Native threads retain an explicit Home
 `features.api_key_model_discovery` value; local discovery must not enable external API-key discovery.
 Before starting the shared process, acquire Home ownership and complete offline migration. Atomically

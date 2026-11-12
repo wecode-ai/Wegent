@@ -1,5 +1,15 @@
 import * as desktopHost from '@/api/dsh/desktopHost'
+import { createCloudModelCatalog } from '@/api/hybrid/cloudModelCatalog'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useStandInConversationModel } from '@/features/todo/useStandInConversationModel'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import {
+  cloudRunnerModelIdentity,
+  type RunnerModel,
+  type WorkspaceStandInSettings,
+} from '@wegent/collaboration'
+import type { ConversationModelControls } from '@/components/layout/workspace-panels/conversationModelControls'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import * as runtimeEnvironment from '@/lib/runtime-environment'
@@ -11,7 +21,7 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useComposerAttachments } from '@wegent/collaboration/composer'
-import { createRef, useState } from 'react'
+import { createRef, useEffect, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -706,6 +716,7 @@ describe('ChatInput', () => {
           variant="desktop"
           projectChat={projectChatControls({
             models: [activeModel, targetModel],
+            supportsModelProviderSwitch: true,
             activeModel,
             selectedModel: activeModel,
             setSelectedModel,
@@ -729,6 +740,102 @@ describe('ChatInput', () => {
       expect(onChange).not.toHaveBeenCalled()
     }
   )
+
+  test.each([true, false])(
+    'confirms same-name provider replacement only in stand-in session mode (%s)',
+    async session => {
+      const model: UnifiedModel = {
+        name: 'same-model',
+        type: 'runtime',
+        provider: 'local',
+        isActive: true,
+        config: { weworkModelKind: 'codex-provider', codexProviderId: 'company' },
+      }
+      const setSelectedModel = vi.fn()
+      const continueInNewConversation = vi.fn()
+      render(
+        <ChatInput
+          value="Keep the draft"
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: model,
+            activeModel: model,
+            activeModelSelection: {
+              modelName: model.name,
+              modelType: 'runtime',
+              options: { codexProviderId: 'openai' },
+            },
+            modelSwitchMode: session ? 'session' : undefined,
+            setSelectedModel,
+            continueInNewConversation,
+          })}
+        />
+      )
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+      await userEvent.click(screen.getByTestId('model-option-same-model'))
+      if (session) {
+        expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+          'Your next message will start a new session here.'
+        )
+        expect(setSelectedModel).not.toHaveBeenCalled()
+        await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+      } else {
+        expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+      }
+      expect(setSelectedModel).toHaveBeenCalledWith(model)
+      expect(continueInNewConversation).not.toHaveBeenCalled()
+    }
+  )
+
+  test('binds recovery confirmation to the session dialog even when provider metadata arrives late', async () => {
+    const model: UnifiedModel = {
+      name: 'same-model',
+      type: 'runtime',
+      provider: 'local',
+      isActive: true,
+      config: { weworkModelKind: 'codex-official' },
+    }
+    const confirmOldSession = vi.fn()
+    const confirmNewSession = vi.fn()
+    const setSelectedModel = vi.fn()
+    const input = (requiresNewSession: boolean, onSessionStartConfirmed: () => void) => (
+      <ChatInput
+        value="Keep the draft"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          activeModel: model,
+          selectedModel: model,
+          activeModelProvider: 'openai',
+          modelSwitchMode: 'session',
+          requiresNewSession,
+          onSessionStartConfirmed,
+          setSelectedModel,
+        })}
+      />
+    )
+    const view = render(input(true, confirmOldSession))
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-option-same-model'))
+    await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
+    expect(confirmOldSession).not.toHaveBeenCalled()
+    expect(setSelectedModel).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-option-same-model'))
+    view.rerender(input(false, confirmNewSession))
+    await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+    expect(confirmOldSession).toHaveBeenCalledOnce()
+    expect(confirmOldSession).toHaveBeenCalledWith(model)
+    expect(confirmNewSession).not.toHaveBeenCalled()
+    expect(setSelectedModel).toHaveBeenCalledWith(model)
+  })
 
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
@@ -2299,6 +2406,267 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('send-message-button'))
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })
+
+  test('keeps model selection usable while only submission is disabled', async () => {
+    const onSubmit = vi.fn()
+    render(
+      <ChatInput
+        value="Keep this draft"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        submitDisabled
+        variant="desktop"
+        projectChat={projectChatControls()}
+      />
+    )
+    expect(screen.getByTestId('chat-message-input')).toHaveAttribute('contenteditable', 'true')
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+    fireEvent.keyDown(screen.getByTestId('chat-message-input'), { key: 'Enter' })
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByTestId('model-selector-button')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    expect(screen.getByTestId('model-selector-menu')).toBeVisible()
+    expect(screen.getByTestId('chat-message-input')).toHaveTextContent('Keep this draft')
+  })
+
+  test.each(['background', 'menu'] as const)(
+    'restores the saved cloud model and sending after %s catalog recovery',
+    async recovery => {
+      const cloud: UnifiedModel = {
+        name: 'cloud-restored-sol',
+        modelId: 'gpt-6.1-sol',
+        type: 'public',
+        provider: 'openai',
+        namespace: 'default',
+        resourceUserId: 7,
+        config: { protocol: 'openai-responses', ui: { reasoningEfforts: ['low', 'high'] } },
+      }
+      const profile: WorkspaceStandInSettings = {
+        enabled: true,
+        prompt: '',
+        version: 1,
+        executionDeviceId: 'device',
+        model: cloudRunnerModelIdentity(cloud, 'codex'),
+        modelOptions: { reasoning: 'high' },
+      }
+      const before = structuredClone(profile)
+      let finish!: (models: UnifiedModel[]) => void
+      const pending = new Promise<UnifiedModel[]>(resolve => (finish = resolve))
+      const load = vi.fn(() => pending)
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      if (recovery === 'menu') load.mockRejectedValueOnce(new Error('Cloud unavailable'))
+      const cache = createCloudModelCatalog(load)
+      const refresh = vi.fn(cache.refresh)
+      const services = {
+        standInApi: {
+          catalog: vi.fn(async () => ({
+            models: [
+              {
+                runtime: 'codex',
+                provider: 'openai',
+                model_id: cloud.modelId,
+                local_model_id: cloud.modelId,
+                label: 'Native Sol',
+                is_default: true,
+              },
+            ],
+          })),
+        },
+        modelApi: {
+          subscribe: cache.subscribe,
+          refresh,
+          listModels: async () => {
+            cache.loadIfNeeded()
+            return { data: cache.getModels() }
+          },
+        },
+      } as unknown as WorkbenchServices
+      const onSubmit = vi.fn()
+      let controls: ConversationModelControls | undefined
+      function RecoveryComposer() {
+        const model = useStandInConversationModel(services, profile)
+        useEffect(() => {
+          controls = model
+        }, [model])
+        const [value, setValue] = useState('Keep the cloud draft')
+        return (
+          <ChatInput
+            value={value}
+            onChange={setValue}
+            onSubmit={() =>
+              onSubmit(
+                selectedModelExecutionFields(model.selectedModel, model.selectedModelOptions)
+              )
+            }
+            disabled={false}
+            submitDisabled={model.loading || model.unavailable}
+            variant="desktop"
+            projectChat={projectChatControls({
+              ...model,
+              activeModel: model.unavailable ? null : model.selectedModel,
+              isModelSelectionReady: !model.loading && !model.unavailable,
+            })}
+          />
+        )
+      }
+      const view = render(<RecoveryComposer />)
+      try {
+        await waitFor(() => expect(controls?.loading).toBe(false))
+        expect(controls?.unavailable).toBe(true)
+        expect(screen.getByTestId('send-message-button')).toBeDisabled()
+        fireEvent.keyDown(screen.getByTestId('chat-message-input'), { key: 'Enter' })
+        expect(onSubmit).not.toHaveBeenCalled()
+        expect(screen.getByTestId('model-selector-button')).toBeEnabled()
+        if (recovery === 'background') {
+          await userEvent.click(screen.getByTestId('model-selector-button'))
+          await userEvent.click(await screen.findByTestId('model-control-reasoning-low'))
+          expect(controls?.selectedModelOptions.reasoning).toBe('low')
+          expect(screen.getByTestId('send-message-button')).toBeDisabled()
+          await userEvent.keyboard('{Escape}')
+        }
+        if (recovery === 'menu') {
+          await waitFor(() => expect(warn).toHaveBeenCalledOnce())
+          await userEvent.click(screen.getByTestId('model-selector-button'))
+          expect(refresh).toHaveBeenCalledOnce()
+          await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+        }
+        await act(async () => finish([cloud]))
+        await waitFor(() => expect(screen.getByTestId('send-message-button')).toBeEnabled())
+        expect(controls?.selectedModel).toBe(cloud)
+        expect(controls?.selectedModelOptions.reasoning).toBe(
+          recovery === 'background' ? 'low' : 'high'
+        )
+        expect(screen.getByTestId('chat-message-input')).toHaveTextContent('Keep the cloud draft')
+        if (recovery === 'menu') {
+          await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+          await userEvent.click(screen.getByTestId(`model-option-${cloud.name}`))
+          await userEvent.keyboard('{Escape}')
+          const updated = { ...cloud, contextWindow: 1_048_576, maxOutputTokens: 96_000 }
+          load.mockResolvedValue([updated])
+          await userEvent.click(screen.getByTestId('model-selector-button'))
+          await waitFor(() => expect(controls?.models).toContain(updated))
+          expect(controls?.selectedModel).toBe(updated)
+          await userEvent.keyboard('{Escape}')
+          expect(refresh).toHaveBeenCalledTimes(2)
+        }
+        await userEvent.click(screen.getByTestId('send-message-button'))
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            modelId: cloud.name,
+            modelType: 'public',
+            modelOptions: expect.objectContaining({
+              reasoning: recovery === 'background' ? 'low' : 'high',
+              weworkCloudModelNamespace: 'default',
+              weworkCloudModelResourceUserId: '7',
+            }),
+          })
+        )
+        if (recovery === 'menu') {
+          expect(onSubmit).toHaveBeenCalledWith(
+            expect.objectContaining({
+              modelOptions: expect.objectContaining({
+                weworkCloudModelContextWindow: '1048576',
+                weworkCloudModelMaxOutputTokens: '96000',
+              }),
+            })
+          )
+        }
+        expect(profile).toEqual(before)
+        expect(load).toHaveBeenCalledTimes(recovery === 'menu' ? 3 : 1)
+      } finally {
+        finish([])
+        view.unmount()
+        warn.mockRestore()
+      }
+    }
+  )
+
+  test.each(['saved Claude runtime', 'missing default', 'ambiguous default'])(
+    'recovers a %s through the model menu without leaving stand-in chat',
+    async reason => {
+      const native: RunnerModel = {
+        runtime: 'codex',
+        provider: 'openai',
+        model_id: 'gpt-6.1-sol',
+        local_model_id: 'gpt-6.1-sol',
+        label: 'Recovery Codex',
+        account_label: 'ChatGPT',
+        is_default: true,
+      }
+      const profile: WorkspaceStandInSettings = {
+        enabled: true,
+        prompt: '',
+        version: 1,
+        executionDeviceId: 'device',
+        model: reason === 'saved Claude runtime' ? { ...native, runtime: 'claude_code' } : null,
+      }
+      const before = structuredClone(profile)
+      const services = {
+        standInApi: {
+          catalog: vi.fn(async () => ({
+            models:
+              reason === 'missing default'
+                ? [{ ...native, is_default: false }]
+                : reason === 'ambiguous default'
+                  ? [
+                      native,
+                      { ...native, model_id: 'other-default', local_model_id: 'other-default' },
+                    ]
+                  : [native],
+          })),
+        },
+        modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+      } as unknown as WorkbenchServices
+      const onSubmit = vi.fn()
+      const continueInNewConversation = vi.fn()
+      function RecoveryComposer() {
+        const controls = useStandInConversationModel(services, profile)
+        const [value, setValue] = useState('Keep this draft')
+        return (
+          <ChatInput
+            value={value}
+            onChange={setValue}
+            onSubmit={() =>
+              onSubmit(
+                selectedModelExecutionFields(controls.selectedModel, controls.selectedModelOptions)
+              )
+            }
+            disabled={false}
+            submitDisabled={controls.loading || controls.unavailable}
+            variant="desktop"
+            projectChat={projectChatControls({
+              ...controls,
+              activeModel: controls.unavailable ? null : controls.selectedModel,
+              isModelSelectionReady: !controls.loading && !controls.unavailable,
+              continueInNewConversation,
+            })}
+          />
+        )
+      }
+      render(<RecoveryComposer />)
+      expect(screen.getByTestId('send-message-button')).toBeDisabled()
+      fireEvent.keyDown(screen.getByTestId('chat-message-input'), { key: 'Enter' })
+      expect(onSubmit).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+      const option = await screen.findByTestId(`model-option-${native.model_id}`)
+      expect(option).toHaveAttribute('aria-checked', 'false')
+      await userEvent.click(option)
+      expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+      expect(screen.getByTestId('chat-message-input')).toHaveTextContent('Keep this draft')
+      expect(screen.getByTestId('send-message-button')).toBeEnabled()
+      await userEvent.click(screen.getByTestId('send-message-button'))
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelId: native.model_id,
+          modelOptions: expect.objectContaining({ codexProviderId: native.provider }),
+        })
+      )
+      expect(continueInNewConversation).not.toHaveBeenCalled()
+      expect(profile).toEqual(before)
+    }
+  )
 
   test('keeps model selector enabled and omits skill selector when options are locked', () => {
     render(

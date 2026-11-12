@@ -1662,6 +1662,10 @@ function OwnedWorkbenchProvider({
       state.user,
     ]
   )
+  const supportsModelProviderSwitch = Boolean(
+    state.currentRuntimeTask &&
+    resolveRuntimeTaskModelSelection(state.currentRuntimeTask).supportsModelProviderSwitch
+  )
   const projectChatValue = useMemo(
     () => ({
       scopeKey: projectChatScopeKey,
@@ -1673,6 +1677,7 @@ function OwnedWorkbenchProvider({
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
       activeModel,
+      supportsModelProviderSwitch,
       selectedModelOptions: modelSelection.selectedModelOptions,
       modelSelectionDiagnostics: modelSelection.modelSelectionDiagnostics,
       isModelCatalogReady: modelSelection.isCatalogReady,
@@ -1768,6 +1773,7 @@ function OwnedWorkbenchProvider({
       handleModelSelectorOpenChange,
       conversationModels,
       activeModel,
+      supportsModelProviderSwitch,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       modelSelection.modelSelectionDiagnostics,

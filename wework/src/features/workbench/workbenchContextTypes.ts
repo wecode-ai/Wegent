@@ -201,6 +201,7 @@ export interface RuntimeTaskModelSelectionControls {
   taskSelection: ModelSelectionConfig | null
   selectedModel: UnifiedModel | null
   activeModel: UnifiedModel | null
+  supportsModelProviderSwitch?: boolean
   selectedModelOptions: ModelOptions
 }
 
@@ -221,6 +222,7 @@ export interface WorkbenchContextValue {
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
     activeModel?: UnifiedModel | null
+    supportsModelProviderSwitch?: boolean
     selectedModelOptions: ModelOptions
     modelSelectionDiagnostics?: ModelSelectionDiagnostics
     isModelCatalogReady: boolean
