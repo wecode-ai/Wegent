@@ -1,3 +1,4 @@
+import { useWorkbenchServiceConnections } from './workbenchServiceConnections'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
@@ -125,7 +126,6 @@ import {
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useWorkbenchDeviceUpgrades } from './useWorkbenchDeviceUpgrades'
 import {
-  useContinueInNewConversation,
   useHandleBlockedModelSelect,
   useHandleBlockedModelSelection,
   useHandleModelSelectorOpenChange,
@@ -503,26 +503,7 @@ function OwnedWorkbenchProvider({
       window.removeEventListener(PLUGIN_TRIAL_QUEUED_EVENT, stableConsumeQueuedPluginTrial)
     }
   }, [consumePluginTrials, stableConsumeQueuedPluginTrial])
-  useEffect(() => {
-    const socketClient = resolvedServices.socketClient
-    if (!socketClient) return undefined
-
-    let isMounted = true
-    void socketClient.ensureConnected().catch(error => {
-      if (isMounted) {
-        console.error('[Workbench] Failed to connect chat socket', error)
-      }
-    })
-
-    return () => {
-      isMounted = false
-      socketClient.dispose()
-    }
-  }, [resolvedServices.socketClient])
-  useEffect(() => {
-    const projectChatClient = resolvedServices.projectChatClient
-    return () => projectChatClient?.dispose()
-  }, [resolvedServices.projectChatClient])
+  useWorkbenchServiceConnections(resolvedServices)
 
   const persistProjectWorkPreference = usePersistProjectWorkPreference({
     projectWorkPreferenceScope,
@@ -638,23 +619,6 @@ function OwnedWorkbenchProvider({
     modelSelectionConfig,
     state.currentRuntimeTask,
   ])
-  const selectModelAndOptions = modelSelection.setSelectedModelAndOptions
-  const selectModelForScope = modelSelection.setSelectionForScope
-  const continueInNewConversation = useContinueInNewConversation({
-    state,
-    selectModelAndOptions,
-    currentUser,
-    resolveRuntimeTaskSummary,
-    draftInputByScope,
-    projectChatScopeKey,
-    t,
-    selectModelForScope,
-    projectModelSelection,
-    setDraftInputForScope,
-    ownershipKey,
-    dispatch,
-    workspaceTabId,
-  })
   const {
     resolveRuntimeTaskModelSelection,
     setRuntimeTaskSelectedModel,
@@ -1698,6 +1662,10 @@ function OwnedWorkbenchProvider({
       state.user,
     ]
   )
+  const supportsModelProviderSwitch = Boolean(
+    state.currentRuntimeTask &&
+    resolveRuntimeTaskModelSelection(state.currentRuntimeTask).supportsModelProviderSwitch
+  )
   const projectChatValue = useMemo(
     () => ({
       scopeKey: projectChatScopeKey,
@@ -1709,6 +1677,7 @@ function OwnedWorkbenchProvider({
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
       activeModel,
+      supportsModelProviderSwitch,
       selectedModelOptions: modelSelection.selectedModelOptions,
       modelSelectionDiagnostics: modelSelection.modelSelectionDiagnostics,
       isModelCatalogReady: modelSelection.isCatalogReady,
@@ -1734,7 +1703,6 @@ function OwnedWorkbenchProvider({
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
       setSelectedModelAndOptions: modelSelection.setSelectedModelAndOptions,
-      continueInNewConversation,
       setSelectedModelOption: modelSelection.setSelectedModelOption,
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
@@ -1805,12 +1773,12 @@ function OwnedWorkbenchProvider({
       handleModelSelectorOpenChange,
       conversationModels,
       activeModel,
+      supportsModelProviderSwitch,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       modelSelection.modelSelectionDiagnostics,
       modelSelection.setSelectedModel,
       modelSelection.setSelectedModelAndOptions,
-      continueInNewConversation,
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,

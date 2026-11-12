@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from './shared.mjs'
@@ -24,6 +25,7 @@ export async function verifyPluginWriteCoordination({
   deviceProxy,
   packageProxy,
   localDeviceId,
+  executorHome,
   evidence,
   timeoutMs,
 }) {
@@ -64,6 +66,15 @@ export async function verifyPluginWriteCoordination({
     await openPlugin(control, item)
     await assertSurfaces(control, item, present)
   }
+
+  await verifyCanonicalNameReactivation({
+    cloud,
+    control,
+    executorHome,
+    refreshSurfaces,
+    evidence,
+    timeoutMs,
+  })
 
   const responsive = {
     ...(await publish('coordination-e2e-responsive')),
@@ -212,6 +223,138 @@ export async function verifyPluginWriteCoordination({
     evidence,
     timeoutMs,
   })
+}
+
+function installedPluginKindName(catalogNamespace, slug) {
+  const digest = createHash('sha256')
+    .update(`${catalogNamespace}:${slug}`)
+    .digest('hex')
+    .slice(0, 10)
+  return `${slug.slice(0, 89)}-${digest}`
+}
+
+async function seedStaleInstallation({ cloud, item, staleIdentity }) {
+  const [plugin] = await cloud.queryDatabase(
+    'SELECT catalog_namespace, name, slug FROM plugins WHERE id = %s',
+    [item.pluginId]
+  )
+  assert.ok(plugin, `Published plugin ${item.pluginId} is missing`)
+  const kindName = installedPluginKindName(plugin.catalog_namespace, plugin.slug)
+  await cloud.executeDatabase(
+    'DELETE FROM kinds WHERE user_id = %s AND kind = %s AND name = %s AND namespace = %s',
+    [1, 'InstalledPlugin', kindName, 'default']
+  )
+  const stalePluginId = item.pluginId + 1000
+  const spec = {
+    revision: 7,
+    source: {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: plugin.name,
+      marketplace: 'wegent',
+    },
+    origin: 'market',
+    releaseId: item.releaseId,
+    desiredVersion: '0.0.1',
+    version: '0.0.1',
+    installState: 'installed',
+    enabled: false,
+    componentStates: { review: false },
+  }
+  if (staleIdentity === 'legacy_plugin_id') {
+    spec.pluginId = stalePluginId
+    spec.source.catalogItemId = String(stalePluginId)
+  }
+  const document = {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: { name: kindName, namespace: 'default' },
+    spec,
+  }
+  await cloud.executeDatabase(
+    'INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, 0, NOW(), NOW())',
+    [1, 'InstalledPlugin', kindName, 'default', JSON.stringify(document)]
+  )
+  const [stale] = await cloud.queryDatabase(
+    'SELECT id, is_active, JSON_UNQUOTE(JSON_EXTRACT(json, "$.spec.pluginId")) AS pluginId FROM kinds WHERE user_id = %s AND kind = %s AND name = %s AND namespace = %s',
+    [1, 'InstalledPlugin', kindName, 'default']
+  )
+  assert.ok(stale, 'The stale installation fixture was not persisted')
+  assert.equal(stale.is_active, 0)
+  assert.equal(stale.pluginId, spec.pluginId == null ? null : String(spec.pluginId))
+  return { id: Number(stale.id), kindName }
+}
+
+async function verifyCanonicalNameReactivation({
+  cloud,
+  control,
+  executorHome,
+  refreshSurfaces,
+  evidence,
+  timeoutMs,
+}) {
+  for (const staleIdentity of ['legacy_plugin_id', 'missing_plugin_id']) {
+    const suffix = staleIdentity.replaceAll('_', '-')
+    const slug = `coordination-e2e-${suffix}`
+    const item = {
+      ...(await cloud.publishPluginRelease({
+        slug,
+        version: '1.0.0',
+        skills: { [slug]: slug },
+      })),
+      slug,
+    }
+    const stale = await seedStaleInstallation({ cloud, item, staleIdentity })
+    await openPlugin(control, item)
+    await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
+    await assertInstallButton(control, item)
+    await control.command('clickWhenEnabled', testId(`plugin-marketplace-install-${item.pluginId}`))
+    await control.command('waitFor', testId('install-plugin-dialog-confirm'))
+    await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+    const installed = await until(
+      () => accountPlugin(cloud, slug),
+      Boolean,
+      `${staleIdentity} did not install through the real marketplace UI`,
+      timeoutMs
+    )
+    item.installedId = Number(installed.metadata.labels.id)
+    assert.equal(item.installedId, stale.id, 'Install did not reuse the canonical Kind ID')
+    assert.equal(installed.spec.pluginId, item.pluginId)
+    assert.equal(installed.spec.releaseId, item.releaseId)
+    const runtime = await until(
+      () => materializedPlugin(executorHome, stale.id),
+      plugin => plugin?.version === '1.0.0',
+      `${staleIdentity} did not materialize the installed plugin version`,
+      timeoutMs
+    )
+    const devices = await cloud.queryDatabase(
+      'SELECT device_id, state, actual_release_id, desired_release_id FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND state = %s',
+      [1, stale.id, 'installed']
+    )
+    const device = devices.find(
+      row =>
+        Number(row.actual_release_id) === item.releaseId &&
+        Number(row.desired_release_id) === item.releaseId
+    )
+    assert.ok(device, `${staleIdentity} did not persist a synchronized device state`)
+    const marketplace = await pluginApi(
+      cloud,
+      `/plugins/marketplace/${item.pluginId}?device_id=${encodeURIComponent(device.device_id)}`
+    )
+    assert.equal(marketplace.installed, true)
+    assert.equal(marketplace.installedPluginId, stale.id)
+    await refreshSurfaces(item)
+    evidence.push({
+      case: 'marketplace-install-reuses-stale-kind',
+      staleIdentity,
+      pluginKey: slug,
+      kindId: stale.id,
+      kindName: stale.kindName,
+      deviceId: device.device_id,
+      actualReleaseId: device.actual_release_id,
+      runtimeVersion: runtime.version,
+    })
+  }
 }
 
 async function verifyLateInstallAcknowledgementRemoval({

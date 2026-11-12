@@ -2095,7 +2095,11 @@ done
 "#,
         log_path.display()
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     make_executable(&path);
     path
 }

@@ -2,11 +2,12 @@
   "name": "@wegent/wework-electron",
   "private": true,
   "packageManager": "pnpm@11.7.0",
-  "version": "0.6.8-beta.5",
+  "version": "0.6.8-beta.6",
   "description": "Wework desktop workbench",
   "author": "Wecode",
   "type": "module",
   "main": "dist/bootstrap.js",
+  "weworkAfterStopPreparation": 1,
   "scripts": {
     "stage:process-explorer": "node scripts/stage-process-explorer.mjs",
     "build": "pnpm run stage:process-explorer && tsc -p tsconfig.json && node scripts/copy-static.mjs",

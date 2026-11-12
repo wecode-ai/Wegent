@@ -32,6 +32,38 @@ impl Drop for ThreadActionActivity {
 }
 
 impl CodexAppServerClient {
+    /// Model-consuming actions need the complete inference profile after a cold resume.
+    pub(crate) async fn resume_thread_for_model_action(
+        &self,
+        request: &ExecutionRequest,
+        thread_id: &str,
+        thread_path: Option<&str>,
+    ) -> Result<(String, Option<Arc<LocalProxyRegistration>>), String> {
+        ensure_codex_mcp_endpoints().await?;
+        let launch = build_codex_launch_config(request)?;
+        let mut params = thread_resume_params(thread_id, request, &launch);
+        params["excludeTurns"] = json!(true);
+        if let Some(path) = thread_path {
+            params["path"] = json!(path);
+        }
+        // A cold resume can recover a Goal before the resume response arrives.
+        bind_local_proxy_thread(&launch, thread_id)?;
+        let response = self
+            .request_for_launch_config("thread/resume", params, &launch)
+            .await?;
+        let resumed =
+            thread_id_from_response("thread/resume", &response, launch.model_provider.as_deref())?;
+        bind_local_proxy_thread(&launch, &resumed)?;
+        log_executor_event(
+            "codex model action thread resumed",
+            &[
+                ("thread_id", resumed.clone()),
+                ("model", codex_request_model(request).unwrap_or_default()),
+            ],
+        );
+        Ok((resumed, launch.local_proxy_registration))
+    }
+
     /// Caller cancellation detaches the worker without dropping its resources.
     pub(crate) async fn run_owned_thread_action<T: Send + 'static>(
         &self,

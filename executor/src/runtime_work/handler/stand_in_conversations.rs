@@ -261,6 +261,9 @@ impl RuntimeWorkRpcHandler {
             address["runtime"] = json!(link.runtime);
             address["workspacePath"] = json!(link.workspace_path);
             address["runtimeHandle"] = json!({"threadId":link.thread_id,"modelSelection":link.runtime_handle.get("modelSelection").or_else(||link.runtime_handle.get("model_selection"))});
+            if let Some(routing) = model_provider_routing(&link.runtime) {
+                address["runtimeHandle"]["modelProviderRouting"] = json!(routing);
+            }
         }
         address
     }

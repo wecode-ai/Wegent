@@ -2428,13 +2428,13 @@ function RuntimeModelSelectionProbe() {
         type="button"
         onClick={() => {
           if (mimoModel) {
-            workbench.projectChat.continueInNewConversation?.(mimoModel, {
+            workbench.projectChat.setSelectedModelAndOptions?.(mimoModel, {
               reasoning: 'high',
             })
           }
         }}
       >
-        continue with mimo in new conversation
+        switch to mimo with options
       </button>
     </div>
   )
@@ -5754,6 +5754,35 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('offline'))
   })
 
+  test('keeps shared runtime connections alive when another workbench unmounts', async () => {
+    const socketClient = {
+      ensureConnected: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+    }
+    const projectChatClient = {
+      subscribe: vi.fn(),
+      send: vi.fn(),
+      dispose: vi.fn(),
+    }
+    const services = createWorkbenchServices({
+      socketClient,
+      projectChatClient,
+    } as Partial<WorkbenchServices>)
+    const first = renderWorkbench(<BootstrapProbe />, services)
+    const second = renderWorkbench(<BootstrapProbe />, services)
+    try {
+      await waitFor(() => expect(socketClient.ensureConnected).toHaveBeenCalled())
+      first.unmount()
+      expect(socketClient.dispose).not.toHaveBeenCalled()
+      expect(projectChatClient.dispose).not.toHaveBeenCalled()
+    } finally {
+      first.unmount()
+      second.unmount()
+    }
+    await waitFor(() => expect(socketClient.dispose).toHaveBeenCalledTimes(1))
+    expect(projectChatClient.dispose).toHaveBeenCalledTimes(1)
+  })
+
   test('ensures the chat socket is connected while mounted', async () => {
     const socketClient = {
       ensureConnected: vi.fn().mockResolvedValue(undefined),
@@ -5770,10 +5799,10 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     unmount()
 
-    expect(socketClient.dispose).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(socketClient.dispose).toHaveBeenCalledTimes(1))
   })
 
-  test('disposes the project chat socket while unmounting', () => {
+  test('disposes the project chat socket while unmounting', async () => {
     const projectChatClient = {
       subscribe: vi.fn(),
       send: vi.fn(),
@@ -5784,7 +5813,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     const { unmount } = renderWorkbench(<BootstrapProbe />, services)
     unmount()
 
-    expect(projectChatClient.dispose).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(projectChatClient.dispose).toHaveBeenCalledTimes(1))
   })
 
   test('keeps newly selected project execution preferences isolated by project', async () => {
@@ -6086,7 +6115,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('continues a cross-provider model switch in a new referenced conversation', async () => {
+  test('switches providers in the original conversation without rewriting its draft', async () => {
     const models: UnifiedModel[] = [
       {
         name: 'gpt-5.6-sol',
@@ -6162,13 +6191,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     await userEvent.click(screen.getByText('set runtime draft'))
-    await userEvent.click(screen.getByText('continue with mimo in new conversation'))
+    await userEvent.click(screen.getByText('switch to mimo with options'))
 
     await waitFor(() => {
-      expect(screen.getByTestId('runtime-model-task')).toBeEmptyDOMElement()
+      expect(screen.getByTestId('runtime-model-task')).toHaveTextContent('runtime-a')
       expect(screen.getByTestId('selected-model')).toHaveTextContent('local-model:mimo')
       expect(screen.getByTestId('selected-reasoning')).toHaveTextContent('high')
-      expect(screen.getByTestId('runtime-model-draft')).toHaveTextContent('[$Runtime A]')
+      expect(screen.getByTestId('runtime-model-draft')).not.toHaveTextContent('[$Runtime A]')
       expect(screen.getByTestId('runtime-model-draft')).toHaveTextContent('继续排查失败原因')
     })
   })

@@ -2339,7 +2339,7 @@ function ProjectItem({
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,
-    runtimeTaskVisibleLimit
+    visibleRuntimeTaskItems
   )
   const canCollapseRuntimeTasks = hasExpandedRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,
@@ -2859,7 +2859,7 @@ function ProjectItem({
                         aria-controls={`project-local-tasks-panel-${project.id}`}
                         className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
-                        {t('workbench.expand_display', '展开显示')}
+                        {t('workbench.show_more', '显示更多')}
                       </button>
                     )}
                     {canCollapseRuntimeTasks && (
@@ -2872,7 +2872,7 @@ function ProjectItem({
                         aria-controls={`project-local-tasks-panel-${project.id}`}
                         className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
-                        {t('workbench.collapse_display', '折叠显示')}
+                        {t('workbench.show_less', '收起')}
                       </button>
                     )}
                   </div>

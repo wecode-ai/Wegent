@@ -204,10 +204,15 @@ export function createSubscriptionConfigRegression() {
         // Measure the normal native default before configuring the retired model.
         await setCatalogConfig('openai', null)
         const account = await rpc('runtime.codex.auth.read', {})
-        assert.equal(
+        assert.deepEqual(
           account.account,
-          null,
-          'The shared router must not be mistaken for the saved subscription account'
+          {
+            email: 'stand-in-config@example.test',
+            planType: 'pro',
+            type: 'chatgpt',
+            workspaceName: null,
+          },
+          'Account reads must preserve the saved subscription identity independently of the router'
         )
         const nativeDefaults = new Map()
         for (const includeHidden of [true, false]) {
