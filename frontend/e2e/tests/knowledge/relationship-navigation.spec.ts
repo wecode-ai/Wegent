@@ -511,6 +511,9 @@ async function expectResultsClearOfFooter(results: Locator, footer: Locator) {
 creationTest(
   'keeps expanded grant results and actions reachable at every supported dialog size',
   async ({ page, creation }) => {
+    // Four viewports times both creation entry points exceed the generic 60s test budget
+    // on the resource-constrained 4-vCPU CI runner while every interaction stays responsive.
+    test.setTimeout(120_000)
     const prefix = fixtureName('e2e-grant-layout')
     const groupIds: number[] = []
     for (let index = 0; index < 8; index++) {
