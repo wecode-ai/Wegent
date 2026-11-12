@@ -41,9 +41,18 @@ describe('errorParser', () => {
 
       it('should keep user-code pymysql tracebacks as container_error', () => {
         const error =
+          'Container exited with code 1. Logs:\n' +
           'Traceback (most recent call last):\n' +
-          '  pymysql.err.OperationalError: (2003, "Can not connect to MySQL server")\n' +
-          'executor exited with exit code 1'
+          '  pymysql.err.OperationalError: (2003, "Can not connect to MySQL server")'
+        expect(parseError(error).type).toBe('container_error')
+      })
+
+      it('should keep user-code SQLAlchemy tracebacks with SQL text as container_error', () => {
+        const error =
+          'Container exited immediately with code 1: executor failed. Logs:\n' +
+          'Traceback (most recent call last):\n' +
+          '  sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) connection lost\n' +
+          '[SQL: SELECT executor_name FROM subtasks]'
         expect(parseError(error).type).toBe('container_error')
       })
 

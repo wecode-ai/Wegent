@@ -119,15 +119,17 @@ function classifyByMessage(errorMessage: string): ParsedError {
   // Database driver errors (check first: the rendered SQL/statement text contains
   // words such as "executor" that the container/executor rules below would match).
   // A user-code traceback followed by an executor exit code is still a container
-  // failure, even when the traceback names a database driver.
-  const hasUserCodeFailureMarker =
-    lowerMessage.includes('traceback (most recent call last):') &&
-    /\bexit code\s+\d+/.test(lowerMessage)
-  if (
+  // failure, even when the traceback names a database driver or includes SQL.
+  const hasDatabaseDriverMarker =
     lowerMessage.includes('[sql:') ||
     lowerMessage.includes('sqlalchemy') ||
-    (lowerMessage.includes('pymysql') && !hasUserCodeFailureMarker)
-  ) {
+    lowerMessage.includes('pymysql')
+  const hasExecutorExitMarker =
+    /\bexit code\s*:?\s*-?\d+/.test(lowerMessage) ||
+    /\bexited(?: immediately)? with (?:code|status)\s*:?\s*-?\d+/.test(lowerMessage)
+  const hasUserCodeFailureMarker =
+    lowerMessage.includes('traceback (most recent call last):') && hasExecutorExitMarker
+  if (hasDatabaseDriverMarker && !hasUserCodeFailureMarker) {
     return buildResult('generic_error', errorMessage)
   }
 
