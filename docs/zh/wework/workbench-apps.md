@@ -73,6 +73,14 @@ node scripts/build.mjs
 
 数据存储是单份 JSON 文档。先通过 `await window.weworkWorkbench.storage.get()` 读取，再通过 `await window.weworkWorkbench.storage.set(value)` 保存；等待保存成功后再更新界面，并向用户展示失败。
 
+### 页面生命周期与恢复
+
+SDK 连接属于安装内容创建的初始轻量页面。页面离开或被替换后，原连接关闭，未完成和后续 SDK 调用会失败；新文档不会获得原 SDK，也不会自动重新授权。宿主仍通过原生策略拦截网络导航及重定向；`about:blank` 等本地文档替换可能实际发生，不能依赖所有自导航都被取消。外部链接应通过已声明并授予的 `external.open` 能力调用 `await window.weworkWorkbench.external.open(url)`，不要用轻量页面自身的导航打开。
+
+若页面被替换后变空或 SDK 不可用，返回 **左侧栏 → 应用 → 工作台 → 我的**，在目标卡片选择 **更多操作 → 停止**。等待停止完成、**运行** 按钮可用后，点击 **运行**，从安装内容重新创建页面和 SDK 连接。已保存的本机数据保留；未保存的页面输入不会恢复。
+
+关闭或隐藏可能让原实例继续运行；运行中卡片的 **打开** 会聚焦现有实例。因此关闭后再打开不能保证重建页面。需要恢复 SDK 时，使用上述 **停止 → 运行** 步骤。
+
 ```mermaid
 flowchart LR
   Entry[应用列表 / AI / CLI / 快捷方式] --> Host[统一宿主应用服务]

@@ -73,6 +73,14 @@ Lightweight pages use `sandbox="allow-scripts"` without `allow-forms` and retain
 
 Storage is one JSON document. Read it with `await window.weworkWorkbench.storage.get()` and save it with `await window.weworkWorkbench.storage.set(value)`. Await successful saves before updating the interface, and show failures to the user.
 
+### Document lifetime and recovery
+
+The SDK connection belongs to the initial lightweight document created from the installed application. When that document leaves or is replaced, its connection closes and pending or future SDK calls fail. The replacement receives neither the original SDK nor automatic reauthorization. The Host still blocks network navigation and redirects through its native policy; local document replacements such as `about:blank` can commit, so do not rely on every self-navigation being cancelled. Open external links with `await window.weworkWorkbench.external.open(url)` using the declared and granted `external.open` capability rather than navigating the lightweight page itself.
+
+If replacement leaves the page blank or its SDK unavailable, return to **Sidebar → Applications → Workbenches → Mine** and select **More actions → Stop** on its card. Wait for stopping to finish and **Run** to become available, then click **Run** to create a new page and SDK connection from the installed application. Saved local data remains; unsaved page input is not restored.
+
+Closing or hiding can keep the original instance running, and a running card's **Open** focuses that instance. Closing and reopening therefore does not guarantee a new document. Use **Stop → Run** when recovering the SDK.
+
 ```mermaid
 flowchart LR
   Entry[List / AI / CLI / shortcut] --> Host[Unified Host application service]

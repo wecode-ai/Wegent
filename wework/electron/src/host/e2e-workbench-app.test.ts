@@ -62,6 +62,7 @@ function navigationFixture(protectedFrame = true) {
     frameTreeNodeId: 13,
     detached: false,
     isDestroyed: vi.fn(() => false),
+    executeJavaScript: vi.fn<(script: string, userGesture?: boolean) => Promise<unknown>>(),
   }
   const contents = Object.assign(new EventEmitter(), {
     isDestroyed: () => false,
@@ -77,11 +78,11 @@ function navigationFixture(protectedFrame = true) {
     list: async () => [],
   }
   const url = 'https://replacement.invalid/workbench'
-  const run = (destination = url) =>
+  const run = (destination = url, action = 'clickAndWaitForBlockedNavigation') =>
     controlWorkbenchApp(
       host as never,
       {
-        action: 'clickAndWaitForBlockedNavigation',
+        action,
         id: 'todo',
         selector: '#replace',
         url: destination,
@@ -116,6 +117,99 @@ function navigationFixture(protectedFrame = true) {
     }
   }
   return { contents, frame, url, run, emit, expectCleaned }
+}
+
+function replacementFixture(leak = '') {
+  const app = navigationFixture(false)
+  const events = new EventEmitter()
+  type Port = {
+    onmessage: ((event: { data: unknown }) => void) | null
+    postMessage: (data: unknown) => void
+    start: () => void
+    close: ReturnType<typeof vi.fn>
+  }
+  const ports: Port[] = []
+  const privateCalls: unknown[] = []
+  const posted: Record<string, unknown>[] = []
+  const parent = {
+    postMessage: (data: Record<string, unknown>, _origin: string, transfer: Port[] = []) => {
+      posted.push(data)
+      if (leak === 'public' && data.channel === 'wework-workbench')
+        events.emit('message', { source: parent, data: { id: data.id, result: 'unauthorized' } })
+      if (leak === 'private' && data.token === 'initial-document-token') {
+        transfer[0].onmessage = event => transfer[0].postMessage(event.data)
+      }
+    },
+  }
+  const window = leak === 'sdk' ? { weworkWorkbench: {} } : {}
+  const context = {
+    window,
+    location: { href: 'about:blank' },
+    parent,
+    setTimeout,
+    clearTimeout,
+    addEventListener: (name: string, listener: (...args: unknown[]) => void) =>
+      events.on(name, listener),
+    removeEventListener: (name: string, listener: (...args: unknown[]) => void) =>
+      events.removeListener(name, listener),
+    MessageChannel: function () {
+      const pair = [0, 1].map(() => ({
+        onmessage: null,
+        start: vi.fn(),
+        close: vi.fn(),
+      })) as unknown as [Port, Port]
+      for (const index of [0, 1])
+        pair[index].postMessage = data => {
+          if (index === 0) privateCalls.push(data)
+          queueMicrotask(() => pair[1 - index].onmessage?.({ data }))
+        }
+      ports.push(...pair)
+      return { port1: pair[0], port2: pair[1] }
+    },
+  }
+  app.frame.executeJavaScript.mockImplementation(async script =>
+    runInNewContext(
+      script,
+      app.frame.url === 'about:srcdoc'
+        ? {
+            window: { weworkWorkbench: {} },
+            document: {
+              scripts: [
+                { textContent: '(function(){const documentToken="initial-document-token";sdk' },
+              ],
+            },
+          }
+        : context
+    )
+  )
+  const commit = (url = 'about:blank', frameTreeNodeId = app.frame.frameTreeNodeId) => {
+    const replacement = { ...app.frame, routingId: 22, url, frameTreeNodeId }
+    app.contents.mainFrame.frames = [replacement]
+    app.frame.url = url
+    app.contents.emit(
+      'did-frame-navigate',
+      {},
+      url,
+      -1,
+      '',
+      false,
+      replacement.processId,
+      replacement.routingId
+    )
+  }
+  vi.mocked(evaluateWorkbenchPage).mockImplementation(async () => {
+    commit()
+    return true
+  })
+  const run = (url = 'about:blank') => app.run(url, 'clickAndVerifyDocumentReplacement')
+  const expectCleaned = () => {
+    app.expectCleaned()
+    expect(events.listenerCount('message')).toBe(0)
+    expect(events.listenerCount('pagehide')).toBe(0)
+    for (const port of ports) expect(port.close).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  }
+  return { ...app, run, commit, ports, posted, privateCalls, events, expectCleaned }
 }
 
 function snapshotFixture() {
@@ -693,5 +787,196 @@ describe('isolated workbench E2E controls', () => {
     await expect(app.run()).rejects.toThrow('Button is unavailable')
     app.expectCleaned()
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+describe('replacement-document authority control', () => {
+  it.each(['token', 'click', 'probe'])(
+    'does not continue a %s phase resolved after the action closes',
+    async phase => {
+      vi.useFakeTimers()
+      const app = replacementFixture()
+      let finish!: (value: unknown) => void
+      const pending = new Promise(resolve => {
+        finish = resolve
+      })
+      if (phase === 'token') app.frame.executeJavaScript.mockReturnValueOnce(pending)
+      if (phase === 'click')
+        vi.mocked(evaluateWorkbenchPage).mockImplementation(() => {
+          app.commit()
+          return pending
+        })
+      if (phase === 'probe')
+        app.frame.executeJavaScript
+          .mockResolvedValueOnce('initial-document-token')
+          .mockReturnValueOnce(pending)
+      const failure = expect(app.run()).rejects.toThrow('document replacement timed out')
+      await vi.advanceTimersByTimeAsync(10_000)
+      await failure
+      finish(
+        phase === 'token'
+          ? 'initial-document-token'
+          : phase === 'click'
+            ? true
+            : { sdkAvailable: false, publicReplies: 0, privateReplies: 0 }
+      )
+      await vi.advanceTimersByTimeAsync(0)
+      if (phase === 'token') expect(evaluateWorkbenchPage).not.toHaveBeenCalled()
+      expect(app.frame.executeJavaScript).toHaveBeenCalledTimes(phase === 'probe' ? 2 : 1)
+      app.expectCleaned()
+    }
+  )
+
+  it('requires enough of the original deadline to observe a full negative window', async () => {
+    vi.useFakeTimers()
+    const app = replacementFixture()
+    vi.mocked(evaluateWorkbenchPage).mockImplementation(async () => true)
+    const failure = expect(app.run()).rejects.toThrow('insufficient authority observation time')
+    await vi.advanceTimersByTimeAsync(9_501)
+    app.commit()
+    await failure
+    expect(app.ports).toHaveLength(0)
+    app.expectCleaned()
+  })
+
+  it('rejects a malformed initial token without returning or logging its contents', async () => {
+    vi.useFakeTimers()
+    const app = replacementFixture()
+    app.frame.executeJavaScript.mockResolvedValueOnce('private invalid token!')
+    const error = (await app.run().catch((failure: Error) => failure)) as Error
+    expect(error.message).toBe('Initial Workbench document token is unavailable')
+    expect(evaluateWorkbenchPage).not.toHaveBeenCalled()
+    app.expectCleaned()
+  })
+  it('accepts only the same logical frame commit and observes actual public and replayed private RPCs', async () => {
+    vi.useFakeTimers()
+    const app = replacementFixture()
+    let completed = false
+    const result = app.run().then(value => {
+      completed = true
+      return value
+    })
+    await vi.advanceTimersByTimeAsync(499)
+    expect(completed).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(result).resolves.toEqual({
+      clicked: true,
+      replaced: true,
+      url: 'about:blank',
+      sdkAvailable: false,
+      publicReplies: 0,
+      privateReplies: 0,
+    })
+    expect(app.frame.executeJavaScript).toHaveBeenCalledTimes(2)
+    expect(app.posted).toEqual([
+      expect.objectContaining({
+        channel: 'wework-workbench',
+        method: 'storage.set',
+        params: { value: { sum: 5, compromised: true } },
+      }),
+      expect.objectContaining({
+        channel: 'wework-workbench-ready',
+        token: 'forged-document-token',
+      }),
+      expect.objectContaining({
+        channel: 'wework-workbench-ready',
+        token: 'initial-document-token',
+      }),
+    ])
+    expect(app.privateCalls).toHaveLength(2)
+    for (const request of app.privateCalls)
+      expect(request).toMatchObject({
+        method: 'storage.set',
+        params: { value: { sum: 5, compromised: true } },
+      })
+    app.expectCleaned()
+  })
+
+  it.each(['sdk', 'public', 'private'])(
+    'rejects replacement authority leakage through %s',
+    async leak => {
+      vi.useFakeTimers()
+      const app = replacementFixture(leak)
+      const failure = expect(app.run()).rejects.toThrow(
+        'replacement document retained host authority'
+      )
+      await vi.advanceTimersByTimeAsync(500)
+      await failure
+      app.expectCleaned()
+    }
+  )
+
+  it.each(['https://replacement.invalid/', 'about:srcdoc'])(
+    'rejects unsupported replacement URL %s before any native action',
+    async url => {
+      const app = replacementFixture()
+      await expect(app.run(url)).rejects.toThrow(
+        'Only about:blank document replacement is supported'
+      )
+      expect(app.frame.executeJavaScript).not.toHaveBeenCalled()
+      expect(evaluateWorkbenchPage).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['frame', 'url'])(
+    'does not accept an unrelated commit with the wrong %s',
+    async mismatch => {
+      vi.useFakeTimers()
+      const app = replacementFixture()
+      vi.mocked(evaluateWorkbenchPage).mockImplementation(async () => {
+        app.commit(
+          mismatch === 'url' ? 'https://replacement.invalid/' : 'about:blank',
+          mismatch === 'frame' ? 99 : 13
+        )
+        return true
+      })
+      const failure = expect(app.run()).rejects.toThrow('document replacement timed out')
+      await vi.advanceTimersByTimeAsync(10_000)
+      await failure
+      expect(app.frame.executeJavaScript).toHaveBeenCalledOnce()
+      app.expectCleaned()
+    }
+  )
+
+  it.each(['did-fail-load', 'did-fail-provisional-load'])(
+    'fails explicitly on matching %s',
+    async name => {
+      vi.useFakeTimers()
+      const app = replacementFixture()
+      vi.mocked(evaluateWorkbenchPage).mockImplementation(async () => {
+        app.contents.emit(name, {}, -3, 'private native detail', 'about:blank', false, 7, 11)
+        return true
+      })
+      await expect(app.run()).rejects.toThrow('document replacement failed (-3)')
+      app.expectCleaned()
+    }
+  )
+
+  it('cleans native observers when the frame tree is destroyed before commit inspection', async () => {
+    vi.useFakeTimers()
+    const app = replacementFixture()
+    vi.mocked(evaluateWorkbenchPage).mockImplementation(async () => {
+      Object.defineProperty(app.contents, 'mainFrame', {
+        get: () => {
+          throw new Error('Destroyed frame tree')
+        },
+      })
+      app.contents.emit('did-frame-navigate', {}, 'about:blank', -1, '', false, 7, 22)
+      return true
+    })
+    await expect(app.run()).rejects.toThrow('Workbench replacement frame is unavailable')
+    app.expectCleaned()
+  })
+
+  it('cleans the probe when the replacement document leaves during negative observation', async () => {
+    vi.useFakeTimers()
+    const app = replacementFixture()
+    const failure = expect(app.run()).rejects.toThrow(
+      'Replacement document left during authority observation'
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    app.events.emit('pagehide')
+    await failure
+    app.expectCleaned()
   })
 })

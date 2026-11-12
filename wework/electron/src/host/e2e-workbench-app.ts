@@ -110,6 +110,10 @@ export async function controlWorkbenchApp(
     case 'clickAndWaitForBlockedNavigation':
       if (typeof params.url !== 'string') throw new Error('Expected navigation URL is required')
       return clickAndWaitForBlockedNavigation(contents, selector, params.url)
+    case 'clickAndVerifyDocumentReplacement':
+      if (params.url !== 'about:blank')
+        throw new Error('Only about:blank document replacement is supported')
+      return clickAndVerifyDocumentReplacement(contents, selector)
     case 'fill': {
       if (typeof params.value !== 'string') throw new Error('Workbench input value must be text')
       return evaluateWorkbenchPage(
@@ -426,5 +430,194 @@ async function clickAndWaitForBlockedNavigation(
     return { clicked: true, blocked: true, url }
   } finally {
     cleanup()
+  }
+}
+
+function observeDocumentReplacement(contents: WebContents, original: WebFrameMain) {
+  const nodeId = original.frameTreeNodeId
+  const originalProcessId = original.processId
+  const originalRoutingId = original.routingId
+  let resolve!: (frame: WebFrameMain) => void
+  let reject!: (error: Error) => void
+  const committed = new Promise<WebFrameMain>((accept, fail) => {
+    resolve = accept
+    reject = fail
+  })
+  const current = (processId: number, routingId: number) =>
+    contents.mainFrame.frames.find(
+      frame =>
+        frame.frameTreeNodeId === nodeId &&
+        frame.processId === processId &&
+        frame.routingId === routingId
+    )
+  const onCommit = (
+    _event: Electron.Event,
+    url: string,
+    _status: number,
+    _text: string,
+    main: boolean,
+    processId: number,
+    routingId: number
+  ) => {
+    if (main || url !== 'about:blank') return
+    try {
+      const frame = current(processId, routingId)
+      if (frame?.url === 'about:blank') resolve(frame)
+    } catch {
+      reject(new Error('Workbench replacement frame is unavailable'))
+    }
+  }
+  const onFailure = (
+    _event: Electron.Event,
+    code: number,
+    _description: string,
+    url: string,
+    main: boolean,
+    processId: number,
+    routingId: number
+  ) => {
+    if (main || url !== 'about:blank') return
+    try {
+      if (
+        (processId === originalProcessId && routingId === originalRoutingId) ||
+        current(processId, routingId)
+      )
+        reject(new Error(`Workbench document replacement failed (${code})`))
+    } catch {
+      reject(new Error('Workbench replacement frame is unavailable'))
+    }
+  }
+  contents.on('did-frame-navigate', onCommit)
+  contents.on('did-fail-load', onFailure)
+  contents.on('did-fail-provisional-load', onFailure)
+  return {
+    committed,
+    dispose() {
+      contents.removeListener('did-frame-navigate', onCommit)
+      contents.removeListener('did-fail-load', onFailure)
+      contents.removeListener('did-fail-provisional-load', onFailure)
+    },
+  }
+}
+
+const INITIAL_DOCUMENT_TOKEN_SOURCE = `(() => {
+  if (!window.weworkWorkbench) throw new Error('Initial Workbench SDK is unavailable')
+  const prefix = '(function(){const documentToken="'
+  const source = Array.from(document.scripts).map(script => script.textContent ?? '').find(text => text.startsWith(prefix))
+  const token = source?.slice(prefix.length).match(/^([A-Za-z0-9-]{1,100})";/)?.[1]
+  if (!token) throw new Error('Initial Workbench document token is unavailable')
+  return token
+})()`
+
+function replacementAuthorityProbeSource(token: string): string {
+  return `(async () => {
+    if (location.href !== 'about:blank') throw new Error('Workbench replacement document changed before authority observation')
+    const sdkAvailable = Boolean(window.weworkWorkbench)
+    let publicReplies = 0, privateReplies = 0, timer
+    const channels = []
+    const receive = event => { if (event.source === parent && event.data?.id === 870001) publicReplies++ }
+    let left
+    try {
+      await new Promise((resolve, reject) => {
+        left = () => reject(new Error('Replacement document left during authority observation'))
+        addEventListener('pagehide', left, { once: true })
+        addEventListener('message', receive)
+        parent.postMessage({ channel: 'wework-workbench', id: 870001, method: 'storage.set', params: { value: { sum: 5, compromised: true } } }, '*')
+        for (const token of ['forged-document-token', ${JSON.stringify(token)}]) {
+          const channel = new MessageChannel()
+          channels.push(channel)
+          channel.port1.onmessage = () => { privateReplies++ }
+          channel.port1.start()
+          parent.postMessage({ channel: 'wework-workbench-ready', token }, '*', [channel.port2])
+          channel.port1.postMessage({ id: 870002, method: 'storage.set', params: { value: { sum: 5, compromised: true } } })
+        }
+        timer = setTimeout(resolve, 500)
+      })
+      return { sdkAvailable: sdkAvailable || Boolean(window.weworkWorkbench), publicReplies, privateReplies }
+    } finally {
+      clearTimeout(timer)
+      removeEventListener('message', receive)
+      if (left) removeEventListener('pagehide', left)
+      for (const channel of channels) {
+        channel.port1.onmessage = null
+        channel.port1.close()
+        channel.port2.close()
+      }
+    }
+  })()`
+}
+
+async function clickAndVerifyDocumentReplacement(
+  contents: WebContents,
+  selector: string
+): Promise<unknown> {
+  const original = contents.mainFrame.frames.find(
+    frame => frame.name === LIGHTWEIGHT_WORKBENCH_FRAME_NAME
+  )
+  if (!original || original.url !== 'about:srcdoc')
+    throw new Error('Initial lightweight Workbench document is unavailable')
+  const startedAt = Date.now()
+  let closed = false
+  let dispose = () => {}
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('Workbench document replacement timed out')),
+      STEP_TIMEOUT_MS
+    )
+  })
+  const active = () => {
+    if (closed) throw new Error('Workbench document replacement is closed')
+  }
+  const operation = async () => {
+    const token: unknown = await original.executeJavaScript(
+      `(${INITIAL_DOCUMENT_TOKEN_SOURCE})`,
+      true
+    )
+    active()
+    if (typeof token !== 'string' || !/^[A-Za-z0-9-]{1,100}$/.test(token))
+      throw new Error('Initial Workbench document token is unavailable')
+    const observation = observeDocumentReplacement(contents, original)
+    dispose = observation.dispose
+    const [replacement] = await Promise.all([
+      observation.committed,
+      clickWorkbenchElement(contents, selector),
+    ])
+    active()
+    if (replacement.url !== 'about:blank')
+      throw new Error('Workbench replacement document changed before authority observation')
+    if (Date.now() - startedAt > STEP_TIMEOUT_MS - 500)
+      throw new Error('Workbench document replacement has insufficient authority observation time')
+    const result = await replacement.executeJavaScript(
+      `(${replacementAuthorityProbeSource(token)})`,
+      true
+    )
+    active()
+    if (
+      !result ||
+      typeof result !== 'object' ||
+      !('sdkAvailable' in result) ||
+      result.sdkAvailable !== false ||
+      !('publicReplies' in result) ||
+      result.publicReplies !== 0 ||
+      !('privateReplies' in result) ||
+      result.privateReplies !== 0
+    )
+      throw new Error('Workbench replacement document retained host authority')
+    return {
+      clicked: true,
+      replaced: true,
+      url: 'about:blank',
+      sdkAvailable: false,
+      publicReplies: 0,
+      privateReplies: 0,
+    }
+  }
+  try {
+    return await Promise.race([deadline, operation()])
+  } finally {
+    closed = true
+    clearTimeout(timer)
+    dispose()
   }
 }

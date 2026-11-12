@@ -82,6 +82,16 @@ The isolated page receives `window.weworkWorkbench`. Methods are asynchronous;
 await them and show failures. The Host binds every call to the authenticated
 installation; the page cannot supply another installation ID or arbitrary paths.
 
+The SDK belongs to the initial document. Leaving or replacing it revokes its
+connection; replacement documents receive no SDK or automatic reauthorization.
+Network navigation and redirects remain natively blocked, but local replacements
+such as `about:blank` may commit. Open external links with
+`await window.weworkWorkbench.external.open(url)` using declared and granted
+`external.open`, rather than navigating the app page. To recover, open
+**Applications → Workbenches → Mine → More actions → Stop**, wait for **Run**,
+then click **Run** to create a new page while retaining saved local data.
+Closing or hiding may retain the existing instance and does not guarantee recovery.
+
 The page uses `sandbox="allow-scripts"` without `allow-forms`, with CSP
 `form-action 'none'`. Native form submission can be blocked before a `submit`
 callback runs. Do not depend on `form.onsubmit`, a `submit` event,

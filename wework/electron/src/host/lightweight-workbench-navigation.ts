@@ -4,7 +4,7 @@ export { LIGHTWEIGHT_WORKBENCH_FRAME_NAME } from './lightweight-workbench-client
 
 const protectedContents = new WeakSet<WebContents>()
 
-/** Keep the application's initial srcDoc document inside its Host-owned frame. */
+/** Block request-backed navigation; document-scoped SDK authority is revoked separately. */
 export function protectLightweightWorkbenchFrames(contents: WebContents): void {
   if (protectedContents.has(contents)) return
   protectedContents.add(contents)

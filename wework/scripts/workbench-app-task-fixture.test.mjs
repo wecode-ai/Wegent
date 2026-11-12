@@ -12,10 +12,88 @@ import {
   createWorkbenchAppTaskFixture,
   workbenchAppTaskCommand,
   readWorkbenchAppTaskResult,
+  verifyWorkbenchDocumentAuthority,
 } from '../e2e/desktop/modules/workbench-app-task-fixture.mjs'
 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
+
+async function documentAuthorityFixture(t, options = {}) {
+  const directory = await mkdtemp(join(tmpdir(), 'workbench-document-authority-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const dataPath = join(directory, 'wework-app.json')
+  await writeFile(dataPath, JSON.stringify({ state: { sum: 5 } }))
+  const actions = []
+  let attempt
+  const workbenchApp = async (action, input) => {
+    if (action === 'clickAndWaitForBlockedNavigation') {
+      assert.notEqual(input.url, 'about:blank', 'Blank commits without a cancellable request event')
+      actions.push({ action, ...input })
+      attempt = input.selector.includes('remote') ? 'remote' : 'redirect'
+      return { clicked: true, blocked: true, url: input.url, ...options.blocked }
+    }
+    if (action === 'clickAndVerifyDocumentReplacement') {
+      actions.push({ action, ...input })
+      if (options.corruptAfterReplacement)
+        await writeFile(dataPath, JSON.stringify({ state: { sum: 5, compromised: true } }))
+      return {
+        clicked: true,
+        replaced: true,
+        url: 'about:blank',
+        sdkAvailable: false,
+        publicReplies: 0,
+        privateReplies: 0,
+        ...options.replacement,
+      }
+    }
+    if (action === 'getText') return options.lostInitialSdk ? '' : `${attempt}:5`
+    if (action === 'document') return { state: options.documentState ?? { sum: 5 } }
+    assert.fail(`Unexpected document authority action: ${action}`)
+  }
+  const until = async (read, predicate, description) => {
+    assert.ok(predicate(await read()), description)
+  }
+  return { actions, dataPath, workbenchApp, until }
+}
+
+test('document authority keeps request-backed navigation blocked and probes a real blank replacement last', async t => {
+  const context = await documentAuthorityFixture(t)
+  await verifyWorkbenchDocumentAuthority(context)
+  assert.deepEqual(context.actions, [
+    {
+      action: 'clickAndWaitForBlockedNavigation',
+      selector: '[data-testid="calculator-remote"]',
+      url: 'https://replacement.invalid/workbench',
+    },
+    {
+      action: 'clickAndWaitForBlockedNavigation',
+      selector: '[data-testid="calculator-redirect"]',
+      url: 'https://replacement.invalid/workbench',
+    },
+    {
+      action: 'clickAndVerifyDocumentReplacement',
+      selector: '[data-testid="calculator-blank"]',
+      url: 'about:blank',
+    },
+  ])
+})
+
+for (const [description, options] of [
+  ['an unblocked request navigation', { blocked: { blocked: false } }],
+  ['a different blocked destination', { blocked: { url: 'https://other.invalid/' } }],
+  ['the initial document losing its SDK', { lostInitialSdk: true }],
+  ['changed data reported by the original SDK', { documentState: { sum: 5, compromised: true } }],
+  ['a replacement retaining the SDK', { replacement: { sdkAvailable: true } }],
+  ['a public RPC reply to the replacement', { replacement: { publicReplies: 1 } }],
+  ['a private handshake reply to the replacement', { replacement: { privateReplies: 1 } }],
+  ['an unexpected replacement destination', { replacement: { url: 'about:srcdoc' } }],
+  ['a replacement changing persisted data', { corruptAfterReplacement: true }],
+]) {
+  test(`document authority rejects ${description}`, async t => {
+    const context = await documentAuthorityFixture(t, options)
+    await assert.rejects(verifyWorkbenchDocumentAuthority(context), assert.AssertionError)
+  })
+}
 
 test('HTTP routing recognizes the quoted task prompt as user text and preserves real login execution', async () => {
   const workspacePath = tmpdir()

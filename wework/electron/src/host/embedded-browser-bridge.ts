@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
+import {
+  BrowserConditionTimeoutError,
+  type BrowserConditionEvaluator,
+} from './embedded-browser-evaluation.js'
 
 const RUNTIME_FILE = 'embedded-browser-bridge.json'
 const DEFAULT_LABEL = 'workspace-browser'
@@ -474,18 +478,12 @@ export class EmbeddedBrowserBridge {
     const pollMs = clampNumber(request.options?.pollMs, 50, 1000, 100)
     const startedAt = Date.now()
     const waitId = `electron-wait-${randomBytes(8).toString('hex')}`
-    let lastResult: Record<string, unknown> = {
-      ok: false,
-      kind: 'browser.wait',
-      backend: 'electron-webcontentsview-js',
-      reason: 'not_started',
-    }
-    while (Date.now() - startedAt <= timeoutMs) {
-      if (!this.browser.has(label)) {
-        await new Promise(resolve => setTimeout(resolve, pollMs))
-        continue
-      }
-      const input = {
+    let evaluateCondition: BrowserConditionEvaluator | undefined = this.browser.has(label)
+      ? this.browser.createConditionEvaluator(label)
+      : undefined
+    const expression = (await this.loadScript('embedded_browser_wait.js')).replace(
+      '__WEWORK_WAIT_INPUT__',
+      JSON.stringify({
         waitId,
         selector: request.selector ?? null,
         text: request.text ?? null,
@@ -493,26 +491,43 @@ export class EmbeddedBrowserBridge {
         expression: request.expression ?? null,
         timeoutMs,
         options: request.options ?? null,
+      })
+    )
+    const pause = () =>
+      new Promise(resolve =>
+        setTimeout(resolve, Math.min(pollMs, Math.max(0, timeoutMs - (Date.now() - startedAt))))
+      )
+    let lastResult: Record<string, unknown> = {
+      ok: false,
+      kind: 'browser.wait',
+      backend: 'electron-webcontentsview-js',
+      reason: 'not_started',
+    }
+    while (Date.now() - startedAt < timeoutMs) {
+      if (!evaluateCondition) {
+        if (!this.browser.has(label)) {
+          await pause()
+          continue
+        }
+        evaluateCondition = this.browser.createConditionEvaluator(label)
       }
       let result: unknown
       try {
-        result = await this.evaluate(
-          label,
-          (await this.loadScript('embedded_browser_wait.js')).replace(
-            '__WEWORK_WAIT_INPUT__',
-            JSON.stringify(input)
-          )
+        const observation = await evaluateCondition(
+          expression,
+          timeoutMs - (Date.now() - startedAt)
         )
+        if (observation.kind === 'document-changed') continue
+        result = observation.value
       } catch (error) {
-        if (!isUnavailableBrowserError(error, label)) throw error
-        await new Promise(resolve => setTimeout(resolve, pollMs))
-        continue
+        if (error instanceof BrowserConditionTimeoutError) break
+        throw error
       }
       if (result && typeof result === 'object' && !Array.isArray(result)) {
         lastResult = result as Record<string, unknown>
       }
       if (lastResult.ok === true) return lastResult
-      await new Promise(resolve => setTimeout(resolve, pollMs))
+      await pause()
     }
     return {
       ...lastResult,
@@ -628,10 +643,6 @@ export class EmbeddedBrowserBridge {
     this.scripts.set(filename, script)
     return script
   }
-}
-
-function isUnavailableBrowserError(error: unknown, label: string): boolean {
-  return errorMessage(error) === `Embedded browser is unavailable: ${label}`
 }
 
 async function writeRuntimeRecord(path: string, record: RuntimeRecord): Promise<void> {

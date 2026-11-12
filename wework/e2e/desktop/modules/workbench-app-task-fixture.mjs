@@ -56,7 +56,10 @@ for (const attempt of ['blank', 'remote', 'redirect']) find(attempt).addEventLis
     const refresh = document.createElement('meta');
     refresh.httpEquiv = 'refresh'; refresh.content = '0;url=' + destination;
     document.head.appendChild(refresh);
-  } else location.assign(destination);
+  } else {
+    location.assign(destination);
+    if (attempt === 'blank') return;
+  }
   const value = await window.weworkWorkbench.storage.get();
   find('security').textContent = attempt + ':' + value.sum;
 });`,
@@ -414,29 +417,49 @@ if (result.exit_code !== 0) throw new Error('The workbench task command exited w
       )
       const state = JSON.parse(await readFile(dataPath, 'utf8'))
       assert.deepEqual(state.state, { sum: 5 })
-      // Opaque origins and WindowProxy identity survive navigation; neither grants authority.
-      for (const attempt of ['blank', 'remote', 'redirect']) {
-        const url = attempt === 'blank' ? 'about:blank' : 'https://replacement.invalid/workbench'
-        assert.deepEqual(
-          await workbenchApp('clickAndWaitForBlockedNavigation', {
-            selector: `[data-testid="calculator-${attempt}"]`,
-            url,
-          }),
-          { clicked: true, blocked: true, url }
-        )
-        await until(
-          () => workbenchApp('getText', { selector: '[data-testid="calculator-security"]' }),
-          value => value === `${attempt}:5`,
-          'The initial document lost its private SDK after blocked navigation'
-        )
-        assert.deepEqual((await workbenchApp('document')).state, { sum: 5 })
-        assert.deepEqual(JSON.parse(await readFile(dataPath, 'utf8')).state, { sum: 5 })
-      }
+      await verifyWorkbenchDocumentAuthority({ workbenchApp, until, dataPath })
       await control.command('navigate', 'body', { value: '/sites?app_type=smart_app' })
       await control.command(
         'waitFor',
         `[data-testid="smart-app-created-item-${evidence.installed.id}"]`
       )
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="smart-app-actions-${evidence.installed.id}"]`
+      )
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="smart-app-stop-menu-${evidence.installed.id}"]`
+      )
+      await until(
+        () => workbenchApp('snapshot'),
+        value => !value.running,
+        'Stopping the replaced document did not stop its workbench'
+      )
+      assert.deepEqual(JSON.parse(await readFile(dataPath, 'utf8')).state, { sum: 5 })
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="harness-app-start-${evidence.installed.id}"]`
+      )
+      await until(
+        () => workbenchApp('snapshot'),
+        value => value.running && value.visible && value.sdkAvailable,
+        'Explicitly restarting did not restore the original calculator with its SDK',
+        workbenchReadyTimeoutMs
+      )
+      await until(
+        () => workbenchApp('getText', { selector: '[data-testid="calculator-ready"]' }),
+        value => value === 'SDK ready',
+        'The restored calculator could not read its existing state'
+      )
+      assert.deepEqual((await workbenchApp('document')).state, { sum: 5 })
+      await workbenchApp('click', { selector: '[data-testid="calculator-add"]' })
+      await until(
+        () => workbenchApp('getText', { selector: '[data-testid="calculator-result"]' }),
+        value => value === '5',
+        'The restored calculator could not use its new document connection'
+      )
+      assert.deepEqual(JSON.parse(await readFile(dataPath, 'utf8')).state, { sum: 5 })
       await control.command(
         'clickWhenEnabled',
         `[data-testid="smart-app-actions-${evidence.installed.id}"]`
@@ -469,4 +492,41 @@ if (result.exit_code !== 0) throw new Error('The workbench task command exited w
       active = false
     },
   }
+}
+
+export async function verifyWorkbenchDocumentAuthority({ workbenchApp, until, dataPath }) {
+  // Opaque origins and WindowProxy identity survive navigation; neither grants authority.
+  for (const attempt of ['remote', 'redirect']) {
+    const url = 'https://replacement.invalid/workbench'
+    assert.deepEqual(
+      await workbenchApp('clickAndWaitForBlockedNavigation', {
+        selector: `[data-testid="calculator-${attempt}"]`,
+        url,
+      }),
+      { clicked: true, blocked: true, url }
+    )
+    await until(
+      () => workbenchApp('getText', { selector: '[data-testid="calculator-security"]' }),
+      value => value === `${attempt}:5`,
+      'The initial document lost its private SDK after blocked navigation'
+    )
+    assert.deepEqual((await workbenchApp('document')).state, { sum: 5 })
+    assert.deepEqual(JSON.parse(await readFile(dataPath, 'utf8')).state, { sum: 5 })
+  }
+  // Chromium commits blank documents without a request throttle. They must receive no authority.
+  assert.deepEqual(
+    await workbenchApp('clickAndVerifyDocumentReplacement', {
+      selector: '[data-testid="calculator-blank"]',
+      url: 'about:blank',
+    }),
+    {
+      clicked: true,
+      replaced: true,
+      url: 'about:blank',
+      sdkAvailable: false,
+      publicReplies: 0,
+      privateReplies: 0,
+    }
+  )
+  assert.deepEqual(JSON.parse(await readFile(dataPath, 'utf8')).state, { sum: 5 })
 }
