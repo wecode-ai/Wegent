@@ -15,6 +15,7 @@ use brz_redis::{
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tracing::instrument::WithSubscriber;
 
 use super::*;
 use crate::executor_manager::ExecutorManager;
@@ -205,6 +206,14 @@ struct LogCapture {
 }
 
 impl LogCapture {
+    async fn capture<F: Future>(&self, future: F) -> F::Output {
+        // With one registered dispatcher, another test can cache a callsite's
+        // interest using its unscoped default. Keep a second dispatcher alive
+        // so registration consults both dispatchers.
+        let _inactive = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        future.with_subscriber(self.clone()).await
+    }
+
     fn messages(&self) -> Vec<String> {
         self.messages.lock().unwrap().clone()
     }
@@ -529,9 +538,7 @@ async fn chat_shell_500_is_observable() {
         RecordingRedis::default(),
     );
     let capture = LogCapture::default();
-    let guard = tracing::subscriber::set_default(capture.clone());
-    let result = run_chat_shell(job).await;
-    drop(guard);
+    let result = capture.capture(run_chat_shell(job)).await;
 
     let error = result.expect_err("a 500 is not a completion");
     assert!(error.contains("HTTP status code: 500"), "{error}");
@@ -561,9 +568,7 @@ async fn mid_stream_error_is_observable() {
         RecordingRedis::default(),
     );
     let capture = LogCapture::default();
-    let guard = tracing::subscriber::set_default(capture.clone());
-    let result = run_chat_shell(job).await;
-    drop(guard);
+    let result = capture.capture(run_chat_shell(job)).await;
 
     let error = result.expect_err("a stream without a terminal frame is not a completion");
     assert!(error.contains("without terminal event"), "{error}");
