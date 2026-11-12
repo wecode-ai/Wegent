@@ -65,8 +65,10 @@ child.once('error', error => {
   console.error(error.message)
   process.exitCode = 1
 })
-child.once('exit', (code, signal) => {
+child.once('close', code => {
   for (const timer of timers) clearInterval(timer)
-  process.exit(code ?? (signal ? 1 : 0))
+  process.stdin.pause()
+  // Let queued stdout writes drain before the relay exits.
+  process.exitCode ??= code ?? 1
 })
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal))
