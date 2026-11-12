@@ -17,6 +17,22 @@ afterEach(async () => {
 })
 
 describe('stand-in error localization', () => {
+  it.each(['zh-CN', 'en'])(
+    'offers reasoning recovery for structured and persisted failures in %s',
+    async language => {
+      await i18n.changeLanguage(language)
+      const expected = i18n.t('common:standIn.errors.model_reasoning_unavailable')
+      expect(getStandInErrorMessage({ code: 'model_reasoning_unavailable' })).toBe(expected)
+      expect(
+        getStandInErrorMessage(
+          new Error(
+            'The selected model does not support the saved reasoning effort; update the stand-in model settings'
+          )
+        )
+      ).toBe(expected)
+      expect(expected).not.toBe(i18n.t('common:standIn.errors.model_unavailable'))
+    }
+  )
   it('keeps compatibility guidance independent of the failed operation in both languages', async () => {
     for (const [language, message] of [
       ['zh-CN', '当前 Wework 与执行设备的版本不兼容。请前往云端工作查看设备情况，升级后重试。'],

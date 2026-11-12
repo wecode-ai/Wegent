@@ -185,8 +185,23 @@ export function StandInComposer({
             selectedModel={models.selectedModel}
             selectedModelOptions={draft.modelOptions ?? {}}
             disabled={disabled}
+            onOpenChange={open => {
+              if (open) models.refresh()
+            }}
             onSelectModel={model =>
               onChange(current => ({ ...current, model: models.resolve(model) }))
+            }
+            onSelectModelAndOptions={(model, options) =>
+              onChange(current => {
+                const modelOptions = { ...current.modelOptions }
+                delete modelOptions.reasoning
+                delete modelOptions.reasoningEffort
+                return {
+                  ...current,
+                  model: models.resolve(model),
+                  modelOptions: { ...modelOptions, ...options },
+                }
+              })
             }
             onSelectModelOption={(key, value) =>
               onChange(current => ({
