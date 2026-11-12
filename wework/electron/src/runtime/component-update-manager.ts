@@ -25,6 +25,11 @@ import {
 } from './bundled-component-archive.js'
 import * as tar from 'tar'
 import { hashComponentPath, sha256 } from './component-content-hash.js'
+import {
+  runStartupStage,
+  type StartupStageEvent,
+  type StartupStageReporter,
+} from './startup-stage.js'
 
 export { hashComponentPath } from './component-content-hash.js'
 
@@ -116,15 +121,11 @@ export interface ComponentUpdateManagerOptions {
   fetch?: typeof fetch
   retryDelay?: (attempt: number) => Promise<void>
   log?: (event: Record<string, unknown>) => void
-  onStage?: (event: ComponentPreparationStage) => void
+  onStage?: StartupStageReporter
   validateExecutor?: (path: string) => Promise<void>
 }
 
-export interface ComponentPreparationStage {
-  stage: string
-  phase: 'started' | 'completed' | 'failed'
-  elapsedMs: number
-}
+export type ComponentPreparationStage = StartupStageEvent
 
 export class ComponentUpdateManager {
   private readonly resourcesRoot: string
@@ -136,7 +137,7 @@ export class ComponentUpdateManager {
   private readonly fetch: typeof fetch
   private readonly retryDelay: (attempt: number) => Promise<void>
   private readonly log: (event: Record<string, unknown>) => void
-  private readonly onStage: ((event: ComponentPreparationStage) => void) | undefined
+  private readonly onStage: StartupStageReporter | undefined
   private activeStage: {
     id: string
     key: string
@@ -548,14 +549,23 @@ export class ComponentUpdateManager {
           const contentSha256 = active?.contentSha256 ?? packagedComponent.sha256
           let path: string
           if (!active) {
-            path = await this.packagedComponentPath(id, packagedComponent)
+            path = await this.stage(`component-${id}-materialize`, () =>
+              this.packagedComponentPath(id, packagedComponent)
+            )
           } else {
             const root = this.componentRoot(id, active.archiveSha256)
             const managedPath = active.entryPath === '.' ? root : join(root, active.entryPath)
-            if (await componentMatches(managedPath, active.contentSha256)) {
+            const matches = await this.stage(
+              `component-${id}-verify`,
+              () => componentMatches(managedPath, active.contentSha256),
+              matched => ({ matched })
+            )
+            if (matches) {
               path = managedPath
             } else if (active.contentSha256 === packagedComponent.sha256) {
-              path = await this.packagedComponentPath(id, packagedComponent)
+              path = await this.stage(`component-${id}-materialize`, () =>
+                this.packagedComponentPath(id, packagedComponent)
+              )
             } else {
               throw new Error(`Managed component checksum mismatch: ${id}`)
             }
@@ -566,28 +576,12 @@ export class ComponentUpdateManager {
     )
   }
 
-  private async stage<T>(stage: string, run: () => Promise<T>): Promise<T> {
-    const startedAt = performance.now()
-    const report = (phase: ComponentPreparationStage['phase']) => {
-      try {
-        this.onStage?.({
-          stage,
-          phase,
-          elapsedMs: Math.round(performance.now() - startedAt),
-        })
-      } catch {
-        // Diagnostics must never interrupt component preparation.
-      }
-    }
-    report('started')
-    try {
-      const result = await run()
-      report('completed')
-      return result
-    } catch (error) {
-      report('failed')
-      throw error
-    }
+  private stage<T>(
+    stage: string,
+    run: () => Promise<T>,
+    details?: (result: T) => Record<string, unknown>
+  ): Promise<T> {
+    return runStartupStage(this.onStage, stage, run, details)
   }
 
   private async packagedComponentPath(
