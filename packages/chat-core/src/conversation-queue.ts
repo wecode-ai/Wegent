@@ -34,6 +34,8 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   modelId?: string
   modelType?: RuntimeSendRequest['modelType']
   modelOptions?: ModelOptions
+  startNewSession?: RuntimeSendRequest['startNewSession']
+  expectedThreadId?: RuntimeSendRequest['expectedThreadId']
   runtimeGoalRequest?: boolean
   initialGoal?: RuntimeGoalCreateInput
   additionalContext?: RuntimeAdditionalContext

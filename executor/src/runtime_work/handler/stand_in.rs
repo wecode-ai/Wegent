@@ -2,6 +2,7 @@
 use super::stand_in_agent::apply_stand_in_agent;
 use super::stand_in_workspace::apply_stand_in_workspace;
 use super::*;
+use crate::agents::normalize_reasoning_effort_alias;
 use crate::runtime_work::response::local_task_json;
 
 pub(super) fn stand_in_issue_identity(config: &Value, issue: &Value) -> String {
@@ -839,8 +840,11 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
     ) -> Result<Value, AppIpcError> {
         let agent = {
-            config["model"].is_object().then(|| json!({
-                "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"],
+            let has_reasoning = super::creation::normalized_model_options(&config["modelOptions"])
+                .get("reasoning")
+                .is_some_and(Value::is_string);
+            (config["model"].is_object() || has_reasoning).then(|| json!({
+                "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"].as_str().unwrap_or("codex"),
                 "execution_policy":{"mode":"fixed","environment_id":self.device_id},
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
@@ -855,6 +859,18 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         agent: Option<Value>,
     ) -> Result<Value, AppIpcError> {
+        let mut options = config
+            .get("modelOptions")
+            .map(super::creation::normalized_model_options)
+            .unwrap_or_default();
+        // Provider identity comes from runner routing, never from saved user options.
+        options.remove("runnerModelProvider");
+        if let Some(effort) = options
+            .get_mut("reasoning")
+            .filter(|value| value.is_string())
+        {
+            *effort = json!(normalize_reasoning_effort_alias(effort.as_str().unwrap()));
+        }
         if let Some(agent) = agent {
             let catalog = self.runner_catalog().await?;
             apply_stand_in_agent(
@@ -864,6 +880,35 @@ impl RuntimeWorkRpcHandler {
                 &self.device_id,
                 config.get("model").filter(|model| model.is_object()),
             )?;
+            if let Some(effort) = options.get("reasoning").and_then(Value::as_str) {
+                let selected = &payload["runnerRouting"]["model"];
+                let model = catalog["models"].as_array().and_then(|models| {
+                    models.iter().find(|model| {
+                        ["runtime", "provider", "model_id"]
+                            .iter()
+                            .all(|key| model.get(key) == selected.get(key))
+                    })
+                });
+                let is_default = model
+                    .and_then(|model| model["default_reasoning_effort"].as_str())
+                    .is_some_and(|value| normalize_reasoning_effort_alias(value) == effort);
+                let supported =
+                    model.and_then(|model| model["supported_reasoning_efforts"].as_array());
+                if !is_default
+                    && supported.is_some_and(|efforts| {
+                        !efforts.iter().any(|value| {
+                            value.as_str().is_some_and(|value| {
+                                normalize_reasoning_effort_alias(value) == effort
+                            })
+                        })
+                    })
+                {
+                    return Err(AppIpcError::new(
+                        "model_reasoning_unavailable",
+                        "The selected model does not support the saved reasoning effort; update the stand-in model settings",
+                    ));
+                }
+            }
             self.materialize_runner_cloud_models(&mut payload).await?;
         } else {
             let mut request = ExecutionRequest {
@@ -877,17 +922,27 @@ impl RuntimeWorkRpcHandler {
                 .insert("origin".into(), payload["origin"].clone());
             payload["executionRequest"] = json!(request);
         }
-        if let Some(options) = config["modelOptions"].as_object() {
+        if !options.is_empty() {
             let target = payload
                 .as_object_mut()
                 .unwrap()
                 .entry("modelOptions")
                 .or_insert_with(|| json!({}));
-            target.as_object_mut().unwrap().extend(options.clone());
+            target.as_object_mut().unwrap().extend(options);
+        }
+        if let Some(effort) = payload["modelOptions"]
+            .get_mut("reasoning")
+            .filter(|value| value.is_string())
+        {
+            *effort = json!(normalize_reasoning_effort_alias(effort.as_str().unwrap()));
         }
         if payload["modelId"].is_string() {
             payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});
         }
+        let mut request = execution_request(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "Invalid stand-in execution request"))?;
+        super::creation::apply_creation_options(&mut request, &payload)?;
+        payload["executionRequest"] = json!(request);
         // Stand-ins and direct Wework profiles do not execute as Backend Teams.
         payload["executionRequest"]["team_id"] = json!(0);
         payload["executionRequest"]["user_id"] = config["userId"].clone();
