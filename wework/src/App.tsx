@@ -1,3 +1,4 @@
+import { useWorkbenchServiceConnections } from '@/features/workbench/workbenchServiceConnections'
 import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
 import { LOCAL_USER } from '@/api/local/localSession'
 import {
@@ -620,6 +621,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       runtimeServiceUser,
     ]
   )
+  useWorkbenchServiceConnections(services)
 
   useEffect(() => {
     if (!isElectronRuntime()) return
@@ -1323,10 +1325,7 @@ function AppShell() {
             )}
           >
             {showChromeTitlebar && (
-              <ChromeTitlebar
-                showWorkspacePortals={activeAppKey !== 'wework'}
-                showFeedback={activeAppKey !== 'wework'}
-              />
+              <ChromeTitlebar showWorkspacePortals={activeAppKey !== 'wework'} />
             )}
             {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
             {isMainWindow && isElectron ? (

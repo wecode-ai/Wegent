@@ -11,6 +11,14 @@ use serde_json::{json, Value};
 
 use crate::protocol::ExecutionRequest;
 
+pub(crate) fn is_codex_runtime(runtime: &str) -> bool {
+    runtime.eq_ignore_ascii_case("codex")
+}
+
+pub(crate) fn model_provider_routing(runtime: &str) -> Option<&'static str> {
+    is_codex_runtime(runtime).then_some("thread")
+}
+
 pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
     payload
         .get("executionRequest")

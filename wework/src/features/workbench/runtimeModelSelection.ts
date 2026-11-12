@@ -32,8 +32,11 @@ export function requiresNewConversationForModelSwitch(
   activeModel: UnifiedModel | null | undefined,
   targetModel: UnifiedModel | null,
   activeSelection?: ModelSelectionConfig | null,
-  activeProviderId?: string | null
+  activeProviderId?: string | null,
+  supportsModelProviderSwitch = false
 ): boolean {
+  // Upgraded runtimes bind every inference profile to one native provider identity.
+  if (supportsModelProviderSwitch) return false
   // A session's provider identity outlives its selectable catalog entry.
   const providerId = activeProviderId ?? savedConversationProvider(activeSelection)
   const activeProvider = providerId

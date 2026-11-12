@@ -14,6 +14,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { MainWindowStateController } from './main-window-state.js'
 import { createSingleFlight, presentWindow } from './window-presentation.js'
 import { DesktopHostReadiness } from './desktop-host-readiness.js'
+import { desktopE2EWindowOptions } from './e2e-window-policy.js'
 import { StartupProgressReporter } from './startup-progress.js'
 import { resolveStartupSplashTheme, StartupSplash } from './startup-splash.js'
 import { startWorkbenchSession, workbenchStartupMode } from './workbench-startup-mode.js'
@@ -313,7 +314,10 @@ function startupFixture(applicationOnly = false, trial = false, loadFailure?: 's
     startupTiming: null,
     pluginDevelopmentInstance: false,
     developmentDockIdentity: null,
-    process: { env: trial ? { WEWORK_ACTIVE_RELEASE_ID: 'target' } : {} },
+    process: {
+      platform: process.platform,
+      env: trial ? { WEWORK_ACTIVE_RELEASE_ID: 'target' } : {},
+    },
     app: { getPath: () => '/test-profile' },
     ReleaseStore: class {
       root = '/test-profile/releases'
@@ -374,6 +378,7 @@ function startupFixture(applicationOnly = false, trial = false, loadFailure?: 's
     },
     startupWindowLayout: () => ({ bounds: {}, maximized: false }),
     desktopWindowFrameOptions: () => ({}),
+    desktopE2EWindowOptions,
     workbenchBackgroundThrottling: () => false,
     dshPreloadPath: '/preload',
     startupSplashPreloadPath: '/splash-preload',

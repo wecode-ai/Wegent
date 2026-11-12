@@ -46,9 +46,11 @@ fn persisted_side_source_is_resolved_by_id_outside_the_default_provider_catalog(
             )
             .await;
             handler.codex_app_server.restart().await;
-            ready
-                .expect("a persisted source must not depend on catalog visibility")
-                .unwrap();
+            let calls = fs::read_to_string(root.path().join("requests.jsonl"))
+                .unwrap_or_else(|error| format!("Cannot read native fixture requests: {error}"));
+            ready.unwrap_or_else(|error| {
+                panic!("A persisted source must not depend on catalog visibility: {error}; native fixture requests: {calls}")
+            }).unwrap();
             assert_eq!(source.thread_path.as_deref(), path.to_str());
             let calls = fs::read_to_string(root.path().join("requests.jsonl")).unwrap();
             let calls: Vec<Value> = calls

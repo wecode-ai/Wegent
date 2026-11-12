@@ -1,3 +1,4 @@
+import { requestExecutor } from './executor-rpc.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -81,4 +82,17 @@ export async function verifyModelCatalogRecovery(control, { resultDir, uiTimeout
     if (stopped) process.kill(originalPid, 'SIGCONT')
     await control.command('releaseLocalExecutorRequestHold', 'body')
   }
+}
+
+export async function setNativeCatalogOverride(control, slug, fields, timeoutMs) {
+  const rpc = (method, params) => requestExecutor(control, method, params, timeoutMs)
+  const catalog = await rpc('runtime.codex.catalog.overrides.read', { slugs: [slug] })
+  const model = catalog.models.find(entry => entry.slug === slug)
+  assert.ok(model, `Missing native catalog fixture: ${slug}`)
+  await rpc('runtime.codex.catalog.overrides.write', {
+    slug,
+    entry: { ...model.effective, ...fields },
+  })
+  const restarted = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
+  assert.equal(restarted.restarted, true, JSON.stringify(restarted))
 }

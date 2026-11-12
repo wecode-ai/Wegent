@@ -4,7 +4,7 @@ import {
   replaceWorkspaceEditorText,
 } from '@/test/pierreCode'
 import type { WorkspaceTarget, WorkspaceTextFileResponse } from '@/types/workspace-files'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeAll, expect, test, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import { Editor } from '@pierre/diffs/edit'
@@ -29,6 +29,94 @@ const save = () =>
   fireEvent.keyDown(screen.getByTestId('workspace-file-editor'), { key: 's', ctrlKey: true })
 const edit = (content: string) =>
   replaceWorkspaceEditorText(screen.getByTestId('workspace-file-editor'), content)
+
+test('renders HTML as a page by default and toggles source with an eye action', async () => {
+  const htmlFile: WorkspaceTextFileResponse = {
+    ...initial,
+    path: '/repo/agreement.html',
+    name: 'agreement.html',
+    content: '<!doctype html><title>Agreement</title><h1>Agreement</h1>',
+    size: 59,
+  }
+  const api = {
+    listWorkspaceEntries: vi.fn(async () => ({
+      path: target.path,
+      entries: [
+        {
+          name: htmlFile.name,
+          path: htmlFile.path,
+          isDirectory: false,
+          size: htmlFile.size,
+        },
+      ],
+    })),
+    readWorkspaceTextFile: vi.fn().mockResolvedValue(htmlFile),
+    writeWorkspaceTextFile: vi.fn(),
+  }
+  render(
+    <FileWorkspacePanel
+      target={target}
+      workspaceFileApi={api}
+      openFileRequest={{ path: htmlFile.path, id: 1 }}
+    />
+  )
+
+  const preview = await screen.findByTestId('workspace-html-file-preview')
+  expect(within(preview).getByTitle(htmlFile.name)).toHaveAttribute('srcdoc', htmlFile.content)
+  const modeButton = screen.getByTestId('workspace-file-markdown-mode-button')
+  expect(modeButton).toHaveTextContent('源码')
+
+  fireEvent.click(modeButton)
+
+  await waitFor(() => expect(getWorkspaceCodeText()).toContain('<!doctype html>'))
+  expect(screen.queryByTestId('workspace-html-file-preview')).not.toBeInTheDocument()
+  expect(modeButton).toHaveTextContent('预览')
+
+  fireEvent.click(modeButton)
+
+  await waitFor(() => expect(screen.getByTestId('workspace-html-file-preview')).toBeInTheDocument())
+})
+
+test('opens HTML source when a file link targets a specific line', async () => {
+  const htmlFile: WorkspaceTextFileResponse = {
+    ...initial,
+    path: '/repo/line-target.html',
+    name: 'line-target.html',
+    content: '<!doctype html>\n<h1>HTML_LINE_TARGET</h1>',
+    size: 43,
+  }
+  const api = {
+    listWorkspaceEntries: vi.fn(async () => ({
+      path: target.path,
+      entries: [
+        {
+          name: htmlFile.name,
+          path: htmlFile.path,
+          isDirectory: false,
+          size: htmlFile.size,
+        },
+      ],
+    })),
+    readWorkspaceTextFile: vi.fn().mockResolvedValue(htmlFile),
+    writeWorkspaceTextFile: vi.fn(),
+  }
+  render(
+    <FileWorkspacePanel
+      target={target}
+      workspaceFileApi={api}
+      openFileRequest={{ path: htmlFile.path, id: 1, lineStart: 2 }}
+    />
+  )
+
+  await waitFor(() => expect(getWorkspaceCodeText()).toContain('HTML_LINE_TARGET'))
+  expect(screen.queryByTestId('workspace-html-file-preview')).not.toBeInTheDocument()
+  const modeButton = screen.getByTestId('workspace-file-markdown-mode-button')
+  expect(modeButton).toHaveTextContent('预览')
+
+  fireEvent.click(modeButton)
+
+  await waitFor(() => expect(screen.getByTestId('workspace-html-file-preview')).toBeInTheDocument())
+})
 
 test('reopening the current file refreshes its document while retaining the file tab', async () => {
   const external = { ...initial, content: 'const external = 2', revision: 'external' }

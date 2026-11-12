@@ -162,7 +162,6 @@ import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
-  TitlebarFeedbackPortal,
   WORKBENCH_MAIN_HEADER_PORTAL_ID,
   WORKBENCH_SPLIT_ACTIONS_PORTAL_ID,
   WorkbenchMainHeaderPortal,
@@ -5208,13 +5207,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <WorkbenchPaneHeaderActionsPortal targetId={paneHeaderActionsPortalId}>
           {paneHeaderActions}
         </WorkbenchPaneHeaderActionsPortal>
-      ) : null}
-      {feedbackInChromeTitlebar &&
-      !activeLocalHarnessSession &&
-      paneActive &&
-      workbenchVisible &&
-      !splitMode ? (
-        <TitlebarFeedbackPortal>{feedbackButton}</TitlebarFeedbackPortal>
       ) : null}
       <>
         {!isDesktop && presentation !== 'popout' && (
