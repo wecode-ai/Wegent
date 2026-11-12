@@ -1384,6 +1384,7 @@ jobs:
 
       - name: Prune transient Wework desktop E2E caches
         if: always()
+        timeout-minutes: 2
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
       - name: Upload Wework desktop macOS diagnostics
