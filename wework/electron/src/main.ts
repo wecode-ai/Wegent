@@ -3172,7 +3172,10 @@ function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
         }),
       log: event => appUpdateLogger.info(event),
       onStage: event =>
-        logStartupStep(event.stage, event.phase, { phaseElapsedMs: event.elapsedMs }),
+        logStartupStep(event.stage, event.phase, {
+          phaseElapsedMs: event.elapsedMs,
+          ...event.details,
+        }),
       resourcesRoot: desktopComponentResourcesRoot(),
       dataDirectory: process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
       updateBaseUrl,

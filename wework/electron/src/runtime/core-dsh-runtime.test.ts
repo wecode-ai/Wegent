@@ -146,6 +146,7 @@ describe('core DSH runtime', () => {
     )
     const unchangedWorkspace = `${await readFile(workspacePath, 'utf8')}# keep-existing-workspace\n`
     await writeFile(workspacePath, unchangedWorkspace)
+    const stages: Array<{ stage: string; phase: string; elapsedMs: number }> = []
     const second = await prepareCoreDshLaunch({
       runtimeRoot: runtime.root,
       dataDirectory,
@@ -155,6 +156,7 @@ describe('core DSH runtime', () => {
         WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
         WEWORK_NODE_PATH: '/managed/node',
       },
+      onStage: event => stages.push(event),
       port: 3081,
     })
 
@@ -168,6 +170,9 @@ describe('core DSH runtime', () => {
     expect(second.args).toContain('3081')
     expect(second.environment.WEWORK_APP_WEB_ROOT).toBe(
       join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web')
+    )
+    expect(stages).toContainEqual(
+      expect.objectContaining({ stage: 'core-dsh-profile-reuse', phase: 'completed' })
     )
     await expect(readFile(workspacePath, 'utf8')).resolves.toBe(unchangedWorkspace)
     expect(
@@ -934,6 +939,7 @@ describe('core DSH runtime', () => {
     await mkdir(join(profileRoot, 'node_modules', '.pnpm'), { recursive: true })
     await Promise.all(lockfilePaths.map(path => writeFile(path, 'stale install state')))
 
+    const stages: Array<{ stage: string; phase: string }> = []
     await prepareCoreDshLaunch({
       runtimeRoot: runtime.root,
       dataDirectory,
@@ -941,6 +947,7 @@ describe('core DSH runtime', () => {
         WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
         WEWORK_NODE_PATH: '/managed/node',
       },
+      onStage: event => stages.push(event),
       port: 3081,
     })
 
@@ -960,6 +967,12 @@ describe('core DSH runtime', () => {
       repaired.dsh.profile.bundles.indexOf('@wework-e2e/native-dsh-consumer')
     )
     expect(repaired.dependencies['@wework-e2e/independent-dsh-plugin']).toBe('1.2.3')
+    expect(stages).toContainEqual(
+      expect.objectContaining({ stage: 'core-dsh-profile-rebuild', phase: 'completed' })
+    )
+    expect(stages).toContainEqual(
+      expect.objectContaining({ stage: 'core-dsh-profile-copy-plugins', phase: 'completed' })
+    )
     await Promise.all(
       lockfilePaths.map(path =>
         expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })

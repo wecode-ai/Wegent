@@ -5,6 +5,7 @@ import { hashComponentPath } from './component-update-manager.js'
 import { copyManagedPlugin } from './managed-plugin-files.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import { recordReleaseDiagnostic } from './release-diagnostics.js'
+import { runStartupStage, type StartupStageReporter } from './startup-stage.js'
 
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
@@ -151,6 +152,7 @@ export interface PrepareCoreDshRuntimeOptions {
   runtimeRoot: string
   dataDirectory: string
   environment: NodeJS.ProcessEnv
+  onStage?: StartupStageReporter
 }
 
 export type CommandRunner = (
@@ -167,21 +169,29 @@ export async function prepareCoreDshRuntime(
     throw new Error('WEWORK_CORE_PLUGIN_ROOT is required for the packaged Core DSH runtime')
   }
   recordReleaseDiagnostic('core-preparation', { phase: 'runtime-select-start' }, true)
-  const runtime = await selectCoreDshRuntime(options.runtimeRoot, pluginsRoot)
+  const runtime = await runStartupStage(options.onStage, 'core-dsh-runtime-select', () =>
+    selectCoreDshRuntime(options.runtimeRoot, pluginsRoot)
+  )
   recordReleaseDiagnostic('core-preparation', { phase: 'runtime-select-finish' }, true)
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
   const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
   recordReleaseDiagnostic('core-preparation', { phase: 'plugins-hash-start' }, true)
-  const corePluginsFingerprint =
-    options.environment.WEWORK_CORE_PLUGINS_SHA256?.trim() ||
-    (await hashComponentPath(resolve(pluginsRoot)))
+  const configuredPluginsFingerprint =
+    options.environment.WEWORK_CORE_PLUGINS_SHA256?.trim() || null
+  const corePluginsFingerprint = await runStartupStage(
+    options.onStage,
+    'core-dsh-plugin-fingerprint',
+    async () => configuredPluginsFingerprint || (await hashComponentPath(resolve(pluginsRoot))),
+    () => ({ source: configuredPluginsFingerprint ? 'environment' : 'content' })
+  )
   recordReleaseDiagnostic('core-preparation', { phase: 'profile-prepare-start' }, true)
   await prepareProfile({
     runtime,
     dshHome,
     managedUiPlugins,
     corePluginsFingerprint,
+    onStage: options.onStage,
   })
   recordReleaseDiagnostic('core-preparation', { phase: 'profile-prepare-finish' }, true)
   return {
@@ -305,12 +315,29 @@ export async function selectBundledDshRuntimeMatching(
   return selected
 }
 
-async function prepareProfile(options: {
+interface ProfileInspection {
+  profileRoot: string
+  workspacePath: string
+  managedBundles: string[]
+  managedDependencies: Record<string, string>
+  managedDependencyNames: string[]
+  previouslyManaged: string[]
+  currentManifest: unknown
+  currentDependencies: Record<string, string>
+  currentBundles: string[]
+  removedDependencies: Set<string>
+  expectedStamp: ProfileStamp
+  stampIsCurrent: boolean
+  coreDependenciesAreCurrent: boolean
+  installationBundlesAreCurrent: boolean
+}
+
+async function inspectProfile(options: {
   runtime: CoreDshRuntime
   dshHome: string
   managedUiPlugins: boolean
   corePluginsFingerprint: string
-}): Promise<void> {
+}): Promise<ProfileInspection> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
   const pluginState = objectRecord(
@@ -357,27 +384,109 @@ async function prepareProfile(options: {
   const installationBundlesAreCurrent = managedBundles
     .filter(name => !managedDependencyNames.includes(name))
     .every(name => currentBundles.includes(name))
-  await ensureNodePtySpawnHelpersExecutable(profileRoot)
-  await mkdir(profileRoot, { recursive: true, mode: 0o700 })
-  // Package installation replaces client files even when their bytes are unchanged.
-  // Production plugin changes take effect on explicit restart, without remounting the UI.
-  await writeFile(join(profileRoot, 'cordis.patch.yml'), '- id: client-hmr\n  disabled: true\n', {
-    mode: 0o600,
+  return {
+    profileRoot,
+    workspacePath,
+    managedBundles,
+    managedDependencies,
+    managedDependencyNames,
+    previouslyManaged,
+    currentManifest,
+    currentDependencies,
+    currentBundles,
+    removedDependencies,
+    expectedStamp,
+    stampIsCurrent,
+    coreDependenciesAreCurrent,
+    installationBundlesAreCurrent,
+  }
+}
+
+async function prepareProfile(options: {
+  runtime: CoreDshRuntime
+  dshHome: string
+  managedUiPlugins: boolean
+  corePluginsFingerprint: string
+  onStage?: StartupStageReporter
+}): Promise<void> {
+  const inspection = await runStartupStage(
+    options.onStage,
+    'core-dsh-profile-inspect',
+    () => inspectProfile(options),
+    result => ({
+      stampIsCurrent: result.stampIsCurrent,
+      coreDependenciesAreCurrent: result.coreDependenciesAreCurrent,
+      installationBundlesAreCurrent: result.installationBundlesAreCurrent,
+      removedDependencyCount: result.removedDependencies.size,
+    })
+  )
+  const {
+    profileRoot,
+    managedDependencyNames,
+    removedDependencies,
+    stampIsCurrent,
+    coreDependenciesAreCurrent,
+  } = inspection
+  await runStartupStage(options.onStage, 'core-dsh-profile-config-sync', async () => {
+    await ensureNodePtySpawnHelpersExecutable(profileRoot)
+    await mkdir(profileRoot, { recursive: true, mode: 0o700 })
+    // Package installation replaces client files even when their bytes are unchanged.
+    // Production plugin changes take effect on explicit restart, without remounting the UI.
+    await writeFile(join(profileRoot, 'cordis.patch.yml'), '- id: client-hmr\n  disabled: true\n', {
+      mode: 0o600,
+    })
   })
   if (
     stampIsCurrent &&
     removedDependencies.size === 0 &&
     coreDependenciesAreCurrent &&
-    installationBundlesAreCurrent
+    inspection.installationBundlesAreCurrent
   ) {
+    await runStartupStage(options.onStage, 'core-dsh-profile-reuse', async () => undefined)
     return
   }
 
-  const recoveredUserPlugins = await recoverInstalledDshDependencies(
+  await runStartupStage(
+    options.onStage,
+    'core-dsh-profile-rebuild',
+    () => rebuildProfile(options, inspection),
+    () => ({ managedDependencies: managedDependencyNames.length })
+  )
+}
+
+async function rebuildProfile(
+  options: {
+    runtime: CoreDshRuntime
+    managedUiPlugins: boolean
+    corePluginsFingerprint: string
+    onStage?: StartupStageReporter
+  },
+  inspection: ProfileInspection
+): Promise<number> {
+  const {
     profileRoot,
+    workspacePath,
+    managedBundles,
+    managedDependencies,
+    managedDependencyNames,
+    previouslyManaged,
+    currentManifest,
     currentDependencies,
     currentBundles,
-    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES, ...previouslyManaged])
+    removedDependencies,
+    expectedStamp,
+    coreDependenciesAreCurrent,
+  } = inspection
+  const recoveredUserPlugins = await runStartupStage(
+    options.onStage,
+    'core-dsh-profile-recover',
+    () =>
+      recoverInstalledDshDependencies(
+        profileRoot,
+        currentDependencies,
+        currentBundles,
+        new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES, ...previouslyManaged])
+      )
   )
   if (
     currentManifest &&
@@ -385,13 +494,15 @@ async function prepareProfile(options: {
       removedDependencies.size > 0 ||
       recoveredUserPlugins.dependencies.size > 0)
   ) {
-    await Promise.all(
-      [
-        join(profileRoot, 'pnpm-lock.yaml'),
-        join(profileRoot, 'node_modules', '.pnpm', 'lock.yaml'),
-        join(profileRoot, 'node_modules', '.modules.yaml'),
-      ].map(path => rm(path, { force: true }))
-    )
+    await runStartupStage(options.onStage, 'core-dsh-profile-clean', async () => {
+      await Promise.all(
+        [
+          join(profileRoot, 'pnpm-lock.yaml'),
+          join(profileRoot, 'node_modules', '.pnpm', 'lock.yaml'),
+          join(profileRoot, 'node_modules', '.modules.yaml'),
+        ].map(path => rm(path, { force: true }))
+      )
+    })
   }
   const userDependencies = Object.fromEntries(
     Object.entries(currentDependencies).filter(
@@ -404,20 +515,52 @@ async function prepareProfile(options: {
       !managedDependencyNames.includes(bundle) &&
       !removedDependencies.has(bundle)
   )
+  await runStartupStage(options.onStage, 'core-dsh-profile-write-config', () =>
+    writeProfileConfiguration({
+      profileRoot,
+      workspacePath,
+      userDependencies,
+      recoveredDependencies: recoveredUserPlugins.dependencies,
+      managedDependencies,
+      managedBundles,
+      userBundles,
+    })
+  )
+  await runStartupStage(
+    options.onStage,
+    'core-dsh-profile-copy-plugins',
+    () => copyManagedProfilePlugins(options.runtime, profileRoot, managedDependencyNames),
+    count => ({ plugins: count })
+  )
+  await runStartupStage(options.onStage, 'core-dsh-profile-finalize', () =>
+    finalizeProfile(profileRoot, expectedStamp)
+  )
+  return managedDependencyNames.length
+}
+
+async function writeProfileConfiguration(options: {
+  profileRoot: string
+  workspacePath: string
+  userDependencies: Record<string, string>
+  recoveredDependencies: Map<string, string>
+  managedDependencies: Record<string, string>
+  managedBundles: string[]
+  userBundles: string[]
+}): Promise<void> {
   await writeFile(
-    join(profileRoot, 'package.json'),
+    join(options.profileRoot, 'package.json'),
     `${JSON.stringify(
       {
         name: `dsh-profile-${PROFILE_NAME}`,
         private: true,
         dependencies: {
-          ...userDependencies,
-          ...Object.fromEntries(recoveredUserPlugins.dependencies),
-          ...managedDependencies,
+          ...options.userDependencies,
+          ...Object.fromEntries(options.recoveredDependencies),
+          ...options.managedDependencies,
         },
         dsh: {
           profile: {
-            bundles: [...managedBundles, ...userBundles],
+            bundles: [...options.managedBundles, ...options.userBundles],
           },
         },
       },
@@ -426,16 +569,26 @@ async function prepareProfile(options: {
     )}\n`,
     { mode: 0o600 }
   )
-  await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
-  await ensureCoreWorkspace(workspacePath)
-  for (const packageName of managedDependencyNames) {
-    const source = options.runtime.pluginRoots[packageName]
+  await writeFile(join(options.profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
+  await ensureCoreWorkspace(options.workspacePath)
+}
+
+async function copyManagedProfilePlugins(
+  runtime: CoreDshRuntime,
+  profileRoot: string,
+  packageNames: string[]
+): Promise<number> {
+  for (const packageName of packageNames) {
     const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
     await rm(destination, { recursive: true, force: true })
-    await copyManagedPlugin(source, destination)
+    await copyManagedPlugin(runtime.pluginRoots[packageName], destination)
   }
+  return packageNames.length
+}
+
+async function finalizeProfile(profileRoot: string, stamp: ProfileStamp): Promise<void> {
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
-  await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
+  await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(stamp, null, 2)}\n`, {
     mode: 0o600,
   })
 }
