@@ -29,6 +29,12 @@ fn persisted_side_source_is_resolved_by_id_outside_the_default_provider_catalog(
                 thread_path: None,
                 workspace_path: root.path().to_string_lossy().into_owned(),
             };
+            // Start the native-history fixture before timing source resolution.
+            handler
+                .codex_app_server
+                .ensure_started()
+                .await
+                .expect("native history fixture must initialize");
             let ready = tokio::time::timeout(
                 Duration::from_secs(5),
                 handler.wait_for_side_source_rollout(&mut source),
