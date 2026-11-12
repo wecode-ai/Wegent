@@ -61,7 +61,10 @@ export function sortProjectSpaceEntries(
   return [...entries].sort(
     (left, right) =>
       direction * collator.compare(left.project.name, right.project.name) ||
-      collator.compare(left.group.label, right.group.label) ||
+      collator.compare(
+        left.project.workspace_context?.name ?? left.group.label,
+        right.project.workspace_context?.name ?? right.group.label
+      ) ||
       collator.compare(left.key, right.key)
   )
 }
