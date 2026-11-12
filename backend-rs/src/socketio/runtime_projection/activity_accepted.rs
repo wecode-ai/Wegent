@@ -150,21 +150,27 @@ pub(in crate::socketio) async fn open_accepted_activity<T: MysqlTransaction>(
             return Ok(None);
         }
         if !metadata.contains_key("run_id") {
-            let active_ai_run_id = issue
-                .as_ref()
-                .and_then(|issue| issue.metadata.0.get("ai_state"))
-                .filter(|state| {
-                    matches!(
-                        state.get("status").and_then(Value::as_str),
-                        Some("running" | "pending" | "queued")
-                    ) && state
-                        .get("runtime_task_id")
-                        .and_then(Value::as_str)
-                        .is_none_or(|task_id| task_id.is_empty() || task_id == conversation)
-                })
-                .and_then(|state| state.get("run_id"))
+            let active_ai_run_id = origin
+                .get("run_id")
                 .and_then(Value::as_str)
-                .filter(|run_id| !run_id.is_empty());
+                .filter(|run_id| !run_id.is_empty())
+                .or_else(|| {
+                    issue
+                        .as_ref()
+                        .and_then(|issue| issue.metadata.0.get("ai_state"))
+                        .filter(|state| {
+                            matches!(
+                                state.get("status").and_then(Value::as_str),
+                                Some("running" | "pending" | "queued")
+                            ) && state
+                                .get("runtime_task_id")
+                                .and_then(Value::as_str)
+                                .is_none_or(|task_id| task_id.is_empty() || task_id == conversation)
+                        })
+                        .and_then(|state| state.get("run_id"))
+                        .and_then(Value::as_str)
+                        .filter(|run_id| !run_id.is_empty())
+                });
             if let Some(run_id) = active_ai_run_id {
                 metadata.insert("run_id".into(), json!(run_id));
             }
