@@ -24,6 +24,27 @@ test('the isolated display retains state between readiness probe connections', (
   assert.match(result.stdout, /_WEWORK_DISPLAY_LIFETIME\(STRING\) = "checkpoint-owned"/)
 })
 
+test('the display requires its private cookie and removes it after checkpoint failure', () => {
+  const result = spawnSync(
+    'sh',
+    [
+      launcher,
+      'sh',
+      '-ec',
+      `xprop -root >/dev/null
+       if XAUTHORITY="$XAUTHORITY.absent" xprop -root >/dev/null 2>&1; then exit 1; fi
+       printf 'display-auth=%s\\n' "$XAUTHORITY"
+       exit 17`,
+    ],
+    { encoding: 'utf8', timeout: 10_000 }
+  )
+  assert.ifError(result.error)
+  assert.equal(result.status, 17, result.stdout + result.stderr)
+  const path = /display-auth=(.+)/.exec(result.stdout)?.[1]
+  assert.ok(path, result.stdout + result.stderr)
+  assert.equal(existsSync(path), false, 'Checkpoint authentication must be removed on failure')
+})
+
 test('each checkpoint gets an unlocked private Secret Service and cleans it up', () => {
   const result = spawnSync(
     'dbus-run-session',
