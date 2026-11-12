@@ -17,53 +17,8 @@ describe('local attachment API', () => {
 
   afterEach(() => {
     delete window.weworkElectronFiles
-    vi.unstubAllEnvs()
     vi.restoreAllMocks()
-  })
-
-  test('bounds staging diagnostics and excludes file names, paths and contents', async () => {
-    vi.stubEnv('VITE_WEWORK_E2E', 'true')
-    const diagnostics = vi.spyOn(console, 'debug').mockImplementation(() => {})
-    desktopMocks.invoke.mockImplementation((capability: string, params) => {
-      if (capability === 'attachment.begin')
-        return Promise.resolve({ uploadId: 'private-id', chunkSize: 2 })
-      if (capability === 'attachment.append')
-        return Promise.resolve(params.offset + atob(params.chunkBase64).length)
-      return Promise.resolve('/private/path/file.txt')
-    })
-    const file = new File(['private-content'], 'private-name.txt')
-
-    await createLocalAttachmentApi().uploadAttachment(file)
-
-    const entries = diagnostics.mock.calls.map(([message]) =>
-      JSON.parse(String(message).replace('[Wework] Electron host diagnostic ', ''))
-    )
-    expect(entries.length).toBeGreaterThan(0)
-    expect(entries.length).toBeLessThanOrEqual(4)
-    expect(entries.at(-1)).toMatchObject({ offset: file.size, totalBytes: file.size })
-    for (const entry of entries) {
-      expect(Object.keys(entry).sort()).toEqual(
-        [
-          'capability',
-          'chunks',
-          'elapsedMs',
-          'encodeMs',
-          'invokeMs',
-          'offset',
-          'phase',
-          'progressMs',
-          'readMs',
-          'totalBytes',
-        ].sort()
-      )
-      expect(entry).toMatchObject({ capability: 'attachment.staging', phase: 'progress' })
-      for (const field of ['readMs', 'encodeMs', 'invokeMs', 'progressMs', 'elapsedMs']) {
-        expect(Number.isFinite(entry[field])).toBe(true)
-        expect(entry[field]).toBeGreaterThanOrEqual(0)
-      }
-    }
-    expect(JSON.stringify(entries)).not.toContain('private-')
-    expect(JSON.stringify(entries)).not.toContain('/private/')
+    vi.unstubAllEnvs()
   })
 
   test('references an Electron-selected Windows file without creating a draft copy', async () => {
@@ -190,5 +145,142 @@ describe('local attachment API', () => {
     expect(desktopMocks.invoke).toHaveBeenLastCalledWith('attachment.abort', {
       uploadId: 'upload-1',
     })
+  })
+
+  test('reports staging totals once without changing repeated progress or logging file data', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    let clock = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    const file = new File([new Uint8Array(101)], 'private-name.bin')
+    const slice = file.slice.bind(file)
+    vi.spyOn(file, 'slice').mockImplementation((start, end, contentType) => {
+      const chunk = slice(start, end, contentType)
+      const read = chunk.arrayBuffer.bind(chunk)
+      vi.spyOn(chunk, 'arrayBuffer').mockImplementation(async () => {
+        clock += 2
+        return read()
+      })
+      return chunk
+    })
+    const encode = btoa
+    vi.spyOn(globalThis, 'btoa').mockImplementation(value => {
+      clock += 3
+      return encode(value)
+    })
+    desktopMocks.invoke.mockImplementation(async (capability, params) => {
+      clock += 5
+      if (capability === 'attachment.begin') {
+        return { uploadId: 'private-upload-id', chunkSize: 1 }
+      }
+      if (capability === 'attachment.append') return params.offset + 1
+      if (capability === 'attachment.finish') return '/private/path/private-name.bin'
+      throw new Error(`Unexpected capability: ${capability}`)
+    })
+    const progress = vi.fn(() => {
+      clock += 7
+    })
+
+    const attachment = await createLocalAttachmentApi().uploadAttachment(file, progress)
+
+    expect(attachment.local_path).toBe('/private/path/private-name.bin')
+    expect(progress.mock.calls).toEqual([
+      [0],
+      ...Array.from({ length: 101 }, (_, index) => [Math.round(((index + 1) / 101) * 100)]),
+      [100],
+    ])
+    expect(debug).toHaveBeenCalledExactlyOnceWith(
+      '[Wework] Electron host diagnostic ' +
+        JSON.stringify({
+          capability: 'attachment.staging',
+          phase: 'completed',
+          elapsedMs: 1727,
+          readMs: 202,
+          encodeMs: 303,
+          invokeMs: 515,
+          chunkCount: 101,
+          progressChangeCount: 100,
+        })
+    )
+    expect(debug.mock.calls[0][0]).not.toMatch(/private|uploadId|filename|path|chunkBase64/)
+  })
+
+  test.each(['attachment.begin', 'attachment.append', 'attachment.finish'])(
+    'reports a %s failure once after cleanup without exposing its error',
+    async failedCapability => {
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+      const failure = new Error('private staging failure')
+      desktopMocks.invoke.mockImplementation(async (capability, params) => {
+        if (capability === failedCapability) throw failure
+        if (capability === 'attachment.begin') return { uploadId: 'private-upload', chunkSize: 2 }
+        if (capability === 'attachment.append') return params.offset + 1
+        if (capability === 'attachment.abort') throw new Error('private abort failure')
+        throw new Error(`Unexpected capability: ${capability}`)
+      })
+
+      await expect(
+        createLocalAttachmentApi().uploadAttachment(new File(['a'], 'private-name.txt'))
+      ).rejects.toBe(failure)
+
+      expect(debug).toHaveBeenCalledTimes(1)
+      const diagnostic = JSON.parse(
+        debug.mock.calls[0][0].replace('[Wework] Electron host diagnostic ', '')
+      )
+      expect(diagnostic).toEqual({
+        capability: 'attachment.staging',
+        phase: 'failed',
+        elapsedMs: expect.any(Number),
+        readMs: expect.any(Number),
+        encodeMs: expect.any(Number),
+        invokeMs: expect.any(Number),
+        chunkCount: failedCapability === 'attachment.begin' ? 0 : 1,
+        progressChangeCount: failedCapability === 'attachment.finish' ? 1 : 0,
+      })
+      expect(debug.mock.calls[0][0]).not.toMatch(/private|uploadId|filename|path|failure/)
+      if (failedCapability === 'attachment.begin') {
+        expect(desktopMocks.invoke).toHaveBeenCalledTimes(1)
+      } else {
+        expect(desktopMocks.invoke).toHaveBeenLastCalledWith('attachment.abort', {
+          uploadId: 'private-upload',
+        })
+      }
+    }
+  )
+
+  test('keeps staging diagnostics disabled outside E2E', async () => {
+    vi.stubEnv('MODE', 'test')
+    vi.stubEnv('VITE_WEWORK_E2E', 'false')
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    desktopMocks.invoke.mockRejectedValueOnce(new Error('disk full'))
+
+    await expect(
+      createLocalAttachmentApi().uploadAttachment(new File(['a'], 'generated.txt'))
+    ).rejects.toThrow('disk full')
+
+    expect(debug).not.toHaveBeenCalled()
+  })
+
+  test.each([true, false])('a diagnostic output failure preserves staging success=%s', async ok => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {
+      throw new Error('diagnostic failure')
+    })
+    const failure = new Error('staging failure')
+    desktopMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'attachment.begin') {
+        if (!ok) throw failure
+        return { uploadId: 'upload-1', chunkSize: 2 }
+      }
+      if (capability === 'attachment.append') return 1
+      if (capability === 'attachment.finish') return '/draft/generated.txt'
+      throw new Error(`Unexpected capability: ${capability}`)
+    })
+
+    const upload = createLocalAttachmentApi().uploadAttachment(new File(['a'], 'generated.txt'))
+
+    if (ok) await expect(upload).resolves.toMatchObject({ local_path: '/draft/generated.txt' })
+    else await expect(upload).rejects.toBe(failure)
+    expect(debug).toHaveBeenCalledTimes(1)
   })
 })

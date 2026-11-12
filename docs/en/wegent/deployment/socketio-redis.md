@@ -33,8 +33,10 @@ This also covers a connection that stops after delivering only part of a message
 so the listener cannot wait indefinitely for the remaining bytes.
 
 Health checks run before client commands or reads, rather than on a background
-timer. A completely idle subscription can therefore reach its read timeout and
-automatically resubscribe. Persistent failures use Socket.IO's existing retry backoff.
+timer. Background ACK probes wait for the smaller of the configured interval and
+half the read timeout, keeping healthy idle subscriptions active before they expire
+and avoiding lost RPC callbacks during unnecessary resubscription. Persistent
+failures use Socket.IO's existing retry backoff.
 Once resubscribed, the listener can receive new messages. Redis Pub/Sub does not replay
 messages missed during disconnection, so operations that already timed out must be retried.
 
@@ -43,7 +45,8 @@ messages missed during disconnection, so operations that already timed out must 
 Each Python Backend process sends a probe ACK through the Redis channel used
 by Socket.IO. After three consecutive failures, `/api/shutdown/status`
 returns 503. The next successful probe restores readiness. Each probe waits up
-to five seconds, with a 30-second interval between checks by default.
+to five seconds. The configured interval defaults to 30 seconds; with the default
+read timeout, the effective wait between checks is 15 seconds.
 
 With `LOG_LEVEL=DEBUG`, correlate `publish`, `receive` and `match` using
 the same `host_id`, `sid` and `callback_id`.
