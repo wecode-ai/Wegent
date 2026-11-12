@@ -10,9 +10,9 @@ export async function readConnectedApplicationPid(control) {
   return applicationPid
 }
 
-/** Attach only to the fresh child paused by this driver's --inspect-brk argument. */
-export async function inspectBeforeStart(child, expression, log = console.log) {
-  const socketUrl = await new Promise((accept, reject) => {
+/** Discover only the loopback endpoint announced by this driver's fresh child. */
+export function readInspectorEndpoint(child) {
+  return new Promise((accept, reject) => {
     let output = ''
     const timer = setTimeout(
       () => finish(new Error('The isolated app inspector did not start')),
@@ -36,6 +36,11 @@ export async function inspectBeforeStart(child, expression, log = console.log) {
     child.once('exit', failed)
     child.once('error', finish)
   })
+}
+
+/** Attach only to the fresh child paused by this driver's --inspect-brk argument. */
+export async function inspectBeforeStart(child, expression, log = console.log) {
+  const socketUrl = await readInspectorEndpoint(child)
   await withInspector(
     socketUrl,
     async (command, socket) => {

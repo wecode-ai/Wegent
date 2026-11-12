@@ -9,7 +9,34 @@ import {
   inspectBeforeStart,
   inspectRunningApp,
   readConnectedApplicationPid,
+  readInspectorEndpoint,
 } from './inspect-before-start.mjs'
+
+test('observes an unpaused child endpoint after entry without a debugger handshake', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-unpaused-inspector-'))
+  const entry = join(directory, 'host.cjs')
+  await writeFile(
+    entry,
+    'globalThis.started = true; setInterval(() => {}, 1000); console.log("ready")'
+  )
+  const child = spawn(process.execPath, ['--inspect=127.0.0.1:0', entry], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const exited = once(child, 'exit')
+  const ready = once(child.stdout, 'data', { signal: AbortSignal.timeout(10_000) })
+  try {
+    const [endpoint, [output]] = await Promise.all([readInspectorEndpoint(child), ready])
+    assert.equal(output.toString().trim(), 'ready')
+    assert.equal(
+      await inspectRunningApp(new URL(endpoint).port, child.pid, 'globalThis.started', () => {}),
+      true
+    )
+  } finally {
+    child.kill('SIGKILL')
+    await exited
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('registered handoff endpoints select the exact host without mutating other live hosts', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-inspector-registry-'))
