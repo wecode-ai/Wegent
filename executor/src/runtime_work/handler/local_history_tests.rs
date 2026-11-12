@@ -149,6 +149,92 @@ async fn transcript_transport_is_opt_in_and_keeps_legacy_responses() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn archived_transcript_refresh_reads_history_without_resuming() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _env: Vec<_> = [
+                "HOME", "CODEX_HOME", "WEGENT_CODEX_HOME", "WEGENT_EXECUTOR_HOME",
+                "WEGENT_WORKBENCH_HOME", "WEGENT_CAPABILITIES_HOME",
+            ].into_iter().map(|key| {
+                let directory = root.path().join(key);
+                fs::create_dir_all(&directory).unwrap();
+                ScalarEnv::set(key, directory.to_str().unwrap())
+            }).collect();
+            let binary = root.path().join("codex-archive-reader.sh");
+            let log = root.path().join("requests.jsonl");
+            fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{}'
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/resume"'*'"threadId":"archived-thread"'*)
+      printf '{{"id":%s,"error":{{"code":-32600,"message":"thread archived-thread is archived"}}}}\n' "$id" ;;
+    *'"method":"thread/turns/list"'*)
+      printf '{{"id":%s,"result":{{"data":[{{"id":"turn-1","status":"completed","items":[{{"id":"answer-1","type":"agentMessage","text":"Saved native history","phase":"final_answer"}}]}}],"nextCursor":null}}}}\n' "$id" ;;
+    *)
+      printf '{{"id":%s,"result":{{"thread":{{"id":"archived-thread","turns":[]}}}}}}\n' "$id" ;;
+  esac
+  case "$line" in *'"method":"test/stop"'*) exit 0;; esac
+done
+"#, log.display()))).unwrap();
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+            let mut handler = RuntimeWorkRpcHandler::new("device-1", binary.to_str().unwrap());
+            handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+            let mut link = RuntimeTaskLink::new_pending(
+                "archived-task".into(), root.path().join("project").display().to_string(),
+                "Archived task".into(),
+            );
+            link.thread_id = Some("archived-thread".into());
+            link.status = "archived".into();
+            link.running = false;
+            link.continuable = false;
+            handler.upsert_local_task(link);
+            for version in [1, 2] {
+                for refresh in [false, true] {
+                    let response = handler.read_thread_transcript(json!({
+                        "taskId":"archived-task", "refresh":refresh,
+                        "transcriptProtocolVersion":version,
+                    }), None).await.unwrap();
+                    assert!(response["messages"].as_array().unwrap().iter()
+                        .any(|message| message["content"] == "Saved native history"));
+                    assert_eq!(response["running"], false);
+                }
+            }
+            let archived = handler.local_task_link("archived-task").unwrap();
+            assert_eq!(archived.status, "archived");
+            assert!(!archived.continuable);
+            assert_eq!(archived.thread_id.as_deref(), Some("archived-thread"));
+
+            let mut active = RuntimeTaskLink::new_pending(
+                "active-task".into(), root.path().join("project").display().to_string(),
+                "Active task".into(),
+            );
+            active.thread_id = Some("active-thread".into());
+            active.status = "done".into();
+            handler.upsert_local_task(active);
+            handler.read_thread_transcript(json!({"taskId":"active-task","refresh":true}), None)
+                .await.unwrap();
+            handler.codex_app_server.request("test/stop", json!({})).await.unwrap();
+            let calls: Vec<Value> = fs::read_to_string(log).unwrap().lines()
+                .map(|line| serde_json::from_str(line).unwrap()).collect();
+            let resumes: Vec<_> = calls.iter().filter(|call| call["method"] == "thread/resume").collect();
+            assert_eq!(resumes.len(), 1);
+            assert_eq!(resumes[0]["params"]["threadId"], "active-thread");
+            assert!(!calls.iter().any(|call|
+                matches!(call["method"].as_str(), Some("thread/unarchive" | "turn/start"))));
+        });
+}
+
 #[tokio::test]
 async fn cancelling_idle_claude_preserves_its_original_outcome_and_time() {
     let (handler, root) = isolated_runtime_work_handler("claude-idle-stop");
