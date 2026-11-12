@@ -1,0 +1,13 @@
+{
+  "order": 171500,
+  "scenario": "./scenarios/feedback-entry.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 117500,
+      "shard": 5,
+      "position": 12500
+    }
+  },
+  "paths": ["wework/src/components/topnav/ChromeTitlebar.tsx", "wework/src/features/feedback/*"]
+}
