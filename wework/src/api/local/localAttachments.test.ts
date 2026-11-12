@@ -131,6 +131,31 @@ describe('local attachment API', () => {
     )
   })
 
+  test('uses the larger negotiated chunk while bounding each host request', async () => {
+    const chunkSize = 1024 * 1024
+    const chunks: { offset: number; size: number }[] = []
+    desktopMocks.invoke.mockImplementation(async (capability, params) => {
+      if (capability === 'attachment.begin') return { uploadId: 'upload-1', chunkSize }
+      if (capability === 'attachment.append') {
+        const size = atob(params.chunkBase64).length
+        chunks.push({ offset: params.offset, size })
+        return params.offset + size
+      }
+      if (capability === 'attachment.finish') return '/draft/generated.bin'
+      throw new Error(`Unexpected capability: ${capability}`)
+    })
+
+    const file = new File([new Uint8Array(chunkSize + 1)], 'generated.bin')
+    await expect(createLocalAttachmentApi().uploadAttachment(file)).resolves.toMatchObject({
+      file_size: chunkSize + 1,
+      local_path: '/draft/generated.bin',
+    })
+    expect(chunks).toEqual([
+      { offset: 0, size: chunkSize },
+      { offset: chunkSize, size: 1 },
+    ])
+  })
+
   test('aborts an Electron upload after a chunk failure', async () => {
     desktopMocks.invoke
       .mockResolvedValueOnce({ uploadId: 'upload-1', chunkSize: 2 })
