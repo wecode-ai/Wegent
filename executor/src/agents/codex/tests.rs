@@ -5824,6 +5824,8 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
     let runtime_path = home.join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
     let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
     env::set_var("WEGENT_EXECUTOR_HOME", &home);
+    let process_environment_before_enable = codex_base_process_environment();
+    assert!(computer_use_mcp_config_overrides().is_empty());
     fs::create_dir_all(runtime_path.parent().expect("runtime parent should exist"))
         .expect("runtime directory should be created");
     fs::write(
@@ -5844,26 +5846,38 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
     );
     assert_eq!(
         config["mcp_servers.wework_computer.args"],
-        json!(["computer-use-mcp-server"])
+        json!(["computer-use-mcp-server", runtime_path])
     );
     assert_eq!(
         config["mcp_servers.wework_computer.default_tools_approval_mode"],
         "writes"
     );
+    assert!(!config.contains_key("mcp_servers.wework_computer.env_vars"));
+    for environment in [&launch_config.env, &codex_base_process_environment()] {
+        assert!(!environment.contains_key("WEWORK_COMPUTER_USE_BRIDGE_URL"));
+        assert!(!environment.contains_key("WEWORK_COMPUTER_USE_BRIDGE_TOKEN"));
+    }
+    assert!(!serde_json::to_string(config)
+        .unwrap()
+        .contains("computer-use-test-token"));
     assert_eq!(
-        config["mcp_servers.wework_computer.env_vars"],
-        json!([
-            "WEWORK_COMPUTER_USE_BRIDGE_URL",
-            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
-        ])
+        codex_base_process_environment(),
+        process_environment_before_enable
     );
+    for params in [
+        thread_resume_params("existing-thread", &request, &launch_config),
+        thread_fork_params("existing-thread", None, &request, &launch_config),
+    ] {
+        assert_eq!(
+            params["config"]["mcp_servers.wework_computer.args"],
+            json!(["computer-use-mcp-server", runtime_path])
+        );
+    }
+    fs::remove_file(&runtime_path).unwrap();
+    assert!(computer_use_mcp_config_overrides().is_empty());
     assert_eq!(
-        launch_config.env["WEWORK_COMPUTER_USE_BRIDGE_URL"],
-        "http://127.0.0.1:43128"
-    );
-    assert_eq!(
-        launch_config.env["WEWORK_COMPUTER_USE_BRIDGE_TOKEN"],
-        "computer-use-test-token"
+        codex_base_process_environment(),
+        process_environment_before_enable
     );
 
     let _ = fs::remove_dir_all(home);

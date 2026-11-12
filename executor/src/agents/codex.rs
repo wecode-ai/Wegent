@@ -5693,7 +5693,6 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
             format!("Bearer {}", endpoint.token),
         );
     }
-    environment.extend(computer_use_mcp_config_overrides().1);
     // Auxiliary RPCs and turns must compare the same effective CLI directories.
     environment.extend(
         process_environment::process_env(&[])
@@ -5708,91 +5707,54 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
     environment
 }
 
-fn computer_use_mcp_config_overrides() -> (Vec<String>, BTreeMap<String, String>) {
+fn computer_use_mcp_config_overrides() -> Vec<String> {
     let path = executor_home().join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
-    let Ok(contents) = fs::read_to_string(path) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    let Ok(record) = serde_json::from_str::<Value>(&contents) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    let Some(address) = record.get("address").and_then(Value::as_str) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    let Some(token) = record.get("token").and_then(Value::as_str) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    if address.trim().is_empty() || token.trim().is_empty() {
-        return (Vec::new(), BTreeMap::new());
+    if crate::computer_use_mcp::read_bridge_record(&path).is_err() {
+        return Vec::new();
     }
     let command =
         env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
-    let env = BTreeMap::from([
-        (
-            "WEWORK_COMPUTER_USE_BRIDGE_URL".to_owned(),
-            format!("http://{}", address.trim()),
+    vec![
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "command"
+            ]),
+            toml_value(&command.display().to_string())
         ),
-        (
-            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN".to_owned(),
-            token.trim().to_owned(),
+        format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
+            toml_json_value(&json!(["computer-use-mcp-server", path]))
         ),
-    ]);
-    (
-        vec![
-            format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "command"
-                ]),
-                toml_value(&command.display().to_string())
-            ),
-            format!(
-                "{}={}",
-                toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
-                toml_json_value(&json!(["computer-use-mcp-server"]))
-            ),
-            format!(
-                "{}=15",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "startup_timeout_sec"
-                ])
-            ),
-            format!(
-                "{}=120",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "tool_timeout_sec"
-                ])
-            ),
-            format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "default_tools_approval_mode"
-                ]),
-                toml_value("writes")
-            ),
-            format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "env_vars"
-                ]),
-                toml_json_value(&json!([
-                    "WEWORK_COMPUTER_USE_BRIDGE_URL",
-                    "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
-                ]))
-            ),
-        ],
-        env,
-    )
+        format!(
+            "{}=15",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "startup_timeout_sec"
+            ])
+        ),
+        format!(
+            "{}=120",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "tool_timeout_sec"
+            ])
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "default_tools_approval_mode"
+            ]),
+            toml_value("writes")
+        ),
+    ]
 }
 
 fn managed_wework_mcp_config_overrides(

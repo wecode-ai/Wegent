@@ -20,6 +20,7 @@ mod passthrough_stream;
 mod progressive_tools;
 mod request_policy;
 pub mod retry_notifications;
+mod sse;
 mod vision;
 
 use std::{
@@ -805,8 +806,6 @@ use request_preparation::prepare_request;
 use request_preparation::prepare_request_with_history;
 #[cfg(test)]
 use request_preparation::prepare_request_with_model_hint;
-pub(super) use responses_stream::append_stream_utf8;
-pub(super) use responses_stream::finish_stream_utf8;
 pub(super) use responses_stream::is_responses_terminal_event;
 use responses_stream::normalize_responses_event;
 use responses_stream::normalize_responses_stream;
@@ -817,7 +816,7 @@ use responses_stream::responses_event_values;
 pub(super) use responses_stream::responses_failed_event;
 #[cfg(test)]
 use responses_stream::rewrite_responses_event;
-pub(super) use responses_stream::take_sse_block;
+pub(super) use sse::{append_stream_utf8, finish_stream_utf8, take_sse_block};
 use upstream_transport::bearer_token;
 #[cfg(test)]
 use upstream_transport::build_upstream_request;
