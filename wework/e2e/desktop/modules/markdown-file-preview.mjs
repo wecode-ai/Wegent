@@ -77,7 +77,7 @@ export async function verifyCloudHtmlFileLinkPreview({
   const links = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="assistant-markdown-link"]`
   await control.command('waitFor', links, {
     text: 'Cloud HTML preview',
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command(
     'waitFor',
@@ -106,8 +106,8 @@ export async function verifyCloudHtmlFileLinkPreview({
   const frame = `${preview} iframe`
 
   await control.command('clickElementWithText', links, { text: 'Cloud HTML preview' })
-  await control.command('waitFor', panel, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
-  await control.command('waitFor', preview, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('waitFor', panel, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await control.command('waitFor', preview, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   assert.equal(
     await control.command('getText', `${panel} [data-testid="workspace-file-path"]`),
     previewPath,
@@ -132,7 +132,7 @@ export async function verifyCloudHtmlFileLinkPreview({
   await control.command('clickWhenEnabled', modeButton)
   await control.command('waitFor', '[data-content][role="textbox"]', {
     text: CLOUD_HTML_SOURCE_MARKER,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.equal(
     Number(await control.command('getElementCount', preview, { visible: true })),
@@ -143,7 +143,7 @@ export async function verifyCloudHtmlFileLinkPreview({
   await control.command('clickWhenEnabled', modeButton)
   await control.command('waitFor', preview, {
     visible: true,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
     await control.command('getAttribute', frame, { value: 'srcdoc' }),
@@ -153,7 +153,7 @@ export async function verifyCloudHtmlFileLinkPreview({
 
   await control.command('clickElementWithText', links, { text: 'Missing Cloud HTML' })
   const previewError = `${panel} [data-testid="workspace-file-preview-error"]`
-  await control.command('waitFor', previewError, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('waitFor', previewError, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   assert.match(
     await control.command('getText', previewError),
     /Failed|失败/,
@@ -164,7 +164,7 @@ export async function verifyCloudHtmlFileLinkPreview({
   await control.command('clickElementWithText', links, { text: 'Cloud HTML preview' })
   await control.command('waitFor', preview, {
     visible: true,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
     await control.command('getAttribute', frame, { value: 'srcdoc' }),

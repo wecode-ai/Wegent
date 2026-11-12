@@ -319,10 +319,11 @@ interface WorkspaceFilePreviewContentProps {
 }
 
 function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
+  const { t } = useTranslation('common')
   return (
     <section
       data-testid="workspace-html-file-preview"
-      className="min-w-0 flex-1 overflow-hidden bg-background"
+      className="relative min-w-0 flex-1 overflow-hidden bg-background"
     >
       <iframe
         title={file.name}
@@ -330,6 +331,14 @@ function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
         sandbox="allow-forms allow-popups allow-scripts"
         className="h-full w-full border-0 bg-white"
       />
+      {file.truncated && (
+        <div
+          data-testid="workspace-html-file-preview-truncated"
+          className="absolute inset-x-0 bottom-0 border-t border-border bg-background/95 px-4 py-2 text-xs text-warning backdrop-blur wework:text-amber-700"
+        >
+          {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
+        </div>
+      )}
     </section>
   )
 }
@@ -815,12 +824,7 @@ export function WorkspaceFilePreview({
     )
   }
 
-  if (
-    !editing &&
-    isHtmlFile(file.name) &&
-    previewMode === 'preview' &&
-    typeof targetLineStart !== 'number'
-  ) {
+  if (!editing && isHtmlFile(file.name) && previewMode === 'preview') {
     return <WorkspaceHtmlPreview file={file} />
   }
 

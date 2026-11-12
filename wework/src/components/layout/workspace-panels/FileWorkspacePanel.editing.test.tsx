@@ -110,7 +110,12 @@ test('opens HTML source when a file link targets a specific line', async () => {
 
   await waitFor(() => expect(getWorkspaceCodeText()).toContain('HTML_LINE_TARGET'))
   expect(screen.queryByTestId('workspace-html-file-preview')).not.toBeInTheDocument()
-  expect(screen.getByTestId('workspace-file-markdown-mode-button')).toHaveTextContent('预览')
+  const modeButton = screen.getByTestId('workspace-file-markdown-mode-button')
+  expect(modeButton).toHaveTextContent('预览')
+
+  fireEvent.click(modeButton)
+
+  await waitFor(() => expect(screen.getByTestId('workspace-html-file-preview')).toBeInTheDocument())
 })
 
 test('reopening the current file refreshes its document while retaining the file tab', async () => {

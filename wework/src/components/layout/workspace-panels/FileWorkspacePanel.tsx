@@ -346,11 +346,12 @@ export function FileWorkspacePanel({
           pendingNavigationRef.current = null
           setBinaryPreview(null)
           acceptRead(file, requestId)
-          setPreviewMode(
+          const nextPreviewMode =
             isHtmlFile(file.name) && options?.lineStart !== undefined ? 'source' : 'preview'
-          )
+          setPreviewMode(nextPreviewMode)
           setEditing(
-            Boolean(file.editable && writeWorkspaceTextFile && !isPreviewableTextFile(file.name))
+            Boolean(file.editable && writeWorkspaceTextFile) &&
+              (!isPreviewableTextFile(file.name) || nextPreviewMode === 'source')
           )
           return
         }
@@ -860,12 +861,9 @@ export function FileWorkspacePanel({
             type="button"
             data-testid="workspace-file-markdown-mode-button"
             onClick={() => {
-              if (canEditPreview) {
-                setEditing(current => !current)
-                setPreviewMode(mode => (mode === 'preview' ? 'source' : 'preview'))
-                return
-              }
-              setPreviewMode(mode => (mode === 'preview' ? 'source' : 'preview'))
+              const nextMode = previewMode === 'preview' ? 'source' : 'preview'
+              setPreviewMode(nextMode)
+              if (canEditPreview) setEditing(nextMode === 'source')
             }}
             className="flex h-11 min-w-11 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:min-w-0"
             aria-label={
