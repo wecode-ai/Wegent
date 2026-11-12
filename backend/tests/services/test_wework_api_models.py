@@ -91,7 +91,7 @@ def test_api_can_select_gateway_models_by_the_returned_identifier(
         model=f"public:default:0:{name}", input="continue", conversation="conv_existing"
     )
 
-    selection = models.selection(test_db, test_user, body)
+    selection = models.selection_with_source(test_db, test_user, body)[0]
 
     assert selection.model_name == name
     assert selection.model_type == "public"
@@ -109,7 +109,7 @@ def test_api_still_rejects_models_outside_wework_catalog(
         model=f"public:default:0:{name}", input="continue", conversation="conv_existing"
     )
     with pytest.raises(HTTPException) as error:
-        models.selection(test_db, test_user, body)
+        models.selection_with_source(test_db, test_user, body)[0]
     assert error.value.status_code == 422
 
 
@@ -162,7 +162,9 @@ def test_existing_conversation_keeps_a_hidden_public_model(
         conversation="conv_existing",
     )
 
-    selection = models.selection(test_db, test_user, body, allow_hidden=True)
+    selection = models.selection_with_source(
+        test_db, test_user, body, allow_hidden=True
+    )[0]
 
     assert selection.model_name == "hidden-model"
     assert selection.model_type == "public"
@@ -184,7 +186,7 @@ def test_new_conversation_still_rejects_a_hidden_public_model(
     )
 
     with pytest.raises(HTTPException) as error:
-        models.selection(test_db, test_user, body)
+        models.selection_with_source(test_db, test_user, body)[0]
 
     assert error.value.status_code == 422
 
@@ -201,7 +203,7 @@ def test_hidden_model_still_has_to_be_available_in_wework(
     )
 
     with pytest.raises(HTTPException) as error:
-        models.selection(test_db, test_user, body, allow_hidden=True)
+        models.selection_with_source(test_db, test_user, body, allow_hidden=True)[0]
 
     assert error.value.status_code == 422
 
@@ -216,7 +218,7 @@ def test_hidden_model_still_has_to_be_an_llm(test_db, test_user, monkeypatch):
     )
 
     with pytest.raises(HTTPException) as error:
-        models.selection(test_db, test_user, body, allow_hidden=True)
+        models.selection_with_source(test_db, test_user, body, allow_hidden=True)[0]
 
     assert error.value.status_code == 422
 
@@ -235,7 +237,7 @@ def test_hidden_model_keeps_the_public_user_whitelist(test_db, test_user, monkey
     )
 
     with pytest.raises(HTTPException) as error:
-        models.selection(test_db, test_user, body, allow_hidden=True)
+        models.selection_with_source(test_db, test_user, body, allow_hidden=True)[0]
 
     assert error.value.status_code == 422
 

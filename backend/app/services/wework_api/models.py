@@ -222,14 +222,3 @@ def selection_with_source(
         ),
         False,
     )
-
-
-def selection(
-    db: Session,
-    user: User,
-    body: WeworkResponseCreate,
-    *,
-    allow_hidden: bool = False,
-) -> RuntimeModelSelection:
-    """Resolve the request model for callers that do not need its source."""
-    return selection_with_source(db, user, body, allow_hidden=allow_hidden)[0]
