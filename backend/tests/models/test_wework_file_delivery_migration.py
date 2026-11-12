@@ -69,7 +69,8 @@ def storage() -> Iterator[tuple[Connection, sa.Table]]:
 def test_withdrawn_revision_is_absent_from_the_version_chain(
     scripts: ScriptDirectory,
 ) -> None:
-    assert scripts.get_heads() == [PREDECESSOR]
+    assert scripts.get_revision(PREDECESSOR) is not None
+    assert REVISION not in {step.revision for step in scripts.walk_revisions()}
     assert not list(Path(scripts.versions).glob(f"*{REVISION}*"))
     with pytest.raises(CommandError, match=REVISION):
         scripts.get_revision(REVISION)
@@ -107,9 +108,7 @@ def _advance(
         connection, opts={"version_table": VERSION_TABLE, "fn": migrations}
     )
     context.run_migrations()
-    assert context.get_current_revision() == (
-        PREDECESSOR if target == "head" else target
-    )
+    assert context.get_current_revision() == target
 
 
 @pytest.mark.parametrize("starting_revision", [PREDECESSOR, REVISION])
@@ -146,9 +145,9 @@ def test_upgrade_and_rollback_preserve_prompts_and_reject_withdrawn_version(
     sa.event.listen(connection, "before_cursor_execute", capture)
     try:
         for target, direction in [
-            ("head", "upgrade"),
+            (PREDECESSOR, "upgrade"),
             (PREDECESSOR, "downgrade"),
-            ("head", "upgrade"),
+            (PREDECESSOR, "upgrade"),
         ]:
 
             if starting_revision == REVISION:

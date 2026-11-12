@@ -118,15 +118,21 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         user_id: i64,
         ids: Option<&[i64]>,
     ) -> MysqlResult<Self> {
-        let rows: Vec<Installation> = mysql.with_transaction(async |tx| {
-            tx.fetch_all("SELECT id,name,json FROM kinds WHERE user_id=? AND kind='InstalledPlugin' AND namespace='default'", (user_id,)).await
-        }).await?;
-        let owned: Vec<_> = rows
-            .into_iter()
-            .filter(|row| ids.is_none_or(|ids| ids.contains(&row.id)))
-            .collect();
-        let names = owned.iter().map(|row| row.name.clone()).collect();
-        let ids = owned.iter().map(|row| row.id).collect();
+        let (names, ids) = mysql
+            .with_transaction(async |tx| installation_scope(tx, user_id, ids).await)
+            .await?;
+        Ok(Self::acquire_names(redis, user_id, names)
+            .await?
+            .for_installations(ids))
+    }
+
+    pub(crate) async fn acquire_installed_on<T: MysqlTransaction>(
+        tx: &mut T,
+        redis: Option<&'a R>,
+        user_id: i64,
+        ids: &[i64],
+    ) -> MysqlResult<Self> {
+        let (names, ids) = installation_scope(tx, user_id, Some(ids)).await?;
         Ok(Self::acquire_names(redis, user_id, names)
             .await?
             .for_installations(ids))
@@ -205,4 +211,20 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         }
         Ok(())
     }
+}
+
+async fn installation_scope<T: MysqlTransaction>(
+    tx: &mut T,
+    user_id: i64,
+    ids: Option<&[i64]>,
+) -> MysqlResult<(Vec<String>, Vec<i64>)> {
+    if ids.is_some_and(<[i64]>::is_empty) {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let rows: Vec<Installation> = tx.fetch_all("SELECT id,name,json FROM kinds WHERE user_id=? AND kind='InstalledPlugin' AND namespace='default'", (user_id,)).await?;
+    Ok(rows
+        .into_iter()
+        .filter(|row| ids.is_none_or(|ids| ids.contains(&row.id)))
+        .map(|row| (row.name, row.id))
+        .unzip())
 }

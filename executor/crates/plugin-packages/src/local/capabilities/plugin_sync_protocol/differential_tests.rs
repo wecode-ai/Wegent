@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use std::time::Duration;
 
 #[derive(Default)]
 struct Packages(AtomicUsize);
@@ -254,6 +255,76 @@ async fn only_changed_plugins_are_synchronized_and_omitted_plugins_are_removed()
         .unwrap()
         .iter()
         .all(|item| item["unchanged"] == true));
+}
+
+#[tokio::test]
+async fn another_plugin_cannot_publish_inside_a_metadata_comparison() {
+    let (_root, handler) = shared_fixture(true);
+    let handler = std::sync::Arc::new(handler);
+    let a = desired("alpha", 1);
+    let mut b = desired("beta", 2);
+    let initial = handler
+        .apply_sync(complete(10, vec![a.clone(), b.clone()]))
+        .await
+        .unwrap();
+    assert_eq!(initial["success"], true, "{initial}");
+    b["enabled"] = json!(false);
+    let publisher = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let saved = publisher.clone();
+    let other = handler.clone();
+    runtime_recovery::set_metadata_probe_hook(
+        &handler.store.manifest.path,
+        "alpha@wework",
+        move || {
+            let (available, state) = std::sync::mpsc::channel();
+            let (finished, completion) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        let locking = other.sync_lock.lock();
+                        tokio::pin!(locking);
+                        match futures_util::poll!(&mut locking) {
+                            std::task::Poll::Ready(guard) => {
+                                drop(guard);
+                                available.send(true).unwrap();
+                            }
+                            std::task::Poll::Pending => {
+                                available.send(false).unwrap();
+                                drop(locking.await);
+                            }
+                        }
+                        let result = other.apply_sync(delta(11, vec![b], vec![])).await.unwrap();
+                        let _ = finished.send(());
+                        result
+                    })
+            });
+            *saved.lock().unwrap() = Some(worker);
+            if state.recv_timeout(Duration::from_secs(5)).unwrap() {
+                // Without the read fence, force the other publication between
+                // planning metadata and comparing it with the live files.
+                completion.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+        },
+    );
+    let result = handler
+        .apply_sync(delta(11, vec![a], vec![]))
+        .await
+        .unwrap();
+    let worker = publisher
+        .lock()
+        .unwrap()
+        .take()
+        .expect("Metadata comparison did not run");
+    let other = worker.join().unwrap();
+    assert_eq!(other["success"], true, "{other}");
+    assert_eq!(result["success"], true, "{result}");
+    assert_eq!(result["plugins"][0]["unchanged"], true, "{result}");
+    let manifest = handler.store.manifest.load().unwrap();
+    assert_eq!(manifest["plugins"]["alpha@wework"]["enabled"], true);
+    assert_eq!(manifest["plugins"]["beta@wework"]["enabled"], false);
 }
 
 #[tokio::test]

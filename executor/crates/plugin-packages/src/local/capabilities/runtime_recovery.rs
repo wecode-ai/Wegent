@@ -20,6 +20,8 @@ mod materialization;
 mod ownership;
 #[path = "runtime_recovery_plan.rs"]
 mod plan;
+#[cfg(test)]
+pub(super) use plan::set_metadata_probe_hook;
 #[path = "runtime_reconciliation.rs"]
 mod reconciliation;
 use materialization::{

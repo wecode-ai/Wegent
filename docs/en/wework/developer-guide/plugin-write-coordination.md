@@ -31,8 +31,9 @@ bounded leases. Checks, renewal and release compare ownership tokens.
 Root commit, rollback and close release leases; savepoints do not. Batch scopes
 are sorted and do not wait separately for every busy target. Failures roll back
 before releasing acquired leases. Downloads, authentication adapters and device
-RPCs execute outside write transactions. Local package preparation runs per
-plugin; shared manifest publication uses a short lock.
+RPCs execute outside write transactions. Versioned preparation runs per plugin.
+Shared native configuration planning and comparison reuse the short publication
+mutex; downloads, extraction and runtime content verification stay outside it.
 
 ## First creation and CAS
 
@@ -83,6 +84,10 @@ First policy creation claims `@account-policy` in the same new table and commits
 that identity with the policy in one short transaction. Ordinary authentication
 does not write this bootstrap identity. Duplicate policies and malformed versions
 fail explicitly without selecting an arbitrary preference or resetting it.
+Cloud automation leases only plugins that need a new device grant; already
+granted, revoked and disconnected connections do not broaden the lease scope.
+Socket authentication resolves that scope and initializes policy on its current
+transaction instead of waiting for a second connection from the same pool.
 
 ## Migration, deployment and evidence
 

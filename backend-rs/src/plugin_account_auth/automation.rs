@@ -319,31 +319,14 @@ async fn grant_current_device<T: MysqlTransaction>(
     }
     let binding = route::device_binding_on(transaction, user_id, device_id).await?;
     let logical = binding.logical_device_id.as_str();
-    let rows: Vec<DeviceKindRow> = transaction
-        .fetch_all(
-            format!(
-                "SELECT {KIND_COLUMNS} FROM kinds WHERE kind='ConnectorConnection' \
-                 AND namespace='plugin-auth' AND user_id=? AND is_active IS true ORDER BY id"
-            ),
-            (user_id,),
-        )
-        .await
-        .map_err(|_| EXCHANGE_FAILED)?;
+    let rows = grant_connections(transaction, user_id).await?;
     let mut granted = false;
     for mut row in rows {
         let spec = &mut row.json["spec"];
         if !spec["installedPluginId"]
             .as_i64()
             .is_some_and(|id| lease.owns_installation(id))
-        {
-            continue;
-        }
-        if spec["status"] != "connected"
-            || !crate::json_compat::python_truthy(&spec["credential"])
-            || spec["deviceGrants"].get(logical).is_some()
-            || spec["deviceRevocations"]
-                .as_array()
-                .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(logical)))
+            || !needs_device_grant(spec, logical)
         {
             continue;
         }
@@ -359,6 +342,47 @@ async fn grant_current_device<T: MysqlTransaction>(
         granted = true;
     }
     Ok(granted)
+}
+
+pub(super) async fn grant_targets<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+    device_id: &str,
+) -> Result<Vec<i64>, &'static str> {
+    let binding = route::device_binding_on(transaction, user_id, device_id).await?;
+    Ok(grant_connections(transaction, user_id)
+        .await?
+        .into_iter()
+        .filter(|row| needs_device_grant(&row.json["spec"], &binding.logical_device_id))
+        .filter_map(|row| row.json["spec"]["installedPluginId"].as_i64())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
+}
+
+fn needs_device_grant(spec: &Value, logical: &str) -> bool {
+    spec["status"] == "connected"
+        && crate::json_compat::python_truthy(&spec["credential"])
+        && spec["deviceGrants"].get(logical).is_none()
+        && !spec["deviceRevocations"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(logical)))
+}
+
+async fn grant_connections<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+) -> Result<Vec<DeviceKindRow>, &'static str> {
+    transaction
+        .fetch_all(
+            format!(
+                "SELECT {KIND_COLUMNS} FROM kinds WHERE kind='ConnectorConnection' \
+                 AND namespace='plugin-auth' AND user_id=? AND is_active IS true ORDER BY id"
+            ),
+            (user_id,),
+        )
+        .await
+        .map_err(|_| EXCHANGE_FAILED)
 }
 
 /// `PluginNativeAutomation`: preparation and targeted reconcile share strict validation.

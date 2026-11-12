@@ -377,8 +377,8 @@ pub(crate) async fn exchange(
                     .await
                     .map_err(exchange_error);
                 }
-                // Cloud grants may touch all connected installations. Native
-                // reconciliation only touches the request's installation IDs.
+                // Cloud grants lease only installations missing a device grant.
+                // Native reconciliation uses the request's installation IDs.
                 let targets = if operation == AUTOMATIC
                     && data["installed_plugin_ids"].as_array().is_some_and(Vec::is_empty)
                     && matches!(
@@ -387,17 +387,18 @@ pub(crate) async fn exchange(
                             | crate::socketio::device::DeviceType::Remote
                     )
                 {
-                    None
+                    automation::grant_targets(transaction, user_id, &runtime_id)
+                        .await.map_err(exchange_error)?
                 } else {
-                    Some(write_targets::resolve(transaction, user_id, data).await?)
+                    write_targets::resolve(transaction, user_id, data).await?
                 };
-                let lease = crate::plugins_installed::write_coordination::PluginWriteLease::acquire_installed(
-                    &state.mysql, state.redis.as_ref(), user_id, targets.as_deref(),
+                let lease = crate::plugins_installed::write_coordination::PluginWriteLease::acquire_installed_on(
+                    transaction, state.redis.as_ref(), user_id, &targets,
                 )
                 .await?;
                 let lease = lease_slot.insert(lease);
                 changed_targets = lease.installation_ids().unwrap_or_default().to_vec();
-                lease.ensure_policy(&state.mysql).await?;
+                lease.ensure_policy_on(transaction).await?;
                 let policy = lease.read_revision(transaction).await?;
                 let revisions = lease.read_plugin_revisions(transaction).await?;
                 if let Some(request) = request {

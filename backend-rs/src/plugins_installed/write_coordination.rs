@@ -185,6 +185,21 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         result
     }
 
+    /// Reuse an active transaction instead of waiting for a second pool slot.
+    pub(crate) async fn ensure_policy_on<T: MysqlTransaction>(
+        &self,
+        transaction: &mut T,
+    ) -> MysqlResult<()> {
+        if load_policy(transaction, self.user_id)
+            .await?
+            .is_none_or(|row| row.is_active != Some(true))
+        {
+            self.verify_owned().await?;
+            ensure_policy_in(transaction, self.user_id).await?;
+        }
+        self.verify_owned().await
+    }
+
     /// Read before any installation state. An ordinary read creates no row
     /// lock; the final atomic update validates this transaction's snapshot.
     pub async fn read_revision<T: MysqlTransaction>(

@@ -8,6 +8,7 @@ use base64::{
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+mod grant_scopes;
 mod recovery;
 
 const SIGNING: &str = "native-plugin-contract-test";
@@ -35,8 +36,10 @@ impl Api {
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status().as_u16(), status, "{operation}");
-        response.json().await.unwrap()
+        let actual = response.status().as_u16();
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(actual, status, "{operation}: {}", body["detail"]);
+        body
     }
     async fn session(&self, data: Value, status: u16) -> Value {
         self.call("", "session", data, status).await
@@ -401,6 +404,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             .n,
         0
     );
+    grant_scopes::verify(&api, token, &state).await?;
     mysql
         .execute("UPDATE users SET is_active=0 WHERE id=?", (OWNER,))
         .await?;

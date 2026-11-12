@@ -164,6 +164,7 @@ impl PreparedPlugin {
         package: Option<PublishedPackage>,
         private_package: Option<tempfile::TempDir>,
         path: Option<PathBuf>,
+        metadata_lock: Option<&AsyncMutex<()>>,
     ) -> Result<Self, PluginSyncFailure> {
         let started = Instant::now();
         let source = package
@@ -191,9 +192,14 @@ impl PreparedPlugin {
             let reused = store
                 .unchanged_plugin_runtime_paths(&result.spec, &source)
                 .map_err(PluginSyncFailure::runtime_metadata)?;
-            result.unchanged = store
-                .plugin_metadata_matches(&result.spec, manifest, &source, &reused)
-                .unwrap_or(false);
+            result.unchanged = {
+                // Shared config files must stay coherent between planning and
+                // comparison. Hashing and package preparation stay outside.
+                let _metadata = metadata_lock.map(AsyncMutex::blocking_lock);
+                store
+                    .plugin_metadata_matches(&result.spec, manifest, &source, &reused)
+                    .unwrap_or(false)
+            };
             if !result.unchanged {
                 result.runtime = Some(
                     PreparedRuntime::prepare(store, &result.spec, &source, reused)
@@ -264,11 +270,14 @@ impl PreparedPlugin {
 }
 
 impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
+    /// Legacy callers retain an owned publication guard. Versioned callers
+    /// acquire the same mutex only for the shared metadata comparison.
     pub(super) async fn prepare_plugin(
         &self,
         spec: &PluginSyncSpec,
         manifest: &Value,
         lease: Arc<PreparationLease>,
+        held_publication: Option<Arc<OwnedMutexGuard<()>>>,
     ) -> Result<PreparedPlugin, PluginSyncFailure> {
         let verify_started = Instant::now();
         let store = self.store.clone();
@@ -376,15 +385,35 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         self.plugin_sync_binding
             .check()
             .map_err(PluginSyncFailure::runtime_metadata)?;
+        let metadata_lock = held_publication.is_none().then(|| self.sync_lock.clone());
         tokio::task::spawn_blocking(move || {
             // Keep both bounds alive in the worker if its async caller is cancelled.
             let _lease = lease;
+            // Legacy synchronization already owns this mutex. Retain its guard
+            // through cancellation rather than trying to acquire it again.
+            let _publication = held_publication;
             if let Some(root) = root {
                 let package = prepare_shared_package(&root, &spec, cached, bytes)?;
-                PreparedPlugin::finish(&store, spec, &manifest, Some(package), None, None)
+                PreparedPlugin::finish(
+                    &store,
+                    spec,
+                    &manifest,
+                    Some(package),
+                    None,
+                    None,
+                    metadata_lock.as_deref(),
+                )
             } else {
                 let staged = prepare_private_package(path.as_deref(), &spec, bytes)?;
-                PreparedPlugin::finish(&store, spec, &manifest, None, staged, path)
+                PreparedPlugin::finish(
+                    &store,
+                    spec,
+                    &manifest,
+                    None,
+                    staged,
+                    path,
+                    metadata_lock.as_deref(),
+                )
             }
         })
         .await
