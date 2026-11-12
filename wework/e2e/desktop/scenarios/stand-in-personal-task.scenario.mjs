@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
-  expandCollaborationWorkspace,
+  revealCollaborationSidebarElement,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
 import {
@@ -257,9 +257,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await selectCollaborationDomain(control, CONTENT, 'cloud')
-      await expandCollaborationWorkspace(
+      await revealCollaborationSidebarElement(
         control,
-        scoped(`collaboration-workspace-toggle-${workspace.id}`)
+        scoped(`collaboration-workspace-project-${project.id}`)
       )
       await control.command('click', scoped(`collaboration-workspace-project-${project.id}`))
       await selectCollaborationProjectView(control, CONTENT, 'board')

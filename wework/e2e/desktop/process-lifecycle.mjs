@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 
@@ -433,6 +433,19 @@ async function stopWindowsProcessTree(child) {
   await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
 }
 
+export function processGroupIsExitingFromDarwinRows(members, ownerUid) {
+  return (
+    Number.isInteger(ownerUid) &&
+    Array.isArray(members) &&
+    members.every(
+      fields =>
+        fields.length === 5 &&
+        Number(fields[3]) === ownerUid &&
+        (fields[4].startsWith('Z') || fields[4].includes('E'))
+    )
+  )
+}
+
 function signalProcessGroup(processGroupId, signal) {
   try {
     process.kill(-processGroupId, signal)
@@ -443,7 +456,41 @@ function signalProcessGroup(processGroupId, signal) {
       result: 'delivered',
     })
   } catch (error) {
-    if (error?.code !== 'ESRCH') throw error
+    if (error?.code !== 'ESRCH') {
+      let members
+      if (process.platform === 'darwin') {
+        try {
+          members = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,pgid=,uid=,stat='], {
+            encoding: 'utf8',
+            timeout: 1000,
+            maxBuffer: 1024 * 1024,
+          })
+            .split('\n')
+            .map(line => line.trim().split(/\s+/))
+            .filter(fields => Number(fields[2]) === processGroupId)
+        } catch (diagnosticError) {
+          members = { error: diagnosticError.code }
+        }
+      }
+      const exiting =
+        error?.code === 'EPERM' &&
+        process.platform === 'darwin' &&
+        processGroupIsExitingFromDarwinRows(members, process.getuid?.())
+      logDesktopE2eSignal({
+        action: 'signal-group',
+        processGroupId,
+        signal,
+        result: exiting ? 'exiting' : 'rejected',
+        code: error?.code,
+        callerPid: process.pid,
+        callerUid: process.getuid?.(),
+        members,
+      })
+      // Zombies and P_WEXIT members cannot receive another signal. Keep the existing exit
+      // waits and deadlines; a live or unowned group still fails below.
+      if (exiting) return
+      throw error
+    }
     logDesktopE2eSignal({ action: 'signal-group', processGroupId, signal, result: 'absent' })
   }
 }

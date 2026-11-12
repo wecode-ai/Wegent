@@ -73,6 +73,7 @@ export interface ProjectChatControls {
   activeModel?: UnifiedModel | null
   activeModelSelection?: ModelSelectionConfig | null
   activeModelProvider?: string | null
+  supportsModelProviderSwitch?: boolean
   modelSwitchMode?: 'session'
   requiresNewSession?: boolean
   onSessionStartConfirmed?(model: UnifiedModel): void
@@ -509,7 +510,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
         controls.activeModel,
         model,
         controls.activeModelSelection,
-        controls.activeModelProvider
+        controls.activeModelProvider,
+        controls.supportsModelProviderSwitch
       )
     if (
       (controls.modelSwitchMode === 'session' && continueInNewConversation) ||

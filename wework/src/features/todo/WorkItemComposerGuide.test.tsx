@@ -159,10 +159,13 @@ describe('WorkItemComposerGuide', () => {
     )
 
     await user.click(screen.getByTestId('project-space-context-pill'))
-    const menu = screen.getByRole('dialog', { name: '加入项目空间' })
+    const menu = screen.getByRole('dialog', { name: '选择项目' })
     const search = screen.getByTestId('project-space-picker-search')
     await waitFor(() => expect(search).toHaveFocus())
     expect(projectOptions().getAllByRole('option')).toHaveLength(4)
+    expect(within(menu).queryByRole('button', { name: '运营协作' })).not.toBeInTheDocument()
+    expect(within(menu).getByRole('button', { name: '远程项目' })).toBeVisible()
+    await user.click(screen.getByTestId('project-space-picker-toggle-workspaces'))
     await user.click(within(menu).getByRole('button', { name: '运营协作' }))
     expect(projectOptions().getAllByRole('option')).toHaveLength(1)
     expect(projectOptions().getByRole('option')).toHaveAccessibleName(
@@ -203,7 +206,7 @@ describe('WorkItemComposerGuide', () => {
 
     await user.click(screen.getByTestId('project-space-context-pill'))
     const localOption = projectOptions().getByRole('option', { name: '周报 · 本地项目 · LOCAL' })
-    const cloudOption = projectOptions().getByRole('option', { name: '周报 · 云端项目 · CLOUD' })
+    const cloudOption = projectOptions().getByRole('option', { name: '周报 · 远程项目 · CLOUD' })
     expect(localOption).toHaveAttribute('aria-selected', 'false')
     expect(cloudOption).toHaveAttribute('aria-selected', 'true')
     await user.click(localOption)
@@ -223,7 +226,7 @@ describe('WorkItemComposerGuide', () => {
 
     const search = screen.getByTestId('project-space-picker-search')
     await waitFor(() => expect(search).toHaveFocus())
-    const option = projectOptions().getByRole('option', { name: '周报 · 云端项目 · CLOUD' })
+    const option = projectOptions().getByRole('option', { name: '周报 · 远程项目 · CLOUD' })
     expect(search).toHaveAttribute('aria-activedescendant', option.id)
     await user.keyboard('{Enter}')
     expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(cloud)

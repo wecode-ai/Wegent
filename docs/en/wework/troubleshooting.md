@@ -153,9 +153,11 @@ When the network is working but the cloud status occasionally shows unavailable,
 
 Every request has a `requestId`. In the desktop client, this value is sent to the Backend as `X-Request-ID`; `backendRequestId` is recorded only when a slow-response or HTTP-error diagnostic event includes the backend's returned request ID. Use these IDs to correlate frontend and Backend logs. The logs do not include Authorization headers, tokens, or request bodies.
 
+<a id="getting-help"></a>
+
 ## Getting help
 
-Select **Report a problem** in the upper-right corner of the affected task (or in the toolbar for a new conversation). Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
+Select **Report a problem** in the upper-right corner of any Wework desktop page, including tasks, new conversations, Plugins, My Stand-in, Scheduled and Settings. Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
 
 Optional information behaves as follows:
 

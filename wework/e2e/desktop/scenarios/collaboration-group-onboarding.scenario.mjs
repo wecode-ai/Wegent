@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar, inProjectCreateDialog } from '../modules/workspace-flows.mjs'
+import {
+  expandCollaborationSpaces,
+  inCollaborationSidebar,
+  inProjectCreateDialog,
+} from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -56,6 +60,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'The left navigation did not expose the standalone Agent destination'
       )
 
+      await expandCollaborationSpaces(control, ACTIVE_WORKBENCH_SELECTOR)
       const localWorkspaceTree = sidebarScoped(
         `[data-testid="collaboration-workspace-tree-${LOCAL_WORKSPACE_ID}"]`
       )
@@ -221,10 +226,14 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: PROJECT_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', localWorkspaceTree, {
-        text: PROJECT_NAME,
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        sidebarScoped('[data-testid="collaboration-project-group-local"]'),
+        {
+          text: PROJECT_NAME,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
 
       // Creating an Issue does not require an initialized execution environment.
       await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))

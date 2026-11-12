@@ -1916,6 +1916,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             projectLocation: location.workspaceId === LOCAL_WORKSPACE_ID ? 'local' : 'cloud',
             workspaceLocations: ['local', 'cloud'],
             sidebarPresentation: 'full',
+            projectNavigation: 'projects',
           },
           navigate: nextLocation => {
             const navigationRevision = ++navigationRequestRevisionRef.current

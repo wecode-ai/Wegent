@@ -179,6 +179,11 @@ async function verifyConcurrentCases(control) {
       const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
       assert.ok(taskId)
+      // Read the restored state after reload so this step proves persistence
+      // without spending the MCP form deadline on duplicate pre-reload checks.
+      await reloadMainWindow(control, 'Reload failed while both native questions were pending')
+      await visible(control, ordinaryFirst ? ordinaryOption : mcpOption)
+      await assertWaiting(control, taskId, true)
       const interactions = await readMcpInteractions(control, taskId)
       await writeFile(
         join(resultDir, `permission-concurrent-${action}-transcript.json`),
@@ -199,10 +204,6 @@ async function verifyConcurrentCases(control) {
       assert.notEqual(String(ordinary.requestId), String(original.requestId))
       assert.equal(ordinary.interactionStatus, 'pending')
       assert.equal(ordinary.response, undefined)
-      await assertWaiting(control, taskId, true)
-      await reloadMainWindow(control, 'Reload failed while both native questions were pending')
-      await visible(control, ordinaryFirst ? ordinaryOption : mcpOption)
-      await assertWaiting(control, taskId, true)
       await captureVerificationScreenshot(
         control,
         `permission-concurrent-${action}-both-pending.png`
@@ -218,7 +219,6 @@ async function verifyConcurrentCases(control) {
           'Ordinary answer settled the real MCP request'
         )
       } else await settleMcp(control, action)
-      await assertRemaining(control, taskId, original, ordinaryFirst, status)
       await reloadMainWindow(control, 'Reload failed after settling only one concurrent request')
       await assertRemaining(control, taskId, original, ordinaryFirst, status)
       await captureVerificationScreenshot(

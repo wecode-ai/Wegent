@@ -117,6 +117,9 @@ import {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
+  CLOUD_HTML_LINK_FILENAME,
+  CLOUD_HTML_LINK_MISSING_FILENAME,
+  CLOUD_HTML_LINK_PROMPT,
   CLOUD_MODEL_CASES,
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -574,6 +577,7 @@ class DesktopE2EServer {
     this.viewImageToolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
+    this.cloudHtmlLinkToolLessPrewarmHandled = false
     this.officialPluginToolLessPrewarmHandled = false
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
@@ -968,6 +972,7 @@ class DesktopE2EServer {
         'side_chat_guidance',
         'cloud_initial',
         'cloud_follow_up',
+        'cloud_html_link',
         'model_protocol_matrix',
         'provider_switch_retry',
         'vision_sidecar',
@@ -2666,6 +2671,17 @@ class DesktopE2EServer {
     }
 
     if (
+      this.scenario === 'cloud_html_link' &&
+      !this.cloudHtmlLinkToolLessPrewarmHandled &&
+      !JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT) &&
+      !requestAdvertisesShellTool(body)
+    ) {
+      this.cloudHtmlLinkToolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (
       this.scenario === 'cloud_initial' &&
       this.cloudModelStage === 'initial' &&
       !this.cloudToolLessPrewarmHandled &&
@@ -3319,6 +3335,30 @@ class DesktopE2EServer {
       this.memoryStage = 'streaming'
       await this.writeStreamingMarkdown(response, responseId, streamingMarkdownReport())
       this.memoryStage = 'complete'
+      return
+    }
+
+    if (this.scenario === 'cloud_html_link') {
+      this.recordScenarioRequest('cloud_html_link', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT),
+        'The real cloud Codex request did not contain the HTML link prompt'
+      )
+      const previewPath = join(this.cloudWorkspacePath, CLOUD_HTML_LINK_FILENAME).replaceAll(
+        '\\',
+        '/'
+      )
+      const missingPath = join(
+        this.cloudWorkspacePath,
+        CLOUD_HTML_LINK_MISSING_FILENAME
+      ).replaceAll('\\', '/')
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(
+          '[Cloud HTML preview](<' + previewPath + '>)\n[Missing Cloud HTML](<' + missingPath + '>)'
+        ),
+        responseCompleted(responseId),
+      ])
       return
     }
 

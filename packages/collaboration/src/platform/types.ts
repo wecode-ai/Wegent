@@ -101,6 +101,7 @@ export interface CollaborationPlatformHostAdapter {
     dingtalkAitable: boolean;
     projectLocation?: "cloud" | "local";
     workspaceLocations?: readonly ("local" | "cloud")[];
+    projectNavigation?: "workspaces" | "projects";
     sidebarPresentation?: "full" | "context";
   };
   defaultAssistant?: CollaborationDefaultAssistant;

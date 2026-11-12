@@ -7,6 +7,8 @@ import {
   createLocalCollaborationProject,
   inCollaborationSidebar,
   reloadMainWindow,
+  expandCollaborationSpaces,
+  revealCollaborationSidebarElement,
 } from './workspace-flows.mjs'
 
 async function waitForLocalProject(control, projectId, timeoutMs) {
@@ -82,9 +84,6 @@ export async function verifyCollaborationLocalProjectImport(
       timeoutMs: workbenchReadyTimeoutMs,
     })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-    const toggle = inCollaborationSidebar(
-      '[data-testid="collaboration-workspace-toggle-wework-local-workspace"]'
-    )
     const localWorkspace = inCollaborationSidebar(
       '[data-testid="collaboration-workspace-wework-local-workspace"]'
     )
@@ -94,15 +93,12 @@ export async function verifyCollaborationLocalProjectImport(
     const cloudWorkspace = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-${cloudWorkspaceId}"]`
     )
-    const cloudToggle = inCollaborationSidebar(
-      `[data-testid="collaboration-workspace-toggle-${cloudWorkspaceId}"]`
-    )
     const cloudProject = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-project-${cloudProjectId}"]`
     )
-    await control.command('waitFor', toggle)
-    await control.command('waitFor', cloudWorkspace)
-    await control.command('waitFor', cloudToggle)
+    await expandCollaborationSpaces(control, scoped('').trim())
+    await revealCollaborationSidebarElement(control, localWorkspace)
+    await revealCollaborationSidebarElement(control, cloudWorkspace)
     assert.equal(
       Number(
         await control.command(
@@ -119,19 +115,11 @@ export async function verifyCollaborationLocalProjectImport(
       (await control.command('getText', localWorkspace)).trim(),
       'The local Workspace name must remain visible on the unified board'
     )
-    if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true') {
-      await control.command('click', toggle)
-    }
 
     assert.ok(
       (await control.command('getText', cloudWorkspace)).trim(),
       'The cloud Workspace name must remain visible on the unified board'
     )
-    if (
-      (await control.command('getAttribute', cloudToggle, { value: 'aria-expanded' })) !== 'true'
-    ) {
-      await control.command('click', cloudToggle)
-    }
     await control.command('waitFor', cloudProject)
 
     const [sidebarMetrics] = JSON.parse(
@@ -237,11 +225,6 @@ export async function verifyCollaborationLocalProjectImport(
       'The project conversation action must not open the Issue creation form'
     )
     await control.command('waitFor', cloudWorkspace)
-    if (
-      (await control.command('getAttribute', cloudToggle, { value: 'aria-expanded' })) !== 'true'
-    ) {
-      await control.command('click', cloudToggle)
-    }
     await control.command('waitFor', cloudProject)
   }
 }

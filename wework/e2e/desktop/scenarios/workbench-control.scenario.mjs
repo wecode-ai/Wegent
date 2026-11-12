@@ -75,7 +75,11 @@ function callResult(body, callId) {
 }
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
-  const collaboration = createWorkbenchControlCollaboration({ uiTimeoutMs, findValue })
+  const collaboration = createWorkbenchControlCollaboration({
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+    findValue,
+  })
   let active = false
   let localControl
   let sourceId

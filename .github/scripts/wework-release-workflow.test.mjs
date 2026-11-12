@@ -20,10 +20,34 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
-test('non-publishing artifact builds cannot be cancelled by another release branch queue', () => {
-  assert.match(workflow.concurrency.group, /inputs.build_only && !inputs.publish_release/);
+test("native writer observation is opt-in and reaches the shared package runner", () => {
+  const input =
+    workflow.true.workflow_dispatch.inputs.verification_writer_wait_seconds;
+  assert.equal(input.type, "number");
+  assert.equal(input.default, 0);
+  assert.equal(input.required, false);
+  const verification = jobs["verify-upgrades"].steps.find(
+    (step) =>
+      step.name ===
+      "Verify declared upgrade and rollback edges on real release packages",
+  );
+  assert.equal(
+    verification.env.WEWORK_E2E_UPGRADE_WRITER_WAIT_SECONDS,
+    "${{ inputs.verification_writer_wait_seconds || 0 }}",
+  );
+  assert.match(
+    verification.run,
+    /wework\/scripts\/verify-release-upgrades\.mjs/,
+  );
+});
+
+test("non-publishing artifact builds cannot be cancelled by another release branch queue", () => {
+  assert.match(
+    workflow.concurrency.group,
+    /inputs.build_only && !inputs.publish_release/,
+  );
   assert.match(workflow.concurrency.group, /github.ref/);
-  assert.equal(workflow.concurrency['cancel-in-progress'], false);
+  assert.equal(workflow.concurrency["cancel-in-progress"], false);
 });
 
 test("full unpublished source pairs cannot replace a pending formal release", () => {
@@ -386,6 +410,13 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   assert.match(
     workflow.concurrency.group,
     /inputs.verification_source_run_id != '' && !inputs.publish_release/,
+  );
+  const sourceGuard = jobs["prepare-release"].steps.find(
+    (step) => step.name === "Reject publishing an unpublished source pair",
+  );
+  assert.equal(
+    sourceGuard.if,
+    "inputs.verification_source_run_id != '' && inputs.publish_release",
   );
   assert.ok(
     workflow.true.workflow_dispatch.inputs.verification_checkpoint.options.includes(
