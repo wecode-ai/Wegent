@@ -743,7 +743,11 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
   }
   return {
     mode: 'search',
-    ...selectToolSearch(request, namespaceName ? `${namespaceName} ${toolName}` : toolName),
+    ...selectToolSearch(
+      request,
+      namespaceName ? `${namespaceName} ${toolName}` : toolName,
+      directToolName
+    ),
   }
 }
 
@@ -770,8 +774,9 @@ function mcpToolRequestEvents(
   }
 }
 
-function selectToolSearch(request, query) {
-  if (requestAdvertisesProgrammaticExec(request)) return discoverySelection(request, query)
+function selectToolSearch(request, query, qualifiedName) {
+  if (requestAdvertisesProgrammaticExec(request))
+    return discoverySelection(request, query, qualifiedName)
   const tools = Array.isArray(request.tools) ? request.tools : []
   const toolNames = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
   const searchTools = tools.filter(
