@@ -166,6 +166,8 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
       const tree = scoped(`[data-testid="collaboration-workspace-tree-${workspace.id}"]`)
       const assertParent = async () => {
         await expandCollaborationSpaces(control, scoped('').trim(), uiTimeoutMs)
+        await control.command('waitFor', tree, { timeoutMs: uiTimeoutMs })
+        await control.command('scrollIntoView', tree)
         await control.command('waitFor', tree, { visible: true, timeoutMs: uiTimeoutMs })
         assert.equal(
           Number(

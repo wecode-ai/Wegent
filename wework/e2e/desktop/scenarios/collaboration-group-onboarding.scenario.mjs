@@ -226,10 +226,14 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: PROJECT_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', localWorkspaceTree, {
-        text: PROJECT_NAME,
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        sidebarScoped('[data-testid="collaboration-project-group-local"]'),
+        {
+          text: PROJECT_NAME,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
 
       // Creating an Issue does not require an initialized execution environment.
       await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))

@@ -2149,6 +2149,7 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     ...initialBoardIds,
     firstBoardTestId,
   ])
+  await expandCollaborationSpaces(control, secondBoardContent)
   const secondLocalWorkspace = inCollaborationSidebar(
     `[data-testid="collaboration-workspace-home-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
     secondBoardContent
