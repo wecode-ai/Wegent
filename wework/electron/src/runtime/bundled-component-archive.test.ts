@@ -46,12 +46,26 @@ test('extracts exact delivered component bytes and reuses the verified physical 
   })
   const physical = await realpath(first)
   expect(await readFile(join(first, 'plugin.js'), 'utf8')).toBe('export const delivered = true\n')
-  expect(await realpath(await f.materialize())).toBe(physical)
+  const warmStages: Array<{ stage: string; phase: string }> = []
+  expect(
+    await realpath(
+      await f.materialize({
+        stagePrefix: 'test-component',
+        onStage: event => warmStages.push(event),
+      })
+    )
+  ).toBe(physical)
   expect(stages).toContainEqual(
     expect.objectContaining({ stage: 'test-component-source-verify', phase: 'completed' })
   )
   expect(stages).toContainEqual(
     expect.objectContaining({ stage: 'test-component-extract', phase: 'completed' })
+  )
+  expect(warmStages).toContainEqual(
+    expect.objectContaining({ stage: 'test-component-source-verify', phase: 'completed' })
+  )
+  expect(warmStages).toContainEqual(
+    expect.objectContaining({ stage: 'test-component-content-verify', phase: 'completed' })
   )
   await rm(f.cache, { recursive: true, force: true })
   expect(await stat(f.archivePath)).toMatchObject({ size: f.archive.bytes })
