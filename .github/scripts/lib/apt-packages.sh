@@ -3,7 +3,7 @@
 set -euo pipefail
 
 rewrite_ci_ubuntu_archive() {
-  sed -E 's#https?://(archive|security|azure\.archive)\.ubuntu\.com/ubuntu/?|mirror\+file:/etc/apt/apt-mirrors\.txt#http://mirrors.edge.kernel.org/ubuntu#g'
+  sed -E 's#https?://((archive|security|azure\.archive)\.ubuntu\.com|mirrors\.edge\.kernel\.org)/ubuntu/?|mirror\+file:/etc/apt/apt-mirrors\.txt#https://archive.ubuntu.com/ubuntu#g'
 }
 
 find_missing_apt_packages() {

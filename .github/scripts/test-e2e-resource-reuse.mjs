@@ -16,12 +16,15 @@ import { runtimeArtifact } from "./runtime-artifact.mjs";
 import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
 import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
 
-test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositories", () => {
+test("CI Ubuntu source rewriting uses the official HTTPS archive and preserves suites, trust and unrelated repositories", () => {
   const input = [
     "URIs: http://archive.ubuntu.com/ubuntu/",
     "URIs: https://security.ubuntu.com/ubuntu",
     "deb http://azure.archive.ubuntu.com/ubuntu/ resolute main universe",
     "URIs: mirror+file:/etc/apt/apt-mirrors.txt",
+    "URIs: http://mirrors.edge.kernel.org/ubuntu",
+    "URIs: https://mirrors.edge.kernel.org/ubuntu",
+    "URIs: https://archive.ubuntu.com/ubuntu",
     "Suites: noble noble-updates noble-security resolute",
     "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
     "deb https://deb.nodesource.com/node_24.x nodistro main",
@@ -38,10 +41,13 @@ test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositor
   assert.equal(
     result.stdout,
     [
-      "URIs: http://mirrors.edge.kernel.org/ubuntu",
-      "URIs: http://mirrors.edge.kernel.org/ubuntu",
-      "deb http://mirrors.edge.kernel.org/ubuntu resolute main universe",
-      "URIs: http://mirrors.edge.kernel.org/ubuntu",
+      "URIs: https://archive.ubuntu.com/ubuntu",
+      "URIs: https://archive.ubuntu.com/ubuntu",
+      "deb https://archive.ubuntu.com/ubuntu resolute main universe",
+      "URIs: https://archive.ubuntu.com/ubuntu",
+      "URIs: https://archive.ubuntu.com/ubuntu",
+      "URIs: https://archive.ubuntu.com/ubuntu",
+      "URIs: https://archive.ubuntu.com/ubuntu",
       "Suites: noble noble-updates noble-security resolute",
       "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
       "deb https://deb.nodesource.com/node_24.x nodistro main",
