@@ -1796,15 +1796,16 @@ export function useWorkbenchRuntimeMessaging({
       options: CreateProjectRuntimeTaskOptions
     ): Promise<RuntimeTaskAddress | false> => {
       const message = input.trim()
-      if (!message) {
-        reportSendBlocked('请输入内容后再发送', undefined, options)
+      const selectedAttachments = options.attachments ?? attachmentSelection.attachments
+      if (!message && selectedAttachments.length === 0) {
+        reportSendBlocked('请输入内容或添加附件后再发送', undefined, options)
         return false
       }
 
       const taskRequest = options.taskRequest
       const prepared = buildSendPayload(
         message,
-        options.attachments,
+        selectedAttachments,
         options.project,
         taskRequest?.additionalSkills ? false : undefined,
         taskRequest?.additionalSkills,
@@ -1912,7 +1913,13 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane: false,
       })
     },
-    [buildSendPayload, reportSendBlocked, sendPreparedRuntimeMessage, state.devices]
+    [
+      attachmentSelection.attachments,
+      buildSendPayload,
+      reportSendBlocked,
+      sendPreparedRuntimeMessage,
+      state.devices,
+    ]
   )
 
   const loadTurnFileChangesDiff = useCallback(

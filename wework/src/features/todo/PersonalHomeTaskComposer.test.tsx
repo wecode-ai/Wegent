@@ -63,7 +63,7 @@ function setup(local = false) {
     projectExecutionMode: 'current_workspace',
     createProjectRuntimeTask,
   })
-  const attachment = { id: 11, status: 'ready' }
+  const attachment = { id: 11, filename: 'release-notes.md', status: 'ready' }
   mocks.attachments.mockReturnValue({
     attachments: [attachment],
     isAttachmentReadyToSend: true,
@@ -152,6 +152,21 @@ it.each([false, true])(
     expect(draft.onResetDraft).toHaveBeenCalledOnce()
   }
 )
+
+it('preserves attachment-only work and generates its Issue title without requiring extra text', async () => {
+  const { props, rerender, api, draft, attachment, createProjectRuntimeTask } = setup()
+  rerender(<PersonalHomeTaskComposer {...props} draft={{ ...props.draft, value: '' }} />)
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
+  expect(api.issues.create).toHaveBeenCalledWith(
+    'project',
+    expect.objectContaining({ title: attachment.filename, description: '' })
+  )
+  expect(createProjectRuntimeTask).toHaveBeenCalledWith(
+    '',
+    expect.objectContaining({ attachments: [attachment] })
+  )
+})
 
 it('keeps the draft and retries the same Issue after a rejected runtime start', async () => {
   const { createProjectRuntimeTask, api, draft, address } = setup()

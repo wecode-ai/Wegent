@@ -3,8 +3,6 @@ import assert from 'node:assert/strict'
 import { inCollaborationSidebar } from './workspace-flows.mjs'
 import {
   openCollaborationIssueCreation,
-  verifyCollaborationPersonalHome,
-  verifyPersonalHomeStartWork,
 } from './collaboration-personal-home.mjs'
 
 // Invoked by collaboration-shared-core after its real project/agent fixtures exist.
@@ -42,8 +40,6 @@ export async function verifyCollaborationIssueHome(
     )
   }
   await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-  await verifyCollaborationPersonalHome(control, { scoped, project, issue })
-  await verifyPersonalHomeStartWork(control, { scoped, project, viewerId: owner.id })
   assert.equal(
     Number(await control.command('getElementCount', `${projectRow} svg:not(.stand-in-icon)`)),
     0,

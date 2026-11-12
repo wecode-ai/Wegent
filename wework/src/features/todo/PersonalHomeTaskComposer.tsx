@@ -40,11 +40,12 @@ export function PersonalHomeTaskComposer({
     deleteAttachment: services.attachmentApi?.deleteAttachment,
   })
   const uploaded = useRef(new Set<File>())
+  const { handleFileSelect } = attachments
   useEffect(() => {
     const files = (draft.pendingFiles ?? []).filter(file => !uploaded.current.has(file))
     files.forEach(file => uploaded.current.add(file))
-    if (files.length) void attachments.handleFileSelect(files)
-  }, [draft.pendingFiles, attachments.handleFileSelect])
+    if (files.length) void handleFileSelect(files)
+  }, [draft.pendingFiles, handleFileSelect])
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
@@ -88,7 +89,7 @@ export function PersonalHomeTaskComposer({
     const content = value.trim()
     const port = project && issueRuntimePort(project.project_store, services)
     if (
-      !content ||
+      (!content && attachments.attachments.length === 0) ||
       !project ||
       !port ||
       submittingRef.current ||
@@ -104,7 +105,11 @@ export function PersonalHomeTaskComposer({
     try {
       const projectKey = `${project.project_store}:${project.id}`
       let issue = preparedIssues.current.get(projectKey)
-      const title = truncateRuntimeTaskTitle(content.replace(/\s+/g, ' '))!
+      const title =
+        truncateRuntimeTaskTitle(
+          content.replace(/\s+/g, ' ') ||
+            attachments.attachments.map(file => file.filename).join('、')
+        ) ?? t('todo.new_task')
       if (!issue)
         issue = await api.issues.create(project.id, {
           title,

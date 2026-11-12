@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { handlePersonalHomeModel, verifyCollaborationPersonalHome, verifyPersonalHomeStartWork } from '../modules/collaboration-personal-home.mjs'
 import { verifyIssueTranscriptTransfer } from '../modules/issue-transcript-transfer.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
@@ -251,6 +252,7 @@ export function createDesktopScenario({
       environment = value
     },
     async handleHttp(request, response, url) {
+      if (await handlePersonalHomeModel(request, response, url)) return true
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
@@ -310,6 +312,8 @@ export function createDesktopScenario({
       await openIssueWorkspace(control)
       await runAssistance(control, local)
       await runAssistance(control, other)
+      await verifyCollaborationPersonalHome(control, { scoped, project: local.project, issue: local.issue })
+      await verifyPersonalHomeStartWork(control, { scoped, project: local.project, viewerId: owner.id })
     },
     diagnostics() {
       return {

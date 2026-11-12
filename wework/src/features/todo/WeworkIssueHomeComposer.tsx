@@ -22,8 +22,8 @@ export function WeworkIssueHomeComposer({
   const [taskOpened, setTaskOpened] = useState(false)
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
   const input = useRef<ComposerInputHandle>(null)
-  const taskInput = useRef<ComposerInputHandle>(null)
-  const activeInput = taskMode ? taskInput : input
+  const [taskInput, setTaskInput] = useState<ComposerInputHandle | null>(null)
+  const getActiveInput = () => (taskMode ? taskInput : input.current)
   const composerId = useId()
   const selectedProject = props.projects.find(project => project.id === props.projectId)
   const projectLocation = (project: IssueHomeTaskComposerProps['projects'][number]) => {
@@ -38,12 +38,12 @@ export function WeworkIssueHomeComposer({
   const ProjectIcon = selectedProject?.project_store === 'local' ? Laptop : Cloud
   useImperativeHandle(ref, () => ({
     get element() {
-      return activeInput.current?.element ?? null
+      return getActiveInput()?.element ?? null
     },
-    focus: () => activeInput.current?.focus(),
-    getValue: () => activeInput.current?.getValue() ?? props.value,
-    setValue: (value, offset) => activeInput.current?.setValue(value, offset),
-    insertReference: reference => activeInput.current?.insertReference(reference),
+    focus: () => getActiveInput()?.focus(),
+    getValue: () => getActiveInput()?.getValue() ?? props.value,
+    setValue: (value, offset) => getActiveInput()?.setValue(value, offset),
+    insertReference: reference => getActiveInput()?.insertReference(reference),
   }))
   const insert = (text: string) => {
     if (disabled) return
@@ -58,10 +58,7 @@ export function WeworkIssueHomeComposer({
     flushSync(() => props.onDraftChange?.(draft))
   }
   const projectControl = (
-    <div
-      data-testid="collaboration-issue-project-bar"
-      className="flex min-w-0 items-center"
-    >
+    <div data-testid="collaboration-issue-project-bar" className="flex min-w-0 items-center">
       <button
         type="button"
         data-testid="collaboration-issue-project-trigger"
@@ -88,7 +85,11 @@ export function WeworkIssueHomeComposer({
       className="flex min-h-0 w-full flex-col gap-3"
     >
       <div className="flex w-full min-w-0 flex-col gap-3">
-        <div role="tablist" aria-label={t('issue_creation.entry_mode')} className="flex items-center gap-5">
+        <div
+          role="tablist"
+          aria-label={t('issue_creation.entry_mode')}
+          className="flex items-center gap-5"
+        >
           {[false, ...(renderTaskComposer ? [true] : [])].map(mode => (
             <button
               key={String(mode)}
@@ -101,7 +102,7 @@ export function WeworkIssueHomeComposer({
               disabled={disabled}
               onClick={() => {
                 if (taskMode === mode) return
-                props.onChange(activeInput.current?.getValue() ?? props.value)
+                props.onChange(getActiveInput()?.getValue() ?? props.value)
                 if (mode) setTaskOpened(true)
                 setTaskMode(mode)
               }}
@@ -112,7 +113,13 @@ export function WeworkIssueHomeComposer({
           ))}
         </div>
         {props.environmentNotice}
-        <div id={`${composerId}-record-panel`} role="tabpanel" aria-labelledby={`${composerId}-record-tab`} className={taskMode ? 'hidden' : ''} inert={taskMode}>
+        <div
+          id={`${composerId}-record-panel`}
+          role="tabpanel"
+          aria-labelledby={`${composerId}-record-tab`}
+          className={taskMode ? 'hidden' : ''}
+          inert={taskMode}
+        >
           <BufferedChatInput
             inputRef={input}
             variant="desktop"
@@ -124,7 +131,9 @@ export function WeworkIssueHomeComposer({
             onSubmit={value => props.onSubmit(value ?? props.value)}
             disabled={disabled}
             requireText
-            placeholder={t('issue_creation.record_placeholder', { defaultValue: props.placeholder })}
+            placeholder={t('issue_creation.record_placeholder', {
+              defaultValue: props.placeholder,
+            })}
             error={props.error}
             inputTestId="collaboration-home-issue-content"
             submitButtonTestId="collaboration-home-create-issue"
@@ -187,10 +196,16 @@ export function WeworkIssueHomeComposer({
         </div>
       </div>
       {taskOpened && (
-        <div id={`${composerId}-task-panel`} role="tabpanel" aria-labelledby={`${composerId}-task-tab`} className={taskMode ? '' : 'hidden'} inert={!taskMode}>
+        <div
+          id={`${composerId}-task-panel`}
+          role="tabpanel"
+          aria-labelledby={`${composerId}-task-tab`}
+          className={taskMode ? '' : 'hidden'}
+          inert={!taskMode}
+        >
           {renderTaskComposer?.({
             ...props,
-            ref: taskInput,
+            ref: setTaskInput,
             projectControl,
             onPendingChange: setTaskPending,
             onTaskCreated: (issue, task) => {

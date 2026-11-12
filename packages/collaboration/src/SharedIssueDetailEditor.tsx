@@ -39,7 +39,6 @@ import {
   ListTodo,
   Maximize2,
   Minimize2,
-  Play,
   Plus,
   Tag,
   Trash2,
@@ -3169,20 +3168,6 @@ export function TodoEditor(props: TodoEditorProps) {
                           </Tooltip>
                         ) : null}
                       </span>
-                    ) : null}
-                    {canStartWork &&
-                    !personalTaskAction &&
-                    !props.defaultAssistant &&
-                    executionTaskCount === 0 ? (
-                      <button
-                        type="button"
-                        data-testid="cloud-todo-create-task"
-                        onClick={() => props.onCreateTask?.()}
-                        className="task-detail-state-action task-detail-state-action-primary"
-                      >
-                        <Play aria-hidden="true" size={14} />
-                        {t("todo.start_work", "开始处理")}
-                      </button>
                     ) : null}
                   </section>
                 ) : (

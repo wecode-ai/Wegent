@@ -6802,6 +6802,8 @@ describe("Issue permission separation in the real shared editor", () => {
         '[data-testid="collaboration-assignment-target"]',
       ),
     ).toBeNull();
+    expect(container.querySelectorAll('[data-testid="cloud-todo-create-task"]')).toHaveLength(1);
+    expect(byTestId("cloud-todo-tasks").contains(byTestId("cloud-todo-create-task"))).toBe(true);
     await click(byTestId("cloud-todo-create-task"));
     expect(onCreateTask).toHaveBeenCalledOnce();
     titleScrollHeight.mockRestore();
