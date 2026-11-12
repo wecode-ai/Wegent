@@ -30,18 +30,32 @@ test('only changes and restarts the native catalog once for repeated identical p
 })
 
 test('keeps a refused restart fatal when the requested fields actually change', async () => {
+  const control = {}
+  let effective = { slug: 'fixture' }
   requestExecutor.mockImplementation(async (_control, method) => {
-    if (method.endsWith('.read'))
-      return { models: [{ slug: 'fixture', effective: { slug: 'fixture' } }] }
+    if (method.endsWith('.read')) return { models: [{ slug: 'fixture', effective }] }
+    if (method.endsWith('.write')) effective = { ...effective, context_window: 12345 }
     if (method.endsWith('.restart')) return { restarted: false, requiresConfirmation: true }
     return {}
   })
   await assert.rejects(
-    setNativeCatalogOverride({}, 'fixture', { context_window: 12345 }, 10000),
+    setNativeCatalogOverride(control, 'fixture', { context_window: 12345 }, 10000),
     /requiresConfirmation/
   )
   assert.equal(
     requestExecutor.mock.calls.filter(([, method]) => method.endsWith('.restart')).length,
     1
+  )
+  await assert.rejects(
+    setNativeCatalogOverride(control, 'fixture', { context_window: 12345 }, 10000),
+    /requiresConfirmation/
+  )
+  assert.equal(
+    requestExecutor.mock.calls.filter(([, method]) => method.endsWith('.write')).length,
+    1
+  )
+  assert.equal(
+    requestExecutor.mock.calls.filter(([, method]) => method.endsWith('.restart')).length,
+    2
   )
 })

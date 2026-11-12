@@ -6,6 +6,8 @@ import { isDeepStrictEqual } from 'node:util'
 import { currentExecutorPid, waitForRestartedExecutor } from './executor-restart-readiness.mjs'
 import { waitForLogPattern } from './shared.mjs'
 
+const loadedCatalogOverrides = new WeakMap()
+
 /** Interrupt a real catalog restart, then reconcile without the failure cooldown. */
 export async function verifyModelCatalogRecovery(control, { resultDir, uiTimeoutMs }) {
   if (process.platform === 'win32') return
@@ -90,15 +92,18 @@ export async function setNativeCatalogOverride(control, slug, fields, timeoutMs)
   const catalog = await rpc('runtime.codex.catalog.overrides.read', { slugs: [slug] })
   const model = catalog.models.find(entry => entry.slug === slug)
   assert.ok(model, `Missing native catalog fixture: ${slug}`)
-  if (
-    Object.entries(fields).every(([key, value]) => isDeepStrictEqual(model.effective[key], value))
-  ) {
-    return
+  const loaded = loadedCatalogOverrides.get(control) ?? new Map()
+  loadedCatalogOverrides.set(control, loaded)
+  const unchanged = Object.entries(fields).every(([key, value]) =>
+    isDeepStrictEqual(model.effective[key], value)
+  )
+  if (unchanged && isDeepStrictEqual(loaded.get(slug), model.effective)) return
+  loaded.delete(slug)
+  const entry = { ...model.effective, ...fields }
+  if (!unchanged) {
+    await rpc('runtime.codex.catalog.overrides.write', { slug, entry })
   }
-  await rpc('runtime.codex.catalog.overrides.write', {
-    slug,
-    entry: { ...model.effective, ...fields },
-  })
   const restarted = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
   assert.equal(restarted.restarted, true, JSON.stringify(restarted))
+  loaded.set(slug, structuredClone(entry))
 }

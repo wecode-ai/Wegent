@@ -94,12 +94,14 @@ test('returns a synchronous action result before navigation destroys promise cal
   }
 })
 
-test.each([false, true])(
+test.each([false, true, 'later-link'] as const)(
   'a local preview action preserves its reply and newer navigation: override=%s',
   async override => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-action-navigation-'))
     const nested = join(directory, 'nested')
     await mkdir(nested)
+    const later = join(directory, 'later')
+    await mkdir(later)
     const contents = new FakeWebContents()
     const manager = new EmbeddedBrowserManager(directory)
     const reply = Promise.withResolvers<unknown>()
@@ -123,6 +125,8 @@ test.each([false, true])(
       contents.debugger.sendCommand.mockImplementation(() => {
         actionPending = true
         contents.emit('will-navigate', event, destination)
+        if (override === 'later-link')
+          contents.emit('will-navigate', event, `${pathToFileURL(later).href}/`)
         return reply.promise
       })
       const result = manager
@@ -138,10 +142,10 @@ test.each([false, true])(
       expect(contents.loadURL).toHaveBeenCalledOnce()
       actionPending = false
       const newerUrl = 'https://example.com/newer'
-      if (override) await manager.navigate('browser', newerUrl)
+      if (override === true) await manager.navigate('browser', newerUrl)
       reply.resolve({ result: { value: { ok: true } } })
       await expect(result).resolves.toEqual({ value: { ok: true } })
-      if (override) {
+      if (override === true) {
         // An older queued link must not replace a navigation explicitly started later.
         await new Promise(resolve => setTimeout(resolve, 50))
         expect(contents.loadURL).toHaveBeenCalledTimes(2)
@@ -149,7 +153,9 @@ test.each([false, true])(
       } else {
         await vi.waitFor(() => {
           expect(contents.loadURL).toHaveBeenCalledTimes(2)
-          expect(manager.state('browser').url).toBe(destination)
+          expect(manager.state('browser').url).toBe(
+            override === 'later-link' ? `${pathToFileURL(later).href}/` : destination
+          )
         })
       }
     } finally {

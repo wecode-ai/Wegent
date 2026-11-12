@@ -73,6 +73,7 @@ interface BrowserEntry {
   historyGeneration: number
   initialNavigation: boolean
   navigationCompletion: Promise<void>
+  pendingLocalNavigation?: symbol
   scripts: BrowserScriptEvaluator
 }
 
@@ -240,10 +241,17 @@ export class EmbeddedBrowserManager {
       }
       event.preventDefault()
       const navigation = entry.navigationCompletion
+      const request = Symbol('local-navigation')
+      entry.pendingLocalNavigation = request
       void entry.scripts
         .afterActions(async () => {
-          if (this.entries.get(entry.label) !== entry || entry.navigationCompletion !== navigation)
+          if (
+            this.entries.get(entry.label) !== entry ||
+            entry.navigationCompletion !== navigation ||
+            entry.pendingLocalNavigation !== request
+          )
             return
+          delete entry.pendingLocalNavigation
           await this.navigate(entry.label, url)
         })
         .catch(error => {
