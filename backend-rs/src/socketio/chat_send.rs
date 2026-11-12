@@ -1406,6 +1406,12 @@ pub async fn handle(
 
             // The ACK is returned before `chat:start`; the broadcast and the
             // AI trigger run after the commit on the persisted turn.
+            let repository = &input.repository;
+            let created_git_repository = (setup.workspace_id != 0
+                && (!repository.git_url.trim().is_empty()
+                    || !repository.git_repo.trim().is_empty()
+                    || repository.git_repo_id > 0))
+                .then(|| repository.to_json());
             let turn = ChatTurn {
                 task_id: setup.task_id,
                 user_subtask_id: setup.user_subtask_id,
@@ -1443,6 +1449,7 @@ pub async fn handle(
                 client_origin: payload.client_origin.clone(),
                 device_id: resolved_device_id.clone(),
                 task_json: setup.task_json.clone(),
+                created_git_repository,
                 executor_name: setup.assistant_executor_name.clone(),
                 executor_namespace: setup.assistant_executor_namespace.clone(),
                 assistant_created_at: setup.assistant_created_at,
