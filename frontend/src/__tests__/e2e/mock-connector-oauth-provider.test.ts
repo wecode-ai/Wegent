@@ -179,4 +179,47 @@ describe('Connector OAuth HTTP protocol fixture', () => {
     expect(restored.status).toBe(200)
     expect((await listing()).map((tool: { name: string }) => tool.name)).toEqual(['echo'])
   })
+
+  it('holds a real registration response until the control barrier releases it', async () => {
+    const hold = await fetch(`${url}/_control`, {
+      method: 'POST',
+      body: JSON.stringify({ holdRegistrations: true }),
+    })
+    expect(hold.status).toBe(200)
+    const controller = new AbortController()
+    const registration = fetch(`${url}/register`, {
+      method: 'POST',
+      body: JSON.stringify({ redirect_uris: ['http://127.0.0.1/callback'] }),
+      signal: controller.signal,
+    })
+    const pending = registration.then(
+      response => response,
+      error => error
+    )
+    try {
+      // Observe receipt of the request before releasing its response.
+      const deadline = Date.now() + 2_000
+      let snapshot = await (await fetch(`${url}/_state`)).json()
+      while (snapshot.registrationRequests === 0 && Date.now() < deadline) {
+        snapshot = await (await fetch(`${url}/_state`)).json()
+      }
+      expect(snapshot.registrationRequests).toBe(1)
+      expect(snapshot.pendingRegistrations).toBe(1)
+      expect(snapshot.clients).toBe(0)
+
+      const released = await fetch(`${url}/_control`, {
+        method: 'POST',
+        body: JSON.stringify({ holdRegistrations: false }),
+      })
+      expect(released.status).toBe(200)
+      expect((await released.json()).pendingRegistrations).toBe(0)
+      const response = await registration
+      expect(response.status).toBe(201)
+      expect((await response.json()).client_id).toBeTruthy()
+    } finally {
+      controller.abort()
+      await pending
+      resetConnectorOAuthProvider()
+    }
+  })
 })

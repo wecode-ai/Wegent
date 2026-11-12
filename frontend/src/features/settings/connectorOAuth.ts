@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { adminApis } from '@/apis/admin'
+import { apiClient } from '@/apis/client'
 
 export const CONNECTOR_AUTHORIZATION_CHANGED_EVENT = 'wegent:connector-authorization-changed'
 
@@ -29,18 +30,31 @@ function delay(ms: number): Promise<void> {
  * Run the authorization-code flow for one connector app: create the session,
  * open the provider consent page, and poll until the backend stores the token.
  */
-export async function authorizeConnectorApp(slug: string): Promise<void> {
+export async function authorizeConnectorApp(
+  slug: string,
+  options: { isCurrent?: () => boolean } = {}
+): Promise<void> {
+  const scope = apiClient.getCacheScope()
+  let authorizationWindow: Window | null = null
+  const checkCurrent = () => {
+    if (apiClient.getCacheScope() !== scope || (options.isCurrent && !options.isCurrent())) {
+      authorizationWindow?.close()
+      throw new DOMException('Connector authorization was cancelled', 'AbortError')
+    }
+  }
+  checkCurrent()
   // Open the window while the click still counts as user activation: session
   // creation performs discovery and client registration first. A same-origin
   // placeholder keeps the popup valid until the consent URL is known.
   // `window.open(..., 'noopener')` returns null in Chrome even though the
   // window opens, so clear `opener` explicitly instead.
-  const authorizationWindow = window.open(CONNECTOR_OAUTH_PENDING_PATH, '_blank')
+  authorizationWindow = window.open(CONNECTOR_OAUTH_PENDING_PATH, '_blank')
   if (authorizationWindow) authorizationWindow.opener = null
 
   let session
   try {
     session = await adminApis.createConnectorOAuthSession(slug)
+    checkCurrent()
   } catch (error) {
     authorizationWindow?.close()
     throw error
@@ -54,13 +68,16 @@ export async function authorizeConnectorApp(slug: string): Promise<void> {
       throw new ConnectorOAuthError('popup_blocked')
     }
     fallback.opener = null
+    authorizationWindow = fallback
   }
 
   const intervalMs = Math.max(500, session.poll_interval_seconds * 1000)
   const deadline = session.expires_at * 1000
   while (Date.now() < deadline) {
     await delay(intervalMs)
+    checkCurrent()
     const result = await adminApis.pollConnectorOAuthSession(session.session_id, session.poll_token)
+    checkCurrent()
     if (result.status === 'pending') continue
     if (result.status === 'success') {
       window.dispatchEvent(new CustomEvent(CONNECTOR_AUTHORIZATION_CHANGED_EVENT))

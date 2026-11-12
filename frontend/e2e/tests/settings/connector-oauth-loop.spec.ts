@@ -208,6 +208,69 @@ test.describe('Connector app OAuth loop', () => {
     expect(admin?.connection.status).toBe('connected')
   })
 
+  for (const [mutation, change, expectedStatus] of [
+    [
+      'metadata edit',
+      { name: 'Edited during registration', tool_allowlist: [CONNECTOR_OAUTH_ALLOWED_TOOL] },
+      200,
+    ],
+    ['resource replacement', { mcp_url: `${MOCK_URL}/connector-oauth/sse` }, 409],
+  ] as const) {
+    test(`keeps a concurrent ${mutation} when registration completes`, async ({ request }) => {
+      const slug = `${SLUG}-registration-${expectedStatus}`
+      const created = await request.post(`${API_URL}/api/admin/connector-apps`, {
+        headers: authHeaders(adminToken),
+        data: {
+          slug,
+          name: 'Original registration app',
+          transport: 'streamable-http',
+          mcp_url: `${MOCK_URL}/connector-oauth/mcp`,
+          auth_type: 'oauth2',
+        },
+      })
+      expect(created.ok(), await created.text()).toBeTruthy()
+      const id = ((await created.json()) as { id: number }).id
+      let started: ReturnType<APIRequestContext['post']> | undefined
+      try {
+        await providerControl(request, { holdRegistrations: true })
+        started = request.post(`${API_URL}/api/connector-apps/${slug}/oauth/sessions`, {
+          headers: authHeaders(adminToken),
+        })
+        await expect
+          .poll(async () => {
+            const response = await request.get(`${MOCK_URL}/connector-oauth/_state`)
+            expect(response.ok(), await response.text()).toBeTruthy()
+            return (await response.json()).pendingRegistrations
+          })
+          .toBe(1)
+
+        const edited = await request.patch(`${API_URL}/api/admin/connector-apps/${id}`, {
+          headers: authHeaders(adminToken),
+          data: change,
+        })
+        expect(edited.ok(), await edited.text()).toBeTruthy()
+        await providerControl(request, { holdRegistrations: false })
+        const completed = await started
+        expect(completed.status(), await completed.text()).toBe(expectedStatus)
+
+        const reloaded = await request.get(`${API_URL}/api/admin/connector-apps/${id}`, {
+          headers: authHeaders(adminToken),
+        })
+        expect(reloaded.ok(), await reloaded.text()).toBeTruthy()
+        expect(await reloaded.json()).toMatchObject({
+          ...change,
+          oauth_client_registered: expectedStatus === 200,
+        })
+      } finally {
+        await providerControl(request, { holdRegistrations: false })
+        await started?.catch(() => undefined)
+        await request.delete(`${API_URL}/api/admin/connector-apps/${id}`, {
+          headers: authHeaders(adminToken),
+        })
+      }
+    })
+  }
+
   test('refreshes an expired grant and asks for authorization after revocation', async ({
     page,
     request,

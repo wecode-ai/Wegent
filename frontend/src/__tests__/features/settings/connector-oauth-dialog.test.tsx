@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { adminApis } from '@/apis/admin'
 import ConnectorOAuthDialog from '@/features/settings/components/ConnectorOAuthDialog'
+import * as connectorOAuth from '@/features/settings/connectorOAuth'
 
 const mockToast = jest.fn()
 const mockT = (key: string) => key
@@ -36,6 +37,14 @@ jest.mock('@/apis/admin', () => ({
     pollConnectorOAuthSession: jest.fn(),
   },
 }))
+
+jest.mock('@/features/settings/connectorOAuth', () => {
+  const actual = jest.requireActual('@/features/settings/connectorOAuth')
+  return {
+    ...actual,
+    authorizeConnectorApp: jest.fn(actual.authorizeConnectorApp),
+  }
+})
 
 const mockedAdminApis = adminApis as jest.Mocked<typeof adminApis>
 
@@ -123,5 +132,88 @@ describe('ConnectorOAuthDialog', () => {
 
     expect(await screen.findByText('DingTalk MCP Generic')).toBeInTheDocument()
     expect(screen.queryByTestId('connector-oauth-authorize')).not.toBeInTheDocument()
+  })
+
+  it('ignores a late catalog response after switching the linked app', async () => {
+    const nextApp = { ...app, id: 8, slug: 'another-app', name: 'Another App' }
+    let resolveOld!: (value: Awaited<ReturnType<typeof adminApis.getUserConnectorApps>>) => void
+    mockedAdminApis.getUserConnectorApps
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveOld = resolve
+          })
+      )
+      .mockResolvedValueOnce([nextApp])
+    const { rerender } = render(
+      <ConnectorOAuthDialog open slug={app.slug} onOpenChange={jest.fn()} />
+    )
+    await waitFor(() => expect(mockedAdminApis.getUserConnectorApps).toHaveBeenCalledTimes(1))
+
+    rerender(<ConnectorOAuthDialog open slug={nextApp.slug} onOpenChange={jest.fn()} />)
+    expect(await screen.findByText(nextApp.name)).toBeInTheDocument()
+    await act(async () => resolveOld([app]))
+
+    expect(screen.getByText(nextApp.name)).toBeInTheDocument()
+    expect(screen.queryByText(app.name)).not.toBeInTheDocument()
+  })
+
+  it('ignores load failures from a dialog that has already closed', async () => {
+    let rejectOld!: (reason: Error) => void
+    mockedAdminApis.getUserConnectorApps.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectOld = reject
+        })
+    )
+    const { rerender } = render(
+      <ConnectorOAuthDialog open slug={app.slug} onOpenChange={jest.fn()} />
+    )
+    await waitFor(() => expect(mockedAdminApis.getUserConnectorApps).toHaveBeenCalledTimes(1))
+    rerender(<ConnectorOAuthDialog open={false} slug={app.slug} onOpenChange={jest.fn()} />)
+
+    await act(async () => rejectOld(new Error('Old catalog failed')))
+
+    expect(mockToast).not.toHaveBeenCalled()
+  })
+
+  it('does not close a new dialog when the previous authorization completes', async () => {
+    const nextApp = { ...app, id: 8, slug: 'another-app', name: 'Another App' }
+    mockedAdminApis.getUserConnectorApps.mockResolvedValue([app, nextApp])
+    let completeOld!: () => void
+    jest.mocked(connectorOAuth.authorizeConnectorApp).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          completeOld = resolve
+        })
+    )
+    const onOpenChange = jest.fn()
+    const onAuthorized = jest.fn()
+    const { rerender } = render(
+      <ConnectorOAuthDialog
+        open
+        slug={app.slug}
+        onOpenChange={onOpenChange}
+        onAuthorized={onAuthorized}
+      />
+    )
+    expect(await screen.findByText(app.name)).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('connector-oauth-authorize'))
+
+    rerender(
+      <ConnectorOAuthDialog
+        open
+        slug={nextApp.slug}
+        onOpenChange={onOpenChange}
+        onAuthorized={onAuthorized}
+      />
+    )
+    expect(await screen.findByText(nextApp.name)).toBeInTheDocument()
+    await act(async () => completeOld())
+
+    expect(screen.getByText(nextApp.name)).toBeInTheDocument()
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(onAuthorized).not.toHaveBeenCalled()
+    expect(mockToast).not.toHaveBeenCalled()
   })
 })

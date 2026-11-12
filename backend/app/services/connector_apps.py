@@ -273,6 +273,7 @@ class ConnectorAppService:
                 Kind.user_id == CONNECTOR_APP_USER_ID,
                 Kind.is_active,
             )
+            .populate_existing()
             .first()
         )
         if not row:

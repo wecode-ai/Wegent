@@ -382,4 +382,55 @@ describe('ConnectorAppConnections', () => {
     expect(replace).toHaveBeenCalledWith('https://oauth.example.test/authorize')
     openSpy.mockRestore()
   })
+
+  it.each(['success', 'failure'])(
+    'ignores late session creation %s after leaving settings',
+    async outcome => {
+      let resolveSession!: (
+        value: Awaited<ReturnType<typeof adminApis.createConnectorOAuthSession>>
+      ) => void
+      let rejectSession!: (error: Error) => void
+      mockedAdminApis.getUserConnectorApps.mockResolvedValue([
+        { ...baseApp, connection: { status: 'disconnected' } },
+      ])
+      mockedAdminApis.createConnectorOAuthSession.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            resolveSession = resolve
+            rejectSession = reject
+          })
+      )
+      const close = jest.fn()
+      const replace = jest.fn()
+      const popup = { closed: false, close, location: { replace } } as unknown as Window
+      const openSpy = jest.spyOn(window, 'open').mockReturnValue(popup)
+      const { unmount } = render(<ConnectorAppConnections />)
+      try {
+        fireEvent.click(await screen.findByTestId(`authorize-connector-app-${baseApp.slug}`))
+        expect(mockedAdminApis.createConnectorOAuthSession).toHaveBeenCalledTimes(1)
+        unmount()
+
+        await act(async () => {
+          if (outcome === 'success') {
+            resolveSession({
+              session_id: 'session-1',
+              poll_token: 'poll-token',
+              authorize_url: 'https://oauth.example.test/authorize',
+              expires_at: 0,
+              poll_interval_seconds: 0,
+            })
+          } else {
+            rejectSession(new Error('Late authorization failure'))
+          }
+        })
+
+        expect(mockToast).not.toHaveBeenCalled()
+        expect(replace).not.toHaveBeenCalled()
+        expect(mockedAdminApis.pollConnectorOAuthSession).not.toHaveBeenCalled()
+        expect(close).toHaveBeenCalled()
+      } finally {
+        openSpy.mockRestore()
+      }
+    }
+  )
 })

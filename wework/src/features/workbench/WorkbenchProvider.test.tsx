@@ -4444,11 +4444,15 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('runtime-record-70')
     await waitFor(() =>
       expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
-        'runtime.connectors.apps.sync',
-        { apps: [] }
+        'runtime.connectors.status'
       )
     )
     expect(listWegentInstalledConnectorApps).toHaveBeenCalled()
+    expect(
+      localExecutorMocks.requestLocalExecutor.mock.calls.some(
+        ([method]) => method === 'runtime.connectors.apps.sync'
+      )
+    ).toBe(false)
 
     act(() => {
       window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))

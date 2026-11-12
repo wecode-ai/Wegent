@@ -659,6 +659,7 @@ class ConnectorOAuthService:
         app: ConnectorApp,
         metadata: dict,
     ) -> dict:
+        app = ConnectorAppService.get_app(db, app.id)
         stored = ConnectorOAuthService._usable_dynamic_client(app, metadata)
         if stored:
             return stored
@@ -673,8 +674,7 @@ class ConnectorOAuthService:
                 if acquired:
                     # Re-read after entering the lock: another instance may have
                     # registered while this request waited for the lock.
-                    db.refresh(app.row)
-                    app = ConnectorAppService.get_app_by_slug(db, app.slug) or app
+                    app = ConnectorAppService.get_app(db, app.id)
                     stored = ConnectorOAuthService._usable_dynamic_client(app, metadata)
                     if stored:
                         return stored
@@ -685,8 +685,7 @@ class ConnectorOAuthService:
             # The lock holder registers once; competing instances poll the shared
             # Kind row instead of registering duplicate OAuth clients.
             await asyncio.sleep(0.2)
-            db.refresh(app.row)
-            app = ConnectorAppService.get_app_by_slug(db, app.slug) or app
+            app = ConnectorAppService.get_app(db, app.id)
             stored = ConnectorOAuthService._usable_dynamic_client(app, metadata)
             if stored:
                 return stored
@@ -701,6 +700,9 @@ class ConnectorOAuthService:
         stored = ConnectorOAuthService._stored_dynamic_client(app)
         if (
             stored
+            and app.enabled
+            and app.auth_type == "oauth2"
+            and app.mcp_url == metadata.get("resource")
             and stored.get("issuer") == metadata.get("issuer")
             and stored.get("resource") == metadata.get("resource")
             and stored.get("token_endpoint") == metadata.get("token_endpoint")
@@ -751,7 +753,24 @@ class ConnectorOAuthService:
             "redirect_uri": settings.CONNECTOR_OAUTH_REDIRECT_URI,
             "client_id": client_id,
         }
-        ConnectorOAuthService._store_dynamic_client(app, client_data)
+        # Registration waits on an external server. Re-read under the same app
+        # lock as administrator edits before merging the client into its spec.
+        # A late response must not undo an edit or bind an old client to a
+        # replacement resource.
+        current = ConnectorAppService._row_to_app(
+            ConnectorAppService._lock_app_row(db, app)
+        )
+        if (
+            not current.row.is_active
+            or not current.enabled
+            or current.auth_type != "oauth2"
+            or current.mcp_url != metadata["resource"]
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Connector app changed during client registration",
+            )
+        ConnectorOAuthService._store_dynamic_client(current, client_data)
         db.commit()
         return client_data
 

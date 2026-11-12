@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { adminApis, type UserConnectorApp } from '@/apis/admin'
 import { Button } from '@/components/ui/button'
@@ -35,27 +35,46 @@ interface ConnectorOAuthDialogProps {
  * Authorization dialog opened from a conversation link
  * (`wegent://modal/connector-oauth?slug=...`).
  */
-export default function ConnectorOAuthDialog({
+export default function ConnectorOAuthDialog(props: ConnectorOAuthDialogProps) {
+  if (!props.open) return null
+  return <ConnectorOAuthSession key={props.slug} {...props} />
+}
+
+function ConnectorOAuthSession({
   open,
   slug,
   onOpenChange,
   onAuthorized,
 }: ConnectorOAuthDialogProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const { toast } = useToast()
+  const activeRef = useRef(false)
+  const loadGenerationRef = useRef(0)
   const [app, setApp] = useState<UserConnectorApp | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [authorizing, setAuthorizing] = useState(false)
 
+  useLayoutEffect(() => {
+    activeRef.current = true
+    return () => {
+      activeRef.current = false
+      loadGenerationRef.current += 1
+    }
+  }, [])
+
   const loadApp = useCallback(async () => {
     if (!slug) return
+    const generation = ++loadGenerationRef.current
+    const isCurrent = () => activeRef.current && generation === loadGenerationRef.current
     setLoading(true)
     setLoadError(null)
     try {
       const apps = await adminApis.getUserConnectorApps()
+      if (!isCurrent()) return
       setApp(apps.find(candidate => candidate.slug === slug) ?? null)
     } catch (error) {
+      if (!isCurrent()) return
       setApp(null)
       setLoadError((error as Error).message)
       toast({
@@ -64,7 +83,7 @@ export default function ConnectorOAuthDialog({
         description: (error as Error).message,
       })
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
   }, [slug, t, toast])
 
@@ -79,18 +98,20 @@ export default function ConnectorOAuthDialog({
     if (!app) return
     setAuthorizing(true)
     try {
-      await authorizeConnectorApp(app.slug)
+      await authorizeConnectorApp(app.slug, { isCurrent: () => activeRef.current })
+      if (!activeRef.current) return
       toast({ title: t('common:integrations.connector_apps.authorized') })
       onAuthorized?.()
       onOpenChange(false)
     } catch (error) {
+      if (!activeRef.current || (error instanceof Error && error.name === 'AbortError')) return
       toast({
         variant: 'destructive',
         title: t('common:integrations.connector_apps.authorization_failed'),
         description: connectorOAuthErrorMessage(t, error),
       })
     } finally {
-      setAuthorizing(false)
+      if (activeRef.current) setAuthorizing(false)
     }
   }
 

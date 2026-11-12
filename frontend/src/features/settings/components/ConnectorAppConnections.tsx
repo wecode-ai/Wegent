@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Cable, Loader2, Search } from 'lucide-react'
 import { adminApis, type UserConnectorApp } from '@/apis/admin'
 import { Button } from '@/components/ui/button'
@@ -37,12 +37,20 @@ export default function ConnectorAppConnections() {
   const [apps, setApps] = useState<UserConnectorApp[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const activeRef = useRef(false)
   const loadGenerationRef = useRef(0)
   const [authorizingSlug, setAuthorizingSlug] = useState<string | null>(null)
   const [disconnectingSlug, setDisconnectingSlug] = useState<string | null>(null)
   const [retryingSlug, setRetryingSlug] = useState<string | null>(null)
   const [disconnectTarget, setDisconnectTarget] = useState<UserConnectorApp | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+
+  useLayoutEffect(() => {
+    activeRef.current = true
+    return () => {
+      activeRef.current = false
+    }
+  }, [])
 
   const loadApps = useCallback(async () => {
     const generation = ++loadGenerationRef.current
@@ -80,16 +88,18 @@ export default function ConnectorAppConnections() {
   const authorize = async (app: UserConnectorApp) => {
     setAuthorizingSlug(app.slug)
     try {
-      await authorizeConnectorApp(app.slug)
+      await authorizeConnectorApp(app.slug, { isCurrent: () => activeRef.current })
+      if (!activeRef.current) return
       toast({ title: t('common:integrations.connector_apps.authorized') })
     } catch (error) {
+      if (!activeRef.current || (error instanceof Error && error.name === 'AbortError')) return
       toast({
         variant: 'destructive',
         title: t('common:integrations.connector_apps.authorization_failed'),
         description: connectorOAuthErrorMessage(t, error),
       })
     } finally {
-      setAuthorizingSlug(null)
+      if (activeRef.current) setAuthorizingSlug(null)
     }
   }
 

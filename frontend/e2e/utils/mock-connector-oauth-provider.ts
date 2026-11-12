@@ -40,6 +40,9 @@ interface ProviderState {
   issued: number
   refreshes: number
   authorizationRequests: number
+  holdRegistrations: boolean
+  registrationRequests: number
+  pendingRegistrations: Map<http.ServerResponse, string>
   toolCalls: Array<{ name: string; arguments: unknown }>
   toolNames: string[]
   httpCalls: Array<{ method: string; path: string; query: Record<string, string> }>
@@ -57,6 +60,9 @@ const state: ProviderState = {
   issued: 0,
   refreshes: 0,
   authorizationRequests: 0,
+  holdRegistrations: false,
+  registrationRequests: 0,
+  pendingRegistrations: new Map(),
   toolCalls: [],
   toolNames: [CONNECTOR_OAUTH_ALLOWED_TOOL, CONNECTOR_OAUTH_HIDDEN_TOOL],
   httpCalls: [],
@@ -75,6 +81,10 @@ export function resetConnectorOAuthProvider(): void {
   state.issued = 0
   state.refreshes = 0
   state.authorizationRequests = 0
+  state.holdRegistrations = false
+  state.registrationRequests = 0
+  for (const response of state.pendingRegistrations.keys()) response.destroy()
+  state.pendingRegistrations.clear()
   state.toolCalls = []
   state.toolNames = [CONNECTOR_OAUTH_ALLOWED_TOOL, CONNECTOR_OAUTH_HIDDEN_TOOL]
   state.httpCalls = []
@@ -297,6 +307,15 @@ function control(res: http.ServerResponse, body: string): void {
   if (typeof payload.rejectHttp === 'boolean') {
     state.rejectHttp = payload.rejectHttp
   }
+  if (typeof payload.holdRegistrations === 'boolean') {
+    state.holdRegistrations = payload.holdRegistrations
+    if (!state.holdRegistrations) {
+      for (const [response, registrationBody] of state.pendingRegistrations) {
+        if (!response.destroyed) register(response, registrationBody)
+      }
+      state.pendingRegistrations.clear()
+    }
+  }
   if (Array.isArray(payload.toolNames)) {
     if (!payload.toolNames.every(name => TOOL_DEFINITIONS.some(tool => tool.name === name))) {
       sendJson(res, 400, { error: 'unknown_tool' })
@@ -317,6 +336,8 @@ function snapshot(): Record<string, unknown> {
     issued: state.issued,
     refreshes: state.refreshes,
     authorizationRequests: state.authorizationRequests,
+    registrationRequests: state.registrationRequests,
+    pendingRegistrations: state.pendingRegistrations.size,
     toolCalls: state.toolCalls,
     toolNames: state.toolNames,
     httpCalls: state.httpCalls,
@@ -368,7 +389,13 @@ export function handleConnectorOAuthRequest(
   }
 
   if (path === `${CONNECTOR_OAUTH_PREFIX}/register` && method === 'POST') {
-    register(res, body)
+    state.registrationRequests += 1
+    if (state.holdRegistrations) {
+      state.pendingRegistrations.set(res, body)
+      res.on('close', () => state.pendingRegistrations.delete(res))
+    } else {
+      register(res, body)
+    }
     return true
   }
 
