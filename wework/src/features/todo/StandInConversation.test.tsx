@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { StandInExecutorApi } from '@/api/standIn'
@@ -6,6 +6,8 @@ import type { RuntimeTaskComposerCreateOptions } from '@/types/workbench'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { StandInConversation } from './StandInConversation'
 import type { RuntimeTaskAddress } from '@/types/api'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { ConversationModelControls } from '@/components/layout/workspace-panels/conversationModelControls'
 
 const mocks = vi.hoisted(() => ({
   initialAddress: undefined as RuntimeTaskAddress | null | undefined,
@@ -14,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   assistantMessageStyle: undefined as string | undefined,
   markReadWhenActive: false,
   nativeConversation: false,
+  modelControls: undefined as ConversationModelControls | undefined,
   createTask: undefined as
     | undefined
     | ((message: string, options: RuntimeTaskComposerCreateOptions) => Promise<unknown>),
@@ -27,6 +30,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     assistantMessageStyle?: string
     markReadWhenActive?: boolean
     nativeConversation?: boolean
+    modelControls?: ConversationModelControls
   }) => {
     mocks.createTask = props.createTask
     mocks.initialAddress = props.initialAddress
@@ -35,9 +39,49 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     mocks.assistantMessageStyle = props.assistantMessageStyle
     mocks.markReadWhenActive = props.markReadWhenActive ?? false
     mocks.nativeConversation = props.nativeConversation ?? false
+    mocks.modelControls = props.modelControls
     return <div data-testid="conversation-pane" />
   },
 }))
+
+it('loads the model catalogs only when the mounted conversation becomes active', async () => {
+  const catalog = vi.fn(async () => ({
+    models: [
+      {
+        runtime: 'codex',
+        provider: 'openai',
+        model_id: 'native-sol',
+        label: 'Native Sol',
+        is_default: true,
+      },
+    ],
+  }))
+  const listModels = vi.fn(async () => ({ data: [] }))
+  const services = {
+    standInApi: { catalog },
+    modelApi: { listModels },
+  } as unknown as WorkbenchServices
+  const api = { readTask: vi.fn(async () => ({ success: true })) } as unknown as StandInExecutorApi
+  const pane = (active: boolean) => (
+    <StandInConversation
+      api={api}
+      userId={7}
+      deviceId="device"
+      services={services}
+      active={active}
+    />
+  )
+  const { rerender } = render(pane(false))
+  await screen.findByTestId('conversation-pane')
+  expect(catalog).not.toHaveBeenCalled()
+  expect(listModels).not.toHaveBeenCalled()
+  rerender(pane(true))
+  await waitFor(() => expect(mocks.modelControls?.loading).toBe(false))
+  expect(mocks.modelControls?.unavailable).toBe(false)
+  expect(mocks.modelControls?.selectedModel?.modelId).toBe('native-sol')
+  expect(catalog).toHaveBeenCalledOnce()
+  expect(listModels).toHaveBeenCalledOnce()
+})
 
 it('retains the persisted owner workspace when reopening the primary conversation', async () => {
   const task = {

@@ -26,6 +26,7 @@ from app.core.cache import cache_manager
 from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession
 from app.models.user import User
+from app.schemas.dingtalk_card import DingTalkChatCardConfig
 from app.services import runtime_work_service
 from app.services.channels import manager as channel_manager_module
 from app.services.channels.callback import (
@@ -35,6 +36,17 @@ from app.services.channels.callback import (
 from app.services.channels.device_selection import CHANNEL_USER_DEVICE_PREFIX
 from app.services.channels.dingtalk import card as card_module
 from app.services.channels.dingtalk.callback import dingtalk_callback_service
+from app.services.channels.dingtalk.card_binding import (
+    CardBinding,
+    binding_key,
+    save_binding,
+)
+from app.services.channels.dingtalk.card_follow_up import DingTalkCardCallbackHandler
+from app.services.channels.dingtalk.card_quotes import (
+    quote_key,
+    route_quoted_card,
+    save_quote_address,
+)
 from app.services.channels.dingtalk.handler import DingTalkChannelHandler
 from app.services.channels.handler import CHANNEL_CONV_TASK_PREFIX, MessageContext
 from app.services.device.runtime_rpc_service import runtime_rpc_service
@@ -330,6 +342,76 @@ async def _cache_snapshot(key: str) -> tuple[Any | None, int]:
     return value, ttl
 
 
+async def _run_private_quote_running_card_guard(user_id: int) -> None:
+    """Exercise the real Redis-backed quote guard for a running private card."""
+    conversation_id = f"dingtalk-ci-e2e-quote-{uuid.uuid4().hex}"
+    track_id = f"dingtalk-ci-e2e-card-{uuid.uuid4().hex}"
+    carrier_id = f"dingtalk-ci-e2e-carrier-{uuid.uuid4().hex}"
+    config = DingTalkChatCardConfig(template_id="dingtalk-ci-e2e.schema")
+    binding = CardBinding(
+        channel_id=CHANNEL_ID,
+        user_id=user_id,
+        task_id=f"runtime:{DEVICE_ID}:dingtalk-ci-e2e-running-task",
+        subtask_id=0,
+        config=config,
+        ready=False,
+        runtime_task={
+            "deviceId": DEVICE_ID,
+            "localTaskId": "dingtalk-ci-e2e-running-task",
+        },
+        incoming_data={
+            "senderId": "dingtalk-ci-e2e-staff",
+            "senderStaffId": "dingtalk-ci-e2e-staff",
+            "senderCorpId": "dingtalk-ci-e2e-corp",
+            "conversationId": conversation_id,
+            "conversationType": "1",
+        },
+    )
+    await save_binding(track_id, binding)
+    await save_quote_address(CHANNEL_ID, conversation_id, carrier_id, track_id)
+    handler = DingTalkChannelHandler(
+        channel_id=CHANNEL_ID,
+        get_chat_card_config=lambda: config.model_dump(),
+    )
+    receiver = DingTalkCardCallbackHandler(handler)
+    reported: list[str] = []
+
+    async def report_error(_binding: CardBinding, message: str) -> None:
+        reported.append(message)
+
+    receiver._report_error = report_error
+    data = {
+        "conversationType": "1",
+        "conversationId": conversation_id,
+        "originalProcessQueryKey": carrier_id,
+        "msgId": f"msg-{uuid.uuid4().hex}",
+        "chatbotUserId": "dingtalk-ci-e2e-bot",
+        "senderStaffId": "dingtalk-ci-e2e-staff",
+        "senderCorpId": "dingtalk-ci-e2e-corp",
+        "text": {
+            "isReplyMsg": True,
+            "content": "分析一下失败原因",
+            "repliedMsg": {
+                "msgType": "interactiveCard",
+                "msgId": f"card-msg-{uuid.uuid4().hex}",
+                "senderId": "dingtalk-ci-e2e-bot",
+            },
+        },
+    }
+    try:
+        assert await route_quoted_card(receiver, data) is True
+        assert reported and "仍在生成" in reported[0]
+    finally:
+        client = await cache_manager._get_client()
+        try:
+            await client.delete(
+                binding_key(CHANNEL_ID, track_id),
+                quote_key(CHANNEL_ID, conversation_id, carrier_id),
+            )
+        finally:
+            await client.aclose()
+
+
 async def run() -> None:
     db = SessionLocal()
     try:
@@ -560,6 +642,7 @@ async def run() -> None:
         assert runtime_requests[-1]["roleId"] == "reviewer"
         session = await im_session_service.get_session(session_key)
         assert session is not None
+        await _run_private_quote_running_card_guard(user_id)
         assert "active_runtime_task" not in session.to_dict()
     finally:
         card_module.DingTalkMarkdownCard = original_card_class

@@ -35,8 +35,54 @@ fn creates_only_v2_when_no_legacy_manifest_exists() {
 }
 
 #[test]
+fn backs_up_an_empty_legacy_manifest_once_and_rebuilds_v2() {
+    let root = tempfile::tempdir().unwrap();
+    let legacy = root.path().join(LEGACY_MANIFEST);
+    let previous = root
+        .path()
+        .join(format!("{EMPTY_MANIFEST_BACKUP_PREFIX}previous"));
+    fs::create_dir(&previous).unwrap();
+    fs::write(previous.join(LEGACY_MANIFEST), b"prior backup").unwrap();
+    fs::write(&legacy, b"").unwrap();
+    let current = ManagedCapabilityManifest::new(root.path().join(WORKBENCH_MANIFEST));
+
+    let value = current.load().unwrap();
+    assert_eq!(value["version"], WORKBENCH_VERSION);
+    assert_eq!(value["revision"], 0);
+    for key in ["skills", "plugins", "mcps"] {
+        assert_eq!(value[key], json!({}));
+    }
+    assert!(!legacy.exists());
+    assert_eq!(current.load().unwrap(), value);
+
+    let backups: Vec<_> = fs::read_dir(root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(EMPTY_MANIFEST_BACKUP_PREFIX)
+                && path != &previous
+        })
+        .collect();
+    assert_eq!(backups.len(), 1);
+    assert_eq!(fs::read(backups[0].join(LEGACY_MANIFEST)).unwrap(), b"");
+    assert_eq!(
+        fs::read(previous.join(LEGACY_MANIFEST)).unwrap(),
+        b"prior backup"
+    );
+}
+
+#[test]
 fn invalid_legacy_is_preserved_and_not_silently_replaced() {
-    for bytes in ["invalid JSON", "[]", r#"{"version":9}"#, r#"{"skills":[]}"#] {
+    for bytes in [
+        " ",
+        "invalid JSON",
+        "[]",
+        r#"{"version":9}"#,
+        r#"{"skills":[]}"#,
+    ] {
         let root = tempfile::tempdir().unwrap();
         let legacy = root.path().join("manifest.json");
         fs::write(&legacy, bytes).unwrap();

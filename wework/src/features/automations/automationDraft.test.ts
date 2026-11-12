@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { RuntimeProjectWork } from '@/types/api'
 import type { Automation } from '@/types/automation'
 import {
@@ -13,6 +13,35 @@ import {
   initialGoalFromAutomationDraft,
   scheduleFromAutomationDraft,
 } from './automationDraft'
+
+test('defaults new arrangements to the device timezone without changing saved timezone', () => {
+  const options = Intl.DateTimeFormat().resolvedOptions()
+  const timezone = vi
+    .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+    .mockReturnValue({ ...options, timeZone: 'America/New_York' })
+  try {
+    expect(emptyAutomationDraft('local', 'device', '/workspace', null, {}).timezone).toBe(
+      'America/New_York'
+    )
+    const saved: Automation = {
+      id: 'existing-zone',
+      name: 'Existing',
+      prompt: '',
+      source: 'local',
+      enabled: true,
+      schedule: { type: 'cron', expression: '0 9 * * 1' },
+      timezone: 'Europe/London',
+      conversationMode: 'independent',
+      notificationPolicy: 'all_runs',
+      createdAt: '',
+      updatedAt: '',
+      version: 1,
+    }
+    expect(automationDraftFromAutomation(saved).timezone).toBe('Europe/London')
+  } finally {
+    timezone.mockRestore()
+  }
+})
 
 describe('automationModelFields', () => {
   test('preserves the complete cloud model identity for execution', () => {

@@ -119,6 +119,7 @@ export function IssueProjectChatThread({
       <ActivityMessage
         key={message.messageId}
         message={target?.activityMessage ?? message}
+        members={members}
         singleExecution={singleExecution}
         persistedStatus={execution?.display_state}
         mine={false}

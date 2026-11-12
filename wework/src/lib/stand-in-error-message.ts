@@ -40,6 +40,8 @@ const LEGACY_ERROR_CODES: Record<string, string> = {
   'Cloud model namespace is required': 'model_unavailable',
   'Cloud model owner is required': 'model_unavailable',
   'Select an available Codex model for this conversation': 'model_unavailable',
+  'The selected model does not support the saved reasoning effort; update the stand-in model settings':
+    'model_reasoning_unavailable',
   "Reselect the task's submitted model interface to restore its credentials": 'model_unavailable',
   'Missing connection events': 'connection_response_invalid',
   'Missing connection checkpoint': 'connection_response_invalid',
