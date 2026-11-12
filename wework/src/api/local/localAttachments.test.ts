@@ -147,6 +147,22 @@ describe('local attachment API', () => {
     })
   })
 
+  test('preserves all byte values across the base64 encoding blocks', async () => {
+    const bytes = Uint8Array.from({ length: 64 * 1024 + 1 }, (_, index) => index % 256)
+    desktopMocks.invoke
+      .mockResolvedValueOnce({ uploadId: 'upload-1', chunkSize: bytes.byteLength })
+      .mockResolvedValueOnce(bytes.byteLength)
+      .mockResolvedValueOnce('/draft/generated.bin')
+
+    await createLocalAttachmentApi().uploadAttachment(new File([bytes], 'generated.bin'))
+
+    expect(desktopMocks.invoke).toHaveBeenNthCalledWith(2, 'attachment.append', {
+      uploadId: 'upload-1',
+      offset: 0,
+      chunkBase64: Buffer.from(bytes).toString('base64'),
+    })
+  })
+
   test('reports staging totals once without changing repeated progress or logging file data', async () => {
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
     let clock = 0
