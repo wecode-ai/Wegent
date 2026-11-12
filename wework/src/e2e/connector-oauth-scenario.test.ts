@@ -40,8 +40,10 @@ function events(value: { end: (input: string) => void }) {
     .map(line => JSON.parse(line.slice(6)))
 }
 
-function itemWithType(events: Array<{ item?: { type?: string } }>, type: string) {
-  return events.find(event => event.item?.type === type)?.item
+function itemWithType(events: Array<{ type?: string; item?: { type?: string } }>, type: string) {
+  return events.find(
+    event => event.type === 'response.output_item.done' && event.item?.type === type
+  )?.item
 }
 
 function codeModeBody(input: string, output: string, callId: string, includeExec = true) {
@@ -80,6 +82,7 @@ test('the first connector tool request emits native discovery instead of falling
   expect(discovery).toMatchObject({ call_id: `${callId}-search`, name: 'exec' })
   expect(discovery?.input).toContain('ALL_TOOLS')
   expect(events(modelResponse).some(event => event.item?.call_id === callId)).toBe(false)
+  expect(events(modelResponse).at(-1)?.response?.output).toEqual([discovery])
 })
 
 test('the searched connector tool is invoked before completing the real call', async () => {
@@ -103,6 +106,7 @@ test('the searched connector tool is invoked before completing the real call', a
   expect(invocation?.input).toContain(discovered.name)
   expect(invocation?.input).toContain(prompt)
   expect(events(modelResponse).some(event => event.item?.type === 'message')).toBe(false)
+  expect(events(modelResponse).at(-1)?.response?.output).toEqual([invocation])
 })
 
 test('the real connector tool result completes the checkpoint', async () => {
@@ -114,4 +118,49 @@ test('the real connector tool result completes the checkpoint', async () => {
 
   const message = itemWithType(events(modelResponse), 'message')
   expect(message?.content).toEqual([{ type: 'output_text', text: completion, annotations: [] }])
+  expect(events(modelResponse).at(-1)?.response?.output).toEqual([message])
+})
+
+test('function-based Code Mode discovery remains in the completed response', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const modelResponse = response()
+  const declaration = {
+    type: 'namespace',
+    name: 'functions',
+    tools: [
+      {
+        type: 'function',
+        name: 'exec',
+        parameters: { type: 'object', properties: { input: { type: 'string' } } },
+      },
+    ],
+  }
+
+  expect(
+    await scenario.handleHttp(
+      request({ tools: [declaration], input: [{ role: 'user', content: prompt }] }),
+      modelResponse,
+      url
+    )
+  ).toBe(true)
+
+  const discovery = itemWithType(events(modelResponse), 'function_call')
+  expect(discovery).toMatchObject({
+    call_id: `${callId}-search`,
+    namespace: 'functions',
+    name: 'exec',
+  })
+  expect(JSON.parse(discovery?.arguments).input).toContain('ALL_TOOLS')
+  expect(events(modelResponse).at(-1)?.response?.output).toEqual([discovery])
+})
+
+test('an unsuccessful upstream tool result cannot complete the checkpoint', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const modelResponse = response()
+  const body = codeModeBody('unused invocation script', 'connector_auth_required', callId, false)
+
+  await expect(scenario.handleHttp(request(body), modelResponse, url)).rejects.toThrow(
+    'The authorized local MCP call must return the upstream success marker'
+  )
+  expect(modelResponse.end).not.toHaveBeenCalled()
 })

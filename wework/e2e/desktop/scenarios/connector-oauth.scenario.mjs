@@ -29,6 +29,7 @@ import { verifyConnectorAccountSwitch } from '../modules/connector-account-switc
 import { openPlugin, testId, until } from '../modules/plugin-regression-fixture.mjs'
 import {
   assistantMessage,
+  createSse,
   mcpToolRequestEvents,
   readRequestBody,
   requestContainsToolOutput,
@@ -46,14 +47,10 @@ const CONNECTOR_PLUGIN_SLUG = 'desktop-connector-oauth-plugin'
 /** `workbench.plugins_local_auth_resume_prompt` in both shipped locales. */
 const RESUME_FRAGMENTS = ['blocked by authorization', '因授权中断']
 
-function sse(events) {
-  return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
-}
-
 function writeReply(response, responseId, text) {
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
   response.end(
-    sse([responseCreated(responseId), assistantMessage(text), responseCompleted(responseId)])
+    createSse([responseCreated(responseId), assistantMessage(text), responseCompleted(responseId)])
   )
 }
 
@@ -148,7 +145,7 @@ export function createDesktopScenario({
         const responseId = `connector-oauth-tool-${replySequence}`
         response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
         response.end(
-          sse([
+          createSse([
             responseCreated(responseId),
             ...mcpToolRequestEvents(body, {
               toolName: 'echo',

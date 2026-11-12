@@ -251,6 +251,7 @@ def test_initial_request_build_handles_missing_and_ready_services(
     builder_context, mocker, shell_type, configured
 ):
     builder, user, team, _ = builder_context
+    mocker.patch.object(builder, "_resolve_shell_type", return_value=shell_type)
     if configured:
         user.preferences = {
             "mcps": {
