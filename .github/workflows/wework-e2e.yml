@@ -998,7 +998,9 @@ jobs:
       - build-wework-desktop-windows-core-e2e-arm64
     if: needs.changes.outputs.windows_desktop_core_e2e == 'true'
     runs-on: windows-11-arm
-    timeout-minutes: 90
+    # Serial Core shards on native arm64 runners take materially longer than
+    # x64; the job budget covers setup, a 100-minute shard step, and teardown.
+    timeout-minutes: 140
     strategy:
       fail-fast: false
       max-parallel: 17
@@ -1195,9 +1197,10 @@ jobs:
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
-        # Native arm64 execution is materially slower than x64; keep a bounded
-        # deadline while allowing the full shard to finish.
-        timeout-minutes: 60
+        # Native arm64 execution is materially slower than x64; a full serial
+        # shard needs more than the x64 budget. Bounded deadline, not a
+        # startup-performance claim.
+        timeout-minutes: 100
         continue-on-error: true
         shell: pwsh
         env:
