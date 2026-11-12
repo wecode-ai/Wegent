@@ -175,7 +175,7 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
     let cancel_key = format!("{CANCEL_KEY_PREFIX}{}", request.subtask_id);
     // A package job starts after the public request has returned or subscribed.
     // Clearing its flag here could erase a cancellation admitted while queued.
-    if !ctx.package_mode {
+    if !ctx.package_mode && !super::package_runtime::is_image_target(target_url) {
         let _ = redis.del(cancel_key.as_str()).await;
     }
 
@@ -294,7 +294,9 @@ async fn read_stream<M: Mysql, R: Redis>(
     // wrapped emitter publishes the START frames without persisting, so the
     // `chat:task_streaming` marker is established only by the parsed
     // `response.created` START inside the consume loop.
+    let image_stream = super::package_runtime::is_image_target(target_url);
     if ctx.forward
+        && !image_stream
         && let Err(error) = emitter
             .emit_start_forward_only(message_id, &ctx.start_data)
             .await
@@ -319,7 +321,7 @@ async fn read_stream<M: Mysql, R: Redis>(
             // The Source still creates `stream_open_task` before waiting on the
             // race and then drops it through `_cancel_sse_stream_open`; start
             // the request so an in-flight open is not skipped.
-            if !ctx.package_mode {
+            if !ctx.package_mode && !image_stream {
                 let _ = poll_once(open.as_mut()).await;
             }
             None
@@ -377,7 +379,16 @@ async fn open_and_consume<M: Mysql, R: Redis>(
     emitter: &mut StatusUpdatingEmitter<R>,
     content: &mut String,
 ) -> Result<StreamEnd, Failure> {
-    let url = format!("{}{RESPONSES_PATH}", target_url.trim_end_matches('/'));
+    let image_stream = super::package_runtime::is_image_target(target_url);
+    let (url, body) = if image_stream {
+        (target_url.to_owned(), image_request_body(request))
+    } else {
+        let payload = dispatch::assemble(request, true, false);
+        (
+            format!("{}{RESPONSES_PATH}", target_url.trim_end_matches('/')),
+            serde_json::to_value(&payload).unwrap_or(Value::Null),
+        )
+    };
     // The source's OpenAI/httpx client uses a 300-second per-read timeout
     // (`x-stainless-read-timeout: 300.0` in the recorded request). The
     // `brz-http` default is 400 ms per socket read, which aborts an SSE stream
@@ -386,8 +397,6 @@ async fn open_and_consume<M: Mysql, R: Redis>(
         .read_timeout(STREAM_TIMEOUT)
         .build()
         .map_err(|_| Failure::network("Connection error.".to_string()))?;
-    let payload = dispatch::assemble(request, true, false);
-    let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
     let http_request = stream_request(&client, &url, &body, request_id)
         .map_err(|_| Failure::network("Connection error.".to_string()))?;
     let mut response = client
@@ -402,11 +411,19 @@ async fn open_and_consume<M: Mysql, R: Redis>(
         )));
     }
 
-    tracing::info!(
-        task_id = request.task_id,
-        subtask_id = request.subtask_id,
-        "Chat Shell SSE stream opened"
-    );
+    if image_stream {
+        tracing::info!(
+            task_id = request.task_id,
+            subtask_id = request.subtask_id,
+            "Image execution SSE stream opened"
+        );
+    } else {
+        tracing::info!(
+            task_id = request.task_id,
+            subtask_id = request.subtask_id,
+            "Chat Shell SSE stream opened"
+        );
+    }
     let mut frames = SseFrames::default();
     let mut event_count = 0_u64;
 
@@ -440,16 +457,23 @@ async fn open_and_consume<M: Mysql, R: Redis>(
             let Some(event_type) = event.get("type").and_then(Value::as_str) else {
                 continue;
             };
-            let parsed = parser::shared()
-                .parse(
-                    request.task_id,
-                    request.subtask_id,
-                    message_id,
-                    event_type,
-                    &event,
-                )
-                .map_err(|error| Failure::persisted(error.0))?;
+            let parsed = if image_stream {
+                Some(parse_image_event(&event, request, &ctx.start_data)?)
+            } else {
+                parser::shared()
+                    .parse(
+                        request.task_id,
+                        request.subtask_id,
+                        message_id,
+                        event_type,
+                        &event,
+                    )
+                    .map_err(|error| Failure::persisted(error.0))?
+            };
             if let Some(mut parsed) = parsed {
+                if image_stream && let Some(redis) = ctx.redis {
+                    persist_image_blocks(redis, &parsed).await;
+                }
                 if parsed.event_type == "chunk" {
                     content.push_str(&parsed.content);
                 }
@@ -472,6 +496,9 @@ async fn open_and_consume<M: Mysql, R: Redis>(
                                 error_code: None,
                             },
                         ));
+                    }
+                    if image_stream {
+                        return Ok(StreamEnd::Terminal(response));
                     }
                 } else if ctx.package_mode {
                     emit_package_event(ctx, &parsed).await?;
@@ -503,6 +530,59 @@ async fn open_and_consume<M: Mysql, R: Redis>(
         // cannot match by type or message (`shared/utils/error_classifier.py`).
         error_code: Some("generic_error"),
     })
+}
+
+/// Only send the fields ImageAgent consumes across the private runtime boundary.
+fn image_request_body(request: &ExecutionRequest) -> Value {
+    serde_json::json!({
+        "task_id": request.task_id,
+        "subtask_id": request.subtask_id,
+        "user_subtask_id": request.user_subtask_id,
+        "message_id": request.message_id,
+        "user": { "id": request.user_id },
+        "prompt": request.prompt,
+        "attachments": request.attachments,
+        "model_config": request.model_config,
+    })
+}
+
+fn parse_image_event(
+    payload: &Value,
+    request: &ExecutionRequest,
+    start_data: &Value,
+) -> Result<ExecutionEvent, Failure> {
+    let mut event = ExecutionEvent::from_value(payload);
+    if event.task_id != request.task_id || event.subtask_id != request.subtask_id {
+        return Err(Failure::persisted(
+            "Image execution returned an event for a different turn".to_owned(),
+        ));
+    }
+    if event.event_type == "start"
+        && let Some(bot_name) = start_data.get("bot_name")
+    {
+        event.data.insert("bot_name".into(), bot_name.clone());
+    }
+    Ok(event)
+}
+
+/// Keep the placeholder and final snapshot available to reconnecting clients.
+async fn persist_image_blocks<R: Redis>(redis: &R, event: &ExecutionEvent) {
+    let Some(blocks) = event
+        .result
+        .as_ref()
+        .and_then(|result| result["blocks"].as_array())
+    else {
+        return;
+    };
+    for block in blocks.iter().filter(|block| block["type"] == "image") {
+        if let Some(mut block) = block.as_object().cloned()
+            && let Err(error) =
+                crate::internal_callback::session::add_block(redis, event.subtask_id, &mut block)
+                    .await
+        {
+            tracing::warn!(%error, subtask_id = event.subtask_id, "image block persistence failed");
+        }
+    }
 }
 
 /// Build the Chat Shell SSE request without a total request deadline.
@@ -845,6 +925,43 @@ mod tests {
             failure_result(&Failure::persisted("boom".to_string())),
             None
         );
+    }
+
+    #[test]
+    fn image_runtime_preserves_reference_input_and_terminal_image_blocks() {
+        let request = ExecutionRequest {
+            task_id: 5,
+            subtask_id: 6,
+            message_id: Some(2),
+            user_id: 7,
+            prompt: serde_json::json!("Draw a blue square"),
+            attachments: vec![serde_json::json!({"mime_type": "image/png", "url": "reference"})],
+            model_config: serde_json::json!({"modelType": "image", "protocol": "gpt-image"}),
+            ..ExecutionRequest::default()
+        };
+        let body = image_request_body(&request);
+        assert_eq!(body["user"]["id"], 7);
+        assert_eq!(body["model_config"]["protocol"], "gpt-image");
+        assert_eq!(body["attachments"][0]["url"], "reference");
+        assert!(body.get("auth_token").is_none());
+
+        let mut frames = SseFrames::default();
+        let events = frames.push(
+            b"data: {\"type\":\"done\",\"task_id\":5,\"subtask_id\":6,\"message_id\":2,\"result\":{\"blocks\":[{\"type\":\"image\",\"image_attachment_ids\":[41]}]}}\n\n",
+        );
+        let event = parse_image_event(&events[0], &request, &Value::Null)
+            .ok()
+            .expect("valid ImageAgent event");
+        assert_eq!(
+            completion::terminal_status(&event.event_type),
+            Some("COMPLETED")
+        );
+        assert_eq!(event.message_id, Some(2));
+        assert_eq!(
+            event.result.unwrap()["blocks"][0]["image_attachment_ids"][0],
+            41
+        );
+        assert!(parse_image_event(&events[0], &ExecutionRequest::default(), &Value::Null).is_err());
     }
 
     #[test]
