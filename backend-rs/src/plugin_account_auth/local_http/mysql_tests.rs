@@ -7,6 +7,7 @@ use base64::{
 };
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use std::time::Duration;
 
 mod recovery;
 
@@ -131,7 +132,12 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     });
     let api = Api {
         base: format!("http://{address}"),
-        client: brz_http::Client::new(),
+        // Breeze defaults each socket read to 400 ms. This test performs real
+        // MySQL work through the route, so give the local exchange CI headroom.
+        client: brz_http::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .read_timeout(Duration::from_secs(30))
+            .build()?,
     };
     // Session creation proves desktop key possession; no Device query or row exists.
     api.session(desktop_proof("/api/auth/wework/refresh"), 401)
