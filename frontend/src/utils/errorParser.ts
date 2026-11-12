@@ -117,11 +117,16 @@ function classifyByMessage(errorMessage: string): ParsedError {
   const lowerMessage = errorMessage.toLowerCase()
 
   // Database driver errors (check first: the rendered SQL/statement text contains
-  // words such as "executor" that the container/executor rules below would match)
+  // words such as "executor" that the container/executor rules below would match).
+  // A user-code traceback followed by an executor exit code is still a container
+  // failure, even when the traceback names a database driver.
+  const hasUserCodeFailureMarker =
+    lowerMessage.includes('traceback (most recent call last):') &&
+    /\bexit code\s+\d+/.test(lowerMessage)
   if (
     lowerMessage.includes('[sql:') ||
     lowerMessage.includes('sqlalchemy') ||
-    lowerMessage.includes('pymysql')
+    (lowerMessage.includes('pymysql') && !hasUserCodeFailureMarker)
   ) {
     return buildResult('generic_error', errorMessage)
   }

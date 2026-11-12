@@ -38,6 +38,19 @@ describe('errorParser', () => {
           'executor exited with exit code 1'
         expect(parseError(error).type).toBe('container_error')
       })
+
+      it('should keep user-code pymysql tracebacks as container_error', () => {
+        const error =
+          'Traceback (most recent call last):\n' +
+          '  pymysql.err.OperationalError: (2003, "Can not connect to MySQL server")\n' +
+          'executor exited with exit code 1'
+        expect(parseError(error).type).toBe('container_error')
+      })
+
+      it('should keep database service errors as generic_error', () => {
+        const error = '(pymysql.err.OperationalError) (2003, "Can not connect to MySQL server")'
+        expect(parseError(error).type).toBe('generic_error')
+      })
     })
 
     describe('forbidden/unauthorized errors', () => {
