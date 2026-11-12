@@ -752,6 +752,15 @@ function mcpToolRequestEvents(
   { toolName, argumentsValue, directToolName, searchCallId, toolCallId }
 ) {
   const selection = selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
+  if (
+    selection.mode === 'search' &&
+    searchCallId &&
+    requestContainsToolOutput(request, searchCallId)
+  ) {
+    assert.fail(
+      `Native discovery did not expose ${directToolName ?? toolName}: ${String(toolOutputText(request, searchCallId)).slice(0, 3000)}`
+    )
+  }
   return {
     mode: selection.mode,
     events:

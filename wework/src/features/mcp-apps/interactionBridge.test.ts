@@ -353,4 +353,27 @@ describe('HTML host API injection', () => {
       1
     )
   })
+
+  it('preserves a native unknown outcome without retrying a completed write', async () => {
+    const bridge = await createBridge()
+    bridge.publish('<p>Form</p>')
+    const result = bridge.api.callTool('create_automation', { name: 'Only once' })
+    const rejected = expect(result).rejects.toMatchObject({ code: 'outcome_unknown' })
+    bridge.respond({
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            code: 'outcome_unknown',
+            error: 'Check the actual result before retrying.',
+          }),
+        },
+      ],
+    })
+    await rejected
+    expect(bridge.post.mock.calls.filter(([value]) => value.method === 'tools/call')).toHaveLength(
+      1
+    )
+  })
 })

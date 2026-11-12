@@ -191,16 +191,13 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         .workbench.currentRuntimeTask
       const findCall = async () =>
-        (
-          await readNativeToolCallId(
-            control,
-            address,
-            block =>
-              block.mcpServer === 'wework_control' && block.toolInput?.title === active.prompt,
-            active.prompt,
-            uiTimeoutMs
-          )
-        ).id
+        readNativeToolCallId(
+          control,
+          address,
+          block => block.mcpServer === 'wework_control' && block.toolInput?.title === active.prompt,
+          active.prompt,
+          uiTimeoutMs
+        )
       const callId = await findCall()
       const appSelector = `[data-testid="mcp-app-slot"] [data-mcp-call-id="${callId}"]`
       const frameSelector = appSelector + ' [data-testid="mcp-app-frame"][data-ready="true"]'

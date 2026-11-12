@@ -5,6 +5,31 @@ fn app_error(message: &str) -> AppIpcError {
     AppIpcError::new("mcp_app_denied", message)
 }
 
+fn app_tool_failure(error: crate::agents::CodexAppToolError) -> Result<Value, AppIpcError> {
+    use crate::agents::CodexAppToolError;
+    let (outcome_unknown, reason) = match error {
+        CodexAppToolError::NotDispatched(reason) => (false, reason),
+        CodexAppToolError::OutcomeUnknown(reason) => (true, reason),
+    };
+    crate::logging::log_executor_event(
+        "MCP App tool transport failed",
+        &[
+            ("outcome_unknown", outcome_unknown.to_string()),
+            ("error_len", reason.len().to_string()),
+        ],
+    );
+    if !outcome_unknown {
+        return Err(app_error("MCP App tool call could not be dispatched"));
+    }
+    // Keep the business error code in the MCP result across SDK JSON-RPC error wrapping.
+    let detail = json!({
+        "code":"outcome_unknown",
+        "error":"The MCP App tool result is unknown. Check the actual result before retrying."
+    })
+    .to_string();
+    Ok(json!({"isError":true,"content":[{"type":"text","text":detail}]}))
+}
+
 fn resource_uri(meta: &Value) -> Option<&str> {
     [
         meta.pointer("/ui/resourceUri"),
@@ -26,12 +51,16 @@ fn source_call<'a>(thread: &'a Value, call_id: &str) -> Option<&'a Value> {
 }
 
 fn source_resource_uri(source: &Value) -> Option<&str> {
-    source
-        .pointer("/mcpAppUi/resourceUri")
-        .and_then(Value::as_str)
-        .or_else(|| source["mcpAppResourceUri"].as_str())
-        .or_else(|| resource_uri(&source["result"]["_meta"]))
-        .filter(|uri| !uri.is_empty())
+    [
+        source
+            .pointer("/mcpAppUi/resourceUri")
+            .and_then(Value::as_str),
+        source["mcpAppResourceUri"].as_str(),
+        resource_uri(&source["result"]["_meta"]),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|uri| !uri.is_empty())
 }
 
 fn app_descriptor(
@@ -286,9 +315,9 @@ impl RuntimeWorkRpcHandler {
                     .iter()
                     .find(|tool| tool["name"] == params["name"] && source_visible(source, tool))
                     .ok_or_else(|| app_error("Tool is not available to this app"))?;
-                let result = self.call_codex_thread_method("mcpServer/tool/call", json!({
+                let result = self.codex_app_server.call_mcp_app_tool(json!({
                     "threadId":thread_id,"server":server,"tool":tool["name"],"arguments":params["arguments"]
-                })).await.map_err(|_| app_error("MCP App tool call failed"))?;
+                })).await.or_else(app_tool_failure)?;
                 crate::logging::log_executor_event(
                     "MCP App tool result",
                     &[
@@ -387,6 +416,44 @@ pub(super) fn append_model_context(request: &mut ExecutionRequest, link: &Runtim
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_resource_declarations_use_the_first_nonempty_uri() {
+        for (source, expected) in [
+            (
+                json!({"mcpAppUi":{"resourceUri":""},"mcpAppResourceUri":"ui://saved"}),
+                Some("ui://saved"),
+            ),
+            (
+                json!({"mcpAppUi":{"resourceUri":""},"mcpAppResourceUri":"","result":{"_meta":{"ui":{"resourceUri":"ui://result"}}}}),
+                Some("ui://result"),
+            ),
+            (
+                json!({"mcpAppUi":{"resourceUri":"ui://original"},"mcpAppResourceUri":"ui://other"}),
+                Some("ui://original"),
+            ),
+            (
+                json!({"mcpAppUi":{"resourceUri":""},"mcpAppResourceUri":""}),
+                None,
+            ),
+        ] {
+            assert_eq!(source_resource_uri(&source), expected);
+        }
+    }
+
+    #[test]
+    fn tool_transport_errors_preserve_unknown_outcomes_in_the_mcp_result() {
+        use crate::agents::CodexAppToolError;
+        let denied =
+            app_tool_failure(CodexAppToolError::NotDispatched("Not started".into())).unwrap_err();
+        assert_eq!(denied.code, "mcp_app_denied");
+        let unknown =
+            app_tool_failure(CodexAppToolError::OutcomeUnknown("Response lost".into())).unwrap();
+        assert_eq!(unknown["isError"], true);
+        let error: Value =
+            serde_json::from_str(unknown["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(error["code"], "outcome_unknown");
+    }
 
     #[test]
     fn generated_html_can_only_call_tools_bound_by_its_source_invocation() {

@@ -457,11 +457,10 @@ export function McpAppHost({
 
   if (!app) return null
   const availableModes = appDisplayModes(descriptor)
-  const resultTitle = record(record(block.toolOutput ?? descriptor?.result).structuredContent).title
-  const title =
-    typeof resultTitle === 'string'
-      ? resultTitle
-      : (app.tool?.title ?? app.server ?? t('mcp_apps.title'))
+  const resultTitle = [block.toolOutput, descriptor?.result]
+    .map(result => record(record(result).structuredContent).title)
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const title = resultTitle ?? app.tool?.title ?? app.server ?? t('mcp_apps.title')
   const metadata = record(descriptor?.resource.contents[0]?._meta)
   const prefersBorder =
     (record(metadata.ui).prefersBorder ?? metadata['openai/widgetPrefersBorder']) !== false

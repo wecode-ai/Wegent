@@ -11,6 +11,46 @@ struct Fixture {
 }
 
 #[tokio::test]
+async fn mcp_app_tool_failure_before_dispatch_remains_a_denial() {
+    let fixture = Fixture::with_script("#!/bin/sh\nexit 0\n");
+    let error = fixture
+        .client
+        .call_mcp_app_tool(json!({"threadId":"source","server":"test","tool":"write"}))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CodexAppToolError::NotDispatched(_)));
+    fixture.client.restart().await;
+}
+
+#[tokio::test]
+async fn mcp_app_tool_response_loss_preserves_unknown_outcome_without_replaying() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"mcpServer/tool/call"'*)
+      printf '%s\n' "$line" >> "$(dirname "$0")/operations.jsonl"
+      exit 0 ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    );
+    let error = fixture
+        .client
+        .call_mcp_app_tool(json!({"threadId":"source","server":"test","tool":"write"}))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CodexAppToolError::OutcomeUnknown(_)));
+    fixture.client.restart().await;
+    let operations =
+        fs::read_to_string(fixture._directory.path().join("operations.jsonl")).unwrap();
+    assert_eq!(operations.lines().count(), 1);
+}
+
+#[tokio::test]
 async fn process_catalog_survives_unrelated_runtime_profile_cleanup() {
     let fixture = Fixture::with_script(
         r#"#!/bin/sh

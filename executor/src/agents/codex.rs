@@ -308,6 +308,7 @@ mod interaction;
 
 #[path = "codex/mcp_apps.rs"]
 mod mcp_apps;
+pub(crate) use mcp_apps::CodexAppToolError;
 
 #[path = "codex/connection_mcp.rs"]
 mod connection_mcp;
@@ -4186,7 +4187,7 @@ fn codex_app_server_command(
 }
 
 const WEWORK_HUMAN_INPUT_INSTRUCTIONS: &str = r#"Wework human participation:
-When a task needs a business judgment, missing requirement, or choice that only the user can provide, collect structured input. Respect the user's presentation preference. For a Wework operation where an available interactive HTML host suits the request and that preference, generate an inline form with known values and let the user complete it there; do not also ask a duplicate question. For other decisions, or when the interaction tool is unavailable, raise a structured question using request_user_input_async when available, otherwise request_user_input. Include the task-specific uncertainty, relevant evidence, clear choices and their consequences. Do not rely on a prose question in the conversation alone: the user may not have this conversation open. Continue independent authorized work while an asynchronous question is pending, and wait before work that depends on its answer. Do not create repeated questions for the same unresolved decision. A business answer never grants execution permission; keep native tool approvals and connector authentication on their original authorization paths."#;
+When a task needs a business judgment, missing requirement, or choice that only the user can provide, raise a structured question using request_user_input_async when available, otherwise request_user_input. Include the task-specific uncertainty, relevant evidence, clear choices and their consequences. Do not rely on a prose question in the conversation alone: the user may not have this conversation open. Continue independent authorized work while an asynchronous question is pending, and wait before work that depends on its answer. Do not create repeated questions for the same unresolved decision. A business answer never grants execution permission; keep native tool approvals and connector authentication on their original authorization paths."#;
 
 fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
     [

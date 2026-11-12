@@ -77,6 +77,30 @@ afterEach(() => {
 })
 
 describe('MCP App discovery', () => {
+  it.each(['Completed', { content: [{ type: 'text', text: 'Completed' }] }])(
+    'keeps the saved interaction title when streamed output has no title: %j',
+    async toolOutput => {
+      const result = { content: [], structuredContent: { title: 'Saved title' } }
+      const loaded = {
+        ...discovery,
+        result,
+        resource: { contents: [{ uri: 'ui://app', mimeType: 'text/html', text: '<p>Saved</p>' }] },
+      }
+      native.invoke.mockResolvedValue({ id: 'saved-title', url: 'http://127.0.0.1/saved-title' })
+      await act(async () =>
+        render(
+          <McpAppHost
+            block={{ ...running, status: 'done', toolOutput }}
+            address={address}
+            api={{ requestMcpApp: vi.fn().mockResolvedValue(loaded) }}
+          />
+        )
+      )
+      expect(screen.getByTestId('mcp-app')).toHaveTextContent('Saved title')
+      expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('title', 'Saved title')
+    }
+  )
+
   it('discovers again when a streamed call becomes a native invocation', async () => {
     const requestMcpApp = vi.fn().mockResolvedValue(null)
     const api = { requestMcpApp }
