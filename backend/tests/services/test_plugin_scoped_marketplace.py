@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 
+from sqlalchemy import event
+
 from app.services.plugin_marketplace_service import PluginMarketplaceService
 from tests.services.test_plugin_marketplace_v2 import _create_marketplace_update_install
 
@@ -49,6 +51,49 @@ def test_same_slug_in_different_catalogs_does_not_lock_another_installation(
         assert held.owned()
         assert set(plugin_write_backend.values) == {held_key}
     finally:
+        held.release()
+
+
+def test_canonical_reactivation_preserves_plugin_scope_without_row_locks(
+    test_db, test_user, plugin_write_backend, monkeypatch
+):
+    service = PluginMarketplaceService()
+    other, _, _, _ = _create_marketplace_update_install(
+        test_db, user_id=test_user.id, index=804
+    )
+    stale, plugin, release, _ = _create_marketplace_update_install(
+        test_db, user_id=test_user.id, index=805
+    )
+    original_id = stale.id
+    payload = service._installed_payload(plugin, release)
+    payload["spec"]["pluginId"] = plugin.id + 1000
+    payload["spec"]["source"]["catalogItemId"] = str(plugin.id + 1000)
+    stale.name = service._kind_name(plugin.catalog_namespace, plugin.slug)
+    stale.json = payload
+    stale.is_active = False
+    test_db.commit()
+    held_key = f"wegent:plugin-write:{test_user.id}:{other.name}"
+    held = plugin_write_backend.lock(
+        held_key, timeout=30, blocking_timeout=0, thread_local=False
+    )
+    assert held.acquire()
+    monkeypatch.setattr("app.services.plugin_write_coordination.WAIT_SECONDS", 0.05)
+
+    def reject_row_lock(context):
+        assert getattr(context.statement, "_for_update_arg", None) is None
+
+    event.listen(test_db, "do_orm_execute", reject_row_lock)
+    try:
+        result = service.install(test_db, user_id=test_user.id, plugin_id=plugin.id)
+        assert int(result.metadata["labels"]["id"]) == original_id
+        test_db.refresh(stale)
+        assert stale.is_active
+        assert stale.json["spec"]["pluginId"] == plugin.id
+        assert stale.json["spec"]["writeRevision"] > 0
+        assert held.owned()
+        assert set(plugin_write_backend.values) == {held_key}
+    finally:
+        event.remove(test_db, "do_orm_execute", reject_row_lock)
         held.release()
 
 

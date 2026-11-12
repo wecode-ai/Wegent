@@ -358,6 +358,80 @@ def test_normal_account_write_materializes_the_device(plugin_requests, entry):
     assert context.targeted_calls == [account.id]
 
 
+@pytest.mark.parametrize("stale_identity", ["legacy_plugin_id", "missing_plugin_id"])
+def test_marketplace_install_reactivates_kind_by_canonical_name(
+    plugin_requests, stale_identity
+):
+    context = plugin_requests
+    with context.sessions() as db:
+        plugin = db.get(Plugin, context.plugin_id)
+        release = db.get(PluginRelease, context.release_id)
+        assert plugin is not None
+        assert release is not None
+        kind_name = plugin_marketplace_service._kind_name(
+            plugin.catalog_namespace, plugin.slug
+        )
+        payload = plugin_marketplace_service._installed_payload(plugin, release)
+        spec = payload["spec"]
+        spec["revision"] = 7
+        spec["enabled"] = False
+        spec["componentStates"] = {"review": False}
+        if stale_identity == "legacy_plugin_id":
+            spec["pluginId"] = plugin.id + 1000
+            spec["source"]["catalogItemId"] = str(plugin.id + 1000)
+        else:
+            spec.pop("pluginId")
+            spec["source"].pop("catalogItemId", None)
+        stale = Kind(
+            user_id=context.user_id,
+            kind="InstalledPlugin",
+            name=kind_name,
+            namespace="default",
+            json=payload,
+            is_active=False,
+        )
+        db.add(stale)
+        db.commit()
+        stale_id = stale.id
+
+    with context.sessions.kw["bind"].begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX uniq_user_kind_name_namespace "
+            "ON kinds (user_id, kind, name, namespace)"
+        )
+
+    response = context.write("marketplace")
+
+    assert response.status_code == 200, response.text
+    account = context.account()
+    assert account is not None
+    assert account.id == stale_id
+    assert account.json["spec"]["revision"] == 8
+    assert account.json["spec"]["pluginId"] == context.plugin_id
+    assert account.json["spec"]["releaseId"] == context.release_id
+    assert account.json["spec"]["source"]["catalogItemId"] == str(context.plugin_id)
+    assert account.json["spec"]["enabled"] is True
+    assert account.json["spec"]["componentStates"] == {}
+    marketplace = context.client.get(f"/plugins/marketplace/{context.plugin_id}")
+    assert marketplace.status_code == 200, marketplace.text
+    installed_item = marketplace.json()
+    assert installed_item["installed"] is True
+    assert installed_item["installedPluginId"] == stale_id
+    assert context.targeted_calls == [stale_id]
+    assert context.remote_calls == ["plugin"]
+    assert len(context.background_tasks) == 1
+    with context.sessions() as db:
+        device = (
+            db.query(PluginDeviceInstallation)
+            .filter_by(user_id=context.user_id, installed_kind_id=stale_id)
+            .one()
+        )
+        assert device.state == "installed"
+        assert device.actual_release_id == context.release_id
+    context.run_background()
+    assert context.targeted_calls == [stale_id]
+
+
 def test_uploaded_plugin_update_targets_the_changed_plugin(plugin_requests):
     context = plugin_requests
     with context.sessions() as db:
