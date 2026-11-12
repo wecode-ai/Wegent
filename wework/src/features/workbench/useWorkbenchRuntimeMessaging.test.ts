@@ -25,7 +25,8 @@ import {
 import { initialWorkbenchState } from './workbenchReducer'
 
 function messagingFixture(
-  modelState: { isSelectionReady?: boolean; isConfiguredModelUnavailable?: boolean } = {}
+  modelState: { isSelectionReady?: boolean; isConfiguredModelUnavailable?: boolean } = {},
+  taskSelectionState: { selectionResolved?: boolean; selectionReady?: boolean } = {}
 ) {
   const address = { deviceId: 'cancel-device', taskId: 'cancel-task' }
   const store = new RuntimeTaskLifecycleStore('messaging-cancellation-test')
@@ -55,6 +56,15 @@ function messagingFixture(
     isOptionsLocked: false,
     attachmentSelection: { attachments: [], resetAttachments: vi.fn() },
     modelSelection: { models: [], selectedModel: null, selectedModelOptions: {}, ...modelState },
+    resolveRuntimeTaskModelSelection: () => ({
+      selectionResolved: false,
+      selectionReady: false,
+      taskSelection: null,
+      selectedModel: null,
+      activeModel: null,
+      selectedModelOptions: {},
+      ...taskSelectionState,
+    }),
     skillSelection: { selectedSkills: [] },
     refreshWorkLists: refresh,
   }
@@ -316,6 +326,26 @@ describe.each([{ isSelectionReady: false }, { isConfiguredModelUnavailable: true
         ).resolves.toBe(false)
         expect(send).not.toHaveBeenCalled()
         expect(onError).toHaveBeenCalledWith(i18n.t('workbench.harness_model_required'))
+      } finally {
+        store.remove(address)
+      }
+    })
+
+    test('allows a send when the destination task has a ready pane selection', async () => {
+      const { address, store, send, messaging } = messagingFixture(modelState, {
+        selectionResolved: true,
+        selectionReady: true,
+      })
+      const onError = vi.fn()
+      try {
+        await expect(
+          messaging.sendRuntimePaneMessage(
+            { address, message: 'Continue', modelId: 'replacement-model' },
+            { onError }
+          )
+        ).resolves.toBe(true)
+        expect(send).toHaveBeenCalledOnce()
+        expect(onError).not.toHaveBeenCalled()
       } finally {
         store.remove(address)
       }

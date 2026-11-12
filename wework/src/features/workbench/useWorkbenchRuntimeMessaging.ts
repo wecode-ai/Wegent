@@ -68,6 +68,7 @@ import type {
   CreateTemporaryRuntimeTaskOptions,
   RuntimePaneActionOptions,
   RuntimePaneGuidanceResult,
+  RuntimeTaskModelSelectionControls,
   SendCurrentInputOptions,
 } from './workbenchContextTypes'
 import { DEVICE_STATUS_LABELS, normalizeGuidanceError } from './workbenchProviderHelpers'
@@ -220,6 +221,9 @@ interface UseWorkbenchRuntimeMessagingOptions {
   isOptionsLocked: boolean
   attachmentSelection: RuntimeMessagingAttachmentSelection
   modelSelection: RuntimeMessagingModelSelection
+  resolveRuntimeTaskModelSelection: (
+    address: RuntimeTaskAddress
+  ) => RuntimeTaskModelSelectionControls
   skillSelection: RuntimeMessagingSkillSelection
   refreshWorkLists: () => Promise<void>
 }
@@ -348,6 +352,7 @@ export function useWorkbenchRuntimeMessaging({
   isOptionsLocked,
   attachmentSelection,
   modelSelection,
+  resolveRuntimeTaskModelSelection,
   skillSelection,
   refreshWorkLists,
 }: UseWorkbenchRuntimeMessagingOptions) {
@@ -396,18 +401,26 @@ export function useWorkbenchRuntimeMessaging({
 
   const blockRuntimeSendForUnavailableModel = useCallback(
     (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): boolean => {
-      const isCurrentTask =
-        state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
       if (
-        !isCurrentTask ||
-        (modelSelection.isSelectionReady !== false &&
-          modelSelection.isConfiguredModelUnavailable !== true) ||
         isAsyncRequestUserInputPayload(
           pendingRequestUserInputPayload(getRuntimeConversationMessages(address))
         )
       ) {
         // Async replies must not depend on composer discovery. Destination model
         // resolution and native validation still apply to the continuation.
+        return false
+      }
+      const taskSelection = resolveRuntimeTaskModelSelection(address)
+      // A ready per-task selection (including a replacement chosen in the pane)
+      // is authoritative. Otherwise keep the legacy active-scope guard below.
+      if (taskSelection.selectionReady) return false
+      const isCurrentTask =
+        state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
+      if (
+        !isCurrentTask ||
+        (modelSelection.isSelectionReady !== false &&
+          modelSelection.isConfiguredModelUnavailable !== true)
+      ) {
         return false
       }
       reportSendBlocked(
@@ -426,6 +439,7 @@ export function useWorkbenchRuntimeMessaging({
       modelSelection.isConfiguredModelUnavailable,
       modelSelection.isSelectionReady,
       reportSendBlocked,
+      resolveRuntimeTaskModelSelection,
       state.currentRuntimeTask,
     ]
   )

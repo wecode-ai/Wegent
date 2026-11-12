@@ -92,8 +92,8 @@ export function useRuntimeTaskModelSelection({
   const resolveRuntimeTaskModelSelection = useCallback(
     (address: RuntimeTaskAddress): RuntimeTaskModelSelectionControls => {
       const { selectionResolved, taskSelection } = resolveTaskModelConfig(address)
-      const taskModel =
-        findModelForSelection(models, taskSelection) ?? modelFromTaskSnapshot(taskSelection)
+      const catalogTaskModel = findModelForSelection(models, taskSelection)
+      const taskModel = catalogTaskModel ?? modelFromTaskSnapshot(taskSelection)
       const scopeKey = runtimeTaskModelScopeKey(userId, address)
       // Read the ref-backed value, not the last rendered state: a retry sent
       // immediately after picking a model must use that model. An entry with no
@@ -112,14 +112,22 @@ export function useRuntimeTaskModelSelection({
           : null
       const effectiveModel = scopedModel ?? taskModel ?? automaticModel
       const hasUsableSelection = selectionResolved || hasScopedModel
-      // A catalog refresh can replace a selected model with its disabled copy,
-      // and that path does not run the selection setter guard.
-      const selectedModelAvailable = Boolean(
-        effectiveModel &&
-        models.some(
-          model => !model.compatibilityDisabled && isSameModelSelection(model, effectiveModel)
-        )
-      )
+      // Validate the saved selection, including its provider identity, rather
+      // than the synthesized snapshot. For a picked model, prefer the refreshed
+      // catalog copy's compatibility flag but do not require the catalog to
+      // contain it yet: a just-created model can be missing from a stale list.
+      const scopedCatalogModel = scopedModel
+        ? models.find(model => isSameModelSelection(model, scopedModel))
+        : null
+      const selectedModelAvailable = hasScopedModel
+        ? Boolean(
+            scopedModel &&
+            !(scopedCatalogModel?.compatibilityDisabled ?? scopedModel.compatibilityDisabled)
+          )
+        : catalogTaskModel
+          ? !catalogTaskModel.compatibilityDisabled
+          : Boolean(automaticModel)
+      const scopedModelOptions = hasScopedOptions ? getSelectedModelOptionsForScope(scopeKey) : null
       return {
         // A model chosen in this pane is authoritative even before the task
         // summary arrives. An empty scoped entry is not.
@@ -135,9 +143,13 @@ export function useRuntimeTaskModelSelection({
           ? { supportsModelProviderSwitch: true }
           : {}),
         selectedModel: effectiveModel,
-        selectedModelOptions: hasScopedOptions
-          ? getSelectedModelOptionsForScope(scopeKey)
-          : (taskSelection?.options ?? {}),
+        // An options-only scoped entry must not drop saved routing options.
+        selectedModelOptions:
+          scopedModelOptions === null
+            ? (taskSelection?.options ?? {})
+            : hasScopedModel
+              ? scopedModelOptions
+              : { ...(taskSelection?.options ?? {}), ...scopedModelOptions },
       }
     },
     [

@@ -2,7 +2,7 @@ import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]'
@@ -517,6 +517,18 @@ async function paneSelectorForTitle(control, title) {
   return `[data-testid="${testId}"]`
 }
 
+async function assertPaneModelLabel(control, paneSelector, expectedLabel, timeoutMs) {
+  const selector = `${paneSelector} [data-testid="model-selector-button"]`
+  const startedAt = Date.now()
+  let lastLabel = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    lastLabel = await control.command('getText', selector, { visible: true })
+    if (lastLabel.includes(expectedLabel)) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Pane model label did not become ${expectedLabel}; last label: ${lastLabel}`)
+}
+
 async function assertPaneConversation(control, paneSelector, expectedText) {
   await control.command('waitFor', `${paneSelector} [data-testid="message-assistant"]`, {
     text: expectedText,
@@ -771,6 +783,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER, { stableMs: 500 })
+      await selectE2EModel(
+        control,
+        'local-model:desktop-e2e-responses',
+        'Desktop E2E Responses',
+        ACTIVE_SURFACE
+      )
       const secondTaskRow = await createTask(control, SECOND_PROMPT, taskTimeoutMs)
       const secondTaskId = secondTaskRow.replace('runtime-local-task-row-', '')
 
@@ -1111,6 +1129,41 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const restoredSecondPane = await paneSelectorForTitle(control, SECOND_PROMPT)
       await assertPaneConversation(control, restoredFirstPane, `${FIRST_PROMPT}_COMPLETE`)
       await assertPaneConversation(control, restoredSecondPane, `${SECOND_PROMPT}_COMPLETE`)
+
+      // Each pane must switch only its own conversation model and persist it.
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, restoredFirstPane)
+      await assertPaneModelLabel(control, restoredSecondPane, 'Desktop E2E Responses', uiTimeoutMs)
+      await control.command('fill', `${restoredFirstPane} [data-testid="chat-message-input"]`, {
+        value: `${FIRST_PROMPT} model isolation follow-up`,
+      })
+      await control.command(
+        'clickWhenEnabled',
+        `${restoredFirstPane} [data-testid="send-message-button"]`,
+        { timeoutMs: taskTimeoutMs }
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.activeTask?.taskId === firstTaskId &&
+          snapshot.workbench?.activeTask?.modelSelection?.modelName === DEFAULT_MODEL_ID,
+        'Switching one pane model did not persist that pane task selection',
+        taskTimeoutMs
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          (snapshot.workbench?.activeWorkspace?.tasks ?? []).some(
+            task =>
+              task.taskId === secondTaskId &&
+              task.modelSelection?.modelName === 'local-model:desktop-e2e-responses'
+          ),
+        'Switching one pane model changed the other pane task selection',
+        taskTimeoutMs
+      )
+      await assertPaneModelLabel(control, restoredFirstPane, DEFAULT_MODEL_LABEL, uiTimeoutMs)
+      await assertPaneModelLabel(control, restoredSecondPane, 'Desktop E2E Responses', uiTimeoutMs)
+      await captureScreenshot(control, '11a-split-pane-model-isolation.png', 'body')
+
       const firstGroupBadge = `${firstRow} [data-testid="runtime-local-task-split-group-${firstTaskId}"]`
       const secondGroupBadge = `${secondRow} [data-testid="runtime-local-task-split-group-${secondTaskId}"]`
       await control.command('waitFor', firstGroupBadge, {
