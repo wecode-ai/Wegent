@@ -1,6 +1,6 @@
 // Increment when the upgrade/rollback acceptance contract changes. Release proof
 // from an older suite cannot authorize a new edge under the current contract.
-export const UPGRADE_SUITE_VERSION = 18
+export const UPGRADE_SUITE_VERSION = 21
 export { RELEASE_PREPARATION_PHASE_TIMEOUT_MS as UPGRADE_PREPARATION_PHASE_TIMEOUT_MS } from '../../electron/src/runtime/release-preparation-progress.mjs'
 export const UPGRADE_CHECKPOINTS = ['app-rollback', 'app-rollback-recovery', 'app-upgrade-recovery']
 export const UPGRADE_PACKAGE_CHECKPOINTS = UPGRADE_CHECKPOINTS
@@ -11,6 +11,11 @@ export const UPGRADE_DIAGNOSTIC_CHECKPOINTS = [
   ...UPGRADE_SOURCE_DIAGNOSTICS,
 ]
 export const UPGRADE_CHECKPOINT_GROUP = 'upgrade-and-rollback'
+
+/** Explicit immutable bridge pairs are diagnostics, never catalog promotion. */
+export function isUpgradeSourceDiagnostic(checkpoint) {
+  return checkpoint === UPGRADE_CHECKPOINT_GROUP || UPGRADE_SOURCE_DIAGNOSTICS.includes(checkpoint)
+}
 
 /** Windows certifies the core round trip; macOS also exercises fault recovery. */
 export function upgradeVerificationCheckpoint(platform) {

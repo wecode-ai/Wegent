@@ -138,7 +138,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
 
   /** Inspect the real feedback preview for the owning task's allowlisted model identities. */
   async function assertFeedbackModelSnapshot(control, identity, expectedModelName) {
-    await control.command('clickWhenEnabled', '[data-testid="task-feedback-button"]')
+    await control.command('clickWhenEnabled', '[data-testid="topnav-feedback-button"]')
     try {
       await control.command('waitFor', '[data-testid="task-feedback-note"]', { visible: true })
       await control.command('fill', '[data-testid="task-feedback-note"]', {

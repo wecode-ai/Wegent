@@ -1,3 +1,4 @@
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { ChatCancelAck, ChatCancelPayload, ChatGuideAck, ChatGuidePayload } from '@/types/api'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
@@ -307,14 +308,19 @@ function logRuntimeChatTerminalEvent(
   subscriptionCount: number
 ): void {
   const payload = asRecord(event.payload)
-  console.info('[Wework] Runtime chat stream terminal event received', {
+  const details = {
     event: event.event,
     taskId: stringField(payload, 'taskId') ?? null,
     subtaskId: stringField(payload, 'subtaskId') ?? null,
     deviceId: stringField(payload, 'deviceId') ?? null,
     subscriptionCount,
     matchedSubscriptionCount,
-  })
+  }
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    logRuntimeTaskCreateStage('runtime-terminal-received', details)
+  } else {
+    console.info('[Wework] Runtime chat stream terminal event received', details)
+  }
 }
 
 function isBatchableRuntimeStreamEvent(event: LocalExecutorEvent): boolean {
@@ -589,6 +595,10 @@ function logRuntimeChatStreamSubscription(
   subscriptionId: number,
   details: Record<string, unknown>
 ): void {
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    logRuntimeTaskCreateStage('runtime-stream-subscription', { action, subscriptionId, ...details })
+    return
+  }
   if (!isRuntimeChatStreamDebugEnabled()) return
   console.debug('[Wework] Runtime chat stream subscription', {
     action,
@@ -601,6 +611,10 @@ function logRuntimeChatStreamNativeSubscription(
   action: string,
   details: Record<string, unknown> = {}
 ): void {
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    logRuntimeTaskCreateStage('runtime-stream-native-subscription', { action, ...details })
+    return
+  }
   if (!isRuntimeChatStreamDebugEnabled()) return
   console.debug('[Wework] Runtime chat stream native subscription', {
     action,
