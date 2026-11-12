@@ -14,6 +14,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   WORKBENCH_READY_TIMEOUT_MS,
   selectE2EModel,
+  withTimeout,
 } from './shared.mjs'
 
 export async function assertMarkdownPreviewAndSource(control, text, options = {}) {
@@ -67,7 +68,11 @@ export async function verifyCloudHtmlFileLinkPreview({
   control.setScenario('cloud_html_link')
   await control.command('fill', composerSelector, { value: CLOUD_HTML_LINK_PROMPT })
   await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR)
-  await control.awaitScenarioRequestCount('cloud_html_link', 1)
+  await withTimeout(
+    control.awaitScenarioRequestCount('cloud_html_link', 1),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The Cloud executor did not request the HTML link response'
+  )
 
   const links = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="assistant-markdown-link"]`
   await control.command('waitFor', links, {
