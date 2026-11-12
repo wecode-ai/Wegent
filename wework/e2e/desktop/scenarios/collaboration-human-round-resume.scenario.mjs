@@ -674,14 +674,35 @@ export function createDesktopScenario({
       assert.equal(String(assignedIssue.assignee_user_id), String(owner.id))
       assert.equal(assignedIssue.assignee_group_id, null)
       assert.ok(!assignedIssue.assignee_agent_id)
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-action"]'), {
-        text: '让 AI 帮我处理',
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'scrollIntoViewAsUser',
+        scoped('[data-testid="cloud-todo-create-task"]')
+      )
+      assert.equal(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="cloud-todo-personal-task-action"]')
+        ),
+        '0',
+        'The AI action bar must stay hidden while the associated-task action is visible'
+      )
       await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
+      await control.command(
+        'scrollToRatioAsUser',
+        scoped('[data-testid="cloud-todo-detail-scroll"]'),
+        { value: '1' }
+      )
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-action"]'), {
+        text: '让 AI 帮我处理',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'scrollIntoViewAsUser',
+        scoped('[data-testid="cloud-todo-create-task"]')
+      )
       const loopItems = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
       assert.equal(
         loopItems.items.some(

@@ -15,7 +15,17 @@ from datetime import datetime, timezone
 from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
-from sqlalchemy import String, and_, bindparam, cast, func, literal, or_, select
+from sqlalchemy import (
+    Integer,
+    String,
+    and_,
+    bindparam,
+    cast,
+    func,
+    literal,
+    or_,
+    select,
+)
 from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
@@ -3199,7 +3209,11 @@ class LoopItemService:
         rank, priority, activity = (
             attention_order(user_id, assigned_only, order)
             if attention
-            else (literal(0), literal(0), cast(LoopItem.updated_at, String))
+            else (
+                cast(literal(0), Integer),
+                cast(literal(0), Integer),
+                cast(LoopItem.updated_at, String),
+            )
         )
         projects = accessible_cloud_projects(db, user_id).all()
         if not projects:

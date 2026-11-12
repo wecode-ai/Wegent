@@ -42,7 +42,7 @@ import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import { createCloudModelCatalog } from './cloudModelCatalog'
-import { canonicalCloudTaskPort } from './canonicalCloudTaskPort'
+import { canonicalCloudTaskPort, registeredCloudDeviceId } from './canonicalCloudTaskPort'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
@@ -1411,7 +1411,15 @@ export function createHybridWorkbenchServices(
         })
         const request =
           route === 'local'
-            ? { ...data, executionDeviceId: data.deviceId }
+            ? {
+                ...data,
+                executionDeviceId:
+                  data.cloudProjectId || data.origin?.cloudProjectId
+                    ? await registeredCloudDeviceId(data.deviceId ?? LOCAL_DEVICE_ID, deviceId =>
+                        localServices.standInApi!.deviceIdentity(deviceId)
+                      )
+                    : data.deviceId,
+              }
             : data.wegentTeamId
               ? { ...data, schemaVersion: 3 as const }
               : data

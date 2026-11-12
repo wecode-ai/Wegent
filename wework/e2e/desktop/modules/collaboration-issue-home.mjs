@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { inCollaborationSidebar } from './workspace-flows.mjs'
-import {
-  openCollaborationIssueCreation,
-} from './collaboration-personal-home.mjs'
+import { openCollaborationIssueCreation } from './collaboration-personal-home.mjs'
 
 // Invoked by collaboration-shared-core after its real project/agent fixtures exist.
 export async function verifyCollaborationIssueHome(
@@ -170,7 +168,7 @@ export async function verifyCollaborationIssueHome(
   await control.command('waitFor', ownerButton, { text: group.name })
   await control.command('click', ownerButton)
   await control.command('click', '[data-testid="collaboration-issue-owner-none"]')
-  assert.equal((await control.command('getText', ownerButton)).trim(), '')
+  assert.equal((await control.command('getText', ownerButton)).trim(), '分配给')
   await control.command('fill', input, { value: '' })
   const issueCard = scoped(`[data-testid="cloud-todo-card-${issue.id}"]`)
   await control.command('click', projectRow)

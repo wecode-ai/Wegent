@@ -731,7 +731,7 @@ export function createDesktopScenario({
       runtimeTaskId = binding.task_id
       assert.equal(
         binding.device_id,
-        currentApp.app_device_id ?? currentApp.device_id,
+        currentApp.execution_target_id,
         'Human AI assistance must run on the current computer even when the project environment is remote'
       )
       assert.equal(binding.assignment_id, notification.payload.assignmentId)

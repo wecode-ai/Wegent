@@ -277,7 +277,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           timeoutMs: modelResponseTimeoutMs,
         }
       )
-      await assertCompleted(control, manualIssue, desktop.app_device_id ?? desktop.device_id)
+      await assertCompleted(control, manualIssue, currentDeviceRoute)
       await assertCollaboration(manualIssue)
       await control.command('click', scoped('ai-chat-modal-close'))
       await control.command('click', scoped('cloud-todo-detail-close'))

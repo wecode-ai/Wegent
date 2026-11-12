@@ -61,21 +61,16 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     async verify(control) {
       let armed = true
       proxy.rule = entry => {
-        if (
-          armed &&
-          entry.method === 'GET' &&
-          entry.path === `/api/v1/cloud-projects/${blockedProject.id}/board-snapshot`
-        ) {
+        if (armed && entry.method === 'GET' && entry.path === '/api/v1/cloud-work-items/my-work') {
           armed = false
           return 'hold-response'
         }
         return null
       }
-      // The personal-work board hosts the shared controller's home preload.
-      // Hold B so the combined home result (including A's old snapshot) stays
-      // pending. Search can independently load A and open its Issue meanwhile.
+      // Hold the batched personal-work page while search independently opens A.
+      // Releasing that old page must not replace the project's newer assignment.
       await control.command('navigate', 'body', { value: '/todo?projectId=default-work-items' })
-      await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
+      await control.command('waitFor', '[data-testid="personal-home"]', {
         timeoutMs: uiTimeoutMs,
       })
       await wait(
