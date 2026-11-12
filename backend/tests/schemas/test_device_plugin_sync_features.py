@@ -139,3 +139,55 @@ def test_malformed_optional_versions_preserve_the_explicit_legacy_protocol(versi
     assert features.model_dump(by_alias=True, exclude_none=True)["pluginSync"] == {
         "protocolVersion": 2,
     }
+
+
+def test_scoped_ack_retains_per_installation_revisions_through_response_serialization():
+    metadata = {
+        "version": 3,
+        "generation": 19,
+        "complete": False,
+        "revisions": {"123": 7, "456": 19},
+        "intentRevisions": {"123": 2, "456": 4},
+    }
+    result = DeviceCapabilitySyncResult.model_validate(
+        {
+            "device_id": "scoped",
+            "success": True,
+            "plugin_sync": metadata,
+            "plugins": [{"id": 123, "status": "synced", "generation": 7}],
+        }
+    )
+    assert result.model_dump()["plugin_sync"] == metadata
+    assert result.model_dump(by_alias=True)["plugin_sync"] == metadata
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"complete": True},
+        {"revisions": {"123": True}},
+        {"revisions": {"123": 0}},
+        {"intentRevisions": {"123": -1}},
+        {"revisions": None},
+        {"intentRevisions": None},
+    ],
+)
+def test_scoped_ack_rejects_incomplete_or_malformed_ordering_metadata(change):
+    from pydantic import ValidationError
+
+    metadata = {
+        "version": 3,
+        "generation": 1,
+        "complete": False,
+        "revisions": {"123": 1},
+        "intentRevisions": {"123": 0},
+        **change,
+    }
+    with pytest.raises(ValidationError):
+        DeviceCapabilitySyncResult.model_validate(
+            {
+                "device_id": "scoped",
+                "success": True,
+                "plugin_sync": metadata,
+            }
+        )

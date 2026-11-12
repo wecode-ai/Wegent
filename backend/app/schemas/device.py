@@ -8,7 +8,7 @@ Device schemas for request/response validation.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Union
 
 from pydantic import (
     BaseModel,
@@ -464,11 +464,23 @@ class PluginSyncMetadata(BaseModel):
     complete: bool
 
 
+class PluginScopedSyncMetadata(BaseModel):
+    """Per-installation identity echoed without discarding its ordering maps."""
+
+    version: Literal[3]
+    generation: StrictInt = Field(..., ge=1)
+    complete: Literal[False]
+    revisions: Dict[str, Annotated[StrictInt, Field(ge=1)]]
+    intentRevisions: Dict[str, Annotated[StrictInt, Field(ge=0)]]
+
+
 class DeviceCapabilitySyncResult(BaseModel):
     """Per-device capability sync result."""
 
     scope: Optional[str] = None
-    plugin_sync: Optional[PluginSyncMetadata] = None
+    plugin_sync: Optional[Union[PluginSyncMetadata, PluginScopedSyncMetadata]] = Field(
+        default=None, discriminator="version"
+    )
     desired_plugin_snapshot: Optional[Dict[str, Any]] = Field(
         default=None, exclude=True
     )
