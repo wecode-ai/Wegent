@@ -133,12 +133,14 @@ export function createDesktopScenario({ workspacePath }) {
         address: { deviceId: created.deviceId, taskId },
         refresh: true,
       })
-      const userItems = transcript.turns
-        .flatMap(turn => turn.items ?? [])
-        .filter(item => item.type === 'userMessage')
-      assert.equal(userItems.length, 1, 'Recovery resubmitted the original user message')
+      const userMessages = transcript.messages.filter(message => message.role === 'user')
+      assert.equal(userMessages.length, 1, 'Recovery resubmitted the original user message')
+      assert.equal(userMessages[0].content, `WEWORK_QUOTA_${taskId}`)
       assert.ok(
-        JSON.stringify(transcript.turns).includes(`WEWORK_QUOTA_${taskId}_RESUMED`),
+        transcript.messages.some(
+          message =>
+            message.role === 'assistant' && message.content === `WEWORK_QUOTA_${taskId}_RESUMED`
+        ),
         'The resumed model reply was not saved in the original conversation'
       )
 
