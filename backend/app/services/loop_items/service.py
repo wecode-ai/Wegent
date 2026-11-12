@@ -3224,13 +3224,13 @@ class LoopItemService:
         result: list[dict[str, object]] = []
         item_ids = [item.id for item in items]
         binding_rows = (
-                db.query(LoopItemTaskBinding)
-                .filter(
-                    LoopItemTaskBinding.loop_item_id.in_(item_ids),
-                    LoopItemTaskBinding.task_user_id == user_id,
-                    loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-                )
-                .all()
+            db.query(LoopItemTaskBinding)
+            .filter(
+                LoopItemTaskBinding.loop_item_id.in_(item_ids),
+                LoopItemTaskBinding.task_user_id == user_id,
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+            )
+            .all()
             if item_ids
             else []
         )
@@ -3245,12 +3245,23 @@ class LoopItemService:
         personal_assignments = {
             issue_id: max(personal, key=lambda assignment: assignment.created_at)
             for issue_id, rows in assignments.items()
-            if (personal := [row for row in rows if row.member_type == "human" and row.member_id == str(user_id)])
+            if (
+                personal := [
+                    row
+                    for row in rows
+                    if row.member_type == "human" and row.member_id == str(user_id)
+                ]
+            )
         }
         author_ids = {row.assigned_by_user_id for row in personal_assignments.values()}
-        authors = {
-            row.id: row.user_name for row in db.query(User).filter(User.id.in_(author_ids)).all()
-        } if author_ids else {}
+        authors = (
+            {
+                row.id: row.user_name
+                for row in db.query(User).filter(User.id.in_(author_ids)).all()
+            }
+            if author_ids
+            else {}
+        )
         contexts = {
             issue_id: {
                 "body": assignment.comment.description or "",

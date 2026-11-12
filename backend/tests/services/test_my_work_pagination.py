@@ -229,18 +229,30 @@ def test_my_work_batches_personal_bindings_and_assignment_comments(test_db, test
     for item in items:
         item.assignee_user_id = test_user.id
         issue_assignment_service.record(
-            test_db, project_id=project.id, issue_id=item.id,
-            member_type="human", member_id=str(test_user.id),
-            assigned_by_user_id=test_user.id, workflow_step=None,
-            notify=False, trigger="manual", comment_body=f"Please handle {item.id}",
+            test_db,
+            project_id=project.id,
+            issue_id=item.id,
+            member_type="human",
+            member_id=str(test_user.id),
+            assigned_by_user_id=test_user.id,
+            workflow_step=None,
+            notify=False,
+            trigger="manual",
+            comment_body=f"Please handle {item.id}",
         )
         for owner in (test_user, other):
-            test_db.add(LoopItemTaskBinding(
-                id=str(uuid4()), cloud_project_id=str(project.id),
-                loop_item_id=item.id, task_user_id=owner.id,
-                device_id="device", task_id=f"{owner.id}-{item.id}",
-                linked_at=datetime(2026, 1, 1), metadata_json={},
-            ))
+            test_db.add(
+                LoopItemTaskBinding(
+                    id=str(uuid4()),
+                    cloud_project_id=str(project.id),
+                    loop_item_id=item.id,
+                    task_user_id=owner.id,
+                    device_id="device",
+                    task_id=f"{owner.id}-{item.id}",
+                    linked_at=datetime(2026, 1, 1),
+                    metadata_json={},
+                )
+            )
     test_db.commit()
     user_id = test_user.id
     loop_item_service.list_my_work_page(test_db, user_id, limit=1)
@@ -260,13 +272,17 @@ def test_my_work_batches_personal_bindings_and_assignment_comments(test_db, test
         assert len(rows) == limit
         for row in rows:
             assert row["assignment_context"]["body"] == f"Please handle {row['id']}"
-            assert row["assignment_context"]["created_by_user_name"] == test_user.user_name
+            assert (
+                row["assignment_context"]["created_by_user_name"] == test_user.user_name
+            )
             assert len(row["task_bindings"]) == 1
             assert row["task_bindings"][0].task_user_id == user_id
     assert counts[0] == counts[1], counts
 
 
-def test_assigned_scope_and_completion_filter_are_applied_before_pagination(test_db, test_user):
+def test_assigned_scope_and_completion_filter_are_applied_before_pagination(
+    test_db, test_user
+):
     project = _make_project(test_db, test_user)
     rows = add_items(test_db, project, test_user.id, 5, prefix="SCOPE")
     rows[0].assignee_user_id = test_user.id

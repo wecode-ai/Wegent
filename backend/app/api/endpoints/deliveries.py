@@ -198,8 +198,12 @@ def list_my_work(
     current_user: User = Depends(get_current_user),
 ) -> MyWorkListResponse:
     items, next_cursor = loop_item_service.list_my_work_page(
-        db, current_user.id, limit=limit, cursor=cursor,
-        assigned_only=scope == "assigned", include_completed=include_completed,
+        db,
+        current_user.id,
+        limit=limit,
+        cursor=cursor,
+        assigned_only=scope == "assigned",
+        include_completed=include_completed,
     )
     return MyWorkListResponse(
         items=[MyWorkItemResponse.model_validate(item) for item in items],
