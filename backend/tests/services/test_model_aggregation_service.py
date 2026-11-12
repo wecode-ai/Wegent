@@ -1381,3 +1381,56 @@ class TestModelAggregationService:
 
         assert "public-model" in names
         assert "user-model" in names
+
+
+def _wework_model(test_user: User, name: str, *, available: bool) -> Kind:
+    return Kind(
+        user_id=test_user.id,
+        kind="Model",
+        name=name,
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": name, "namespace": "default"},
+            "spec": {
+                "isWeworkAvailable": available,
+                "modelType": "llm",
+                "modelConfig": {
+                    "env": {"model": "openai", "model_id": f"{name}-upstream"}
+                },
+            },
+        },
+    )
+
+
+def test_single_model_lookup_applies_wework_availability(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+):
+    unavailable = _wework_model(test_user, "not-in-wework", available=False)
+    available = _wework_model(test_user, "in-wework", available=True)
+    by_name = {unavailable.name: unavailable, available.name: available}
+    monkeypatch.setattr(
+        "app.services.model_aggregation_service.kind_service.get_resource",
+        lambda user_id, kind, namespace, name: by_name.get(name),
+    )
+
+    assert (
+        model_aggregation_service.resolve_model(
+            test_db, test_user, "not-in-wework", "user"
+        )
+        is not None
+    )
+    assert (
+        model_aggregation_service.resolve_model(
+            test_db, test_user, "not-in-wework", "user", "wework"
+        )
+        is None
+    )
+    assert (
+        model_aggregation_service.resolve_model(
+            test_db, test_user, "in-wework", "user", "wework"
+        )
+        is not None
+    )

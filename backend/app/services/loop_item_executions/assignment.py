@@ -171,6 +171,9 @@ def prepare_assignment(
             user_id=assigner_user_id,
             selection=effective_context.get("runner_selection"),
             automatic=bool(effective_context.get("run_id")),
+            # The assignment stores the model selection; it must keep working
+            # after an admin hides that model from new selections.
+            allow_hidden_models=True,
         )
         runtime_selection["runner_routing"] = routing.snapshot()
         # Native selectors and the actual owner are materialized at claim time.

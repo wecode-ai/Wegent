@@ -166,3 +166,45 @@ def test_hidden_public_model_outside_listing_limit_remains_resolvable(
 
     assert aggregated_model is not None
     assert aggregated_model["name"] == hidden_model.name
+
+
+def test_wework_single_lookup_keeps_hidden_available_public_models(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    hidden_available = _public_model("hidden-wework-available", is_visible=False)
+    hidden_available.json["spec"]["isWeworkAvailable"] = True
+    hidden_unavailable = _public_model("hidden-wework-unavailable", is_visible=False)
+    hidden_unavailable.json["spec"]["isWeworkAvailable"] = False
+    test_db.add_all([hidden_available, hidden_unavailable])
+    test_db.commit()
+
+    assert (
+        model_aggregation_service.get_model_by_name_and_type(
+            test_db,
+            test_user,
+            "hidden-wework-unavailable",
+            ModelType.PUBLIC,
+        )
+        is not None
+    )
+    assert (
+        model_aggregation_service.get_model_by_name_and_type(
+            test_db,
+            test_user,
+            "hidden-wework-unavailable",
+            ModelType.PUBLIC,
+            "wework",
+        )
+        is None
+    )
+    assert (
+        model_aggregation_service.get_model_by_name_and_type(
+            test_db,
+            test_user,
+            "hidden-wework-available",
+            ModelType.PUBLIC,
+            "wework",
+        )
+        is not None
+    )
