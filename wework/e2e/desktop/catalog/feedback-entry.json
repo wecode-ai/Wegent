@@ -9,10 +9,5 @@
       "position": 12500
     }
   },
-  "paths": [
-    "wework/src/components/layout/DesktopWorkbenchLayout.tsx",
-    "wework/src/components/layout/DesktopWorkbenchMain.tsx",
-    "wework/src/components/topnav/ChromeTitlebar.tsx",
-    "wework/src/features/feedback/*"
-  ]
+  "paths": ["wework/src/components/topnav/ChromeTitlebar.tsx", "wework/src/features/feedback/*"]
 }
