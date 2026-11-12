@@ -387,6 +387,16 @@ export async function createDesktopScenario(options) {
         }
         if (snapshot) await saveInstalledSourceSnapshot(snapshot)
       }
+      if (snapshot) {
+        assert.equal(
+          await saveInstalledSourceSnapshot(snapshot),
+          false,
+          'Saving the same installed-source snapshot twice must reuse it'
+        )
+        console.log(
+          `[upgrade-e2e] Reused installed-source snapshot cache: sha256=${pair.from.sha256}`
+        )
+      }
       if (!options.preparationOnly)
         await installPreparedSource(
           join(root, 'slots/source-preparation'),
@@ -1004,7 +1014,13 @@ export async function createDesktopScenario(options) {
             })
           assert.equal(alive, false, 'The upgraded application did not exit during cleanup')
         }
-        if (passed) await fs.rm(root, { recursive: true, force: true })
+        if (passed)
+          await fs.rm(root, {
+            recursive: true,
+            force: true,
+            maxRetries: 20,
+            retryDelay: 100,
+          })
         if (legacyDataDirectory) {
           const legacy = await lstat(legacyDataDirectory).catch(error => {
             if (error.code !== 'ENOENT') throw error

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
+  canReuseInstalledSourceSnapshot,
   saveInstalledSourceSnapshot,
   restoreInstalledSourceSnapshot,
 } from '../e2e/desktop/modules/installed-source-snapshot.mjs'
@@ -53,7 +54,7 @@ async function fixture(t) {
 
 test('restores independent prepared profiles and relocates all owned composition paths', async t => {
   const source = await fixture(t)
-  await saveInstalledSourceSnapshot(source)
+  assert.equal(await saveInstalledSourceSnapshot(source), true)
   for (const name of ['first', 'second']) {
     const dataDirectory = join(source.root, name)
     const slot = join(dataDirectory, 'releases/slots/source-preparation')
@@ -82,6 +83,33 @@ test('restores independent prepared profiles and relocates all owned composition
     await readFile(join(source.slot, 'profile/cordis.yml'), 'utf8'),
     'initial private configuration'
   )
+})
+
+test('reuses a complete snapshot and replaces changed cache entries before restoring', async t => {
+  const source = await fixture(t)
+  const target = {
+    ...source,
+    dataDirectory: join(source.root, 'reused'),
+    slot: join(source.root, 'reused/slot'),
+  }
+  assert.equal(await saveInstalledSourceSnapshot(source), true)
+  assert.equal(await saveInstalledSourceSnapshot(source), false)
+  assert.equal(await canReuseInstalledSourceSnapshot(source), true)
+  await writeFile(join(source.cache, 'slot/profile/cordis.yml'), 'corrupted')
+  assert.equal(await canReuseInstalledSourceSnapshot(source), false)
+  assert.equal(await saveInstalledSourceSnapshot(source), true)
+  await mkdir(target.slot, { recursive: true })
+  await assert.rejects(restoreInstalledSourceSnapshot(target), { code: 'EEXIST' })
+  await rm(target.slot, { recursive: true })
+  assert.equal(await restoreInstalledSourceSnapshot(target), true)
+  assert.equal(
+    await readFile(join(target.slot, 'profile/cordis.yml'), 'utf8'),
+    'initial private configuration'
+  )
+  const identity = { sha256: 'b'.repeat(64), disabled: [] }
+  assert.equal(await canReuseInstalledSourceSnapshot({ ...source, identity }), false)
+  assert.equal(await saveInstalledSourceSnapshot({ ...source, identity }), true)
+  assert.equal(await canReuseInstalledSourceSnapshot({ ...source, identity }), true)
 })
 
 test('refuses changed package identity, changed cache bytes, and incomplete snapshots', async t => {
