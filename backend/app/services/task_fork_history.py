@@ -50,6 +50,9 @@ class TaskForkHistoryResolver:
         limit: Optional[int] = None,
         current_task: Optional[TaskResource] = None,
     ) -> list[ForkHistoryItem]:
+        if limit is not None and limit <= 0:
+            return []
+
         lineage = self.resolve_lineage(
             db,
             task_id=task_id,
