@@ -231,6 +231,16 @@ jobs:
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
 
+      - name: Verify Socket.IO device heartbeat with Redis
+        working-directory: backend-rs
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+          WEGENT_BACKEND_RS_ENV_FILE: /dev/null
+          SECRET_KEY: heartbeat-e2e-signing-key
+        run: |
+          set -o pipefail
+          cargo test --locked --test device_heartbeat_redis -- --ignored --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/device-heartbeat-redis.log
+
       - name: Verify streaming activity recovery with Redis
         working-directory: backend-rs
         env:
@@ -262,6 +272,24 @@ jobs:
           set -o pipefail
           cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
+
+      - name: Verify account HTTP plugin snapshots without Device registration
+        working-directory: backend-rs
+        env:
+          PLUGIN_LOCAL_SYNC_ENABLED: "true"
+          WEWORK_PLUGIN_CREDENTIAL_KEYS: '{"native-test":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+          WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: native-test
+          SECRET_KEY: plugin-local-contract-test
+          DATABASE_URL: mysql://root@127.0.0.1:3306/mysql
+          REDIS_URL: redis://127.0.0.1:6379/0
+          WEGENT_BACKEND_RS_ENV_FILE: /dev/null
+          EXECUTOR_MANAGER_URL: http://127.0.0.1:1
+        run: |
+          set -o pipefail
+          cargo test --locked --lib plugins_installed::local_sync::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-local-sync-mysql.log
+          cargo test --locked --lib plugin_account_auth::local_http::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-native-auth-mysql.log
 
       - name: Verify plugin write leases with real Redis replication and MySQL
         working-directory: backend-rs
@@ -549,6 +577,8 @@ jobs:
         run: |
           cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
           cargo test --all-features --lib deferred_worktree_rebases_project_roots_using_path_identity
+          cargo test -p wegent-executor --all-features --lib cleanup_waits_for_owned_git_on_exit_timeout_and_cancellation -- --nocapture
+          cargo test -p wegent-workspace --all-features --lib pipe_lifetime_tests
 
       - name: Run native clone platform regressions
         if: ${{ !cancelled() }}
@@ -768,6 +798,12 @@ jobs:
       - name: Verify isolated Electron update transport
         if: matrix.shard == 1
         run: |
+          source .github/scripts/lib/apt-packages.sh
+          mapfile -t missing < <(find_missing_apt_packages gdb)
+          if ((${#missing[@]})); then
+            bash .github/scripts/install-e2e-apt-packages.sh "${missing[@]}"
+          fi
+          sudo -n gdb --version
           sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
           sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
           dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs

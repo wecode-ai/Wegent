@@ -4501,6 +4501,11 @@ class DesktopE2EServer {
         false,
         'The edited turn retained the original prompt in the latest model input'
       )
+      assert.equal(
+        JSON.stringify(body).includes(MESSAGE_EDIT_ORIGINAL_PROMPT),
+        false,
+        'The edited model context retained the original prompt after reverting the thread'
+      )
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(MESSAGE_EDIT_UPDATED_COMPLETION_TEXT),

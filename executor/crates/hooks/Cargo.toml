@@ -21,3 +21,4 @@ tokio = { version = "1.48", features = ["fs", "io-util", "macros", "process", "r
 [dev-dependencies]
 base64 = "0.22"
 tempfile = "3.23"
+wegent-executor-test-support = { path = "../test-support" }

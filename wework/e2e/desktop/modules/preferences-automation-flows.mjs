@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
 
 import { telemetryEvents } from './response-protocol.mjs'
+import { expireAutomationCredentials } from './automation-stale-credentials.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -71,6 +72,21 @@ async function verifyTelemetryPreference(control) {
     'false',
     'Disabling telemetry was not persisted'
   )
+  const refusal = JSON.parse(await control.command('getAppPreferences', 'body'))
+  assert.equal(refusal.telemetryEnabled, false)
+  assert.ok(refusal.telemetryConsentRevision > 0)
+  await assert.rejects(
+    control.command('setTelemetryConsent', 'body', {
+      value: JSON.stringify({
+        enabled: true,
+        expectedRevision: refusal.telemetryConsentRevision - 1,
+      }),
+    }),
+    /changed in another window/
+  )
+  const afterStaleOptIn = JSON.parse(await control.command('getAppPreferences', 'body'))
+  assert.equal(afterStaleOptIn.telemetryEnabled, false, 'A stale opt-in replaced the saved refusal')
+  assert.equal(afterStaleOptIn.telemetryConsentRevision, refusal.telemetryConsentRevision)
   await control.command('click', '[data-testid="settings-back-button"]')
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
@@ -497,6 +513,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
   const previousScenario = control.scenario
   control.setScenario('automation')
   try {
+    await expireAutomationCredentials(control, storedAutomation.id, DEFAULT_STEP_TIMEOUT_MS)
     await control.command('click', `[data-testid="${automationActions}"]`)
     await control.command('click', '[data-testid="automation-run-now-button"]')
     await control.awaitScenarioRequestCount('automation', 2, WORKBENCH_READY_TIMEOUT_MS)

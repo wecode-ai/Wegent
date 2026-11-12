@@ -22,6 +22,7 @@ from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
     ChannelType,
+    TaskCallbackKey,
     get_callback_registry,
 )
 
@@ -42,6 +43,8 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
     incoming_message_data: Optional[Dict[str, Any]] = None
     # AI Card instance ID for cross-worker emitter reconstruction
     card_instance_id: Optional[str] = None
+    # Terminal delivery state survives marker-write failures across workers.
+    delivered: bool = False
 
     def __init__(
         self,
@@ -52,6 +55,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
         card_instance_id: Optional[str] = None,
         chat_card: Optional[Dict[str, Any]] = None,
         card_subtask_id: Optional[int] = None,
+        delivered: bool = False,
     ):
         """Initialize DingTalkCallbackInfo.
 
@@ -72,6 +76,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
         self.card_instance_id = card_instance_id
         self.chat_card = chat_card
         self.card_subtask_id = card_subtask_id
+        self.delivered = delivered
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for Redis storage."""
@@ -83,6 +88,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
                 "card_instance_id": self.card_instance_id,
                 "chat_card": self.chat_card,
                 "card_subtask_id": self.card_subtask_id,
+                "delivered": self.delivered,
             }
         )
         return data
@@ -98,6 +104,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
             card_instance_id=data.get("card_instance_id"),
             chat_card=data.get("chat_card"),
             card_subtask_id=data.get("card_subtask_id"),
+            delivered=bool(data.get("delivered", False)),
         )
 
 
@@ -123,7 +130,7 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         return self._is_current_card_round(info, subtask_id)
 
     async def accepts_runtime_source(
-        self, task_id: int | str, source: Dict[str, Any]
+        self, task_id: TaskCallbackKey, source: Dict[str, Any]
     ) -> bool:
         info = await self.get_callback_info(task_id)
         if not info or not info.chat_card:
@@ -137,6 +144,8 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
 
     async def _get_or_create_emitter(self, task_id, subtask_id):
         info = await self.get_callback_info(task_id)
+        if info and info.delivered:
+            return None
         if not self._is_current_card_round(info, subtask_id):
             return None
         active = self._active_emitters.get(task_id)
@@ -152,7 +161,7 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
 
     async def send_task_result(
         self,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         subtask_id: int,
         content: str,
         status: str = "COMPLETED",
@@ -170,6 +179,14 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
     def _parse_callback_info(self, data: Dict[str, Any]) -> DingTalkCallbackInfo:
         """Parse callback info from dictionary."""
         return DingTalkCallbackInfo.from_dict(data)
+
+    async def _mark_callback_delivered(
+        self, task_id: TaskCallbackKey, callback_info: DingTalkCallbackInfo
+    ) -> bool:
+        """Persist terminal delivery state across workers and restarts."""
+        callback_info.delivered = True
+        await self.save_callback_info(task_id, callback_info)
+        return True
 
     def _extract_thinking_display(self, thinking: Any) -> str:
         """Extract the latest thinking step in human-readable format.
@@ -279,7 +296,10 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         return "处理中..."
 
     async def _create_emitter(
-        self, task_id: int, subtask_id: int, callback_info: DingTalkCallbackInfo
+        self,
+        task_id: TaskCallbackKey,
+        subtask_id: int,
+        callback_info: DingTalkCallbackInfo,
     ) -> Optional["ResultEmitter"]:
         """Create a streaming emitter for DingTalk.
 

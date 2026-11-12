@@ -131,6 +131,30 @@ describe('RuntimeConversationQueueController', () => {
     vi.restoreAllMocks()
   })
 
+  test.each([
+    undefined,
+    { startNewSession: true, expectedThreadId: 'previous-thread' },
+    { startNewSession: false, expectedThreadId: 'previous-thread' },
+  ])('preserves an explicit session boundary when sending %j', async boundary => {
+    const store = idleStore(taskA)
+    const send = acceptingTransport(store)
+    const { controller } = attach(taskA, store, send)
+    const item = { ...message('session-boundary'), ...boundary }
+    cacheRuntimeConversationQueuedMessages(taskA, [item])
+
+    await controller.send(item)
+
+    expect(send).toHaveBeenCalledOnce()
+    const request = send.mock.calls[0][0]
+    expect(request).toMatchObject({ address: taskA, message: item.content })
+    if (boundary) {
+      expect(request).toMatchObject(boundary)
+    } else {
+      expect(request).not.toHaveProperty('startNewSession')
+      expect(request).not.toHaveProperty('expectedThreadId')
+    }
+  })
+
   test('never replays an unconfirmed send when an idle replacement returns no receipt', async () => {
     const store = idleStore(taskA)
     const send = acceptingTransport(store)

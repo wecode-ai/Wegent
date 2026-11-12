@@ -13,6 +13,7 @@ const {
   s3AccelerationArgs,
   runNotaryCommand,
   hasStapledTicket,
+  submitArchive,
 } = require('../scripts/notarize-macos.cjs')
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -149,4 +150,125 @@ test('uses S3 acceleration by default and supports explicit standard S3', () => 
   expect(s3AccelerationArgs('true')).toEqual(['--s3-acceleration'])
   expect(s3AccelerationArgs('false')).toEqual(['--no-s3-acceleration'])
   expect(() => s3AccelerationArgs('invalid')).toThrow('must be true or false')
+})
+
+const submissionId = 'cd5196aa-a989-4a83-9866-7c67eaae4738'
+const notaryEnvironment = { APPLE_KEYCHAIN_PROFILE: 'test-profile' }
+
+test('uploads once and observes the same submission after a wait transport failure', async () => {
+  let now = 0
+  let observations = 0
+  const execute = vi.fn(async (_command, args: string[]) => {
+    if (args[1] === 'submit') return JSON.stringify({ id: submissionId })
+    observations += 1
+    if (observations === 1) {
+      now += 12000
+      throw new Error('NSURLErrorDomain Code=-1001 The request timed out')
+    }
+    return JSON.stringify({ id: submissionId, status: 'Accepted' })
+  })
+  const wait = vi.fn(async (milliseconds: number) => {
+    now += milliseconds
+  })
+  await expect(
+    submitArchive('/tmp/WeWork.zip', notaryEnvironment, {
+      execute,
+      wait,
+      now: () => now,
+    })
+  ).resolves.toMatchObject({ status: 'Accepted' })
+  const calls = execute.mock.calls.map(([, args]) => args)
+  expect(calls.filter(args => args[1] === 'submit')).toHaveLength(1)
+  expect(calls[0]).not.toContain('--wait')
+  expect(calls.slice(1).map(args => args.slice(0, 3))).toEqual([
+    ['notarytool', 'wait', submissionId],
+    ['notarytool', 'wait', submissionId],
+  ])
+  expect(calls[1].slice(-2)).toEqual(['--timeout', '1800s'])
+  expect(calls[2].slice(-2)).toEqual(['--timeout', '1783s'])
+})
+
+test('recovers the observed submission URL instead of uploading the archive again', async () => {
+  const execute = vi
+    .fn()
+    .mockRejectedValueOnce(
+      new Error(
+        `NSURLErrorDomain Code=-1001 https://appstoreconnect.apple.com/notary/v2/submissions/${submissionId}?`
+      )
+    )
+    .mockResolvedValue(JSON.stringify({ id: submissionId, status: 'Accepted' }))
+  await expect(
+    submitArchive('/tmp/WeWork.zip', notaryEnvironment, {
+      execute,
+      wait: vi.fn(),
+    })
+  ).resolves.toMatchObject({ status: 'Accepted' })
+  expect(execute.mock.calls.map(([, args]) => args.slice(0, 3))).toEqual([
+    ['notarytool', 'submit', '/tmp/WeWork.zip'],
+    ['notarytool', 'wait', submissionId],
+  ])
+})
+
+test('does not blindly repeat an upload whose submission identity is unknown', async () => {
+  const failure = new Error('NSURLErrorDomain Code=-1001 The request timed out')
+  const execute = vi.fn().mockRejectedValue(failure)
+  await expect(
+    submitArchive('/tmp/WeWork.zip', notaryEnvironment, {
+      execute,
+      wait: vi.fn(),
+    })
+  ).rejects.toBe(failure)
+  expect(execute).toHaveBeenCalledOnce()
+})
+
+test('rejects missing submission identity and unrelated error URLs', async () => {
+  const execute = vi.fn().mockResolvedValue(JSON.stringify({ status: 'Accepted' }))
+  await expect(
+    submitArchive('/tmp/WeWork.zip', notaryEnvironment, {
+      execute,
+      wait: vi.fn(),
+    })
+  ).rejects.toThrow('no valid submission ID')
+  expect(execute).toHaveBeenCalledOnce()
+  const failure = new Error(
+    `request timed out https://example.com/notary/v2/submissions/${submissionId}?`
+  )
+  execute.mockReset().mockRejectedValue(failure)
+  await expect(
+    submitArchive('/tmp/WeWork.zip', notaryEnvironment, {
+      execute,
+      wait: vi.fn(),
+    })
+  ).rejects.toBe(failure)
+  expect(execute).toHaveBeenCalledOnce()
+})
+
+test('preserves terminal rejection and the original total observation budget', async () => {
+  const execute = vi
+    .fn()
+    .mockResolvedValueOnce(JSON.stringify({ id: submissionId }))
+    .mockResolvedValueOnce(JSON.stringify({ id: submissionId, status: 'Invalid' }))
+  await expect(
+    submitArchive('/tmp/WeWork.zip', notaryEnvironment, {
+      execute,
+      wait: vi.fn(),
+    })
+  ).rejects.toThrow('Apple notarization failed with status: Invalid')
+
+  let now = 0
+  execute.mockReset().mockImplementation(async (_command, args: string[]) => {
+    if (args[1] === 'submit') return JSON.stringify({ id: submissionId })
+    now = 1800000
+    throw new Error('NSURLErrorDomain Code=-1001 The request timed out')
+  })
+  const wait = vi.fn()
+  await expect(
+    submitArchive('/tmp/WeWork.zip', notaryEnvironment, {
+      execute,
+      wait,
+      now: () => now,
+    })
+  ).rejects.toThrow('observation budget exhausted')
+  expect(execute).toHaveBeenCalledTimes(2)
+  expect(wait).not.toHaveBeenCalled()
 })
