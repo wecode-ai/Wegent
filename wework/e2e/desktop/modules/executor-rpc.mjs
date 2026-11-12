@@ -2,7 +2,45 @@ import { fetchLocalRuntime } from './runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
-export async function requestExecutor(control, method, params, timeoutMs) {
+const TRANSPORT_RETRY_DELAYS_MS = [250, 1_000]
+
+class ExecutorTransportFailure extends Error {
+  constructor(method, stage, requestId, cause) {
+    super(`${method} failed during ${stage} (${requestId})`, { cause })
+    this.name = 'DesktopE2EExecutorTransportFailure'
+  }
+}
+
+export async function requestExecutor(
+  control,
+  method,
+  params,
+  timeoutMs,
+  { retryOnTransport = false } = {}
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await requestExecutorOnce(control, method, params, timeoutMs)
+    } catch (error) {
+      const retryDelay = TRANSPORT_RETRY_DELAYS_MS[attempt]
+      if (
+        !retryOnTransport ||
+        !(error instanceof ExecutorTransportFailure) ||
+        retryDelay === undefined
+      ) {
+        throw error
+      }
+      console.warn('[desktop-e2e] retrying idempotent Executor RPC after transport failure', {
+        method,
+        attempt: attempt + 1,
+        retryDelay,
+      })
+      await new Promise(resolve => setTimeout(resolve, retryDelay))
+    }
+  }
+}
+
+async function requestExecutorOnce(control, method, params, timeoutMs) {
   const origin = await control.command('getLocationOrigin', 'body')
   const requestId = `desktop-e2e-${method}-${randomUUID()}`
   const startedAt = Date.now()
@@ -28,7 +66,7 @@ export async function requestExecutor(control, method, params, timeoutMs) {
       contentLength: response?.headers.get('content-length'),
       contentEncoding: response?.headers.get('content-encoding'),
     })
-    throw new Error(`${method} failed during ${stage} (${requestId})`, { cause })
+    throw new ExecutorTransportFailure(method, stage, requestId, cause)
   }
   assert.equal(
     response.ok,
