@@ -1654,17 +1654,24 @@ export function e2eSystemPressureOverride(environment: NodeJS.ProcessEnv = proce
   return { cpuLoadRatio: 0.1, freeMemoryRatio: 0.5, userIdleSeconds: 60 }
 }
 
+export function enforceIdleSystemLoadLimits(environment: NodeJS.ProcessEnv = process.env): boolean {
+  return environment.WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD?.trim().toLowerCase() !== 'false'
+}
+
 export async function systemPressureSnapshot(): Promise<{
   cpuLoadRatio: number
   freeMemoryRatio: number
   userIdleSeconds: number
+  enforceSystemLoadLimits: boolean
 }> {
   const override = e2eSystemPressureOverride()
-  if (override) return override
+  const enforceSystemLoadLimits = enforceIdleSystemLoadLimits()
+  if (override) return { ...override, enforceSystemLoadLimits }
   const cpuBefore = cpuTimeSample()
   await new Promise(resolve => setTimeout(resolve, 100))
   const cpuAfter = cpuTimeSample()
   return {
+    enforceSystemLoadLimits,
     cpuLoadRatio: cpuLoadRatioBetween(cpuBefore, cpuAfter),
     freeMemoryRatio: availableMemoryRatio(
       process.getSystemMemoryInfo(),
