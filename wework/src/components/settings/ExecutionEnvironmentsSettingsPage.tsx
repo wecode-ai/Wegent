@@ -101,7 +101,7 @@ export function ExecutionEnvironmentsSettingsPage() {
       {error && (
         <div
           data-testid="execution-environments-error"
-          className="mb-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-600"
+          className="mb-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive wework:border-red-500/30 wework:bg-red-500/5 wework:text-red-600"
         >
           {error}
         </div>
@@ -201,7 +201,9 @@ export function ExecutionEnvironmentsSettingsPage() {
                     </div>
                   )}
                   {environment.error && (
-                    <p className="mt-2 text-xs text-red-600">{environment.error}</p>
+                    <p className="mt-2 text-xs text-destructive wework:text-red-600">
+                      {environment.error}
+                    </p>
                   )}
                   {installed && environment.path && (
                     <p className="mt-2 truncate text-xs text-text-muted" title={environment.path}>
@@ -211,7 +213,7 @@ export function ExecutionEnvironmentsSettingsPage() {
                   {environment.restartRequired && (
                     <div
                       data-testid="execution-environment-node-restart-required"
-                      className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-4 text-amber-700"
+                      className="mt-2 rounded-lg bg-warning/10 px-3 py-2 text-xs leading-4 text-warning wework:bg-amber-500/10 wework:text-amber-700"
                     >
                       {environment.configuredPath
                         ? t(

@@ -49,6 +49,9 @@ const address: RuntimeTaskAddress = {
 }
 
 const mocks = vi.hoisted(() => ({
+  markRead: vi.fn(),
+  windowFocused: true,
+  focusListener: undefined as undefined | ((focused: boolean) => void),
   renderToolBlocks: false,
   inputHost: undefined as
     | undefined
@@ -87,6 +90,7 @@ const mocks = vi.hoisted(() => ({
     blocks?: WorkbenchMessage['blocks']
   }>,
   lifecycleSnapshot: null as {
+    unread?: boolean
     turn?: { id: string | null }
     derived: {
       isRunning: boolean
@@ -102,6 +106,16 @@ const mocks = vi.hoisted(() => ({
   } | null,
   inputByScope: {} as Record<string, string>,
   setInputForScope: vi.fn(),
+}))
+
+vi.mock('@/desktop/windowFocus', () => ({
+  isMainWindowFocused: () => mocks.windowFocused,
+  subscribeMainWindowFocus: (listener: (focused: boolean) => void) => {
+    mocks.focusListener = listener
+    return () => {
+      mocks.focusListener = undefined
+    }
+  },
 }))
 
 function CatalogBindingProbe({ scope }: { scope?: string }) {
@@ -465,6 +479,11 @@ vi.mock('@/features/workbench/runtimePaneStatus', () => ({
 }))
 
 vi.mock('@/features/workbench/runtimeConversationCache', () => ({
+  appendOptimisticRuntimeConversationGuidance: (
+    _address: RuntimeTaskAddress,
+    _turn: string,
+    message: { id: string; content: string }
+  ) => [{ ...message, role: 'user', status: 'pending', runtimeGuidance: true }],
   abortRuntimeConversationHydration: vi.fn(),
   getRuntimeConversationTurnIds: () => new Set<string>(),
   appendAcceptedRuntimeConversationMessage: (_address: RuntimeTaskAddress, message: unknown) => [
@@ -495,6 +514,7 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
     return revision
   }
   let store = {
+    markRead: mocks.markRead,
     getTask: () => mocks.lifecycleSnapshot,
     getTaskRevision: taskRevision,
     syncTranscript: mocks.syncTranscript,
@@ -508,6 +528,7 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
         revision = 0
         previousSnapshot = mocks.lifecycleSnapshot
         store = {
+          markRead: mocks.markRead,
           getTask: () => mocks.lifecycleSnapshot,
           getTaskRevision: taskRevision,
           syncTranscript: mocks.syncTranscript,
@@ -519,7 +540,66 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 })
 
 describe('TemporaryChatPanel', () => {
+  it('keeps the stand-in usable and steers new messages while native subagents are running', async () => {
+    mocks.busy = true
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    mocks.lifecycleSnapshot = {
+      turn: { id: 'parent-turn' },
+      derived: { isRunning: true, isTurnActive: true },
+    }
+    mocks.sendRuntimePaneGuidance.mockResolvedValue({ sent: true, turnId: 'parent-turn' })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="native-chat"
+        nativeConversation
+      />
+    )
+    await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(mocks.sendRuntimePaneGuidance).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(mocks.sendRuntimePaneGuidance).toHaveBeenCalledTimes(2))
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('mock-queue-row')).not.toBeInTheDocument()
+  })
+  it('acknowledges visible stand-in messages only while the main window is focused', async () => {
+    mocks.windowFocused = false
+    mocks.lifecycleSnapshot = {
+      unread: true,
+      turn: { id: null },
+      derived: { isRunning: false, isTurnActive: false },
+    }
+    const panel = (active: boolean) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="read-stand-in"
+        markReadWhenActive
+        active={active}
+      />
+    )
+    const view = render(panel(false))
+    expect(mocks.markRead).not.toHaveBeenCalled()
+    view.rerender(panel(true))
+    expect(mocks.markRead).not.toHaveBeenCalled()
+    act(() => {
+      mocks.windowFocused = true
+      mocks.focusListener?.(true)
+    })
+    expect(mocks.markRead).toHaveBeenCalledExactlyOnceWith(address)
+    view.rerender(panel(false))
+    expect(mocks.focusListener).toBeUndefined()
+  })
   beforeEach(() => {
+    mocks.markRead.mockClear()
+    mocks.windowFocused = true
+    mocks.cancelRuntimePaneTask.mockClear()
     clearWorkbenchWorkspaceLaunch()
     mocks.renderToolBlocks = false
     mocks.inputHost = undefined

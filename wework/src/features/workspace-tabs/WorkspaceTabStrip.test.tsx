@@ -153,7 +153,7 @@ describe('WorkspaceTabStrip', () => {
       .find(tab => tab.getAttribute('aria-selected') === 'true')
     expect(activeBoardTab).toBeDefined()
     expect(activeBoardTab?.parentElement).toHaveClass(
-      'bg-white',
+      'bg-surface',
       'border-border/70',
       'shadow-sm',
       'rounded-md'
@@ -382,9 +382,11 @@ describe('WorkspaceTabStrip', () => {
       history: [],
       errors: {},
       drafts: {},
+      replyDrafts: [],
       busy: new Set(),
       loading: false,
       setDraft: vi.fn(),
+      discardDraft: vi.fn().mockResolvedValue(true),
       respond: vi.fn(),
       refresh: vi.fn(),
       open: vi.fn(),

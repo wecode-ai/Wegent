@@ -19,6 +19,7 @@ import {
 import {
   closeWorkspaceTab,
   createWorkspaceTab,
+  defaultContentRoute,
   dispatchWorkspaceTabsClosed,
   inferWorkspaceTabKind,
   moveWorkspaceTab,
@@ -119,6 +120,13 @@ function normalizePersistedTab(tab: WorkspaceTab, labels: WorkspaceTabLabels): W
       'Collaboration (Beta)',
     ].includes(tab.title)
   const normalized = { ...tab, fixed: tab.fixed === true }
+  if (
+    normalized.fixed &&
+    tab.kind !== 'auxiliary' &&
+    tab.contentRoute === defaultContentRoute(tab.kind)
+  ) {
+    return { ...normalized, title: labels[tab.kind] }
+  }
   return isLegacyDefaultBoard
     ? { ...normalized, title: labels.board, contentRoute: '/todo' }
     : normalized
@@ -347,7 +355,12 @@ function workspaceTabsReducer(
           return {
             ...tab,
             kind: current.kind,
-            title: current.title,
+            title:
+              current.kind === tab.kind &&
+              current.kind !== 'auxiliary' &&
+              current.contentRoute === defaultContentRoute(current.kind)
+                ? tab.title
+                : current.title,
             contentRoute: current.contentRoute,
           }
         }

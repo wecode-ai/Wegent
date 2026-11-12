@@ -48,7 +48,6 @@ import { stripAppBasePath } from '@/config/runtime'
 import {
   AppearanceProvider,
   getWorkbenchBackground,
-  useAppearance,
   useOptionalAppearance,
 } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -72,6 +71,8 @@ import {
 } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
+import { LocalRuntimeNotice } from '@/features/local-runtime/LocalRuntimeNotice'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { IdleTaskCoordinator } from '@/features/idle-tasks/IdleTaskCoordinator'
 import { WeworkIdleTasks } from '@/features/idle-tasks/WeworkIdleTasks'
@@ -834,14 +835,17 @@ export default function App() {
     isDesktopRuntime() && path === '/system-drag' ? (
       <SystemDragPanel />
     ) : isDesktopRuntime() && path === '/process-explorer' ? (
-      <AppEnvironment persistAppearance={false} syncAppearanceFromPreferences>
-        <ProcessExplorerPage />
-      </AppEnvironment>
+      <ProcessExplorerPage />
     ) : (
       <MainApp />
     )
   return (
-    <>
+    <AppEnvironment
+      persistAppearance={
+        !isDesktopRuntime() ||
+        (!['/system-drag', '/process-explorer'].includes(path) && !isPopoutWindowRuntime())
+      }
+    >
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
       <GlobalIconButtonTooltip />
@@ -853,7 +857,7 @@ export default function App() {
           slot={WEWORK_DSH_SLOTS.shellOverlay}
         />
       </div>
-    </>
+    </AppEnvironment>
   )
 }
 
@@ -863,50 +867,33 @@ function MainApp() {
   }, [])
 
   return (
-    <AppEnvironment>
-      <AppUpdateProvider>
-        <CloudConnectionProvider>
-          <AuthProvider>
-            <TelemetryBridge />
-            <TelemetryAgent />
-            <AppShell />
-          </AuthProvider>
-        </CloudConnectionProvider>
-      </AppUpdateProvider>
-    </AppEnvironment>
+    <AppUpdateProvider>
+      <CloudConnectionProvider>
+        <AuthProvider>
+          <TelemetryBridge />
+          <TelemetryAgent />
+          <AppShell />
+        </AuthProvider>
+      </CloudConnectionProvider>
+    </AppUpdateProvider>
   )
 }
 
 function AppEnvironment({
   children,
   persistAppearance = true,
-  syncAppearanceFromPreferences = false,
 }: {
   children: ReactNode
   persistAppearance?: boolean
-  syncAppearanceFromPreferences?: boolean
 }) {
   return (
     <AppearanceProvider persist={persistAppearance}>
       <AppPreferencesProvider>
-        {syncAppearanceFromPreferences ? <AppearancePreferenceSync /> : null}
         <LanguagePreferenceInitializer />
         {children}
       </AppPreferencesProvider>
     </AppearanceProvider>
   )
-}
-
-function AppearancePreferenceSync() {
-  const appPreferences = useAppPreferencesState()
-  const { setAppearance } = useAppearance()
-
-  useEffect(() => {
-    if (!appPreferences?.loaded) return
-    setAppearance({ mode: appPreferences.preferences.appearanceMode })
-  }, [appPreferences?.loaded, appPreferences?.preferences.appearanceMode, setAppearance])
-
-  return null
 }
 
 function LanguagePreferenceInitializer() {
@@ -1266,7 +1253,10 @@ function AppShell() {
     return (
       <CodexHomeInitializer>
         <LocalRuntimeInitializer startupReady={false}>
-          <div />
+          <div className="flex h-dvh flex-col">
+            <MacOSTitleBarDragRegion className="h-10 shrink-0" />
+            <LocalRuntimeNotice />
+          </div>
         </LocalRuntimeInitializer>
       </CodexHomeInitializer>
     )
@@ -1278,8 +1268,12 @@ function AppShell() {
 
   if (isIsolatedSurface) {
     const isolatedShell = (
-      <div data-testid="app-shell" className="fixed inset-0 overflow-hidden bg-background">
-        <div data-testid="app-route-host" className="h-full min-h-0 overflow-hidden">
+      <div
+        data-testid="app-shell"
+        className="fixed inset-0 flex flex-col overflow-hidden bg-background"
+      >
+        <LocalRuntimeNotice />
+        <div data-testid="app-route-host" className="min-h-0 flex-1 overflow-hidden">
           <AppRoutes />
         </div>
       </div>
@@ -1494,7 +1488,7 @@ function WeworkDevInstanceBadge() {
               <button
                 type="button"
                 data-testid="collapse-wework-dev-instance-button"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]"
                 title="Collapse to movable icon"
                 aria-label="Collapse development instance info"
                 onClick={() => setCollapsed(true)}
@@ -1519,7 +1513,7 @@ function WeworkDevInstanceBadge() {
                 <button
                   type="button"
                   data-testid={`copy-wework-dev-${row.key}-button`}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]"
                   title={`Copy ${row.label}`}
                   aria-label={`Copy ${row.label}`}
                   onClick={() => void copyValue(row.key, row.value)}

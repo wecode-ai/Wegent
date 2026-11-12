@@ -45,13 +45,16 @@ digest = steps.find { |candidate| candidate["id"] == "runtime" }
   .fetch("env").fetch("SOURCE_DIGEST")
 
 recipe = ".github/runtime-images/backend-rs-e2e.Dockerfile"
-%W[backend-rs/crates/** shared/rust/** backend-rs/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
+%W[backend-rs/crates/** shared/rust/** shared/assets/codex-models/** backend-rs/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
   raise "Backend Rust runtime digest omits #{input}" unless digest.include?("'#{input}'")
 end
 
 # Compile-time migration assets must exist at the same relative paths inside the
 # builder. Check the actual include paths against its COPY instructions.
 builder = File.read(File.join(root, ".github/runtime-images/backend-rs-builder.Dockerfile"))
+unless builder.include?("COPY shared/assets/codex-models /workspace/shared/assets/codex-models")
+  raise "Backend Rust builder omits the embedded Codex model catalogs"
+end
 copies = builder.scan(/^COPY (backend-rs\/\S+) (\.\/\S+)$/)
 Dir[File.join(root, "backend-rs/src/migrations/**/*.rs")].each do |source|
   File.read(source).scan(/include_(?:str|bytes)!\(\s*"([^"]+)"/).flatten.each do |path|

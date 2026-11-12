@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import {
+  MATRIX_PROVIDER_INSTRUCTIONS,
+  MATRIX_LEGACY_INSTRUCTIONS,
+} from './model-native-catalog.mjs'
 import { dirname, join, resolve } from 'node:path'
 import {
   assertCodeModeOutput,
@@ -19,6 +23,7 @@ import {
 } from './response-protocol.mjs'
 
 export const MATRIX_UNUSED_SKILL_CANARY = 'MATRIX_UNUSED_SKILL_BODY_MUST_NEVER_BE_LOADED_29BD'
+export const INITIAL_CONTEXT_TOKEN_LIMIT = 12_000
 export const MATRIX_REQUIRED_TOOLS = ['get_goal', 'exec_command', 'apply_patch']
 const MATRIX_DISCOVERY_SCRIPT =
   'text(ALL_TOOLS.filter(tool => tool.name.includes("get_issue_details") || ["get_goal","exec_command","apply_patch"].includes(tool.name)))'
@@ -68,17 +73,26 @@ export function assertProgressiveHi(body, model, budget = countModelRequest(body
     'hi',
     'The budget must measure the real default hi, not a title or prediction request'
   )
-  if (budget.tokens >= 7000)
+  if (budget.tokens >= INITIAL_CONTEXT_TOKEN_LIMIT)
     failures.push(
-      `complete request uses ${budget.tokens} ${budget.encoding} tokens (must be < 7000)`
+      `complete request uses ${budget.tokens} ${budget.encoding} tokens (must be < ${INITIAL_CONTEXT_TOKEN_LIMIT})`
     )
   const text = strings(body).join('\n')
-  if (!text.includes("You are Codex, Wework's coding assistant."))
-    failures.push('The canonical native catalog did not restore the default base instructions')
+  if (model.source === 'codex') {
+    if (text.split(MATRIX_PROVIDER_INSTRUCTIONS).length - 1 !== 1)
+      failures.push('Provider canonical instructions must appear exactly once')
+    if (text.includes(MATRIX_LEGACY_INSTRUCTIONS))
+      failures.push('Legacy instructions replaced the provider canonical template')
+  } else if (!text.includes('You are Codex,')) {
+    failures.push('The native Codex catalog instructions are missing')
+  }
   for (const marker of [
     MATRIX_SKILL_CANARY,
     MATRIX_UNUSED_SKILL_CANARY,
     MATRIX_MCP_DESCRIPTION,
+    'wework-runtime:coding',
+    'Read [workflow.md](workflow.md)',
+    "You are Codex, Wework's coding assistant.",
     'Run JavaScript in the persistent Node REPL.',
     '### `get_goal`',
     '### `create_goal`',
@@ -116,9 +130,7 @@ export function captureMatrixRequest(control, model, body) {
     control.matrixEvidenceDirectory,
     'The matrix must retain final model-side request evidence'
   )
-  const caseId = [model.execution, model.source, model.protocol, model.requestMode ?? 'auto'].join(
-    '-'
-  )
+  const caseId = `${matrixCaseId(model)}${model.requestMode ? '' : '-auto'}`
   const directory = control.matrixEvidenceDirectory
   mkdirSync(directory, { recursive: true })
   const sequence = control.matrixState.requests.length
@@ -340,8 +352,13 @@ export function assertCodeModeMatrixPatch(body, model) {
 }
 
 export function assertCodeModeMatrixRequest(body, model) {
-  const lite = model.protocol === 'responses' && model.source === 'codex'
-  assertCodeModeRequest(body, { protocol: model.protocol, lite })
+  // Matrix Codex providers have custom endpoints and use the portable defaults.
+  const exec = assertCodeModeRequest(body, { protocol: model.protocol, lite: false })
+  if (model.protocol === 'responses' && model.source === 'codex') {
+    assert.equal(exec.type, 'function', 'Configured Codex providers must default to function tools')
+    assert.equal(exec.name, 'functions__exec')
+    assert.equal(exec.namespace, undefined)
+  }
 }
 
 export function assertRequiredToolInventory(output) {

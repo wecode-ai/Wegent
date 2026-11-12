@@ -13,6 +13,7 @@ from app.models.kind import Kind
 from app.services.capability_reference_service import (
     list_referenced_capabilities_by_namespace,
 )
+from app.services.execution_permission_scope import is_execution_resource_scope
 from app.services.resource_lookup_queries import named_kind_rows
 
 
@@ -30,17 +31,18 @@ class ExecutionCapabilityLookup:
         self._references: dict[str, dict[str, dict[str, Kind]]] = defaultdict(dict)
         self._model_reference_sources: dict[str, list[Kind]] = {}
         self._model_reference_names: set[str] = set()
-        self._group_names: list[str] | None = None
+        self._group_names: dict[bool, list[str]] = {}
         self._runtime_models: dict[str, dict[str, Any] | None] = {}
 
     @property
     def groups(self) -> list[str]:
-        """Resolve current group membership once for this request."""
+        """Resolve membership once per permission scope in this request."""
         from app.services.group_permission import get_user_groups
 
-        if self._group_names is None:
-            self._group_names = get_user_groups(self.db, self.user_id)
-        return self._group_names
+        explicit = is_execution_resource_scope()
+        if explicit not in self._group_names:
+            self._group_names[explicit] = get_user_groups(self.db, self.user_id)
+        return self._group_names[explicit]
 
     def personal(
         self, kind: str, name: str, namespace: str | None = None
@@ -87,7 +89,14 @@ class ExecutionCapabilityLookup:
             namespaces = (
                 ["default"]
                 if namespace == "default"
-                else list(dict.fromkeys([namespace, *(self._group_names or [])]))
+                else list(
+                    dict.fromkeys(
+                        [
+                            namespace,
+                            *self._group_names.get(is_execution_resource_scope(), []),
+                        ]
+                    )
+                )
             )
             namespaces = [ns for ns in namespaces if ns not in references]
             rows = list_referenced_capabilities_by_namespace(

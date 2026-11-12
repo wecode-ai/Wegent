@@ -1,3 +1,5 @@
+import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
+import { findSelectableProject } from './workbenchRuntimeHelpers'
 import type {
   ModelCompatibilityDisabledReason,
   ModelSelectionConfig,
@@ -70,4 +72,49 @@ export function normalizeGuidanceError(error?: string | null) {
     return '连接未建立，请稍后重试'
   }
   return error
+}
+
+export function findFirstSelectableProject(
+  projects: ProjectWithTasks[],
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectIds: Array<number | null | undefined>
+): ProjectWithTasks | null {
+  for (const projectId of projectIds) {
+    if (!projectId) continue
+    const project = findSelectableProject(projects, runtimeWork, projectId)
+    if (project) return project
+  }
+  return null
+}
+
+export function getProjectChatScopeKey({
+  currentRuntimeTask,
+  standaloneChatKey,
+}: {
+  currentRuntimeTask: RuntimeTaskAddress | null
+  standaloneChatKey: number
+}): string {
+  if (currentRuntimeTask) {
+    return getRuntimeTaskChatScopeKey(currentRuntimeTask)
+  }
+  return `blank:${standaloneChatKey}`
+}
+
+export function getModelSelectionScopeKey({
+  userId,
+  currentProjectId,
+  currentRuntimeTask,
+  standaloneChatKey,
+}: {
+  userId: number
+  currentProjectId: number | null
+  currentRuntimeTask: RuntimeTaskAddress | null
+  standaloneChatKey: number
+}): string {
+  if (currentRuntimeTask) {
+    return `user:${userId}:${getRuntimeTaskChatScopeKey(currentRuntimeTask)}`
+  }
+  return currentProjectId === null
+    ? `user:${userId}:new-task:standalone:${standaloneChatKey}`
+    : `user:${userId}:new-task:project:${currentProjectId}:${standaloneChatKey}`
 }

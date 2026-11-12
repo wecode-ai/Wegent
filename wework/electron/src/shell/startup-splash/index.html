@@ -23,13 +23,16 @@
       ></div>
       <footer id="startup-status" class="startup-status" data-testid="startup-status">
         <div class="splash-copy">
-          <h1 id="splash-title" aria-live="polite">We're preparing your workbench</h1>
+          <h1 id="splash-title" class="sr-only" aria-live="polite">
+            We're preparing your workbench
+          </h1>
+          <p id="splash-activity" class="activity-line" aria-hidden="true"></p>
           <span id="splash-percentage" aria-hidden="true">0%</span>
         </div>
         <section class="progress-block" aria-label="Startup progress">
-          <div class="progress-meta">
+          <div class="sr-only">
             <span id="splash-step-count">Starting</span>
-            <span id="splash-elapsed" class="elapsed">0.0s</span>
+            <span id="splash-elapsed">0.0s</span>
           </div>
           <div
             id="splash-progress"
@@ -45,35 +48,35 @@
                 <linearGradient
                   id="startup-progress-gradient"
                   gradientUnits="userSpaceOnUse"
-                  x1="1"
-                  y1="4"
-                  x2="1"
-                  y2="4"
+                  x1="0"
+                  y1="2"
+                  x2="0"
+                  y2="2"
                 >
-                  <stop offset="0%" stop-color="var(--startup-progress-start)" />
-                  <stop offset="70%" stop-color="var(--startup-progress-middle)" />
-                  <stop offset="100%" stop-color="var(--startup-progress-end)" />
+                  <stop offset="0%" class="startup-progress-stop-start" />
+                  <stop offset="72%" class="startup-progress-stop-middle" />
+                  <stop offset="100%" class="startup-progress-stop-end" />
                 </linearGradient>
               </defs>
               <line
                 id="splash-progress-track"
                 class="startup-progress-track"
-                x1="1"
-                x2="1"
-                y1="4"
-                y2="4"
+                x1="0"
+                x2="0"
+                y1="2"
+                y2="2"
               />
               <line
                 id="splash-progress-fill"
                 class="startup-progress-fill"
-                x1="1"
-                x2="1"
-                y1="4"
-                y2="4"
+                x1="0"
+                x2="0"
+                y1="2"
+                y2="2"
+                visibility="hidden"
               />
             </svg>
           </div>
-          <p id="splash-activity" class="activity-line" aria-hidden="true"></p>
         </section>
         <div id="startup-slow" class="inline-note" hidden>
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">

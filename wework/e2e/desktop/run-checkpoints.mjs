@@ -15,6 +15,7 @@ import {
 } from './checkpoints.mjs'
 import {
   isResourceExclusiveCheckpoint,
+  linuxCoreCheckpointResources,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS, rejectFailedReleaseCheckpoint } from './upgrade-suite.mjs'
@@ -129,12 +130,18 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (checkpoint === 'workspace-attachments') {
+    nextEnv.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS = '1'
+  }
   if (
-    ['human-interactions', 'human-interactions-hidden', 'human-interactions-issue'].includes(
-      checkpoint
-    )
+    [
+      'human-interactions',
+      'human-interactions-hidden',
+      'human-interactions-issue',
+      'stand-in-notifications',
+    ].includes(checkpoint)
   ) {
-    // The narrow 480x760 content viewport must fit inside the physical display.
+    // Narrow 760px-tall content viewports must fit inside the physical display.
     nextEnv.WEWORK_E2E_XVFB_SCREEN = '1280x900x24'
   }
   if (UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(checkpoint)) {
@@ -411,8 +418,10 @@ async function runParallelCheckpoints(checkpoints) {
     await runWithCheckpointResources({
       checkpoints,
       workerCount,
-      resourceFor: checkpoint =>
-        process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
+      resourceFor: checkpoint => {
+        if (linuxCore) return linuxCoreCheckpointResources(checkpoint)
+        return process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : []
+      },
       exclusiveFor: checkpoint => isResourceExclusiveCheckpoint(checkpoint, linuxCore),
       run: async checkpoint => {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)

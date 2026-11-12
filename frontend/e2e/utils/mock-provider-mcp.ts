@@ -9,6 +9,27 @@ interface McpToolCall {
   isError: boolean
 }
 
+const marketplaceServers = [
+  {
+    id: 'product-comparison',
+    name: '商品数据对比',
+    description: 'Compare product catalog data across marketplaces',
+    type: 'streamable-http',
+    base_url: 'http://127.0.0.1:9999/mcp',
+    is_active: true,
+    tags: ['商品', '数据'],
+  },
+  {
+    id: 'document-search',
+    name: '文档检索助手',
+    description: 'Search product documentation and internal knowledge',
+    type: 'streamable-http',
+    base_url: 'http://127.0.0.1:9999/mcp',
+    is_active: true,
+    tags: ['文档', '搜索'],
+  },
+]
+
 const states = new MockScopeStore(() => ({
   toolCalls: [] as McpToolCall[],
   contentGates: new Map<
@@ -122,6 +143,14 @@ function handleScopedRequest(
   port: number
 ): boolean {
   const url = new URL(req.url || '/', `http://localhost:${port}`)
+  if (url.pathname === '/mock-mcp-catalog/servers' && req.method === 'GET') {
+    writeControlJson(res, 200, {
+      success: true,
+      total: marketplaceServers.length,
+      servers: marketplaceServers,
+    })
+    return true
+  }
   if (url.pathname === '/mcp' && req.method === 'POST') {
     handleMcpRequest(req, res, body, port)
     return true

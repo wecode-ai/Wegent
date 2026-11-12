@@ -7,6 +7,7 @@ import { ConversationTranslationProvider } from './ConversationTranslation'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
 import type { ToolBlock } from './blocks/types'
+import { getBlockLabel } from './blocks/toolBlockLabels'
 import { MarkdownServicesProvider, browserMarkdownServices } from '../markdown/MarkdownServices'
 
 let container: HTMLDivElement
@@ -44,6 +45,31 @@ function block(id: string): ToolBlock {
 }
 
 describe('shared tool output without a desktop host', () => {
+  it.each([
+    ['done', 'Ran pwd'],
+    ['streaming', 'Running pwd'],
+    ['error', 'Command failed: pwd'],
+  ] as const)('localizes command labels for %s tools', (status, expected) => {
+    const tool = { ...block('localized-command'), status }
+    expect(getBlockLabel(tool, createCollaborationTranslator('en')).label).toBe(expected)
+    expect(getBlockLabel(tool, createCollaborationTranslator('zh-CN')).label).toMatch(/运行/)
+  })
+
+  it('localizes file reads and file fallbacks through the conversation catalog', () => {
+    const translate = createCollaborationTranslator('en')
+    const read = {
+      ...block('localized-read'),
+      toolInput: { command: 'cat requirements.md' },
+    }
+    expect(getBlockLabel(read, translate).label).toBe('Read requirements.md')
+    const create = {
+      ...block('localized-create'),
+      toolName: 'create_file',
+      toolInput: {},
+    }
+    expect(getBlockLabel(create, translate).label).toBe('Created file')
+  })
+
   it.each(['done', 'error', 'pending'] as const)(
     'shows native AI review evidence for %s decisions',
     status => {
@@ -54,7 +80,9 @@ describe('shared tool output without a desktop host', () => {
               ...block('review-1'),
               toolName: 'auto_approval_review',
               status,
-              toolOutput: JSON.stringify({ rationale: 'Check the authorized destination' }),
+              toolOutput: JSON.stringify({
+                rationale: 'Check the authorized destination',
+              }),
             },
           ]}
           isStreaming={status === 'pending'}

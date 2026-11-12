@@ -8,6 +8,7 @@ interface TransientNoticeProps {
   onClear: () => void
   horizontalAnchorRef?: RefObject<HTMLElement | null>
   visible?: boolean
+  action?: { label: string; testId: string; onClick: () => void; pending: boolean }
 }
 
 interface HorizontalPlacement {
@@ -23,15 +24,16 @@ export function TransientNotice({
   onClear,
   horizontalAnchorRef,
   visible = true,
+  action,
 }: TransientNoticeProps) {
   const [horizontalPlacement, setHorizontalPlacement] = useState<HorizontalPlacement | null>(null)
 
   useEffect(() => {
-    if (!message) return
+    if (!message || action) return
 
     const timeout = window.setTimeout(onClear, 2200)
     return () => window.clearTimeout(timeout)
-  }, [message, onClear])
+  }, [action, message, onClear])
 
   useLayoutEffect(() => {
     if (!message || !horizontalAnchorRef || !visible) return
@@ -78,10 +80,23 @@ export function TransientNotice({
       }
       className={cn(
         'fixed left-1/2 top-28 z-system max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg border bg-surface px-4 py-3 text-sm shadow-[0_8px_28px_rgba(0,0,0,0.12)]',
-        tone === 'success' ? 'border-primary/20 text-text-primary' : 'border-red-200 text-red-700'
+        tone === 'success'
+          ? 'border-success/20 text-text-primary wework:border-primary/20'
+          : 'border-destructive/30 text-destructive wework:border-red-200 wework:text-red-700'
       )}
     >
       {message}
+      {action && (
+        <button
+          type="button"
+          data-testid={action.testId}
+          disabled={action.pending}
+          onClick={action.onClick}
+          className="ml-3 min-h-11 min-w-11 underline disabled:opacity-50 md:min-h-7 md:min-w-7"
+        >
+          {action.label}
+        </button>
+      )}
     </div>
   )
 

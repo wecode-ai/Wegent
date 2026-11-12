@@ -43,6 +43,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.list" => {
                 boxed_rpc(move || async move { self.list_stand_in_settings(payload).await })
             }
+            "runtime.stand_in.device_identity" => boxed_rpc(move || async move {
+                Ok(json!({"deviceId":self.device_id,"backendDeviceId":self.cloud_device_id()?}))
+            }),
             "runtime.stand_in.personal.get" => {
                 boxed_rpc(
                     move || async move { self.personal_stand_in_settings(payload, false).await },

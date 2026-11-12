@@ -10,6 +10,7 @@ import { installGitUiTestContributions } from '../../ui-git/test-support'
 import { CloudWorkPage } from './CloudWorkPage'
 
 const sidebarMock = vi.hoisted(() => ({ renderReal: false }))
+const runtimeMock = vi.hoisted(() => ({ desktop: false }))
 
 const workbenchMock = vi.hoisted(() => ({
   value: {
@@ -101,7 +102,6 @@ const workbenchMock = vi.hoisted(() => ({
     archiveChatConversations: vi.fn(),
     selectStandaloneDevice: vi.fn(),
     openStandaloneWorkspace: vi.fn(),
-    getRemoteDeviceStartupCommand: vi.fn(),
     refreshDevices: vi.fn().mockResolvedValue(undefined),
     createProject: vi.fn(),
     createGitWorkspaceProject: vi.fn(),
@@ -131,6 +131,14 @@ vi.mock('@/features/auth/useAuth', () => ({
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: () => false,
 }))
+
+vi.mock('@/lib/runtime-environment', async importOriginal => {
+  const original = await importOriginal<typeof import('@/lib/runtime-environment')>()
+  return {
+    ...original,
+    isElectronRuntime: () => runtimeMock.desktop,
+  }
+})
 
 vi.mock('@/components/layout/useDesktopSidebarCollapsed', () => ({
   useDesktopSidebarCollapsed: () => ({
@@ -184,9 +192,61 @@ describe('CloudWorkPage', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     sidebarMock.renderReal = false
+    runtimeMock.desktop = false
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
   }, 60_000)
+
+  test('keeps local recovery available on desktop even with no cloud devices', async () => {
+    runtimeMock.desktop = true
+    const originalDevices = workbenchMock.value.state.devices
+    workbenchMock.value.state.devices = []
+    try {
+      const { navigateTo } = await import('@/lib/navigation')
+      render(<CloudWorkPage />)
+      expect(screen.getByTestId('cloud-work-devices-empty')).toBeVisible()
+      expect(screen.getByTestId('cloud-work-local-device-guidance')).toHaveTextContent(
+        '本机执行环境由当前 Wework 管理'
+      )
+      const localVersion = screen.getByRole('button', { name: '查看本机版本' })
+      expect(navigateTo).not.toHaveBeenCalled()
+      localVersion.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/settings/about')
+    } finally {
+      workbenchMock.value.state.devices = originalDevices
+    }
+  })
+
+  test('keeps local guidance separate from cloud device management', () => {
+    runtimeMock.desktop = true
+    render(<CloudWorkPage />)
+    expect(screen.getByTestId('cloud-work-local-device-guidance')).toBeVisible()
+    expect(screen.getByTestId('cloud-device-section')).toHaveTextContent('cloud-device')
+    expect(screen.getByTestId('cloud-device-section')).not.toHaveTextContent('local-device')
+  })
+
+  test('lets desktop users return to their stand-in from the real sidebar', async () => {
+    runtimeMock.desktop = true
+    sidebarMock.renderReal = true
+    const { navigateTo } = await import('@/lib/navigation')
+    render(
+      <RuntimeTaskLifecycleProvider
+        store={new RuntimeTaskLifecycleStore('cloud-work-stand-in-return')}
+      >
+        <CloudWorkPage />
+      </RuntimeTaskLifecycleProvider>
+    )
+    await userEvent.click(await screen.findByTestId('personal-stand-in-button'))
+    expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/stand-in')
+  })
+
+  test('does not offer local Wework recovery in a web browser', () => {
+    render(<CloudWorkPage />)
+    expect(screen.queryByTestId('cloud-work-local-device-guidance')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-work-local-version-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-device-section')).toHaveTextContent('cloud-device')
+  })
 
   test('clones from the cloud work sidebar and recovers from a clone failure', async () => {
     sidebarMock.renderReal = true

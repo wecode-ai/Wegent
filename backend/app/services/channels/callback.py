@@ -14,6 +14,7 @@ its own callback logic while sharing common infrastructure.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -34,12 +35,21 @@ logger = logging.getLogger(__name__)
 CHANNEL_TASK_CALLBACK_PREFIX = "channel:task_callback:"
 # TTL for task callback info (1 hour - should be enough for most tasks)
 CHANNEL_TASK_CALLBACK_TTL = 60 * 60
+# Refresh the TTL at most this often so long runs keep an addressable card.
+CHANNEL_TASK_CALLBACK_REFRESH_INTERVAL = 5 * 60
 RUNTIME_LOCAL_TASK_CALLBACK_PREFIX = "runtime"
+# A numeric Wegent task id, or a runtime address key ("runtime:{device}:{task}").
+TaskCallbackKey = int | str
 
 
-def runtime_local_task_callback_key(device_id: str, local_task_id: str) -> str:
+def runtime_local_task_callback_key(
+    device_id: str, local_task_id: str, callback_id: str | None = None
+) -> str:
     """Build the IM callback key for a device-local runtime task."""
-    return f"{RUNTIME_LOCAL_TASK_CALLBACK_PREFIX}:{device_id}:{local_task_id}"
+    key = f"{RUNTIME_LOCAL_TASK_CALLBACK_PREFIX}:{device_id}:{local_task_id}"
+    if callback_id:
+        key += ":" + hashlib.sha256(callback_id.encode()).hexdigest()
+    return key
 
 
 class ChannelType(str, Enum):
@@ -111,15 +121,17 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         """
         self._channel_type = channel_type
         # Cache of active streaming emitters: task_id -> ResultEmitter
-        self._active_emitters: Dict[int, "ResultEmitter"] = {}
+        self._active_emitters: Dict[TaskCallbackKey, "ResultEmitter"] = {}
         # Locks for each task to prevent concurrent emitter creation
-        self._emitter_locks: Dict[int, asyncio.Lock] = {}
+        self._emitter_locks: Dict[TaskCallbackKey, asyncio.Lock] = {}
         # Global lock for accessing _emitter_locks dict
         self._locks_lock = asyncio.Lock()
         # Track last emitted content offset for each task to calculate delta
-        self._last_emitted_offsets: Dict[int, int] = {}
+        self._last_emitted_offsets: Dict[TaskCallbackKey, int] = {}
         # Track emitter creation time for TTL cleanup
-        self._emitter_created_at: Dict[int, float] = {}
+        self._emitter_created_at: Dict[TaskCallbackKey, float] = {}
+        # Last time each task's callback info TTL was refreshed
+        self._callback_ttl_refreshed_at: Dict[TaskCallbackKey, float] = {}
         # Emitter TTL in seconds (30 minutes)
         self._emitter_ttl = 30 * 60
 
@@ -133,20 +145,20 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         """Get the Redis key prefix for this channel type."""
         return f"{CHANNEL_TASK_CALLBACK_PREFIX}{self._channel_type.value}:"
 
-    async def _get_lock_for_task(self, task_id: int) -> asyncio.Lock:
+    async def _get_lock_for_task(self, task_id: TaskCallbackKey) -> asyncio.Lock:
         """Get or create a lock for a specific task."""
         async with self._locks_lock:
             if task_id not in self._emitter_locks:
                 self._emitter_locks[task_id] = asyncio.Lock()
             return self._emitter_locks[task_id]
 
-    def _remove_lock_for_task(self, task_id: int) -> None:
+    def _remove_lock_for_task(self, task_id: TaskCallbackKey) -> None:
         """Remove lock for a task (called during cleanup)."""
         self._emitter_locks.pop(task_id, None)
 
     @abstractmethod
     async def _create_emitter(
-        self, task_id: int, subtask_id: int, callback_info: T
+        self, task_id: TaskCallbackKey, subtask_id: int, callback_info: T
     ) -> Optional["ResultEmitter"]:
         """Create a streaming emitter for the channel.
 
@@ -194,7 +206,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         pass
 
     async def _get_or_create_emitter(
-        self, task_id: int, subtask_id: int
+        self, task_id: TaskCallbackKey, subtask_id: int
     ) -> Optional["ResultEmitter"]:
         """Get existing emitter or create a new one for streaming.
 
@@ -273,12 +285,12 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 return None
 
     async def accepts_runtime_source(
-        self, task_id: int | str, source: Dict[str, Any]
+        self, task_id: TaskCallbackKey, source: Dict[str, Any]
     ) -> bool:
         """Allow channels to reject events from an older local-runtime turn."""
         return True
 
-    async def _remove_emitter(self, task_id: int) -> None:
+    async def _remove_emitter(self, task_id: TaskCallbackKey) -> None:
         """Remove emitter, lock, and offset tracking from cache.
 
         Closes the emitter if it has a close() method to release resources.
@@ -317,8 +329,14 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 f"expired after {self._emitter_ttl}s, cleaning up"
             )
             await self._remove_emitter(task_id)
+        monotonic_now = time.monotonic()
+        for task_id, refreshed_at in list(self._callback_ttl_refreshed_at.items()):
+            if monotonic_now - refreshed_at > CHANNEL_TASK_CALLBACK_TTL:
+                self._callback_ttl_refreshed_at.pop(task_id, None)
 
-    async def register_emitter(self, task_id: int, emitter: "ResultEmitter") -> None:
+    async def register_emitter(
+        self, task_id: TaskCallbackKey, emitter: "ResultEmitter"
+    ) -> None:
         """Register an externally created emitter for a task.
 
         This allows channel handlers to reuse an existing streaming emitter
@@ -349,7 +367,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         )
 
     async def emit_event(
-        self, task_id: int, subtask_id: int, event: "ExecutionEvent"
+        self, task_id: TaskCallbackKey, subtask_id: int, event: "ExecutionEvent"
     ) -> bool:
         """Emit a single execution event to the channel.
 
@@ -385,6 +403,9 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             emitter = await self._get_or_create_emitter(task_id, subtask_id)
             if not emitter:
                 return False
+            # Refresh only after this worker accepts the current round. Stale
+            # events and completed callbacks must not extend the busy window.
+            await self._refresh_callback_info_ttl(task_id)
 
             logger.debug(
                 f"[{self._channel_type.value}Callback] Emitting event to "
@@ -404,99 +425,57 @@ class BaseChannelCallbackService(ABC, Generic[T]):
 
     async def send_progress(
         self,
-        task_id: int,
+        task_id: TaskCallbackKey,
         subtask_id: int,
         content: str,
         offset: int,
         thinking: Optional[Any] = None,
     ) -> bool:
-        """Send streaming progress update to the channel.
-
-        This method receives FULL content but calculates and sends only the DELTA
-        (incremental content) to the emitter. It tracks the last emitted offset
-        for each task to avoid sending duplicate content.
-
-        Args:
-            task_id: Task ID
-            subtask_id: Subtask ID
-            content: Full content (result.value) - NOT delta
-            offset: Current offset in full content (used for tracking)
-            thinking: Thinking content (optional)
-
-        Returns:
-            True if sent successfully, False otherwise
-        """
+        """Send only the new response text and the latest thinking state."""
         try:
             emitter = await self._get_or_create_emitter(task_id, subtask_id)
             if not emitter:
                 return False
 
-            # Get last emitted offset for this task
             last_offset = self._last_emitted_offsets.get(task_id, 0)
-
-            # Build display content - include thinking if available
-            # For thinking, we always show the latest status (not accumulated)
-            thinking_text = ""
-            if thinking:
-                thinking_text = self._extract_thinking_display(thinking)
-
-            # Calculate delta content (only new content since last emit)
-            delta_content = ""
-            if content and len(content) > last_offset:
-                delta_content = content[last_offset:]
-
-            # If no new content and no thinking update, skip
+            thinking_text = self._extract_thinking_display(thinking) if thinking else ""
+            delta_content = content[last_offset:] if len(content) > last_offset else ""
             if not delta_content and not thinking_text:
                 return False
 
-            # Build the chunk to send
-            # For the first chunk, include thinking prefix if present
             chunk_to_send = ""
             if last_offset == 0 and thinking_text:
-                # First chunk: include thinking status
                 chunk_to_send = f"{thinking_text}\n\n"
                 if delta_content:
                     chunk_to_send += "**回复:**\n"
                     chunk_to_send += delta_content
             elif delta_content:
-                # Subsequent chunks: only send delta content
                 chunk_to_send = delta_content
             elif thinking_text:
-                # Only thinking update (tool use), send thinking status
                 chunk_to_send = f"{thinking_text}\n\n"
 
             if not chunk_to_send:
                 return False
 
-            # Update last emitted offset
             if content:
                 self._last_emitted_offsets[task_id] = len(content)
-
-            # Send chunk update with delta content
             await emitter.emit_chunk(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 content=chunk_to_send,
                 offset=offset,
             )
-
-            logger.debug(
-                f"[{self._channel_type.value}Callback] Sent progress delta: "
-                f"task={task_id}, last_offset={last_offset}, new_offset={len(content) if content else 0}, "
-                f"delta_len={len(delta_content)}, has_thinking={bool(thinking_text)}"
-            )
-
             return True
-
         except Exception as e:
             logger.warning(
-                f"[{self._channel_type.value}Callback] Failed to send progress for task {task_id}: {e}"
+                f"[{self._channel_type.value}Callback] Failed to send progress "
+                f"for task {task_id}: {e}"
             )
             return False
 
     async def save_callback_info(
         self,
-        task_id: int,
+        task_id: TaskCallbackKey,
         callback_info: T,
     ) -> None:
         """Save callback info for a task.
@@ -504,15 +483,30 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         Args:
             task_id: Task ID
             callback_info: Channel-specific callback information
+
+        Raises:
+            RuntimeError: The address could not be persisted. Callers must fail
+                loudly: a silently missing entry strands the card, because no
+                later event or terminal result can reach it.
         """
         key = f"{self.redis_key_prefix}{task_id}"
         data = json.dumps(callback_info.to_dict())
-        await cache_manager.set(key, data, expire=CHANNEL_TASK_CALLBACK_TTL)
+        try:
+            saved = await cache_manager.set_or_raise(
+                key, data, expire=CHANNEL_TASK_CALLBACK_TTL
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not persist callback info for task {task_id}"
+            ) from exc
+        if not saved:
+            raise RuntimeError(f"Could not persist callback info for task {task_id}")
+        self._callback_ttl_refreshed_at[task_id] = time.monotonic()
         logger.info(
             f"[{self._channel_type.value}Callback] Saved callback info for task {task_id}"
         )
 
-    async def get_callback_info(self, task_id: int) -> Optional[T]:
+    async def get_callback_info(self, task_id: TaskCallbackKey) -> Optional[T]:
         """Get callback info for a task.
 
         Args:
@@ -532,7 +526,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 )
         return None
 
-    async def has_callback_info(self, task_id: int) -> bool:
+    async def has_callback_info(self, task_id: TaskCallbackKey) -> bool:
         """Check if callback info exists for a task without full deserialization.
 
         Args:
@@ -545,13 +539,50 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         data = await cache_manager.get(key)
         return data is not None
 
-    async def delete_callback_info(self, task_id: int) -> None:
+    async def _refresh_callback_info_ttl(self, task_id: TaskCallbackKey) -> None:
+        """Keep the address alive while the run keeps producing events."""
+        now = time.monotonic()
+        last = self._callback_ttl_refreshed_at.get(task_id)
+        if last is not None and now - last < CHANNEL_TASK_CALLBACK_REFRESH_INTERVAL:
+            return
+        key = f"{self.redis_key_prefix}{task_id}"
+        try:
+            refreshed = await cache_manager.expire_or_raise(
+                key, CHANNEL_TASK_CALLBACK_TTL
+            )
+        except Exception:
+            self._callback_ttl_refreshed_at.pop(task_id, None)
+            logger.exception(
+                "[%sCallback] Failed to refresh callback TTL for task %s",
+                self._channel_type.value,
+                task_id,
+            )
+            return
+        if not refreshed:
+            self._callback_ttl_refreshed_at.pop(task_id, None)
+            logger.warning(
+                "[%sCallback] Callback info expired before TTL refresh: task=%s",
+                self._channel_type.value,
+                task_id,
+            )
+            return
+        self._callback_ttl_refreshed_at[task_id] = now
+
+    async def _mark_callback_delivered(
+        self, task_id: TaskCallbackKey, callback_info: T
+    ) -> bool:
+        """Persist provider-specific terminal delivery state."""
+        del task_id, callback_info
+        return False
+
+    async def delete_callback_info(self, task_id: TaskCallbackKey) -> None:
         """Delete callback info for a task.
 
         Args:
             task_id: Task ID
         """
         key = f"{self.redis_key_prefix}{task_id}"
+        self._callback_ttl_refreshed_at.pop(task_id, None)
         await cache_manager.delete(key)
         logger.debug(
             f"[{self._channel_type.value}Callback] Deleted callback info for task {task_id}"
@@ -559,7 +590,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
 
     async def send_task_result(
         self,
-        task_id: int,
+        task_id: TaskCallbackKey,
         subtask_id: int,
         content: str,
         status: str = "COMPLETED",
@@ -588,6 +619,17 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 f"[{self._channel_type.value}Callback] No callback info for task {task_id}, skipping"
             )
             return False
+        if getattr(callback_info, "delivered", False):
+            # The provider already accepted this card's terminal update. Drop
+            # the stale address without letting a late result rewrite the card.
+            logger.warning(
+                "[%sCallback] Terminal result arrived after delivery: task=%s",
+                self._channel_type.value,
+                task_id,
+            )
+            await self._remove_emitter(task_id)
+            await self.delete_callback_info(task_id)
+            return True
 
         try:
             emitter = self._active_emitters.get(task_id)
@@ -649,6 +691,27 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             )
             # Clean up on error
             await self._remove_emitter(task_id)
+            if getattr(emitter, "terminal_delivery_succeeded", False):
+                # Keep the delivered marker so another worker can distinguish a
+                # completed card from one that still needs terminal recovery.
+                delivered = False
+                try:
+                    delivered = await self._mark_callback_delivered(
+                        task_id, callback_info
+                    )
+                except Exception:
+                    logger.exception(
+                        "[%sCallback] Failed to persist delivered callback "
+                        "state: task=%s",
+                        self._channel_type.value,
+                        task_id,
+                    )
+                if delivered:
+                    return True
+                # If the delivered marker cannot be persisted, remove the
+                # address when possible so a new turn is not permanently blocked.
+                await self.delete_callback_info(task_id)
+                return True
             return False
 
 
@@ -735,7 +798,7 @@ class ChannelCallbackRegistry:
 
     async def handle_task_completed(
         self,
-        task_id: int,
+        task_id: TaskCallbackKey,
         subtask_id: int,
         status: str,
         result: Any,
@@ -823,7 +886,7 @@ async def handle_channel_task_completed(event: Any) -> None:
 
 async def forward_event_to_channel_callbacks(
     *,
-    task_id: int,
+    task_id: TaskCallbackKey,
     subtask_id: int,
     event: Any,
     source: str = "ChannelCallback",

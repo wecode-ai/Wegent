@@ -9,6 +9,7 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 const mergedDefaultPreferences = {
   workbenchMode: 'developer',
   appearanceMode: 'system',
+  appearanceThemeSnapshot: null,
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   fixedWorkspaceTabs: [
@@ -26,6 +27,7 @@ const mergedDefaultPreferences = {
   contextCompactionThreshold: 75,
   experimentalFeaturesEnabled: false,
   localCodexSubscriptionEnabled: true,
+  telemetryConsentRevision: 0,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
   performanceRecordingEnabled: false,
@@ -100,6 +102,17 @@ const mergedDefaultPreferences = {
 }
 
 describe('appPreferences', () => {
+  test('carries the observed consent revision to the atomic host update', async () => {
+    invokeMock.mockResolvedValue({ ...mergedDefaultPreferences, telemetryConsentRevision: 8 })
+    const { updateAppPreferences } = await import('./appPreferences')
+    const patch = { telemetryConsentAsked: true, telemetryEnabled: true }
+    const preferences = await updateAppPreferences(patch, 7)
+    expect(invokeMock).toHaveBeenCalledWith('preferences.update', {
+      patch,
+      expectedTelemetryConsentRevision: 7,
+    })
+    expect(preferences.telemetryConsentRevision).toBe(8)
+  })
   beforeEach(() => {
     vi.resetModules()
     invokeMock.mockReset()
@@ -113,6 +126,23 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual({
       ...mergedDefaultPreferences,
       showMainWindowOnLaunch: false,
+    })
+  })
+
+  test('round trips both appearance variants through desktop preferences', async () => {
+    const appearanceThemeSnapshot = {
+      light: { themeId: 'github', variables: { '--color-bg-base': '255 255 255' } },
+      dark: { themeId: 'tokyo-night', variables: { '--color-bg-base': '26 27 38' } },
+    }
+    invokeMock.mockResolvedValue({ appearanceMode: 'system', appearanceThemeSnapshot })
+    const { getAppPreferences, updateAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toMatchObject({ appearanceThemeSnapshot })
+    await expect(updateAppPreferences({ appearanceThemeSnapshot })).resolves.toMatchObject({
+      appearanceThemeSnapshot,
+    })
+    expect(invokeMock).toHaveBeenLastCalledWith('preferences.update', {
+      patch: { appearanceThemeSnapshot },
     })
   })
 

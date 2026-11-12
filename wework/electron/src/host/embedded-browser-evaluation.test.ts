@@ -53,3 +53,42 @@ test.each([false, true])(
     }
   }
 )
+
+test('returns a synchronous action result before navigation destroys promise callbacks', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-browser-action-evaluation-'))
+  const contents = new FakeWebContents()
+  const manager = new EmbeddedBrowserManager(directory)
+  manager.attach('browser', contents as unknown as WebContents)
+  await manager.open({
+    label: 'browser',
+    url: 'about:blank',
+    bounds: { x: 0, y: 0, width: 800, height: 600 },
+    visible: false,
+    navigateExisting: false,
+  })
+  let clicks = 0
+  contents.debugger.sendCommand.mockImplementation(async (_method, options) => {
+    clicks++
+    if (options.awaitPromise) throw new Error('Inspected target navigated or closed')
+    return { result: { value: { ok: true, action: 'click' } } }
+  })
+  try {
+    await expect(
+      manager.evaluate('browser', 'document.querySelector("a").click()', {
+        awaitPromise: false,
+      })
+    ).resolves.toEqual({ ok: true, action: 'click' })
+    expect(clicks).toBe(1)
+    expect(contents.executeJavaScript).not.toHaveBeenCalled()
+
+    contents.debugger.sendCommand.mockRejectedValue(new Error('Page closed before dispatch'))
+    await expect(
+      manager.evaluate('browser', 'document.querySelector("a").click()', {
+        awaitPromise: false,
+      })
+    ).rejects.toThrow('Page closed before dispatch')
+  } finally {
+    manager.close('browser')
+    await rm(directory, { recursive: true, force: true })
+  }
+})

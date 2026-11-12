@@ -326,6 +326,8 @@ describe('DesktopSidebar', () => {
         'style',
         'data-theme',
         'data-appearance-mode',
+        'data-appearance-theme',
+        'data-ui-theme-id',
         'data-sidebar-translucent',
         'class',
       ].map(name => [name, root.getAttribute(name)] as const)
@@ -340,7 +342,13 @@ describe('DesktopSidebar', () => {
           ['#fff', '255 255 255'],
           [defaultAppearance.accentColor, '37 99 235'],
         ]) {
-          applyAppearance({ ...defaultAppearance, accentColor }, theme)
+          applyAppearance(
+            {
+              ...defaultAppearance,
+              themeOverrides: { ...defaultAppearance.themeOverrides, [theme]: { accentColor } },
+            },
+            theme
+          )
           expect(root.style.getPropertyValue('--color-primary')).toBe(expectedAccent)
           if (theme === 'light' && accentColor === defaultAppearance.accentColor) {
             expect(root.style.getPropertyValue('--color-sidebar-attention')).toBe(expectedAccent)
@@ -892,10 +900,8 @@ describe('DesktopSidebar', () => {
   })
 
   test('does not open add-device guidance while cloud work checks are failing', async () => {
-    const onGetRemoteDeviceStartupCommand = vi.fn()
     renderSidebar({
       devices: [localDevice()],
-      onGetRemoteDeviceStartupCommand,
       cloudWorkStatus: cloudWorkStatus({
         availability: 'unavailable',
         checks: { devices: 'unavailable' },
@@ -909,37 +915,11 @@ describe('DesktopSidebar', () => {
       '云端设备: request timed out'
     )
     expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
-    expect(onGetRemoteDeviceStartupCommand).not.toHaveBeenCalled()
   })
 
   test('treats an empty cloud device list as an add-device state instead of an error', async () => {
-    const onGetRemoteDeviceStartupCommand = vi.fn().mockResolvedValue({
-      device_id: 'remote-device',
-      name: 'alice-remote-device',
-      image: 'ghcr.io/wecode-ai/wegent-device:latest',
-      env: {},
-      command:
-        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
-      commands: [
-        {
-          kind: 'docker',
-          label: 'Docker',
-          description: 'Run in Docker.',
-          command:
-            'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
-        },
-        {
-          kind: 'process',
-          label: '宿主机启动',
-          description: 'Run as a local process.',
-          command:
-            'DEVICE_TYPE=remote EXECUTOR_MODE=local WEGENT_BACKEND_URL=http://backend wegent-executor',
-        },
-      ],
-    })
     renderSidebar({
       devices: [localDevice()],
-      onGetRemoteDeviceStartupCommand,
       cloudWorkStatus: cloudWorkStatus({
         availability: 'empty',
         checks: { devices: 'empty' },
@@ -951,50 +931,17 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(screen.getByTestId('sidebar-cloud-connection-button'))
 
-    expect(screen.getByTestId('standalone-folder-project-dialog')).toHaveTextContent('添加新设备')
-    await waitFor(() => expect(onGetRemoteDeviceStartupCommand).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toHaveTextContent('添加设备')
+    expect(screen.getByTestId('add-device-panel')).toBeInTheDocument()
   })
 
-  test('shows Docker and process startup scripts when no cloud device is available', async () => {
-    const onGetRemoteDeviceStartupCommand = vi.fn().mockResolvedValue({
-      device_id: 'remote-device',
-      name: 'alice-remote-device',
-      image: 'ghcr.io/wecode-ai/wegent-device:latest',
-      env: {},
-      command:
-        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
-      commands: [
-        {
-          kind: 'docker',
-          label: 'Docker',
-          description: 'Run in Docker.',
-          command:
-            'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
-        },
-        {
-          kind: 'process',
-          label: '宿主机启动',
-          description: 'Run as a local process.',
-          command:
-            'DEVICE_TYPE=remote EXECUTOR_MODE=local WEGENT_BACKEND_URL=http://backend wegent-executor',
-        },
-      ],
-    })
-    renderSidebar({ onGetRemoteDeviceStartupCommand })
-
+  test('shows managed cloud and remote Docker choices without a host script', async () => {
+    renderSidebar()
     await userEvent.click(screen.getByTestId('sidebar-cloud-connection-button'))
-
-    expect(screen.getByTestId('standalone-folder-project-dialog')).toHaveTextContent('添加新设备')
-    await waitFor(() => expect(onGetRemoteDeviceStartupCommand).toHaveBeenCalledTimes(1))
-    expect(await screen.findByTestId('remote-device-startup-command')).toHaveTextContent(
-      'docker run'
-    )
-    expect(screen.getByTestId('remote-device-startup-tab-docker')).toBeInTheDocument()
-    expect(screen.getByTestId('remote-device-startup-tab-process')).toHaveTextContent('宿主机启动')
-
-    await userEvent.click(screen.getByTestId('remote-device-startup-tab-process'))
-
-    expect(screen.getByTestId('remote-device-startup-command')).toHaveTextContent('wegent-executor')
+    expect(screen.getByTestId('add-device-panel')).toHaveTextContent('云设备')
+    expect(screen.getByTestId('add-device-panel')).toHaveTextContent('远程 Docker 设备')
+    expect(screen.queryByTestId('remote-device-startup-tab-process')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('remote-docker-command')).not.toBeInTheDocument()
   })
 
   test('opens the path contributed by the plugin-center sidebar item', async () => {
@@ -1103,6 +1050,21 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('personal-stand-in-button'))
     expect(onOpenStandIn).toHaveBeenCalledTimes(2)
   })
+
+  test.each([0, 3, 105])(
+    'shows the stand-in unread count %i with a capped visible badge',
+    count => {
+      renderSidebar({ onOpenStandIn: vi.fn(), standInUnreadCount: count })
+      if (count === 0) {
+        expect(screen.queryByTestId('personal-stand-in-unread-count')).not.toBeInTheDocument()
+      } else {
+        const badge = screen.getByTestId('personal-stand-in-unread-count')
+        expect(badge).toHaveTextContent(count > 99 ? '99+' : String(count))
+        expect(badge).toHaveAttribute('aria-label', `${count} 条未读`)
+      }
+      expect(screen.getByTestId('personal-stand-in-beta')).toBeVisible()
+    }
+  )
 
   test('opens independent schedules from the sidebar when experimental features are disabled', async () => {
     experimentalFeatures.enabled = false
@@ -2476,6 +2438,80 @@ describe('DesktopSidebar', () => {
       setTimeoutSpy.mockRestore()
       clearTimeoutSpy.mockRestore()
     }
+  })
+
+  test('renders the icon declared by a conversation menu extension', async () => {
+    const user = userEvent.setup()
+    window.__WEWORK_DSH_EXTENSIONS__ = {
+      getRevision: () => 0,
+      subscribe: () => () => {},
+      context: { matches: () => true },
+      commands: {
+        get: (id: string) =>
+          id === 'conversation-export.open'
+            ? {
+                id,
+                title: '导出会话',
+                icon: 'download',
+              }
+            : null,
+      },
+      menus: {
+        list: (location: string) =>
+          location === 'conversation.context'
+            ? [
+                {
+                  id: 'conversation-export.conversation.context',
+                  command: 'conversation-export.open',
+                  title: '导出会话',
+                  icon: 'download',
+                  enabled: true,
+                },
+              ]
+            : [],
+      },
+    } as unknown as NonNullable<Window['__WEWORK_DSH_EXTENSIONS__']>
+    onTestFinished(() => {
+      delete window.__WEWORK_DSH_EXTENSIONS__
+    })
+
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'codex-1',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Fix reconnect',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    await user.click(screen.getByTestId('runtime-local-task-menu-codex-1'))
+    const exportItem = screen.getByTestId(
+      'runtime-local-task-menu-extension-conversation-export.conversation.context-codex-1'
+    )
+    await waitFor(() => expect(exportItem.querySelector('svg.lucide-download')).toBeInTheDocument())
   })
 
   test('preserves pending archive undo when a runtime task gains its thread id', async () => {

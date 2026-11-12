@@ -32,6 +32,20 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 
 The plugin account late-response E2E uses a unique `Server-Timing` diagnostic marker on the selected fault-proxy response while preserving its real upstream body bytes. Verification identifies the renderer's actual consumption of that response before checking stable current-account inventory. Browsers may record multiple fetch consumers for one HTTP response, so a time window containing exactly one entry cannot establish response identity. Protocol tests protect byte preservation and coalesced-consumer correlation; the existing desktop checkpoint still verifies real account/device boundaries.
 
+## Conversation model restoration diagnostics
+
+When full task data is selected, the feedback bundle's `context/task.json` includes `modelSelection`: `configured` is the configuration supplied to the model selector, `effective` is the configuration after default resolution, and `selected` is the current composer model. Missing snapshots remain `null`. Snapshots contain only model identity, resource ownership and a diagnostic fingerprint; arbitrary model options and authentication configuration are excluded.
+
+The `workbench.selection_restored`, `workbench.selection_changed` and `workbench.selection_seeded` events in `logs/app/model-loading.log` correlate scopes and models through numeric fingerprints. Fingerprints are diagnostic identifiers. The executor's `runtime task model selection updated` event records an in-memory assignment. The `runtime task get resolved link` and `runtime task transcript resolved link` events record the owning task's current model identity on reads. Assignment does not prove that a disk write succeeded.
+
+`configured` is not the raw on-disk task record. Existing conversations receive configuration from the task summary or runtime handle; new conversations can receive project configuration or user preferences.
+
+1. Export feedback before restarting.
+2. Restart the app.
+3. Export feedback before the first send.
+4. Check the model identity read by the executor.
+5. Compare the composer's configured, effective and selected models to distinguish missing records, default substitution and composer changes.
+
 ## Prepare desktop E2E prerequisites before startup
 
 Write configuration that Codex caches, including model catalog overrides, in the scenario's `prepareApp` before launching the app and shared app-server. `human-interactions` declares `request_user_input_async` at this stage. Updating the configuration or deleting the disk cache in `verify` can leave the running process using the old catalog.
@@ -184,3 +198,11 @@ Once CPU profiling stops successfully, trace collection, parsing or report-write
 A successful explicit `detach` discards unfinished recording state for that target, allowing cancellation or recovery after an unexpected disconnect. Failed detaches retain state. The real Electron checkpoint also detaches during a recording, then starts another recording and generates its report.
 
 All desktop checkpoints use a `desktop-control` registry within their result directory for on-demand diagnosis of their isolated instance. Native macOS process snapshots read PID parent relationships first, then collect detailed metrics and command lines only for the Electron process tree, keeping unrelated process arguments out of the collection buffer.
+
+### Diff preview CPU and workbench memory regressions
+
+The diff preview uses Pierre virtualization. Keep line callbacks, render options, annotations and layout metrics stable; owner refreshes or replacement event handlers must not rebuild unchanged code DOM. Actual option, diff and annotation changes must still render. `FileChangesPatchDiff.test.tsx` checks node identity across repeated refreshes and cleanup on unmount with real Pierre instances.
+
+Define workbench memoized callbacks in independent Hook lexical scopes instead of the Provider's large render scope. Otherwise callbacks whose dependencies change at different rates can retain historical task, lifecycle and work-list snapshots through their shared closures. `workbenchCallbackLifetime.test.tsx` triggers real GC through Inspector, uses weak references to verify snapshot collection and guards against defining `useCallback` directly in the Provider again.
+
+Interpret CPU samples, HTML parsing duration and process memory separately. Heap object sizes do not equal Activity Monitor process memory; one heap snapshot establishes retaining paths, not a memory growth rate. Keep analysis files local and never commit user traces or heap snapshots.

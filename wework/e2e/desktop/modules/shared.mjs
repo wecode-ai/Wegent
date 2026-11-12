@@ -468,15 +468,24 @@ const CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES = MODEL_PROTOCOL_MATRIX_CASES.
   ...model,
   execution: 'cloud',
 }))
-const LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
-  model => model.source === 'local'
-)
+const LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES = [
+  ...LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source === 'local'),
+  {
+    execution: 'local',
+    source: 'local',
+    protocol: 'responses',
+    providerProfileId: 'deepseek',
+    optionIds: ['local-model:desktop-e2e-vision-main'],
+    labels: ['Desktop E2E DeepSeek Pro Vision Main'],
+    modelId: 'deepseek-v4-pro',
+  },
+]
 const MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.filter(
   model => model.protocol === 'chat' || model.protocol === 'anthropic'
 )
 const LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES =
   LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source !== 'local')
-const MODEL_PROTOCOL_MATRIX_TOTAL = MODEL_PROTOCOL_MATRIX_CASES.length * 2
+const MODEL_PROTOCOL_MATRIX_TOTAL = MODEL_PROTOCOL_MATRIX_CASES.length * 2 + 1
 const MODEL_PROTOCOL_MATRIX_TEXT_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TEXT'
 const MODEL_PROTOCOL_MATRIX_TOOL_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TOOL'
 const LOCAL_MODEL_SWITCH_INITIAL_PROMPT =
@@ -1514,14 +1523,16 @@ async function createSingleRootLocalProject(
   const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
     ? '[data-testid="projects-empty-create-button"]'
     : '[data-testid="projects-create-button"]'
+  const createButtonText = await control.command('clickWhenEnabled', createButtonSelector, {
+    timeoutMs,
+  })
   if (createButtonSelector.includes('projects-empty-create-button')) {
     assert.match(
-      await control.command('getText', createButtonSelector),
+      createButtonText,
       /New project|新建项目/,
       'The empty project section did not expose a localized creation action'
     )
   }
-  await control.command('click', createButtonSelector)
   await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

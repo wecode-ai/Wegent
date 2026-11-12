@@ -30,7 +30,7 @@ pub mod continuation;
 pub use wegent_protocol::dispatch;
 pub mod executor_client;
 pub mod ghost;
-mod kb_context_creation;
+pub(crate) mod kb_context_creation;
 mod kb_meta_prompt;
 mod kb_resolver;
 pub mod kb_tool_access_mode;
@@ -73,4 +73,7 @@ pub mod team_access;
 pub(crate) mod tokens;
 
 mod handler;
+pub(crate) use handler::{publish_inserted_assistant_subtask_metrics, team_member_context};
 pub(crate) mod wework;
+
+mod socket_runtime_model;

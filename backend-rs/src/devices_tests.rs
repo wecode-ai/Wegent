@@ -80,6 +80,7 @@ fn item_json_matches_device_info_shape() {
         name: "local-device app".to_string(),
         status: "online".to_string(),
         is_default: false,
+        last_seen_at: None,
         last_heartbeat: Some(raw_json(&json!("2026-09-04T15:52:17.193124"))),
         device_type: DeviceType::App,
         connection_mode: "websocket".to_string(),

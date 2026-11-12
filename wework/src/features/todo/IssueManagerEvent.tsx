@@ -66,7 +66,7 @@ export function IssueManagerEvent({
                   type="button"
                   data-testid={`cloud-task-manager-cancel-${message.messageId}`}
                   disabled={cancelling}
-                  className="text-xs text-text-muted hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45"
+                  className="text-xs text-text-muted hover:text-destructive disabled:cursor-not-allowed disabled:opacity-45 wework:hover:text-red-600"
                   onClick={onCancel}
                 >
                   {cancelling

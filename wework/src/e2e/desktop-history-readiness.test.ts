@@ -1,7 +1,8 @@
 // @vitest-environment node
 
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
+import { waitForRestoredTranscript } from '../../e2e/desktop/modules/transcript-restoration.mjs'
 
 import { createBarrier as barrier } from '../test/async-barrier'
 import { verifyCachedInitialRecovery } from '../../e2e/desktop/modules/issue-transcript-transfer.mjs'
@@ -10,6 +11,36 @@ import {
   TERMINAL_HISTORY_SEARCH_CASES,
   TERMINAL_HISTORY_TURN_COUNT,
 } from '../../e2e/desktop/modules/terminal-history-search.mjs'
+
+test('a connected renderer must restore the target transcript before history assertions', async () => {
+  vi.useFakeTimers()
+  try {
+    let paneTaskId = 'previous-task'
+    let loading = true
+    let restored = false
+    const command = vi.fn(async () =>
+      JSON.stringify({
+        workbench: { currentRuntimeTask: { taskId: 'restored-task' } },
+        pane: { currentRuntimeTask: { taskId: paneTaskId }, transcript: { loading } },
+      })
+    )
+    const recovery = waitForRestoredTranscript({ command }, 'restored-task', 1000).then(() => {
+      restored = true
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    assert.equal(restored, false, 'A control connection does not establish the restored owner')
+    paneTaskId = 'restored-task'
+    await vi.advanceTimersByTimeAsync(100)
+    assert.equal(restored, false, 'A mounted task does not establish completed history hydration')
+    loading = false
+    await vi.advanceTimersByTimeAsync(100)
+    await recovery
+    assert.equal(restored, true)
+    assert.equal(command.mock.calls.length, 3)
+  } finally {
+    vi.useRealTimers()
+  }
+})
 
 test('cached Issue history settles its current read before injecting a new initial-read failure', async () => {
   const waiting = barrier()

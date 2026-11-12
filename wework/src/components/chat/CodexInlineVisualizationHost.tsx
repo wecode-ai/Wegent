@@ -10,6 +10,10 @@ import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import type { TurnFileChangesSummary } from '@/types/api'
+import {
+  readVisualizationThemeVariables,
+  VISUALIZATION_THEME_PROPERTIES,
+} from '@/lib/visualization-theme'
 
 const MIN_FRAME_HEIGHT = 120
 const MAX_FRAME_HEIGHT = 1200
@@ -94,7 +98,12 @@ export function CodexInlineVisualizationHost({
 
   const updateFrameTheme = useCallback(() => {
     frameRef.current?.contentWindow?.postMessage(
-      { type: THEME_MESSAGE_TYPE, token: resizeToken, theme },
+      {
+        type: THEME_MESSAGE_TYPE,
+        token: resizeToken,
+        theme,
+        variables: readVisualizationThemeVariables(),
+      },
       '*'
     )
   }, [resizeToken, theme])
@@ -103,6 +112,15 @@ export function CodexInlineVisualizationHost({
     themeRef.current = theme
     updateFrameTheme()
   }, [theme, updateFrameTheme, document])
+
+  useEffect(() => {
+    const observer = new MutationObserver(updateFrameTheme)
+    observer.observe(window.document.documentElement, {
+      attributes: true,
+      attributeFilter: ['style', 'class', 'data-theme', 'data-appearance-theme'],
+    })
+    return () => observer.disconnect()
+  }, [updateFrameTheme])
 
   useEffect(() => {
     if (!sourcePath || !sourceUrl) return
@@ -230,9 +248,16 @@ function buildVisualizationDocument(
 ): string {
   const directoryUrl = new URL('.', sourceUrl).href
   const base = `<base href="${escapeHtmlAttribute(directoryUrl)}">`
-  const styles = `<style>${CODEX_VISUALIZATION_HOST_STYLES}\n:root { color-scheme: ${theme}; }</style>`
+  const variables = Object.entries(readVisualizationThemeVariables())
+    .map(([property, value]) => `${property}:${value.replace(/</g, '\\3c ')};`)
+    .join('')
+  const themeStyleId = `wework-visualization-theme-${token}`
+  const styles = `<style>${CODEX_VISUALIZATION_HOST_STYLES}\n:root { color-scheme: ${theme}; }</style><style id="${escapeHtmlAttribute(themeStyleId)}">:root { ${variables} }</style>`
   const resizeScript = `<script>(()=>{
     const token=${JSON.stringify(token)};
+    const properties=${JSON.stringify(VISUALIZATION_THEME_PROPERTIES)};
+    const originalProperties=new Map();
+    const themeStyle=document.getElementById(${JSON.stringify(themeStyleId)});
     const height=()=>{
       const body=document.body,top=body.getBoundingClientRect().top;
       return Math.max(body.getBoundingClientRect().height,...Array.from(body.children,child=>child.getBoundingClientRect().bottom-top));
@@ -243,6 +268,22 @@ function buildVisualizationDocument(
       if(event.source!==parent||!data||data.type!==${JSON.stringify(THEME_MESSAGE_TYPE)}||data.token!==token) return;
       if(data.theme!=='light'&&data.theme!=='dark') return;
       document.documentElement.style.colorScheme=data.theme;
+      themeStyle.textContent='';
+      if(data.variables&&typeof data.variables==='object') {
+        const style=document.documentElement.style;
+        for(const property of properties) {
+          const value=data.variables[property];
+          if(typeof value==='string') {
+            if(!originalProperties.has(property)) originalProperties.set(property,[style.getPropertyValue(property),style.getPropertyPriority(property)]);
+            style.setProperty(property,value);
+          } else if(originalProperties.has(property)) {
+            const [original,priority]=originalProperties.get(property);
+            if(original) style.setProperty(property,original,priority);
+            else style.removeProperty(property);
+            originalProperties.delete(property);
+          }
+        }
+      }
       send();
     });
     new ResizeObserver(send).observe(document.body);

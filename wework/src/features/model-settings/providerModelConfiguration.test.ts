@@ -23,6 +23,28 @@ const provider = {
 }
 
 describe('Provider configuration runtime adapter', () => {
+  test.each(['custom', 'function', undefined] as const)(
+    'preserves saved %s tools independently of provider identity',
+    toolProfile => {
+      const resolved = resolveProviderModel({
+        provider,
+        model: {
+          id: 'saved-deepseek',
+          model_id: 'deepseek-v4-flash',
+          provider_profile_id: 'deepseek',
+          tool_profile: toolProfile,
+        },
+      })
+      expect(resolved).toMatchObject({
+        id: 'saved-deepseek',
+        toolProfile: toolProfile ?? 'function',
+        apiFormat: 'openai-responses',
+        apiKey: provider.api_key,
+        baseUrl: provider.base_url,
+      })
+    }
+  )
+
   test.each(['openai-responses', 'openai-chat-completions', 'anthropic-messages'] as const)(
     'resolves managed model capabilities without an official account for %s',
     apiFormat => {

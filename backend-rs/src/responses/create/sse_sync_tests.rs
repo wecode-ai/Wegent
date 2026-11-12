@@ -464,12 +464,16 @@ impl brz_redis::Redis for RecordingRedis {
         Ok(())
     }
 
-    async fn publish<C, M>(&self, channel: C, _: M) -> RedisResult<i64>
+    async fn publish<C, M>(&self, channel: C, message: M) -> RedisResult<i64>
     where
         C: EncodeRedisArg + Send,
         M: EncodeRedisArg + Send,
     {
-        self.record(format!("PUBLISH {}", Self::key(&channel)));
+        let payload = message
+            .as_encoded_bytes()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default();
+        self.record(format!("PUBLISH {} {payload}", Self::key(&channel)));
         Ok(1)
     }
 
@@ -609,6 +613,10 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
         tables: tables(),
         executor_manager: &executor,
         app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
     };
 
     let collected = tokio::time::timeout(
@@ -668,6 +676,10 @@ async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
         tables: tables(),
         executor_manager: &executor,
         app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
     };
 
     let dispatch = collect(&ctx, &url, &request, "req-test", Some(2));
@@ -716,6 +728,10 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
         tables: tables(),
         executor_manager: &executor,
         app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
     };
 
     let request = execution_request();
@@ -777,6 +793,10 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
         tables: tables(),
         executor_manager: &executor,
         app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
     };
 
     let request = execution_request();
@@ -946,6 +966,10 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
         tables: tables(),
         executor_manager: &executor,
         app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
     };
 
     let mut collect_fut = Box::pin(collect(&ctx, &url, &request, "req-test", Some(2)));
@@ -985,5 +1009,77 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
     assert!(
         get_end < unregister,
         "unregister DEL must follow the admitted GET: {calls:?}"
+    );
+}
+
+/// Forwarding mode publishes the dispatcher START pair, the streamed chunks
+/// and the terminal frames (`chat:done`, `task:status`) like
+/// `WebSocketResultEmitter`.
+#[tokio::test]
+async fn a_forwarded_dispatch_publishes_the_chat_frames() {
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::default();
+    let executor = executor_manager();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: true,
+        start_data: serde_json::json!({"shell_type": "Chat", "bot_name": "wegent-chat"}),
+        created_task: Some(crate::internal_callback::emitter::CreatedTask {
+            user_id: 6501,
+            team_id: 110_467,
+            team_name: "wegent-chat".into(),
+            title: "title".into(),
+            is_group_chat: false,
+            project_id: 0,
+        }),
+        owner_user_id: Some(6501),
+    };
+    let request = execution_request();
+    collect(&ctx, &url, &request, "req-test", Some(2))
+        .await
+        .expect("the forwarded dispatch completes");
+    let published = redis
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("PUBLISH socketio "))
+        .collect::<Vec<_>>();
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"chat:start\"")
+                && message.contains("\"bot_name\": \"wegent-chat\"")),
+        "the dispatcher START frame is published: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"task:created\"")
+                && message.contains("\"room\": \"user:6501\"")),
+        "the START branch also publishes task:created: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"chat:chunk\"")),
+        "streamed chunks are forwarded: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"chat:done\"")),
+        "the terminal publishes chat:done: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"task:status\"")
+                && message.contains("\"room\": \"user:6501\"")),
+        "the terminal publishes task:status to the owner room: {published:?}"
     );
 }

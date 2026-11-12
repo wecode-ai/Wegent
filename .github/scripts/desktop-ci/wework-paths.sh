@@ -56,7 +56,16 @@ classify_wework_path() {
       select_target "core:split-workbench"
       return
       ;;
+    wework/e2e/desktop/modules/github-release-asset.mjs)
+      select_target "core:harness-app-development"
+      select_target "core:harness-app-lifecycle"
+      select_target "core:harness-app-models"
+      select_target "cloud:plugin-legacy-upgrade"
+      return
+      ;;
     wework/e2e/desktop/scenarios/harness-apps.scenario.mjs | \
+      wework/e2e/desktop/modules/dsh-runtime-cache.mjs | \
+      wework/electron/src/host/e2e-dsh-release-redirect.ts | \
       wework/e2e/desktop/modules/harness-app-*)
       select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"
@@ -456,6 +465,16 @@ classify_wework_path() {
       select_target "core:human-interactions-browser"
       select_target "core:human-interactions-hidden"
       select_target "core:human-interactions-issue"
+      if [[ "$path" == wework/src/features/notifications/RuntimeInteractions* || \
+        "$path" == wework/src/features/notifications/runtimeInteractions* || \
+        "$path" == wework/src/features/notifications/useRuntimeInteraction* || \
+        "$path" == wework/src/features/notifications/useInteractionDrafts* || \
+        "$path" == wework/src/features/notifications/useNativeInteractionReplies* || \
+        "$path" == wework/src/features/notifications/interactionArchive* || \
+        "$path" == wework/src/features/notifications/interactionStorage* || \
+        "$path" == wework/src/features/notifications/InteractionDraftRecovery* ]]; then
+        select_target "core:runtime-input-answer-persistence"
+      fi
       if [[ "$path" == wework/src/features/notifications/WeworkSchemeBridge* || \
         "$path" == wework/src/features/notifications/scheme* ]]; then
         select_target "core:collaboration-issue-comment-notification"

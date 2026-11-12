@@ -4,6 +4,13 @@ fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value) {
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
     handler.store = RuntimeWorkStore::new(root.join("runtime.json"));
+    handler.turn_queue_path = Arc::new(root.join("turn-queue.json"));
+    handler.command_journal = Arc::new(Mutex::new(Default::default()));
+    handler.turn_scheduler = Arc::new(Mutex::new(RuntimeTurnScheduler::new(
+        RuntimeSettings::default(),
+        VecDeque::new(),
+    )));
+    handler.active_goal_turns = Arc::new(Mutex::new(Default::default()));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
     settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
@@ -15,6 +22,53 @@ fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value) {
 
 fn connection_event() -> Value {
     json!({"roleScoped":true,"kind":"connection","source":{"providerId":"@wegent/dsh-connection-dingtalk/dingtalk","id":"group","profile":"default","kind":"group"},"message":{"id":"event","text":"Source message","at":chrono::Utc::now().to_rfc3339()},"roleIds":["default"]})
+}
+
+#[tokio::test]
+async fn conversation_turns_do_not_depend_on_automatic_followup_policy_or_assignment() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Manual work"})).unwrap())
+        .unwrap();
+    let issue = store
+        .create_task(
+            &project.id,
+            serde_json::from_value(json!({"title":"Review","assignee_user_id":7})).unwrap(),
+        )
+        .unwrap();
+    let history = issue.metadata["assignment_history"].as_array().unwrap();
+    assert!(!history.is_empty());
+    settings["roles"][0]["collaboration"] = json!({"enabled":true,"allProjects":false,"projects":[{"id":project.id,"store":"local"}],"excludedProjects":[],"tags":[],"policy":{"automatic":false,"askBeforeAct":false}});
+    let role = &settings["roles"][0];
+    let mut link = RuntimeTaskLink {
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","trigger":"manual","userId":7,"standInId":"default","cloudProjectId":project.id,"projectStore":"local","loopItemId":issue.id,"humanAssignmentId":format!("{}-{}",issue.id,history.len())}}),
+        ..Default::default()
+    };
+    let automatic = handler
+        .validate_followup_role(&store, 7, role, &link)
+        .await
+        .unwrap_err();
+    assert_eq!(automatic.message, "Automatic project handling is disabled");
+    handler
+        .read_stand_in_issue(&store, 7, &link.runtime_handle["origin"])
+        .await
+        .unwrap();
+    link.runtime_handle["origin"]["humanAssignmentId"] = json!("superseded");
+    handler
+        .read_stand_in_issue(&store, 7, &link.runtime_handle["origin"])
+        .await
+        .unwrap();
+    let mut automatic_role = role.clone();
+    automatic_role["collaboration"]["policy"]["automatic"] = json!(true);
+    assert_eq!(
+        handler
+            .validate_followup_role(&store, 7, &automatic_role, &link)
+            .await
+            .unwrap_err()
+            .code,
+        "invalid_assignment"
+    );
 }
 
 #[tokio::test]

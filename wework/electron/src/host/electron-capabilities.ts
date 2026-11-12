@@ -6,6 +6,7 @@ import {
   enqueueNotificationReply,
   pendingNotificationReplies,
 } from './notification-replies.js'
+import { registerNotificationReplyE2E } from './notification-reply-e2e.js'
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
@@ -169,7 +170,10 @@ export interface ElectronDesktopServices {
   pendingSchemes: SchemeQueue
   openScheme: (url: string) => void
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
-  updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
+  updatePreferences?: (
+    patch: Record<string, unknown>,
+    expectedTelemetryConsentRevision?: number
+  ) => Promise<Record<string, unknown>>
   weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
@@ -287,7 +291,7 @@ export interface ElectronE2EHost {
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
-  rendererStartupReady: (source: 'task-list' | 'other') => void | Promise<void>
+  rendererStartupReady: (source: 'task-list' | 'task-list-error' | 'other') => void | Promise<void>
   rendererStartupFailed: (failure: {
     message: string
     stack?: string
@@ -456,11 +460,12 @@ export function createElectronCapabilityRouter(
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
-  router.register('renderer.startupReady', params =>
-    e2eHost.rendererStartupReady(
-      optionalStringParam(params, 'source') === 'task-list' ? 'task-list' : 'other'
+  router.register('renderer.startupReady', params => {
+    const source = optionalStringParam(params, 'source')
+    return e2eHost.rendererStartupReady(
+      source === 'task-list' || source === 'task-list-error' ? source : 'other'
     )
-  )
+  })
   router.register('renderer.startupFailed', params =>
     e2eHost.rendererStartupFailed({
       message: optionalStringParam(params, 'message') ?? 'Desktop frontend failed to initialize',
@@ -1037,7 +1042,10 @@ export function createElectronCapabilityRouter(
     return mcpDiscoveryFault.configure(params.enabled)
   })
   router.register('e2e.inlineVisualizationFrame', params =>
-    controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
+    controlInlineVisualizationFrame(
+      e2eHost.captureTarget(optionalStringParam(params, 'windowLabel') ?? 'main'),
+      params
+    )
   )
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
@@ -1088,6 +1096,17 @@ export function createElectronCapabilityRouter(
       requiredIntegerParam(params, 'length')
     )
   )
+  router.register('notification.openSettings', async () => {
+    const url =
+      process.platform === 'darwin'
+        ? 'x-apple.systempreferences:com.apple.preference.notifications'
+        : process.platform === 'win32'
+          ? 'ms-settings:notifications'
+          : null
+    if (!url) return { supported: false }
+    await shell.openExternal(url)
+    return { supported: true }
+  })
   router.register('notification.show', params => {
     if (!Notification.isSupported()) {
       throw new HostCapabilityError(
@@ -1119,6 +1138,9 @@ export function createElectronCapabilityRouter(
       desktopServices
     )
   })
+  registerNotificationReplyE2E(router, () =>
+    desktopServices.events.publish('notification-reply', {})
+  )
   router.register('notification.pendingReplies', params =>
     pendingNotificationReplies(stringParam(params, 'accountKey'))
   )
@@ -1126,10 +1148,13 @@ export function createElectronCapabilityRouter(
     acknowledgeNotificationReply(stringParam(params, 'id'), stringParam(params, 'accountKey'))
   )
   router.register('preferences.get', () => preferences.read())
-  const updatePreferences = async (preferencePatch: Record<string, unknown>) => {
+  const updatePreferences = async (
+    preferencePatch: Record<string, unknown>,
+    expectedTelemetryConsentRevision?: number
+  ) => {
     const updated = desktopServices.updatePreferences
-      ? await desktopServices.updatePreferences(preferencePatch)
-      : await preferences.update(preferencePatch)
+      ? await desktopServices.updatePreferences(preferencePatch, expectedTelemetryConsentRevision)
+      : await preferences.update(preferencePatch, expectedTelemetryConsentRevision)
     if (typeof updated.preventSleepWhileTasksRunning === 'boolean') {
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
     }
@@ -1141,7 +1166,14 @@ export function createElectronCapabilityRouter(
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       invalidParam('patch')
     }
-    return updatePreferences(patch as Record<string, unknown>)
+    const expected = params.expectedTelemetryConsentRevision
+    if (
+      expected !== undefined &&
+      (typeof expected !== 'number' || !Number.isSafeInteger(expected) || expected < 0)
+    ) {
+      invalidParam('expectedTelemetryConsentRevision')
+    }
+    return updatePreferences(patch as Record<string, unknown>, expected as number | undefined)
   })
   router.register('runtime.changeWorkbenchMode', async (params, context) => {
     const mode = stringParam(params, 'mode')

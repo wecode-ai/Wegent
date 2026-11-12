@@ -18,9 +18,12 @@ environment variables. Values are seconds and must be finite, positive numbers.
 | `SOCKETIO_REDIS_SOCKET_TIMEOUT` | `30` | Bound the wait for a Redis read or write |
 | `SOCKETIO_REDIS_CONNECT_TIMEOUT` | `5` | Bound the wait to establish a Redis connection |
 | `SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL` | `15` | Health check interval before client commands or reads |
+| `SOCKETIO_REDIS_ACK_PROBE_INTERVAL_SECONDS` | `30` | Wait between completed ACK probes |
 
 These settings apply only to the Backend Socket.IO Redis manager. They do not change
 cache or Celery connection settings. Restart Backend instances after changing them.
+Set `SOCKETIO_REDIS_CLIENT_NAME` to identify the manager's connections in Redis
+`CLIENT LIST`.
 
 ## Timeouts and resubscription
 
@@ -36,6 +39,14 @@ Once resubscribed, the listener can receive new messages. Redis Pub/Sub does not
 messages missed during disconnection, so operations that already timed out must be retried.
 
 ## Verify recovery
+
+Each Python Backend process sends a probe ACK through the Redis channel used
+by Socket.IO. After three consecutive failures, `/api/shutdown/status`
+returns 503. The next successful probe restores readiness. Each probe waits up
+to five seconds, with a 30-second interval between checks by default.
+
+With `LOG_LEVEL=DEBUG`, correlate `publish`, `receive` and `match` using
+the same `host_id`, `sid` and `callback_id`.
 
 Call the read-only `runtime.capacity.get` from a Backend instance other than the
 device's WebSocket owner and confirm the RPC acknowledgement arrives. Also check

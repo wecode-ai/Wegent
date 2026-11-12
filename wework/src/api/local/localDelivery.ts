@@ -1,4 +1,5 @@
 import type { Milestone, MilestoneInput } from '@wegent/collaboration'
+import type { IssueAttachmentContext } from '@wegent/collaboration'
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
@@ -27,7 +28,7 @@ import {
   type LoopItemTaskBinding,
 } from '@/api/deliveries'
 import type { LocalProjectSpaceApi } from '@/features/workbench/workbenchServices'
-import { openLocalFile } from '@/lib/local-terminal'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
 import { LOCAL_USER } from './localSession'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
 import type {
@@ -494,7 +495,7 @@ type LocalAgentRecord = Record<string, unknown> & {
   updated_at?: string
 }
 
-function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
+export function projectChatAgentFromRecord(record: LocalAgentRecord): LocalProjectChatAgent {
   const maxConcurrentExecutions =
     typeof record.max_concurrent_executions === 'number' &&
     Number.isInteger(record.max_concurrent_executions) &&
@@ -631,7 +632,7 @@ export function createLocalProjectChatAgentApi(
           const records = await request<LocalAgentRecord[]>('chat_agents.list', {
             project_id: projectId,
           })
-          return records.map(localAgent)
+          return records.map(projectChatAgentFromRecord)
         },
         options?.forceRefresh ? 0 : 60_000
       )
@@ -645,7 +646,7 @@ export function createLocalProjectChatAgentApi(
         agent: createPayload(input),
       })
       cache.invalidate('agents:')
-      return localAgent(record)
+      return projectChatAgentFromRecord(record)
     },
     async ensureDefault(
       projectId: string,
@@ -656,7 +657,7 @@ export function createLocalProjectChatAgentApi(
         agent: createPayload(input),
       })
       cache.invalidate('agents:')
-      return record ? localAgent(record) : null
+      return record ? projectChatAgentFromRecord(record) : null
     },
     async update(
       projectId: string,
@@ -721,7 +722,7 @@ export function createLocalProjectChatAgentApi(
         },
       })
       cache.invalidate('agents:')
-      return localAgent(record)
+      return projectChatAgentFromRecord(record)
     },
     async archive(projectId: string, agentId: string, version: number) {
       await request('chat_agents.archive', {
@@ -970,6 +971,13 @@ function localAccess(record: LocalAccessRecord) {
 
 function unsupported(name: string): never {
   throw new Error(`${name} is not available for local projects yet`)
+}
+
+function attachmentRequestScope(attachmentId: string, context?: IssueAttachmentContext) {
+  if (!context?.projectId.trim() || !context.issueId.trim()) {
+    throw new Error('Local attachment requires its project and Issue context')
+  }
+  return { project_id: context.projectId, item_id: context.issueId, attachment_id: attachmentId }
 }
 
 export function createLocalDeliveryApi(
@@ -1421,12 +1429,13 @@ export function createLocalDeliveryApi(
         user_id: userId,
       })
     },
-    async markLoopItemRead(itemId: string, activitySequence?: number) {
+    async markLoopItemRead(itemId: string, activitySequence?: number, contentRevision?: number) {
       const projectId = await resolveProjectId(itemId)
       const record = await request<LocalLoopItemRecord>('todos.mark_read', {
         project_id: projectId,
         task_id: itemId,
         ...(activitySequence == null ? {} : { activity_sequence: activitySequence }),
+        ...(contentRevision == null ? {} : { content_revision: contentRevision }),
       })
       return localTask(record)
     },
@@ -1557,28 +1566,29 @@ export function createLocalDeliveryApi(
         file: await fileInput(file),
       })
     },
-    async accessLoopItemAttachment(attachmentId: string) {
+    async accessLoopItemAttachment(attachmentId: string, context?: IssueAttachmentContext) {
       return localAccess(
         await request<LocalAccessRecord>('attachments.access', {
-          attachment_id: attachmentId,
+          ...attachmentRequestScope(attachmentId, context),
         })
       )
     },
-    async readLoopItemAttachment(attachmentId: string) {
+    async readLoopItemAttachment(attachmentId: string, context?: IssueAttachmentContext) {
       const access = await request<LocalAccessRecord>('attachments.access', {
-        attachment_id: attachmentId,
+        ...attachmentRequestScope(attachmentId, context),
       })
       const [file] = await readDroppedFiles([access.path])
       return file
     },
-    async downloadLoopItemAttachment(attachmentId: string) {
-      const access = await request<LocalAccessRecord>('attachments.access', {
-        attachment_id: attachmentId,
-      })
-      await openLocalFile(access.path)
+    async downloadLoopItemAttachment(
+      attachmentId: string,
+      filename: string,
+      context?: IssueAttachmentContext
+    ) {
+      await saveBlobToDownloads(await api.readLoopItemAttachment(attachmentId, context), filename)
     },
-    async deleteLoopItemAttachment(attachmentId: string) {
-      await request('attachments.delete', { attachment_id: attachmentId })
+    async deleteLoopItemAttachment(attachmentId: string, context?: IssueAttachmentContext) {
+      await request('attachments.delete', attachmentRequestScope(attachmentId, context))
     },
     async listTaskBindings(itemId: string) {
       const records = await request<LocalTaskBindingRecord[]>('todos.bindings', {

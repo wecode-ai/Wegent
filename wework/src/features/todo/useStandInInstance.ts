@@ -16,15 +16,20 @@ export function useStandInInstance(
   connected: boolean,
   active: boolean,
   backendUrl = '',
-  initialDeviceId?: string
+  initialDeviceId?: string,
+  entryRequestKey?: number
 ) {
   const [binding, setBinding] = useState<StandInInstanceBinding>()
   const [stoppedProfile, setStoppedProfile] = useState<PersonalStandInSettings>()
   const [localDeviceId, setLocalDeviceId] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{
+    cause: unknown
+    fallback: 'load_settings_failed' | 'save_settings_failed'
+  } | null>(null)
   const [busy, setBusy] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const operation = useRef(false)
+  const cancelRead = useRef<(() => void) | null>(null)
   const pageActive = useRef(active)
   useLayoutEffect(() => {
     pageActive.current = active
@@ -40,6 +45,10 @@ export function useStandInInstance(
   useEffect(() => {
     if (!active || operation.current) return
     let current = true
+    const cancel = () => {
+      current = false
+    }
+    cancelRead.current = cancel
     void (async () => {
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity || !api) throw new Error('Executor identity is unavailable')
@@ -57,6 +66,8 @@ export function useStandInInstance(
         const profile = await api.personalGet(value.target.userId, value.target.deviceId)
         if (!current) return
         setStoppedProfile(profile)
+        setError(null)
+        return
       }
       if (value.status === 'unbound') {
         const initialize = async () => {
@@ -146,12 +157,21 @@ export function useStandInInstance(
         setError(null)
       }
     })().catch(cause => {
-      if (current) setError(getStandInErrorMessage(cause, 'load_settings_failed'))
+      if (current) setError({ cause, fallback: 'load_settings_failed' })
     })
-    return () => {
-      current = false
-    }
-  }, [api, services, userId, devices, connected, active, attempt, backendUrl, initialDeviceId])
+    return cancel
+  }, [
+    api,
+    services,
+    userId,
+    devices,
+    connected,
+    active,
+    attempt,
+    backendUrl,
+    initialDeviceId,
+    entryRequestKey,
+  ])
 
   const run = async <T>(action: () => Promise<T>, propagate = false): Promise<T | undefined> => {
     if (operation.current) return
@@ -161,7 +181,7 @@ export function useStandInInstance(
     try {
       return await action()
     } catch (cause) {
-      setError(getStandInErrorMessage(cause, 'save_settings_failed'))
+      setError({ cause, fallback: 'save_settings_failed' })
       if (propagate) throw cause
     } finally {
       operation.current = false
@@ -171,6 +191,7 @@ export function useStandInInstance(
   const stop = (version: number) =>
     run(async () => {
       if (!api || !binding?.target || !localDeviceId) return
+      cancelRead.current?.()
       const stopping = await api.binding(localDeviceId, 'beginStop', version)
       setBinding(stopping)
       const target = stopping.target!
@@ -186,6 +207,7 @@ export function useStandInInstance(
   const bind = (target: StandInBindingTarget) =>
     run(async () => {
       if (!api || !binding || !localDeviceId || binding.status !== 'stopped') return
+      cancelRead.current?.()
       const next = await api.binding(localDeviceId, 'bind', binding.version, target)
       try {
         await api.lifecycle(target.userId, target.deviceId, 'start')
@@ -197,6 +219,7 @@ export function useStandInInstance(
     run(async () => {
       if (!api || !binding?.target || binding.status !== 'stopped' || !localDeviceId)
         throw new StandInMigrationError('not_stopped')
+      cancelRead.current?.()
       const role = await migrateStandIn(api, {
         sourceUser: binding.target.userId,
         sourceDevice: binding.target.deviceId,
@@ -218,7 +241,8 @@ export function useStandInInstance(
     stoppedProfile,
     localDeviceId,
     busy,
-    error,
+    error: error ? getStandInErrorMessage(error.cause, error.fallback) : null,
+    errorCause: error?.cause,
     stop,
     bind,
     migrate,

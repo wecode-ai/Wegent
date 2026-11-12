@@ -58,6 +58,44 @@ pub(crate) async fn get_accessible_task_owner(
         .and_then(|row| row.get_required::<i64>("user_id").ok()))
 }
 
+/// The `/chat` `task:join` fork-history lineage read.
+///
+/// `task_fork_history_resolver._lineage_task` calls `task_store.get_by_id`
+/// with the caller as the owner filter, whose ORM rendering is the labeled
+/// projection over the id's physical table with both predicates prefixed
+/// (`SELECT tasks_0357.id AS tasks_0357_id, ... FROM tasks_0357 WHERE
+/// tasks_0357.id = ? AND tasks_0357.user_id = ? LIMIT 1`). This is the
+/// join's second task read (recording qs99), distinct from the access
+/// check's active-task read.
+pub(crate) fn task_owned_labeled_statement(tasks_table: &str) -> String {
+    crate::task_store_statements::task_by_id_owned_labeled_statement(tasks_table)
+}
+
+pub(crate) async fn get_task_owner_for_caller(
+    state: &crate::state::AppState,
+    task_id: i64,
+    user_id: i64,
+) -> brz_mysql::MysqlResult<Option<i64>> {
+    // The physical table is resolved for the id first (`task_model_for_task_id`
+    // runs before the query in Source), so the statement carries bare
+    // identifiers and issues unrouted.
+    let tables = state.task_store.message_edit_tables(task_id).await?;
+    let mut handle = &state.mysql;
+    let row = crate::request_sql::fetch_optional_as(
+        &mut handle,
+        crate::request_sql::RouteKey::None,
+        &task_owned_labeled_statement(&tables.tasks),
+        vec![
+            crate::sql_support::StatementArg::Int(task_id),
+            crate::sql_support::StatementArg::Int(user_id),
+        ],
+    )
+    .await?;
+    Ok(row
+        .as_ref()
+        .and_then(|row| crate::internal_callback::completion::task_column::<i64>(row, "user_id")))
+}
+
 /// `task_store.get_by_id` with the owner filter, through the store.
 pub(crate) async fn get_task_by_id_with_owner(
     task_store: &dyn crate::task_store::TaskStore,
@@ -139,10 +177,19 @@ pub(crate) async fn list_subtasks_by_task(
     task_store: &dyn crate::task_store::TaskStore,
     task_id: i64,
     owner_user_id: i64,
+    ordered_in_sql: bool,
 ) -> brz_mysql::MysqlResult<SubtaskListing> {
-    let listing = task_store
-        .list_subtasks_by_task_ordered(task_id, owner_user_id)
-        .await?;
+    // Socket.IO can use the deployment's specialized join listing. The
+    // default store restores order after reading the result rows.
+    let listing = if ordered_in_sql {
+        task_store
+            .list_subtasks_by_task_ordered_in_sql(task_id, owner_user_id)
+            .await?
+    } else {
+        task_store
+            .list_subtasks_by_task_ordered(task_id, owner_user_id)
+            .await?
+    };
     Ok(SubtaskListing {
         subtasks: listing
             .rows
@@ -325,5 +372,23 @@ mod tests {
         assert!(!json_status_is_delete(&serde_json::json!({
             "status": {"status": "PENDING"}
         })));
+    }
+    /// The join's second task read is the fork-history lineage read: the
+    /// recorded ORM projection over the resolved physical table with the
+    /// caller's owner filter (recording qs99), never another copy of the
+    /// access check's active-task shape and never a routing template.
+    #[test]
+    fn the_join_lineage_read_is_the_owner_filtered_orm_projection() {
+        let sql = task_owned_labeled_statement("tasks_0357");
+        assert!(sql.starts_with("SELECT tasks_0357.id AS tasks_0357_id, "));
+        assert!(sql.contains("tasks_0357.user_id AS tasks_0357_user_id"));
+        assert!(sql.contains("\nFROM tasks_0357 \n"));
+        assert!(sql.contains("WHERE tasks_0357.id = ? AND tasks_0357.user_id = ?"));
+        assert!(sql.contains("\n LIMIT 1"));
+        assert!(!sql.contains('`'));
+        assert!(!sql.contains("{{"));
+        assert!(!sql.contains("kind = 'Task'"));
+        assert!(!sql.contains("SELECT id, user_id"));
+        assert!(!sql.contains("JSON_EXTRACT"));
     }
 }

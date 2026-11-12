@@ -204,9 +204,9 @@ fn materialize_cloud_payload(
             config.as_object_mut().expect("config is an object").extend(
                 json!({
                     "codex_catalog_model_id":cloud_catalog_model_id(model),
-                    "codex_responses_compat_proxy":true,"tool_profile":"custom",
-                    "native_tool_search":model.pointer("/config/native_tool_search").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
-                    "native_namespace_tools":model.pointer("/config/native_namespace_tools").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
+                    "codex_responses_compat_proxy":true,"tool_profile":"function",
+                    "native_tool_search":model.pointer("/config/native_tool_search").and_then(Value::as_bool).unwrap_or(false),
+                    "native_namespace_tools":model.pointer("/config/native_namespace_tools").and_then(Value::as_bool).unwrap_or(false),
                     "runtime_config":{"codex":{"use_user_config":false,"configured":true}}
                 }).as_object().expect("Codex config is an object").clone()
             );

@@ -150,7 +150,13 @@ async fn run_tool_json(
         crate::python_runtime::isolate_python_environment(&mut command)
             .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
     }
-    let mut child = command.spawn().map_err(|_| {
+    let mut child = command.spawn().map_err(|_cause| {
+        #[cfg(test)]
+        eprintln!(
+            "Connection tool spawn failed: kind={:?} os_error={:?}",
+            _cause.kind(),
+            _cause.raw_os_error()
+        );
         AppIpcError::new(
             "connection_cli_unavailable",
             "Plugin tool could not be started",
@@ -355,8 +361,10 @@ fn parse_connection_tool_output(
             ));
         }
         let declared_failure = declared_tool_failure(&value);
-        return Err(AppIpcError::new(
-            if declared_failure {
+        let mut error = AppIpcError::new(
+            if declared_failure && retryable_tool_request(code) {
+                "connection_cli_request_unavailable"
+            } else if declared_failure {
                 "connection_cli_request_failed"
             } else {
                 "connection_cli_failed"
@@ -366,14 +374,116 @@ fn parse_connection_tool_output(
             } else {
                 "Plugin tool request failed".to_owned()
             },
-        ));
+        );
+        error.provider_code = super::diagnostics::identifier(code).then(|| code.to_owned());
+        return Err(error);
     }
     Ok(value)
+}
+
+fn retryable_tool_request(code: &str) -> bool {
+    matches!(
+        code,
+        "request_failed"
+            | "NETWORK_ERROR"
+            | "SERVER_ERROR"
+            | "ECONNRESET"
+            | "ECONNREFUSED"
+            | "ETIMEDOUT"
+            | "EHOSTUNREACH"
+            | "ENETUNREACH"
+            | "EAI_AGAIN"
+    )
 }
 
 #[cfg(test)]
 mod connection_tool_tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn tool_fixture(root: &Path, name: &str) -> PathBuf {
+        // A checked-in inode cannot retain a writer inherited by parallel forks.
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/connection-tool-outcome.sh");
+        let script = root.join(name);
+        std::os::unix::fs::symlink(fixture, &script).unwrap();
+        script
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn writable_tool_inodes_fail_before_structured_output_is_available() {
+        use std::io::Write;
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("fresh-tool");
+        let mut writer = fs::File::create(&script).unwrap();
+        writer.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let cause = std::process::Command::new(&script).spawn().unwrap_err();
+        assert_eq!(cause.raw_os_error(), Some(libc::ETXTBSY));
+        let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "connection_cli_unavailable");
+        drop(writer);
+    }
+
+    #[test]
+    fn generic_and_transport_failures_retain_structured_causes_and_only_reads_get_retry_hints() {
+        for code in [
+            "request_failed",
+            "NETWORK_ERROR",
+            "SERVER_ERROR",
+            "ECONNRESET",
+            "ECONNREFUSED",
+            "ETIMEDOUT",
+            "EHOSTUNREACH",
+            "ENETUNREACH",
+            "EAI_AGAIN",
+        ] {
+            for stderr in [false, true] {
+                let bytes = serde_json::to_vec(
+                    &json!({"success":false,"error":{"code":code,"message":"private-token"}}),
+                )
+                .unwrap();
+                let error = parse_connection_tool_streams(
+                    if stderr { b"" } else { &bytes },
+                    if stderr { &bytes } else { b"" },
+                    false,
+                    "plugin",
+                    "account",
+                )
+                .unwrap_err();
+                assert_eq!(error.code, "connection_cli_request_unavailable");
+                assert_eq!(error.provider_code.as_deref(), Some(code));
+                assert_eq!(
+                    error.retry_after_ms, None,
+                    "An action outcome cannot authorize replay"
+                );
+                assert!(!error.message.contains("private-token"));
+                let read = crate::runtime_work::connection_cli::collection_read_error(error);
+                assert_eq!(read.retry_after_ms, Some(30_000));
+                assert_eq!(read.provider_code.as_deref(), Some(code));
+            }
+        }
+        let bytes = br#"{"success":false,"error":{"message":"private-token"}}"#;
+        let error = parse_connection_tool_output(bytes, false, "plugin", "account").unwrap_err();
+        assert_eq!(error.provider_code.as_deref(), Some("request_failed"));
+        assert_eq!(error.code, "connection_cli_request_unavailable");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn structured_generic_action_failure_is_never_replayed() {
+        let temp = tempfile::tempdir().unwrap();
+        let script = tool_fixture(temp.path(), "generic-action");
+        let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "connection_cli_request_unavailable");
+        assert_eq!(error.retry_after_ms, None);
+        assert_eq!(fs::read(temp.path().join("attempts")).unwrap(), b"x");
+    }
 
     #[test]
     fn failed_process_output_is_not_classified_as_a_successful_malformed_response() {
@@ -388,9 +498,7 @@ mod connection_tool_tests {
     #[tokio::test]
     async fn structured_stderr_errors_preserve_auth_identity_without_exposing_messages() {
         let temp = tempfile::tempdir().unwrap();
-        let script = temp.path().join("tool");
-        fs::write(&script, "#!/bin/sh\nprintf '%s' '{\"success\":false,\"error\":{\"code\":\"need_login\",\"message\":\"private-token\"}}' >&2\nexit 1\n").unwrap();
-        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let script = tool_fixture(temp.path(), "auth-stderr");
         let error = run_tool_json(temp.path(), &script, &[], "exact-plugin", "exact-connector")
             .await
             .unwrap_err();
@@ -404,7 +512,16 @@ mod connection_tool_tests {
 
     #[test]
     fn structured_stderr_rejections_never_become_retryable_reads_or_successes() {
-        for code in ["FORBIDDEN", "403", "PERMISSION_DENIED", "NETWORK_ERROR"] {
+        for code in [
+            "FORBIDDEN",
+            "403",
+            "PERMISSION_DENIED",
+            "EPERM",
+            "EACCES",
+            "CERTIFICATE_VERIFY_FAILED",
+            "INVALID_ARGUMENT",
+            "unknown_failure",
+        ] {
             let stderr = serde_json::to_vec(
                 &json!({"success":false,"error":{"code":code,"message":"private-token"}}),
             )
@@ -412,6 +529,7 @@ mod connection_tool_tests {
             let error = parse_connection_tool_streams(b"", &stderr, false, "plugin", "account")
                 .unwrap_err();
             assert_eq!(error.code, "connection_cli_request_failed");
+            assert_eq!(error.provider_code.as_deref(), Some(code));
             assert!(error.message.contains(code));
             assert!(!error.message.contains("private-token"));
             assert_eq!(
@@ -443,13 +561,7 @@ mod connection_tool_tests {
     #[tokio::test]
     async fn unknown_action_failure_is_executed_once_without_a_retry_hint() {
         let temp = tempfile::tempdir().unwrap();
-        let script = temp.path().join("tool");
-        fs::write(
-            &script,
-            "#!/bin/sh\nprintf x >> attempts\nprintf '%s' 'private-unknown-error' >&2\nexit 1\n",
-        )
-        .unwrap();
-        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let script = tool_fixture(temp.path(), "unknown-action");
         let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
             .await
             .unwrap_err();
@@ -650,7 +762,7 @@ mod connection_tool_tests {
                 "pluginKey=existing-plugin connectorSlug=original-slug"
             );
         }
-        for code in ["NETWORK_ERROR", "FORBIDDEN", "403", "SERVER_ERROR"] {
+        for code in ["FORBIDDEN", "403"] {
             let bytes = serde_json::to_vec(
                 &json!({"success":false,"error":{"code":code,"message":"secret"}}),
             )

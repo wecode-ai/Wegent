@@ -21,6 +21,11 @@ import {
 } from '@/lib/local-harness'
 
 import { DEFAULT_CONTEXT_COMPACTION_THRESHOLD } from '@wegent/chat-core/runtime-context-usage'
+import {
+  normalizeAppearanceThemeSnapshot,
+  type AppearanceThemeSnapshot,
+} from '../../electron/src/host/appearance-theme-contract'
+export type { AppearanceThemeSnapshot } from '../../electron/src/host/appearance-theme-contract'
 export { DEFAULT_CONTEXT_COMPACTION_THRESHOLD } from '@wegent/chat-core/runtime-context-usage'
 export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
 export const CONTEXT_COMPACTION_THRESHOLD_MAX = 100
@@ -35,6 +40,7 @@ export function clampContextCompactionThreshold(value: number): number {
 export interface AppPreferences {
   workbenchMode: WorkbenchMode
   appearanceMode: AppearanceModePreference
+  appearanceThemeSnapshot: AppearanceThemeSnapshot | null
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
   fixedWorkspaceTabs: FixedWorkspaceTabPreference[]
@@ -48,6 +54,7 @@ export interface AppPreferences {
   experimentalFeaturesEnabled: boolean
   localCodexSubscriptionEnabled: boolean
   telemetryConsentAsked: boolean
+  telemetryConsentRevision: number
   telemetryEnabled: boolean
   performanceRecordingEnabled: boolean
   supervisorPrinciples: string
@@ -119,6 +126,7 @@ export interface FixedWorkspaceTabPreference {
 export interface AppPreferencesPatch {
   workbenchMode?: WorkbenchMode
   appearanceMode?: AppearanceModePreference
+  appearanceThemeSnapshot?: AppearanceThemeSnapshot | null
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
   fixedWorkspaceTabs?: FixedWorkspaceTabPreference[]
@@ -163,6 +171,7 @@ export interface AppPreferencesPatch {
 export const defaultAppPreferences: AppPreferences = {
   workbenchMode: 'developer',
   appearanceMode: 'system',
+  appearanceThemeSnapshot: null,
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   fixedWorkspaceTabs: [
@@ -181,6 +190,7 @@ export const defaultAppPreferences: AppPreferences = {
   experimentalFeaturesEnabled: false,
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
+  telemetryConsentRevision: 0,
   telemetryEnabled: false,
   performanceRecordingEnabled: false,
   supervisorPrinciples: '',
@@ -292,6 +302,7 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       supportedAppearanceModes.has(record.appearanceMode as AppearanceModePreference)
         ? (record.appearanceMode as AppearanceModePreference)
         : defaultAppPreferences.appearanceMode,
+    appearanceThemeSnapshot: normalizeAppearanceThemeSnapshot(record.appearanceThemeSnapshot),
     closeToTrayEnabled:
       typeof record.closeToTrayEnabled === 'boolean'
         ? record.closeToTrayEnabled
@@ -354,6 +365,12 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.telemetryEnabled === 'boolean'
         ? record.telemetryEnabled
         : defaultAppPreferences.telemetryEnabled,
+    telemetryConsentRevision:
+      typeof record.telemetryConsentRevision === 'number' &&
+      Number.isSafeInteger(record.telemetryConsentRevision) &&
+      record.telemetryConsentRevision >= 0
+        ? record.telemetryConsentRevision
+        : 0,
     performanceRecordingEnabled:
       typeof record.performanceRecordingEnabled === 'boolean'
         ? record.performanceRecordingEnabled
@@ -560,13 +577,21 @@ export async function getAppPreferences(): Promise<AppPreferences> {
   return mergeAppPreferences(await invokeDesktopHost<Record<string, unknown>>('preferences.get'))
 }
 
-export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<AppPreferences> {
+export async function updateAppPreferences(
+  patch: AppPreferencesPatch,
+  expectedTelemetryConsentRevision?: number
+): Promise<AppPreferences> {
   if (typeof window === 'undefined') {
     const preferences = mergeAppPreferences({ ...defaultAppPreferences, ...patch })
     return preferences
   }
   const preferences = mergeAppPreferences(
-    await invokeDesktopHost<Record<string, unknown>>('preferences.update', { patch })
+    await invokeDesktopHost<Record<string, unknown>>('preferences.update', {
+      patch,
+      ...(expectedTelemetryConsentRevision !== undefined
+        ? { expectedTelemetryConsentRevision }
+        : {}),
+    })
   )
   emitAppPreferencesChanged(preferences)
   return preferences

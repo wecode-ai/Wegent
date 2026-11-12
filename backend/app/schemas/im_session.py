@@ -2,20 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Schemas for private IM task continuation sessions."""
+"""Schemas for private IM addresses and routing modes."""
 
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
-
-IMSessionModeValue = Literal["chat", "task"]
-IMSessionStateValue = Literal[
-    "idle",
-    "pending_new_flow",
-    "pending_task_switch",
-    "pending_task_creation",
-]
+from pydantic import BaseModel
 
 
 class IMPrivateSessionOut(BaseModel):
@@ -26,22 +18,11 @@ class IMPrivateSessionOut(BaseModel):
     conversation_id: str
     sender_id: str
     display_name: str
-    mode: IMSessionModeValue
-    state: IMSessionStateValue
-    active_task_id: int | None = None
+    mode: Literal["chat", "stand_in"]
     last_seen_at: datetime
+    stand_in: dict[str, str | None] | None = None
 
 
 class IMPrivateSessionListResponse(BaseModel):
     total: int
     items: list[IMPrivateSessionOut]
-
-
-class BindTaskIMSessionsRequest(BaseModel):
-    session_keys: list[str] = Field(min_length=1)
-
-
-class BindTaskIMSessionsResponse(BaseModel):
-    task_id: int
-    bound_session_keys: list[str]
-    notified_count: int

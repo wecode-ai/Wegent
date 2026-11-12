@@ -46,6 +46,47 @@ export async function flushDesktopLocalStoragePersistence(): Promise<void> {
   if (writeFailure !== null) throw writeFailure
 }
 
+/** Durable commands read the host snapshot, not another window's pending browser cache. */
+export async function readCommittedLocalStorageValue(key: string): Promise<string | null> {
+  if (!isElectronRuntime()) return localStorage.getItem(key)
+  if (flushScheduled) flushPendingChanges()
+  await writeQueue
+  const entries = await invokeDesktopHost<Record<string, string>>('rendererStorage.initialize', {
+    entries: {},
+  })
+  return Object.hasOwn(entries, key) ? entries[key] : null
+}
+
+/** Publish to browser windows only after the owning host has committed the value. */
+export async function commitLocalStorageValue(key: string, value: string): Promise<void> {
+  if (!isElectronRuntime()) {
+    localStorage.setItem(key, value)
+    return
+  }
+  if (flushScheduled) flushPendingChanges()
+  const commit = writeQueue.then(async () => {
+    const update = { clear: false, changes: new Map([[key, value]]) }
+    const persisted = retryUpdate ? mergeUpdates(retryUpdate, update) : update
+    await invokeDesktopHost('rendererStorage.update', {
+      clear: persisted.clear,
+      changes: Object.fromEntries(persisted.changes),
+    })
+    retryUpdate = null
+    writeFailure = null
+    try {
+      const storage = window.localStorage
+      const prototype = storagePrototype(storage)
+      const setItem = prototype[STORAGE_METHODS]?.setItem ?? prototype.setItem
+      setItem.call(storage, key, value)
+    } catch (error) {
+      console.error('[Wework] Could not publish committed localStorage value:', error)
+    }
+  })
+  // A rejected command is not a queued write to retry alongside unrelated changes.
+  writeQueue = commit.catch(() => {})
+  await commit
+}
+
 function storageEntries(storage: Storage): Record<string, string> {
   const entries: Array<[string, string]> = []
   for (let index = 0; index < storage.length; index += 1) {

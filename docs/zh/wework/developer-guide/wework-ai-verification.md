@@ -32,6 +32,28 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 
 插件账户迟到响应 E2E 由故障代理为指定响应添加唯一 `Server-Timing` 诊断标记，并保持真实上游响应正文原样。验证按标记确认渲染器实际消费旧响应，再检查当前账户清单持续稳定。浏览器可能为同一 HTTP 响应记录多个 fetch 消费者，不能以时间窗口内“恰好一条记录”代替响应身份。代理字节保持及重复消费者关联有协议测试，真实账户/设备边界仍由既有桌面 checkpoint 验证。
 
+## 对话模型恢复诊断
+
+选择「完整任务数据」后，反馈包的 `context/task.json` 包含 `modelSelection`。快照包含模型名称、类型、资源归属和诊断指纹。快照不包含任意模型参数和认证配置。
+
+- `configured`：传入模型选择器的配置。
+- `effective`：解析默认值后的配置。
+- `selected`：输入框当前模型。
+
+缺失记录保留为 `null`。`logs/app/model-loading.log` 的 `workbench.selection_restored`、`workbench.selection_changed` 和 `workbench.selection_seeded` 使用数字指纹关联模型和作用域。指纹只用于诊断。
+
+执行器的 `runtime task model selection updated` 记录内存中的模型赋值。`runtime task get resolved link` 和 `runtime task transcript resolved link` 记录读取任务的模型身份。赋值日志不代表磁盘写入已经成功。
+
+`configured` 不等于磁盘中的原始任务记录。对于现有对话，配置来自任务摘要或运行句柄。对于新对话，配置来自项目配置或用户偏好。
+
+复现时按以下步骤收集证据：
+
+1. 在重启前导出反馈包。
+2. 重启应用。
+3. 在首次发送前再次导出反馈包。
+4. 核对执行器读取的模型身份。
+5. 比较输入框的配置、有效值和选择值，区分模型记录缺失、默认值替代和输入框切换。
+
 ## 桌面 E2E 启动前准备
 
 模型目录覆盖等会被 Codex 缓存的配置必须在场景的 `prepareApp` 中写入，先于应用和共享 app-server 启动。`human-interactions` 在此阶段声明 `request_user_input_async`；不要等到 `verify` 才改配置或删除磁盘缓存，已经运行的进程可能仍使用旧目录。
@@ -184,3 +206,11 @@ CPU 录制成功停止后，即使 trace 读取、解析或报告写入失败，
 显式 `detach` 成功后会丢弃该目标未完成的录制状态，可用于取消录制或在意外断开后重新开始；detach 失败时保留状态。真实 Electron 回归也覆盖录制中断开后重新录制并生成报告。
 
 所有桌面 checkpoint 共用结果目录内的 `desktop-control` 注册表，便于按需诊断自己的隔离实例。macOS 原生进程快照先读取 PID 父子关系，再只读取 Electron 进程树的详细指标和命令行，避免全机无关进程的参数撑满采集缓冲区。
+
+### 差异预览 CPU 与工作台内存回归
+
+差异预览使用 Pierre 的虚拟化渲染。行事件回调、渲染选项、行注解和布局度量应保持稳定；父组件刷新或更换事件处理函数不应重建未变化的代码 DOM。实际选项、差异内容或行注解变化时仍须更新。`FileChangesPatchDiff.test.tsx` 使用真实 Pierre 实例检查连续刷新时的节点身份及卸载清理。
+
+工作台的记忆化回调分别定义在独立 Hook 的词法作用域中，不能重新合并进 Provider 的大型渲染作用域。否则依赖交替变化的回调会通过共享闭包串联保留历史任务、生命周期和工作列表快照。`workbenchCallbackLifetime.test.tsx` 使用 Inspector 触发真实 GC，并通过弱引用验证旧快照能够回收，同时约束 Provider 不再直接定义 `useCallback`。
+
+CPU Trace 的采样时间、HTML 解析时间与进程内存应分别解释。堆快照中的对象大小不等于活动监视器中的进程占用；单份堆快照能证明对象保留路径，不能独立证明内存增长速率。分析文件保持本地，不提交用户 Trace 或堆快照。

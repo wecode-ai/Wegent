@@ -1,6 +1,7 @@
 import { writeCodexConfig, setMatrixUpstreamProtocol } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
+import { redisCliBinary } from './desktop-cloud-login.mjs'
 
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
@@ -459,6 +460,10 @@ class RealCloudEnvironment {
       ...this.scenarioBackendEnv,
     }
     this.backendEnv = backendEnv
+    // Seed before device requests can start a remote refresh that races fixture updates.
+    await this.observePreparation('executor-version-seeding', () =>
+      this.setExecutorLatestVersion('1.0.0')
+    )
     await this.observePreparation('database-migrate', () =>
       runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
         cwd: backendDirectory,
@@ -617,17 +622,15 @@ class RealCloudEnvironment {
     assert.equal(typeof enabled, 'boolean')
     assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
     await this.stopBackend()
-    const fromOffset = (await readFile(this.backendLogPath, 'utf8')).length
+    const fromOffset = (await readFile(this.remoteExecutorLogPath, 'utf8')).length
     this.backendEnv = {
       ...this.backendEnv,
       TERMINAL_PROTOCOL_V2_ENABLED: String(enabled),
     }
     await this.launchBackend()
     await waitForLogPattern(
-      this.backendLogPath,
-      new RegExp(
-        `\\[Device WS\\] Device registered: user=\\d+, device=${CLOUD_DEVICE_ID}(?:\\r?\\n|$)`
-      ),
+      this.remoteExecutorLogPath,
+      new RegExp(`local backend registered [^\\r\\n]*device_id=${CLOUD_DEVICE_ID}(?:\\r?\\n|$)`),
       { fromOffset, timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
     )
     await this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath)
@@ -840,6 +843,7 @@ class RealCloudEnvironment {
       'WEGENT_APP_IPC_OWNER_TOKEN',
       'WEGENT_APP_IPC_TOKEN',
       'WEGENT_APP_LIFECYCLE_FD',
+      'WEGENT_RUNTIME_INSTANCE_ID',
     ]) {
       delete environment[key]
     }
@@ -1115,7 +1119,7 @@ class RealCloudEnvironment {
 
   async setExecutorLatestVersion(version) {
     await runChecked(
-      'redis-cli',
+      redisCliBinary(),
       [
         '-h',
         '127.0.0.1',
@@ -1296,7 +1300,7 @@ class RealCloudEnvironment {
   }
 
   terminalSessionRecords() {
-    const keys = commandOutput('redis-cli', [
+    const keys = commandOutput(redisCliBinary(), [
       '-p',
       String(this.redisPort),
       '--raw',
@@ -1308,7 +1312,7 @@ class RealCloudEnvironment {
       .map(value => value.trim())
       .filter(Boolean)
     return keys.map(key => {
-      const serialized = commandOutput('redis-cli', [
+      const serialized = commandOutput(redisCliBinary(), [
         '-p',
         String(this.redisPort),
         '--raw',
@@ -1326,7 +1330,7 @@ class RealCloudEnvironment {
       'The terminal session ID is not safe for the Redis fixture'
     )
     const subscriberCount = Number(
-      commandOutput('redis-cli', [
+      commandOutput(redisCliBinary(), [
         '-p',
         String(this.redisPort),
         '--raw',

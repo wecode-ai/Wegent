@@ -335,7 +335,11 @@ pub fn registered(
     payload: &RegisterPayload,
     cloud_matched: bool,
 ) -> Registered {
-    let route_id = route_id(row, payload.device_type);
+    let route_id = if cloud_matched {
+        payload.device_id.clone()
+    } else {
+        route_id(row, payload.device_type)
+    };
     let display_name = if cloud_matched {
         payload.name.clone()
     } else {
@@ -500,6 +504,31 @@ pub async fn set_online(state: &AppState, user_id: i64, route_id: &str, data: &V
             false
         }
     }
+}
+
+/// `LocalDeviceProvider.update_status`: read the online document, replace
+/// `status` and `last_heartbeat`, then rewrite it with the online TTL. A
+/// missing document leaves Redis untouched and returns `false`.
+pub async fn update_online_status(
+    state: &AppState,
+    user_id: i64,
+    route_id: &str,
+    status: &str,
+) -> bool {
+    let Some(redis) = state.redis.as_ref() else {
+        return false;
+    };
+    let Ok(Some(document)) =
+        crate::device_online_state::read_online_state_with(redis, user_id, route_id).await
+    else {
+        return false;
+    };
+    let Value::Object(mut data) = document else {
+        return false;
+    };
+    data.insert("status".into(), Value::String(status.into()));
+    data.insert("last_heartbeat".into(), Value::String(local_isoformat()));
+    set_online(state, user_id, route_id, &Value::Object(data)).await
 }
 
 /// Reads the device online state (`cache_manager.get_or_raise`).
@@ -835,7 +864,8 @@ mod tests {
     fn cloud_registration_keeps_the_reported_name() {
         // `_register_device_session`'s `is_cloud_device` branch sets the
         // persisted name to `payload.name`, ignoring the CRD display name.
-        let row = device_row("qingjieyun");
+        let mut row = device_row("qingjieyun");
+        row.name = "cloud-logical-name".into();
         let payload = cloud_payload("executor-a4b5");
         let registered = registered(&row, &payload, true);
         assert_eq!(registered.display_name, "executor-a4b5");

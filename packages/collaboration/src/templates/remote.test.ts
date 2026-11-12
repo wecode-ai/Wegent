@@ -7,6 +7,12 @@ import { createCollaborationTemplateRemote, type TemplateHttpClient } from './re
 import { CollaborationTemplateStore } from './store'
 import type { TemplateRecord } from './types'
 
+it('deletes using the immutable template id', async () => {
+  const client = { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() }
+  await createCollaborationTemplateRemote(client).delete(42)
+  expect(client.delete).toHaveBeenCalledWith('/v1/collaboration-templates/42')
+})
+
 it('keeps the valid pending draft when a save response contains invalid configuration', async () => {
   const document = structuredClone(builtinCollaborationTemplates()[0].document)
   document.metadata = { name: 'personal-workflow', namespace: 'default' }
@@ -14,7 +20,12 @@ it('keeps the valid pending draft when a save response contains invalid configur
   const client = {
     get: vi.fn(),
     post: vi.fn(),
-    put: vi.fn(async () => ({ id: 42, ownerId: 7, document: invalid, source: 'personal' })),
+    put: vi.fn(async () => ({
+      id: 42,
+      ownerId: 7,
+      document: invalid,
+      source: 'personal',
+    })),
   } as unknown as TemplateHttpClient
   let cached: TemplateRecord[] = []
   const store = new CollaborationTemplateStore({
@@ -23,7 +34,9 @@ it('keeps the valid pending draft when a save response contains invalid configur
     remote: createCollaborationTemplateRemote(client),
     persistence: {
       read: async () => structuredClone(cached),
-      write: async records => { cached = structuredClone(records) },
+      write: async records => {
+        cached = structuredClone(records)
+      },
     },
   })
   await store.save(document, 7)

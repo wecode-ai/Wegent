@@ -13,6 +13,197 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { runtimeArtifact } from "./runtime-artifact.mjs";
+import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
+import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
+
+test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositories", () => {
+  const input = [
+    "URIs: http://archive.ubuntu.com/ubuntu/",
+    "URIs: https://security.ubuntu.com/ubuntu",
+    "deb http://azure.archive.ubuntu.com/ubuntu/ resolute main universe",
+    "URIs: mirror+file:/etc/apt/apt-mirrors.txt",
+    "Suites: noble noble-updates noble-security resolute",
+    "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
+    "deb https://deb.nodesource.com/node_24.x nodistro main",
+  ].join("\n");
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      "source .github/scripts/lib/apt-packages.sh; rewrite_ci_ubuntu_archive",
+    ],
+    { input, encoding: "utf8", cwd: resolve(import.meta.dirname, "../..") },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    result.stdout,
+    [
+      "URIs: http://mirrors.edge.kernel.org/ubuntu",
+      "URIs: http://mirrors.edge.kernel.org/ubuntu",
+      "deb http://mirrors.edge.kernel.org/ubuntu resolute main universe",
+      "URIs: http://mirrors.edge.kernel.org/ubuntu",
+      "Suites: noble noble-updates noble-security resolute",
+      "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
+      "deb https://deb.nodesource.com/node_24.x nodistro main",
+    ].join("\n"),
+  );
+});
+
+test("historical fixtures use the exact GitHub release asset by ID", async () => {
+  const requests = [];
+  const response = await fetchGithubReleaseAsset({
+    repository: "wecode-ai/Wegent",
+    tag: "wework-updater",
+    name: "pinned.tar.gz",
+    redirect: "manual",
+    token: "fixture-token",
+    fetchImpl: async (url, options) => {
+      requests.push({ url, ...options });
+      if (requests.length === 1) {
+        return Response.json({
+          assets: [
+            { name: "other-pinned.tar.gz", id: 1 },
+            { name: "pinned.tar.gz", id: 2 },
+          ],
+        });
+      }
+      return new Response(null, { status: 302 });
+    },
+  });
+  assert.equal(response.status, 302);
+  assert.equal(
+    requests[0].url,
+    "https://api.github.com/repos/wecode-ai/Wegent/releases/tags/wework-updater",
+  );
+  assert.equal(
+    requests[1].url,
+    "https://api.github.com/repos/wecode-ai/Wegent/releases/assets/2?download=1",
+  );
+  assert.deepEqual(requests[1].headers, {
+    authorization: "Bearer fixture-token",
+    accept: "application/octet-stream",
+  });
+  assert.equal(requests[1].redirect, "manual");
+  assert.equal(requests[1].signal, requests[0].signal);
+});
+
+test("isolated browsers route localhost to real runner services without retaining a loopback alias", () => {
+  const hosts = [
+    "127.0.0.1 localhost # IPv4 loopback",
+    "::1 localhost ip6-localhost ip6-loopback",
+    "172.17.0.1 wegent-e2e-runner",
+    "172.17.0.2 browser-container",
+    "# localhost in a comment is unchanged",
+    "",
+  ].join("\n");
+  const mapped = runnerLoopbackHosts(hosts, "172.17.0.1");
+  assert.equal(
+    mapped,
+    [
+      "# IPv4 loopback",
+      "::1\tip6-localhost\tip6-loopback",
+      "172.17.0.1 wegent-e2e-runner",
+      "172.17.0.2 browser-container",
+      "# localhost in a comment is unchanged",
+      "172.17.0.1\tlocalhost",
+      "",
+    ].join("\n"),
+  );
+  assert.equal(runnerLoopbackHosts(mapped, "172.17.0.1"), mapped);
+});
+
+test("invalid runner addresses fail before configuring browser routing", () => {
+  for (const gateway of [
+    "",
+    "localhost",
+    "127.0.0.1:8000",
+    "::1",
+    "1.2.3.4, MAP * 1.2.3.4",
+  ]) {
+    assert.throws(
+      () => runnerLoopbackHosts("127.0.0.1 localhost\n", gateway),
+      /IPv4 address/,
+    );
+  }
+});
+
+test("fixture servers advertise the container address reachable from runner processes", () => {
+  const interfaces = {
+    lo: [
+      { address: "127.0.0.1", family: "IPv4", internal: true },
+      { address: "::1", family: "IPv6", internal: true },
+    ],
+    eth0: [
+      { address: "fe80::1", family: "IPv6", internal: false },
+      { address: "172.17.0.2", family: "IPv4", internal: false },
+    ],
+  };
+  assert.equal(containerIPv4(interfaces), "172.17.0.2");
+  assert.throws(
+    () => containerIPv4({ lo: interfaces.lo }),
+    /no non-loopback IPv4 address/,
+  );
+  const wrapper = readFileSync(
+    ".github/scripts/run-isolated-e2e-browser.sh",
+    "utf8",
+  );
+  assert.match(wrapper, /E2E_TEST_CONTAINER_ADDRESS="\$container_address"/);
+  const fixture = readFileSync(
+    "frontend/e2e/utils/device-git-http-fixture.ts",
+    "utf8",
+  );
+  assert.match(fixture, /process\.env\.E2E_TEST_CONTAINER_ADDRESS/);
+  const artifactFixture = readFileSync(
+    "frontend/e2e/utils/artifact-device-fixture.ts",
+    "utf8",
+  );
+  assert.ok(
+    artifactFixture.indexOf("process.env.E2E_CLAUDE_MODEL_SERVER_URL") <
+      artifactFixture.indexOf("process.env.E2E_LOCAL_CLAUDE_MODEL_SERVER_URL"),
+    "container-hosted artifact devices must prefer the runner-reachable model URL",
+  );
+});
+
+test("executor browser containers isolate network changes while retaining the existing jobs and workers", () => {
+  const parsed = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['executor-e2e-tests'])",
+      ".github/workflows/e2e-tests.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(parsed.status, 0, parsed.stderr);
+  const job = JSON.parse(parsed.stdout);
+  for (const name of [
+    "Run Executor E2E tests",
+    "Run stalled Chat SSE regression",
+  ]) {
+    const run = job.steps.find((step) => step.name === name).run;
+    assert.match(run, /--network bridge\s/);
+    assert.match(run, /--add-host wegent-e2e-runner:host-gateway\s/);
+    assert.match(
+      run,
+      /--entrypoint "\$container_workspace\/\.github\/scripts\/run-isolated-e2e-browser\.sh"/,
+    );
+    assert.doesNotMatch(run, /--network host|--workers|--retries/);
+  }
+  const wrapper = readFileSync(
+    ".github/scripts/run-isolated-e2e-browser.sh",
+    "utf8",
+  );
+  assert.match(wrapper, /export E2E_BROWSER_HOST_GATEWAY=/);
+  assert.match(wrapper, /exec "\$@"/);
+  const config = readFileSync("frontend/playwright.config.ts", "utf8");
+  assert.match(
+    config,
+    /--host-resolver-rules=MAP localhost \$\{process.env.E2E_BROWSER_HOST_GATEWAY\}/,
+  );
+  assert.match(config, /name: 'executor-chromium',[\s\S]*?workers: 2/);
+});
 
 const runner = resolve(".github/scripts/run-attachment-replica-e2e.sh");
 const knowledgeRunner = resolve(
@@ -418,6 +609,70 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
           "Install Electron for native startup and schema verification" &&
         step.if === pnpm.if,
     ),
+  );
+});
+
+test("Linux native probes restore verified Electron downloads before the official installer", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate({core: YAML.load_file(ARGV[0])['jobs']['wework-desktop-core-e2e']['steps'], unit: YAML.load_file(ARGV[1])['jobs']['test-wework']['steps'], action: YAML.load_file(ARGV[2])['runs']['steps']})",
+      ".github/workflows/wework-e2e.yml",
+      ".github/workflows/test.yml",
+      ".github/actions/prepare-electron-installer-cache/action.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const { core: steps, unit, action } = JSON.parse(result.stdout);
+  const primeIndex = steps.findIndex(
+    (step) => step.name === "Restore verified Electron installer cache",
+  );
+  const installIndex = steps.findIndex(
+    (step) =>
+      step.name ===
+      "Install Electron for native startup and schema verification",
+  );
+  assert(primeIndex >= 0 && primeIndex < installIndex);
+  const prime = steps[primeIndex];
+  assert.equal(prime.if, steps[installIndex].if);
+  assert.equal(
+    prime.uses,
+    "./.github/actions/prepare-electron-installer-cache",
+  );
+  const unitPrime = unit.find((step) => step.name === prime.name);
+  assert.equal(unitPrime.uses, prime.uses);
+  assert.equal(unitPrime.if, "matrix.shard == 1");
+  assert(
+    unit.indexOf(unitPrime) <
+      unit.findIndex(
+        (step) => step.name === "Prepare Wework Electron dependencies",
+      ),
+  );
+  const commands = action.map((step) => step.run).join("\n");
+  assert(commands.includes("find_missing_apt_packages skopeo umoci"));
+  assert(commands.includes(".github/scripts/restore-ci-downloads.sh"));
+  assert(
+    commands.includes("pnpm --dir wework/electron install --frozen-lockfile"),
+  );
+  assert(
+    commands.includes(
+      "node .github/scripts/prime-ci-electron-installer-cache.mjs",
+    ),
+  );
+  const moduleInstall = action.find((step) =>
+    step.run?.includes("pnpm --dir wework/electron install --frozen-lockfile"),
+  );
+  assert.equal(moduleInstall.env.ELECTRON_SKIP_BINARY_DOWNLOAD, "1");
+  assert.equal(
+    steps[installIndex].env.WEWORK_ELECTRON_DEPENDENCIES_READY,
+    "true",
+  );
+  assert(
+    steps[installIndex].run.includes("pnpm --dir wework prepare:electron"),
   );
 });
 

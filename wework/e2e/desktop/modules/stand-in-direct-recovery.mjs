@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { requestExecutor } from './executor-rpc.mjs'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
+import { seedCollectionTimeout } from './stand-in-collection-timeout.mjs'
 import {
   openStandInActivity,
   verifyStandInProfileNavigation,
@@ -28,7 +29,9 @@ import {
 const USER = 9001
 const PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 const COORDINATOR = `stand-in-coordinator-${USER}`
+const PRIMARY = `stand-in-chat-${USER}-primary`
 const MARKER = 'DIRECT_RECOVERY'
+const BATCH_RESULT = `${MARKER}_BATCH_DONE`
 
 /** Protocol integration: real Electron, Executor, Codex, storage and native tool calls. */
 export function createDirectRecoveryVerification(options) {
@@ -187,7 +190,7 @@ export function createDirectRecoveryVerification(options) {
           )
         }
         workCalls++
-        events = [assistantMessage(`${MARKER}_DONE`)]
+        events = [assistantMessage(dispatchBatch ? BATCH_RESULT : `${MARKER}_DONE`)]
       }
       if (!events) return false
       const id = `${MARKER}-${Date.now()}`
@@ -242,6 +245,12 @@ export function createDirectRecoveryVerification(options) {
             USER
           )
         assert.equal(changed.changes, 1)
+        const assertCollectionRecovered = await seedCollectionTimeout(
+          database,
+          USER,
+          PROVIDER,
+          options.modelResponseTimeoutMs
+        )
         await publish(1)
         const work = await storyUntil(
           () => rpc(control, 'runtime.stand_in.work.list', { userId: USER }),
@@ -262,6 +271,7 @@ export function createDirectRecoveryVerification(options) {
             'Direct work must complete through real Codex'
           )
         assert.equal(workCalls, 2, 'Each incoming source event executes exactly once')
+        assertCollectionRecovered()
         const status = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
         assert.equal(
           status.error.code,
@@ -344,6 +354,17 @@ export function createDirectRecoveryVerification(options) {
         )
         assert.equal(workCalls, 3)
         dispatchBatch = false
+        await storyUntil(
+          () => rpc(control, 'runtime.tasks.transcript', { taskId: PRIMARY, limit: 100 }),
+          value =>
+            value.messages?.some(
+              message =>
+                message.role === 'assistant' &&
+                message.content?.includes(`任务 ${direct.taskId}（done）：${BATCH_RESULT}`)
+            ),
+          options.modelResponseTimeoutMs,
+          'The primary conversation must report the selected batch result before archiving its source'
+        )
         await rpc(control, 'runtime.tasks.archive', { taskId: direct.taskId })
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await openStandInActivity(control)

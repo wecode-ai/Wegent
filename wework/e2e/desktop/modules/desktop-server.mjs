@@ -534,7 +534,6 @@ class DesktopE2EServer {
     this.catalogRequests = []
     this.httpRequests = []
     this.userPreferences = {}
-    this.runtimeImBindingRequests = []
     this.telemetryRequests = []
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
@@ -1499,39 +1498,6 @@ class DesktopE2EServer {
 
     if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
       json(response, 200, { apps: [] })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/im/private-sessions') {
-      json(response, 200, {
-        total: 1,
-        items: [
-          {
-            session_key: 'desktop-e2e-im-session',
-            channel_type: 'dingtalk',
-            channel_label: 'DingTalk',
-            channel_id: 77,
-            conversation_id: 'desktop-e2e-conversation',
-            sender_id: 'desktop-e2e-user',
-            display_name: 'Desktop E2E',
-            mode: 'task',
-            state: 'idle',
-            active_task_id: null,
-            last_seen_at: '2026-08-12T00:00:00.000Z',
-          },
-        ],
-      })
-      return
-    }
-
-    if (request.method === 'POST' && url.pathname === '/api/runtime-work/im-sessions') {
-      const body = await readRequestBody(request)
-      this.runtimeImBindingRequests.push(body)
-      json(response, 200, {
-        address: body.address,
-        boundSessionKeys: body.sessionKeys,
-        notifiedCount: 1,
-      })
       return
     }
 
@@ -4535,6 +4501,11 @@ class DesktopE2EServer {
         false,
         'The edited turn retained the original prompt in the latest model input'
       )
+      assert.equal(
+        JSON.stringify(body).includes(MESSAGE_EDIT_ORIGINAL_PROMPT),
+        false,
+        'The edited model context retained the original prompt after reverting the thread'
+      )
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(MESSAGE_EDIT_UPDATED_COMPLETION_TEXT),
@@ -5240,6 +5211,23 @@ class DesktopE2EServer {
     assert.equal(body.model, model.modelId, `${matrixCaseId(model)} forwarded the wrong model ID`)
     state.requests.push({ body, headers })
     const evidenceDirectory = captureMatrixRequest(this, model, body)
+
+    if (model.providerProfileId === 'deepseek') {
+      const unsupported = wireDeclarations(body, protocol).find(
+        tool => tool.type === 'custom' && tool.name !== 'apply_patch'
+      )
+      if (unsupported) {
+        const message = `Unsupported custom tool: '${unsupported.name}'. Only 'apply_patch' is supported.`
+        recordMatrixFailure(this, 'deepseek-tool-contract', new Error(message))
+        console.error(`[deepseek-matrix] ${message}`)
+        json(response, 400, { error: { message, type: 'invalid_request_error' } })
+        return
+      }
+      const exec = wireDeclarations(body, protocol).find(tool =>
+        ['exec', 'functions__exec'].includes(tool.name)
+      )
+      if (exec) assert.equal(exec.type, 'function', 'DeepSeek exec must use function tools')
+    }
 
     const requestKind = codexRequestKind(body)
     if (requestKind === 'prewarm' || requestKind === 'compaction') {

@@ -58,6 +58,7 @@ const quote = value => `'${value.replaceAll("'", "'\\''")}'`
 export async function createDesktopScenario({
   homePath,
   resultDir,
+  releaseAssetToken,
   workspacePath,
   workbenchReadyTimeoutMs,
   captureScreenshot,
@@ -144,10 +145,12 @@ export async function createDesktopScenario({
       root,
       userHome: userHomeFor(release),
       directory: join(resultDir, 'historical-executors', release.version),
+      token: releaseAssetToken,
     })
     const delivered = await historicalPluginPackages(
       HISTORICAL_PLUGIN_SOURCE,
-      join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version)
+      join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version),
+      releaseAssetToken
     )
     evidence.push({
       phase: 'delivered-plugin-package',
@@ -173,8 +176,12 @@ export async function createDesktopScenario({
         })
         fixtures[role] = fixture
       }
+      let observedState
       const original = await until(
-        () => readHistoricalPluginState(root, release),
+        async () => {
+          observedState = await readHistoricalPluginState(root, release)
+          return observedState
+        },
         value =>
           Object.values(fixtures).every(
             fixture => value.value.plugins[`${fixture.slug}@wegent`]?.version === fixture.version
@@ -185,7 +192,28 @@ export async function createDesktopScenario({
           ] === false,
         'The delivered historical installer did not materialize the plugins',
         workbenchReadyTimeoutMs
-      )
+      ).catch(async error => {
+        await writeFile(
+          join(resultDir, `legacy-source-${release.version}-materialization-failure.json`),
+          JSON.stringify(
+            {
+              plugins: Object.fromEntries(
+                Object.entries(observedState?.value?.plugins ?? {}).map(([key, plugin]) => [
+                  key,
+                  {
+                    version: plugin.version,
+                    enabled: plugin.enabled,
+                    componentStates: plugin.component_states,
+                  },
+                ])
+              ),
+            },
+            null,
+            2
+          )
+        ).catch(() => {})
+        throw error
+      })
       const records = Object.fromEntries(
         Object.values(fixtures).map(fixture => {
           const value = original.value.plugins[`${fixture.slug}@wegent`]
@@ -271,7 +299,8 @@ export async function createDesktopScenario({
       id,
       prompt: `WEWORK_LEGACY_PLUGIN ${id}`,
       output: null,
-      command: `node ${quote(join(record.runtime.codex_link, 'scripts/smart-app-tool.mjs'))} doctor`,
+      // Keep the prepared Corepack ahead of host tools after native login-shell hydration.
+      command: `node -e ${quote('Object.assign(process.env,JSON.parse(Buffer.from(process.argv[1],`base64`).toString())); const script=process.argv[2]; process.argv=[process.execPath,script,`doctor`]; import(require(`node:url`).pathToFileURL(script).href)')} ${quote(Buffer.from(JSON.stringify(pluginTools)).toString('base64'))} ${quote(join(record.runtime.codex_link, 'scripts/smart-app-tool.mjs'))}`,
       expected: '"pnpmAvailable": true',
       skillPath: join(record.runtime.codex_link, 'skills', fixture.skillName, 'SKILL.md'),
       skillName: fixture.skillName,
@@ -402,7 +431,8 @@ export async function createDesktopScenario({
       pluginTools = await prepareHistoricalPluginTools(join(resultDir, 'historical-plugin-tools'))
       const delivered = await historicalPluginPackages(
         HISTORICAL_PLUGIN_UPDATE,
-        join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_UPDATE.version)
+        join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_UPDATE.version),
+        releaseAssetToken
       )
       updatePackages = delivered.packages
       evidence.push({ phase: 'delivered-plugin-update', ...delivered.evidence })

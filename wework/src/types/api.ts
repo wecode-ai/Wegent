@@ -614,19 +614,6 @@ export interface RuntimeTaskPinRequest {
   beforeThreadId?: string | null
 }
 
-export interface BindRuntimeTaskIMSessionsRequest {
-  address: RuntimeTaskAddress
-  taskTitle: string
-  sessionKeys: string[]
-  modelSelection?: ModelSelectionConfig | null
-}
-
-export interface BindRuntimeTaskIMSessionsResponse {
-  address: RuntimeTaskAddress
-  boundSessionKeys: string[]
-  notifiedCount: number
-}
-
 export interface RuntimeIMNotificationSession {
   sessionKey: string
   channelType: string
@@ -1007,7 +994,14 @@ export interface TaskListResponse {
   items: Task[]
 }
 
+export interface IMStandInBinding {
+  deviceId: string
+  roleId: string | null
+}
+
 export interface IMPrivateSession {
+  mode: 'chat' | 'stand_in'
+  stand_in?: IMStandInBinding | null
   session_key: string
   channel_type: string
   channel_label: string
@@ -1015,9 +1009,6 @@ export interface IMPrivateSession {
   conversation_id: string
   sender_id: string
   display_name: string
-  mode: 'chat' | 'task'
-  state: 'idle' | 'pending_new_flow' | 'pending_task_switch' | 'pending_task_creation'
-  active_task_id?: string | null
   last_seen_at: string
 }
 
@@ -1111,16 +1102,6 @@ export interface CloneGitRepositoryInput {
   url: string
   branch?: string
   targetPath: string
-}
-
-export interface GitCloneProjectOperation extends CloneGitRepositoryInput {
-  id: string
-  deviceId: string
-  name: string
-  status: 'cloning' | 'opening' | 'failed'
-  failureStage?: 'clone' | 'open'
-  failureReason?: 'executor-offline' | 'executor-not-found' | 'clone-failed' | 'open-failed'
-  error?: string
 }
 
 export interface TaskContextData {
@@ -1650,6 +1631,8 @@ export interface PluginMarketplaceInstallResponse {
 
 export interface PluginDeviceSyncResponse {
   reconciled?: boolean
+  /** Local HTTP execution changed the observed account snapshot. */
+  localChanged?: boolean
   deviceId: string
   pendingCount: number
   sync: DeviceCapabilitySyncResponse

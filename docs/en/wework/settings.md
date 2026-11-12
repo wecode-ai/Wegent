@@ -43,6 +43,8 @@ cannot be enabled or disabled separately from the plugin management page.
 
 Open **bottom-left account menu → Settings → Personal → General**. The page groups basic preferences, runtime, AI assistance, privacy and the popout window. Most switches save immediately; check the page for save errors.
 
+The workbench remains open when the settings file is damaged or unreadable, and the original file is preserved. This does not authorize importing or removing native Codex credentials or replacing the active shortcut with a default. Affected setting changes report a failure and can be retried after repairing the file.
+
 | Feature                                    | Steps and result                                                                                             | Conditions or limitations                                                                                       |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | Mode                                       | Select Focus or Developer mode and confirm                                                                   | Restarts the managed plugin runtime; Focus mode hides Git entries                                               |
@@ -62,6 +64,10 @@ Open **bottom-left account menu → Settings → Personal → General**. The pag
 | Help improve Wework                        | Change the privacy preference and read the collection notice                                                 | Separate from explicitly exporting diagnostic logs                                                              |
 | Popout Window shortcut                     | Record a new key combination or clear the binding                                                            | Opens the Wework popout, not the message-send action                                                            |
 | System drag panel                          | Toggle in the popout group                                                                                   | Availability depends on device and system capabilities                                                          |
+
+Refusing data collection on first use or in privacy settings takes effect immediately. Enabling collection requires a successfully saved global preference, and a refusal saved by another window also applies. A failed save does not block the workbench; the next launch uses the saved preference or asks again. A later explicit choice takes precedence, so an older request completing late cannot re-enable collection after refusal.
+
+If saving the first choice fails, a notice at the top of the workbench offers **Retry** while the workbench remains usable. Retry reads the latest settings before saving again. After another window changes the preference, an opt-in based on an older revision is rejected. Refusing collection is allowed even from an older revision.
 
 Saving a UI preference, changing scheduler limits and replacing an executable have different activation rules. Follow restart prompts for Node.js and coding tools; saved preferences do not imply that existing processes have already changed.
 
@@ -326,7 +332,11 @@ In **Settings → Models**, click **Add model** and choose a provider first. Wew
 
 One provider configuration can contain multiple models. Each model item has its own model selection, display name, vision proxy, enabled state, and connection test, while all items share the provider-level API key, group, and technical configuration. Clicking **Add model** automatically refreshes the provider catalog and adds an item, so **Load models** is needed only for a manual refresh. A model item's **Test** action tests only that selected model. After saving, every item appears as an independent choice in the model picker.
 
-The DeepSeek profile uses the native Responses API and exposes `deepseek-v4-flash` and `deepseek-v4-pro`, the models currently available for Codex. Both use a 1,048,576-token context window, `high` default reasoning effort, live Web Search, and freeform `apply_patch`. The connection test also requires a real `apply_patch` custom-tool call. Existing Wework-managed DeepSeek Chat Completions configurations are migrated to the Responses API. The current catalog declares text input and disables image generation, so image generation and image understanding are not presented as supported capabilities for this profile.
+Local custom APIs and cloud Responses models default to ordinary function-tool conversion, independently of provider profile IDs or model names. Existing configurations without tool capability fields use the same defaults. Native custom tools, namespaces/tool search, or full passthrough require explicit selection.
+
+Responses connection tests also validate tool-call arguments. Missing arguments, invalid JSON, or arguments that do not satisfy the probe fail the test; retry from the same editor after correcting the problem.
+
+The DeepSeek profile uses the native Responses API and exposes `deepseek-v4-flash` and `deepseek-v4-pro`, the models currently available for Codex. Both use a 1,048,576-token context window, `high` default reasoning effort, and live Web Search. DeepSeek accepts only `apply_patch` as a custom tool, so Wework retains Code Mode while translating `exec` and freeform tools into function tools at the API boundary and restoring native tool calls from responses. The connection test verifies function-tool calling. Existing configurations without an explicit native-tool selection use the same portable adaptation without re-adding models; legacy Wework-managed Chat Completions configurations still migrate to the Responses API. The current catalog declares text input and disables image generation, so image generation and image understanding are not presented as supported capabilities for this profile.
 
 A text-only model can explicitly reference another model that declares image input as its vision proxy. Local-model references are maintained in Wework's local model settings. Cloud-model references must be configured in the Wegent web administration UI; Wework only consumes the `visionSidecarModel` reference returned by the Backend, does not provide cloud-model editing, and never selects a default vision model automatically. Before the primary request, Wework asks the vision model to describe each image and replaces `input_image` with the description text. With a configured proxy, executor generically derives a vision catalog from the current base catalog, so any text model preserves its reasoning, tool, context, and compaction capabilities. Without an explicit reference, the model remains text-only and makes no additional model call. Original media reaches only the vision model and never the text-only primary model. Vision proxies support OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages endpoints. Each turn describes at most eight distinct images, accepts images up to 20 MB, and injects an explicit error message when description fails. Remote vision endpoints must use HTTPS; only `localhost` and loopback IP addresses may use HTTP, and vision requests do not follow redirects so credentials cannot be forwarded to an unauthorized destination.
 
@@ -351,15 +361,24 @@ Codex credentials participate in cloud synchronization only after an explicit up
 
 Open **Settings → Personal → Appearance**. Changes stay on this device. **Reset** at the top restores appearance defaults; consider whether you want to keep custom values first.
 
-| Feature                                  | Steps and result                                                                                                            |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Theme                                    | Select light, dark or system                                                                                                |
-| Accent, Contrast                         | Choose a color or move the slider to adjust emphasis and contrast                                                           |
-| Translucent sidebar                      | Toggle transparency; system and window background affect the result                                                         |
-| Use different light and dark backgrounds | Enable to configure each mode separately; disable for a shared background                                                   |
-| Background image                         | Select or remove an image on the relevant mode card; adjust visibility and blur and choose main, sidebar or top-bar regions |
-| UI font, UI font size                    | Enter the interface font and adjust its size                                                                                |
-| Code font, Code font size                | Set the font and size for code/monospace content separately                                                                 |
+| Feature                                  | Steps and result                                                                                                                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Theme                                    | Select light, dark or system                                                                                                                                                                                       |
+| Light theme, Dark theme                  | Defaults to the original Wework palette, alongside all 29 names from the installed ChatGPT Desktop, including Tokyo Night: 30 names and 46 light/dark variants in total; system mode uses the corresponding choice |
+| Accent, Contrast                         | Choose a color or move the slider to adjust emphasis and contrast                                                                                                                                                  |
+| Restore theme accent                     | After customizing the accent, click Restore to use the current light/dark theme's accent again; fonts and background images remain unchanged                                                                       |
+| Translucent sidebar                      | Toggle transparency; system and window background affect the result                                                                                                                                                |
+| Use different light and dark backgrounds | Enable to configure each mode separately; disable for a shared background                                                                                                                                          |
+| Background image                         | Select or remove an image on the relevant mode card; adjust visibility and blur and choose main, sidebar or top-bar regions                                                                                        |
+| UI font, UI font size                    | Enter the interface font and adjust its size                                                                                                                                                                       |
+| Code font, Code font size                | Set the font and size for code/monospace content separately                                                                                                                                                        |
+
+The original Wework palette uses a white light background, a `#181818` dark background and a `#2563eb` blue accent.
+New preferences, migration from legacy default palettes and Reset select Wework. Changing the default does not overwrite saved named themes or custom color edits.
+
+Named themes cover application interfaces, menus, detached windows, code, terminals and visualizations.
+Startup flow and startup colors follow upstream, and remote Wegent Agent content retains its own theme.
+Reselecting a palette resets its color overrides; the light and dark choices remain independent.
 
 ## Context and default instructions
 

@@ -9,6 +9,7 @@ import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
+import { selectDesktopControlFile } from './select-file'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { readElementVisibility } from './element-visibility'
@@ -135,6 +136,7 @@ import { nextConnectorSyncRevision } from '@/features/cloud-connection/connector
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import type { LocalPluginInventoryRead } from '@/features/plugins/pluginInventorySources'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
+import { saveTelemetryConsent } from '@/telemetry/sessionConsent'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
@@ -641,7 +643,7 @@ export function seedDesktopE2ELocalModels(
       displayName: 'Desktop E2E DeepSeek Pro Vision Main',
       modelId: 'deepseek-v4-pro',
       apiFormat: 'openai-responses' as const,
-      toolProfile: 'custom' as const,
+      toolProfile: 'function' as const,
       requestPath: '/v1/responses',
       contextWindow: 1_048_576,
       webSearchMode: 'live' as const,
@@ -759,6 +761,8 @@ export async function installWeworkAutomationBridge(
     return
   }
 
+  // Startup assets can fill the default buffer before a failure snapshot is requested.
+  performance.setResourceTimingBufferSize(10_000)
   if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
     installLocalHarnessDiagnostics()
@@ -2773,6 +2777,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return JSON.stringify(updated.localHarnesses)
     }
+    case 'getAppPreferences':
+      return JSON.stringify(await getAppPreferences())
+    case 'setTelemetryConsent': {
+      const { enabled, expectedRevision } = JSON.parse(command.value ?? '{}') as {
+        enabled: boolean
+        expectedRevision: number
+      }
+      return JSON.stringify(await saveTelemetryConsent(enabled, expectedRevision))
+    }
     case 'setAppPreferences': {
       const patch = JSON.parse(command.value ?? '{}') as AppPreferencesPatch
       const preferences = await updateAppPreferences(patch)
@@ -2947,6 +2960,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return endDesktopControlDrag(command)
     case 'dropFile':
       return dropDesktopControlFile(command)
+    case 'selectFile':
+      return selectDesktopControlFile(findDesktopControlElements(command.selector)[0], command)
     case 'dropPaths':
       return dispatchDesktopControlPaths(command, 'drop')
     case 'pasteFile':
@@ -3581,7 +3596,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       stopRuntimeStreamDiagnostics()
       return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
-      performance.setResourceTimingBufferSize(10_000)
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
         conversationRendering: await collectConversationRenderingDiagnostics(capability =>
@@ -3656,7 +3670,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ) {
         throw new Error('Plugin image timing diagnostics require an absolute image path')
       }
-      performance.setResourceTimingBufferSize(10_000)
       const completed = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
       return JSON.stringify(
         completed

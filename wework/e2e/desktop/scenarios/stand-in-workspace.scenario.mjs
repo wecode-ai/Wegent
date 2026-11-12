@@ -425,7 +425,11 @@ export function createDesktopScenario({
               { project_id: project.id, task_id: issue.id },
               uiTimeoutMs
             )
-            assert.equal(assigned.assignee_user_id, USER_ID)
+            assert.equal(
+              assigned.assignee_user_id,
+              issue.assignee_user_id,
+              'Manual delegation must preserve the existing Issue assignee'
+            )
             const result = await requestExecutor(
               control,
               'runtime.tasks.get',

@@ -1,7 +1,43 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { waitForVoiceToolbarReady } from './voice-toolbar-flow.mjs'
+import { readVoiceProfileDiagnostics } from './voice-profile-diagnostics.mjs'
+
+test('voice diagnostics distinguish missing, empty and live writer locks without changing them', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'voice-profile-diagnostics-'))
+  try {
+    assert.equal(readVoiceProfileDiagnostics(home).writer, 'absent')
+    const root = join(home, 'dsh-core', 'profiles', 'wework-core')
+    await mkdir(root, { recursive: true })
+    const lock = join(root, 'package.json.lock')
+    await writeFile(lock, '')
+    assert.equal(readVoiceProfileDiagnostics(home).writer, 'empty')
+    assert.equal(await readFile(lock, 'utf8'), '')
+    await writeFile(lock, `${process.pid}\n`)
+    await writeFile(
+      join(root, 'cordis.patch.yml'),
+      '- id: speech\n  config:\n    defaultProvider: voice-toolbar-model\n'
+    )
+    assert.deepEqual(readVoiceProfileDiagnostics(home), {
+      writer: 'recorded',
+      writerPid: process.pid,
+      writerAlive: true,
+      fixtureProviderPersisted: true,
+    })
+    assert.equal(await readFile(lock, 'utf8'), `${process.pid}\n`)
+    await writeFile(lock, 'not-a-pid-secret')
+    assert.deepEqual(readVoiceProfileDiagnostics(home), {
+      writer: 'invalid',
+      fixtureProviderPersisted: true,
+    })
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
 
 test('voice readiness keeps the original wait and does not collect diagnostics on success', async () => {
   const commands = []

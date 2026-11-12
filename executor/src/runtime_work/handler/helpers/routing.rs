@@ -194,26 +194,26 @@ fn log_runtime_project_filter_item(link: &RuntimeTaskLink, details: RuntimeProje
     );
 }
 
+/// Record the resolved task link and its allowlisted model identity for read and archive events.
 fn log_runtime_archive_link(event: &str, link: &RuntimeTaskLink, archived_query: bool) {
-    log_executor_event(
-        event,
-        &[
-            ("archived_query", archived_query.to_string()),
-            ("local_task_id", link.local_task_id.clone()),
-            (
-                "thread_id",
-                link.thread_id.as_deref().unwrap_or("none").to_owned(),
-            ),
-            ("workspace_path", link.workspace_path.clone()),
-            ("runtime", link.runtime.clone()),
-            ("status", link.status.clone()),
-            ("running", link.running.to_string()),
-            (
-                "session_id",
-                runtime_session_id_from_link(link).unwrap_or_else(|| "none".to_owned()),
-            ),
-        ],
-    );
+    let mut fields = vec![
+        ("archived_query", archived_query.to_string()),
+        ("local_task_id", link.local_task_id.clone()),
+        (
+            "thread_id",
+            link.thread_id.as_deref().unwrap_or("none").to_owned(),
+        ),
+        ("workspace_path", link.workspace_path.clone()),
+        ("runtime", link.runtime.clone()),
+        ("status", link.status.clone()),
+        ("running", link.running.to_string()),
+        (
+            "session_id",
+            runtime_session_id_from_link(link).unwrap_or_else(|| "none".to_owned()),
+        ),
+    ];
+    fields.extend(model_selection_log_fields(&link.runtime_handle));
+    log_executor_event(event, &fields);
 }
 
 fn log_runtime_transcript_finished(details: RuntimeTranscriptLog<'_>) {
@@ -448,6 +448,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "cloudProjectId"
                 | "cloud_project_id"
                 | "client_user_message_id"
+                | "collaborationMode"
                 | "collaboration_mode"
                 | "collaboration_model"
                 | "modelSelection"
@@ -493,6 +494,26 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
 #[cfg(test)]
 mod stand_in_request_snapshot_tests {
     use super::*;
+
+    #[test]
+    fn native_collaboration_mode_survives_saved_execution_round_trip() {
+        for mode in ["default", "plan", "single"] {
+            let mut request = ExecutionRequest::default();
+            request.extra.extend(json!({"collaborationMode":mode,"collaboration_model":"single"})
+                .as_object().unwrap().clone());
+            let mut handle = json!({});
+            store_runtime_execution_request(&mut handle, &request);
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("index.json");
+            RuntimeWorkStore::new(path.clone()).upsert_task(RuntimeTaskLink {
+                local_task_id: "native-mode".into(), runtime_handle: handle, ..Default::default()
+            });
+            let restored = RuntimeWorkStore::new(path).get_task_summary("native-mode").unwrap();
+            let request = runtime_event_request_from_link(&restored);
+            assert_eq!(request.extra["collaborationMode"], mode);
+            assert_eq!(request.extra["collaboration_model"], "single");
+        }
+    }
 
     #[test]
     fn stand_in_bindings_and_request_identity_survive_snapshots_without_one_time_permission() {

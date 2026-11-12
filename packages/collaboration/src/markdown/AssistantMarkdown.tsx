@@ -269,7 +269,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <p
           data-scroll-anchor
           {...sourceLineData(node, sourceLineAnchors)}
-          className={`${variant === 'process' ? 'mb-1.5' : variant === 'user' ? 'mb-2 whitespace-pre-wrap' : 'mb-3'} min-w-0 break-words leading-6`}
+          className={`${variant === 'process' ? 'mb-1.5' : variant === 'user' ? 'mb-2 whitespace-pre-wrap' : 'mb-3'} min-w-0 break-words ${variant === 'user' ? 'leading-5' : 'leading-6'}`}
         >
           {children}
         </p>
@@ -295,7 +295,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <li
           data-scroll-anchor
           {...sourceLineData(node, sourceLineAnchors)}
-          className={`min-w-0 break-words leading-6 ${variant === 'process' ? '' : 'pl-1'}`}
+          className={`min-w-0 break-words ${variant === 'user' ? 'leading-5' : 'leading-6'} ${variant === 'process' ? '' : 'pl-1'}`}
         >
           {children}
         </li>

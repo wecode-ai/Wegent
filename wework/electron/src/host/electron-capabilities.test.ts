@@ -287,6 +287,23 @@ describe('showElectronNotification', () => {
     expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
   })
 
+  test('opens only the fixed platform notification settings destination', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.shellOpenExternal.mockClear()
+    const result = await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.openSettings', {
+      url: 'https://untrusted.invalid',
+    })
+    const expected =
+      process.platform === 'darwin'
+        ? 'x-apple.systempreferences:com.apple.preference.notifications'
+        : process.platform === 'win32'
+          ? 'ms-settings:notifications'
+          : null
+    expect(result).toEqual({ supported: Boolean(expected) })
+    if (expected) expect(electronMocks.shellOpenExternal).toHaveBeenCalledExactlyOnceWith(expected)
+    else expect(electronMocks.shellOpenExternal).not.toHaveBeenCalled()
+  })
+
   test('uses the production click action for desktop regression activation', async () => {
     const { router, notificationNavigation } = createIsolatedClipboardRouter()
     const url = 'wework://tasks/device-1/task-1'
@@ -502,6 +519,48 @@ describe('Process explorer capabilities', () => {
   })
 })
 
+describe('inline visualization window targeting', () => {
+  test.each([undefined, 'workspace-visualization'])(
+    'inspects the frame in the requested window: %s',
+    async windowLabel => {
+      const original = {
+        VITE_WEWORK_E2E: process.env.VITE_WEWORK_E2E,
+        WEWORK_E2E_CONTROL_URL: process.env.WEWORK_E2E_CONTROL_URL,
+      }
+      try {
+        process.env.VITE_WEWORK_E2E = 'true'
+        process.env.WEWORK_E2E_CONTROL_URL = 'http://127.0.0.1:1234'
+        const url = 'blob:http://127.0.0.1/visualization'
+        const frame = { url, executeJavaScript: vi.fn(async () => '249.32') }
+        const captureTarget = vi.fn(
+          () =>
+            ({
+              isDestroyed: () => false,
+              mainFrame: { executeJavaScript: vi.fn(async () => true), frames: [frame] },
+            }) as unknown as WebContents
+        )
+        const { router } = createIsolatedClipboardRouter(true, { captureTarget })
+
+        await expect(
+          router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.inlineVisualizationFrame', {
+            url,
+            action: 'text',
+            selector: '#interest',
+            ...(windowLabel ? { windowLabel } : {}),
+          })
+        ).resolves.toBe('249.32')
+        expect(captureTarget).toHaveBeenCalledExactlyOnceWith(windowLabel ?? 'main')
+        expect(frame.executeJavaScript).toHaveBeenCalledOnce()
+      } finally {
+        for (const [key, value] of Object.entries(original)) {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+      }
+    }
+  )
+})
+
 describe('renderer heap debugger ownership', () => {
   test('releases its heap lease without detaching another active consumer', async () => {
     const { contents, debuggerSession } = createWebContents({})
@@ -540,6 +599,14 @@ describe('renderer heap debugger ownership', () => {
 })
 
 describe('startup renderer capabilities', () => {
+  test('preserves the failed task-list source in the startup handoff', async () => {
+    const rendererStartupReady = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, { rendererStartupReady })
+    for (const source of ['task-list', 'task-list-error', 'unrecognized']) {
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'renderer.startupReady', { source })
+    }
+    expect(rendererStartupReady.mock.calls).toEqual([['task-list'], ['task-list-error'], ['other']])
+  })
   test('forwards the real renderer failure and supplies a message for legacy callers', async () => {
     const rendererStartupFailed = vi.fn()
     const { router } = createIsolatedClipboardRouter(true, { rendererStartupFailed })
@@ -585,6 +652,29 @@ describe('startup renderer capabilities', () => {
 })
 
 describe('Core DSH runtime capabilities', () => {
+  test('passes the consent revision to the atomic preference owner and rejects invalid revisions', async () => {
+    const updatePreferences = vi
+      .fn()
+      .mockResolvedValue({ telemetryEnabled: true, telemetryConsentRevision: 8 })
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, {
+      updatePreferences,
+    })
+    const patch = { telemetryEnabled: true, telemetryConsentAsked: true }
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.update', {
+      patch,
+      expectedTelemetryConsentRevision: 7,
+    })
+    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith(patch, 7)
+    for (const expectedTelemetryConsentRevision of [-1, 1.5, '7']) {
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.update', {
+          patch,
+          expectedTelemetryConsentRevision,
+        })
+      ).rejects.toThrow()
+    }
+    expect(updatePreferences).toHaveBeenCalledTimes(1)
+  })
   test('commits a mode before scheduling its restart outside the renderer lifetime', async () => {
     const stored = { workbenchMode: 'developer' }
     const updatePreferences = vi.fn(async patch => Object.assign(stored, patch))
@@ -612,7 +702,7 @@ describe('Core DSH runtime capabilities', () => {
     expect(completions).toHaveLength(1)
     await completions[0]()
     expect(scheduleCoreDshRestart).toHaveBeenCalledOnce()
-    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith({ workbenchMode: 'focus' })
+    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith({ workbenchMode: 'focus' }, undefined)
     expect(stored.workbenchMode).toBe('focus')
   })
 

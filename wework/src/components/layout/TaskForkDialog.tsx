@@ -277,7 +277,7 @@ export function TaskForkDialog({
           {requiresStop && (
             <div
               data-testid="task-fork-stop-notice"
-              className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+              className="mt-4 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning wework:border-amber-200 wework:bg-amber-50 wework:text-amber-800"
             >
               {t('workbench.task_fork_stop_notice', '当前任务正在执行。复制前会先停止当前回复。')}
             </div>
@@ -369,7 +369,7 @@ export function TaskForkDialog({
           {error && (
             <div
               data-testid="task-fork-error"
-              className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+              className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive wework:border-red-200 wework:bg-red-50 wework:text-red-700"
             >
               {error}
             </div>

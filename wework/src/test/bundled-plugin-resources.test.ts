@@ -147,8 +147,8 @@ describe('bundled plugin resources', () => {
     const plugin = resolve(root, 'plugins/wework-runtime')
     const manifest = JSON.parse(readFileSync(resolve(plugin, '.codex-plugin/plugin.json'), 'utf8'))
     expect(manifest.skills).toBe('./skills/')
+    expect(existsSync(resolve(plugin, 'skills/coding/SKILL.md'))).toBe(false)
     for (const name of [
-      'coding',
       'browser',
       'computer',
       'github',
@@ -377,11 +377,19 @@ describe('bundled plugin resources', () => {
       expect(workflow).toContain('plan-desktop-release.mjs')
       const concurrencyGroup = workflow.match(/^ {2}group: (.+)$/m)?.[1].trim()
       expect(concurrencyGroup).toContain(
-        `inputs.verification_run_id != '' || (contains(fromJSON('["app-update-refresh","app-update-retry"]'), inputs.verification_checkpoint) && inputs.verification_source_run_id != '' && !inputs.publish_release)`
+        `inputs.verification_run_id != '' || (inputs.verification_source_run_id != '' && !inputs.publish_release)`
       )
       expect(concurrencyGroup).toContain(
-        'github.ref, inputs.verification_run_id || inputs.verification_source_run_id)'
+        'github.ref, inputs.verification_run_id || inputs.verification_source_run_id || github.run_id)'
       )
+      const groupKeys = concurrencyGroup?.match(/github.ref, ([^)]+)\)/)?.[1].split(' || ')
+      const identifiers = [
+        { 'github.run_id': 'build-1' },
+        { 'github.run_id': 'build-2' },
+        { 'github.run_id': 'replay-1', 'inputs.verification_run_id': 'target-producer' },
+        { 'github.run_id': 'replay-2', 'inputs.verification_source_run_id': 'source-producer' },
+      ].map(context => groupKeys?.map(key => context[key as keyof typeof context]).find(Boolean))
+      expect(identifiers).toEqual(['build-1', 'build-2', 'target-producer', 'source-producer'])
       expect(concurrencyGroup).toMatch(/\|\| github\.workflow \}\}$/)
       expect(workflow).not.toContain('group: ${{ github.workflow }}-${{ github.ref }}')
       expect(workflow).not.toContain('prepare-rolling-desktop-installers.mjs')
