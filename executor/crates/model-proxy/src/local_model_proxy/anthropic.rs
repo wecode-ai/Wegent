@@ -14,7 +14,7 @@ use crate::logging::log_executor_event;
 
 use super::{
     chat::{self, ToolContext},
-    vision, DEFAULT_MAX_OUTPUT_TOKENS,
+    take_sse_block, vision, DEFAULT_MAX_OUTPUT_TOKENS,
 };
 
 pub(super) fn responses_to_anthropic(body: &Value) -> Result<(Value, ToolContext), String> {
@@ -346,10 +346,7 @@ where
 
 impl<S> AnthropicStreamState<S> {
     fn handle_block(&mut self, block: &str) {
-        for data in block.lines().filter_map(|line| line.strip_prefix("data:")) {
-            let Ok(event) = serde_json::from_str::<Value>(data.trim()) else {
-                continue;
-            };
+        if let Some(event) = super::sse::json(block) {
             self.handle_event(&event);
         }
     }
@@ -512,18 +509,6 @@ fn anthropic_finish_reason(value: &str) -> &str {
         "tool_use" => "tool_calls",
         _ => "stop",
     }
-}
-
-fn take_sse_block(buffer: &mut String) -> Option<String> {
-    let index = buffer.find("\n\n").or_else(|| buffer.find("\r\n\r\n"))?;
-    let delimiter = if buffer[index..].starts_with("\r\n\r\n") {
-        4
-    } else {
-        2
-    };
-    let block = buffer[..index].to_owned();
-    buffer.drain(..index + delimiter);
-    Some(block)
 }
 
 #[cfg(test)]

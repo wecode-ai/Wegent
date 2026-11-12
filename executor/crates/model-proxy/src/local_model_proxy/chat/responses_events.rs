@@ -198,26 +198,13 @@ pub(super) fn rewrite_responses_sse_block(
     block: &str,
     state: &mut ResponsesToolState,
 ) -> Option<String> {
-    let mut event_name: Option<String> = None;
-    let mut data_lines: Vec<&str> = Vec::new();
-    for raw_line in block.lines() {
-        let line = raw_line.trim_start_matches('\u{feff}').trim_start();
-        if let Some(value) = line.strip_prefix("event:") {
-            event_name = Some(value.trim().to_owned());
-        } else if let Some(value) = line.strip_prefix("data:") {
-            data_lines.push(value.trim_start());
-        }
-    }
-    if data_lines.is_empty() {
-        return None;
-    }
-    let data = data_lines.join("\n");
-    let data = data.trim();
-    let mut value = serde_json::from_str::<Value>(data).ok()?;
+    let mut value = crate::local_model_proxy::sse::json(block)?;
     let ids_normalized = normalize_responses_stream_ids(&mut value);
+    // Match Codex's JSON event type dispatch; SSE event headers are optional.
+    let event_type = value.get("type").and_then(Value::as_str)?.to_owned();
 
-    let rewritten = match event_name.as_deref() {
-        Some("response.output_item.added") => {
+    let rewritten = match event_type.as_str() {
+        "response.output_item.added" => {
             if let Some(item) = value.get_mut("item") {
                 if let Some(identity) = state.bridged_identity(item) {
                     let item_id = item
@@ -229,9 +216,9 @@ pub(super) fn rewrite_responses_sse_block(
                     restore_responses_tool_item(item, &identity, None);
                 }
             }
-            rewrite_event_data(block, &value)
+            Some(crate::local_model_proxy::sse::rewrite_data(block, &value))
         }
-        Some("response.function_call_arguments.delta") => {
+        "response.function_call_arguments.delta" => {
             let item_id = value
                 .get("item_id")
                 .and_then(Value::as_str)
@@ -249,7 +236,7 @@ pub(super) fn rewrite_responses_sse_block(
             }
             None
         }
-        Some("response.function_call_arguments.done") => {
+        "response.function_call_arguments.done" => {
             let item_id = value
                 .get("item_id")
                 .and_then(Value::as_str)
@@ -292,7 +279,7 @@ pub(super) fn rewrite_responses_sse_block(
             }
             None
         }
-        Some("response.output_item.done") => {
+        "response.output_item.done" => {
             if let Some(item) = value.get_mut("item") {
                 let item_id = item
                     .get("id")
@@ -308,9 +295,9 @@ pub(super) fn rewrite_responses_sse_block(
                     restore_responses_tool_item(item, &identity, arguments);
                 }
             }
-            rewrite_event_data(block, &value)
+            Some(crate::local_model_proxy::sse::rewrite_data(block, &value))
         }
-        Some("response.completed") => {
+        "response.completed" => {
             if let Some(response) = value.get_mut("response") {
                 if let Some(output) = response.get_mut("output").and_then(Value::as_array_mut) {
                     for item in output {
@@ -330,16 +317,14 @@ pub(super) fn rewrite_responses_sse_block(
                     }
                 }
             }
-            rewrite_event_data(block, &value)
+            Some(crate::local_model_proxy::sse::rewrite_data(block, &value))
         }
         _ => None,
     };
 
     rewritten
         .or_else(|| {
-            ids_normalized
-                .then(|| rewrite_event_data(block, &value))
-                .flatten()
+            ids_normalized.then(|| crate::local_model_proxy::sse::rewrite_data(block, &value))
         })
         .or_else(|| Some(block.to_owned()))
 }
@@ -384,26 +369,6 @@ pub(super) fn format_sse_event(event: &str, data: &Value) -> String {
         event,
         serde_json::to_string(data).unwrap_or_default()
     )
-}
-
-pub(super) fn rewrite_event_data(block: &str, value: &Value) -> Option<String> {
-    let mut lines: Vec<String> = Vec::new();
-    let mut replaced = false;
-    for raw_line in block.lines() {
-        let line = raw_line.trim_start_matches('\u{feff}').trim_start();
-        if let Some(data) = line.strip_prefix("data:") {
-            if !replaced {
-                lines.push(format!(
-                    "data: {}",
-                    serde_json::to_string(value).unwrap_or_else(|_| data.trim_start().to_owned())
-                ));
-                replaced = true;
-                continue;
-            }
-        }
-        lines.push(raw_line.to_owned());
-    }
-    Some(lines.join("\n"))
 }
 
 pub(crate) fn chat_sse_to_responses<S, E>(

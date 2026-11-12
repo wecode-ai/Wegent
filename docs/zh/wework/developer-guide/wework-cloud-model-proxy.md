@@ -83,6 +83,10 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 #### 通用 Responses 工具兼容
 
+所有模型流共用 executor 的 SSE 分帧和数据解析模块，包括 Responses 工具桥接、普通 Responses、透传检查、Chat Completions、Anthropic Messages、工具历史记录和 Harness 适配器。解析按流中的先后顺序处理 LF/CRLF 边界，拼接同一事件的全部 `data:` 行，并在网络块之间保留未完整接收的 UTF-8 字符。Responses 的工具分发和终态识别以 JSON `type` 为准，不依赖可选的 SSE `event:` 字段；重写事件时替换全部旧数据行，同时保留事件元数据。透传检查和历史记录不会修改转发的数据块。
+
+`model-sse-parsing` 桌面 E2E 复用真实 Electron、executor 和 Codex，仅模拟模型服务，覆盖 Responses function 桥接、原生 Responses、Chat Completions 和 Anthropic Messages。场景发送多行 JSON、混合换行、跨块中文和误导性事件头，要求真实 Code Mode 工具写入文件、读取文件，并将成功结果传入下一轮模型历史。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
+
 本机模型接口、云端模型、分身和配置的 Codex provider 使用相同默认策略：`tool_profile: "function"`，原生 `tool_search` 和 namespace 默认关闭。没有 profile 或工具能力字段的已有配置同样生效，无需重建模型。显式 `tool_profile: "custom"` 保留原生 custom 工具；本机 `codex_tool_compatibility: "native"` 或云端单项能力开关开启原生 namespace 和工具搜索。云端 `codex_request_mode: "passthrough"` 保留完整原生请求，`standard` 始终转换为 function 工具。
 
 `tool_profile: "function"` 同样适用于原生 namespace 内的 custom 工具。开启 `native_namespace_tools` 时，代理保留 namespace 及其描述，将内部的 `exec` 等 custom 工具转换为带字符串 `input` 参数的 function 工具；历史调用、工具结果和强制工具选择使用同一协议。关闭原生 namespace 时，代理展开 namespace，并为其中的 custom 工具保留相同的输入包装。返回给 Codex 的 SSE 恢复原始工具名、namespace 和原始输入，避免同名工具串线。
