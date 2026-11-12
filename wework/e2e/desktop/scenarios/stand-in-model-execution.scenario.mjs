@@ -517,6 +517,10 @@ export function createDesktopScenario(options) {
             await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
               visible: false,
             })
+            await control.command('press', 'body', { key: 'Escape' })
+            await control.command('waitFor', '[data-testid="model-selector-menu"]', {
+              visible: false,
+            })
             await control.command('waitFor', CHAT)
             assert.equal(
               (
@@ -882,6 +886,8 @@ async function verifyCloudModelRecovery({
     await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
       visible: false,
     })
+    await control.command('press', 'body', { key: 'Escape' })
+    await control.command('waitFor', '[data-testid="model-selector-menu"]', { visible: false })
     await waitForDeliveredCloudCatalog(control, catalogProxy)
     const updatedLabel = `${model.json.metadata.displayName} · updated limits`
     const updated = withModelLimits(model.json, UPDATED_LIMITS)
