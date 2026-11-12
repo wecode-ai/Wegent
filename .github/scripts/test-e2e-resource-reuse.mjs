@@ -17,6 +17,7 @@ import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
 import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
 
 test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositories", () => {
+  const mirrorList = "mirror+file:/etc/apt/wegent-ubuntu-mirrors.txt";
   const input = [
     "URIs: http://archive.ubuntu.com/ubuntu/",
     "URIs: https://security.ubuntu.com/ubuntu",
@@ -38,15 +39,28 @@ test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositor
   assert.equal(
     result.stdout,
     [
-      "URIs: http://mirrors.edge.kernel.org/ubuntu",
-      "URIs: http://mirrors.edge.kernel.org/ubuntu",
-      "deb http://mirrors.edge.kernel.org/ubuntu resolute main universe",
-      "URIs: http://mirrors.edge.kernel.org/ubuntu",
+      `URIs: ${mirrorList}`,
+      `URIs: ${mirrorList}`,
+      `deb ${mirrorList} resolute main universe`,
+      `URIs: ${mirrorList}`,
       "Suites: noble noble-updates noble-security resolute",
       "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
       "deb https://deb.nodesource.com/node_24.x nodistro main",
     ].join("\n"),
   );
+});
+
+test("CI Ubuntu mirrors provide two HTTPS origins in priority order", () => {
+  const result = spawnSync(
+    "bash",
+    ["-c", "source .github/scripts/lib/apt-packages.sh; ci_ubuntu_mirrors"],
+    { encoding: "utf8", cwd: resolve(import.meta.dirname, "../..") },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.trimEnd().split("\n"), [
+    "https://mirrors.edge.kernel.org/ubuntu\tpriority:1",
+    "https://archive.ubuntu.com/ubuntu",
+  ]);
 });
 
 test("historical fixtures use the exact GitHub release asset by ID", async () => {

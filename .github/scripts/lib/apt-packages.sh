@@ -2,8 +2,16 @@
 
 set -euo pipefail
 
+CI_UBUNTU_MIRROR_LIST=/etc/apt/wegent-ubuntu-mirrors.txt
+
+ci_ubuntu_mirrors() {
+  printf '%s\tpriority:1\n%s\n' \
+    'https://mirrors.edge.kernel.org/ubuntu' \
+    'https://archive.ubuntu.com/ubuntu'
+}
+
 rewrite_ci_ubuntu_archive() {
-  sed -E 's#https?://(archive|security|azure\.archive)\.ubuntu\.com/ubuntu/?|mirror\+file:/etc/apt/apt-mirrors\.txt#http://mirrors.edge.kernel.org/ubuntu#g'
+  sed -E "s#https?://(archive|security|azure\.archive)\.ubuntu\.com/ubuntu/?|mirror\+file:/etc/apt/apt-mirrors\.txt#mirror+file:${CI_UBUNTU_MIRROR_LIST}#g"
 }
 
 find_missing_apt_packages() {
