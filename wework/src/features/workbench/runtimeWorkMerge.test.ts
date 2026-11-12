@@ -1,7 +1,12 @@
 // @vitest-environment node
 
 import { describe, expect, test } from 'vitest'
-import type { DeviceInfo, RuntimeProjectWork, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  DeviceInfo,
+  RuntimeProjectWork,
+  RuntimeTaskSummary,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import { buildRuntimeRemoteProjectStateId } from '@/lib/runtime-project-identity'
 import { mergeRuntimeWorkLists } from './runtimeWorkMerge'
 
@@ -43,6 +48,17 @@ function project(key = 'project-a', deviceId = 'executor'): RuntimeProjectWork {
     ],
   }
 }
+function pinnedTask(pinned: boolean): RuntimeTaskSummary {
+  return {
+    taskId: 'task-pinned',
+    title: 'Pinned task',
+    runtime: 'codex',
+    workspacePath: '/srv/work',
+    updatedAt: 1_794_475_800_000,
+    pinned,
+    ...(pinned ? { pinnedOrder: 0 } : {}),
+  }
+}
 function reference(key: string | null = 'project-a'): RuntimeProjectWork {
   const stateKey = key ? buildRuntimeRemoteProjectStateId('relay', key) : 'external-sidebar-entry'
   return {
@@ -74,6 +90,47 @@ function reference(key: string | null = 'project-a'): RuntimeProjectWork {
 }
 
 describe('runtime project identity', () => {
+  test.each([true, false])('keeps the primary pin state %s when snapshots tie', primaryPinned => {
+    const primary = project()
+    const secondary = project()
+    primary.deviceWorkspaces[0].tasks = [pinnedTask(primaryPinned)]
+    secondary.deviceWorkspaces[0].tasks = [pinnedTask(!primaryPinned)]
+
+    const merged = mergeRuntimeWorkLists(list(primary), list(secondary), context)
+    const task = merged.projects[0].deviceWorkspaces[0].tasks[0]
+
+    expect(task).toMatchObject({ taskId: 'task-pinned', pinned: primaryPinned })
+    expect(task.pinnedOrder).toBe(primaryPinned ? 0 : undefined)
+  })
+
+  test('keeps the primary pin state when a duplicate task changes workspace kind', () => {
+    const primary = project()
+    primary.deviceWorkspaces[0].tasks = [pinnedTask(true)]
+    const secondary: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
+        {
+          deviceId: device.device_id,
+          workspacePath: '/srv/chat',
+          workspaceKind: 'chat',
+          available: true,
+          tasks: [{ ...pinnedTask(false), workspacePath: '/srv/chat' }],
+        },
+      ],
+      totalTasks: 1,
+    }
+
+    const merged = mergeRuntimeWorkLists(list(primary), secondary, context)
+    const tasks = [
+      ...merged.projects.flatMap(work => work.deviceWorkspaces.flatMap(item => item.tasks)),
+      ...merged.chats.flatMap(item => item.tasks),
+    ]
+
+    expect(tasks).toEqual([
+      expect.objectContaining({ taskId: 'task-pinned', pinned: true, pinnedOrder: 0 }),
+    ])
+  })
+
   test.each([true, false])(
     'joins a sidebar reference in either input order (reference first: %s)',
     referenceFirst => {

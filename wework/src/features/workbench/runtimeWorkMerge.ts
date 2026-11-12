@@ -38,7 +38,17 @@ export function mergeRuntimeWorkLists(
     canonicalizer
   )
   const mergedChats = mergeRuntimeWorkspaces(primaryWork.chats, secondaryWork.chats, canonicalizer)
-  const { projects, chats } = dedupeRuntimeTaskProjections(mergedProjects, mergedChats)
+  const primaryPinStates = indexPrimaryPinStates(primaryWork, canonicalizer)
+  const deduped = dedupeRuntimeTaskProjections(mergedProjects, mergedChats)
+  const projects = deduped.projects.map(project => {
+    const deviceWorkspaces = applyPrimaryPinStates(project.deviceWorkspaces, primaryPinStates)
+    return {
+      ...project,
+      deviceWorkspaces,
+      totalTasks: countWorkspaceTasks(deviceWorkspaces),
+    }
+  })
+  const chats = applyPrimaryPinStates(deduped.chats, primaryPinStates)
   const totalTasks =
     projects.reduce((total, project) => total + countWorkspaceTasks(project.deviceWorkspaces), 0) +
     countWorkspaceTasks(chats)
@@ -360,6 +370,59 @@ function mergeRuntimeTasks(
   secondaryTasks.forEach(upsertTask)
 
   return Array.from(tasks.values())
+}
+
+function indexPrimaryPinStates(
+  primaryWork: RuntimeWorkListResponse,
+  devices: WorkbenchDeviceResolver
+): Map<string, RuntimeTaskSummary> {
+  const states = new Map<string, RuntimeTaskSummary>()
+  const addWorkspace = (workspace: RuntimeDeviceWorkspace) => {
+    const canonicalWorkspace = canonicalizeRuntimeWorkspace(workspace, devices)
+    canonicalWorkspace.tasks.forEach(task => {
+      runtimeTaskProjectionAliases(canonicalWorkspace, task).forEach(alias => {
+        if (!states.has(alias)) states.set(alias, task)
+      })
+    })
+  }
+
+  primaryWork.projects.forEach(project => project.deviceWorkspaces.forEach(addWorkspace))
+  primaryWork.chats.forEach(addWorkspace)
+  return states
+}
+
+function applyPrimaryPinStates(
+  workspaces: RuntimeDeviceWorkspace[],
+  primaryPinStates: Map<string, RuntimeTaskSummary>
+): RuntimeDeviceWorkspace[] {
+  return workspaces.map(workspace => {
+    let changed = false
+    const tasks = workspace.tasks.map(task => {
+      const primaryTask = [...runtimeTaskProjectionAliases(workspace, task)]
+        .map(alias => primaryPinStates.get(alias))
+        .find((candidate): candidate is RuntimeTaskSummary => Boolean(candidate))
+      if (!primaryTask) return task
+      const nextTask = preservePrimaryPinState(primaryTask, task)
+      changed ||= nextTask !== task
+      return nextTask
+    })
+    return changed ? { ...workspace, tasks } : workspace
+  })
+}
+
+function preservePrimaryPinState(
+  primaryTask: RuntimeTaskSummary,
+  selectedTask: RuntimeTaskSummary
+): RuntimeTaskSummary {
+  if (typeof primaryTask.pinned !== 'boolean') return selectedTask
+
+  const task = { ...selectedTask, pinned: primaryTask.pinned }
+  if (primaryTask.pinned && primaryTask.pinnedOrder != null) {
+    task.pinnedOrder = primaryTask.pinnedOrder
+  } else {
+    delete task.pinnedOrder
+  }
+  return task
 }
 
 interface RuntimeTaskProjection {
