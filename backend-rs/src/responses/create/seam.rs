@@ -29,7 +29,7 @@ use crate::http_compat::FastApiError;
 use crate::internal_callback::completion;
 use crate::state::AppState;
 
-use super::dispatch::{self, ExecutionRequest};
+use super::dispatch::ExecutionRequest;
 use super::executor_client::{DEFAULT_EXECUTOR_MANAGER_URL, EXECUTOR_MANAGER_URL_ENV};
 use super::request::{BuildExecutionRequestInput, build_execution_request};
 use super::response_object::ResponseObject;
@@ -719,8 +719,7 @@ pub(super) fn enqueue_executor_dispatch(
     request: &ExecutionRequest,
     created_task: Option<crate::internal_callback::emitter::CreatedTask>,
 ) {
-    let payload = dispatch::assemble(request, false, true);
-    let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
+    let body = crate::executor_binding::dispatch_request(state, request);
     let url = super::executor_client::executor_responses_url(target_url);
     state
         .responses_dispatch

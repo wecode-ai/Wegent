@@ -22,7 +22,7 @@ const expectedCounts: Record<string, number> = {
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/claudecode-compaction.spec.ts': 4,
   'tasks/pipeline-session-archive.spec.ts': 5,
-  'tasks/claude-background-lifecycle.spec.ts': 3,
+  'tasks/claude-background-lifecycle.spec.ts': 4,
   'tasks/provider-native-claudecode.spec.ts': 2,
   'tasks/shell-reference-cancel.spec.ts': 1,
   'collaboration/collaboration-agent-execution.spec.ts': 1,

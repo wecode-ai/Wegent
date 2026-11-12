@@ -147,7 +147,7 @@ pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     /// `stream=false, background=true`, then the `chat:start` emit.
     Executor {
         url: String,
-        body: Value,
+        body: Result<crate::executor_binding::DispatchRequest, String>,
         start: Option<ExecutorStart<R>>,
         consumer: Box<ConsumerState<M, R>>,
         task_id: i64,
@@ -385,7 +385,10 @@ where
             subtask_id,
             user_id,
             message_id,
-        } => match send_executor(http, &url, &body).await {
+        } => match match body {
+            Ok(body) => send_executor(http, &url, &body).await,
+            Err(error) => Err(error),
+        } {
             Ok(()) => {
                 if let Some(start) = start {
                     emit_executor_start(start).await;
@@ -406,8 +409,12 @@ where
     }
 }
 
-async fn send_executor(http: &HttpClient, url: &str, body: &Value) -> Result<(), String> {
-    let request = executor_request(http, url, body)
+async fn send_executor(
+    http: &HttpClient,
+    url: &str,
+    dispatch: &crate::executor_binding::DispatchRequest,
+) -> Result<(), String> {
+    let request = executor_request(http, url, dispatch)
         .ok_or_else(|| "Could not build executor dispatch request".to_owned())?;
     let response = request
         .timeout(DISPATCH_TIMEOUT)
@@ -558,7 +565,7 @@ where
 fn executor_request(
     http: &HttpClient,
     url: &str,
-    body: &Value,
+    dispatch: &crate::executor_binding::DispatchRequest,
 ) -> Option<brz_http::RequestBuilder> {
     Some(
         crate::responses::create::openai_client::apply_openai_client_headers(
@@ -571,10 +578,14 @@ fn executor_request(
                 )
                 .header(
                     "authorization",
-                    crate::responses::create::openai_client::OPENAI_DUMMY_AUTHORIZATION,
+                    format!(
+                        "{} {}",
+                        crate::executor_binding::AUTHORIZATION_SCHEME,
+                        dispatch.binding_token
+                    ),
                 ),
         )
-        .json(body),
+        .json(&dispatch.body),
     )
 }
 

@@ -1,7 +1,14 @@
 import { APIRequestContext } from '@playwright/test'
 import { test, expect, EXECUTOR_USER, executorMockUrl } from '../../fixtures/executor-test'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
-import { collectTaskToolCalls, extractTaskAnswer } from '../../utils/provider-native-test-support'
+import {
+  clearToolScenario,
+  collectTaskToolCalls,
+  configureToolScenario,
+  extractTaskAnswer,
+  getTask,
+  waitForTaskTerminal,
+} from '../../utils/provider-native-test-support'
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_URL = executorMockUrl()
@@ -292,6 +299,145 @@ test.describe('Real Claude background subagent lifecycle', () => {
       expect(cleared.ok()).toBe(true)
     }
   })
+})
+
+test('cloud Claude registers downloadable artifacts before new and reused turns finish', async ({
+  page,
+  request,
+  executorAccount,
+}) => {
+  test.setTimeout(120_000)
+  const model = `e2e-cloud-artifact-${crypto.randomUUID().slice(0, 12)}`
+  const shell = `${model}-shell`
+  const bot = `${model}-bot`
+  const team = `${model}-team`
+  const token = executorAccount.token
+  const headers = createBackendRequestHeaders(token)
+  let taskId: number | undefined
+  let executorName: string | undefined
+  const cleanup: Array<() => Promise<unknown>> = []
+
+  try {
+    const teamId = await createAgent(request, headers, model, shell, bot, team)
+    await page.addInitScript(id => {
+      localStorage.setItem('user_onboarding_completed', 'true')
+      localStorage.setItem('wegent_last_team_id', String(id))
+      localStorage.setItem('wegent_last_team_id_chat', String(id))
+    }, teamId)
+    await page.goto(`/chat?teamId=${teamId}`, { waitUntil: 'domcontentloaded' })
+    const selector = page.getByTestId('model-selector')
+    await expect(selector).toBeEnabled()
+    await selector.click()
+    await page.getByTestId('model-cascade-search-input').fill(model)
+    await page.getByTestId(`model-option-${model}`).click()
+
+    for (const turn of [1, 2]) {
+      const prompt = `Create the test file for ${model}, turn ${turn}.`
+      const name = `report-${turn}.txt`
+      const content = `ARTIFACT_CONTENT_${model}_${turn}`
+      const marker = `ARTIFACT_REGISTERED_${model}_${turn}`
+      await configureToolScenario(request, prompt, [
+        {
+          toolCalls: [
+            {
+              toolName: 'Bash',
+              arguments: {
+                command: [
+                  'set -eu',
+                  `printf '%s' '${content}' > "$WEGENT_TASK_WORKSPACE/${name}"`,
+                  `"$WEGENT_EXECUTOR_BINARY" artifact declare --path '${name}'`,
+                  `printf '%s' '${marker}'`,
+                ].join('\n'),
+              },
+            },
+          ],
+        },
+        { responseContent: `Created ${name}.` },
+      ])
+      cleanup.push(() => clearToolScenario(request, prompt))
+      const gate = await request.post(`${MOCK_URL}/stream-rules`, {
+        data: { matchText: marker, responseContent: `Created ${name}.`, holdResponse: true },
+      })
+      expect(gate.ok(), await gate.text()).toBe(true)
+      cleanup.push(() =>
+        request.delete(`${MOCK_URL}/stream-rules`, { params: { matchText: marker } })
+      )
+
+      await page.getByTestId('message-input').fill(prompt)
+      await page.getByTestId('send-button').click()
+      await expect.poll(() => new URL(page.url()).searchParams.get('taskId')).not.toBeNull()
+      const id = Number(new URL(page.url()).searchParams.get('taskId'))
+      expect(id).toBeGreaterThan(0)
+      taskId ??= id
+      expect(id).toBe(taskId)
+
+      let artifactId: number | undefined
+      await expect
+        .poll(
+          async () => {
+            const detail = (await getTask(request, token, id)) as {
+              status: string
+              subtasks: Array<{
+                status: string
+                executor_name?: string
+                contexts?: Array<{ id: number; name: string; context_type: string }>
+              }>
+            }
+            const subtask = detail.subtasks.find(item =>
+              item.contexts?.some(
+                context =>
+                  context.name === name && context.context_type === 'remote_workspace_artifact'
+              )
+            )
+            if (!subtask) return undefined
+            expect(detail.status).toBe('RUNNING')
+            expect(subtask.status).toBe('RUNNING')
+            expect(subtask.executor_name).toBeTruthy()
+            executorName ??= subtask.executor_name
+            expect(subtask.executor_name).toBe(executorName)
+            artifactId = subtask.contexts!.find(context => context.name === name)!.id
+            return artifactId
+          },
+          { timeout: 35_000 }
+        )
+        .toBeGreaterThan(0)
+
+      const file = await request.get(
+        `${API_URL}/api/tasks/${id}/remote-workspace/artifacts/${artifactId}/file`,
+        { headers }
+      )
+      expect(file.ok(), await file.text()).toBe(true)
+      expect(await file.text()).toBe(content)
+      const released = await request.post(`${MOCK_URL}/stream-rules/release`, {
+        data: { matchText: marker },
+      })
+      expect(released.ok(), await released.text()).toBe(true)
+      await waitForTaskTerminal(token, id, /^COMPLETED$/)
+      await clearToolScenario(request, prompt)
+      const removed = await request.delete(`${MOCK_URL}/stream-rules`, {
+        params: { matchText: marker },
+      })
+      expect(removed.ok(), await removed.text()).toBe(true)
+    }
+  } finally {
+    for (const action of cleanup.reverse()) await action()
+    if (taskId) {
+      const removed = await request.delete(`${API_URL}/api/tasks/${taskId}`, { headers })
+      expect([200, 204, 404]).toContain(removed.status())
+    }
+    for (const [kind, name] of [
+      ['teams', team],
+      ['bots', bot],
+      ['models', model],
+    ]) {
+      const removed = await request.delete(`${API_URL}/api/v1/namespaces/default/${kind}/${name}`, {
+        headers,
+      })
+      expect([200, 204, 404]).toContain(removed.status())
+    }
+    const removed = await request.delete(`${API_URL}/api/shells/${shell}`, { headers })
+    expect([200, 204, 404]).toContain(removed.status())
+  }
 })
 
 async function createAgent(
