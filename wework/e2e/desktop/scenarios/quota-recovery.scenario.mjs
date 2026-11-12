@@ -154,6 +154,7 @@ export function createDesktopScenario({ workspacePath }) {
         DEFAULT_STEP_TIMEOUT_MS
       )
       holdQuota = false
+      const observationDeadline = Math.max(resetAt * 1000 + 500, Date.now() + 10_000)
       await waitForValue(
         async () => {
           assert.equal(
@@ -163,7 +164,7 @@ export function createDesktopScenario({ workspacePath }) {
           )
           return Date.now()
         },
-        now => now >= resetAt * 1000 + 500,
+        now => now >= observationDeadline,
         'The cancellation observation window did not finish',
         15_000
       )
