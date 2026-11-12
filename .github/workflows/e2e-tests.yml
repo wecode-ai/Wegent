@@ -2223,6 +2223,8 @@ jobs:
           name: backend-logs-executor
           path: |
             backend/backend.log
+            logs/backend/rust/error.log
+            logs/backend/rust/warn.log
             backend/backend-stalled.log
             backend/backend-stalled-rust/info.log
             backend/chat_shell.log
