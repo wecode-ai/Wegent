@@ -16,6 +16,22 @@ import type { ReactNode } from 'react'
 
 afterEach(cleanup)
 
+it.each([0, 7])(
+  'identifies the current assignee when their display name is absent: %s',
+  async viewerId => {
+    const assigned = { ...issue('mine'), assignee_user_id: viewerId, assignee_name: null }
+    const { props, rerender } = await setup([source(vi.fn().mockResolvedValue([assigned]))])
+    rerender(
+      <WeworkPersonalHome
+        {...props}
+        userId={viewerId}
+        projects={[{ ...projects[0], project_store: viewerId === 0 ? 'local' : 'backend' }]}
+      />
+    )
+    expect(await screen.findByTestId('cloud-todo-card-assignee-mine')).toHaveTextContent('Me')
+  }
+)
+
 it('replaces the single Issue tab while keeping the assistant tab', async () => {
   await setup([
     source(

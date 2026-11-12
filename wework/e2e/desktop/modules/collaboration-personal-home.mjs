@@ -52,6 +52,7 @@ export async function verifyCollaborationPersonalHome(
   await control.command('waitFor', scoped(`[data-testid="personal-home-issue-${issue.id}"]`), {
     text: issue.title,
   })
+  await control.command('waitFor', scoped(`[data-testid="cloud-todo-card-assignee-${issue.id}"]`))
   await control.command('waitFor', scoped('[data-testid="personal-home-work-list"]'))
   for (const order of ['assignment', 'activity', 'priority', 'attention']) {
     await control.command('fill', scoped('[data-testid="personal-home-sort"]'), { value: order })

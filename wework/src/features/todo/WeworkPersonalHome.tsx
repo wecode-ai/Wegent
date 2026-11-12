@@ -189,20 +189,16 @@ function PersonalIssueList({
             </span>
           </h3>
           {items.map(item => {
-            const assignedAt = personalHomeAssignmentAt(
-              item,
+            const viewerIds =
               project.project_store === 'local'
                 ? (localUserIds ?? [userId])
                 : [project.current_user_id ?? userId]
-            )
+            const assignedAt = personalHomeAssignmentAt(item, viewerIds)
             const waiting =
-              pendingIssueHumanRequests(item).length > 0 &&
-              issueNeedsUser(
-                item,
-                project.project_store === 'local'
-                  ? (localUserIds ?? [userId])
-                  : (project.current_user_id ?? userId)
-              )
+              pendingIssueHumanRequests(item).length > 0 && issueNeedsUser(item, viewerIds)
+            const currentAssignee =
+              item.assignee_user_id != null &&
+              viewerIds.some(id => String(id) === String(item.assignee_user_id))
             const configuredStatus = project.board_config?.statuses.find(
               status => status.id === item.status
             )?.name
@@ -214,7 +210,11 @@ function PersonalIssueList({
                 variant="list"
                 cardRef={item.id === recentIssue?.id ? recentCard : undefined}
                 key={item.id}
-                item={item}
+                item={
+                  currentAssignee && !item.assignee_name
+                    ? { ...item, assignee_name: t('personalHome.me') }
+                    : item
+                }
                 reference={`#${item.sequence_number}`}
                 labels={{
                   ...labels,

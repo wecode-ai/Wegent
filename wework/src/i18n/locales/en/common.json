@@ -1,8 +1,9 @@
 {
   "personalHome": {
     "title": "My work",
-    "subtitle": "Your issues and the work your stand-in is moving forward.",
+    "subtitle": "Your issues and the work your assistant is moving forward.",
     "assigned": "Assigned to me",
+    "me": "Me",
     "participating": "Participating",
     "issueScope": "Issue scope",
     "workspaceTabs": "Right workspace",
