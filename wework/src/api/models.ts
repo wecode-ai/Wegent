@@ -8,7 +8,12 @@ export interface ModelApi {
     options?: HttpRequestOptions & { forceRefresh?: boolean }
   ): Promise<UnifiedModelListResponse>
   /** Resolve one model even when it is hidden from the selector catalog. */
-  getModel?(modelName: string, modelType?: string, clientOrigin?: string): Promise<UnifiedModel>
+  getModel?(
+    modelName: string,
+    modelType?: string,
+    clientOrigin?: string,
+    modelCategoryType?: string
+  ): Promise<UnifiedModel>
   refresh?(): void
   subscribe?(onChange: () => void): () => void
 }

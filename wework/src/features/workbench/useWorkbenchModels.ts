@@ -295,7 +295,8 @@ export function useWorkbenchModels({
           model = await api.getModel(
             nextSelectionConfig.modelName,
             nextSelectionConfig.modelType,
-            'wework'
+            'wework',
+            'llm'
           )
           if (
             !model ||

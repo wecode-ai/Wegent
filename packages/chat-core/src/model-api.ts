@@ -69,13 +69,15 @@ export function createModelApi(client: {
     getModel(
       modelName: string,
       modelType?: string,
-      clientOrigin?: string
+      clientOrigin?: string,
+      modelCategoryType?: string
     ): Promise<UnifiedModel> {
       // The single-model endpoint still resolves public models hidden from the
       // selector, which lets an existing conversation keep its recorded model.
       const query = new URLSearchParams()
       if (modelType) query.set('model_type', modelType)
       if (clientOrigin) query.set('client_origin', clientOrigin)
+      if (modelCategoryType) query.set('model_category_type', modelCategoryType)
       const suffix = query.toString()
       return withDeadline(signal =>
         client.get<UnifiedModel>(
