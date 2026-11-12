@@ -7,6 +7,24 @@ use sha2::{Digest, Sha256};
 pub(crate) const REQUEST_ACCOUNT: &str = "_runtime_event_account";
 pub(crate) const RAW_ACCOUNT: &str = "_runtime_event_account";
 
+/// An immutable local routing identity for shared Runtime event producers.
+/// Backend authentication and resource authorization remain independent.
+#[derive(Clone)]
+pub struct RuntimeEventSource {
+    account: String,
+}
+
+impl RuntimeEventSource {
+    /// Capture once at work admission and reuse for late events after reconnects.
+    pub fn capture(connection: &ConnectionConfig) -> Option<Self> {
+        account(connection).map(|account| Self { account })
+    }
+
+    pub fn stamp(&self, event: &mut Value) {
+        event[RAW_ACCOUNT] = Value::String(self.account.clone());
+    }
+}
+
 pub(crate) fn account(connection: &ConnectionConfig) -> Option<String> {
     if connection.backend_url.trim().is_empty() || connection.auth_token.trim().is_empty() {
         return None;
@@ -49,7 +67,10 @@ pub(crate) fn admit(payload: &mut Value, connection: Option<&ConnectionConfig>) 
 
 pub(crate) fn stamp(event: &mut Value, request: &ExecutionRequest) {
     if let Some(account) = request.extra.get(REQUEST_ACCOUNT).and_then(Value::as_str) {
-        event[RAW_ACCOUNT] = Value::String(account.to_owned());
+        RuntimeEventSource {
+            account: account.to_owned(),
+        }
+        .stamp(event);
     }
 }
 

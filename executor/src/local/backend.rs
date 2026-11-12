@@ -257,6 +257,8 @@ where
         .with_device_route_id_slot(device_route_id)
     }
 
+    /// Shared producers must capture `RuntimeEventSource` when accepting work
+    /// and stamp events with that source, including after account changes.
     pub fn new_for_app_sidecar_with_shared_runtime_work_handler(
         config: LocalBackendConfig,
         transport: T,

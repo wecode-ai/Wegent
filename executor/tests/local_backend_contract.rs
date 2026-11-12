@@ -19,7 +19,7 @@ use flate2::read::GzDecoder;
 use serde_json::{json, Value};
 use tokio::{sync::broadcast, time::timeout};
 use wegent_executor::{
-    config::device::{DeviceConfig, UpdateConfig},
+    config::device::{ConnectionConfig, DeviceConfig, UpdateConfig},
     emitter::ResponsesEventBuilder,
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     local::backend::{
@@ -27,11 +27,21 @@ use wegent_executor::{
         LocalBackendClient, LocalBackendConfig, LocalBackendEventSink, LocalBackendRunner,
         LocalBackendTransport,
     },
+    local::RuntimeEventSource,
     runner::EventSink,
     runtime_work::RuntimeWorkRpcHandler,
 };
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn shared_event_source(config: &LocalBackendConfig) -> RuntimeEventSource {
+    RuntimeEventSource::capture(&ConnectionConfig {
+        backend_url: config.backend_url.clone(),
+        auth_token: config.auth_token.clone(),
+        ..Default::default()
+    })
+    .unwrap()
+}
 
 #[tokio::test]
 async fn local_backend_rejects_missing_persistent_identity_before_registration() {
@@ -677,6 +687,12 @@ async fn local_backend_execute_command_handler_returns_backend_call_ack_payload(
 
 #[tokio::test]
 async fn local_backend_runtime_rpc_handler_uses_default_runtime_work_handler() {
+    let _lock = ENV_LOCK.lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        executor_home.path().to_str().unwrap(),
+    );
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();
@@ -858,8 +874,10 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
         "/bin/false",
         event_tx.clone(),
     ));
+    let config = local_backend_config();
+    let source = shared_event_source(&config);
     let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
-        local_backend_config(),
+        config,
         transport.clone(),
         handler,
         event_tx.subscribe(),
@@ -867,13 +885,13 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
     let runner_task = tokio::spawn(runner.run_forever());
     transport.wait_for_emit_event("device:heartbeat").await;
 
-    event_tx
-        .send(json!({
-            "type": "event",
-            "event": "runtime.task.completed",
-            "payload": {"task_id": "runtime-1"}
-        }))
-        .unwrap();
+    let mut event = json!({
+        "type": "event",
+        "event": "runtime.task.completed",
+        "payload": {"task_id": "runtime-1"}
+    });
+    source.stamp(&mut event);
+    event_tx.send(event).unwrap();
 
     transport.wait_for_emit_event("runtime:event").await;
     runner_task.abort();
@@ -899,6 +917,7 @@ async fn local_backend_replays_runtime_events_after_reconnecting() {
     config.heartbeat_timeout = Duration::from_millis(5);
     config.reconnect_delay = Duration::from_millis(1);
     config.reconnect_delay_max = Duration::from_millis(1);
+    let source = shared_event_source(&config);
     let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         config,
         transport.clone(),
@@ -907,11 +926,12 @@ async fn local_backend_replays_runtime_events_after_reconnecting() {
     );
     let runner_task = tokio::spawn(runner.run_forever());
     transport.wait_for_emit_event("device:heartbeat").await;
-    let event = json!({
+    let mut event = json!({
         "type": "event",
         "event": "runtime.task.completed",
         "payload": {"task_id": "runtime-1"}
     });
+    source.stamp(&mut event);
 
     event_tx.send(event.clone()).unwrap();
 
