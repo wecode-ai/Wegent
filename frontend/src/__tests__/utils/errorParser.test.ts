@@ -60,6 +60,14 @@ describe('errorParser', () => {
         const error = '(pymysql.err.OperationalError) (2003, "Can not connect to MySQL server")'
         expect(parseError(error).type).toBe('generic_error')
       })
+
+      it('should not treat failure marker text inside SQL as user-code failure', () => {
+        const error =
+          "(pymysql.err.OperationalError) (1064, 'syntax error')\n" +
+          '[SQL: INSERT INTO logs (executor_name, message) VALUES ' +
+          "('worker', 'Traceback (most recent call last): exit code 1')]"
+        expect(parseError(error).type).toBe('generic_error')
+      })
     })
 
     describe('forbidden/unauthorized errors', () => {

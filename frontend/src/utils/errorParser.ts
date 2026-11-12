@@ -118,17 +118,18 @@ function classifyByMessage(errorMessage: string): ParsedError {
 
   // Database driver errors (check first: the rendered SQL/statement text contains
   // words such as "executor" that the container/executor rules below would match).
-  // A user-code traceback followed by an executor exit code is still a container
-  // failure, even when the traceback names a database driver or includes SQL.
+  // Inspect only the wrapper before [SQL:]: statements and parameters can contain
+  // traceback or exit-code text as data. A user-code traceback plus an executor
+  // exit in that wrapper is still a container failure.
+  const sqlMarkerIndex = lowerMessage.indexOf('[sql:')
+  const outerMessage = sqlMarkerIndex >= 0 ? lowerMessage.slice(0, sqlMarkerIndex) : lowerMessage
   const hasDatabaseDriverMarker =
-    lowerMessage.includes('[sql:') ||
-    lowerMessage.includes('sqlalchemy') ||
-    lowerMessage.includes('pymysql')
+    sqlMarkerIndex >= 0 || outerMessage.includes('sqlalchemy') || outerMessage.includes('pymysql')
   const hasExecutorExitMarker =
-    /\bexit code\s*:?\s*-?\d+/.test(lowerMessage) ||
-    /\bexited(?: immediately)? with (?:code|status)\s*:?\s*-?\d+/.test(lowerMessage)
+    /\bexit code\s*:?\s*-?\d+/.test(outerMessage) ||
+    /\bexited(?: immediately)? with (?:code|status)\s*:?\s*-?\d+/.test(outerMessage)
   const hasUserCodeFailureMarker =
-    lowerMessage.includes('traceback (most recent call last):') && hasExecutorExitMarker
+    outerMessage.includes('traceback (most recent call last):') && hasExecutorExitMarker
   if (hasDatabaseDriverMarker && !hasUserCodeFailureMarker) {
     return buildResult('generic_error', errorMessage)
   }
