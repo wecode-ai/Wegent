@@ -26,37 +26,41 @@ export async function materializeBundledComponentArchive(
 ): Promise<string> {
   const stagePrefix = options.stagePrefix ?? 'component-archive'
   const source = resolve(resources, archive.path)
-  await runStartupStage(options.onStage, `${stagePrefix}-source-verify`, async () => {
-    const child = relative(resolve(resources), source)
-    if (
-      isAbsolute(archive.path) ||
-      !child ||
-      child === '..' ||
-      child.startsWith('../') ||
-      child.startsWith('..\\') ||
-      isAbsolute(child) ||
-      !/^[a-f0-9]{64}$/.test(archive.sha256) ||
-      !/^[a-f0-9]{64}$/.test(contentSha256) ||
-      !Number.isSafeInteger(archive.bytes) ||
-      archive.bytes <= 0
-    )
-      throw new Error('Bundled component archive metadata is invalid')
-    const physicalChild = relative(await realpath(resources), await realpath(source))
-    if (
-      physicalChild === '..' ||
-      physicalChild.startsWith('../') ||
-      physicalChild.startsWith('..\\') ||
-      isAbsolute(physicalChild)
-    )
-      throw new Error('Bundled component archive escapes its package')
-    const metadata = await stat(source)
-    if (
-      !metadata.isFile() ||
-      metadata.size !== archive.bytes ||
-      (await sha256(source)) !== archive.sha256
-    )
-      throw new Error('Bundled component archive integrity mismatch')
-  })
+  const sourceVerified = runStartupStage(
+    options.onStage,
+    `${stagePrefix}-source-verify`,
+    async () => {
+      const child = relative(resolve(resources), source)
+      if (
+        isAbsolute(archive.path) ||
+        !child ||
+        child === '..' ||
+        child.startsWith('../') ||
+        child.startsWith('..\\') ||
+        isAbsolute(child) ||
+        !/^[a-f0-9]{64}$/.test(archive.sha256) ||
+        !/^[a-f0-9]{64}$/.test(contentSha256) ||
+        !Number.isSafeInteger(archive.bytes) ||
+        archive.bytes <= 0
+      )
+        throw new Error('Bundled component archive metadata is invalid')
+      const physicalChild = relative(await realpath(resources), await realpath(source))
+      if (
+        physicalChild === '..' ||
+        physicalChild.startsWith('../') ||
+        physicalChild.startsWith('..\\') ||
+        isAbsolute(physicalChild)
+      )
+        throw new Error('Bundled component archive escapes its package')
+      const metadata = await stat(source)
+      if (
+        !metadata.isFile() ||
+        metadata.size !== archive.bytes ||
+        (await sha256(source)) !== archive.sha256
+      )
+        throw new Error('Bundled component archive integrity mismatch')
+    }
+  )
   const matches = async (path: string) => {
     return runStartupStage(
       options.onStage,
@@ -72,15 +76,18 @@ export async function materializeBundledComponentArchive(
       matched => ({ matched })
     )
   }
-  const published = await publishImmutableDirectory(
+  const published = publishImmutableDirectory(
     join(cache, archive.sha256),
-    content =>
-      runStartupStage(options.onStage, `${stagePrefix}-extract`, async () => {
+    async content => {
+      await sourceVerified
+      await runStartupStage(options.onStage, `${stagePrefix}-extract`, async () => {
         await extractPhysicalRelease(source, content)
         if (!(await matches(content)))
           throw new Error('Bundled component content checksum mismatch')
-      }),
+      })
+    },
     matches
   )
-  return realpath(published)
+  const [publishedPath] = await Promise.all([published, sourceVerified])
+  return realpath(publishedPath)
 }

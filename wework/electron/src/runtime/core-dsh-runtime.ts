@@ -10,6 +10,7 @@ import { runStartupStage, type StartupStageReporter } from './startup-stage.js'
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
 const PROFILE_STAMP = '.wework-runtime.json'
+const MANAGED_PROFILE_COPY_WORKERS = 2
 const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-app-wework', 'wework-app'],
   ['@wegent/dsh-electron-host', 'wework-electron-host'],
@@ -578,11 +579,19 @@ async function copyManagedProfilePlugins(
   profileRoot: string,
   packageNames: string[]
 ): Promise<number> {
-  for (const packageName of packageNames) {
-    const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
-    await rm(destination, { recursive: true, force: true })
-    await copyManagedPlugin(runtime.pluginRoots[packageName], destination)
+  let next = 0
+  const copyNext = async () => {
+    while (next < packageNames.length) {
+      const packageName = packageNames[next++]
+      const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
+      await rm(destination, { recursive: true, force: true })
+      await copyManagedPlugin(runtime.pluginRoots[packageName], destination)
+    }
   }
+  // Independent plugin trees can overlap filesystem latency without oversubscribing the disk.
+  await Promise.all(
+    Array.from({ length: Math.min(MANAGED_PROFILE_COPY_WORKERS, packageNames.length) }, copyNext)
+  )
   return packageNames.length
 }
 
