@@ -41,13 +41,13 @@ const APPROVED_MEMBERSHIP_QUERY: &str = "SELECT resource_members.id AS resource_
      AND resource_members.copied_resource_id = 0 \n LIMIT 1";
 
 const INSERT_SHARE_LINK_QUERY: &str = "INSERT INTO share_links \
-     (resource_type, resource_id, share_token, token_hash, require_approval, \
+     (resource_type, resource_id, share_token, token_hash, token_version, require_approval, \
      default_role, expires_at, created_by_user_id, is_active, created_at, updated_at) \
-     VALUES ('Task', ?, ?, ?, false, 'Reporter', ?, ?, true, NOW(6), NOW(6))";
+     VALUES ('Task', ?, ?, ?, 2, false, 'Reporter', ?, ?, true, NOW(6), NOW(6))";
 
 /// `task_member_service.is_member` over `task_access_store.is_member`: the
 /// viewer owns the active task, or holds an approved membership in it.
-pub(super) async fn is_member(
+pub(crate) async fn is_member(
     state: &AppState,
     task_id: i64,
     user_id: i64,

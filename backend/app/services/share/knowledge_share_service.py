@@ -496,16 +496,14 @@ class KnowledgeShareService(UnifiedShareService):
         self,
         db: Session,
         share_token: str,
+        viewer_id: Optional[int] = None,
     ) -> dict:
         """
-        Get public knowledge base info by share token (no auth required).
-
-        This method is used by the public share page to display KB info
-        without requiring authentication.
+        Read KB share info. Only opaque tokens grant anonymous access.
 
         Args:
             db: Database session
-            share_token: Encrypted share token
+            share_token: Persisted share token
 
         Returns:
             Dict with public KB info
@@ -523,6 +521,7 @@ class KnowledgeShareService(UnifiedShareService):
 
         if share_link.resource_type not in self._resource_type_variants:
             raise ValueError("Invalid resource type")
+        self._require_link_access(db, share_link, viewer_id)
         is_expired = share_link.is_expired
 
         # Get KB info
@@ -566,6 +565,7 @@ class KnowledgeShareService(UnifiedShareService):
         self,
         db: Session,
         knowledge_base_id: int,
+        user_id: int,
     ) -> str | None:
         """
         Get share token for a knowledge base by its ID.
@@ -579,7 +579,12 @@ class KnowledgeShareService(UnifiedShareService):
         Returns:
             Share token if found, None otherwise
         """
-        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource = self._get_resource(db, knowledge_base_id, user_id)
+        if not resource:
+            raise HTTPException(status_code=403, detail="Resource access required")
+
+        # An ID is never a sharing credential. Only owners may retrieve bearers;
+        # authorized members may resolve legacy locators, which grant no access.
         resource_type_variants = self._resource_type_variants
 
         share_link = (
@@ -588,7 +593,13 @@ class KnowledgeShareService(UnifiedShareService):
                 ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == knowledge_base_id,
                 ShareLink.is_active == True,
+                ShareLink.expires_at > datetime.utcnow(),
             )
+            .filter(
+                (ShareLink.token_version == ShareLink.LEGACY_TOKEN_VERSION)
+                | (resource.user_id == user_id)
+            )
+            .order_by(ShareLink.token_version.desc(), ShareLink.id.desc())
             .first()
         )
 

@@ -19,7 +19,6 @@
 use std::sync::Arc;
 
 use brz_mysql::{FromMysqlRow, MysqlResult, MysqlRow};
-use sha2::{Digest, Sha256};
 
 use super::auth::UserRow;
 use super::context_store;
@@ -31,7 +30,8 @@ use crate::state::AppState;
 const CONTEXT_TYPE_ATTACHMENT: &str = "attachment";
 
 const TASK_SHARE_LINK_QUERY: &str = "SELECT share_links.resource_id AS resource_id, \
-     share_links.created_by_user_id AS created_by_user_id FROM share_links \
+     share_links.created_by_user_id AS created_by_user_id, \
+     share_links.token_version AS token_version FROM share_links \
      WHERE share_links.token_hash = ? AND share_links.resource_type = 'Task' \
      AND share_links.is_active = true AND share_links.expires_at > UTC_TIMESTAMP() LIMIT 1";
 
@@ -61,6 +61,7 @@ pub struct ShareInfo {
 struct ShareLinkRow {
     resource_id: i64,
     created_by_user_id: i64,
+    token_version: i32,
 }
 
 /// `_validate_share_token_access`: the same attachment access the source
@@ -72,8 +73,9 @@ pub(super) async fn validate_share_token_access(
     state: &Arc<AppState>,
     attachment_id: i64,
     share_token: &str,
+    viewer_id: Option<i64>,
 ) -> Result<bool, FastApiError> {
-    let Some(share_info) = decode_share_token(state, share_token).await? else {
+    let Some(share_info) = decode_share_token(state, share_token, viewer_id).await? else {
         return Ok(false);
     };
 
@@ -90,9 +92,9 @@ pub(super) async fn validate_share_token_access(
         return Ok(false);
     }
 
-    // Unlinked attachments authorize on the owner matching the token.
+    // An unlinked upload is not part of this shared task, even with the same owner.
     if context.subtask_id <= 0 {
-        return Ok(i64::from(context.user_id) == share_info.user_id);
+        return Ok(false);
     }
 
     // `subtask_store.get_by_id`: the full projection; a returned row then
@@ -136,6 +138,7 @@ pub(super) async fn validate_share_token_access(
 async fn decode_share_token(
     state: &Arc<AppState>,
     share_token: &str,
+    viewer_id: Option<i64>,
 ) -> Result<Option<ShareInfo>, FastApiError> {
     let share_link: Option<ShareLinkRow> = state
         .mysql
@@ -145,11 +148,19 @@ async fn decode_share_token(
             tracing::error!(%error, "share-token link lookup failed");
             internal_error()
         })?;
-    let Some(info) = share_link.map(|link| ShareInfo {
+    let Some(link) = share_link else {
+        return Ok(None);
+    };
+    crate::share_access::require_task_access(
+        state,
+        link.token_version,
+        link.resource_id,
+        viewer_id,
+    )
+    .await?;
+    let info = ShareInfo {
         user_id: link.created_by_user_id,
         task_id: link.resource_id,
-    }) else {
-        return Ok(None);
     };
 
     let user: Option<UserRow> = state
@@ -176,8 +187,7 @@ async fn decode_share_token(
 
 /// SHA-256(token) as lowercase hex, matching `share_links.token_hash`.
 fn token_hash(token: &str) -> String {
-    let digest = Sha256::digest(token.as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    crate::share_access::token_hash(token)
 }
 
 /// `subqueryload(Subtask.contexts)`: the contexts of one subtask, the source

@@ -369,15 +369,17 @@ export const taskApis = {
     return apiClient.post('/tasks/share/join', request)
   },
 
-  // Get public shared task - doesn't require authentication
-  // Use native fetch to avoid authentication interceptor
+  // Opaque links are public; legacy locators use existing session permissions.
+  // Keep native fetch so access failures can be explained on the share page.
   getPublicSharedTask: async (token: string): Promise<PublicSharedTaskResponse> => {
     const query = new URLSearchParams()
     query.append('token', token)
+    const sessionToken = getToken()
     const response = await fetch(`/api/tasks/share/public?${query}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
       },
     })
 
@@ -392,7 +394,7 @@ export const taskApis = {
       } catch {
         // Not JSON, use original text
       }
-      throw new Error(errorMsg)
+      throw Object.assign(new Error(errorMsg), { status: response.status })
     }
 
     return response.json()

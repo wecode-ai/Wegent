@@ -12,7 +12,6 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use sha2::{Digest, Sha256};
 
 use crate::config::env_or_dotenv;
 
@@ -39,8 +38,7 @@ pub(crate) fn generate_share_token() -> Result<String, ()> {
 
 /// SHA-256(token) as lowercase hex, the `share_links.token_hash` value.
 pub(crate) fn token_hash(token: &str) -> String {
-    let digest = Sha256::digest(token.as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    crate::share_access::token_hash(token)
 }
 
 /// The `"{base_url}/shared/task?token={token}"` link.

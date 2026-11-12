@@ -8,7 +8,6 @@ Service for managing task sharing functionality.
 Uses the unified ResourceMember model instead of the legacy SharedTask table.
 """
 
-import hashlib
 import logging
 import re
 import secrets
@@ -18,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
@@ -34,6 +34,7 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
+from app.services.share.token_access import hash_share_token, require_share_link_access
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 
@@ -42,9 +43,6 @@ logger = logging.getLogger(__name__)
 
 class SharedTaskService:
     """Service for managing task sharing functionality using ResourceMember"""
-
-    def __init__(self):
-        self.token_hasher = hashlib.sha256
 
     def generate_share_token(self, user_id: int, task_id: int) -> str:
         """Generate a 256-bit opaque share token."""
@@ -63,6 +61,7 @@ class SharedTaskService:
             resource_id=task_id,
             share_token=share_token,
             token_hash=self._hash_share_token(share_token),
+            token_version=ShareLink.OPAQUE_TOKEN_VERSION,
             require_approval=False,
             default_role=ResourceRole.Reporter.value,
             expires_at=datetime.utcnow() + timedelta(days=365 * 100),
@@ -75,7 +74,7 @@ class SharedTaskService:
 
     def _hash_share_token(self, share_token: str) -> str:
         """Return the SHA-256 digest used for token lookup."""
-        return self.token_hasher(share_token.encode("utf-8")).hexdigest()
+        return hash_share_token(share_token)
 
     def _find_share_link(self, db: Session, share_token: str) -> Optional[ShareLink]:
         """Find an active task share link by its token hash."""
@@ -91,7 +90,10 @@ class SharedTaskService:
         return share_link
 
     def decode_share_token(
-        self, share_token: str, db: Optional[Session] = None
+        self,
+        share_token: str,
+        db: Optional[Session] = None,
+        viewer_id: Optional[int] = None,
     ) -> Optional[TaskShareInfo]:
         """Resolve a task share token to its active, owned resource."""
         if db is None:
@@ -102,6 +104,7 @@ class SharedTaskService:
             logger.info("Invalid or inactive share token")
             return None
 
+        self._require_link_access(db, share_link, viewer_id)
         user_id = share_link.created_by_user_id
         task_id = share_link.resource_id
 
@@ -217,9 +220,23 @@ class SharedTaskService:
             share_token=share_link.share_token,
         )
 
-    def get_share_info(self, db: Session, share_token: str) -> TaskShareInfo:
+    def _require_link_access(
+        self, db: Session, link: ShareLink, viewer_id: Optional[int]
+    ) -> None:
+        require_share_link_access(
+            db,
+            link,
+            viewer_id,
+            lambda uid: task_stores.task_access_store.is_member(
+                db, task_id=link.resource_id, user_id=uid
+            ),
+        )
+
+    def get_share_info(
+        self, db: Session, share_token: str, viewer_id: Optional[int] = None
+    ) -> TaskShareInfo:
         """Get task share information from token"""
-        share_info = self.decode_share_token(share_token, db)
+        share_info = self.decode_share_token(share_token, db, viewer_id)
 
         if not share_info:
             raise HTTPException(status_code=400, detail="Invalid share token")
@@ -554,7 +571,7 @@ class SharedTaskService:
     ) -> JoinSharedTaskResponse:
         """Join a shared task by copying it to user's task list"""
         # Decode share token
-        share_info = self.decode_share_token(share_token, db)
+        share_info = self.decode_share_token(share_token, db, user_id)
 
         if not share_info:
             raise HTTPException(status_code=400, detail="Invalid share token")
@@ -714,13 +731,14 @@ class SharedTaskService:
         return True
 
     def get_public_shared_task(
-        self, db: Session, share_token: str
+        self, db: Session, share_token: str, viewer_id: Optional[int] = None
     ) -> PublicSharedTaskResponse:
-        """Get public shared task data (no authentication required)"""
+        """Read opaque shares anonymously; legacy locators require resource access."""
         share_link = self._find_share_link(db, share_token)
         if not share_link:
             raise HTTPException(status_code=400, detail="Invalid share link format")
 
+        self._require_link_access(db, share_link, viewer_id)
         user_id = share_link.created_by_user_id
         task_id = share_link.resource_id
 

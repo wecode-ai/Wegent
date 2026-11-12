@@ -4,7 +4,6 @@
 
 """Service for task invite link functionality."""
 
-import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta
@@ -12,17 +11,16 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.core.config import settings
 from app.models.share_link import ResourceType, ShareLink
+from app.services.share.token_access import hash_share_token, require_share_link_access
 
 logger = logging.getLogger(__name__)
 
 
 class TaskInviteService:
     """Service for generating and validating group chat invite links."""
-
-    def __init__(self):
-        self.token_hasher = hashlib.sha256
 
     def generate_invite_token(
         self, db: Session, task_id: int, inviter_id: int, expires_hours: int = 0
@@ -42,6 +40,7 @@ class TaskInviteService:
                 resource_id=task_id,
                 share_token=token,
                 token_hash=self._hash_share_token(token),
+                token_version=ShareLink.OPAQUE_TOKEN_VERSION,
                 require_approval=False,
                 default_role="Reporter",
                 expires_at=expire_time,
@@ -54,9 +53,11 @@ class TaskInviteService:
 
     def _hash_share_token(self, token: str) -> str:
         """Return the SHA-256 digest used for token lookup."""
-        return self.token_hasher(token.encode("utf-8")).hexdigest()
+        return hash_share_token(token)
 
-    def decode_invite_token(self, db: Session, token: str) -> Optional[dict]:
+    def decode_invite_token(
+        self, db: Session, token: str, viewer_id: Optional[int] = None
+    ) -> Optional[dict]:
         """
         Resolve a group chat invite token to its active share record.
 
@@ -75,6 +76,14 @@ class TaskInviteService:
             logger.info("Invalid or inactive invite token")
             return None
 
+        require_share_link_access(
+            db,
+            invite,
+            viewer_id,
+            lambda uid: task_stores.task_access_store.is_member(
+                db, task_id=invite.resource_id, user_id=uid
+            ),
+        )
         return {
             "task_id": invite.resource_id,
             "inviter_id": invite.created_by_user_id,

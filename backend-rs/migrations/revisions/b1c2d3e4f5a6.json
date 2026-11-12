@@ -7,6 +7,12 @@
   "upgrade": [
     {
       "sql": [
+        "ALTER TABLE share_links ADD COLUMN token_version INT NOT NULL DEFAULT 1",
+        "ALTER TABLE share_links ALTER COLUMN token_version SET DEFAULT 2"
+      ]
+    },
+    {
+      "sql": [
         "ALTER TABLE share_links ADD COLUMN token_hash VARCHAR(64) NULL COMMENT 'SHA-256 hash of the share token'"
       ]
     },
@@ -31,7 +37,8 @@
     },
     {
       "sql": [
-        "ALTER TABLE share_links DROP COLUMN token_hash"
+        "ALTER TABLE share_links DROP COLUMN token_hash",
+        "ALTER TABLE share_links DROP COLUMN token_version"
       ]
     }
   ]

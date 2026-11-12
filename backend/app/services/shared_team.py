@@ -8,7 +8,6 @@ Service for managing team sharing functionality.
 Uses the unified ResourceMember model instead of the legacy SharedTeam table.
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -34,15 +33,13 @@ from app.schemas.shared_team import (
     TeamShareInfo,
     TeamShareResponse,
 )
+from app.services.share.token_access import hash_share_token, require_share_link_access
 
 logger = logging.getLogger(__name__)
 
 
 class SharedTeamService:
     """Service for managing team sharing functionality using ResourceMember"""
-
-    def __init__(self):
-        self.token_hasher = hashlib.sha256
 
     def generate_share_token(self, user_id: int, team_id: int) -> str:
         """Generate a 256-bit opaque share token."""
@@ -61,6 +58,7 @@ class SharedTeamService:
             resource_id=team_id,
             share_token=share_token,
             token_hash=self._hash_share_token(share_token),
+            token_version=ShareLink.OPAQUE_TOKEN_VERSION,
             require_approval=False,
             default_role=ResourceRole.Maintainer.value,
             expires_at=datetime.utcnow() + timedelta(days=365 * 100),
@@ -73,7 +71,7 @@ class SharedTeamService:
 
     def _hash_share_token(self, share_token: str) -> str:
         """Return the SHA-256 digest used for token lookup."""
-        return self.token_hasher(share_token.encode("utf-8")).hexdigest()
+        return hash_share_token(share_token)
 
     def _find_share_link(self, db: Session, share_token: str) -> Optional[ShareLink]:
         """Find an active team share link by its token hash."""
@@ -89,7 +87,10 @@ class SharedTeamService:
         return share_link
 
     def decode_share_token(
-        self, share_token: str, db: Optional[Session] = None
+        self,
+        share_token: str,
+        db: Optional[Session] = None,
+        viewer_id: Optional[int] = None,
     ) -> Optional[TeamShareInfo]:
         """Resolve a team share token to its active, owned resource."""
         if db is None:
@@ -100,6 +101,16 @@ class SharedTeamService:
             logger.info("Invalid or inactive share token")
             return None
 
+        from app.services.share import team_share_service
+
+        require_share_link_access(
+            db,
+            share_link,
+            viewer_id,
+            lambda uid: team_share_service._get_resource(
+                db, share_link.resource_id, uid
+            ),
+        )
         user_id = share_link.created_by_user_id
         team_id = share_link.resource_id
         user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
@@ -376,9 +387,11 @@ class SharedTeamService:
             share_token=share_link.share_token,
         )
 
-    def get_share_info(self, db: Session, share_token: str) -> TeamShareInfo:
+    def get_share_info(
+        self, db: Session, share_token: str, viewer_id: Optional[int] = None
+    ) -> TeamShareInfo:
         """Get team share information from token"""
-        share_info = self.decode_share_token(share_token, db)
+        share_info = self.decode_share_token(share_token, db, viewer_id)
 
         if not share_info:
             raise HTTPException(status_code=400, detail="Invalid share token")
@@ -407,7 +420,7 @@ class SharedTeamService:
     ) -> JoinSharedTeamResponse:
         """Join a shared team"""
         # Decode share token
-        share_info = self.decode_share_token(share_token, db)
+        share_info = self.decode_share_token(share_token, db, user_id)
 
         if not share_info:
             raise HTTPException(status_code=400, detail="Invalid share token")

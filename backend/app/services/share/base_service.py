@@ -9,7 +9,6 @@ Provides common functionality for share links and resource members management.
 Resource-specific services should extend this base class.
 """
 
-import hashlib
 import logging
 import secrets
 import urllib.parse
@@ -51,6 +50,7 @@ from app.schemas.share import (
     ShareLinkResponse,
 )
 from app.services.external_entity_resolver import get_entity_resolver
+from app.services.share.token_access import hash_share_token, require_share_link_access
 from shared.telemetry.decorators import trace_sync
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
@@ -81,7 +81,6 @@ class UnifiedShareService(ABC):
     def __init__(self, resource_type: ResourceType):
         """Initialize the share service for a specific resource type."""
         self.resource_type = resource_type
-        self.token_hasher = hashlib.sha256
 
     @property
     def _resource_type_variants(self) -> list[str]:
@@ -159,7 +158,7 @@ class UnifiedShareService(ABC):
         """
         Return the SHA-256 digest used for token lookup.
         """
-        return self.token_hasher(share_token.encode("utf-8")).hexdigest()
+        return hash_share_token(share_token)
 
     def _find_share_link(self, db: Session, share_token: str) -> Optional[ShareLink]:
         """Find an active share link by its token hash."""
@@ -223,6 +222,7 @@ class UnifiedShareService(ABC):
                 ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active.is_(True),
+                ShareLink.token_version == ShareLink.OPAQUE_TOKEN_VERSION,
             )
             .first()
         )
@@ -294,6 +294,7 @@ class UnifiedShareService(ABC):
             resource_id=resource_id,
             share_token=share_token,
             token_hash=token_hash,
+            token_version=ShareLink.OPAQUE_TOKEN_VERSION,
             require_approval=config.require_approval,
             default_role=config.default_role.value,
             expires_at=expires_at,
@@ -349,6 +350,11 @@ class UnifiedShareService(ABC):
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active.is_(True),
             )
+            .filter(
+                (ShareLink.token_version == ShareLink.LEGACY_TOKEN_VERSION)
+                | (self._get_resource_owner_id(resource) == user_id)
+            )
+            .order_by(ShareLink.token_version.desc(), ShareLink.id.desc())
             .first()
         )
 
@@ -419,8 +425,20 @@ class UnifiedShareService(ABC):
     # Public Info (for share link preview)
     # =========================================================================
 
-    def get_share_info(self, db: Session, share_token: str) -> ShareInfoResponse:
-        """Get public info about a share link (no auth required)."""
+    def _require_link_access(
+        self, db: Session, link: ShareLink, viewer_id: Optional[int]
+    ) -> None:
+        require_share_link_access(
+            db,
+            link,
+            viewer_id,
+            lambda uid: self._get_resource(db, link.resource_id, uid),
+        )
+
+    def get_share_info(
+        self, db: Session, share_token: str, viewer_id: Optional[int] = None
+    ) -> ShareInfoResponse:
+        """Read opaque shares anonymously; legacy locators require resource access."""
         share_link = self._find_share_link(db, share_token)
         if not share_link:
             raise HTTPException(status_code=400, detail="Invalid share token")
@@ -432,6 +450,7 @@ class UnifiedShareService(ABC):
         if share_link.resource_type not in self._resource_type_variants:
             raise HTTPException(status_code=400, detail="Invalid resource type")
 
+        self._require_link_access(db, share_link, viewer_id)
         is_expired = share_link.is_expired
 
         # Get resource (without user validation)
@@ -484,6 +503,8 @@ class UnifiedShareService(ABC):
         if share_link.resource_type not in self._resource_type_variants:
             raise HTTPException(status_code=400, detail="Invalid resource type")
 
+        self._require_link_access(db, share_link, user_id)
+        resource_type_variants = self._resource_type_variants
         if share_link.is_expired:
             raise HTTPException(status_code=400, detail="Share link has expired")
 

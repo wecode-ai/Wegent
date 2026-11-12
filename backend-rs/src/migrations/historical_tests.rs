@@ -243,14 +243,20 @@ async fn historical_secure_share_tokens_backfill_existing_rows() -> Result<()> {
         target(mysql, "b1c2d3e4f5a6").await?;
         let rows = data(
             mysql,
-            "SELECT JSON_OBJECT('hash',token_hash,'expected',SHA2(REPLACE(REPLACE(share_token,'%2B','+'),'%3D','='),256),'active',is_active) AS data FROM share_links ORDER BY id",
+            "SELECT JSON_OBJECT('hash',token_hash,'expected',SHA2(REPLACE(REPLACE(share_token,'%2B','+'),'%3D','='),256),'active',is_active,'version',token_version) AS data FROM share_links ORDER BY id",
         )
         .await?;
         assert_eq!(rows.len(), 3);
         for (index, row) in rows.into_iter().enumerate() {
             assert_eq!(row["active"], json!(u8::from(index < 2)));
+            assert_eq!(row["version"], json!(1));
             assert_eq!(row["hash"], row["expected"]);
         }
+        sql(mysql, &["INSERT INTO share_links(resource_type,resource_id,share_token,token_hash,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) VALUES ('Task',4,'opaque-new',SHA2('opaque-new',256),0,'Reporter','9999-12-31',7,1,NOW(),NOW())"]).await?;
+        assert_eq!(
+            data(mysql, "SELECT JSON_OBJECT('version',token_version) AS data FROM share_links WHERE share_token='opaque-new'").await?,
+            vec![json!({"version": 2})],
+        );
         assert!(mysql.execute("INSERT INTO share_links(resource_type,resource_id,share_token,token_hash,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) SELECT resource_type,resource_id,'different-token',token_hash,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at FROM share_links WHERE id=1",()).await.is_err());
         // MySQL implicitly drops the named index when the indexed column is
         // removed, so the JSON migration treats dropping it as optional.
@@ -268,7 +274,7 @@ async fn historical_secure_share_tokens_backfill_existing_rows() -> Result<()> {
             Ok(())
         })
         .await?;
-        assert!(data(mysql, "SELECT JSON_OBJECT('name',COLUMN_NAME) AS data FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='share_links' AND COLUMN_NAME='token_hash'").await?.is_empty());
+        assert!(data(mysql, "SELECT JSON_OBJECT('name',COLUMN_NAME) AS data FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='share_links' AND COLUMN_NAME IN ('token_hash','token_version')").await?.is_empty());
         Ok(())
     })
     .await

@@ -66,6 +66,8 @@ class ShareLink(Base):
     """
 
     __tablename__ = "share_links"
+    LEGACY_TOKEN_VERSION = 1
+    OPAQUE_TOKEN_VERSION = 2
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
 
@@ -94,6 +96,13 @@ class ShareLink(Base):
         nullable=False,
         unique=True,
         comment="SHA-256 hash of the share token",
+    )
+    token_version = Column(
+        Integer,
+        nullable=False,
+        default=OPAQUE_TOKEN_VERSION,
+        server_default="2",
+        comment="1: legacy locator requiring resource access; 2: opaque bearer token",
     )
 
     # Share configuration

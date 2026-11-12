@@ -12,7 +12,7 @@ import { openTaskRightPanel, registerTaskRightPanel } from '@/features/tasks/com
 const mockGetPublicSharedTask = jest.fn()
 const mockRouterPush = jest.fn()
 const mockTranslate = (key: string) => key
-const mockSearchParams = new URLSearchParams('token=shared-token')
+let mockSearchParams = new URLSearchParams('token=shared-token')
 
 jest.mock('next/dynamic', () => ({
   __esModule: true,
@@ -71,6 +71,7 @@ registerTaskRightPanel('shared-test-panel', ({ embedded, onClose }) => (
 
 describe('SharedTaskPage right panel', () => {
   beforeEach(() => {
+    mockSearchParams = new URLSearchParams('token=shared-token')
     mockGetPublicSharedTask.mockReset()
     mockRouterPush.mockReset()
     mockGetPublicSharedTask.mockResolvedValue({
@@ -108,5 +109,49 @@ describe('SharedTaskPage right panel', () => {
       expect(screen.queryByTestId('shared-task-right-panel')).not.toBeInTheDocument()
     })
     expect(content).not.toHaveClass('lg:mr-[720px]')
+  })
+
+  it('preserves the legacy URL when login is required instead of copying', async () => {
+    mockGetPublicSharedTask.mockRejectedValue(Object.assign(new Error('legacy'), { status: 401 }))
+    render(<SharedTaskPage />)
+    await screen.findByRole('heading', { name: 'shared-task:legacy_login_required' })
+    expect(screen.queryByTestId('shared-message-bubble')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('shared-task-access-action'))
+    expect(mockRouterPush).toHaveBeenCalledWith(
+      `/login?redirect=${encodeURIComponent('/shared/task?token=shared-token')}`
+    )
+  })
+
+  it('explains missing permission without offering automatic access', async () => {
+    mockGetPublicSharedTask.mockRejectedValue(Object.assign(new Error('legacy'), { status: 403 }))
+    render(<SharedTaskPage />)
+    await screen.findByRole('heading', { name: 'shared-task:legacy_access_required' })
+    expect(screen.getByText('shared-task:legacy_access_required_desc')).toBeInTheDocument()
+    expect(screen.queryByTestId('shared-message-bubble')).not.toBeInTheDocument()
+  })
+
+  it('does not publish a late response from the previous share URL', async () => {
+    let resolveOld!: (value: unknown) => void
+    mockGetPublicSharedTask.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveOld = resolve
+        })
+    )
+    const { rerender } = render(<SharedTaskPage />)
+    mockSearchParams = new URLSearchParams('token=new-link')
+    rerender(<SharedTaskPage />)
+    await screen.findByRole('heading', { name: 'Shared task' })
+    await act(async () => {
+      resolveOld({
+        task_title: 'Previous private task',
+        sharer_name: 'Owner',
+        sharer_id: 1,
+        subtasks: [],
+        created_at: '2026-08-31T00:00:00Z',
+      })
+    })
+    expect(screen.queryByRole('heading', { name: 'Previous private task' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Shared task' })).toBeInTheDocument()
   })
 })

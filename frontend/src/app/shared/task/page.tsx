@@ -40,31 +40,43 @@ function SharedTaskContent() {
   const [taskData, setTaskData] = useState<PublicSharedTaskResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [accessError, setAccessError] = useState<401 | 403 | null>(null)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [showInAppBrowserGuard, setShowInAppBrowserGuard] = useState(false)
   const { request: rightPanelRequest, close: closeRightPanel } = useTaskRightPanel()
   const rightPanelOffsetClassName = rightPanelRequest ? 'lg:mr-[720px]' : ''
 
   // Check if user is logged in
-  const isLoggedIn = !!getToken()
+  const sessionToken = getToken()
+  const isLoggedIn = !!sessionToken
 
   // Fetch current user if logged in
   useEffect(() => {
+    let cancelled = false
+    setCurrentUser(null)
     const fetchUser = async () => {
       if (isLoggedIn) {
         try {
           const user = await userApis.getCurrentUser()
-          setCurrentUser(user)
+          if (!cancelled) setCurrentUser(user)
         } catch (err) {
           console.error('Failed to fetch user:', err)
         }
       }
     }
     fetchUser()
-  }, [isLoggedIn])
+    return () => {
+      cancelled = true
+    }
+  }, [isLoggedIn, sessionToken])
 
   useEffect(() => {
     const token = searchParams.get('token')
+    let cancelled = false
+    setTaskData(null)
+    setError(null)
+    setAccessError(null)
+    setIsLoading(true)
 
     if (!token) {
       setError(t('shared-task:error_invalid_link'))
@@ -75,13 +87,25 @@ function SharedTaskContent() {
     const fetchSharedTask = async () => {
       try {
         const data = await taskApis.getPublicSharedTask(token)
+        if (cancelled) return
         setTaskData(data)
       } catch (err) {
+        if (cancelled) return
         console.error('Failed to load shared task:', err)
         const errorMessage = (err as Error)?.message || ''
+        const status = (err as Error & { status?: number }).status
 
         // Map error messages to i18n keys
-        if (
+        if (status === 401 || status === 403) {
+          setAccessError(status)
+          setError(
+            t(
+              status === 401
+                ? 'shared-task:legacy_login_required'
+                : 'shared-task:legacy_access_required'
+            )
+          )
+        } else if (
           errorMessage.includes('Invalid share link format') ||
           errorMessage.includes('Invalid share token')
         ) {
@@ -95,12 +119,15 @@ function SharedTaskContent() {
           setError(t('shared-task:error_load_failed'))
         }
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       }
     }
 
     fetchSharedTask()
-  }, [searchParams, t])
+    return () => {
+      cancelled = true
+    }
+  }, [searchParams, t, sessionToken])
 
   const handleLoginAndCopy = () => {
     const token = searchParams.get('token')
@@ -253,7 +280,18 @@ function SharedTaskContent() {
     let errorDesc = t('shared-task:error_load_failed_desc')
     let errorIcon = '⚠️'
 
-    if (error) {
+    if (accessError) {
+      errorTitle = t(
+        accessError === 401
+          ? 'shared-task:legacy_login_required'
+          : 'shared-task:legacy_access_required'
+      )
+      errorDesc = t(
+        accessError === 401
+          ? 'shared-task:legacy_login_required_desc'
+          : 'shared-task:legacy_access_required_desc'
+      )
+    } else if (error) {
       if (error.includes(t('shared-task:error_invalid_link'))) {
         errorTitle = t('shared-task:error_invalid_link')
         errorDesc = t('shared-task:error_invalid_link_desc')
@@ -290,12 +328,20 @@ function SharedTaskContent() {
             {/* Action Button */}
             <div className="flex justify-center">
               <Button
-                onClick={() => router.push('/chat')}
+                data-testid="shared-task-access-action"
+                onClick={() => {
+                  if (accessError === 401) {
+                    const target = `/shared/task?token=${encodeURIComponent(searchParams.get('token') || '')}`
+                    router.push(`/login?redirect=${encodeURIComponent(target)}`)
+                  } else {
+                    router.push('/chat')
+                  }
+                }}
                 variant="default"
                 size="default"
                 className="min-w-[160px]"
               >
-                {t('shared-task:go_home')}
+                {t(accessError === 401 ? 'shared-task:login' : 'shared-task:go_home')}
               </Button>
             </div>
           </div>

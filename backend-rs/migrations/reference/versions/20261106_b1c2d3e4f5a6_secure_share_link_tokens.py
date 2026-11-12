@@ -1,14 +1,13 @@
-"""Revoke legacy share tokens and add token-hash storage.
+"""Preserve legacy link locators and add secure token storage.
 
 Revision ID: b1c2d3e4f5a6
-Revises: a4c8e2f6b901
+Revises: f3a7c9e1b2d4
 Create Date: 2026-11-06
 """
 
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision: str = "b1c2d3e4f5a6"
@@ -18,6 +17,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Existing AES links remain locators, never anonymous access credentials.
+    op.add_column(
+        "share_links",
+        sa.Column("token_version", sa.Integer(), nullable=False, server_default="1"),
+    )
+    op.alter_column(
+        "share_links", "token_version", existing_type=sa.Integer(), server_default="2"
+    )
     op.add_column(
         "share_links",
         sa.Column(
@@ -55,3 +62,4 @@ def downgrade() -> None:
         type_="unique",
     )
     op.drop_column("share_links", "token_hash")
+    op.drop_column("share_links", "token_version")
