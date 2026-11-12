@@ -2,6 +2,7 @@ import asyncio
 import threading
 from contextlib import contextmanager
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -97,6 +98,107 @@ async def test_reconciliation_rereads_desired_state_after_concurrent_uninstall(
     assert dispatch.await_count == 2
     assert dispatch.call_args.kwargs["payload"]["plugins"] == []
     record.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_during_wait", [False, True])
+async def test_ack_contention_reopens_transaction_without_replaying_device_work(
+    reconciliation, monkeypatch, changed_during_wait
+):
+    desired, dispatch, record = reconciliation
+    sessions = []
+    clock = [0.0]
+    delays = []
+    removed = {"scope": "plugins", "mode": "merge", "plugins": []}
+
+    @contextmanager
+    def session():
+        db = Mock(closed=False)
+        sessions.append(db)
+        try:
+            yield db
+        finally:
+            db.closed = True
+
+    def backoff(delay):
+        assert all(db.closed for db in sessions), "Backoff retained a transaction"
+        delays.append(delay)
+        clock[0] += delay
+        if changed_during_wait:
+            desired.return_value = removed
+
+    acquire = Mock(
+        side_effect=[
+            PluginWriteError("plugin_write_busy"),
+            PluginWriteError("plugin_write_busy"),
+            None,
+            None,
+        ]
+    )
+    monkeypatch.setattr(module, "get_db_session", session)
+    monkeypatch.setattr(module, "acquire_plugin_write_locks", acquire)
+    monkeypatch.setattr(
+        plugin_write_operations,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock[0], sleep=backoff),
+    )
+
+    result = await module.reconcile_device_plugins(7, "device")
+
+    assert result.reconciled
+    assert len(delays) == 2
+    assert clock[0] < 20
+    assert dispatch.await_count == (2 if changed_during_wait else 1)
+    assert len(sessions) == (4 if changed_during_wait else 3)
+    assert all(db.closed for db in sessions)
+    assert sessions[0].rollback.call_count == sessions[1].rollback.call_count == 1
+    record.assert_called_once()
+    assert record.call_args.args[0] is sessions[-1]
+    if changed_during_wait:
+        assert dispatch.call_args.kwargs["payload"] == removed
+
+
+def test_catalog_preparation_retries_contention_in_a_fresh_session(monkeypatch):
+    sessions = []
+    clock = [0.0]
+
+    @contextmanager
+    def session():
+        db = Mock(closed=False)
+        sessions.append(db)
+        try:
+            yield db
+        finally:
+            db.closed = True
+
+    def backoff(delay):
+        assert all(db.closed for db in sessions)
+        clock[0] += delay
+
+    repair = Mock(side_effect=[PluginWriteError("plugin_write_busy"), 0])
+    snapshot = {"scope": "plugins", "mode": "merge", "plugins": []}
+    build = Mock(return_value=snapshot)
+    monkeypatch.setattr(module, "get_db_session", session)
+    monkeypatch.setattr(plugin_write_operations, "configure_plugin_session", Mock())
+    monkeypatch.setattr(
+        plugin_write_operations,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock[0], sleep=backoff),
+    )
+    monkeypatch.setattr(
+        module.plugin_marketplace_service,
+        "reconcile_stale_installed_catalog_refs",
+        repair,
+    )
+    monkeypatch.setattr(
+        module.device_capability_sync_service, "build_desired_plugins", build
+    )
+
+    assert module.desired_plugins(7, "device") is snapshot
+    assert len(sessions) == 2
+    sessions[0].rollback.assert_called_once()
+    build.assert_called_once_with(sessions[1], user_id=7, device_id="device")
+    assert all(db.closed for db in sessions)
 
 
 @pytest.mark.asyncio
@@ -302,14 +404,14 @@ async def test_reconciliation_waits_leave_loop_responsive_and_sessions_in_worker
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ("snapshot", "record"))
-async def test_reconciliation_propagates_coordination_rejection_without_retry(
+async def test_reconciliation_propagates_lease_loss_without_retry(
     reconciliation, stage
 ):
     desired, dispatch, record = reconciliation
     target = desired if stage == "snapshot" else record
-    target.side_effect = PluginWriteError("plugin_write_busy")
+    target.side_effect = PluginWriteError("plugin_write_lease_lost")
 
-    with pytest.raises(PluginWriteError, match="plugin_write_busy"):
+    with pytest.raises(PluginWriteError, match="plugin_write_lease_lost"):
         await module.reconcile_device_plugins(7, "device")
 
     if stage == "snapshot":

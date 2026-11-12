@@ -32,26 +32,35 @@ def run_plugin_transaction(
     session_factory: Callable[[], AbstractContextManager[Session]],
     *,
     attempts: int = 2,
+    retry_busy: bool = False,
 ) -> T:
-    """Retry bounded optimistic conflicts after a complete transaction rollback."""
+    """Retry rolled-back work; snapshot transactions may also await contention."""
     deadline = time.monotonic() + 20
-    last_conflict = None
-    for attempt in range(attempts):
-        if last_conflict is not None and time.monotonic() >= deadline:
-            raise last_conflict
+    last_error = None
+    attempt = 0
+    busy_backoff = 0.05
+    while attempt < attempts:
+        if last_error is not None and time.monotonic() >= deadline:
+            raise last_error
         with session_factory() as db:
             configure_plugin_session(db)
             try:
                 return operation(db)
             except Exception as error:
                 db.rollback()
-                if not (
-                    attempt + 1 < attempts
-                    and time.monotonic() < deadline
-                    and isinstance(error, PluginWriteError)
-                    and error.code == "plugin_write_conflict"
+                if (
+                    not isinstance(error, PluginWriteError)
+                    or time.monotonic() >= deadline
                 ):
                     raise
-                last_conflict = error
-        time.sleep(min(0.01 * (attempt + 1), max(0, deadline - time.monotonic())))
+                if retry_busy and error.code == "plugin_write_busy":
+                    delay = busy_backoff
+                    busy_backoff = min(0.25, busy_backoff * 2)
+                elif error.code == "plugin_write_conflict" and attempt + 1 < attempts:
+                    attempt += 1
+                    delay = 0.01 * attempt
+                else:
+                    raise
+                last_error = error
+        time.sleep(min(delay, max(0, deadline - time.monotonic())))
     raise AssertionError("Plugin transaction retry exhausted without a result")

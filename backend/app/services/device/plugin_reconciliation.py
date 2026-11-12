@@ -33,8 +33,7 @@ from shared.telemetry.decorators import trace_async
 
 
 def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
-    with get_db_session() as db:
-        configure_plugin_session(db)
+    def prepare(db: Session) -> dict[str, Any]:
         changed = plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
             db, user_id=user_id
         )
@@ -47,6 +46,8 @@ def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
             db, user_id=user_id, device_id=device_id
         )
 
+    return run_plugin_transaction(prepare, get_db_session, attempts=3, retry_busy=True)
+
 
 def record_reconciliation_result(
     user_id: int,
@@ -54,7 +55,7 @@ def record_reconciliation_result(
     payload: dict[str, Any],
     result: DeviceCapabilitySyncResult,
 ) -> dict[str, Any] | None:
-    """Validate and persist the acknowledged snapshot under one write lease."""
+    """Atomically validate and persist the snapshot in a fresh plugin transaction."""
 
     def record(db: Session) -> dict[str, Any] | None:
         configure_plugin_session(db)
@@ -88,7 +89,7 @@ def record_reconciliation_result(
             raise
         return None
 
-    return run_plugin_transaction(record, get_db_session, attempts=3)
+    return run_plugin_transaction(record, get_db_session, attempts=3, retry_busy=True)
 
 
 def plugin_snapshot(payload: dict[str, Any]) -> list[dict[str, Any]]:

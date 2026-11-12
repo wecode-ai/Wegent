@@ -94,8 +94,17 @@ conflicts require rollback and reconstruction. No table or `FOR UPDATE` is added
 Single-device and batch acknowledgements share one persistence entry point.
 Metadata CAS conflicts use the existing limit of three transaction attempts,
 rolling back, releasing leases and rereading current state each time. Only database
-writes are replayed, never remote execution. Busy locks, unavailable Redis and lost
-leases still fail directly.
+writes are replayed, never remote execution. Busy locks in ordinary operations,
+unavailable Redis and lost leases still fail directly.
+
+Python full-snapshot reconciliation retains account-wide CAS for catalog
+preparation and acknowledgement persistence. Only these two database transactions
+may back off after contention, after rolling back and releasing all leases and
+sessions. They reread state at 50/100/200 ms intervals capped at 250 ms within each
+transaction's existing 20-second budget. Waiting to persist an acknowledgement
+does not resend the executed device RPC. Changed desired state still requires a
+new snapshot, so an old acknowledgement cannot confirm current state. Account
+installation, update and removal requests are not resubmitted.
 
 Authentication validates the actual account policy using a final conditional no-op
 update until commit; ordinary authentication never advances that policy revision.
