@@ -111,6 +111,12 @@ under the overload policy.
 
 Background terminals retain collected output after restoring a conversation. Use `Shift + PageUp` and `Shift + PageDown` to navigate history. Screen-reader row positions and character alignment update with the output; live output and history navigation should not block other interface actions.
 
+### Tools unavailable after resuming a conversation
+
+If MCP tools failed to start or their connection was interrupted, sending another message in the same conversation checks their actual connection status and attempts recovery while preserving the conversation and healthy tool connections. Restarting the app is unnecessary. Each new execution reconciles at most once, concurrent continuations share recovery, and an execution never loops on a persistent failure. A later continuation can still recover a service that becomes available afterward. Tools requiring login or renewed authorization still require that authorization. Connection recovery does not replay earlier tool operations.
+
+The `codex MCP startup status` log records the process generation, conversation, server, startup status, and redacted error. `codex MCP startup recovery` records the servers that triggered recovery. Preserve these records if the problem persists.
+
 ### Unable to connect to the model service
 
 When the local model proxy cannot send a request to the model service, the conversation shows **Unable to connect to the model service** and includes the complete failed endpoint directly in the error card. `Failed to send a request` means that the client did not receive a usable HTTP response. Check the current network, VPN, proxy, and DNS settings. For an internal endpoint, also confirm that the device is connected to the corporate network or VPN.

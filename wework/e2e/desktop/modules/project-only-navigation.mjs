@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { expandCollaborationWorkspace } from './workspace-flows.mjs'
+import { expandCollaborationSpaces, revealCollaborationSidebarElement } from './workspace-flows.mjs'
 import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 import { verifyBoardPreferenceIsolation } from './collaboration-board-preferences.mjs'
 import {
@@ -165,7 +165,8 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
       )
       const tree = scoped(`[data-testid="collaboration-workspace-tree-${workspace.id}"]`)
       const assertParent = async () => {
-        await control.command('waitFor', tree, { visible: true, timeoutMs: uiTimeoutMs })
+        await expandCollaborationSpaces(control, scoped('').trim(), uiTimeoutMs)
+        await revealCollaborationSidebarElement(control, tree, uiTimeoutMs)
         assert.equal(
           Number(
             await control.command(
@@ -196,6 +197,12 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
       }
       await assertParent()
       for (const project of projects.slice(0, 2)) {
+        await expandCollaborationSpaces(control, scoped('').trim(), uiTimeoutMs)
+        await revealCollaborationSidebarElement(
+          control,
+          scoped('[data-testid="collaboration-workspace-home-wework-local-workspace"]'),
+          uiTimeoutMs
+        )
         await control.command(
           'clickWhenEnabled',
           scoped('[data-testid="collaboration-workspace-home-wework-local-workspace"]'),
@@ -212,9 +219,9 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
           scoped('[data-testid="collaboration-workspace-nav-projects"]')
         )
         await assertParent()
-        await expandCollaborationWorkspace(
+        await revealCollaborationSidebarElement(
           control,
-          scoped(`[data-testid="collaboration-workspace-toggle-${workspace.id}"]`),
+          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
           uiTimeoutMs
         )
         const projectSelector = scoped(

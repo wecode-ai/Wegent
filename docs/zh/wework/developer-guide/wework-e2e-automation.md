@@ -4,6 +4,12 @@ sidebar_position: 34
 
 # E2E 自动化
 
+## CI 后台任务负载策略
+
+`WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD` 控制后台空闲任务是否根据 CPU 和可用内存推迟执行。普通启动未设置时为 `true`；显式设为 `false` 后，调度器继续采集并记录真实负载，但不再以 CPU／内存阈值阻塞任务。用户空闲、渲染器空闲、探测失败保护和任务串行执行规则仍然生效。
+
+Wework E2E 工作流默认设为 `false`，避免共享 CI 运行器的负载阻止插件更新等后台流程被覆盖。通过 GitHub 仓库 Actions variable `WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD=true` 可恢复 CI 的负载判断；新配置在下一次运行生效。测试范围、断言、超时和检查点并发保持不变。这类 CI 结果验证显式关闭负载门限时的功能流程；默认负载门限及两种策略由调度器单元测试覆盖。
+
 macOS 的真实桌面测试在同时启用 `VITE_WEWORK_E2E=true` 和 `WEWORK_E2E_CONTROL_URL` 时允许测试窗口大于显示器，避免可用高度不足 1200 的屏幕截断固定视口。原生尺寸命令仍须观察到请求的实际内容尺寸才返回；既有尺寸断言和时限保持有效。共享 `tray-lifecycle` 检查点在既有 macOS CI 中验证 1280×1200 的原生窗口调整及恢复，不新增 runner 或应用启动。普通启动沿用平台默认行为。
 
 重启后控制器连接成功不代表原生启动页已经关闭。测试需要主窗口焦点时，先复用 `waitForClosedStartupSplash` 等待真实启动页关闭，再验证原生焦点；启动期间的激活仍应遵循产品既有的启动页路由，不能通过重复激活或放宽焦点超时绕过时序。

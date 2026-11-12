@@ -120,8 +120,12 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_DEV_RELOAD:-1"));
     assert!(dev_sidecar.contains("dev-executor-reload.mjs"));
     assert!(dev_sidecar.contains("cargo build"));
-    assert!(dev_sidecar.contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor\""));
-    assert!(dev_sidecar.contains("$cache_root/executor-dev"));
+    assert!(
+        dev_sidecar.contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor-dev\"")
+    );
+    assert!(
+        dev_sidecar.contains("cargo_target_binary_path \"$EXECUTOR_DIR\" debug wegent-executor")
+    );
     assert!(!dev_sidecar.contains("executor_source_cache_key"));
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_SOURCE_DIR"));
     assert!(!dev_sidecar.contains("exec cargo run"));

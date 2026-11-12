@@ -73,6 +73,22 @@ GUID and position after relaunch. Checking only the GUID misses this failure.
 
 The script also exports these values as `VITE_WEWORK_*` so the frontend can display them at runtime.
 
+## Cargo Build Isolation
+
+The macOS launcher and Unix Executor launchers use the same Cargo directory
+resolver. Build state is isolated by component and canonical worktree path,
+while sccache continues sharing compiled content. Cargo uses file timestamps
+to decide whether to rebuild. When worktrees share one `target`, older sources
+can incorrectly reuse another source tree's artifacts.
+
+`CARGO_TARGET_DIR` selects the cache location; launchers append
+`<component>/worktrees/<path-hash>`. Without it, they use
+`WEGENT_CARGO_TARGET_ROOT` or the default cache root.
+`WEGENT_DISABLE_SHARED_CARGO_TARGET=1` places artifacts in the current
+worktree's `target/<component>`. The macOS startup log shows the resolved
+`CARGO_TARGET_DIR`. Direct `cargo` commands bypass these launchers and must
+select a separate target directory themselves.
+
 ## Frontend Display
 
 Debug instances show a `Debug Wework` badge in the bottom-right corner. The badge shows the short label; hover or focus expands a details panel where each item can be copied individually.

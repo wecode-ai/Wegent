@@ -4,6 +4,12 @@ sidebar_position: 34
 
 # E2E Automation
 
+## CI background task load policy
+
+`WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD` controls whether background idle tasks defer execution based on CPU and available memory. Normal startup defaults to `true`. Explicitly setting it to `false` preserves real load sampling and diagnostics while disabling CPU/memory threshold gating. User idle checks, renderer idle checks, probe failure protection, and serial execution remain enforced.
+
+The Wework E2E workflow defaults to `false` so shared CI runner load does not prevent background flows such as plugin updates from being exercised. Set the GitHub repository Actions variable `WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD=true` to restore load gating in the next run. Test coverage, assertions, timeouts, and checkpoint concurrency remain unchanged. These CI results verify functional flows with load thresholds explicitly disabled; scheduler unit tests cover the default thresholds and both policies.
+
 Real macOS desktop tests allow windows larger than the display only when both `VITE_WEWORK_E2E=true` and `WEWORK_E2E_CONTROL_URL` are enabled. This prevents a work area shorter than 1200 from truncating fixed viewports. Native resize commands still wait for the requested actual content dimensions; existing assertions and deadlines remain enforced. The shared `tray-lifecycle` checkpoint verifies a native 1280×1200 resize and restoration in the existing macOS CI job, without another runner or app launch. Ordinary launches retain platform defaults.
 
 A reconnected controller after restart does not establish that the native startup splash has closed. Before asserting main-window focus, reuse `waitForClosedStartupSplash` to observe its actual closure. Activation during startup retains the product's existing splash routing; repeated activation or a longer focus timeout must not conceal this ordering requirement.

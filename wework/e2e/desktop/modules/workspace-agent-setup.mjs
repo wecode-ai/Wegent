@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 
 import {
   inCollaborationSidebar,
+  expandCollaborationSpaces,
+  revealCollaborationSidebarElement,
   openDirectProjectCreation,
   openProjectAgentCreator,
   selectCloudAgentModel,
@@ -82,7 +84,9 @@ export async function createWorkspaceAndProject(
 export async function openWorkspaceAgentConfiguration(control, contentSelector, workspaceId) {
   const scoped = selector => `${contentSelector} ${selector}`
   const sidebar = selector => inCollaborationSidebar(selector, contentSelector)
+  await expandCollaborationSpaces(control, contentSelector)
   const workspaceTree = sidebar(`[data-testid="collaboration-workspace-tree-${workspaceId}"]`)
+  await revealCollaborationSidebarElement(control, `${workspaceTree} .collaboration-workspace-row`)
   await control.command('hover', `${workspaceTree} .collaboration-workspace-row`)
   // Only the active Workspace exposes the untagged trigger, so match both forms.
   await control.command(

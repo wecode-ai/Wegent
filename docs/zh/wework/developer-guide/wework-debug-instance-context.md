@@ -65,6 +65,19 @@ macOS `tray-lifecycle` 回归会在独立应用域中设置位置，验证退出
 
 脚本也会把这些值导出为 `VITE_WEWORK_*`，供前端在运行时显示。
 
+## Cargo 构建隔离
+
+macOS 启动脚本和 Unix Executor 启动入口使用同一套 Cargo 目录解析逻辑。构建
+状态按组件和 worktree 的规范路径隔离，编译内容缓存仍由 sccache 共享。Cargo
+依赖文件时间判断是否重编译；多个 worktree 共用一个 `target` 时，较旧源码可能
+被误判为无需重编译，导致读取另一份源码的产物。
+
+`CARGO_TARGET_DIR` 指定缓存存放位置，启动入口会在其下追加
+`<组件>/worktrees/<路径哈希>`；未设置时使用 `WEGENT_CARGO_TARGET_ROOT` 或默认
+缓存根目录。`WEGENT_DISABLE_SHARED_CARGO_TARGET=1` 将产物放在当前 worktree 的
+`target/<组件>`。macOS 启动日志会显示最终的 `CARGO_TARGET_DIR`。直接运行
+`cargo` 时不会经过这些启动入口，应自行选择独立的 target 目录。
+
 ## 前端显示
 
 调试实例会在右下角显示 `Debug Wework` 浮标。浮标展示短标题；hover 或聚焦后展开完整信息面板，每一项都可以单独复制。

@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { WebContents } from 'electron'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { FakeWebContents } from '../../test-fixtures/embedded-browser.js'
 import { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 
@@ -92,3 +93,75 @@ test('returns a synchronous action result before navigation destroys promise cal
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test.each([false, true, 'later-link'] as const)(
+  'a local preview action preserves its reply and newer navigation: override=%s',
+  async override => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-action-navigation-'))
+    const nested = join(directory, 'nested')
+    await mkdir(nested)
+    const later = join(directory, 'later')
+    await mkdir(later)
+    const contents = new FakeWebContents()
+    const manager = new EmbeddedBrowserManager(directory)
+    const reply = Promise.withResolvers<unknown>()
+    let actionPending = false
+    contents.loadURL.mockImplementation(async url => {
+      if (actionPending) reply.reject(new Error('Inspected target navigated or closed'))
+      contents.commitUrl(url)
+      contents.emit('did-navigate', {}, url)
+    })
+    manager.attach('browser', contents as unknown as WebContents)
+    try {
+      await manager.open({
+        label: 'browser',
+        url: pathToFileURL(directory).href,
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      const destination = `${pathToFileURL(nested).href}/`
+      const event = { preventDefault() {} }
+      contents.debugger.sendCommand.mockImplementation(() => {
+        actionPending = true
+        contents.emit('will-navigate', event, destination)
+        if (override === 'later-link')
+          contents.emit('will-navigate', event, `${pathToFileURL(later).href}/`)
+        return reply.promise
+      })
+      const result = manager
+        .evaluate('browser', 'document.querySelector("a").click()', {
+          awaitPromise: false,
+        })
+        .then(
+          value => ({ value }),
+          error => ({ error: String(error) })
+        )
+      // The action remains pending throughout this negative observation window.
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(contents.loadURL).toHaveBeenCalledOnce()
+      actionPending = false
+      const newerUrl = 'https://example.com/newer'
+      if (override === true) await manager.navigate('browser', newerUrl)
+      reply.resolve({ result: { value: { ok: true } } })
+      await expect(result).resolves.toEqual({ value: { ok: true } })
+      if (override === true) {
+        // An older queued link must not replace a navigation explicitly started later.
+        await new Promise(resolve => setTimeout(resolve, 50))
+        expect(contents.loadURL).toHaveBeenCalledTimes(2)
+        expect(manager.state('browser').url).toBe(newerUrl)
+      } else {
+        await vi.waitFor(() => {
+          expect(contents.loadURL).toHaveBeenCalledTimes(2)
+          expect(manager.state('browser').url).toBe(
+            override === 'later-link' ? `${pathToFileURL(later).href}/` : destination
+          )
+        })
+      }
+    } finally {
+      reply.resolve({ result: { value: { ok: true } } })
+      manager.close('browser')
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
