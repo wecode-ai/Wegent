@@ -1091,6 +1091,7 @@ describe('DesktopWorkbenchLayout', () => {
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
       devices: [],
       runtimeWork: null,
+      runtimeWorkLoad: { phase: 'loading', error: null },
       currentProject: null,
       currentRuntimeTask: null,
       standaloneDeviceId: null,
@@ -1679,6 +1680,7 @@ describe('DesktopWorkbenchLayout', () => {
         projects: state.projects,
         devices: state.devices,
         runtimeWork: state.runtimeWork,
+        runtimeWorkLoad: state.runtimeWorkLoad,
         standaloneDeviceId: state.standaloneDeviceId,
         selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
         pendingProjectWorkspaceProjectId: state.pendingProjectWorkspaceProjectId,
@@ -6714,6 +6716,25 @@ describe('DesktopWorkbenchLayout', () => {
       'data-embedded-browser-label',
       'workspace-browser-runtime-b'
     )
+  })
+
+  test('reveals the workbench when its initial task list fails without claiming list readiness', async () => {
+    runtimeMocks.electron = true
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          runtimeWork: null,
+          runtimeWorkLoad: { phase: 'error', error: 'Local executor is unavailable' },
+        }}
+      />
+    )
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady', {
+        source: 'task-list-error',
+      })
+    })
   })
 
   test('reveals the Electron startup window once the task list is ready', async () => {

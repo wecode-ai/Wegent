@@ -694,6 +694,14 @@ describe('renderer heap debugger ownership', () => {
 })
 
 describe('startup renderer capabilities', () => {
+  test('preserves the failed task-list source in the startup handoff', async () => {
+    const rendererStartupReady = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, { rendererStartupReady })
+    for (const source of ['task-list', 'task-list-error', 'unrecognized']) {
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'renderer.startupReady', { source })
+    }
+    expect(rendererStartupReady.mock.calls).toEqual([['task-list'], ['task-list-error'], ['other']])
+  })
   test('forwards the real renderer failure and supplies a message for legacy callers', async () => {
     const rendererStartupFailed = vi.fn()
     const { router } = createIsolatedClipboardRouter(true, { rendererStartupFailed })
@@ -739,6 +747,29 @@ describe('startup renderer capabilities', () => {
 })
 
 describe('Core DSH runtime capabilities', () => {
+  test('passes the consent revision to the atomic preference owner and rejects invalid revisions', async () => {
+    const updatePreferences = vi
+      .fn()
+      .mockResolvedValue({ telemetryEnabled: true, telemetryConsentRevision: 8 })
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, {
+      updatePreferences,
+    })
+    const patch = { telemetryEnabled: true, telemetryConsentAsked: true }
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.update', {
+      patch,
+      expectedTelemetryConsentRevision: 7,
+    })
+    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith(patch, 7)
+    for (const expectedTelemetryConsentRevision of [-1, 1.5, '7']) {
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.update', {
+          patch,
+          expectedTelemetryConsentRevision,
+        })
+      ).rejects.toThrow()
+    }
+    expect(updatePreferences).toHaveBeenCalledTimes(1)
+  })
   test('commits a mode before scheduling its restart outside the renderer lifetime', async () => {
     const stored = { workbenchMode: 'developer' }
     const updatePreferences = vi.fn(async patch => Object.assign(stored, patch))
@@ -766,7 +797,7 @@ describe('Core DSH runtime capabilities', () => {
     expect(completions).toHaveLength(1)
     await completions[0]()
     expect(scheduleCoreDshRestart).toHaveBeenCalledOnce()
-    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith({ workbenchMode: 'focus' })
+    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith({ workbenchMode: 'focus' }, undefined)
     expect(stored.workbenchMode).toBe('focus')
   })
 

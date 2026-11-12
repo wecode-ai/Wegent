@@ -18,6 +18,12 @@ interface PreparationTiming {
 type PreparationProcess<T> = Promise<T> & { child: ChildProcess }
 type StopPreparation = (child: ChildProcess) => Promise<void>
 
+export function spawnReleaseProcess(
+  executable: string,
+  args: string[],
+  options: { env: NodeJS.ProcessEnv; maxBuffer?: number }
+): PreparationProcess<{ stdout: string; stderr: string }>
+
 export function prepareReleaseProcess(
   executable: string,
   args: string[],

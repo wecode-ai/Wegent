@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import { MODEL_PROVIDER_ID, selectE2EModel } from '../modules/shared.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createMemoryConsolidation,
+  assertMemoryReviewModelSelection,
   MEMORY_HISTORY_FACT,
 } from '../modules/stand-in-memory-consolidation.mjs'
 import {
@@ -52,13 +53,26 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       const original = await rpc('runtime.stand_in.personal.get', { userId: USER })
+      const catalog = await rpc('runtime.runner.catalog', {})
+      const defaults = catalog.models.filter(
+        model => model.runtime === 'codex' && model.is_default === true
+      )
+      assert.equal(defaults.length, 1, 'Memory review requires a unique native Codex default')
+      const defaultModel = defaults[0]
+      assert.equal(defaultModel.provider, MODEL_PROVIDER_ID)
       let schedule
       try {
         await rpc('runtime.stand_in.personal.save', {
           userId: USER,
           settings: {
             ...original,
-            primary: { prompt: '', preferences: '', ...original.primary, enabled: true },
+            primary: {
+              prompt: '',
+              preferences: '',
+              ...original.primary,
+              enabled: true,
+              model: null,
+            },
           },
         })
         await ensureExperimentalFeaturesEnabled(control)
@@ -86,12 +100,13 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
           45000
         )
         const settings = await rpc('runtime.stand_in.personal.get', { userId: USER })
+        assert.equal(settings.primary.model, null)
         await rpc('runtime.stand_in.personal.save', {
           userId: USER,
           settings: { ...settings, primary: { ...settings.primary, enabled: false } },
         })
         const deadline = new Date(Date.now() + 2000).toISOString()
-        review.activate()
+        review.activate(defaultModel)
         await rpc('runtime.automations.update', {
           automation: {
             ...schedule,
@@ -112,6 +127,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         assert.equal(run.status, 'succeeded', JSON.stringify(run))
         assert.ok(run.taskId)
         assert.notEqual(run.taskId, `stand-in-chat-${USER}-primary`)
+        const stored = await rpc('runtime.tasks.get', { taskId: run.taskId })
+        assertMemoryReviewModelSelection(stored.task, defaultModel)
         assert.ok(review.result.committed)
         assert.ok(review.result.saved)
         const memories = (await rpc('runtime.stand_in.memory.list', { userId: USER })).items

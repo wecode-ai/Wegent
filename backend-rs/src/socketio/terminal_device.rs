@@ -89,7 +89,11 @@ pub(crate) async fn relay_device_event(
     )
     .await;
     if output {
-        tracing::info!(session_id = record.session_id, "terminal output forwarded");
+        tracing::info!(
+            session_id = record.session_id,
+            sequence = payload.get("sequence").and_then(|value| value.as_u64()),
+            "terminal output forwarded"
+        );
     } else {
         // `on_terminal_exit` ACKs success only after `terminal_session_service`
         // `.delete` returns; a store failure propagates instead of a success.

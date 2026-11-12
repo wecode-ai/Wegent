@@ -129,7 +129,7 @@ describe('lightweight DSH workbenches', () => {
     ).rejects.toThrow('escapes its project')
   })
 
-  test('imports legacy source, state, expired reminders and shortcut metadata without deleting or overwriting source', async () => {
+  test('imports legacy source, ordinary state and shortcut metadata without deleting or overwriting source', async () => {
     const base = await mkdtemp(join(tmpdir(), 'wework-legacy-lightweight-'))
     roots.push(base)
     const source = join(base, 'legacy')
@@ -170,7 +170,7 @@ describe('lightweight DSH workbenches', () => {
     expect(await readLegacyLightApps(dataDirectory)).toEqual(records)
     const store = new WorkbenchAppDataStore(dataDirectory)
     await store.importLegacy(imported.name, await readLegacyLightAppData(dataDirectory, legacy.id))
-    expect(await store.read(imported.name)).toEqual(data)
+    expect(await store.read(imported.name)).toEqual({ state: data.state })
     expect(await readFile(join(source, 'app.js'), 'utf8')).toContain('weworkLightApp')
     expect(await readFile(join(destination, 'view.html'), 'utf8')).toContain(
       Buffer.from('window.weworkWorkbench.storage.get()').toString('base64')

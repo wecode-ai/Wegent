@@ -11,7 +11,8 @@ interface FrameProperties {
   srcDoc: string
 }
 interface Sdk {
-  storage: { get(): Promise<unknown> }
+  storage: { get(): Promise<unknown>; set(value: unknown): Promise<unknown> }
+  notifications: { show(value: unknown): Promise<unknown> }
 }
 type BridgeResponse = { ok: boolean; json(): Promise<{ result: number }> }
 type BridgeFetch = (url: string, options: { body: string }) => Promise<BridgeResponse>
@@ -117,6 +118,20 @@ function fixture(
 }
 
 describe('lightweight document bridge', () => {
+  test('exposes ordinary state and immediate notifications without scheduled-reminder APIs', async () => {
+    const app = fixture()
+    expect(Object.keys(app.sdk.storage).sort()).toEqual(['get', 'set'])
+    expect(Object.hasOwn(app.sdk, 'reminders')).toBe(false)
+    expect(app.sdk.notifications.show).toBeTypeOf('function')
+    app.props.onLoad()
+    const value = [{ id: 'one', text: 'Keep my task', done: false }]
+    await app.sdk.storage.set(value)
+    expect(JSON.parse(app.fetch.mock.calls[0][1].body)).toEqual({
+      capability: 'workbench.invoke',
+      params: { method: 'storage.set', params: { value } },
+    })
+  })
+
   test('queues startup SDK calls until the initial load and invokes through the private port', async () => {
     const app = fixture()
     const pending = app.sdk.storage.get()

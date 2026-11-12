@@ -13,11 +13,10 @@ export async function createTodoProject(dataDirectory: string, locale = 'zh-CN')
     name,
     displayName: 'TODO',
     description: locale.startsWith('zh')
-      ? '在本机保存待办事项，并通过系统通知定时提醒。'
-      : 'Persistent local tasks with scheduled system reminders.',
+      ? '在本机保存和管理待办事项。'
+      : 'Save and manage tasks locally.',
     dshVersion: WORKBENCH_DSH_VERSION,
     html: createTodoHtml(locale),
-    nativeCapabilities: ['notifications'],
     window: { width: 380, height: 520, alwaysOnTop: false },
   })
   return path

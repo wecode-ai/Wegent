@@ -414,14 +414,12 @@ function AutomationRow({
             className="mt-1 block text-sm text-text-secondary"
             title={automation.schedule.type === 'cron' ? automation.schedule.expression : undefined}
           >
-            {formatScheduleSummary(automation.schedule, locale, t, automation.timezone)}
+            {formatScheduleSummary(automation.schedule, locale, t)}
           </span>
           {automation.enabled && (
             <span className="mt-1 block text-xs text-text-tertiary">
               {t('todo.automation_next_run_at', {
-                time:
-                  formatNextRun(automation.nextRunAt, locale, automation.timezone) ??
-                  t('todo.automation_waiting_schedule'),
+                time: formatNextRun(automation, locale) ?? t('todo.automation_waiting_schedule'),
               })}
             </span>
           )}
@@ -431,18 +429,14 @@ function AutomationRow({
   )
 }
 
-function formatNextRun(
-  value: string | null | undefined,
-  locale: string,
-  timezone: string
-): string | null {
-  if (!value) return null
+function formatNextRun(automation: Automation, locale: string): string | null {
+  if (!automation.nextRunAt) return null
   return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-    timeZone: timezone,
+    ...(automation.schedule.type === 'one_time' ? {} : { timeZone: automation.timezone }),
     timeZoneName: 'short',
-  }).format(new Date(value))
+  }).format(new Date(automation.nextRunAt))
 }

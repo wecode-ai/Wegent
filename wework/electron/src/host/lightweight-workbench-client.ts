@@ -14,9 +14,8 @@ export function createLightweightClientSource(packageName: string, html: string)
     });
     addEventListener('pagehide',()=>{closed=true;port?.close();for(const request of pending.values())request.reject(new Error('Workbench document is closed'));pending.clear()},{once:true});
     window.weworkWorkbench=Object.freeze({
-      storage:Object.freeze({get:()=>invoke('storage.get'),set:value=>invoke('storage.set',{value}),commit:options=>invoke('storage.commit',options)}),
+      storage:Object.freeze({get:()=>invoke('storage.get'),set:value=>invoke('storage.set',{value})}),
       notifications:Object.freeze({show:options=>invoke('notifications.show',options)}),
-      reminders:Object.freeze({schedule:options=>invoke('reminders.schedule',options),cancel:id=>invoke('reminders.cancel',{id}),list:()=>invoke('reminders.list')}),
       clipboard:Object.freeze({readText:()=>invoke('clipboard.readText'),writeText:text=>invoke('clipboard.writeText',{text})}),
       files:Object.freeze({openText:()=>invoke('files.openText'),saveText:options=>invoke('files.saveText',options)}),
       external:Object.freeze({open:url=>invoke('external.open',{url})}),

@@ -1,6 +1,6 @@
 ---
 name: workbenches
-description: 'Create, install, open and manage Wework workbenches based on DSH, including lightweight calculators, TODO notes and reminders, extended plugin applications, independent windows, local data and approved system capabilities.'
+description: 'Create, install, open and manage Wework workbenches based on DSH, including lightweight calculators, TODO notes, extended plugin applications, independent windows, local data and approved system capabilities.'
 ---
 
 # Wework workbenches
@@ -9,7 +9,7 @@ All workbenches use Wework's existing DSH package, installation and runtime syst
 `flavor: lightweight` selects a minimal sandboxed page; `flavor: extended` permits
 DSH service and plugin composition. Flavor does not determine presentation or
 whether a model is required. Both support independent windows and main-window tabs.
-The Host owns runtime lifetime, shortcuts, local data and durable reminders.
+The Host owns runtime lifetime, shortcuts, local data and approved native access.
 
 ## Task-bound CLI
 
@@ -38,8 +38,8 @@ lists available instances without exposing their authentication tokens.
 
 ## Create, verify, install and open
 
-1. Infer the smallest supported flavor from the requested outcome. A calculator,
-   TODO note or timer normally uses lightweight. Services, plugins and complex
+1. Infer the smallest supported flavor from the requested outcome. A calculator
+   or TODO note normally uses lightweight. Services, plugins and complex
    workflows use extended. Follow the user's explicit choice. Ask a structured
    question through `request_user_input_async` or `request_user_input` only when a
    missing business requirement materially changes the result; do not add a
@@ -92,28 +92,22 @@ that calls the same action after `preventDefault()`. Ignore IME events with
 and Enter input; manually dispatching `submit` bypasses the browser restriction
 and does not prove the interaction works. Keep the sandbox and CSP unchanged.
 
-| API                                                   | Required capability                   | Result                                                    |
-| ----------------------------------------------------- | ------------------------------------- | --------------------------------------------------------- |
-| `storage.get()`                                       | None                                  | App-owned JSON document, initially `null`                 |
-| `storage.set(value)`                                  | None                                  | Replace this installation's JSON, up to 1 MiB             |
-| `storage.commit({ value, reminders? })`               | `notifications` if reminders included | Atomically commit data and optional complete reminder set |
-| `notifications.show({ title, body })`                 | `notifications`                       | System notification                                       |
-| `reminders.schedule({ id, title, body, at })`         | `notifications`                       | Durable reminder with ISO timestamp                       |
-| `reminders.list()` / `reminders.cancel(id)`           | `notifications`                       | Inspect or cancel this installation's reminders           |
-| `clipboard.readText()` / `clipboard.writeText(text)`  | `clipboard.read` / `clipboard.write`  | Clipboard text                                            |
-| `files.openText()` / `files.saveText({ name, text })` | `files.read` / `files.write`          | Native chooser; cancelled open returns `null`             |
-| `external.open(url)`                                  | `external.open`                       | Approved HTTP(S) or `mailto:` link                        |
-| `window.hide()` / `window.setAlwaysOnTop(boolean)`    | None                                  | Control the current presentation                          |
+| API                                                   | Required capability                  | Result                                        |
+| ----------------------------------------------------- | ------------------------------------ | --------------------------------------------- |
+| `storage.get()`                                       | None                                 | App-owned JSON document, initially `null`     |
+| `storage.set(value)`                                  | None                                 | Replace this installation's JSON, up to 1 MiB |
+| `notifications.show({ title, body })`                 | `notifications`                      | System notification                           |
+| `clipboard.readText()` / `clipboard.writeText(text)`  | `clipboard.read` / `clipboard.write` | Clipboard text                                |
+| `files.openText()` / `files.saveText({ name, text })` | `files.read` / `files.write`         | Native chooser; cancelled open returns `null` |
+| `external.open(url)`                                  | `external.open`                      | Approved HTTP(S) or `mailto:` link            |
+| `window.hide()` / `window.setAlwaysOnTop(boolean)`    | None                                 | Control the current presentation              |
 
 Storage is one JSON document, not a key-value store. Initialize from
-`await window.weworkWorkbench.storage.get()` and await saves. Use
-`storage.commit({ value, reminders })` when a TODO edit changes both state and
-reminders. Omission preserves reminders; supplying even `[]` requires the
-notifications grant and replaces the complete collection. Supply
-at most 100 reminders with unique IDs. New times must be in the future; existing identical
-IDs/times may be retained for Host overdue recovery. Do not recreate delivered
-past reminders or rely on renderer timers. Reminders are delivered while Wework
-is running and restored after restart, independently of application windows.
+`await window.weworkWorkbench.storage.get()` and save with
+`await window.weworkWorkbench.storage.set(value)`. Await successful saves before
+updating the interface and show failures. Saving app state does not require a
+notification grant. `notifications.show` sends an immediate system notification;
+it requires the declared and granted capability plus operating-system support.
 
 ## Lifecycle and presentation
 
@@ -133,7 +127,7 @@ is running and restored after restart, independently of application windows.
 Repeated opens focus the same installation. Presentation changes reuse its DSH
 runtime. Closing its last view follows its background preference (`--background true|false`);
 `--resident` separately controls automatic startup. Stop preserves
-data and scheduled Host reminders; uninstall removes owned state and reminders.
+local data; uninstall removes owned state.
 Desktop shortcuts can cold-start the Host directly into a workbench. Global
 shortcuts require Wework to remain running. Do not uninstall or delete data
 outside the user's explicit request.

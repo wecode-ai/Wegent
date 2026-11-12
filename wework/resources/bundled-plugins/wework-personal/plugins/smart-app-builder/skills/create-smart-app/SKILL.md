@@ -76,7 +76,7 @@ from the DSH source tree.
 
 ## Native application services
 
-Extended workbenches use the same installation-scoped storage, reminders and
+Extended workbenches use the same installation-scoped storage and
 native capabilities as lightweight workbenches. Declare required native grants in
 `plugin-manifest.json` under `capabilities.native`; installation confirmation owns
 authorization. A trusted DSH Client can call the existing Host bridge:
@@ -99,5 +99,5 @@ const state = body.result
 
 The Host derives identity from the authenticated DSH connection. Never add an
 installation ID, expose a Host token to page content, or use the main application
-principal. Use the methods and capability requirements in the workbenches skill;
-for coupled state/reminder edits, use `storage.commit`.
+principal. Use the methods and capability requirements in the workbenches skill.
+Read ordinary state through `storage.get` and await `storage.set` when saving it.

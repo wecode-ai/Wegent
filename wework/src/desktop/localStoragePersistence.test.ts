@@ -119,3 +119,83 @@ describe('desktop localStorage persistence', () => {
     })
   })
 })
+
+describe('committed localStorage commands', () => {
+  beforeEach(() => {
+    mocks.invokeDesktopHost.mockReset()
+    mocks.isElectronRuntime.mockReturnValue(true)
+  })
+
+  it('publishes a durable value only after acknowledgement and does not queue it twice', async () => {
+    let commit!: () => void
+    const acknowledged = new Promise<void>(resolve => {
+      commit = resolve
+    })
+    mocks.invokeDesktopHost.mockImplementation(async (method: string) => {
+      if (method === 'rendererStorage.initialize') return {}
+      await acknowledged
+      return { persisted: true }
+    })
+    const persistence = await loadPersistence()
+    await persistence.initializeDesktopLocalStoragePersistence()
+    const write = persistence.commitLocalStorageValue('archive', 'committed')
+    await vi.waitFor(() =>
+      expect(mocks.invokeDesktopHost).toHaveBeenCalledWith('rendererStorage.update', {
+        clear: false,
+        changes: { archive: 'committed' },
+      })
+    )
+    expect(localStorage.getItem('archive')).toBeNull()
+    commit()
+    await write
+    expect(localStorage.getItem('archive')).toBe('committed')
+    await persistence.flushDesktopLocalStoragePersistence()
+    expect(
+      mocks.invokeDesktopHost.mock.calls.filter(([method]) => method === 'rendererStorage.update')
+    ).toHaveLength(1)
+  })
+
+  it('does not publish or retry a failed command alongside a later successful command', async () => {
+    const durable: Record<string, string> = {}
+    mocks.invokeDesktopHost.mockImplementation(async (method: string, params) => {
+      if (method === 'rendererStorage.initialize') return { ...durable }
+      if (params.changes.failed) throw new Error('Disk unavailable')
+      Object.assign(durable, params.changes)
+      return { persisted: true }
+    })
+    const persistence = await loadPersistence()
+    await persistence.initializeDesktopLocalStoragePersistence()
+    await expect(persistence.commitLocalStorageValue('failed', 'tentative')).rejects.toThrow(
+      'Disk unavailable'
+    )
+    expect(localStorage.getItem('failed')).toBeNull()
+    await persistence.commitLocalStorageValue('successful', 'committed')
+    expect(durable).toEqual({ successful: 'committed' })
+    expect(localStorage.getItem('failed')).toBeNull()
+    expect(await persistence.readCommittedLocalStorageValue('successful')).toBe('committed')
+  })
+
+  it('reads another window’s durable value even when this window has stale cached history', async () => {
+    mocks.invokeDesktopHost.mockResolvedValue({ archive: 'another-window' })
+    const persistence = await loadPersistence()
+    expect(await persistence.readCommittedLocalStorageValue('archive')).toBe('another-window')
+    expect(mocks.invokeDesktopHost).toHaveBeenCalledWith('rendererStorage.initialize', {
+      entries: {},
+    })
+  })
+
+  it('preserves the durable command result when browser-cache publication fails', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.invokeDesktopHost.mockResolvedValue({ persisted: true })
+    const persistence = await loadPersistence()
+    const set = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new Error('Browser cache unavailable')
+    })
+    await expect(
+      persistence.commitLocalStorageValue('archive', 'committed')
+    ).resolves.toBeUndefined()
+    expect(log).toHaveBeenCalledOnce()
+    set.mockRestore()
+    log.mockRestore()
+  })
+})

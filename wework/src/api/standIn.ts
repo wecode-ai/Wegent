@@ -3,6 +3,7 @@ import {
   type ConnectionDependencyPluginApi,
 } from './standInConnectionDependencies'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getDeviceTimezone } from '@/lib/timezone'
 import type { StandInGeneratedEventMap } from '@/telemetry/generated/standInEvents'
 import type {
   SharedWorkspaceApi,
@@ -368,14 +369,15 @@ export interface StandInExecutorApi {
   ): Promise<PersonalStandInSettings>
   readTask(
     deviceId: string,
-    taskId: string
+    taskId: string,
+    options?: { resolveActiveProvider?: boolean }
   ): Promise<{ success: boolean; task?: RuntimeTaskSummary; code?: string; error?: string }>
   assignmentTasks(
     userId: number,
     deviceId: string,
     assignments: Array<{ projectId: string; itemId: string; humanAssignmentId: string }>
   ): Promise<{ items: RuntimeTaskSummary[] }>
-  catalog(deviceId: string): Promise<{ models: RunnerModel[] }>
+  catalog(deviceId: string): Promise<{ models: RunnerModel[]; errors?: string[] }>
   run(
     projectId: string,
     issueId: string,
@@ -469,11 +471,15 @@ export function createStandInExecutorApi(
       )
     },
     onboarding: (userId, deviceId, language) =>
-      request('runtime.stand_in.onboarding.get', { userId, language }, deviceId),
+      request(
+        'runtime.stand_in.onboarding.get',
+        { userId, language, timezone: getDeviceTimezone() },
+        deviceId
+      ),
     completeOnboarding: async (userId, deviceId, weeklyReview, time, language) => {
       const result = await request<StandInOnboardingResult>(
         'runtime.stand_in.onboarding.complete',
-        { userId, weeklyReview, time, language },
+        { userId, weeklyReview, time, language, timezone: getDeviceTimezone() },
         deviceId
       )
       if (result.settings) publishPersonalStandIn(result.settings)
@@ -648,11 +654,11 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    readTask: async (deviceId, taskId) => {
+    readTask: async (deviceId, taskId, options) => {
       try {
         return await request<Awaited<ReturnType<StandInExecutorApi['readTask']>>>(
           'runtime.tasks.get',
-          { taskId },
+          { taskId, ...(options?.resolveActiveProvider ? { resolveActiveProvider: true } : {}) },
           deviceId
         )
       } catch (error) {

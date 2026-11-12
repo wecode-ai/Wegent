@@ -25,7 +25,7 @@ function confirmationHtml(manifest: WorkbenchAppManifest, previous?: WorkbenchAp
   const chinese = app.getLocale().startsWith('zh')
   const labels: Record<string, string> = chinese
     ? {
-        notifications: '系统通知与定时提醒',
+        notifications: '系统通知',
         'clipboard.read': '读取剪贴板',
         'clipboard.write': '写入剪贴板',
         'files.read': '读取您选择的文件',
@@ -33,7 +33,7 @@ function confirmationHtml(manifest: WorkbenchAppManifest, previous?: WorkbenchAp
         'external.open': '打开外部链接',
       }
     : {
-        notifications: 'Notifications and reminders',
+        notifications: 'System notifications',
         'clipboard.read': 'Read clipboard',
         'clipboard.write': 'Write clipboard',
         'files.read': 'Read files you select',
@@ -42,8 +42,8 @@ function confirmationHtml(manifest: WorkbenchAppManifest, previous?: WorkbenchAp
       }
   const replacement = previous
     ? chinese
-      ? `将替换已有工作台 ${previous.displayName}（${previous.name}），并保留、访问其本机数据和提醒。`
-      : `Replaces ${previous.displayName} (${previous.name}) and retains access to its local data and reminders.`
+      ? `将替换已有工作台 ${previous.displayName}（${previous.name}），并保留、访问其本机数据。`
+      : `Replaces ${previous.displayName} (${previous.name}) and retains access to its local data.`
     : ''
   const native = manifest.capabilities?.native ?? []
   const capabilities = native.length
@@ -57,7 +57,7 @@ function confirmationHtml(manifest: WorkbenchAppManifest, previous?: WorkbenchAp
 <p>${escapeHtml(manifest.description)}</p>${replacement ? `<p data-testid="workbench-install-replacement">${escapeHtml(replacement)}</p>` : ''}
 <p>${manifest.flavor === 'lightweight' ? (chinese ? '轻量型：页面在隔离沙箱内运行。' : 'Lightweight: its page runs in an isolated sandbox.') : chinese ? '扩展型：DSH Host 插件在本机运行，具有插件自身的系统访问能力。' : 'Extended: DSH Host plugins run locally with their own system access.'}</p>
 <p>${chinese ? '申请的 Wework 原生能力：' : 'Requested Wework native capabilities:'}</p><ul data-testid="workbench-install-capabilities">${capabilities.map(label => `<li>${escapeHtml(label)}</li>`).join('')}</ul>
-<p>${chinese ? '关闭窗口后的运行方式遵循工作台设置。已安排的提醒由 Wework 管理。' : 'Background execution follows this workbench’s settings. Scheduled reminders are managed by Wework.'}</p>
+<p>${chinese ? '关闭窗口后的运行方式遵循工作台设置。' : 'Background execution follows this workbench’s settings.'}</p>
 <div class="actions"><button id="cancel" data-testid="workbench-install-cancel" autofocus>${chinese ? '取消' : 'Cancel'}</button><button id="install" data-testid="workbench-install-accept">${chinese ? '安装' : 'Install'}</button></div>
 <script>for(const id of ['install','cancel'])document.getElementById(id).onclick=()=>window.weworkWorkbenchInstallation.respond(id==='install')</script></body></html>`
 }

@@ -8,8 +8,8 @@ import { verifyWorkbenchAppColdLaunch } from '../modules/workbench-app-cold-laun
 import { createWorkbenchAppTaskFixture } from '../modules/workbench-app-task-fixture.mjs'
 
 const NOTE = 'WEWORK_WORKBENCH_PERSISTENT_TODO'
-const REMINDER = 'WEWORK_WORKBENCH_BACKGROUND_REMINDER'
-const CANCELLED_REMINDER = 'WEWORK_WORKBENCH_CANCELLED_REMINDER'
+const DELETED_NOTE = 'WEWORK_WORKBENCH_DELETED_TODO'
+const CLOSE_POLICY_NOTE = 'WEWORK_WORKBENCH_KEEP_AFTER_CLOSE'
 const STEP_TIMEOUT_MS = 10_000
 const execFileAsync = promisify(execFile)
 const CLI = fileURLToPath(new URL('../../../electron/src/cli/wework-cli.mjs', import.meta.url))
@@ -30,11 +30,6 @@ async function until(read, predicate, description, timeoutMs = STEP_TIMEOUT_MS) 
     await new Promise(resolve => setTimeout(resolve, 100))
   } while (Date.now() < deadline)
   assert.fail(`${description}: ${JSON.stringify(observed)}`)
-}
-
-function localDateTime(date) {
-  const pad = value => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 export async function createDesktopScenario({
@@ -243,55 +238,34 @@ export async function createDesktopScenario({
       )
       await control.command('restoreMainWindow', 'body')
       await owned()
-      const reminderTime = '[data-testid="todo-reminder-time"]'
       await ready()
-      await workbenchApp('fill', { selector: input, value: CANCELLED_REMINDER })
-      await workbenchApp('fill', {
-        selector: reminderTime,
-        value: localDateTime(new Date(Date.now() + 3_600_000)),
-      })
+      await workbenchApp('fill', { selector: input, value: DELETED_NOTE })
       await workbenchApp('click', { selector: '[data-testid="todo-add"]' })
-      await until(
+      const saved = await until(
         data,
-        value => value.reminders?.some(item => item.body === CANCELLED_REMINDER),
-        'TODO did not persist a scheduled reminder'
+        value => value.state?.some(item => item.text === DELETED_NOTE),
+        'The second TODO was not persisted'
       )
+      const deleted = saved.state.find(item => item.text === DELETED_NOTE)
+      assert.ok(deleted, 'The deletion fixture was not saved')
       await ready()
-      await workbenchApp('fill', { selector: input, value: REMINDER })
-      await workbenchApp('fill', {
-        selector: reminderTime,
-        value: localDateTime(new Date(Date.now() + 15_000)),
-      })
-      await workbenchApp('click', { selector: '[data-testid="todo-add"]' })
-      const scheduled = await until(
+      await workbenchApp('click', { selector: `[data-testid="todo-delete-${deleted.id}"]` })
+      const beforeStop = await until(
         data,
-        value => value.reminders?.length === 2,
-        'Reminder identities did not persist independently'
-      )
-      const cancelled = scheduled.state.find(item => item.text === CANCELLED_REMINDER)
-      assert.ok(cancelled, 'The cancellation fixture was not saved')
-      await workbenchApp('click', { selector: `[data-testid="todo-delete-${cancelled.id}"]` })
-      await until(
-        data,
-        value => value.reminders?.length === 1 && value.reminders[0].body === REMINDER,
-        'Cancelling one reminder removed another reminder'
+        value =>
+          value.state?.length === 1 && value.state[0].text === NOTE && value.state[0].done === true,
+        'Deleting one TODO changed another TODO or lost its completion state'
       )
       await menu('smart-app-stop-menu')
       await until(state, value => !value.running, 'Stop did not stop the DSH runtime')
-      assert.equal((await data()).reminders[0]?.body, REMINDER, 'Stop lost a durable reminder')
-      await until(
-        data,
-        value => value.reminders.length === 0,
-        'The Host did not consume a due reminder after the runtime stopped',
-        20_000
-      )
+      assert.deepEqual((await data()).state, beforeStop.state, 'Stop changed the persisted TODOs')
       await control.command(
         'clickWhenEnabled',
         `[data-testid="harness-app-start-${installationId}"]`
       )
       await until(
         state,
-        value => value.running && value.sdkAvailable,
+        value => value.running && value.visible && value.sdkAvailable,
         'A stopped workbench could not reopen',
         workbenchReadyTimeoutMs
       )
@@ -300,7 +274,11 @@ export async function createDesktopScenario({
         value => value?.includes(NOTE),
         'Reopening lost the persisted TODO'
       )
-      assert.equal((await data()).state[0].done, true)
+      assert.deepEqual(
+        (await data()).state,
+        beforeStop.state,
+        'Reopening changed the persisted TODOs'
+      )
       await settings()
       await control.command('clickWhenEnabled', '[data-testid="workbench-desktop-shortcut"]')
       const desktopDirectory = join(electronUserDataDirectory, 'e2e-desktop')
@@ -391,16 +369,15 @@ export async function createDesktopScenario({
       )
       await closeSettings()
       await ready()
-      await workbenchApp('fill', { selector: input, value: 'Keep after close' })
-      await workbenchApp('fill', {
-        selector: reminderTime,
-        value: localDateTime(new Date(Date.now() + 3_600_000)),
-      })
+      await workbenchApp('fill', { selector: input, value: CLOSE_POLICY_NOTE })
       await workbenchApp('click', { selector: '[data-testid="todo-add"]' })
-      await until(
+      const beforeClose = await until(
         data,
-        value => value.reminders.length === 1,
-        'The close-policy reminder was not saved'
+        value =>
+          value.state?.length === 2 &&
+          value.state.some(item => item.text === NOTE && item.done === true) &&
+          value.state.some(item => item.text === CLOSE_POLICY_NOTE && item.done === false),
+        'The close-policy TODO was not saved alongside the completed TODO'
       )
       await workbenchApp('close')
       await until(
@@ -408,12 +385,28 @@ export async function createDesktopScenario({
         value => !value.running,
         'Closing a background-disabled view kept its runtime running'
       )
-      assert.equal(
-        (await data()).reminders.length,
-        1,
-        'Closing the last view removed a durable reminder'
+      assert.deepEqual(
+        (await data()).state,
+        beforeClose.state,
+        'Closing the last view changed the persisted TODOs'
       )
       await cli(['launch', '--id', installationId])
+      await until(
+        state,
+        value => value.running && value.visible && value.sdkAvailable,
+        'The closed workbench did not reopen',
+        workbenchReadyTimeoutMs
+      )
+      await until(
+        () => workbenchApp('getText', { selector: '[data-testid="todo-items"]' }),
+        value => value?.includes(NOTE) && value.includes(CLOSE_POLICY_NOTE),
+        'Reopening after close lost the persisted TODOs'
+      )
+      assert.deepEqual(
+        (await data()).state,
+        beforeClose.state,
+        'Reopening after close changed the persisted TODOs'
+      )
       await owned()
       await menu('smart-app-remove-local')
       await control.command('waitFor', '[data-testid="smart-app-remove-local-confirm"]')

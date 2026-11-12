@@ -5,11 +5,7 @@ import {
   WORKBENCH_NATIVE_CAPABILITIES,
   type WorkbenchNativeCapability,
 } from './workbench-app-capabilities.js'
-import {
-  validateWorkbenchReminders,
-  validateWorkbenchState,
-  type WorkbenchAppData,
-} from './workbench-app-data.js'
+import { validateWorkbenchState, type WorkbenchAppData } from './workbench-app-data.js'
 import { bundleLightweightHtml } from './lightweight-workbench-assets.js'
 import { scaffoldLightweightWorkbench } from './smart-app-scaffold.js'
 
@@ -185,10 +181,9 @@ export async function readLegacyLightAppData(
     )
     return {
       state: validateWorkbenchState(data.state),
-      reminders: validateWorkbenchReminders(data.reminders),
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { state: null, reminders: [] }
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { state: null }
     throw error
   }
 }

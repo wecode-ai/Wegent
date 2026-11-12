@@ -5013,6 +5013,19 @@ fn project_plugin_config_overrides(request: &ExecutionRequest) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn codex_request_inherits_wework_default(request: &ExecutionRequest) -> bool {
+    codex_request_model(request).is_none()
+        && super::instance_home::request_home(request).is_none()
+        && explicit_model_provider(&request.model_config)
+            .map_or(true, |provider| provider == "openai")
+        && (use_user_runtime_config(&request.model_config)
+            || (api_key(&request.model_config).is_none()
+                && matches!(
+                    local_model_proxy::upstream_from_model_config(&request.model_config),
+                    Ok(None)
+                )))
+}
+
 fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
     let compat_proxy = bool_value(
         request
@@ -5676,13 +5689,21 @@ fn normalize_reasoning(value: Option<&Value>) -> NormalizedReasoning {
 }
 
 fn normalize_reasoning_effort(value: Option<&str>) -> String {
-    let normalized = value
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .replace(' ', "_");
-    let aliased = match normalized.as_str() {
-        "" | "none" | "off" | "false" | "disabled" | "关闭" => DEFAULT_REASONING_EFFORT,
+    let aliased = normalize_reasoning_effort_alias(value.unwrap_or_default());
+    if matches!(
+        aliased.as_str(),
+        "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    ) {
+        aliased
+    } else {
+        DEFAULT_REASONING_EFFORT.to_owned()
+    }
+}
+
+/// Canonicalize aliases without replacing unsupported or disabled values with a default.
+pub(crate) fn normalize_reasoning_effort_alias(value: &str) -> String {
+    let normalized = value.trim().to_ascii_lowercase().replace(' ', "_");
+    match normalized.as_str() {
         "minimal" | "低" | "轻度" | "最低" => "low",
         "中" | "中等" => "medium",
         "高" => "high",
@@ -5690,15 +5711,8 @@ fn normalize_reasoning_effort(value: Option<&str>) -> String {
         "最大" | "最高" | "maximum" => "max",
         "极高" => "ultra",
         value => value,
-    };
-    if matches!(
-        aliased,
-        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
-    ) {
-        aliased.to_owned()
-    } else {
-        DEFAULT_REASONING_EFFORT.to_owned()
     }
+    .to_owned()
 }
 
 fn normalize_service_tier(value: Option<&Value>) -> Option<String> {
@@ -5833,7 +5847,6 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
             format!("Bearer {}", endpoint.token),
         );
     }
-    environment.extend(computer_use_mcp_config_overrides().1);
     // Auxiliary RPCs and turns must compare the same effective CLI directories.
     environment.extend(
         process_environment::process_env(&[])
@@ -5848,91 +5861,54 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
     environment
 }
 
-fn computer_use_mcp_config_overrides() -> (Vec<String>, BTreeMap<String, String>) {
+fn computer_use_mcp_config_overrides() -> Vec<String> {
     let path = executor_home().join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
-    let Ok(contents) = fs::read_to_string(path) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    let Ok(record) = serde_json::from_str::<Value>(&contents) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    let Some(address) = record.get("address").and_then(Value::as_str) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    let Some(token) = record.get("token").and_then(Value::as_str) else {
-        return (Vec::new(), BTreeMap::new());
-    };
-    if address.trim().is_empty() || token.trim().is_empty() {
-        return (Vec::new(), BTreeMap::new());
+    if crate::computer_use_mcp::read_bridge_record(&path).is_err() {
+        return Vec::new();
     }
     let command =
         env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
-    let env = BTreeMap::from([
-        (
-            "WEWORK_COMPUTER_USE_BRIDGE_URL".to_owned(),
-            format!("http://{}", address.trim()),
+    vec![
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "command"
+            ]),
+            toml_value(&command.display().to_string())
         ),
-        (
-            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN".to_owned(),
-            token.trim().to_owned(),
+        format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
+            toml_json_value(&json!(["computer-use-mcp-server", path]))
         ),
-    ]);
-    (
-        vec![
-            format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "command"
-                ]),
-                toml_value(&command.display().to_string())
-            ),
-            format!(
-                "{}={}",
-                toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
-                toml_json_value(&json!(["computer-use-mcp-server"]))
-            ),
-            format!(
-                "{}=15",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "startup_timeout_sec"
-                ])
-            ),
-            format!(
-                "{}=120",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "tool_timeout_sec"
-                ])
-            ),
-            format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "default_tools_approval_mode"
-                ]),
-                toml_value("writes")
-            ),
-            format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                    "env_vars"
-                ]),
-                toml_json_value(&json!([
-                    "WEWORK_COMPUTER_USE_BRIDGE_URL",
-                    "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
-                ]))
-            ),
-        ],
-        env,
-    )
+        format!(
+            "{}=15",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "startup_timeout_sec"
+            ])
+        ),
+        format!(
+            "{}=120",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "tool_timeout_sec"
+            ])
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "default_tools_approval_mode"
+            ]),
+            toml_value("writes")
+        ),
+    ]
 }
 
 fn managed_wework_mcp_config_overrides(

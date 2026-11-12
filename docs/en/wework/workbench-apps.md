@@ -13,7 +13,7 @@ On desktop, open **Sidebar → Applications → Workbenches → Mine**. No exper
 The main window also offers **Top tab bar → + → Manage Workbenches**. Select an installed workbench's name in that menu to open it in a main-window tab. Both entries remain available regardless of the experimental-features setting.
 
 - **Create workbench**: enter a name and choose **Lightweight** for calculators and notes, or **Extended** for DSH services and plugins. Description and location are optional; Advanced allows editing the directory identifier. The default location is `WeworkSmartApps` under Documents. Creation opens a development conversation for the linked directory.
-- **Create TODO note**: review the native installation confirmation and requested system capabilities. Accepting installs and opens it; cancelling does neither.
+- **Create TODO note**: review the native installation confirmation and requested system capabilities. Accepting installs and opens it. Add, complete and delete tasks saved on this device; cancelling does not install or open the application.
 - **Link folder** / **Import workbench**: link DSH source or import a package. Review version and capabilities. Explicitly importing an old light-app directory converts it to DSH instead of retaining its old runtime.
 - **Run** / **Open**: start or focus the existing instance, using an independent window by default. Refresh failures retain the existing list and show an error.
 
@@ -21,13 +21,13 @@ The main window also offers **Top tab bar → + → Manage Workbenches**. Select
 
 Open a card's **More actions → Workbench settings → Open in**, then select **Independent window** or **Main-window tab**. Both flavors support both modes. Changes save immediately and move the same running page, preserving unsaved input and page state.
 
-**Run automatically when Wework starts** controls restoration on the next launch. **Keep running after closing the window** separately controls the close button; **Hide and keep running** retains the instance; **Stop** releases its runtime while keeping local data and registered reminders. Fully quitting Wework stops execution.
+**Run automatically when Wework starts** controls restoration on the next launch. **Keep running after closing the window** separately controls the close button; **Hide and keep running** retains the instance; **Stop** releases its runtime while keeping local data. Fully quitting Wework stops execution.
 
 Enter a **Global shortcut**, such as `CommandOrControl+Shift+T`, and click **Save**. While Wework is running, the shortcut opens or focuses the application; pressing it while focused hides it. Save an empty value to clear it. Invalid or conflicting combinations show an error without replacing another application's binding.
 
 **Create desktop shortcut** writes a macOS `.app` launcher bound to its owning Wework instance and data directory, keeping development and installed instances separate. Windows uses `.url`; Linux uses `.desktop`. Opening the shortcut starts the target directly without opening the main window first. Windows and Linux require the registered Wework protocol. Recreating a macOS shortcut removes that workbench's old generated `.webloc`; user-modified files are preserved.
 
-**Remove** asks for confirmation before stopping the instance, unregistering shortcuts, cancelling reminders and deleting owned data and managed installation files. Linked external source directories remain. Cancelling preserves the running application.
+**Remove** asks for confirmation before stopping the instance, unregistering shortcuts and deleting owned data and managed installation files. Linked external source directories remain. Cancelling preserves the running application.
 
 ## Models and development
 
@@ -35,11 +35,11 @@ Flavor does not determine whether a model is required. Tools without AI can run 
 
 **Develop workbench** edits the same directory. **Add DSH plugins** applies to extended projects. The development preview supports **Verify**, **Add plugins**, **Refresh page** and **Reload DSH**. Export requires verification of the current source; edits invalidate earlier verification. Use **Copy as my workbench** before editing marketplace installations. Publishing and access management retain marketplace permissions.
 
-## System capabilities and reminders
+## System capabilities and local data
 
 The manifest declares required capabilities; native confirmation grants them. Notifications, clipboard, native file choosers and external links have separate capability checks. Pages cannot select another installation identity or arbitrary filesystem paths.
 
-Data is isolated by installation ID. Host reminders persist independently of windows and continue after hiding or stopping an application. They pause while Wework is fully closed, then recover overdue reminders on restart. Operating-system notification permission is also required.
+Data is isolated by installation ID. Hiding or stopping a workbench preserves saved content. `notifications.show` sends an immediate system notification and also requires operating-system notification permission. Saving app state does not require a notification grant.
 
 ## Development contract
 
@@ -60,20 +60,18 @@ Use the successful installation result's top-level `id`; `null` means cancellati
 
 For lightweight projects, edit root `view.html` and local assets while retaining the trusted generated DSH bridges. The opaque sandbox exposes asynchronous `window.weworkWorkbench` APIs:
 
-| API                                                                | Capability                                                    |
-| ------------------------------------------------------------------ | ------------------------------------------------------------- |
-| `storage.get()` / `storage.set(value)`                             | Own JSON document, up to 1 MiB                                |
-| `storage.commit({value, reminders?})`                              | Atomic state and reminders; reminders require `notifications` |
-| `notifications.show({title, body})`                                | `notifications`                                               |
-| `reminders.schedule({id,title,body,at})` / `list()` / `cancel(id)` | `notifications`                                               |
-| `clipboard.readText()` / `writeText(text)`                         | `clipboard.read` / `clipboard.write`                          |
-| `files.openText()` / `saveText({name,text})`                       | `files.read` / `files.write`, native chooser                  |
-| `external.open(url)`                                               | `external.open`, HTTP(S) or `mailto:`                         |
-| `window.hide()` / `setAlwaysOnTop(boolean)`                        | Current workbench window                                      |
+| API                                          | Capability                                   |
+| -------------------------------------------- | -------------------------------------------- |
+| `storage.get()` / `storage.set(value)`       | Own JSON document, up to 1 MiB               |
+| `notifications.show({title, body})`          | `notifications`                              |
+| `clipboard.readText()` / `writeText(text)`   | `clipboard.read` / `clipboard.write`         |
+| `files.openText()` / `saveText({name,text})` | `files.read` / `files.write`, native chooser |
+| `external.open(url)`                         | `external.open`, HTTP(S) or `mailto:`        |
+| `window.hide()` / `setAlwaysOnTop(boolean)`  | Current workbench window                     |
 
 Lightweight pages use `sandbox="allow-scripts"` without `allow-forms` and retain CSP `form-action 'none'`. The browser can block native form submission before a `submit` callback runs, so do not rely on `form.onsubmit`, a `submit` event, `requestSubmit()` or `form.submit()` for business actions. Call the action directly from a `<button type="button">` click handler. Handle Enter on text inputs by calling the same action after `preventDefault()`, ignoring IME events whose `isComposing` is true. Await SDK calls and show failures. Verify both real button clicks and Enter input rather than manually dispatching a `submit` event; do not add `allow-forms` or relax CSP.
 
-Supplying a complete reminders collection, including `[]`, requires notification capability; omitting it preserves existing reminders. At most 100 unique reminder IDs are allowed, and new times must be in the future. Use `storage.commit` when an edit changes state and reminders together.
+Storage is one JSON document. Read it with `await window.weworkWorkbench.storage.get()` and save it with `await window.weworkWorkbench.storage.set(value)`. Await successful saves before updating the interface, and show failures to the user.
 
 ```mermaid
 flowchart LR

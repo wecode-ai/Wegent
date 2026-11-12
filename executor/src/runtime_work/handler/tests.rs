@@ -12,6 +12,10 @@ mod im_callback_routing;
 #[path = "superseded_turn_tests.rs"]
 mod superseded_turn_tests;
 
+#[cfg(unix)]
+#[path = "codex_startup_tests.rs"]
+mod codex_startup_tests;
+
 #[test]
 fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
     for method in [
@@ -4858,6 +4862,30 @@ async fn codex_model_discovery_waits_for_app_server_restart() {
     }
 
     drop(restart_guard);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // Isolate process-wide Codex authentication paths.
+async fn codex_account_switch_waits_for_model_discovery() {
+    let _lock = crate::test_env::lock();
+    let home = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_CODEX_HOME", home.path().to_str().unwrap());
+    let (handler, root) = isolated_runtime_work_handler("catalog-account-serialization");
+    let discovery_guard = codex_app_server_restart_gate().lock().await;
+    let switching = handler.switch_codex_account(json!({"accountId": "next-account"}));
+    tokio::pin!(switching);
+    let waiting = tokio::time::timeout(Duration::from_millis(100), &mut switching).await;
+    assert!(waiting.is_err(), "account switch bypassed model discovery");
+
+    drop(discovery_guard);
+    let error = tokio::time::timeout(Duration::from_secs(1), &mut switching)
+        .await
+        .expect("account switch did not resume after model discovery")
+        .unwrap_err();
+    assert_eq!(error.code, "codex_account_switch_failed");
+    assert_eq!(error.message, "Codex account was not found");
+    assert!(fs::read_dir(home.path()).unwrap().next().is_none());
     let _ = fs::remove_dir_all(root);
 }
 

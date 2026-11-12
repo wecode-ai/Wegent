@@ -41,9 +41,6 @@ describe('Workbench system capabilities', () => {
   test('requires explicit capability grants for every sensitive SDK method', () => {
     const methods = {
       'notifications.show': 'notifications',
-      'reminders.list': 'notifications',
-      'reminders.schedule': 'notifications',
-      'reminders.cancel': 'notifications',
       'clipboard.readText': 'clipboard.read',
       'clipboard.writeText': 'clipboard.write',
       'files.openText': 'files.read',

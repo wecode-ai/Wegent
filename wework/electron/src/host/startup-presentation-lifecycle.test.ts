@@ -144,6 +144,7 @@ function backgroundFixture(maximized = false) {
     startupSplashWindow: {},
     deferredWorkspaceWindowRestore: false,
     restoreFixedWorkspaceWindows: vi.fn(async () => {}),
+    focusStartupRecoveryIfActive: vi.fn(() => false),
     focusStartupSplashIfActive: vi.fn(() => false),
     ensureWorkbenchWindow: vi.fn(async () => {}),
     setDockVisible: vi.fn(async () => {}),
@@ -255,6 +256,9 @@ class StartupShellWindow extends EventEmitter {
   show = vi.fn(() => {
     this.shown = true
   })
+  hide = vi.fn(() => {
+    this.shown = false
+  })
   maximize = vi.fn()
   setOpacity = vi.fn()
   close = vi.fn(() => {
@@ -273,6 +277,7 @@ class StartupShellWindow extends EventEmitter {
 /** Execute the production bootstrap, shell creation and activation with native boundaries stubbed. */
 function startupFixture(applicationOnly = false, trial = false, loadFailure?: 'shell' | 'splash') {
   const windows: StartupShellWindow[] = []
+  const recoveryWindow = new StartupShellWindow()
   const stages: string[] = []
   const events: string[] = []
   const readiness = new DesktopHostReadiness()
@@ -295,7 +300,10 @@ function startupFixture(applicationOnly = false, trial = false, loadFailure?: 's
     startupProgress: progress,
     desktopHostReadiness: readiness,
     recordStartupFailure: vi.fn(),
-    dialog: { showErrorBox: vi.fn() },
+    showStartupRecovery: vi.fn<(error: unknown) => Promise<StartupShellWindow>>(async () => {
+      recoveryWindow.show()
+      return recoveryWindow
+    }),
     console: { error: vi.fn(), warn: vi.fn() },
     Error,
     startupWorkspaceOpenRequest: null,
@@ -381,6 +389,7 @@ function startupFixture(applicationOnly = false, trial = false, loadFailure?: 's
     createWindow: async () => {},
     createWorkbenchWindow: async () => {},
     ensureWorkbenchWindow: async () => {},
+    focusStartupRecoveryIfActive: vi.fn(() => recoveryWindow.isVisible()),
     focusStartupSplashIfActive: () => context.startupSplash?.snapshot().state !== 'closed',
     setDockVisible: async () => {},
     presentMainWindow: vi.fn(),
@@ -400,6 +409,7 @@ function startupFixture(applicationOnly = false, trial = false, loadFailure?: 's
     events,
     stages,
     windows,
+    recoveryWindow,
     release,
     configurationStarted,
     progress,
@@ -577,7 +587,7 @@ test('shutdown waits for admitted configuration before disposing the services it
   expect(dispose).toHaveBeenCalledOnce()
 })
 
-test('Host configuration failure preserves the native error box with a visible splash', async () => {
+test('Host configuration failure opens independent recovery before hiding startup surfaces', async () => {
   const fixture = startupFixture()
   const pending = fixture.initialize()
   await fixture.configurationStarted
@@ -592,14 +602,16 @@ test('Host configuration failure preserves the native error box with a visible s
   expect(fixture.windows[1].webContents.executeJavaScript).not.toHaveBeenCalledWith(
     expect.stringContaining('wework-startup-error')
   )
-  expect(fixture.context.dialog.showErrorBox).toHaveBeenCalledWith('Wework', error.message)
+  expect(fixture.context.showStartupRecovery).toHaveBeenCalledExactlyOnceWith(error)
+  expect(fixture.recoveryWindow.isVisible()).toBe(true)
+  expect(fixture.windows.every(window => !window.shown)).toBe(true)
   fixture.context.quitting = true
   fixture.release()
   await pending
 })
 
 test.each(['shell', 'splash'] as const)(
-  'a failed %s load retains the native error box independently of splash readiness',
+  'a failed %s load opens independent recovery without requiring splash readiness',
   async failingPage => {
     const fixture = startupFixture(false, false, failingPage)
     await expect(fixture.initialize()).rejects.toThrow(`${failingPage} load failed`)
@@ -609,8 +621,10 @@ test.each(['shell', 'splash'] as const)(
       window: { visible: failingPage !== 'splash' },
     })
     await fixture.fail(error)
-    if (failingPage === 'splash') expect(fixture.windows.every(window => !window.shown)).toBe(true)
-    expect(fixture.context.dialog.showErrorBox).toHaveBeenCalledWith('Wework', error.message)
+    expect(fixture.context.showStartupRecovery).toHaveBeenCalledExactlyOnceWith(error)
+    expect(fixture.recoveryWindow.isVisible()).toBe(true)
+    expect(fixture.windows.every(window => !window.shown)).toBe(true)
+    await expect(fixture.context.desktopHostReadiness.wait()).rejects.toBe(error)
     expect(fixture.windows[1].webContents.executeJavaScript).not.toHaveBeenCalledWith(
       expect.stringContaining('wework-startup-error')
     )
@@ -618,7 +632,7 @@ test.each(['shell', 'splash'] as const)(
 )
 
 test.each(['closed', 'contents-destroyed', 'hidden-trial', 'script-failed'] as const)(
-  'Host failure retains the native error box when recovery is %s',
+  'Host failure opens independent recovery when the splash is %s',
   async unavailable => {
     const fixture = startupFixture(unavailable === 'hidden-trial', unavailable === 'hidden-trial')
     const pending = fixture.initialize()
@@ -631,7 +645,10 @@ test.each(['closed', 'contents-destroyed', 'hidden-trial', 'script-failed'] as c
     }
     const error = new Error('Host initialization failed')
     await fixture.fail(error)
-    expect(fixture.context.dialog.showErrorBox).toHaveBeenCalledWith('Wework', error.message)
+    expect(fixture.context.showStartupRecovery).toHaveBeenCalledExactlyOnceWith(error)
+    expect(fixture.recoveryWindow.isVisible()).toBe(true)
+    expect(fixture.windows.every(window => !window.shown)).toBe(true)
+    await expect(fixture.context.desktopHostReadiness.wait()).rejects.toBe(error)
     expect(splashWindow.webContents.executeJavaScript).not.toHaveBeenCalledWith(
       expect.stringContaining('wework-startup-error')
     )
@@ -641,26 +658,111 @@ test.each(['closed', 'contents-destroyed', 'hidden-trial', 'script-failed'] as c
   }
 )
 
-test('Host failure during shutdown does not display another error box', async () => {
+test('Host failure during shutdown fails readiness without opening recovery', async () => {
   const fixture = startupFixture()
   const pending = fixture.initialize()
   await fixture.configurationStarted
   fixture.context.quitting = true
-  await fixture.fail(new Error('Host initialization failed'))
-  expect(fixture.context.dialog.showErrorBox).not.toHaveBeenCalled()
+  const error = new Error('Host initialization failed')
+  await fixture.fail(error)
+  await expect(fixture.context.desktopHostReadiness.wait()).rejects.toBe(error)
+  expect(fixture.context.showStartupRecovery).not.toHaveBeenCalled()
+  expect(fixture.context.recordStartupFailure).not.toHaveBeenCalled()
   fixture.release()
   await pending
 })
 
-test('application-only Host failure uses the native error box without creating windows', async () => {
+test('application-only Host failure opens recovery without creating normal shells', async () => {
   const fixture = startupFixture(true)
   const pending = fixture.initialize()
   await fixture.configurationStarted
   const error = new Error('Host initialization failed')
   await fixture.fail(error)
   expect(fixture.windows).toHaveLength(0)
-  expect(fixture.context.dialog.showErrorBox).toHaveBeenCalledWith('Wework', error.message)
+  expect(fixture.context.showStartupRecovery).toHaveBeenCalledExactlyOnceWith(error)
+  expect(fixture.recoveryWindow.isVisible()).toBe(true)
+  await expect(fixture.context.desktopHostReadiness.wait()).rejects.toBe(error)
   fixture.context.quitting = true
   fixture.release()
   await pending
+})
+
+test('Host failure keeps existing startup surfaces until independent recovery is ready', async () => {
+  const fixture = startupFixture()
+  const pending = fixture.initialize()
+  await fixture.configurationStarted
+  let releaseRecovery!: () => void
+  const recoveryReady = new Promise<void>(resolve => {
+    releaseRecovery = resolve
+  })
+  fixture.context.showStartupRecovery.mockImplementationOnce(async () => {
+    await recoveryReady
+    fixture.recoveryWindow.show()
+    return fixture.recoveryWindow
+  })
+  const error = new Error('Host initialization failed')
+  const failing = fixture.fail(error)
+  expect(fixture.context.showStartupRecovery).toHaveBeenCalledExactlyOnceWith(error)
+  expect(fixture.recoveryWindow.isVisible()).toBe(false)
+  expect(fixture.windows[1].isVisible()).toBe(true)
+  expect(fixture.windows.every(window => window.hide.mock.calls.length === 0)).toBe(true)
+  await expect(fixture.context.desktopHostReadiness.wait()).rejects.toBe(error)
+  releaseRecovery()
+  await failing
+  expect(fixture.recoveryWindow.isVisible()).toBe(true)
+  for (const window of fixture.windows) expect(window.hide).toHaveBeenCalledOnce()
+  expect(fixture.windows.every(window => !window.shown)).toBe(true)
+  fixture.context.quitting = true
+  fixture.release()
+  await pending
+})
+
+test('a recovery load failure preserves existing surfaces and the original Host failure', async () => {
+  const fixture = startupFixture()
+  const pending = fixture.initialize()
+  await fixture.configurationStarted
+  const recoveryError = new Error('Recovery could not load')
+  fixture.context.showStartupRecovery.mockRejectedValueOnce(recoveryError)
+  const error = new Error('Host initialization failed')
+  await fixture.fail(error)
+  expect(fixture.recoveryWindow.isVisible()).toBe(false)
+  expect(fixture.windows[1].isVisible()).toBe(true)
+  for (const window of fixture.windows) expect(window.hide).not.toHaveBeenCalled()
+  await expect(fixture.context.desktopHostReadiness.wait()).rejects.toBe(error)
+  expect(fixture.context.recordStartupFailure).toHaveBeenCalledExactlyOnceWith(
+    error,
+    'desktop_host'
+  )
+  expect(fixture.context.console.error).toHaveBeenCalledWith(
+    '[startup] recovery window failed',
+    recoveryError
+  )
+  fixture.context.quitting = true
+  fixture.release()
+  await pending
+})
+
+test('activation focuses active recovery without starting normal workbench services', async () => {
+  const fixture = startupFixture(true)
+  const error = new Error('Host initialization failed')
+  await fixture.fail(error)
+  await fixture.activate()
+  expect(fixture.context.focusStartupRecoveryIfActive).toHaveBeenCalledOnce()
+  expect(fixture.recoveryWindow.isVisible()).toBe(true)
+  expect(fixture.windows).toHaveLength(0)
+  expect(fixture.context.configureDesktopRuntime).not.toHaveBeenCalled()
+  expect(fixture.context.startDesktopRuntime).not.toHaveBeenCalled()
+  expect(fixture.context.ensureDesktopControlBridge).not.toHaveBeenCalled()
+  expect(fixture.context.applicationLaunches.start).not.toHaveBeenCalled()
+  await expect(fixture.context.desktopHostReadiness.wait()).rejects.toBe(error)
+})
+
+test('activation during shutdown does not focus recovery or create startup surfaces', async () => {
+  const fixture = startupFixture(true)
+  fixture.context.quitting = true
+  await fixture.activate()
+  expect(fixture.context.focusStartupRecoveryIfActive).not.toHaveBeenCalled()
+  expect(fixture.context.configureDesktopRuntime).not.toHaveBeenCalled()
+  expect(fixture.context.startDesktopRuntime).not.toHaveBeenCalled()
+  expect(fixture.windows).toHaveLength(0)
 })

@@ -235,9 +235,22 @@ export function prepareManagedExecutorEnvironment(
   const executorHome = managedExecutorHome(options)
   const codexHome = options.environment.WEGENT_CODEX_HOME?.trim() || join(executorHome, 'codex')
   const nativeCodexHome = resolveNativeCodexHome(options.environment, codexHome)
-  if (nativeCodexHome) {
+  if (nativeCodexHome && options.environment.WEWORK_CODEX_SUBSCRIPTION_ENABLED !== 'unavailable') {
     if (isCodexSubscriptionEnabled(options.environment)) {
-      prepareCodexAuth(nativeCodexHome, codexHome, options.environment.WEWORK_AI_VERIFY_AUTH_OWNER)
+      try {
+        prepareCodexAuth(
+          nativeCodexHome,
+          codexHome,
+          options.environment.WEWORK_AI_VERIFY_AUTH_OWNER
+        )
+      } catch (error) {
+        console.warn(
+          '[codex-auth] Native credential import is unavailable; sign-in remains accessible',
+          {
+            errorType: error instanceof Error ? error.name : typeof error,
+          }
+        )
+      }
     } else {
       removeCodexAuthLink(nativeCodexHome, codexHome)
     }

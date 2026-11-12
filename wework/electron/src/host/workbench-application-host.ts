@@ -116,7 +116,6 @@ export class WorkbenchApplicationHost implements WorkbenchService {
       options.desktopShortcutLaunch
     )
     this.native = new WorkbenchAppServices(options.dataDirectory, {
-      list: () => options.manager.list(),
       get: id => options.manager.get(id),
       open: id => this.open(id),
       window: id => this.ownerWindowForId(id),
@@ -146,7 +145,6 @@ export class WorkbenchApplicationHost implements WorkbenchService {
         this.report(error)
       }
     }
-    await this.native.start()
     this.assertActive()
     void this.resumeResident().catch(error => this.report(error))
   }
@@ -217,7 +215,6 @@ export class WorkbenchApplicationHost implements WorkbenchService {
       rollbackShortcut = undefined
       restoreNative = false
       this.native.activate(installation.id)
-      await this.native.refresh(installation.id)
       this.installing.delete(installation.id)
       return this.open(installation.id)
     } finally {
@@ -230,7 +227,6 @@ export class WorkbenchApplicationHost implements WorkbenchService {
       }
       if (restoreNative && claimedId && !this.disposed) {
         this.native.activate(claimedId)
-        await this.native.refresh(claimedId).catch(error => this.report(error))
       }
       if (claimedId) this.installing.delete(claimedId)
       await rm(staging, { recursive: true, force: true })
@@ -260,7 +256,6 @@ export class WorkbenchApplicationHost implements WorkbenchService {
         installation.manifest.capabilities?.native ?? []
       )
       this.native.activate(installation.id)
-      await this.native.refresh(installation.id)
       return this.snapshot(await this.options.manager.get(installation.id))
     } finally {
       this.installing.delete(installation.id)
@@ -284,7 +279,6 @@ export class WorkbenchApplicationHost implements WorkbenchService {
         expectedPreviousSha256: previous?.sha256 ?? null,
       })
       this.native.activate(id)
-      await this.native.refresh(id)
       return this.snapshot(installation)
     } finally {
       this.installing.delete(id)
@@ -430,7 +424,6 @@ export class WorkbenchApplicationHost implements WorkbenchService {
       this.shortcuts.delete(id)
       this.shortcutErrors.delete(id)
       if (deleteData) await this.native.removeData(id)
-      else await this.native.refresh(id).catch(error => this.report(error))
     } finally {
       this.removing.delete(id)
     }
