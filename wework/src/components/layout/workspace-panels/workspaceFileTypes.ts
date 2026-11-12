@@ -1,5 +1,6 @@
 import { normalizeWorkspaceSeparators } from '@/lib/workspace-file-contract'
 const MARKDOWN_FILE_PATTERN = /\.(?:md|markdown)$/i
+const HTML_FILE_PATTERN = /\.(?:html?|xhtml)$/i
 
 export type WorkspaceFilePreviewKind = 'text' | 'binary' | 'unknown'
 
@@ -85,6 +86,14 @@ function fileName(path: string): string {
 
 export function isMarkdownFile(path: string): boolean {
   return MARKDOWN_FILE_PATTERN.test(path)
+}
+
+export function isHtmlFile(path: string): boolean {
+  return HTML_FILE_PATTERN.test(path)
+}
+
+export function isPreviewableTextFile(path: string): boolean {
+  return isMarkdownFile(path) || isHtmlFile(path)
 }
 
 export function workspaceFilePreviewKind(path: string, contentType = ''): WorkspaceFilePreviewKind {
