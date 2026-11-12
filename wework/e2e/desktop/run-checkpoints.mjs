@@ -162,6 +162,7 @@ function checkpointScenarioEnv(env, checkpoint) {
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
     checkpoint === 'project-assignment-notification' ||
+    checkpoint === 'collaboration-shared-core' ||
     checkpoint === 'stand-in-profile-settings' ||
     checkpoint === 'stand-in-git' ||
     checkpoint.startsWith('human-interactions')
