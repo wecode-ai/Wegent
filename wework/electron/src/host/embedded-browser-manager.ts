@@ -239,9 +239,11 @@ export class EmbeddedBrowserManager {
         return
       }
       event.preventDefault()
+      const navigation = entry.navigationCompletion
       void entry.scripts
         .afterActions(async () => {
-          if (this.entries.get(entry.label) !== entry) return
+          if (this.entries.get(entry.label) !== entry || entry.navigationCompletion !== navigation)
+            return
           await this.navigate(entry.label, url)
         })
         .catch(error => {
