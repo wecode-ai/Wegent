@@ -14,6 +14,7 @@ import {
   createElectronCapabilityRouter,
   coreGrantedCapabilities,
   e2eSystemPressureOverride,
+  enforceIdleSystemLoadLimits,
   systemPressureSnapshot,
   e2eOpenDialogOverride,
   e2eSaveDialogOverride,
@@ -125,7 +126,10 @@ describe('E2E system pressure fixture', () => {
     const original = { ...process.env }
     try {
       Object.assign(process.env, environment)
-      expect(await systemPressureSnapshot()).toEqual(e2eSystemPressureOverride(environment))
+      expect(await systemPressureSnapshot()).toEqual({
+        ...e2eSystemPressureOverride(environment),
+        enforceSystemLoadLimits: enforceIdleSystemLoadLimits(),
+      })
     } finally {
       for (const key of Object.keys(environment)) {
         if (original[key] === undefined) delete process.env[key]
@@ -133,6 +137,18 @@ describe('E2E system pressure fixture', () => {
       }
     }
   })
+})
+
+test.each([
+  [undefined, true],
+  ['true', true],
+  ['false', false],
+  [' FALSE ', false],
+  ['unknown', true],
+])('system load policy requires explicit opt-out: %s', (value, expected) => {
+  expect(enforceIdleSystemLoadLimits({ WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD: value })).toBe(
+    expected
+  )
 })
 
 describe('Smart App verification capabilities', () => {

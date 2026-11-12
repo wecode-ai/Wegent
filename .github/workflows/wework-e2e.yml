@@ -26,6 +26,9 @@ permissions:
   contents: read
   packages: read
 
+env:
+  WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD: ${{ vars.WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD || 'false' }}
+
 defaults:
   run:
     shell: bash
