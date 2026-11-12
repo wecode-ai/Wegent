@@ -227,13 +227,13 @@ impl LocalBackendConnectionController {
                     handler.clone(),
                     event_hub.clone(),
                 )
+                .with_runtime_event_cursor(Arc::clone(&self.runtime_event_cursor))
             } else {
                 LocalBackendRunner::new_for_app_sidecar(
                     LocalBackendConfig::from_device_config(config),
                     transport.clone(),
                 )
             }
-            .with_runtime_event_cursor(Arc::clone(&self.runtime_event_cursor))
             .with_connection_status(Arc::clone(&self.connection_status))
             .with_connection_snapshot(Arc::clone(&self.connection_snapshot));
             let handler = runner

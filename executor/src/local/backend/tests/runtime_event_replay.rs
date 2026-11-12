@@ -14,7 +14,11 @@ async fn receive_through(
         let mut turns = Vec::new();
         loop {
             let event = receiver.recv().await.expect("the backend must stay open");
-            let turn = event["payload"]["data"]["turnId"].as_str().unwrap();
+            let turn = if event["event"] == "executor.event_lagged" {
+                "history-gap"
+            } else {
+                event["payload"]["data"]["turnId"].as_str().unwrap()
+            };
             turns.push(turn.to_owned());
             if turn == marker {
                 return turns;
@@ -80,7 +84,7 @@ async fn verify_connection_replacement() {
     let controller = LocalBackendConnectionController::start_with_runtime(
         config,
         Arc::new(RouteRegistrationRuntimeWorkHandler),
-        hub,
+        hub.clone(),
         Arc::new(TestMutex::new(None)),
         Arc::new(TestMutex::new(None)),
     )
@@ -114,7 +118,7 @@ async fn verify_connection_replacement() {
 
     controller.configure_backend(json!({})).await.unwrap();
     publish(&events, "response.completed", "completed-offline");
-    controller.configure_backend(profile).await.unwrap();
+    controller.configure_backend(profile.clone()).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), registered.notified())
         .await
         .unwrap();
@@ -122,6 +126,38 @@ async fn verify_connection_replacement() {
     assert_eq!(
         receive_through(&mut receiver, "third-barrier").await,
         ["completed-offline", "third-barrier"]
+    );
+
+    // Overflow the 4096-entry journal while disconnected. Wait for ingestion,
+    // rather than overflowing the separate raw broadcast channel as well.
+    controller.configure_backend(json!({})).await.unwrap();
+    let mut ingested = hub.subscribe_live();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for index in 0..4100 {
+            publish(&events, "runtime.turn.updated", &format!("offline-{index}"));
+            ingested.recv().await.unwrap();
+        }
+        publish(&events, "response.completed", "retained-after-gap");
+        ingested.recv().await.unwrap();
+    })
+    .await
+    .expect("offline events must enter the journal");
+    controller.configure_backend(profile).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), registered.notified())
+        .await
+        .unwrap();
+    let mut expected = (5..4100)
+        .map(|index| format!("offline-{index}"))
+        .collect::<Vec<_>>();
+    expected.extend(["retained-after-gap", "history-gap"].map(str::to_owned));
+    assert_eq!(
+        receive_through(&mut receiver, "history-gap").await,
+        expected
+    );
+    publish(&events, "runtime.turn.updated", "fourth-barrier");
+    assert_eq!(
+        receive_through(&mut receiver, "fourth-barrier").await,
+        ["fourth-barrier"]
     );
 
     controller.configure_backend(json!({})).await.unwrap();

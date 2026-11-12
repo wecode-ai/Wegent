@@ -22,7 +22,7 @@ where
                 while !connection_status.load(Ordering::Acquire) {
                     sleep(RUNTIME_EVENT_CONNECTION_POLL_INTERVAL).await;
                 }
-                let mut subscription = event_hub.subscribe_after(delivered_sequence);
+                let mut subscription = event_hub.subscribe_for_relay(delivered_sequence);
                 let mut reconnect = false;
                 for event in subscription.replay.drain(..) {
                     if !connection_status.load(Ordering::Acquire) {
