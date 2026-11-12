@@ -86,6 +86,8 @@ class _CompactOnSecond:
 
 
 class _EmptySnapshot:
+    """Minimal state snapshot used by the recording agent."""
+
     values: dict = {"messages": []}
 
 
@@ -95,14 +97,17 @@ class _RecordingAgent:
     checkpointer = object()
 
     def __init__(self, captured: list[dict]) -> None:
+        """Keep a shared list for configs observed during streaming."""
         self._captured = captured
 
     async def astream_events(self, _input, config=None, version=None, durability=None):
+        """Record the invocation settings and emit no events."""
         self._captured.append({"config": config, "durability": durability})
         for _ in []:  # empty async generator
             yield
 
     async def aget_state(self, _config):
+        """Return an empty conversation state for cleanup paths."""
         return _EmptySnapshot()
 
 
@@ -150,6 +155,7 @@ async def test_recursion_limit_allows_one_round_per_configured_iteration():
     rounds = 5
 
     async def _count_model_calls(recursion_limit: int) -> int:
+        """Count completed model rounds before the recursion limit is reached."""
         model = _LoopingModel()
         agent = create_react_agent(
             model=model,
@@ -211,6 +217,7 @@ def test_build_agent_attaches_request_local_checkpointer():
 
 @pytest.mark.asyncio
 async def test_stream_tokens_injects_unique_thread_and_exit_durability(monkeypatch):
+    """Each turn receives a fresh thread id and sends exit durability."""
     from chat_shell.agents.graph_builder import LangGraphAgentBuilder
 
     captured: list[dict] = []
@@ -232,6 +239,7 @@ async def test_stream_tokens_injects_unique_thread_and_exit_durability(monkeypat
 
 @pytest.mark.asyncio
 async def test_stream_tokens_passes_hook_aware_recursion_limit(monkeypatch):
+    """Streaming forwards the recursion limit that accounts for the hook node."""
     from chat_shell.agents.graph_builder import LangGraphAgentBuilder
 
     captured: list[dict] = []
