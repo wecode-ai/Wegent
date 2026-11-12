@@ -6,7 +6,6 @@ import { createAndAssignCloudIssue } from '../e2e/desktop/modules/workspace-agen
 import {
   openDirectProjectCreation,
   openProjectAgentCreator,
-  expandCollaborationWorkspace,
   expandCollaborationSpaces,
   revealCollaborationSidebarElement,
   selectCollaborationIssueAgent,
@@ -142,86 +141,6 @@ test('does not open an Agent form when the creation choice is unavailable', asyn
   assert.equal(calls.length, 2)
 })
 
-test('leaves an already expanded workspace untouched', async () => {
-  const calls = []
-  const control = {
-    async command(action, selector, options) {
-      calls.push({ action, selector, options })
-      if (action === 'getAttribute') return 'true'
-    },
-  }
-  const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
-  await expandCollaborationWorkspace(control, toggle)
-  assert.equal(calls.filter(call => call.action === 'click').length, 0)
-  const section =
-    '[data-workspace-tab-content][aria-hidden="false"] [data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-workspaces-section-toggle"]'
-  assert.deepEqual(calls, [
-    { action: 'waitFor', selector: section, options: { timeoutMs: 10000 } },
-    { action: 'scrollIntoView', selector: section, options: { visible: true } },
-    { action: 'waitFor', selector: section, options: { visible: true, timeoutMs: 10000 } },
-    { action: 'getAttribute', selector: section, options: { value: 'aria-expanded' } },
-    { action: 'waitFor', selector: toggle, options: { timeoutMs: 10000 } },
-    { action: 'scrollIntoView', selector: toggle, options: { visible: true } },
-    { action: 'waitFor', selector: toggle, options: { visible: true, timeoutMs: 10000 } },
-    {
-      action: 'getAttribute',
-      selector: toggle,
-      options: { value: 'aria-expanded' },
-    },
-  ])
-})
-
-test('expands a collapsed workspace and verifies the result', async () => {
-  const calls = []
-  const control = {
-    async command(action, selector, options) {
-      calls.push({ action, selector, options })
-      if (action === 'getAttribute')
-        return selector.includes('workspaces-section-toggle') ? 'true' : 'false'
-    },
-  }
-  const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
-  await expandCollaborationWorkspace(control, toggle)
-  assert.equal(calls.filter(call => call.action === 'click').length, 1)
-  assert.deepEqual(calls.at(-1), {
-    action: 'waitFor',
-    selector: `${toggle}[aria-expanded="true"]`,
-    options: { visible: true, timeoutMs: 10000 },
-  })
-})
-
-test('fails when one click does not expand the selected workspace', async () => {
-  const calls = []
-  const failure = new Error('Toggle collapsed again')
-  const control = {
-    async command(action, selector, options) {
-      calls.push({ action, selector, options })
-      if (action === 'getAttribute')
-        return selector.includes('workspaces-section-toggle') ? 'true' : 'false'
-      if (action === 'waitFor' && selector.endsWith('[aria-expanded="true"]')) throw failure
-    },
-  }
-  const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
-  await assert.rejects(expandCollaborationWorkspace(control, toggle), error => error === failure)
-  assert.equal(calls.filter(call => call.action === 'click').length, 1)
-})
-
-test('rejects a workspace toggle without a declared expanded state', async () => {
-  const calls = []
-  const control = {
-    async command(action, selector) {
-      calls.push(action)
-      if (action === 'getAttribute')
-        return selector.includes('workspaces-section-toggle') ? 'true' : ''
-    },
-  }
-  await assert.rejects(
-    expandCollaborationWorkspace(control, '[data-testid="workspace-toggle"]'),
-    /must expose its expanded state/
-  )
-  assert.ok(!calls.includes('click'))
-})
-
 test('waits for asynchronously loaded Agent options before selecting an assignee', async () => {
   const calls = []
   let optionReady
@@ -328,31 +247,6 @@ test('waits for the saved Issue editor before assigning a persisted Issue', asyn
   assert.ok(saved)
 })
 
-test('opens space management before expanding its workspace', async () => {
-  const clicks = []
-  const waits = []
-  const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
-  const section =
-    '[data-workspace-tab-content][aria-hidden="false"] [data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-workspaces-section-toggle"]'
-  const control = {
-    async command(action, selector) {
-      if (action === 'getAttribute') return 'false'
-      if (action === 'click') clicks.push(selector)
-      if (action === 'waitFor') waits.push(selector)
-    },
-  }
-  await expandCollaborationWorkspace(control, toggle)
-  assert.deepEqual(clicks, [section, toggle])
-  assert.deepEqual(waits, [
-    section,
-    section,
-    section + '[aria-expanded="true"]',
-    toggle,
-    toggle,
-    toggle + '[aria-expanded="true"]',
-  ])
-})
-
 test('does not click space management without a declared expanded state', async () => {
   const clicks = []
   const control = {
@@ -369,7 +263,7 @@ test('reveals offscreen navigation controls before testing visibility or clickin
   const states = new Map([
     ['collaboration-workspaces-section-toggle', { mounted: true, visible: false, expanded: false }],
     [
-      'collaboration-workspace-toggle-guest-parent',
+      'collaboration-workspace-home-guest-parent',
       { mounted: false, visible: false, expanded: false },
     ],
   ])
@@ -385,16 +279,17 @@ test('reveals offscreen navigation controls before testing visibility or clickin
         assert.ok(state.visible, 'An offscreen control must be revealed before clicking')
         state.expanded = true
         if (key === 'collaboration-workspaces-section-toggle')
-          states.get('collaboration-workspace-toggle-guest-parent').mounted = true
+          states.get('collaboration-workspace-home-guest-parent').mounted = true
       }
       if (selector.endsWith('[aria-expanded="true"]')) assert.ok(state.expanded)
     },
   }
-  await expandCollaborationWorkspace(
+  await expandCollaborationSpaces(control)
+  await revealCollaborationSidebarElement(
     control,
-    '[data-testid="collaboration-workspace-toggle-guest-parent"]'
+    '[data-testid="collaboration-workspace-home-guest-parent"]'
   )
-  assert.ok([...states.values()].every(state => state.expanded))
+  assert.ok([...states.values()].every(state => state.visible))
 })
 
 test('reveals a workspace identity independently of its section toggle position', async () => {

@@ -621,20 +621,22 @@ export function CollaborationPlatformNavigation({
                       />
                     </div>
                   ) : null}
-                  <button
-                    type="button"
-                    className="collaboration-workspace-toggle"
-                    aria-expanded={expanded}
-                    aria-label={
-                      expanded
-                        ? messages.collapseWorkspace
-                        : messages.expandWorkspace
-                    }
-                    data-testid={`collaboration-workspace-toggle-${candidate.id}`}
-                    onClick={() => toggleWorkspace(candidate.id)}
-                  >
-                    <ChevronRight aria-hidden="true" />
-                  </button>
+                  {!projectFirst ? (
+                    <button
+                      type="button"
+                      className="collaboration-workspace-toggle"
+                      aria-expanded={expanded}
+                      aria-label={
+                        expanded
+                          ? messages.collapseWorkspace
+                          : messages.expandWorkspace
+                      }
+                      data-testid={`collaboration-workspace-toggle-${candidate.id}`}
+                      onClick={() => toggleWorkspace(candidate.id)}
+                    >
+                      <ChevronRight aria-hidden="true" />
+                    </button>
+                  ) : null}
                 </div>
                 {expanded && !projectFirst ? (
                   <nav

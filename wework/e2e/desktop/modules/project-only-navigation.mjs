@@ -1,9 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  expandCollaborationSpaces,
-  expandCollaborationWorkspace,
-  revealCollaborationSidebarElement,
-} from './workspace-flows.mjs'
+import { expandCollaborationSpaces, revealCollaborationSidebarElement } from './workspace-flows.mjs'
 import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 import { verifyBoardPreferenceIsolation } from './collaboration-board-preferences.mjs'
 import {
@@ -217,9 +213,9 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
           scoped('[data-testid="collaboration-workspace-nav-projects"]')
         )
         await assertParent()
-        await expandCollaborationWorkspace(
+        await revealCollaborationSidebarElement(
           control,
-          scoped(`[data-testid="collaboration-workspace-toggle-${workspace.id}"]`),
+          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
           uiTimeoutMs
         )
         const projectSelector = scoped(

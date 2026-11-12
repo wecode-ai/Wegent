@@ -8,7 +8,6 @@ export {
   COLLABORATION_SIDEBAR_SELECTOR,
   inCollaborationSidebar,
   expandCollaborationSpaces,
-  expandCollaborationWorkspace,
   revealCollaborationSidebarElement,
 } from './collaboration-sidebar-navigation.mjs'
 import { randomUUID } from 'node:crypto'

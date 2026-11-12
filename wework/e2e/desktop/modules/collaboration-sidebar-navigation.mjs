@@ -32,15 +32,6 @@ export async function expandCollaborationSpaces(
   await expandCollaborationToggle(control, toggle, timeoutMs)
 }
 
-export async function expandCollaborationWorkspace(
-  control,
-  toggleSelector,
-  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
-) {
-  await expandCollaborationSpaces(control, undefined, timeoutMs)
-  await expandCollaborationToggle(control, toggleSelector, timeoutMs)
-}
-
 async function expandCollaborationToggle(control, toggleSelector, timeoutMs) {
   await revealCollaborationSidebarElement(control, toggleSelector, timeoutMs)
   const expandedSelector = `${toggleSelector}[aria-expanded="true"]`

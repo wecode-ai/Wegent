@@ -1019,6 +1019,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
     await click(byTestId("collaboration-workspaces-section-toggle"));
     expect(
+      container.querySelector(".collaboration-workspace-toggle"),
+    ).toBeNull();
+    expect(
       byTestId("collaboration-project-parent-workspace-context").textContent,
     ).toContain(workspace.name);
     expect(

@@ -19,7 +19,7 @@ sidebar_position: 3
 
 Open **top + → Collaboration**. The sidebar shows accessible **Local projects** and **Remote projects** by default. Use the **+** beside either group to create a project without first choosing or creating a collaboration space. Remote projects require a cloud connection. These groups describe project storage; configure execution devices separately inside the project.
 
-Expand **Collaboration spaces** when you need shared membership, resources, and permissions across projects. Existing membership inheritance, project roles, and administration permissions continue to apply. Project-only members can open their projects directly; seeing a parent space name does not grant space access. The project picker defaults to local/remote groups; choose **Filter by collaboration space** to use space groups.
+Expand **Collaboration spaces** when you need shared membership, resources, and permissions across projects. Space entries provide management controls; open projects from the local/remote project lists above. Existing membership inheritance, project roles, and administration permissions continue to apply. Project-only members can open their projects directly; seeing a parent space name does not grant space access. The project picker defaults to local/remote groups; choose **Filter by collaboration space** to use space groups.
 
 Global catalogs, space settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace space membership management.
 
