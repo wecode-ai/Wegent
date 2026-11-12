@@ -2,8 +2,6 @@ import assert from 'node:assert/strict'
 import { commandOutputAsync, redisCliBinary } from './shared.mjs'
 import { pluginApi, testId, until } from './plugin-regression-fixture.mjs'
 
-export { redisCliBinary }
-
 export async function disconnectDesktopCloud(control) {
   await control.command('navigate', 'body', { value: '/settings/connections' })
   await control.command(
