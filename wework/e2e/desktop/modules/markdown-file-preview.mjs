@@ -130,7 +130,7 @@ export async function verifyCloudHtmlFileLinkPreview({
 
   const modeButton = `${panel} [data-testid="workspace-file-markdown-mode-button"]`
   await control.command('clickWhenEnabled', modeButton)
-  await control.command('waitFor', `${panel} [data-testid="workspace-file-editor-content"]`, {
+  await control.command('waitFor', '[data-content][role="textbox"]', {
     text: CLOUD_HTML_SOURCE_MARKER,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
