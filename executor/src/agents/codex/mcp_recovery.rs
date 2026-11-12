@@ -7,14 +7,20 @@ use super::*;
 /// failed startup future or replaying business operations.
 #[derive(Default)]
 pub(super) struct McpRecovery {
-    failures: StdMutex<HashMap<(String, String), bool>>,
+    connections: StdMutex<HashMap<(String, String), ConnectionHealth>>,
     admission: Mutex<()>,
+}
+
+#[derive(Default)]
+struct ConnectionHealth {
+    failed: bool,
+    attempted: bool,
 }
 
 /// An interrupted status check has not attempted recovery and must not consume it.
 struct RecoveryClaim {
     recovery: Arc<McpRecovery>,
-    failures: Vec<(String, String)>,
+    connections: Vec<(String, String)>,
     committed: bool,
 }
 
@@ -23,14 +29,14 @@ impl Drop for RecoveryClaim {
         if self.committed {
             return;
         }
-        let mut failures = self
+        let mut connections = self
             .recovery
-            .failures
+            .connections
             .lock()
             .expect("MCP recovery registry poisoned");
-        for key in &self.failures {
-            if let Some(attempted) = failures.get_mut(key) {
-                *attempted = false;
+        for key in &self.connections {
+            if let Some(health) = connections.get_mut(key) {
+                health.attempted = false;
             }
         }
     }
@@ -40,19 +46,21 @@ impl McpRecovery {
     pub(super) fn observe(&self, message: &Value) {
         let method = message["method"].as_str().unwrap_or_default();
         let params = message_params(message);
-        let mut failures = self
-            .failures
+        let mut connections = self
+            .connections
             .lock()
             .expect("MCP recovery registry poisoned");
         if method == "codex/app-server/exited" {
-            failures.clear();
+            connections.clear();
             return;
         }
         let Some(thread_id) = stream_thread_id(params) else {
             return;
         };
-        if method == "thread/closed" {
-            failures.retain(|(thread, _), _| thread != &thread_id);
+        if matches!(method, "thread/closed" | "thread/archived")
+            || (method == "thread/status/changed" && params["status"]["type"] == "notLoaded")
+        {
+            connections.retain(|(thread, _), _| thread != &thread_id);
             return;
         }
         if method != "mcpServer/startupStatus/updated" {
@@ -61,57 +69,103 @@ impl McpRecovery {
         let Some(server) = params["name"].as_str() else {
             return;
         };
+        // The native connector runtime owns this reserved server's reconnect
+        // and authentication policy; do not run a competing recovery loop.
+        if server == "codex_apps" {
+            return;
+        }
         let key = (thread_id, server.to_owned());
         match params["status"].as_str() {
             Some("ready") => {
-                failures.remove(&key);
+                // Transport exit does not emit another startup notification.
+                // Retain ready connections for exact status checks at admission.
+                connections.insert(key, ConnectionHealth::default());
+            }
+            Some("starting") => {
+                connections.entry(key).or_default();
             }
             Some("failed" | "cancelled") if params["failureReason"].is_null() => {
                 // A retry's starting/failed notifications must not rearm itself.
-                failures.entry(key).or_insert(false);
+                connections.entry(key).or_default().failed = true;
             }
             Some("failed") => {
                 // Authentication requires a credential change, not automatic retries.
-                failures.remove(&key);
+                connections.remove(&key);
             }
             _ => {}
         }
     }
 
     fn claim(&self, thread_id: &str) -> Vec<(String, String)> {
-        let mut failures = self
-            .failures
+        let mut connections = self
+            .connections
             .lock()
             .expect("MCP recovery registry poisoned");
-        failures
+        connections
             .iter_mut()
-            .filter_map(|((thread, server), attempted)| {
-                if thread != thread_id || *attempted {
+            .filter_map(|((thread, server), health)| {
+                if thread != thread_id || health.attempted {
                     return None;
                 }
-                *attempted = true;
+                health.attempted = true;
                 Some((thread.clone(), server.clone()))
             })
             .collect()
     }
 
     fn claim_other_failures(&self) {
-        for attempted in self
-            .failures
+        for health in self
+            .connections
             .lock()
             .expect("MCP recovery registry poisoned")
             .values_mut()
         {
-            *attempted = true;
+            if health.failed {
+                health.attempted = true;
+            }
         }
+    }
+
+    fn checked(&self, thread: &str, server: &str, status: &str) -> bool {
+        let mut connections = self
+            .connections
+            .lock()
+            .expect("MCP recovery registry poisoned");
+        let key = (thread.to_owned(), server.to_owned());
+        if status == "authenticationRequired" || status == "disabled" {
+            connections.remove(&key);
+            return false;
+        }
+        let failed = matches!(status, "failed" | "cancelled");
+        if let Some(health) = connections.get_mut(&key) {
+            health.failed = failed;
+            health.attempted = failed;
+        }
+        failed
     }
 }
 
 impl CodexAppServerClient {
-    /// Recover failed startup at a new resume boundary, without replaying any tool
+    async fn mcp_connection_snapshots(
+        &self,
+        connections: &[(String, String)],
+        launch_config: Option<&CodexLaunchConfig>,
+    ) -> Result<Vec<Value>, String> {
+        // Exact snapshots inspect existing clients without separate discovery.
+        futures_util::future::try_join_all(connections.iter().map(|(thread, server)| {
+            self.request_with_thread_admission(
+                "mcpServerStatus/list",
+                json!({"threadId":thread,"serverName":server,"detail":"toolsAndAuthOnly"}),
+                launch_config,
+            )
+        }))
+        .await
+    }
+
+    /// Check native connections at work admission without replaying any tool
     /// call or restarting the shared process. Persistent failures get one attempt
     /// until a ready notification establishes a new connection episode.
-    pub(super) async fn recover_mcp_startup(
+    pub(super) async fn reconcile_mcp_connections(
         &self,
         thread_id: &str,
         launch_config: Option<&CodexLaunchConfig>,
@@ -137,36 +191,28 @@ impl CodexAppServerClient {
         {
             return Ok(());
         }
-        let failures = recovery.claim(thread_id);
-        if failures.is_empty() {
+        let connections = recovery.claim(thread_id);
+        if connections.is_empty() {
             return Ok(());
         }
         let mut claim = RecoveryClaim {
             recovery: Arc::clone(&recovery),
-            failures,
+            connections,
             committed: false,
         };
+        let statuses = self
+            .mcp_connection_snapshots(&claim.connections, launch_config)
+            .await?;
         let mut unavailable = Vec::new();
-        for (thread, server) in &claim.failures {
-            let status = self
-                .request_with_thread_admission(
-                    "mcpServerStatus/list",
-                    json!({"threadId":thread,"serverName":server,"detail":"toolsAndAuthOnly"}),
-                    launch_config,
-                )
-                .await?;
-            if status["data"]
+        for ((thread, server), status) in claim.connections.iter().zip(statuses) {
+            let state = status["data"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .any(|entry| {
-                    entry["name"] == *server
-                        && matches!(
-                            entry["runtimeStatus"].as_str(),
-                            Some("failed" | "cancelled")
-                        )
-                })
-            {
+                .find(|entry| entry["name"] == *server)
+                .and_then(|entry| entry["runtimeStatus"].as_str())
+                .unwrap_or_default();
+            if recovery.checked(thread, server, state) {
                 unavailable.push(server.clone());
             }
         }
@@ -188,6 +234,14 @@ impl CodexAppServerClient {
         // Native reconciliation reuses ready clients and creates fresh clients
         // for failed startup, while retaining each thread's configuration layers.
         self.request_with_thread_admission("config/mcpServer/reload", Value::Null, launch_config)
+            .await?;
+        // Optional MCPs may be omitted while startup is pending. Wait for the
+        // native startup results before assembling the next turn's tool catalog.
+        let refreshed: Vec<_> = unavailable
+            .into_iter()
+            .map(|server| (thread_id.to_owned(), server))
+            .collect();
+        self.mcp_connection_snapshots(&refreshed, launch_config)
             .await?;
         Ok(())
     }
@@ -229,6 +283,7 @@ mod tests {
         let mut auth = status("one", "mail", "failed");
         auth["params"]["failureReason"] = json!("reauthenticationRequired");
         recovery.observe(&auth);
+        recovery.observe(&status("one", "codex_apps", "failed"));
         assert!(recovery.claim("one").is_empty());
         recovery.observe(&status("one", "computer", "failed"));
         recovery.observe(&json!({"method":"thread/closed","params":{"threadId":"one"}}));
@@ -248,12 +303,40 @@ mod tests {
     }
 
     #[test]
+    fn ready_connections_are_checked_for_silent_transport_failure() {
+        let recovery = McpRecovery::default();
+        recovery.observe(&status("one", "browser", "ready"));
+        assert_eq!(recovery.claim("one").len(), 1);
+        assert!(!recovery.checked("one", "browser", "connected"));
+        assert_eq!(recovery.claim("one").len(), 1);
+        assert!(recovery.checked("one", "browser", "failed"));
+        assert!(recovery.claim("one").is_empty());
+        recovery.observe(&status("one", "browser", "ready"));
+        assert_eq!(recovery.claim("one").len(), 1);
+    }
+
+    #[test]
+    fn unloaded_threads_discard_connection_health_before_cold_resume() {
+        for notification in [
+            json!({"method":"thread/closed","params":{"threadId":"one"}}),
+            json!({"method":"thread/archived","params":{"threadId":"one"}}),
+            json!({"method":"thread/status/changed","params":{"threadId":"one","status":{"type":"notLoaded"}}}),
+        ] {
+            let recovery = McpRecovery::default();
+            recovery.observe(&status("one", "browser", "ready"));
+            recovery.observe(&status("one", "calendar", "failed"));
+            recovery.observe(&notification);
+            assert!(recovery.claim("one").is_empty());
+        }
+    }
+
+    #[test]
     fn abandoned_status_checks_preserve_unattempted_recovery() {
         let recovery = Arc::new(McpRecovery::default());
         recovery.observe(&status("one", "mail", "failed"));
         let claim = RecoveryClaim {
             recovery: Arc::clone(&recovery),
-            failures: recovery.claim("one"),
+            connections: recovery.claim("one"),
             committed: false,
         };
         assert!(recovery.claim("one").is_empty());
@@ -261,7 +344,7 @@ mod tests {
         assert_eq!(recovery.claim("one").len(), 1);
         let claim = RecoveryClaim {
             recovery: Arc::clone(&recovery),
-            failures: vec![("one".into(), "mail".into())],
+            connections: vec![("one".into(), "mail".into())],
             committed: true,
         };
         drop(claim);

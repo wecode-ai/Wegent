@@ -8,6 +8,7 @@ import { DEFAULT_MODEL_ID, MODEL_PROVIDER_ID } from '../modules/shared.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { programmaticExecTools } from '../modules/model-tool-catalog.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { collectProcessInstanceIdentity } from '../process-instance.mjs'
 import {
   assistantMessage,
   createSse,
@@ -34,6 +35,7 @@ export function createDesktopScenario({
   const root = join(resultDir, 'mcp-resume-recovery')
   const log = join(resultDir, 'executor.log')
   const completed = new Set()
+  const retainedProcesses = new Map()
   const executable = name =>
     join(root, 'bin', `${name}${process.platform === 'win32' ? '.exe' : ''}`)
   let phase = 'initial'
@@ -52,6 +54,23 @@ export function createDesktopScenario({
         /lifecycle=start pid=(\d+)/g
       ),
     ].map(match => match[1])
+
+  async function retain(name, pid) {
+    const identity = await collectProcessInstanceIdentity(Number(pid))
+    assert.ok(identity, `The real ${name} MCP process is no longer running`)
+    retainedProcesses.set(name, identity)
+  }
+
+  async function assertRetained(names) {
+    for (const name of names) {
+      const expected = retainedProcesses.get(name)
+      assert.deepEqual(
+        await collectProcessInstanceIdentity(expected.pid),
+        expected,
+        `Recovery replaced the original ${name} MCP process`
+      )
+    }
+  }
 
   async function run(control, next, create = false) {
     phase = next
@@ -127,6 +146,7 @@ export function createDesktopScenario({
       assert.ok(pid)
       const healthy = await starts(NAMES[0])
       assert.ok(healthy.length >= 1, 'The real healthy MCP did not start')
+      await retain(NAMES[0], healthy[0])
       const initialLog = await readFile(log, 'utf8')
       for (const name of NAMES.slice(1))
         assert.match(
@@ -144,16 +164,13 @@ export function createDesktopScenario({
       }
       await run(control, 'recovered')
       assert.equal(await processId(), pid, 'MCP recovery restarted the shared Codex process')
-      assert.deepEqual(
-        await starts(NAMES[0]),
-        healthy,
-        'Native reload restarted a healthy MCP client'
-      )
-      const recoveredStarts = new Map()
+      // Prediction forks may start independent clients. Verify the original
+      // connection's OS creation identity rather than counting all processes.
+      await assertRetained([NAMES[0]])
       for (const name of NAMES.slice(1, 3)) {
         const pids = await starts(name)
         assert.ok(pids.length >= 1, `The real ${name} MCP did not start after recovery`)
-        recoveredStarts.set(name, pids)
+        await retain(name, pids[0])
       }
       await run(control, 'stable')
       const recoveredLog = await readFile(log, 'utf8')
@@ -164,11 +181,38 @@ export function createDesktopScenario({
         1,
         'A persistent startup failure repeatedly reloaded the native runtime'
       )
-      assert.deepEqual(await starts(NAMES[0]), healthy)
-      for (const [name, pids] of recoveredStarts) assert.deepEqual(await starts(name), pids)
+      await assertRetained(NAMES.slice(0, 3))
       assert.equal(await processId(), pid)
+
+      // Native changes runtimeStatus when a connected transport exits, but
+      // emits no new startup failure notification for this connection.
+      const beforeExit = await starts(NAMES[1])
+      const disconnectedPid = retainedProcesses.get(NAMES[1]).pid
+      process.kill(disconnectedPid, 'SIGTERM')
+      await waitForValue(
+        () => collectProcessInstanceIdentity(disconnectedPid),
+        identity => identity === null,
+        'The owned MCP transport process did not terminate',
+        uiTimeoutMs
+      )
+      await run(control, 'transport-recovered')
+      assert.equal(await processId(), pid)
+      await assertRetained([NAMES[0], NAMES[2]])
+      const restarted = await starts(NAMES[1])
+      const replacement = restarted.find(value => !beforeExit.includes(value))
+      assert.ok(replacement, 'The disconnected MCP did not start a replacement process')
+      await retain(NAMES[1], replacement)
+      await run(control, 'transport-stable')
+      await assertRetained(NAMES.slice(0, 3))
+      assert.equal(
+        (await readFile(log, 'utf8'))
+          .split('\n')
+          .filter(line => line.includes(`codex MCP startup recovery thread_id=${threadId}`)).length,
+        2,
+        'Startup failure and later transport exit must each reconcile once'
+      )
       console.log(
-        '[mcp-resume-recovery] Same conversation, recovered catalogs, retained healthy PID, and bounded persistent failure verified'
+        '[mcp-resume-recovery] Startup failure, transport exit, original conversation, healthy PIDs, and bounded recovery verified'
       )
     },
 
@@ -216,6 +260,7 @@ export function createDesktopScenario({
       executorHome,
       threadId,
       completed: [...completed],
+      retainedProcesses: Object.fromEntries(retainedProcesses),
       failure: modelFailure?.message,
     }),
   }

@@ -171,7 +171,7 @@ done
 
 impl Fixture {
     async fn resume_work(&self, thread: &str) -> Result<Value, String> {
-        self.client.recover_mcp_startup(thread, None).await?;
+        self.client.reconcile_mcp_connections(thread, None).await?;
         self.client
             .request("thread/resume", json!({"threadId":thread}))
             .await
@@ -300,7 +300,7 @@ while IFS= read -r line; do
   [ -n "$id" ] || continue
   case "$line" in
     *'"method":"test/fail-mcp"'*)
-      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"failed"}}'
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"ready"}}'
       printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"two","name":"mail","status":"failed"}}'
       result='{}' ;;
     *'"method":"mcpServerStatus/list"'*)

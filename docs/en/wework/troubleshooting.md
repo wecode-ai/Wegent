@@ -113,7 +113,7 @@ Background terminals retain collected output after restoring a conversation. Use
 
 ### Tools unavailable after resuming a conversation
 
-If MCP tools failed to start, sending another message in the same conversation attempts to recover those connections while preserving the conversation and healthy tool connections. Restarting the app is unnecessary. Each persistent failure receives one automatic attempt; a successful connection rearms recovery for a subsequent startup failure. Tools requiring login or renewed authorization still require that authorization. Connection recovery does not replay earlier tool operations.
+If MCP tools failed to start or their connection was interrupted, sending another message in the same conversation checks their actual connection status and attempts recovery while preserving the conversation and healthy tool connections. Restarting the app is unnecessary. Each persistent failure receives one automatic attempt; a successful connection rearms recovery for a subsequent interruption. Tools requiring login or renewed authorization still require that authorization. Connection recovery does not replay earlier tool operations.
 
 The `codex MCP startup status` log records the process generation, conversation, server, startup status, and redacted error. `codex MCP startup recovery` records the servers that triggered recovery. Preserve these records if the problem persists.
 
