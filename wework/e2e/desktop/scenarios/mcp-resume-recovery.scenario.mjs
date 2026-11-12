@@ -178,8 +178,8 @@ export function createDesktopScenario({
         recoveredLog
           .split('\n')
           .filter(line => line.includes(`codex MCP startup recovery thread_id=${threadId}`)).length,
-        1,
-        'A persistent startup failure repeatedly reloaded the native runtime'
+        2,
+        'Each new work admission must reconcile a persistent failure at most once'
       )
       await assertRetained(NAMES.slice(0, 3))
       assert.equal(await processId(), pid)
@@ -214,8 +214,25 @@ export function createDesktopScenario({
         (await readFile(log, 'utf8'))
           .split('\n')
           .filter(line => line.includes(`codex MCP startup recovery thread_id=${threadId}`)).length,
-        2,
-        'Startup failure and later transport exit must each reconcile once'
+        4,
+        'Each admitted execution must reconcile once without looping on persistent failure'
+      )
+      await copyFile(
+        process.env.WEWORK_E2E_EXECUTOR_BIN,
+        `${executable(NAMES[3])}.ready`,
+        constants.COPYFILE_FICLONE
+      )
+      await rename(`${executable(NAMES[3])}.ready`, executable(NAMES[3]))
+      await run(control, 'late-recovered')
+      await run(control, 'late-stable')
+      await assertRetained([NAMES[0], NAMES[2]])
+      assert.equal(await processId(), pid)
+      assert.equal(
+        (await readFile(log, 'utf8'))
+          .split('\n')
+          .filter(line => line.includes(`codex MCP startup recovery thread_id=${threadId}`)).length,
+        5,
+        'A healthy work admission must not reload MCPs after the late service recovers'
       )
       console.log(
         '[mcp-resume-recovery] Startup failure, transport exit, original conversation, healthy PIDs, and bounded recovery verified'
@@ -241,7 +258,11 @@ export function createDesktopScenario({
           const tools = programmaticExecTools(body)
           assert.equal(tools.length, 1)
           const expected =
-            phase === 'initial' ? [true, false, false, false] : [true, true, true, false]
+            phase === 'initial'
+              ? [true, false, false, false]
+              : phase.startsWith('late-')
+                ? [true, true, true, true]
+                : [true, true, true, false]
           events = [
             ...selectedToolCall(callId, {
               name: tools[0].name,

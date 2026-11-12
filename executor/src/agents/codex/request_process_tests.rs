@@ -291,7 +291,7 @@ impl Drop for Fixture {
 }
 
 #[tokio::test]
-async fn resumes_reconcile_failed_mcp_once_without_replaying_turns() {
+async fn concurrent_work_coalesces_mcp_reload_and_later_work_can_retry() {
     let fixture = Fixture::with_script(
         r#"#!/bin/sh
 while IFS= read -r line; do
@@ -306,7 +306,7 @@ while IFS= read -r line; do
     *'"method":"mcpServerStatus/list"'*)
       case "$line" in
         *'"serverName":"calendar"'*) result='{"data":[{"name":"calendar","runtimeStatus":"failed"}]}' ;;
-        *) result='{"data":[{"name":"mail","runtimeStatus":"authenticationRequired"}]}' ;;
+        *) result='{"data":[{"name":"mail","runtimeStatus":"failed"}]}' ;;
       esac ;;
     *'"method":"config/mcpServer/reload"'*)
       printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"starting"}}'
@@ -346,7 +346,7 @@ done
             .iter()
             .filter(|r| r["method"] == "config/mcpServer/reload")
             .count(),
-        1
+        2
     );
     assert_eq!(
         requests
@@ -422,6 +422,72 @@ done
     assert!(!requests
         .iter()
         .any(|r| r["method"] == "config/mcpServer/reload"));
+    fixture.client.restart().await;
+}
+
+#[tokio::test]
+async fn failed_mcp_status_query_preserves_the_next_work_admission() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$(dirname "$0")/requests.jsonl"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"test/fail-mcp"'*)
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"failed"}}'
+      result='{}' ;;
+    *'"method":"mcpServerStatus/list"'*)
+      marker="$(dirname "$0")/status-attempted"
+      if [ ! -f "$marker" ]; then
+        touch "$marker"
+        printf '{"id":%s,"error":{"code":-32000,"message":"status unavailable"}}\n' "$id"
+        continue
+      fi
+      result='{"data":[{"name":"calendar","runtimeStatus":"failed"}]}' ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#,
+    );
+    fixture
+        .client
+        .request("test/fail-mcp", json!({}))
+        .await
+        .unwrap();
+    assert!(fixture
+        .resume_work("one")
+        .await
+        .unwrap_err()
+        .contains("status unavailable"));
+    fixture.resume_work("one").await.unwrap();
+    let requests: Vec<Value> = fs::read_to_string(fixture._directory.path().join("requests.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "config/mcpServer/reload")
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "thread/resume")
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "initialize")
+            .count(),
+        1
+    );
     fixture.client.restart().await;
 }
 
