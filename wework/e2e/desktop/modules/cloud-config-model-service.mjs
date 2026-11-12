@@ -34,7 +34,7 @@ async function authFileMetadata(path) {
 
 // The failure belongs to the model subscription service. Executor IPC, native
 // Codex requests, notifications, persistence and restart are never substituted.
-export function createCloudConfigModelService() {
+export function createCloudConfigModelService({ readUsage } = {}) {
   let server
   let codexHome
   let nativeHome
@@ -60,13 +60,18 @@ export function createCloudConfigModelService() {
           : null
         return { ...response, held, release }
       })
-      const plan = { marker, rounds, count: 0 }
+      const plan = { marker, rounds, count: 0, calls: [] }
       plans.set(marker, plan)
       return plan
     },
     async prepareApp({ appEnvironment, codexHome: home, control }) {
       codexHome = home
       server = createServer((request, response) => {
+        if (readUsage && request.url?.includes('/wham/usage')) {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify(readUsage()))
+          return
+        }
         if (request.url?.startsWith('/backend-api/wham/accounts/check')) {
           accountChecks += 1
           response.writeHead(200, { 'content-type': 'application/json' })
@@ -178,6 +183,7 @@ export function createCloudConfigModelService() {
       assert.ok(plan, 'A foreground model request did not belong to the recovery fixture')
       const round = plan.rounds[plan.count++]
       assert.ok(round, `Unexpected model continuation for ${plan.marker}: ${plan.count}`)
+      plan.calls.push({ body, at: Date.now() })
       const subscription = url.pathname === '/backend-api/codex/responses'
       if (subscription) {
         const [nativeAuth, managedAuth, nativeMarker, managedMarker] = await Promise.all([
@@ -199,6 +205,22 @@ export function createCloudConfigModelService() {
         assert.equal(request.headers['chatgpt-account-id'], ACCOUNT)
       }
       requests.push({ marker: plan.marker, round: plan.count, subscription })
+      if (round.usageLimit) {
+        const resetsAt = round.usageLimit()
+        response.writeHead(429, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            error: {
+              type: 'usage_limit_reached',
+              code: 'usage_limit_reached',
+              message: 'Synthetic subscription usage limit reached',
+              plan_type: 'enterprise',
+              resets_at: resetsAt,
+            },
+          })
+        )
+        return true
+      }
       const id = `cloud-config-${requests.length}`
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       response.write(createSse([responseCreated(id)]))

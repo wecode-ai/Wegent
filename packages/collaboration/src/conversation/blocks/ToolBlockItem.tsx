@@ -15,6 +15,7 @@ import {
 import { getBlockLabel } from './toolBlockLabels'
 import { renderBlockDetail, hasBlockDetail, getWorkspaceFilePath } from './ToolBlockDetails'
 import { isRuntimeRateLimitWaitBlock } from '@wegent/chat-core/runtime-conversation-turns'
+import { AutomaticRetryStatus } from '../AutomaticRetryStatus'
 
 const RECONNECTING_DISPLAY_DELAY_MS = 10_000
 
@@ -138,6 +139,16 @@ export function ToolBlockItem({
   }
 
   if (block.toolName === 'runtime_reconnecting') {
+    if (block.toolInput?.retry_reason === 'overload') {
+      if (!isRunning) return null
+      return (
+        <AutomaticRetryStatus
+          reason="overload"
+          retryAt={Number(block.toolInput.retry_at) || null}
+          translate={translate}
+        />
+      )
+    }
     if (isRuntimeRateLimitWaitBlock(block)) {
       return (
         <div

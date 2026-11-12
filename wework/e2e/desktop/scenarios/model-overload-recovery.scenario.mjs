@@ -272,7 +272,8 @@ export function createDesktopScenario({
       await control.command('waitFor', `${WORKBENCH} [data-testid="pause-response-button"]`)
       await waitUntil(
         () => requests.length === 3,
-        uiTimeoutMs,
+        // Native recovery now deliberately waits 10 seconds before its first retry.
+        10_000 + uiTimeoutMs,
         'The direct-provider overload did not automatically continue the saved conversation'
       )
       const log = await readFile(join(resultDir, 'executor.log'), 'utf8')

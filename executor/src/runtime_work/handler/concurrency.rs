@@ -205,7 +205,8 @@ impl RuntimeTurnScheduler {
     }
 
     pub(super) fn has_capacity(&self, turn: &SpawnTurnRequest) -> bool {
-        self.active(turn.task_kind()) < self.settings.limit(turn.task_kind())
+        super::quota_recovery::is_ready(turn, now_ms())
+            && self.active(turn.task_kind()) < self.settings.limit(turn.task_kind())
             && !self.active_task_ids.contains_key(&turn.local_task_id)
     }
 

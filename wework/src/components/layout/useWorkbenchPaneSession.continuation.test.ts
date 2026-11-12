@@ -1485,6 +1485,55 @@ describe('unbound pane conversation search', () => {
 })
 
 describe('composer cancellation rollback', () => {
+  test.each(
+    ['usageLimited', 'blocked'].flatMap(status => [
+      { status, accepted: true },
+      { status, accepted: false },
+    ]) as { status: 'usageLimited' | 'blocked'; accepted: boolean }[]
+  )(
+    'pauses a $status quota goal before cancelling recovery (accepted=$accepted)',
+    async ({ status, accepted }) => {
+      const goal: RuntimeGoal = {
+        threadId: address.threadId,
+        objective: 'Finish the original task',
+        status,
+        tokenBudget: 2000,
+        tokensUsed: 300,
+        timeUsedSeconds: 10,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      lifecycleStore.syncRuntimeTask(address, {
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        title: 'Quota goal',
+        runtime: 'codex',
+        running: false,
+        continuable: true,
+        goalStatus: status,
+        runtimeHandle: { quotaWait: { resumeAt: Date.now() + 60_000 } },
+      })
+      const order: string[] = []
+      mocks.context.getRuntimeGoal = vi.fn().mockResolvedValue({ accepted: true, goal })
+      const pause = vi.fn().mockImplementation(async () => {
+        order.push('pause')
+        return { accepted, goal: { ...goal, status: 'paused' } }
+      })
+      mocks.context.setRuntimeGoal = pause
+      mocks.cancel.mockImplementation(async () => {
+        order.push('cancel')
+        return true
+      })
+      const { result } = await renderSession()
+      await waitFor(() => expect(result.current.goal?.status).toBe(status))
+      await act(async () => {
+        await result.current.pauseCurrentResponse()
+      })
+      expect(pause).toHaveBeenCalledExactlyOnceWith({ address, status: 'paused' })
+      expect(order).toEqual(accepted ? ['pause', 'cancel'] : ['pause'])
+    }
+  )
+
   test('a delayed cancellation acknowledgement cannot stop the next native turn', async () => {
     const { result } = await renderSession()
     let acknowledge!: (accepted: boolean) => void

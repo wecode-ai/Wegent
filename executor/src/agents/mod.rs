@@ -64,7 +64,7 @@ pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
     CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,
     CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexIdleMutationError,
-    CodexNotification, CodexNotificationSender, CodexRequestUserInputReceiver,
+    CodexNotification, CodexNotificationSender, CodexQuotaRecovery, CodexRequestUserInputReceiver,
     CodexResponseValueOrigin, CodexThreadStartedCallback, CodexTurnInterrupter,
     CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED, CODEX_APP_SERVER_EXECUTOR_SHUTDOWN,
     CODEX_APP_SERVER_TURN_CANCELLED,
