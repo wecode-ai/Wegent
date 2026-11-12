@@ -199,6 +199,7 @@ function IssueDetailAttachmentPreview({
       src={previewUrl}
       alt=""
       loading="lazy"
+      onError={() => setPreviewUrl(null)}
     />
   ) : (
     <span className="issue-detail-attachment-fallback">{fallback}</span>

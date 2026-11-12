@@ -59,6 +59,7 @@ import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.j
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import { inspectWorkspacePaths } from './workspace-path-inspector.js'
 import { readClipboardWorkspacePaths } from './workspace-path-clipboard.js'
+import { clipboardImageToPngDataUrl } from './clipboard-image-conversion.js'
 import { FeedbackBundleManager, type FeedbackExportRequest } from './feedback-bundle-manager.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
@@ -641,6 +642,13 @@ export function createElectronCapabilityRouter(
   })
   router.register('clipboard.readWorkspacePaths', params =>
     readClipboardWorkspacePaths(stringArrayParam(params, 'fallbackPaths') ?? [])
+  )
+  router.register('clipboard.convertImageToPng', params =>
+    clipboardImageToPngDataUrl(
+      rawStringParam(params, 'dataBase64'),
+      stringParam(params, 'fileName'),
+      optionalStringParam(params, 'mimeType') ?? ''
+    )
   )
   router.register('clipboard.writeText', params =>
     clipboard.writeText(rawStringParam(params, 'text'))
