@@ -18,10 +18,16 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    CollaborationChatGroup,
+    LoopItem,
+    ProjectChatAgent,
+)
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
+from app.services.collaboration_container_access import get_collaboration_container
 from app.services.loop_item_executions.profile import native_runtime_contract
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.notification_target import board_notification_target
@@ -51,6 +57,20 @@ def dispatch_collaboration_group_assignment(
 ) -> LoopItemExecution | None:
     """Dispatch exactly once to the configured human or AI leader."""
 
+    from app.services.issue_resource_context import require_assignment_group
+
+    authorized = require_assignment_group(
+        db,
+        container_id=str(item.cloud_project_id),
+        group_id=str(group["id"]),
+        user_id=user_id,
+        item=item,
+        source_id=group.get("binding_owner_id"),
+    )
+    if isinstance(
+        get_collaboration_container(db, item.cloud_project_id), CollaborationChatGroup
+    ):
+        group = {**group, "binding_owner_id": authorized["binding_owner_id"]}
     metadata = dict(item.metadata_json or {})
     assignment_key = str(metadata.get("collaboration_group_assignment_key") or "")
     if not assignment_key:
@@ -94,6 +114,27 @@ def _enqueue_ai_leader(
     automatic: bool = False,
     automation_context: dict | None = None,
 ) -> LoopItemExecution:
+    from app.services.issue_resource_context import require_assignment_agent
+
+    project = get_collaboration_container(db, item.cloud_project_id)
+    resource_owner = (
+        get_collaboration_container(db, group.get("binding_owner_id") or project.id)
+        if project
+        else None
+    )
+    if project is None or resource_owner is None:
+        raise HTTPException(
+            404, "Collaboration work or resource container is unavailable"
+        )
+    leader = _manager_agent(db, project=resource_owner, group=group)
+    leader = require_assignment_agent(
+        db,
+        container_id=str(project.id),
+        agent_id=leader.id,
+        user_id=user_id,
+        item=item,
+        execute=True,
+    )
     run_id = (automation_context or {}).get(
         "run_id"
     ) or f"collaboration-group:{assignment_key}"
@@ -109,14 +150,6 @@ def _enqueue_ai_leader(
     if existing is not None:
         return existing
 
-    project = db.get(CloudProject, item.cloud_project_id)
-    if project is None:
-        raise RuntimeError("Collaboration group project is unavailable")
-    leader = _manager_agent(
-        db,
-        project=project,
-        group=group,
-    )
     config = compiled_bot_config(
         db,
         leader,
@@ -155,7 +188,7 @@ def _enqueue_ai_leader(
     routes = resolve_group_routing(
         db,
         group=group,
-        project_id=str(project.id),
+        project_id=str(resource_owner.id),
         issue_id=item.id,
         user_id=user_id,
         selection=runner_selection,
@@ -204,7 +237,7 @@ def _notify_human_leader(
     leader: dict[str, Any],
     assignment_key: str,
 ) -> None:
-    project = db.get(CloudProject, item.cloud_project_id)
+    project = get_collaboration_container(db, item.cloud_project_id)
     if project is None:
         raise RuntimeError("Collaboration group project is unavailable")
     try:
@@ -214,6 +247,17 @@ def _notify_human_leader(
     human = db.get(User, leader_id)
     if human is None:
         raise HTTPException(422, "Collaboration group human leader does not exist")
+    from app.schemas.base_role import BaseRole
+    from app.services.collaboration_container_access import (
+        require_collaboration_container_access,
+    )
+
+    require_collaboration_container_access(db, project.id, human.id, BaseRole.Developer)
+    source_id = group.get("binding_owner_id") or project.id
+    if str(source_id) != str(project.id):
+        require_collaboration_container_access(
+            db, source_id, human.id, BaseRole.Developer
+        )
     notification_key = f"group:{group['id']}:{assignment_key}"
     existing = (
         db.query(WeworkNotification)

@@ -19,7 +19,12 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user, get_current_user_jwt_apikey_tasktoken
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    CollaborationChatGroup,
+    LoopItem,
+    ProjectChatAgent,
+)
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
@@ -40,6 +45,9 @@ from app.schemas.project_chat import (
 )
 from app.schemas.runtime_profile import ExecutionRuntimeSelect
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.collaboration_container_access import (
+    require_collaboration_container_access,
+)
 from app.services.collaboration_group_execution import (
     collaboration_group_agent_matches,
     collaboration_group_snapshot_for_dispatch,
@@ -56,12 +64,9 @@ from app.services.collaboration_member_activity import (
     project_collaboration_member_activity,
 )
 from app.services.issue_assignments import issue_assignment_service
+from app.services.loop_item_executions.response import execution_view
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
-    _optional_datetime,
-    _optional_text,
-    _optional_user_id,
-    execution_display_state,
     loop_item_execution_service,
 )
 from app.services.loop_items.access import visible_item_filter
@@ -69,7 +74,6 @@ from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.push import push_project_chat_message
 from app.services.project_chat.service import project_chat_service
 from app.services.runtime_profiles import runtime_profile_service
-from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +123,33 @@ def _require_project_execution(
     row = db.get(LoopItemExecution, execution_id)
     if row is None or row.cloud_project_id != str(project_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
+    return row
+
+
+def _require_group_execution_stop(
+    db: Session, *, group_id: int, execution_id: int, user_id: int
+) -> LoopItemExecution:
+    from app.services.collaboration_container_access import (
+        lock_scoped_thread,
+        require_collaboration_container_access,
+    )
+    from app.services.project_chat.group_message_authority import (
+        prepare_group_message_authority,
+    )
+    from app.services.thread_participation import require_thread_participation
+
+    prepare_group_message_authority(
+        db,
+        group_id=str(group_id),
+        thread_id=None,
+        actor_user_id=user_id,
+    )
+    require_collaboration_container_access(
+        db, group_id, user_id, BaseRole.Developer, write=True
+    )
+    row = _require_project_execution(db, project_id=group_id, execution_id=execution_id)
+    item = lock_scoped_thread(db, str(group_id), row.loop_item_id)
+    require_thread_participation(db, item, user_id, execute=True)
     return row
 
 
@@ -186,98 +217,6 @@ def _collaboration_group_contains_execution_agent(
     )
 
 
-def _execution_view(
-    db: Session,
-    row: object,
-    *,
-    viewer_user_id: int | None = None,
-    include_runtime_payload: bool = False,
-) -> LoopItemExecutionView:
-    item = db.get(LoopItem, row.loop_item_id)
-    origin_context = row.runtime_origin_context
-    workflow_task_title = str(origin_context.get("workflow_task_title") or "").strip()
-    agent = db.get(ProjectChatAgent, row.agent_id) if row.agent_id else None
-    if agent is not None:
-        from app.services.project_chat.service import bot_max_concurrent_executions
-
-        agent_max_concurrent_executions = bot_max_concurrent_executions(agent)
-    else:
-        agent_max_concurrent_executions = 1
-    runtime_payload = (
-        loop_item_execution_service.build_runtime_payload(
-            db,
-            execution=row,
-        )
-        if include_runtime_payload
-        else None
-    )
-    return LoopItemExecutionView.model_validate(
-        {
-            "id": row.id,
-            "loop_item_id": row.loop_item_id,
-            "cloud_project_id": row.cloud_project_id,
-            "workspace_id": workspace_id_for_project(db, row.cloud_project_id),
-            "task_title": workflow_task_title
-            or ((item.title or item.name or "") if item else ""),
-            "task_status": item.status if item else None,
-            "task_priority": item.priority if item else None,
-            "executor_type": row.executor_type,
-            "agent_id": _optional_text(row.agent_id),
-            "team_id": row.optional_team_id,
-            "backend_task_id": row.optional_backend_task_id,
-            "automation_run_id": row.automation_run_id,
-            "executor_owner_user_id": _optional_user_id(row.executor_owner_user_id),
-            "assigner_user_id": row.assigner_user_id,
-            "execution_environment": row.execution_environment,
-            "execution_device_id": _optional_text(row.execution_device_id),
-            "runtime_instance_id": _optional_text(row.runtime_instance_id),
-            "status": row.status,
-            "display_state": execution_display_state(row),
-            "observed_state": row.observed_state,
-            "sync_state": row.sync_state,
-            "priority_weight": row.priority_weight,
-            "queued_at": _optional_datetime(row.queued_at),
-            "started_at": _optional_datetime(row.started_at),
-            "completed_at": _optional_datetime(row.completed_at),
-            "lease_expires_at": _optional_datetime(row.lease_expires_at),
-            "heartbeat_at": _optional_datetime(row.heartbeat_at),
-            "claimed_at": _optional_datetime(row.claimed_at),
-            "start_requested_at": _optional_datetime(row.start_requested_at),
-            "observed_at": _optional_datetime(row.observed_at),
-            "cancel_requested_at": _optional_datetime(row.cancel_requested_at),
-            "attempt_no": row.attempt_no,
-            "previous_execution_id": row.previous_execution_id or None,
-            "execution_scope": row.execution_scope,
-            "last_event_seq": row.last_event_seq,
-            "termination_reason": row.termination_reason,
-            "retry_attempt": row.retry_attempt,
-            "error_message": row.error_message,
-            "execution_note": row.execution_note,
-            "approval_status": _optional_text(row.approval_status),
-            "approved_by_user_id": _optional_user_id(row.approved_by_user_id),
-            "rejected_reason": _optional_text(row.rejected_reason),
-            "runtime_device_id": _optional_text(row.runtime_device_id),
-            "runtime_task_id": _optional_text(row.runtime_task_id),
-            "agent_max_concurrent_executions": agent_max_concurrent_executions,
-            "runtime_profile_id": row.runtime_selection.get("runtime_profile_id"),
-            "runtime_source": row.runtime_selection.get("runtime_source"),
-            "can_select_runtime": (
-                viewer_user_id is not None
-                and row.executor_owner_user_id == viewer_user_id
-                and not row.uses_runner_routing
-                and row.status in {"waiting_runtime", "queued"}
-            ),
-            "waiting_runtime_reason": (
-                row.execution_note if row.status == "waiting_runtime" else None
-            ),
-            "runtime_payload": runtime_payload,
-            "version": row.version,
-            "created_at": row.created_at,
-            "updated_at": row.updated_at,
-        }
-    )
-
-
 @router.put(
     "/{project_id}/executions/{execution_id}/runtime",
     response_model=LoopItemExecutionView,
@@ -289,7 +228,9 @@ def select_execution_runtime(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemExecutionView:
-    require_cloud_project_role(db, project_id, current_user.id, BaseRole.Viewer)
+    require_collaboration_container_access(
+        db, project_id, current_user.id, BaseRole.Viewer
+    )
     row = _require_project_execution(
         db, project_id=project_id, execution_id=execution_id
     )
@@ -305,7 +246,7 @@ def select_execution_runtime(
         profile_id=values.runtime_profile_id,
         version=values.version,
     )
-    return _execution_view(db, selected, viewer_user_id=current_user.id)
+    return execution_view(db, selected, viewer_user_id=current_user.id)
 
 
 @router.get(
@@ -321,7 +262,7 @@ async def list_executions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemExecutionListResponse:
-    access = require_cloud_project_role(
+    access = require_collaboration_container_access(
         db, project_id, current_user.id, BaseRole.Viewer
     )
     project = access.project
@@ -351,7 +292,9 @@ async def list_executions(
     else:
         item_ids = [row["loop_item_id"] for row in rows]
         item_query = db.query(LoopItem).filter(LoopItem.id.in_(item_ids))
-        if not has_permission(access.role, BaseRole.Maintainer):
+        if not isinstance(project, CollaborationChatGroup) and not has_permission(
+            access.role, BaseRole.Maintainer
+        ):
             item_query = item_query.filter(
                 visible_item_filter(current_user.id, access.project)
             )
@@ -388,31 +331,50 @@ def enqueue_execution_batch(
     human notifications. It does not create or schedule AI member work.
     """
 
-    require_cloud_project_role(
+    from app.services.group_collaboration_runtime import require_group_runtime_context
+
+    group_context = require_group_runtime_context(
         db,
-        project_id,
-        current_user.id,
-        BaseRole.Developer,
+        container_id=project_id,
+        item_id=values.loop_item_id,
+        dispatch_id=values.dispatch_id,
+        caller_user_id=current_user.id,
+        manager_agent_id=values.manager_agent_id,
     )
-    item = (
-        db.query(LoopItem)
-        .filter(
-            LoopItem.id == values.loop_item_id,
-            LoopItem.cloud_project_id == project_id,
+    if group_context is not None:
+        project, item, manager = (
+            group_context.group,
+            group_context.item,
+            group_context.manager,
         )
-        .with_for_update()
-        .first()
-    )
-    if item is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
-    manager = _require_project_agent(
-        db,
-        project_id=project_id,
-        agent_id=values.manager_agent_id,
-    )
-    project = db.get(CloudProject, project_id)
-    if project is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+        actor_user_id = group_context.actor_user_id
+    else:
+        require_cloud_project_role(
+            db,
+            project_id,
+            current_user.id,
+            BaseRole.Developer,
+        )
+        item = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.id == values.loop_item_id,
+                LoopItem.cloud_project_id == project_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if item is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        manager = _require_project_agent(
+            db,
+            project_id=project_id,
+            agent_id=values.manager_agent_id,
+        )
+        project = db.get(CloudProject, project_id)
+        if project is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+        actor_user_id = current_user.id
     manager_execution = next(
         (
             execution
@@ -467,11 +429,20 @@ def enqueue_execution_batch(
                 "Assignment target is not part of the collaboration group",
             )
         if command.assignee_type == "agent":
-            agent = _require_project_agent(
-                db,
-                project_id=project_id,
-                agent_id=command.assignee_id,
-            )
+            if group_context is not None:
+                from app.services.group_collaboration_runtime import (
+                    runtime_member_agent,
+                )
+
+                agent = runtime_member_agent(
+                    db, item, manager_execution, command.assignee_id
+                )
+            else:
+                agent = _require_project_agent(
+                    db,
+                    project_id=project_id,
+                    agent_id=command.assignee_id,
+                )
             if collaboration_group_agent_matches(group.get("leader"), agent):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -522,7 +493,7 @@ def enqueue_execution_batch(
                 project=project,
                 issue=item,
                 human=human,
-                actor_user_id=current_user.id,
+                actor_user_id=actor_user_id,
                 actor_name=manager.title or manager.name,
                 human_assignment_id=human_assignment_id,
                 dispatch_id=values.dispatch_id,
@@ -574,7 +545,7 @@ def enqueue_execution_batch(
         from app.services.collaboration_round_assignment import assign_round_owner
 
         assign_round_owner(
-            db, item=item, assignments=assignment_activity, user_id=current_user.id
+            db, item=item, assignments=assignment_activity, user_id=actor_user_id
         )
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         assignment_message = ProjectChatMessage(
@@ -634,7 +605,17 @@ def report_collaboration_assignment_status(
 ) -> dict[str, object]:
     """Bind the member session and record progress; Executor owns the round."""
 
-    require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
+    from app.services.group_collaboration_runtime import require_group_runtime_context
+
+    context = require_group_runtime_context(
+        db,
+        container_id=project_id,
+        item_id=values.loop_item_id,
+        dispatch_id=values.dispatch_id,
+        caller_user_id=current_user.id,
+    )
+    if context is None:
+        require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
     message, changed = project_collaboration_member_activity(
         db,
         project_id=project_id,
@@ -655,17 +636,29 @@ def decide_collaboration_issue_status(
 ) -> dict[str, object]:
     """Persist one manager-owned Issue decision without owning the loop."""
 
-    require_cloud_project_role(
+    from app.services.group_collaboration_runtime import require_group_runtime_context
+
+    context = require_group_runtime_context(
         db,
-        project_id,
-        current_user.id,
-        BaseRole.Developer,
+        container_id=project_id,
+        item_id=values.loop_item_id,
+        dispatch_id=values.dispatch_id,
+        caller_user_id=current_user.id,
+        manager_agent_id=values.manager_agent_id,
     )
+    if context is None:
+        require_cloud_project_role(
+            db,
+            project_id,
+            current_user.id,
+            BaseRole.Developer,
+        )
+    actor_user_id = context.actor_user_id if context is not None else current_user.id
     decision = apply_collaboration_manager_decision(
         db,
         project_id=project_id,
         item_id=values.loop_item_id,
-        user_id=current_user.id,
+        user_id=actor_user_id,
         dispatch_id=values.dispatch_id,
         manager_agent_id=values.manager_agent_id,
         idempotency_key=values.idempotency_key,
@@ -700,7 +693,7 @@ def _claimed_execution_view(
     """Materialize a claimed run or durably fail an unavailable model."""
 
     try:
-        return _execution_view(db, row, include_runtime_payload=True)
+        return execution_view(db, row, include_runtime_payload=True)
     except WeworkRuntimeConfigurationError as exc:
         logger.warning(
             "[LoopItemExecution] Runtime configuration unavailable "
@@ -741,7 +734,7 @@ def heartbeat_execution(
         runtime_task_id=values.runtime_task_id,
         lease_seconds=values.lease_seconds,
     )
-    return _execution_view(db, row) if row else None
+    return execution_view(db, row) if row else None
 
 
 @router.post(
@@ -769,7 +762,7 @@ def request_runtime_start(
         runtime_device_id=values.runtime_device_id,
         runtime_task_id=values.runtime_task_id,
     )
-    return _execution_view(db, row) if row else None
+    return execution_view(db, row) if row else None
 
 
 @router.post(
@@ -798,7 +791,7 @@ def report_runtime_dispatch_unknown(
         runtime_task_id=values.runtime_task_id,
         error=values.error,
     )
-    return _execution_view(db, row) if row else None
+    return execution_view(db, row) if row else None
 
 
 @router.post(
@@ -827,7 +820,7 @@ def runtime_start_execution(
         runtime_task_id=values.runtime_task_id,
         prompt=values.prompt,
     )
-    return _execution_view(db, accepted) if accepted is not None else None
+    return execution_view(db, accepted) if accepted is not None else None
 
 
 @router.post(
@@ -853,7 +846,7 @@ def fail_runtime_preflight(
         error=values.error,
         note=values.note,
     )
-    return _execution_view(db, row) if row else None
+    return execution_view(db, row) if row else None
 
 
 @router.post(
@@ -886,7 +879,7 @@ def cancel_execution(
         from app.tasks.robot_queue_tasks import emit_runtime_cancels
 
         background_tasks.add_task(emit_runtime_cancels, [row])
-    return _execution_view(db, row) if row else None
+    return execution_view(db, row) if row else None
 
 
 @router.post(
@@ -902,12 +895,20 @@ def stop_execution(
 ) -> Optional[LoopItemExecutionView]:
     """Stop a run from the automation page (project member action)."""
 
-    require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
-    _require_project_execution(
-        db,
-        project_id=project_id,
-        execution_id=execution_id,
-    )
+    if db.get(CollaborationChatGroup, str(project_id)) is not None:
+        _require_group_execution_stop(
+            db,
+            group_id=project_id,
+            execution_id=execution_id,
+            user_id=current_user.id,
+        )
+    else:
+        require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
+        _require_project_execution(
+            db,
+            project_id=project_id,
+            execution_id=execution_id,
+        )
     row = loop_item_execution_service.cancel(
         db,
         execution_id=execution_id,
@@ -922,4 +923,4 @@ def stop_execution(
         from app.tasks.robot_queue_tasks import emit_runtime_cancels
 
         background_tasks.add_task(emit_runtime_cancels, [row])
-    return _execution_view(db, row) if row else None
+    return execution_view(db, row) if row else None

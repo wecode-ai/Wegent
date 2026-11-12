@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import (
     CloudProject,
     CloudProjectLocalBinding,
+    CollaborationChatGroup,
     ProjectChatAgent,
     RuntimeProfile,
     loop_datetime_is_unset,
@@ -27,6 +28,7 @@ from app.models.delivery import (
 from app.models.user import User
 from app.schemas.project_chat import ProjectChatWorkspaceBindingView
 from app.schemas.runtime_work import RuntimeName, RuntimeTaskCreateRequest
+from app.services.collaboration_container_access import get_collaboration_container
 from app.services.project_chat.workspace_binding import (
     adapt_legacy_workspace_binding,
     read_agent_workspace_binding,
@@ -40,12 +42,16 @@ class WeworkExecutionProfileError(ValueError):
 
 def _execution_environment_config(
     db: Session,
-    project: CloudProject,
+    project: CloudProject | CollaborationChatGroup,
 ) -> dict[str, Any]:
     """Compile Workspace defaults and Project overrides into one Run snapshot."""
 
     workspace_config: dict[str, Any] = {}
-    workspace_id = workspace_id_for_project(db, project.id)
+    workspace_id = (
+        workspace_id_for_project(db, project.id)
+        if isinstance(project, CloudProject)
+        else None
+    )
     if workspace_id is not None:
         workspace = get_workspace_kind(db, workspace_id)
         payload = workspace.json if workspace is not None else {}
@@ -54,7 +60,11 @@ def _execution_environment_config(
         if isinstance(candidate, dict):
             workspace_config = candidate
 
-    metadata = project.metadata_json if isinstance(project.metadata_json, dict) else {}
+    metadata = (
+        project.metadata_json
+        if isinstance(project, CloudProject) and isinstance(project.metadata_json, dict)
+        else {}
+    )
     candidate = metadata.get("execution_environment")
     project_config = candidate if isinstance(candidate, dict) else {}
     selected_config = project_config if project_config else workspace_config
@@ -281,6 +291,7 @@ class WeworkExecutionProfile:
     additional_skills: tuple[Any, ...] = ()
     mcp_servers: dict[str, Any] | None = None
     workspace_binding_override: ProjectChatWorkspaceBindingView | None = None
+    workspace_policy: str = "git_worktree"
 
     @classmethod
     def for_project_robot(
@@ -359,6 +370,7 @@ class WeworkExecutionProfile:
                 or {}
             ),
             agent_id=agent.id,
+            workspace_policy=str(config["workspace_policy"]),
             local_project_id=local_project_id,
             max_concurrent_executions=bot_max_concurrent_executions(agent),
             plugins=tuple(
@@ -447,14 +459,14 @@ class WeworkExecutionProfile:
         """Build the canonical V2 intent consumed by either Runtime compiler."""
 
         owner = db.get(User, self.owner_user_id)
-        project = db.get(CloudProject, cloud_project_id)
+        project = get_collaboration_container(db, cloud_project_id)
         if owner is None or project is None:
             raise ValueError("Wework execution owner or project is unavailable")
         task_id = str(getattr(task, "id", ""))
+        agent = db.get(ProjectChatAgent, self.agent_id) if self.agent_id else None
         if self.workspace_binding_override is not None:
             workspace_binding = self.workspace_binding_override
         elif self.agent_id:
-            agent = db.get(ProjectChatAgent, self.agent_id)
             if agent is None:
                 raise WeworkExecutionProfileError(
                     f"Project robot '{self.agent_id}' is unavailable"
@@ -629,7 +641,14 @@ class WeworkExecutionProfile:
             }
 
         configured_execution = origin_context.get("execution")
-        environment_config = _execution_environment_config(db, project)
+        environment_owner = project
+        if isinstance(project, CollaborationChatGroup) and agent is not None:
+            environment_owner = get_collaboration_container(db, agent.cloud_project_id)
+            if environment_owner is None:
+                raise WeworkExecutionProfileError("Agent resource owner is unavailable")
+        environment_config = _execution_environment_config(db, environment_owner)
+        if isinstance(environment_owner, CollaborationChatGroup):
+            environment_config["workspace_policy"] = self.workspace_policy
         project_workspace_policy = environment_config["workspace_policy"]
         origin["workspacePolicy"] = workspace_policy or project_workspace_policy
         device_states = environment_config["devices"]
@@ -661,7 +680,7 @@ class WeworkExecutionProfile:
             # The claimed runner prepares this immutable snapshot before starting
             # a turn. Historical paths are reused only on their own installation.
             execution["environment"] = {
-                "environmentId": f"project-{project.id}",
+                "environmentId": f"project-{environment_owner.id}",
                 "repositories": environment_config["repositories"],
                 "setupSteps": environment_config["setup_steps"],
                 "fingerprint": environment_config["fingerprint"],

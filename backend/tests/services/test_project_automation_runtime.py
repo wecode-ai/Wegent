@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.models.delivery import CloudProject
 from app.services.project_automation_domain import ProjectAutomationEvent
 from app.services.project_automation_execution import (
     ProjectAutomationExecution,
@@ -39,6 +40,7 @@ async def test_event_processing_wakes_only_dispatched_execution_without_queue_sc
     query.all.return_value = [rule]
     db = MagicMock()
     db.query.return_value = query
+    db.get.return_value = CloudProject(metadata_json={})
     dispatch = AsyncMock()
     monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
     execution = SimpleNamespace(
@@ -113,7 +115,7 @@ async def test_status_event_dispatches_only_when_processing_boundary_is_crossed(
     query.all.return_value = [matching_rule, other_rule]
     db = MagicMock()
     db.query.return_value = query
-    db.get.return_value = SimpleNamespace(metadata_json={})
+    db.get.return_value = CloudProject(metadata_json={})
     dispatch = AsyncMock()
     monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
     processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
@@ -196,7 +198,7 @@ async def test_target_status_dispatches_after_processing_has_already_started(
     query.all.return_value = [matching_rule]
     db = MagicMock()
     db.query.return_value = query
-    db.get.return_value = SimpleNamespace(metadata_json={})
+    db.get.return_value = CloudProject(metadata_json={})
     dispatch = AsyncMock()
     monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
     processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
@@ -252,6 +254,7 @@ async def test_unbound_issue_does_not_dispatch_multiple_matching_automations(
     item_query.one_or_none.return_value = SimpleNamespace(metadata_json={})
     db = MagicMock()
     db.query.side_effect = [rule_query, item_query]
+    db.get.return_value = CloudProject(metadata_json={})
     dispatch = AsyncMock()
     monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
     processor = ProjectAutomationProcessor(run_factory=MagicMock())
@@ -305,6 +308,7 @@ async def test_bound_issue_dispatches_only_its_matching_automation(monkeypatch):
     )
     db = MagicMock()
     db.query.side_effect = [rule_query, item_query]
+    db.get.return_value = CloudProject(metadata_json={})
     run = SimpleNamespace(
         id="run-1",
         task_id="",

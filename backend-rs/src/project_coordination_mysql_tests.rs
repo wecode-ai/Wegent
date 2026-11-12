@@ -472,6 +472,7 @@ async fn runtime_group_context_rechecks_current_authority() {
     with_schema(4, |mysql| async move {
         seed(&mysql).await;
         crate::loop_tasks::cloud_context_group_tests::verify_current_group_context(&mysql).await;
+        crate::cloud_projects::verify_group_environment_authority(&mysql).await;
     })
     .await;
 }

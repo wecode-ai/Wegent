@@ -25,6 +25,7 @@ from app.schemas.share import (
     FailedMemberResponse,
     ResourceMemberResponse,
 )
+from app.services.resource_authority_reads import authority_query
 from app.services.share.base_service import UnifiedShareService
 from app.services.team_access_policy import can_use_group_teams
 from shared.telemetry.decorators import trace_sync
@@ -52,15 +53,13 @@ class TeamShareService(UnifiedShareService):
         permits approved group guests without granting configuration access.
         """
         # First try to find team owned by user
-        team = (
-            db.query(Kind)
-            .filter(
+        team = authority_query(
+            db.query(Kind).filter(
                 Kind.id == resource_id,
                 Kind.kind == "Team",
                 Kind.is_active.is_(True),
             )
-            .first()
-        )
+        ).first()
 
         if team and (team.user_id == user_id or team.user_id == 0):
             return team
@@ -121,15 +120,13 @@ class TeamShareService(UnifiedShareService):
         return role.value if hasattr(role, "value") else str(role)
 
     def _get_active_team(self, db: Session, resource_id: int) -> Optional[Kind]:
-        return (
-            db.query(Kind)
-            .filter(
+        return authority_query(
+            db.query(Kind).filter(
                 Kind.id == resource_id,
                 Kind.kind == "Team",
                 Kind.is_active.is_(True),
             )
-            .first()
-        )
+        ).first()
 
     def _ensure_can_manage_members(
         self,

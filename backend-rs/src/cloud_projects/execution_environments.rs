@@ -8,6 +8,7 @@
 use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Json, Mysql};
 use chrono::NaiveDateTime;
+use std::collections::HashSet;
 
 use crate::devices;
 use crate::http_compat::FastApiError;
@@ -65,6 +66,8 @@ struct ExecutionEnvironmentListResponse {
 /// recorded exchange. Only the fields consumed by the response are typed.
 #[derive(Debug, FromMysqlRow)]
 struct ExecutionEnvironmentRow {
+    #[mysql(rename = "resource_members_role")]
+    grant_role: String,
     #[mysql(rename = "resource_members_id")]
     #[allow(dead_code, reason = "selected to match source column list")]
     member_id: i32,
@@ -148,6 +151,7 @@ fn internal_execution_error(error: brz_mysql::MysqlError) -> FastApiError {
 async fn device_env_rows<M: Mysql>(
     mysql: &M,
     project_id: &str,
+    entity_type: &str,
 ) -> Result<Vec<ExecutionEnvironmentRow>, brz_mysql::MysqlError> {
     mysql
         .fetch_all(
@@ -175,7 +179,7 @@ async fn device_env_rows<M: Mysql>(
                  kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
                  kinds.updated_at AS kinds_updated_at \n\
                  FROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id \n\
-                 WHERE resource_members.resource_type = 'Device' AND resource_members.entity_type = 'project' \
+                 WHERE resource_members.resource_type = 'Device' AND resource_members.entity_type = '{entity_type}' \
                  AND resource_members.entity_id = '{project_id}' AND resource_members.status = 'approved' \
                  AND kinds.kind = 'Device' \
                  ORDER BY resource_members.created_at, resource_members.id",
@@ -359,24 +363,69 @@ async fn device_owner_names<M: Mysql>(
     Ok(names)
 }
 
-/// Handler body for `GET /api/v1/cloud-projects/{project_id}/execution-environments`.
-async fn execution_environments(
-    state: &AppState,
-    project_id: &str,
-    current_user: &crate::loop_tasks::auth::UserRow,
-) -> Result<ExecutionEnvironmentListResponse, FastApiError> {
-    let id = super::parse_project_id(project_id)?;
-    let access = super::collaboration_access::authorized_projects(
-        &state.mysql,
-        current_user.id,
-        Some(id),
-        None,
-    )
-    .await
-    .map_err(internal_execution_error)?
-    .into_iter()
-    .next()
-    .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Cloud project not found"))?;
+enum EnvironmentScope {
+    Project {
+        workspace_id: String,
+        authorized: HashSet<i64>,
+    },
+    Group {
+        id: String,
+        active: bool,
+    },
+}
+
+impl EnvironmentScope {
+    fn entity_type(&self) -> &'static str {
+        match self {
+            Self::Project { .. } => "project",
+            Self::Group { .. } => "chat_group",
+        }
+    }
+
+    fn owner_id(&self) -> &str {
+        match self {
+            Self::Project { workspace_id, .. } => workspace_id,
+            Self::Group { id, .. } => id,
+        }
+    }
+
+    fn allows_use(&self, device: i64, active: bool, role: &str) -> bool {
+        active
+            && match self {
+                Self::Project { authorized, .. } => authorized.contains(&device),
+                Self::Group { active, .. } => {
+                    *active && matches!(role, "Owner" | "Maintainer" | "Developer")
+                }
+            }
+    }
+}
+
+async fn environment_scope<M: Mysql>(
+    mysql: &M,
+    container: &str,
+    user: i32,
+) -> Result<EnvironmentScope, FastApiError> {
+    let id = super::parse_project_id(container)?;
+    let kind: Option<(String,)> = mysql
+        .fetch_optional(
+            "SELECT resource_type FROM loop_items WHERE id=?",
+            (container,),
+        )
+        .await
+        .map_err(internal_execution_error)?;
+    if kind.is_some_and(|kind| kind.0 == "chat_group") {
+        let group = crate::chat_groups::repository::access(mysql, container, user).await?;
+        return Ok(EnvironmentScope::Group {
+            id: group.id,
+            active: group.status.as_deref() == Some("active"),
+        });
+    }
+    let access = super::collaboration_access::authorized_projects(mysql, user, Some(id), None)
+        .await
+        .map_err(internal_execution_error)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Cloud project not found"))?;
     let workspace_id = access.workspace.id.clone();
     let metadata = access
         .project
@@ -384,16 +433,29 @@ async fn execution_environments(
         .as_ref()
         .and_then(|m| m.0.value.as_ref());
     let authorized = super::environment_authorization::authorized_device_ids(
-        &state.mysql,
-        project_id,
+        mysql,
+        container,
         workspace_id.parse().expect("workspace IDs are numeric"),
         metadata,
     )
     .await
     .map_err(internal_execution_error)?;
+    Ok(EnvironmentScope::Project {
+        workspace_id,
+        authorized,
+    })
+}
+
+/// Handler body for `GET /api/v1/cloud-projects/{project_id}/execution-environments`.
+async fn execution_environments(
+    state: &AppState,
+    project_id: &str,
+    current_user: &crate::loop_tasks::auth::UserRow,
+) -> Result<ExecutionEnvironmentListResponse, FastApiError> {
+    let scope = environment_scope(&state.mysql, project_id, current_user.id).await?;
 
     // The approved Device grants joined with `kinds`.
-    let rows = device_env_rows(&state.mysql, project_id)
+    let rows = device_env_rows(&state.mysql, project_id, scope.entity_type())
         .await
         .map_err(internal_execution_error)?;
 
@@ -437,10 +499,10 @@ async fn execution_environments(
             .filter(|value| !value.is_empty())
             .map(str::to_string);
 
-        let can_use = row.is_active && authorized.contains(&row.id);
+        let can_use = scope.allows_use(row.id, row.is_active, &row.grant_role);
         items.push(ExecutionEnvironmentItem {
             id: row.id.to_string(),
-            workspace_id: workspace_id.clone(),
+            workspace_id: scope.owner_id().to_string(),
             device_id: row.id,
             device_key: runtime_device_route_id(row),
             app_device_id: spec.app_device_id.clone(),
@@ -485,8 +547,111 @@ fn datetime_value(value: NaiveDateTime) -> String {
 }
 
 #[cfg(test)]
+pub(crate) use tests::verify_group_environment_authority;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    pub(crate) async fn verify_group_environment_authority(mysql: &brz_mysql::MysqlService) {
+        mysql.execute("ALTER TABLE kinds ADD namespace VARCHAR(100) DEFAULT 'default', ADD created_at DATETIME NULL, ADD updated_at DATETIME NULL",()).await.unwrap();
+        mysql.execute("ALTER TABLE resource_members ADD entity_display_name VARCHAR(100), ADD user_id INT, ADD invited_by_user_id INT DEFAULT 1, ADD share_link_id INT, ADD reviewed_by_user_id INT, ADD reviewed_at DATETIME, ADD copied_resource_id BIGINT, ADD requested_at DATETIME, ADD created_at DATETIME, ADD updated_at DATETIME",()).await.unwrap();
+        for group in [39001, 39002] {
+            mysql.execute("INSERT INTO loop_items(id,resource_type,project_key,status,name,description,metadata,version,created_at,updated_at) VALUES(?,'chat_group',?,'active','Group','',JSON_OBJECT(),1,UTC_TIMESTAMP(),UTC_TIMESTAMP())",(group.to_string(),format!("G{group}"))).await.unwrap();
+        }
+        assert_eq!(
+            environment_scope(mysql, "39001", 7)
+                .await
+                .err()
+                .unwrap()
+                .status()
+                .as_u16(),
+            404
+        );
+        mysql.execute("INSERT INTO resource_members(resource_type,resource_id,entity_type,entity_id,status,role) VALUES('CollaborationChatGroup',39001,'user','7','approved','Viewer')",()).await.unwrap();
+        for device in [37901, 37902] {
+            mysql.execute("INSERT INTO kinds(id,user_id,name,kind,is_active,json) VALUES(?,7,'Device','Device',true,JSON_OBJECT())",(device,)).await.unwrap();
+        }
+        // A project grant and a different group's grant are not consent for this group.
+        for (device, kind, owner) in [(37901, "project", "1001"), (37902, "chat_group", "39002")] {
+            mysql.execute("INSERT INTO resource_members(resource_type,resource_id,entity_type,entity_id,status,role) VALUES('Device',?,?,?,'approved','Developer')",(device,kind,owner)).await.unwrap();
+        }
+        assert!(
+            device_env_rows(mysql, "39001", "chat_group")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        mysql.execute("INSERT INTO resource_members(resource_type,resource_id,entity_type,entity_id,status,role) VALUES('Device',37901,'chat_group','39001','approved','Developer')",()).await.unwrap();
+        let scope = environment_scope(mysql, "39001", 7).await.unwrap();
+        let rows = device_env_rows(mysql, "39001", scope.entity_type())
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, 37901);
+        assert!(scope.allows_use(rows[0].id, rows[0].is_active, &rows[0].grant_role));
+        mysql.execute("UPDATE resource_members SET role='Viewer' WHERE resource_type='Device' AND resource_id=37901 AND entity_type='chat_group' AND entity_id='39001'",()).await.unwrap();
+        let rows = device_env_rows(mysql, "39001", "chat_group").await.unwrap();
+        assert!(!scope.allows_use(rows[0].id, rows[0].is_active, &rows[0].grant_role));
+        mysql.execute("UPDATE resource_members SET status='rejected' WHERE resource_type='Device' AND resource_id=37901 AND entity_type='chat_group' AND entity_id='39001'",()).await.unwrap();
+        assert!(
+            device_env_rows(mysql, "39001", "chat_group")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        mysql
+            .execute(
+                "UPDATE loop_items SET status='archived' WHERE id='39001'",
+                (),
+            )
+            .await
+            .unwrap();
+        assert!(
+            !environment_scope(mysql, "39001", 7)
+                .await
+                .unwrap()
+                .allows_use(37901, true, "Owner")
+        );
+        mysql.execute("DELETE FROM resource_members WHERE resource_type='CollaborationChatGroup' AND resource_id=39001 AND entity_type='user'",()).await.unwrap();
+        assert_eq!(
+            environment_scope(mysql, "39001", 7)
+                .await
+                .err()
+                .unwrap()
+                .status()
+                .as_u16(),
+            404
+        );
+    }
+
+    #[test]
+    fn group_device_consent_never_comes_from_membership_or_a_project() {
+        let group = EnvironmentScope::Group {
+            id: "9001".into(),
+            active: true,
+        };
+        for role in ["Owner", "Maintainer", "Developer"] {
+            assert!(group.allows_use(1, true, role));
+            assert!(!group.allows_use(1, false, role));
+        }
+        for role in ["Viewer", "Reporter", "", "developer"] {
+            assert!(!group.allows_use(1, true, role));
+        }
+        assert_eq!(group.entity_type(), "chat_group");
+        let archived = EnvironmentScope::Group {
+            id: "9001".into(),
+            active: false,
+        };
+        assert!(!archived.allows_use(1, true, "Owner"));
+        let project = EnvironmentScope::Project {
+            workspace_id: "2001".into(),
+            authorized: HashSet::from([2]),
+        };
+        assert!(!project.allows_use(1, true, "Owner"));
+        assert!(project.allows_use(2, true, "Developer"));
+        assert_eq!(project.entity_type(), "project");
+    }
 
     fn normalize(sql: &str) -> String {
         sql.split_whitespace().collect::<Vec<_>>().join(" ")

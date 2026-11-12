@@ -14,8 +14,9 @@ from sqlalchemy.orm import Session, aliased
 
 from app.db.timezone import database_datetime_timezone
 from app.models.delivery import (
-    CloudProject,
+    CollaborationChatGroup,
     LoopItem,
+    LoopNode,
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectIncomingHook,
@@ -30,8 +31,15 @@ from app.schemas.project_automation import (
     ProjectAutomationUpdate,
     ProjectAutomationWorkflowMigration,
 )
-from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.cloud_projects.access import (
+    CloudProjectAccess,
+    require_cloud_project_role,
+)
 from app.services.cloud_projects.service import cloud_project_service
+from app.services.collaboration_container_access import (
+    get_collaboration_container,
+    require_collaboration_container_access,
+)
 from app.services.loop_item_executions.service import (
     ACTIVE_STATUSES,
     loop_item_execution_service,
@@ -82,11 +90,25 @@ def _canonical_event_config(
     return config
 
 
+def _require_automation_owner(
+    db: Session, project_id: str, user_id: int, required_role: BaseRole
+) -> CloudProjectAccess:
+    if isinstance(get_collaboration_container(db, project_id), CollaborationChatGroup):
+        return require_collaboration_container_access(
+            db,
+            project_id,
+            user_id,
+            required_role,
+            write=required_role != BaseRole.Viewer,
+        )
+    return require_cloud_project_role(db, project_id, user_id, required_role)
+
+
 class ProjectAutomationService:
     """Own project automation rules, schedules, and persisted run records."""
 
     def list(self, db: Session, project_id: str, user_id: int) -> list[dict]:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        _require_automation_owner(db, project_id, user_id, BaseRole.Viewer)
         rows = (
             db.query(ProjectAutomationRule)
             .filter(
@@ -105,10 +127,8 @@ class ProjectAutomationService:
         user_id: int,
         values: ProjectAutomationCreate,
     ) -> dict:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
-        db.query(CloudProject).filter(
-            CloudProject.id == project_id
-        ).with_for_update().one()
+        _require_automation_owner(db, project_id, user_id, BaseRole.Maintainer)
+        db.query(LoopNode).filter(LoopNode.id == project_id).with_for_update().one()
         row = self._create_rule(
             db,
             project_id=project_id,
@@ -128,10 +148,10 @@ class ProjectAutomationService:
     ) -> dict:
         """Promote one legacy Issue workflow into canonical automation storage."""
 
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        _require_automation_owner(db, project_id, user_id, BaseRole.Maintainer)
         project = (
-            db.query(CloudProject)
-            .filter(CloudProject.id == project_id)
+            db.query(LoopNode)
+            .filter(LoopNode.id == project_id)
             .with_for_update()
             .one_or_none()
         )
@@ -406,7 +426,7 @@ class ProjectAutomationService:
             )
         if not enabled:
             return
-        project = db.get(CloudProject, project_id)
+        project = get_collaboration_container(db, project_id)
         available = (
             {status_id for status_id, _ in project_board_statuses(project)}
             if project is not None
@@ -426,10 +446,8 @@ class ProjectAutomationService:
         user_id: int,
         values: ProjectAutomationUpdate,
     ) -> dict:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
-        db.query(CloudProject).filter(
-            CloudProject.id == project_id
-        ).with_for_update().one()
+        _require_automation_owner(db, project_id, user_id, BaseRole.Maintainer)
+        db.query(LoopNode).filter(LoopNode.id == project_id).with_for_update().one()
         row = self._rule(db, project_id, automation_id, for_update=True)
         if row.version != values.version:
             raise HTTPException(status.HTTP_409_CONFLICT, "Automation version conflict")
@@ -561,10 +579,10 @@ class ProjectAutomationService:
     def delete(
         self, db: Session, project_id: str, automation_id: str, user_id: int
     ) -> dict:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        _require_automation_owner(db, project_id, user_id, BaseRole.Maintainer)
         project = (
-            db.query(CloudProject)
-            .filter(CloudProject.id == project_id)
+            db.query(LoopNode)
+            .filter(LoopNode.id == project_id)
             .with_for_update()
             .one_or_none()
         )
@@ -623,7 +641,7 @@ class ProjectAutomationService:
     async def run_now(
         self, db: Session, project_id: str, automation_id: str, user_id: int
     ) -> dict:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+        _require_automation_owner(db, project_id, user_id, BaseRole.Developer)
         rule = self._rule(db, project_id, automation_id)
         trigger_type = _metadata(rule).get("trigger_type")
         if trigger_type == "workflow":
@@ -659,7 +677,7 @@ class ProjectAutomationService:
     ) -> dict:
         """Re-dispatch the same failed processor record for its existing task."""
 
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+        _require_automation_owner(db, project_id, user_id, BaseRole.Developer)
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or str(run.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
@@ -691,7 +709,7 @@ class ProjectAutomationService:
     def list_runs(
         self, db: Session, project_id: str, automation_id: str, user_id: int
     ) -> list[dict]:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        _require_automation_owner(db, project_id, user_id, BaseRole.Viewer)
         rule = self._rule(db, project_id, automation_id)
         timezone_name = str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         rows = (
@@ -732,7 +750,7 @@ class ProjectAutomationService:
     async def cancel_run(
         self, db: Session, project_id: str, run_id: str, user_id: int
     ) -> dict:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+        _require_automation_owner(db, project_id, user_id, BaseRole.Developer)
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or str(run.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
@@ -858,7 +876,7 @@ class ProjectAutomationService:
 
     async def check_due(self, db: Session) -> int:
         now = utcnow()
-        active_project = aliased(CloudProject)
+        active_project = aliased(LoopNode)
         rule_ids = (
             db.query(ProjectAutomationRule.id)
             .join(
@@ -866,7 +884,9 @@ class ProjectAutomationService:
                 active_project.id == ProjectAutomationRule.cloud_project_id,
             )
             .filter(
+                active_project.resource_type.in_(("project", "chat_group")),
                 active_project.status == "active",
+                loop_datetime_is_unset(active_project.deleted_at),
                 ProjectAutomationRule.status == "enabled",
                 ProjectAutomationRule.due_at.isnot(None),
                 ProjectAutomationRule.due_at <= now,
@@ -1084,13 +1104,22 @@ class ProjectAutomationService:
         target_id: str,
     ) -> dict[str, object]:
         if target_kind == "human":
+            if isinstance(
+                get_collaboration_container(db, project_id), CollaborationChatGroup
+            ):
+                from app.services.chat_group_access import chat_group_members
+
+                members = chat_group_members(db, project_id)
+            else:
+                members = cloud_project_service.list_members(
+                    db, int(project_id), user_id
+                )
             member = next(
                 (
-                    item
-                    for item in cloud_project_service.list_members(
-                        db, int(project_id), user_id
-                    )
-                    if str(item["user_id"]) == str(target_id)
+                    entry
+                    for entry in members
+                    if str(entry["user_id"]) == str(target_id)
+                    and entry.get("can_be_assignee", True)
                 ),
                 None,
             )
@@ -1106,6 +1135,11 @@ class ProjectAutomationService:
             }
         if target_kind == "agent":
             agent = project_agent(db, project_id, target_id)
+            from app.services.collaboration_permissions import (
+                require_project_agent_visibility,
+            )
+
+            require_project_agent_visibility(agent, user_id)
             return {
                 "kind": "agent",
                 "id": str(agent.id),

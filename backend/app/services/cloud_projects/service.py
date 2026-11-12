@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session
 
 from app.core.provider_credentials import store_provider_config
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, ProjectAutomationRun, loop_datetime_is_unset
+from app.models.delivery import (
+    CollaborationChatGroup,
+    LoopItem,
+    ProjectAutomationRun,
+    loop_datetime_is_unset,
+)
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -646,6 +651,14 @@ class CloudProjectService(CloudProjectMemberService):
         device_id: int,
         user_id: int,
     ) -> dict[str, object]:
+        if db.get(CollaborationChatGroup, str(cloud_project_id)) is not None:
+            from app.services.group_execution_environments import (
+                add_group_execution_environment,
+            )
+
+            return await add_group_execution_environment(
+                db, cloud_project_id, device_id, user_id
+            )
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         workspace_id = workspace_id_for_project(db, cloud_project_id)
         if workspace_id is None:
@@ -713,6 +726,13 @@ class CloudProjectService(CloudProjectMemberService):
         device_id: int,
         user_id: int,
     ) -> None:
+        if db.get(CollaborationChatGroup, str(cloud_project_id)) is not None:
+            from app.services.group_execution_environments import (
+                remove_group_execution_environment,
+            )
+
+            remove_group_execution_environment(db, cloud_project_id, device_id, user_id)
+            return
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         grant = (
             db.query(ResourceMember)

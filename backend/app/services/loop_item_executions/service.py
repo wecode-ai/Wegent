@@ -513,6 +513,7 @@ def _execution_is_claimable_by_device(
 
     from app.services.collaboration_revocation import execution_authorized
     from app.services.device.identity import resolve_owned_device_alias
+    from app.services.issue_resource_context import execution_resource_owner
     from app.services.runner_routing import execution_environment_ids
 
     if execution.assignment_pending:
@@ -526,7 +527,10 @@ def _execution_is_claimable_by_device(
         or runner is None
         or runner.id
         not in execution_environment_ids(
-            db, execution.cloud_project_id, execution.agent_id
+            db,
+            execution_resource_owner(db, execution),
+            execution.agent_id,
+            current=True,
         )
     ):
         return False
@@ -3857,8 +3861,14 @@ class LoopItemExecutionService:
     ) -> list[dict[str, Any]]:
         """Compile immutable member profiles in the root Executor handoff."""
 
+        from app.services.issue_resource_context import (
+            execution_resource_owner,
+            require_assignment_agent,
+        )
         from app.services.project_chat.service import bot_config
         from app.services.runtime_work_service import compile_runtime_task_create
+
+        resource_owner_id = execution_resource_owner(db, execution)
 
         group = origin_context.get("collaboration_group")
         if not isinstance(group, dict):
@@ -3880,7 +3890,7 @@ class LoopItemExecutionService:
         agents = (
             db.query(ProjectChatAgent)
             .filter(
-                ProjectChatAgent.cloud_project_id == execution.cloud_project_id,
+                ProjectChatAgent.cloud_project_id == resource_owner_id,
                 ProjectChatAgent.status == "active",
             )
             .all()
@@ -3905,6 +3915,14 @@ class LoopItemExecutionService:
                 )
             if agent.id in compiled_agent_ids:
                 continue
+            agent = require_assignment_agent(
+                db,
+                container_id=str(execution.cloud_project_id),
+                agent_id=agent.id,
+                user_id=execution.assigner_user_id,
+                item=db.get(LoopItem, execution.loop_item_id),
+                execute=True,
+            )
             compiled_agent_ids.add(agent.id)
             aliases = sorted(
                 {
@@ -3925,7 +3943,7 @@ class LoopItemExecutionService:
                 WeworkExecutionProfile.for_project_robot(
                     agent,
                     db=db,
-                    cloud_project_id=execution.cloud_project_id,
+                    cloud_project_id=resource_owner_id,
                 ),
                 execution_prompt="Collaboration member task",
             )
@@ -4009,6 +4027,9 @@ class LoopItemExecutionService:
     ) -> tuple[WeworkExecutionProfile, dict[str, Any]]:
         """Resolve live executor configuration from its canonical record."""
 
+        from app.services.issue_resource_context import execution_resource_owner
+
+        resource_owner_id = execution_resource_owner(db, execution)
         run, rule = self._automation_run_and_rule(db, execution)
         if execution.executor_type == "collaboration_group_dispatch":
             origin_context = self._selection_context(
@@ -4020,7 +4041,7 @@ class LoopItemExecutionService:
             if (
                 manager is None
                 or manager.status != "active"
-                or str(manager.cloud_project_id) != str(execution.cloud_project_id)
+                or str(manager.cloud_project_id) != resource_owner_id
             ):
                 raise WeworkRuntimeConfigurationError(
                     "Collaboration group manager is unavailable"
@@ -4028,7 +4049,7 @@ class LoopItemExecutionService:
             profile = WeworkExecutionProfile.for_project_robot(
                 manager,
                 db=db,
-                cloud_project_id=execution.cloud_project_id,
+                cloud_project_id=resource_owner_id,
                 model_override=str(origin_context.get("model") or ""),
                 model_type_override=origin_context.get("model_type"),
                 model_options_override=origin_context.get("model_options"),
@@ -4052,7 +4073,7 @@ class LoopItemExecutionService:
             if (
                 agent is None
                 or agent.status != "active"
-                or str(agent.cloud_project_id) != str(execution.cloud_project_id)
+                or str(agent.cloud_project_id) != resource_owner_id
             ):
                 raise WeworkRuntimeConfigurationError(
                     f"Project robot '{execution.agent_id}' is unavailable"
@@ -4085,7 +4106,7 @@ class LoopItemExecutionService:
                 agent,
                 db=db,
                 runtime_profile=runtime_profile,
-                cloud_project_id=execution.cloud_project_id,
+                cloud_project_id=resource_owner_id,
                 model_override=str(origin_context.get("model") or ""),
                 model_type_override=origin_context.get("model_type"),
                 model_options_override=origin_context.get("model_options"),

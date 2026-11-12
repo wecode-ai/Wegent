@@ -35,6 +35,7 @@ class LoopItemCreate(BaseModel):
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
     assignee_group_id: str | None = Field(default=None, max_length=64)
+    assignee_group_source_id: str | None = Field(default=None, max_length=64)
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
@@ -51,6 +52,8 @@ class LoopItemCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_assignee(self) -> "LoopItemCreate":
+        if self.assignee_group_source_id is not None and not self.assignee_group_id:
+            raise ValueError("A collaboration group source requires a group assignee")
         selected = sum(
             value is not None
             for value in (
@@ -83,6 +86,7 @@ class LoopItemUpdate(BaseModel):
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
     assignee_group_id: str | None = Field(default=None, max_length=64)
+    assignee_group_source_id: str | None = Field(default=None, max_length=64)
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
@@ -101,6 +105,15 @@ class LoopItemUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_assignee(self) -> "LoopItemUpdate":
+        if self.assignee_group_source_id is not None and any(
+            value is not None
+            for value in (
+                self.assignee_user_id,
+                self.assignee_agent_id,
+                self.assignee_team_id,
+            )
+        ):
+            raise ValueError("A collaboration group source requires a group assignee")
         if "security_level" in self.model_fields_set and self.security_level is None:
             raise ValueError("security_level cannot be null")
         values = [
@@ -163,6 +176,7 @@ class LoopItemResponse(BaseModel):
     status: str
     assignee_user_id: int | None
     assignee_group_id: str | None = None
+    assignee_group_source_id: str | None = None
     assignee_group_name: str | None = None
     assignee_name: str | None = None
     assignee_agent_id: str | None = None

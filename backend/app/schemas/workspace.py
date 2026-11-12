@@ -320,9 +320,10 @@ class CollaborationGroupUpdate(BaseModel):
 
 class CollaborationGroupResponse(BaseModel):
     id: SnowflakeId
-    workspace_id: SnowflakeId
-    owner_type: Literal["workspace", "project"]
+    workspace_id: SnowflakeId | None
+    owner_type: Literal["workspace", "project", "chat_group"]
     owner_id: SnowflakeId
+    binding_owner_id: SnowflakeId | None = None
     name: str
     description: str
     instructions: str

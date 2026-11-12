@@ -224,6 +224,7 @@ class LoopItemAssign(ProjectChatSchema):
     version: int = Field(ge=1)
     assignee_type: Literal["user", "agent", "team", "group"]
     assignee_id: str = Field(min_length=1, max_length=128)
+    assignee_group_source_id: str | None = Field(default=None, max_length=64)
     workflow_step: str | None = Field(default=None, max_length=128)
     trigger: Literal[
         "manual",
@@ -232,6 +233,12 @@ class LoopItemAssign(ProjectChatSchema):
         "automation",
         "mention",
     ] = "manual"
+
+    @model_validator(mode="after")
+    def validate_group_source(self):
+        if self.assignee_group_source_id is not None and self.assignee_type != "group":
+            raise ValueError("Collaboration group source requires a group assignee")
+        return self
 
 
 class LoopItemApproval(ProjectChatSchema):

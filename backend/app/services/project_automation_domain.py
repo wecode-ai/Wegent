@@ -115,7 +115,7 @@ def project_agent(
     from app.services.collaboration_permissions import collaboration_permission_service
 
     return collaboration_permission_service.require_project_agent(
-        db, project_id, agent_id or ""
+        db, project_id, agent_id or "", current=True
     )
 
 

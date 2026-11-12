@@ -53,6 +53,50 @@ def _direct_role(grants: list[ResourceMember]) -> str | None:
     )
 
 
+def require_locked_workspace(
+    db: Session,
+    workspace_id: int,
+    user_id: int,
+    required_role: BaseRole = BaseRole.Maintainer,
+) -> Kind:
+    """Authorize a resource share from current Workspace and membership facts."""
+    actor = (
+        db.query(User)
+        .filter(User.id == user_id, User.is_active.is_(True))
+        .with_for_update()
+        .populate_existing()
+        .one_or_none()
+    )
+    if actor is None:
+        raise HTTPException(404, "Workspace not found")
+    workspace = (
+        db.query(Kind)
+        .filter(Kind.id == workspace_id)
+        .with_for_update()
+        .populate_existing()
+        .one_or_none()
+    )
+    if (
+        workspace is None
+        or workspace.kind != "CollaborationWorkspace"
+        or not workspace.is_active
+    ):
+        raise HTTPException(404, "Workspace not found")
+    direct = _direct_role(_grants(db, "Workspace", workspace_id, user_id))
+    role = (
+        BaseRole.Owner
+        if workspace.user_id == user_id
+        else BaseRole(direct) if direct else None
+    )
+    if role is None:
+        raise HTTPException(404, "Workspace not found")
+    if not has_permission(role, required_role):
+        raise HTTPException(
+            403, "Source administration is required to share this collaboration group"
+        )
+    return workspace
+
+
 def require_classification_project(
     db: Session,
     project_id: str,

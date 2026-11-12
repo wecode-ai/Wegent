@@ -53,16 +53,15 @@ def create_thread_classification(
     db.flush()
 
 
-def linked_project_id(db: Session, thread_id: str) -> str | None:
-    row = (
-        db.query(ThreadProjectLink.parent_id)
-        .filter(
-            ThreadProjectLink.loop_item_id == thread_id,
-            ThreadProjectLink.status == "active",
-            loop_datetime_is_unset(ThreadProjectLink.deleted_at),
-        )
-        .one_or_none()
+def linked_project_id(db: Session, thread_id: str, *, lock: bool = False) -> str | None:
+    query = db.query(ThreadProjectLink.parent_id).filter(
+        ThreadProjectLink.loop_item_id == thread_id,
+        ThreadProjectLink.status == "active",
+        loop_datetime_is_unset(ThreadProjectLink.deleted_at),
     )
+    if lock:
+        query = query.with_for_update()
+    row = query.one_or_none()
     return str(row[0]) if row else None
 
 

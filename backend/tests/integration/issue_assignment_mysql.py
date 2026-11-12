@@ -344,6 +344,19 @@ def main() -> None:
         )
 
         verify_thread_classification(engine)
+        from tests.integration.group_crew_sharing_mysql import verify_group_crew_sharing
+
+        verify_group_crew_sharing(engine)
+        from tests.integration.group_resource_authority_mysql import (
+            run_group_resource_authority_cases,
+        )
+
+        run_group_resource_authority_cases(engine)
+        from tests.integration.group_runtime_profile_mysql import (
+            verify_runtime_profile_current_authority,
+        )
+
+        verify_runtime_profile_current_authority(engine)
         from tests.integration.project_board_order_mysql import (
             verify_project_board_order,
         )

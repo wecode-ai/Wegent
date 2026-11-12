@@ -7,9 +7,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func
-from sqlalchemy.dialects.mysql import insert as mysql_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject
@@ -18,6 +15,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import ExecutionEnvironmentConfig
+from app.services.resource_grant_storage import ensure_resource_member_grant
 
 COLLABORATION_WORKSPACE_KIND = "CollaborationWorkspace"
 WORKSPACE_ENTITY_TYPE = "workspace"
@@ -142,37 +140,14 @@ def ensure_resource_grant(
     added_by_user_id: int,
     role: BaseRole,
 ) -> ResourceMember:
-    identity = {
-        "resource_type": resource_type,
-        "resource_id": resource_id,
-        "entity_type": WORKSPACE_ENTITY_TYPE,
-        "entity_id": str(workspace_id),
-    }
-    updates = {
-        "role": role.value,
-        "status": MemberStatus.APPROVED.value,
-        "invited_by_user_id": added_by_user_id,
-        "updated_at": func.now(),
-    }
-    # Insert before locking: absent-row locking reads can deadlock independent
-    # grants through InnoDB gap locks. The unique identity also restores inactive
-    # grants atomically without replacing their audit history.
-    db.flush()
-    if db.get_bind().dialect.name == "mysql":
-        statement = mysql_insert(ResourceMember).values(**identity, **updates)
-        statement = statement.on_duplicate_key_update(**updates)
-    else:
-        statement = sqlite_insert(ResourceMember).values(**identity, **updates)
-        statement = statement.on_conflict_do_update(
-            index_elements=list(identity), set_=updates
-        )
-    db.execute(statement)
-    return (
-        db.query(ResourceMember)
-        .filter_by(**identity)
-        .with_for_update()
-        .populate_existing()
-        .one()
+    return ensure_resource_member_grant(
+        db,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        entity_type=WORKSPACE_ENTITY_TYPE,
+        entity_id=str(workspace_id),
+        added_by_user_id=added_by_user_id,
+        role=role,
     )
 
 

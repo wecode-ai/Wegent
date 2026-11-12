@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.schemas.namespace import GroupRole
+from app.services.resource_authority_reads import authority_query
 
 # Define epoch time for default datetime values
 EPOCH_TIME = datetime(1970, 1, 1, 0, 0, 0)
@@ -34,11 +35,9 @@ MAX_ENTITY_MEMBERS_PER_GROUP = settings.MAX_ENTITY_MEMBERS_PER_GROUP
 
 def get_namespace_id_by_name(db: Session, group_name: str) -> Optional[int]:
     """Get namespace ID by name."""
-    namespace = (
-        db.query(Namespace)
-        .filter(Namespace.name == group_name, Namespace.is_active)
-        .first()
-    )
+    namespace = authority_query(
+        db.query(Namespace).filter(Namespace.name == group_name, Namespace.is_active)
+    ).first()
     return namespace.id if namespace else None
 
 
@@ -60,17 +59,15 @@ def get_group_member(
     if not namespace_id:
         return None
 
-    return (
-        db.query(ResourceMember)
-        .filter(
+    return authority_query(
+        db.query(ResourceMember).filter(
             ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
             ResourceMember.resource_id == namespace_id,
             ResourceMember.entity_type == "user",
             ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
-        .first()
-    )
+    ).first()
 
 
 def get_user_role_in_group(

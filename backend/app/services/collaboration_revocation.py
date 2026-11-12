@@ -3,9 +3,15 @@
 import logging
 
 from fastapi import HTTPException
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_value_is_unset
+from app.models.delivery import (
+    CollaborationChatGroup,
+    LoopItem,
+    ProjectChatAgent,
+    loop_datetime_value_is_unset,
+)
 from app.models.loop_item_execution import LoopItemExecution
 from app.schemas.base_role import BaseRole
 from app.services.cloud_project_visibility import project_participant_ids
@@ -13,9 +19,13 @@ from app.services.cloud_projects.access import (
     CloudProjectAccess,
     require_cloud_project_role,
 )
+from app.services.collaboration_container_access import (
+    require_collaboration_container_access,
+)
 from app.services.collaboration_permissions import (
     PermissionDecision,
     collaboration_permission_service,
+    resource_query,
 )
 from app.services.execution_permission_scope import execution_resource_scope
 from shared.telemetry.decorators import trace_sync
@@ -51,6 +61,10 @@ def _require_issue(
         raise HTTPException(404, "Issue is not in this project")
     if not can_view_item(db, access, item, execution.assigner_user_id):
         raise HTTPException(404, "Issue is not accessible")
+    if isinstance(access.project, CollaborationChatGroup):
+        from app.services.thread_participation import require_thread_participation
+
+        require_thread_participation(db, item, execution.assigner_user_id, execute=True)
 
 
 def _require_agent_use(
@@ -61,11 +75,15 @@ def _require_agent_use(
     if agent_id:
         agent = db.get(ProjectChatAgent, agent_id)
         if agent is not None:
-            agent = collaboration_permission_service.require_project_agent(
+            from app.services.issue_resource_context import require_assignment_agent
+
+            agent = require_assignment_agent(
                 db,
-                execution.cloud_project_id,
-                agent_id,
+                container_id=str(execution.cloud_project_id),
+                agent_id=agent_id,
                 user_id=execution.assigner_user_id,
+                item=db.get(LoopItem, execution.loop_item_id),
+                execute=True,
             )
             team_id = (agent.metadata_json or {}).get("wegent_team_id")
             profile_id = execution.runtime_selection.get("runtime_profile_id") or (
@@ -74,7 +92,12 @@ def _require_agent_use(
             if profile_id and not execution.assignment_pending:
                 from app.models.delivery import RuntimeProfile
 
-                profile = db.get(RuntimeProfile, str(profile_id))
+                profile = resource_query(
+                    db.query(RuntimeProfile).filter(
+                        RuntimeProfile.id == str(profile_id)
+                    ),
+                    current=True,
+                ).one_or_none()
                 if (
                     profile is None
                     or profile.status != "active"
@@ -86,8 +109,10 @@ def _require_agent_use(
         else:
             raise HTTPException(422, "Agent is not enabled in this project")
     if team_id:
+        from app.services.issue_resource_context import execution_resource_owner
+
         team = collaboration_permission_service.require_project_team(
-            db, execution.cloud_project_id, int(team_id)
+            db, execution_resource_owner(db, execution), int(team_id)
         )
         if not execution.assignment_pending:
             validate_team_execution_readiness(
@@ -120,16 +145,42 @@ def _require_group(
     )
     if not isinstance(group, dict):
         return
+    from app.services.issue_resource_context import execution_resource_owner
+
     current = collaboration_permission_service.require_project_group(
-        db, execution.cloud_project_id, str(group.get("id") or "")
+        db, execution_resource_owner(db, execution), str(group.get("id") or "")
     )
     current_members = {
         (member.get("kind"), str(member.get("id")))
         for member in _members((current.json or {}).get("spec", {}))
     }
-    humans = project_participant_ids(
-        db, access.project, required_role=BaseRole.Developer
-    )
+    if isinstance(access.project, CollaborationChatGroup):
+        from app.services.chat_group_access import chat_group_members
+        from app.services.collaboration_group_execution import (
+            collaboration_group_snapshot_for_dispatch,
+        )
+        from app.services.loop_item_executions.comment_continuation import (
+            _require_group_dispatch,
+        )
+
+        if execution.executor_type == "collaboration_group_dispatch":
+            collaboration_group_snapshot_for_dispatch(
+                item=db.get(LoopItem, execution.loop_item_id), execution=execution
+            )
+        elif (
+            execution.runtime_origin_context.get("dispatch_kind")
+            == "collaboration_group"
+        ):
+            _require_group_dispatch(db, execution, execution.runtime_origin_context)
+        humans = {
+            member["user_id"]
+            for member in chat_group_members(db, access.project.id, lock=True)
+            if member["can_be_assignee"]
+        }
+    else:
+        humans = project_participant_ids(
+            db, access.project, required_role=BaseRole.Developer
+        )
     for member in _members(group):
         if (member.get("kind"), str(member.get("id"))) not in current_members:
             raise HTTPException(422, "Collaboration group membership was revoked")
@@ -151,8 +202,18 @@ def _device_authorized(db: Session, execution: LoopItemExecution) -> bool:
     runner = resolve_owned_device_alias(
         db, user_id=execution.executor_owner_user_id, device_id=device_id
     )
+    from app.services.issue_resource_context import execution_resource_owner
+
+    try:
+        resource_owner_id = execution_resource_owner(db, execution)
+    except HTTPException as error:
+        if error.status_code >= 500:
+            raise
+        return False
+    from app.services.issue_resource_context import execution_resource_agent_id
+
     return runner is not None and runner.id in execution_environment_ids(
-        db, execution.cloud_project_id, execution.agent_id
+        db, resource_owner_id, execution_resource_agent_id(execution), current=True
     )
 
 
@@ -185,13 +246,28 @@ def execution_permission(
 def _execution_permission(
     db: Session, execution: LoopItemExecution
 ) -> PermissionDecision:
-    decision = collaboration_permission_service.check(
+    from app.services.project_chat.group_message_authority import (
+        prepare_group_message_authority,
+    )
+
+    try:
+        prepare_group_message_authority(
+            db,
+            group_id=str(execution.cloud_project_id),
+            thread_id=str(execution.loop_item_id),
+            actor_user_id=execution.assigner_user_id,
+        )
+    except HTTPException as error:
+        if error.status_code >= 500:
+            raise
+        return PermissionDecision(False, None, reason="not_accessible")
+    decision = collaboration_permission_service.check_container(
         db, execution.assigner_user_id, "execute", execution.cloud_project_id
     )
     if not decision.allowed:
         return decision
     try:
-        access = require_cloud_project_role(
+        access = require_collaboration_container_access(
             db, execution.cloud_project_id, execution.assigner_user_id
         )
         _require_issue(db, access, execution)
@@ -229,8 +305,30 @@ def revoke_unauthorized_project_work(
     """Return cancellation requests that callers publish after their commit."""
     from app.services.loop_item_executions.service import loop_item_execution_service
 
+    payload = case(
+        (
+            func.json_valid(LoopItemExecution.execution_payload) == 1,
+            LoopItemExecution.execution_payload,
+        ),
+        else_="{}",
+    )
+    manager_id = func.json_extract(payload, "$.origin_context.manager_agent_id")
+    if db.get_bind().dialect.name == "mysql":
+        manager_id = func.json_unquote(manager_id)
     rows = db.query(LoopItemExecution).filter(
-        LoopItemExecution.cloud_project_id == str(project_id),
+        or_(
+            LoopItemExecution.cloud_project_id == str(project_id),
+            LoopItemExecution.agent_id.in_(
+                select(ProjectChatAgent.id).where(
+                    ProjectChatAgent.cloud_project_id == str(project_id)
+                )
+            ),
+            manager_id.in_(
+                select(ProjectChatAgent.id).where(
+                    ProjectChatAgent.cloud_project_id == str(project_id)
+                )
+            ),
+        ),
         LoopItemExecution.status.in_(ACTIVE_WORK_STATUSES),
     )
     if actor_user_id is not None:

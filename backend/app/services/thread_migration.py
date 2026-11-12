@@ -33,6 +33,10 @@ from app.services.thread_migration_assets import (
 )
 from app.services.thread_migration_history import migrate_thread_history
 from app.services.thread_migration_inventory import ThreadMigrationInventory
+from app.services.thread_migration_resources import (
+    has_execution_resources,
+    require_original_resource_bindings,
+)
 from app.services.thread_participation import initialize_historical_participants
 from app.services.thread_project_links import create_thread_classification
 
@@ -218,6 +222,15 @@ def _move_threads(
             db, thread, source_container_id=inventory.source_project_id
         )
         if retain_project:
+            reference = (thread.metadata_json or {}).get("collaboration_group")
+            if isinstance(reference, dict):
+                thread.metadata_json = {
+                    **thread.metadata_json,
+                    "collaboration_group": {
+                        **reference,
+                        "binding_owner_id": str(project.id),
+                    },
+                }
             create_thread_classification(db, thread, project)
         elif (thread.metadata_json or {}).get("milestone_id"):
             thread.metadata_json = {
@@ -286,6 +299,15 @@ def apply_thread_migration(
                 raise HTTPException(409, "Migration checkpoint identity collision")
             return ThreadMigrationResult(checkpoint_id, ids, True)
         require_current_inventory(db, inventory, actor_user_id)
+        for thread_id in ids:
+            item = db.get(LoopItem, thread_id)
+            if has_execution_resources(item) and not retain_source_project:
+                raise HTTPException(
+                    409, "Retain the original Project to preserve execution resources"
+                )
+            require_original_resource_bindings(
+                db, item, inventory.source_project_id, current=True
+            )
         _require_idle(session_factory, ids)
         require_migration_asset_receipts(db, inventory, assets, storage)
         _move_threads(db, inventory, group, project, assets, retain_source_project)

@@ -32,6 +32,8 @@ mod workflow_definition;
 
 /// Execution-environment route for `GET /api/v1/cloud-projects/{project_id}/execution-environments`.
 mod execution_environments;
+#[cfg(test)]
+pub(crate) use execution_environments::verify_group_environment_authority;
 
 /// Collaboration-group route for
 /// `GET /api/v1/cloud-projects/{project_id}/collaboration-groups`.

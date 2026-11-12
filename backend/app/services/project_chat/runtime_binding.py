@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
+    CollaborationChatGroup,
     LoopItem,
     LoopItemTaskBinding,
     ProjectChatAgent,
@@ -291,13 +292,20 @@ def resolve_collaboration_member_session(
     from app.services.runner_routing import profile_for_runner
 
     dispatch, assignment = collaboration_member_assignment(db, request, target)
-    agent = db.get(ProjectChatAgent, target.agent_id)
-    if (
-        agent is None
-        or agent.status != "active"
-        or str(agent.cloud_project_id) != request.project_id
-    ):
-        raise HTTPException(409, "The collaboration member is unavailable")
+    if db.get(CollaborationChatGroup, str(request.project_id)) is not None:
+        from app.services.group_collaboration_runtime import runtime_member_agent
+
+        agent = runtime_member_agent(
+            db, db.get(LoopItem, request.task_id), dispatch, target.agent_id
+        )
+    else:
+        agent = db.get(ProjectChatAgent, target.agent_id)
+        if (
+            agent is None
+            or agent.status != "active"
+            or str(agent.cloud_project_id) != request.project_id
+        ):
+            raise HTTPException(409, "The collaboration member is unavailable")
     profile = WeworkExecutionProfile.for_project_robot(
         agent, db=db, cloud_project_id=request.project_id
     )
@@ -394,6 +402,7 @@ def bind_collaboration_activity_task(
             assignmentId=(activity.metadata_json or {}).get("assignment_id"),
         ),
         user_id=dispatch.executor_owner_user_id,
+        trusted_execution=dispatch,
         commit=False,
     )
 

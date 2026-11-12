@@ -122,6 +122,25 @@ def require_project_execution_environment(
     project_id: int | str,
     execution_device_id: str,
 ) -> None:
+    if isinstance(get_collaboration_container(db, project_id), CollaborationChatGroup):
+        from app.services.runner_routing import execution_environment_ids
+
+        devices = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(execution_environment_ids(db, str(project_id), None)),
+                Kind.kind == "Device",
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+        if not any(
+            runtime_device_route_id(device) == execution_device_id for device in devices
+        ):
+            raise HTTPException(
+                422, "Execution environment is not authorized in this group"
+            )
+        return
     devices = (
         db.query(Kind)
         .join(ResourceMember, Kind.id == ResourceMember.resource_id)
@@ -1014,7 +1033,7 @@ class ProjectChatService:
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
-        self._validate_agent_mentions(db, project, request)
+        self._validate_agent_mentions(db, project, request, user_id=user_id)
         existing = (
             db.query(ProjectChatMessage)
             .filter(
@@ -1227,12 +1246,24 @@ class ProjectChatService:
             required_role=BaseRole.Developer,
             execute=True,
         )
-        configured_agent = self._agent_row(
-            db,
-            project_id=request.project_id,
-            agent_id=request.agent_id,
-            active_only=True,
-        )
+        if isinstance(project, CollaborationChatGroup) and request.task_id:
+            from app.services.issue_resource_context import require_assignment_agent
+
+            configured_agent = require_assignment_agent(
+                db,
+                container_id=str(project.id),
+                agent_id=request.agent_id,
+                user_id=user_id,
+                item=db.get(LoopItem, request.task_id),
+                execute=True,
+            )
+        else:
+            configured_agent = self._agent_row(
+                db,
+                project_id=request.project_id,
+                agent_id=request.agent_id,
+                active_only=True,
+            )
         require_project_agent_visibility(configured_agent, user_id)
         trigger = None
         if request.trigger_message_id:
@@ -2614,12 +2645,25 @@ class ProjectChatService:
         return project
 
     def _validate_agent_mentions(
-        self, db: Session, project: LoopItem, request: ProjectChatSend
+        self, db: Session, project: LoopItem, request: ProjectChatSend, *, user_id: int
     ) -> None:
         agent_mentions = [
             mention for mention in request.mentions if mention.type == "agent"
         ]
         if not agent_mentions:
+            return
+        if isinstance(project, CollaborationChatGroup) and request.task_id:
+            from app.services.issue_resource_context import require_assignment_agent
+
+            for mention in agent_mentions:
+                require_assignment_agent(
+                    db,
+                    container_id=str(project.id),
+                    agent_id=mention.id,
+                    user_id=user_id,
+                    item=db.get(LoopItem, request.task_id),
+                    execute=True,
+                )
             return
         unknown = [
             mention.id
@@ -2673,6 +2717,15 @@ class ProjectChatService:
         )
         from app.services.workspaces import workspace_service
 
+        if isinstance(project, CollaborationChatGroup):
+            from app.services.group_resource_permissions import authorize_group_team
+
+            if share_with_workspace:
+                authorize_group_team(db, project, user_id, team_id)
+            collaboration_permission_service.require_project_team(
+                db, project.id, team_id, require_binding=False
+            )
+            return
         if share_with_workspace:
             workspace_service.ensure_accessible_agent_authorized(
                 db, workspace_id=project.workspace_id, user_id=user_id, team_id=team_id
@@ -2795,7 +2848,7 @@ class ProjectChatService:
                     raise ValueError("Agent must belong to the authorized project")
                 can_use = has_permission(project_access.role, ACTION_ROLES["execute"])
             else:
-                can_use = collaboration_permission_service.check(
+                can_use = collaboration_permission_service.check_container(
                     db, viewer_user_id, "execute", row.cloud_project_id
                 ).allowed
             if row.status == "active":

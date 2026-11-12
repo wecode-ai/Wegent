@@ -63,6 +63,7 @@ ISSUE_ASSIGNMENT_FIELDS = frozenset(
         "assignee_agent_id",
         "assignee_team_id",
         "assignee_group_id",
+        "assignee_group_source_id",
     }
 )
 

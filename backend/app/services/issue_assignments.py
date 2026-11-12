@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
+    CollaborationChatGroup,
     LoopItem,
     LoopItemActiveAssignment,
     LoopItemComment,
@@ -351,9 +352,19 @@ class IssueAssignmentService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Human member id must be numeric",
                 ) from exc
-            if user_id not in project_participant_ids(
-                db, project, required_role=BaseRole.Developer
-            ):
+            if isinstance(project, CollaborationChatGroup):
+                from app.services.chat_group_access import chat_group_members
+
+                participants = {
+                    int(member["user_id"])
+                    for member in chat_group_members(db, project.id, lock=True)
+                    if member["can_be_assignee"]
+                }
+            else:
+                participants = project_participant_ids(
+                    db, project, required_role=BaseRole.Developer
+                )
+            if user_id not in participants:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Assignee is not a member of this Project",

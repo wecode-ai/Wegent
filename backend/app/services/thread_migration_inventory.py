@@ -23,6 +23,7 @@ from app.services.collaboration_container_access import (
     require_collaboration_container_access,
 )
 from app.services.loop_items.access import item_security
+from app.services.thread_migration_resources import require_original_resource_bindings
 from app.services.thread_participation import historical_participant_ids
 
 
@@ -147,12 +148,11 @@ def _entry(
     parent = str(item.parent_id) if item.parent_id else None
     if parent and parent not in source_items:
         blockers.append("parent_outside_source_project")
-    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
-    if (
-        item.assignee_agent_id
-        or item.assignee_team_id
-        or metadata.get("collaboration_group") is not None
-    ):
+    try:
+        require_original_resource_bindings(db, item, source_id)
+    except HTTPException as error:
+        if error.status_code >= 500:
+            raise
         blockers.append("execution_resource_mapping_required")
     counts, objects = _resources(db, item)
     candidates = historical_participant_ids(db, item, source_container_id=source_id)
@@ -181,7 +181,7 @@ def inspect_thread_migration(
 ) -> ThreadMigrationInventory:
     """Inventory persisted facts; never move records, copy objects or create grants.
 
-    Execution-resource choices remain explicit blockers. Source visibility uses
+    Invalid execution-resource references remain explicit blockers. Source visibility uses
     the existing Project permission service, including its archive restrictions.
     Restricted legacy records stay in their original project. A public child of
     an excluded restricted parent becomes a root instead of crossing containers.
