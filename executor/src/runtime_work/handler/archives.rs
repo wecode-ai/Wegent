@@ -360,9 +360,14 @@ impl RuntimeWorkRpcHandler {
                     string_field(&goal, "status"),
                 );
                 let resumed = if string_field(&goal, "status").as_deref() == Some("active") {
-                    self.resume_goal_needing_attention(&link.local_task_id)
-                        .await
-                        .unwrap_or(false)
+                    self.journal_active_goal_turn(
+                        &link.local_task_id,
+                        self.active_codex_turn(&link.local_task_id).as_ref(),
+                    );
+                    // A successful activation must survive shutdown even when
+                    // no local send still owns the native continuation.
+                    self.persist_current_turn_state().await?;
+                    self.resume_active_goal(&link.local_task_id).await?
                 } else {
                     false
                 };

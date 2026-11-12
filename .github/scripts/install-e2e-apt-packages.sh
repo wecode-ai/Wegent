@@ -8,15 +8,5 @@ source "$script_dir/lib/apt-packages.sh"
 privileged=()
 if ((EUID != 0)); then privileged=(sudo); fi
 
-# Let APT select another mirror for individual failed downloads.
-ci_ubuntu_mirrors | "${privileged[@]}" tee "$CI_UBUNTU_MIRROR_LIST" >/dev/null
-
-# Preserve Ubuntu suites and signing keys on disposable CI hosts and containers.
-for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.{list,sources}; do
-  if [[ -f "$source" ]]; then
-    rewritten_source="$(rewrite_ci_ubuntu_archive < "$source")"
-    printf '%s\n' "$rewritten_source" | "${privileged[@]}" tee "$source" >/dev/null
-  fi
-done
 run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update
 run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "$@"

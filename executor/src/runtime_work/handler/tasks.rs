@@ -428,7 +428,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn create_task_after_local_checks(
         &self,
-        payload: Value,
+        mut payload: Value,
         activity: bool,
     ) -> Result<Value, AppIpcError> {
         let schema_version = payload
@@ -727,6 +727,9 @@ impl RuntimeWorkRpcHandler {
         }
         self.apply_project_workspace_roots(&mut request);
 
+        let initial_user_message =
+            prepare_initial_user_message(&local_task_id, &mut request, &mut payload);
+
         let mut link = RuntimeTaskLink::new_pending_with_runtime(
             local_task_id.clone(),
             workspace_path.clone(),
@@ -792,7 +795,7 @@ impl RuntimeWorkRpcHandler {
         ) {
             runtime_handle.insert("origin".to_owned(), origin.clone());
         }
-        if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
+        if let Some(message) = initial_user_message {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
         if let Some(presentation) = user_message_presentation(&payload) {
@@ -1620,6 +1623,7 @@ impl RuntimeWorkRpcHandler {
             .then(|| existing_link.workspace_path.clone())
             .or_else(|| workspace_path(&payload))
             .unwrap_or_default();
+        restore_request_home_identity(&mut request, &existing_link);
         apply_runtime_payload_metadata(&mut request, &payload);
         set_runtime_task_title(&mut request, &existing_link.title);
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
@@ -1720,12 +1724,12 @@ impl RuntimeWorkRpcHandler {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &source_turn_id);
         }
 
-        let (direct_thread_id, resume_thread_id) =
-            if paginated_history || uses_ephemeral_codex_thread {
-                (Some(thread_id), None)
-            } else {
-                (None, Some(thread_id))
-            };
+        // Persisted edits restore the inference profile after the control-only revert.
+        let (direct_thread_id, resume_thread_id) = if uses_ephemeral_codex_thread {
+            (Some(thread_id), None)
+        } else {
+            (None, Some(thread_id))
+        };
         self.spawn_turn(SpawnTurnRequest {
             task_kind: None,
             local_task_id: local_task_id.clone(),
@@ -2036,7 +2040,8 @@ impl RuntimeWorkRpcHandler {
             ));
         };
 
-        let request = runtime_model_request(&link, &payload)?;
+        let mut request = runtime_model_request(&link, &payload)?;
+        self.apply_backend_connection(&mut request);
         let client = match self.codex_app_server.for_request(&request) {
             Ok(client) => client,
             Err(error) => return Ok(task_action_failure(&link, error)),
@@ -2061,19 +2066,20 @@ impl RuntimeWorkRpcHandler {
         thread_id: &str,
         request: ExecutionRequest,
     ) -> Result<Value, AppIpcError> {
-        let thread_id = match self
-            .resume_codex_thread_with_client(client, link, thread_id)
+        self.register_thread_event_route(
+            thread_id,
+            link.local_task_id.clone(),
+            request.clone(),
+            true,
+        );
+        self.ensure_notification_router().await;
+        let thread_path = runtime_thread_path_from_link(link);
+        // Retain the registered inference route until native compaction settles.
+        let (thread_id, _model_route) = match client
+            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
             .await
         {
-            Ok(resumed_thread_id) => resumed_thread_id,
-            Err(error) => return Ok(task_action_failure(link, error)),
-        };
-        // The compaction turn answers through the local model route, which only
-        // exists while a turn that registered it is alive. Register it for the
-        // duration of this action so compacting an idle thread still reaches a
-        // model instead of failing inside the Codex app-server.
-        let _model_route = match bind_codex_thread_model_route(&request, &thread_id) {
-            Ok(route) => route,
+            Ok(context) => context,
             Err(error) => return Ok(task_action_failure(link, error)),
         };
         self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);

@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    now_ms, string_field, timestamp_ms_field, workspace_group_path, workspace_label,
+    model_provider_routing, now_ms, string_field, timestamp_ms_field, workspace_group_path,
+    workspace_label,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -864,6 +865,10 @@ fn runtime_task_address(link: &RuntimeTaskLink, device_id: &str) -> Value {
 
 fn runtime_handle_with_thread_id(link: &RuntimeTaskLink) -> Map<String, Value> {
     let mut runtime_handle = runtime_handle_list_summary_map(&link.runtime_handle);
+    runtime_handle.remove("modelProviderRouting");
+    if let Some(routing) = model_provider_routing(&link.runtime) {
+        runtime_handle.insert("modelProviderRouting".to_owned(), json!(routing));
+    }
     runtime_handle.insert(
         "threadId".to_owned(),
         link.thread_id

@@ -95,6 +95,15 @@ namespace 内的内置工具类型会返回请求校验错误，避免错误定�
 
 `responses-tool-compatibility` 桌面 E2E 使用真实 Electron、Backend、executor 和 Codex，只模拟模型服务。模拟服务拒绝未转换的 custom `exec`，校验 function 参数，并要求本机和云端模型真实执行命令、重载后读取文件以及保留工具历史，同时验证显式原生配置。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
 
+#### 旧 DeepSeek 配置
+
+旧配置已保存 `tool_profile: "custom"` 时，仅更改默认值不能修复 `exec` 被拒绝的问题。
+直接调用 `api.deepseek.com` Responses 且模式为 `auto` 时，仍遵循其实际工具能力：
+保留原生 `apply_patch`，将其他 custom 工具、namespace 和客户端工具搜索转换为可逆
+function 协议。没有旧 profile 的配置使用上述通用 function 默认策略。
+规则按实际端点匹配，不猜测模型名称，也不失败后重试。显式 `standard` 和 `passthrough`
+模式仍各自优先；其他网关使用通用策略。
+
 #### Kimi K3 Chat Completions 兼容
 
 云端 Model CRD 配置为 OpenAI Chat Completions，且 provider 模型名称包含不区分大小写的 `kimi-k3`（例如 `moonshot-kimi-k3`）时，如果 Model CRD 未配置 `codex_catalog_model_id` 或 `codexCatalogModelId`，Wework 会自动选择上下文窗口为 1,048,576 tokens 的 `wework-kimi-k3` Codex 模型目录。显式配置的模型目录始终优先于 Kimi K3 自动选择。Codex 内部仍使用 Responses 协议，executor 在边界将请求转换为 Chat Completions，并为 Kimi K3 进行以下兼容处理：

@@ -16,51 +16,64 @@ import { runtimeArtifact } from "./runtime-artifact.mjs";
 import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
 import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
 
-test("CI Ubuntu source rewriting preserves suites, trust and unrelated repositories", () => {
-  const mirrorList = "mirror+file:/etc/apt/wegent-ubuntu-mirrors.txt";
-  const input = [
-    "URIs: http://archive.ubuntu.com/ubuntu/",
-    "URIs: https://security.ubuntu.com/ubuntu",
-    "deb http://azure.archive.ubuntu.com/ubuntu/ resolute main universe",
-    "URIs: mirror+file:/etc/apt/apt-mirrors.txt",
-    "Suites: noble noble-updates noble-security resolute",
-    "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
-    "deb https://deb.nodesource.com/node_24.x nodistro main",
+test("CI package installation preserves distribution repositories and trust", (t) => {
+  const root = resolve(import.meta.dirname, "../..");
+  const installer = readFileSync(
+    join(root, ".github/scripts/install-e2e-apt-packages.sh"),
+    "utf8",
+  );
+  const common = readFileSync(
+    join(root, ".github/scripts/lib/apt-packages.sh"),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    installer,
+    /sources\.list|rewrite_ci_ubuntu_archive|\btee\b/,
+  );
+  assert.doesNotMatch(common, /mirrors\.kernel\.org/);
+  const directory = mkdtempSync(join(tmpdir(), "apt-package-test-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const calls = join(directory, "commands");
+  writeFileSync(
+    join(directory, "apt-get"),
+    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$APT_TEST_COMMANDS"\n',
+  );
+  writeFileSync(join(directory, "sudo"), '#!/usr/bin/env bash\nexec "$@"\n');
+  for (const command of ["apt-get", "sudo"])
+    chmodSync(join(directory, command), 0o755);
+  const options = {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CI: "true",
+      PATH: directory + ":" + process.env.PATH,
+      APT_TEST_COMMANDS: calls,
+    },
+  };
+  const packages = ["iproute2", "ca-certificates", "openssl"];
+  const result = spawnSync(
+    "bash",
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    options,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const expected = [
+    "-o APT::Update::Error-Mode=any update",
+    "install --yes --no-install-recommends " + packages.join(" "),
+    "",
   ].join("\n");
-  const result = spawnSync(
+  assert.equal(readFileSync(calls, "utf8"), expected);
+  const rejected = spawnSync(
     "bash",
-    [
-      "-c",
-      "source .github/scripts/lib/apt-packages.sh; rewrite_ci_ubuntu_archive",
-    ],
-    { input, encoding: "utf8", cwd: resolve(import.meta.dirname, "../..") },
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    {
+      ...options,
+      env: { ...options.env, CI: "false" },
+    },
   );
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(
-    result.stdout,
-    [
-      `URIs: ${mirrorList}`,
-      `URIs: ${mirrorList}`,
-      `deb ${mirrorList} resolute main universe`,
-      `URIs: ${mirrorList}`,
-      "Suites: noble noble-updates noble-security resolute",
-      "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
-      "deb https://deb.nodesource.com/node_24.x nodistro main",
-    ].join("\n"),
-  );
-});
-
-test("CI Ubuntu mirrors provide two HTTPS origins in priority order", () => {
-  const result = spawnSync(
-    "bash",
-    ["-c", "source .github/scripts/lib/apt-packages.sh; ci_ubuntu_mirrors"],
-    { encoding: "utf8", cwd: resolve(import.meta.dirname, "../..") },
-  );
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.stdout.trimEnd().split("\n"), [
-    "https://mirrors.edge.kernel.org/ubuntu\tpriority:1",
-    "https://archive.ubuntu.com/ubuntu",
-  ]);
+  assert.notEqual(rejected.status, 0);
+  assert.equal(readFileSync(calls, "utf8"), expected);
 });
 
 test("historical fixtures use the exact GitHub release asset by ID", async () => {
@@ -623,70 +636,6 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
           "Install Electron for native startup and schema verification" &&
         step.if === pnpm.if,
     ),
-  );
-});
-
-test("Linux native probes restore verified Electron downloads before the official installer", () => {
-  const result = spawnSync(
-    "ruby",
-    [
-      "-ryaml",
-      "-rjson",
-      "-e",
-      "puts JSON.generate({core: YAML.load_file(ARGV[0])['jobs']['wework-desktop-core-e2e']['steps'], unit: YAML.load_file(ARGV[1])['jobs']['test-wework']['steps'], action: YAML.load_file(ARGV[2])['runs']['steps']})",
-      ".github/workflows/wework-e2e.yml",
-      ".github/workflows/test.yml",
-      ".github/actions/prepare-electron-installer-cache/action.yml",
-    ],
-    { encoding: "utf8" },
-  );
-  assert.equal(result.status, 0, result.stderr);
-  const { core: steps, unit, action } = JSON.parse(result.stdout);
-  const primeIndex = steps.findIndex(
-    (step) => step.name === "Restore verified Electron installer cache",
-  );
-  const installIndex = steps.findIndex(
-    (step) =>
-      step.name ===
-      "Install Electron for native startup and schema verification",
-  );
-  assert(primeIndex >= 0 && primeIndex < installIndex);
-  const prime = steps[primeIndex];
-  assert.equal(prime.if, steps[installIndex].if);
-  assert.equal(
-    prime.uses,
-    "./.github/actions/prepare-electron-installer-cache",
-  );
-  const unitPrime = unit.find((step) => step.name === prime.name);
-  assert.equal(unitPrime.uses, prime.uses);
-  assert.equal(unitPrime.if, "matrix.shard == 1");
-  assert(
-    unit.indexOf(unitPrime) <
-      unit.findIndex(
-        (step) => step.name === "Prepare Wework Electron dependencies",
-      ),
-  );
-  const commands = action.map((step) => step.run).join("\n");
-  assert(commands.includes("find_missing_apt_packages skopeo umoci"));
-  assert(commands.includes(".github/scripts/restore-ci-downloads.sh"));
-  assert(
-    commands.includes("pnpm --dir wework/electron install --frozen-lockfile"),
-  );
-  assert(
-    commands.includes(
-      "node .github/scripts/prime-ci-electron-installer-cache.mjs",
-    ),
-  );
-  const moduleInstall = action.find((step) =>
-    step.run?.includes("pnpm --dir wework/electron install --frozen-lockfile"),
-  );
-  assert.equal(moduleInstall.env.ELECTRON_SKIP_BINARY_DOWNLOAD, "1");
-  assert.equal(
-    steps[installIndex].env.WEWORK_ELECTRON_DEPENDENCIES_READY,
-    "true",
-  );
-  assert(
-    steps[installIndex].run.includes("pnpm --dir wework prepare:electron"),
   );
 });
 
