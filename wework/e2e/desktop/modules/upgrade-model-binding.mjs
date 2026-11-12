@@ -32,6 +32,11 @@ export async function verifyLegacyModelBindings({ nativeRequire, directory, host
         await fs.writeFile(path.join(legacy, 'model-binding.json'), binding, { mode: 0o600 })
       const store = new ModelConfigurationStore(target, new SecureValueStore(profile), legacy)
       assert.equal((await store.read()).error, undefined, 'Legacy model import failed')
+      assert.equal(
+        (await store.runtime()).models[0].provider.api_key,
+        'synthetic-source-model-key',
+        'Legacy model import lost its credential'
+      )
       const snapshot = await store.bind(source)
       assert.equal(
         snapshot.path,

@@ -14,7 +14,7 @@ function evidence(protectedTarget) {
       storageVersion: protectedTarget && index % 2 === 1 ? 3 : 2,
       modelAuthenticated: true,
       cloudDeviceSignature: true,
-      ...(stage === 'rolled-back' ? { writeAuthenticated: true } : {}),
+      ...(['upgraded', 'rolled-back'].includes(stage) ? { writeAuthenticated: true } : {}),
     })),
     rollbackProtection: {
       version: '1.1.0',
@@ -25,6 +25,19 @@ function evidence(protectedTarget) {
       ...(protectedTarget ? { retryConfirmed: true } : {}),
     },
   }
+}
+
+for (const protectedTarget of [false, true]) {
+  test(`shared storage requires an upgraded write (protected target: ${protectedTarget})`, () => {
+    const valid = evidence(protectedTarget)
+    assert.equal(credentialRoundTripPassed(valid), true)
+    for (const missing of [false, true]) {
+      const invalid = structuredClone(valid)
+      if (missing) delete invalid.credentials[1].writeAuthenticated
+      else invalid.credentials[1].writeAuthenticated = false
+      assert.equal(credentialRoundTripPassed(invalid), false)
+    }
+  })
 }
 
 test('format-preserving packages require authenticated writes and exact rollback protection', () => {

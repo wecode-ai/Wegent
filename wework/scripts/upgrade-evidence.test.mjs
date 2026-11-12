@@ -423,7 +423,7 @@ function input() {
       storageVersion: index % 2 === 0 ? 2 : 3,
       modelAuthenticated: true,
       cloudDeviceSignature: true,
-      ...(stage === 'rolled-back' ? { writeAuthenticated: true } : {}),
+      ...(['upgraded', 'rolled-back'].includes(stage) ? { writeAuthenticated: true } : {}),
     })),
     manifestRecovery: {
       schemaVersion: 2,

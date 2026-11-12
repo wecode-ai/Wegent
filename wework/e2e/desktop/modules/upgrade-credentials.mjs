@@ -11,6 +11,11 @@ const NEXT_SECRET = 'wework-rollback-synthetic-model-secret'
 const UPGRADED_SECRET = 'wework-upgraded-synthetic-model-secret'
 const MODEL_PATH = '/upgrade-credential-model'
 
+/** Both storage modes must authenticate a target write before rollback. */
+export function credentialWriteForStage(stage, write = false) {
+  return stage === 'upgraded' ? UPGRADED_SECRET : write ? NEXT_SECRET : null
+}
+
 /** Invoke each delivered host's native reader; historical packages predate authorization transactions. */
 export async function readCloudDevicePublicKey(credentials, apiBaseUrl) {
   if (typeof credentials.prepareAuthorization === 'function')
@@ -79,16 +84,16 @@ export function upgradeCredentials() {
     },
     async verify(control, port, stage, directories, { write = false } = {}) {
       const applicationPid = await readConnectedApplicationPid(control)
+      const writeSecret = credentialWriteForStage(stage, write)
       authenticationSecrets = {
-        shared: write ? NEXT_SECRET : expectedSecrets.shared,
-        isolated:
-          stage === 'upgraded' ? UPGRADED_SECRET : write ? NEXT_SECRET : expectedSecrets.isolated,
+        shared: writeSecret ?? expectedSecrets.shared,
+        isolated: writeSecret ?? expectedSecrets.isolated,
       }
       const input = {
         directories,
         expectedPublicKey,
         expectedSecrets,
-        write,
+        writeSecret,
         stage,
         protectedFormats,
         legacyDigests,
@@ -144,9 +149,8 @@ export function credentialAssertionScript(input) {
     const secret = await store.get(${JSON.stringify(KEY)})
     mark('model-read')
     assert.ok(secret === input.expectedSecrets[domain], 'Native model credential changed across release selection')
-    const write = input.write || (isolated && input.stage === 'upgraded')
-    const nextSecret = isolated && input.stage === 'upgraded'
-      ? ${JSON.stringify(UPGRADED_SECRET)} : ${JSON.stringify(NEXT_SECRET)}
+    const nextSecret = input.writeSecret
+    const write = typeof nextSecret === 'string'
     if (write) {
       mark('write-model')
       await store.set(${JSON.stringify(KEY)}, nextSecret)
