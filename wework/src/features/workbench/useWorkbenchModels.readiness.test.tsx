@@ -1,4 +1,4 @@
-import type { UnifiedModel } from '@/types/api'
+import type { ModelSelectionConfig, UnifiedModel } from '@/types/api'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { useWorkbenchModels } from './useWorkbenchModels'
@@ -108,4 +108,80 @@ test('finishes a failed catalog attempt so the launcher can report an unavailabl
   await waitFor(() => expect(hook.result.current.isCatalogReady).toBe(true))
   expect(hook.result.current.models).toEqual([])
   expect(hook.result.current.error).toBe(error)
+})
+
+test('keeps a user-selected model through a task summary refresh', async () => {
+  const local: UnifiedModel = { name: 'local-model', type: 'runtime' }
+  const cloud: UnifiedModel = { name: 'cloud-model', type: 'public', provider: 'openai' }
+  const api = { listModels: vi.fn().mockResolvedValue({ data: [local, cloud] }) }
+  const hook = renderHook(
+    ({ selectionConfig }: { selectionConfig: ModelSelectionConfig }) =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        persistSelection: false,
+        scopeKey: 'task-scope',
+        selectionConfig,
+      }),
+    {
+      initialProps: {
+        selectionConfig: { modelName: local.name, modelType: local.type } as ModelSelectionConfig,
+      },
+    }
+  )
+
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  act(() => hook.result.current.setSelectedModelForScope('task-scope', cloud))
+  expect(hook.result.current.getSelectedModelForScope('task-scope')).toEqual(cloud)
+
+  hook.rerender({
+    selectionConfig: { modelName: local.name, modelType: local.type } as ModelSelectionConfig,
+  })
+  await waitFor(() => expect(hook.result.current.isLoading).toBe(false))
+  expect(hook.result.current.getSelectedModelForScope('task-scope')).toEqual(cloud)
+})
+
+test('bumps selectionRevision for a scoped model option change', async () => {
+  const model: UnifiedModel = { name: 'scoped-model', type: 'runtime' }
+  const api = { listModels: vi.fn().mockResolvedValue({ data: [model] }) }
+  const { result } = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      persistSelection: false,
+      scopeKey: 'active-scope',
+    })
+  )
+
+  await waitFor(() => expect(result.current.isSelectionReady).toBe(true))
+  const before = result.current.selectionRevision
+  act(() => result.current.setSelectedModelOptionForScope('background-scope', 'reasoning', 'high'))
+  await waitFor(() => expect(result.current.selectionRevision).toBeGreaterThan(before))
+})
+
+test('keeps a user-selected model through a catalog refresh for a bound task', async () => {
+  const local: UnifiedModel = { name: 'local-model', type: 'runtime' }
+  const cloud: UnifiedModel = { name: 'cloud-model', type: 'public', provider: 'openai' }
+  const api = { listModels: vi.fn().mockResolvedValue({ data: [local, cloud] }) }
+  const { result } = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      persistSelection: false,
+      scopeKey: 'task-scope',
+      selectionConfig: { modelName: local.name, modelType: local.type },
+    })
+  )
+
+  await waitFor(() => expect(result.current.isSelectionReady).toBe(true))
+  expect(result.current.getSelectedModelForScope('task-scope')).toEqual(local)
+
+  act(() => result.current.setSelectedModelForScope('task-scope', cloud))
+  expect(result.current.getSelectedModelForScope('task-scope')).toEqual(cloud)
+
+  api.listModels.mockResolvedValue({ data: [{ ...local }, { ...cloud }] })
+  act(() => result.current.refreshModels())
+  await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(result.current.isLoading).toBe(false))
+  expect(result.current.getSelectedModelForScope('task-scope')).toEqual(cloud)
 })

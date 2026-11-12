@@ -12,6 +12,7 @@ const taskModel: UnifiedModel = {
 }
 const selection: RuntimeTaskModelSelectionControls = {
   selectionResolved: true,
+  selectionReady: true,
   taskSelection: { modelName: 'task-model', modelType: 'public', options: { reasoning: 'high' } },
   selectedModel: taskModel,
   activeModel: taskModel,
@@ -63,6 +64,7 @@ describe('runtimeTaskModelControlOverrides', () => {
     const overrides = runtimeTaskModelControlOverrides(source(), address, {
       ...selection,
       selectionResolved: false,
+      selectionReady: false,
       taskSelection: null,
       selectedModel: null,
       activeModel: null,
@@ -71,5 +73,15 @@ describe('runtimeTaskModelControlOverrides', () => {
 
     expect(overrides.isModelSelectionReady).toBe(false)
     expect(overrides.selectedModel).toBeNull()
+  })
+
+  it('keeps the deleted conversation model visible while sending stays disabled', () => {
+    const overrides = runtimeTaskModelControlOverrides(source(), address, {
+      ...selection,
+      selectionReady: false,
+    })
+
+    expect(overrides.isModelSelectionReady).toBe(false)
+    expect(overrides.selectedModel).toBe(taskModel)
   })
 })

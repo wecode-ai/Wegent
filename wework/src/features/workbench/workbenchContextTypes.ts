@@ -200,6 +200,8 @@ export interface RuntimePaneGuidanceResult {
 export interface RuntimeTaskModelSelectionControls {
   /** Whether the conversation's persisted selection has been loaded, even when it has none. */
   selectionResolved: boolean
+  /** Whether the resolved selection can be used to send, i.e. its model is available. */
+  selectionReady: boolean
   taskSelection: ModelSelectionConfig | null
   selectedModel: UnifiedModel | null
   activeModel: UnifiedModel | null
@@ -226,6 +228,7 @@ export interface WorkbenchContextValue {
     activeModel?: UnifiedModel | null
     supportsModelProviderSwitch?: boolean
     selectedModelOptions: ModelOptions
+    selectionRevision?: number
     modelSelectionDiagnostics?: ModelSelectionDiagnostics
     isModelCatalogReady: boolean
     isModelSelectionReady: boolean

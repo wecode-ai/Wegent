@@ -1687,6 +1687,18 @@ export function useWorkbenchPaneSession({
     ]
   )
 
+  const setDefaultCollaborationMode = useCallback(() => {
+    if (currentRuntimeTask) {
+      projectChat.setRuntimeTaskSelectedModelOption(
+        currentRuntimeTask,
+        'collaborationMode',
+        'default'
+      )
+      return
+    }
+    projectChat.setSelectedModelOption('collaborationMode', 'default')
+  }, [currentRuntimeTask, projectChat])
+
   const sendRequestUserInputResponse = useCallback(
     async (
       response: RequestUserInputResponse,
@@ -1704,7 +1716,7 @@ export function useWorkbenchPaneSession({
           ? { collaborationMode: 'default' }
           : undefined
         if (options.forceDefaultCollaborationMode) {
-          projectChat.setSelectedModelOption('collaborationMode', 'default')
+          setDefaultCollaborationMode()
         }
         // A question that is answered by the next user message - a non-blocking
         // Codex question or an implementation-plan confirmation - is delivered like
@@ -1760,11 +1772,11 @@ export function useWorkbenchPaneSession({
       currentRuntimeTask,
       getRuntimeModelFields,
       lifecycleStore,
-      projectChat,
       queuedMessages.length,
       sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
       setAnsweredRequestUserInputIds,
+      setDefaultCollaborationMode,
       setQueuedMessages,
     ]
   )
@@ -2649,10 +2661,10 @@ export function useWorkbenchPaneSession({
   ])
 
   const setCurrentGoal = useCallback(async () => {
-    projectChat.setSelectedModelOption('collaborationMode', 'default')
+    setDefaultCollaborationMode()
     setGoalDraftActive(true)
     return true
-  }, [projectChat, setGoalDraftActive])
+  }, [setDefaultCollaborationMode, setGoalDraftActive])
 
   const cancelGoalDraft = useCallback(() => {
     setGoalDraftActive(false)

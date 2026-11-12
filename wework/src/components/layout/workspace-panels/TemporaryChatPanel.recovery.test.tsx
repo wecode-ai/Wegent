@@ -35,6 +35,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       selectedModel: null,
       resolveRuntimeTaskModelSelection: () => ({
         selectionResolved: false,
+        selectionReady: false,
         taskSelection: null,
         activeModel: null,
         selectedModel: null,
