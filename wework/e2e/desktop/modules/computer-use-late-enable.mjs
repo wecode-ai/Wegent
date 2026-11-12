@@ -27,6 +27,7 @@ export function createComputerUseLateEnable({
   workspacePath,
   uiTimeoutMs,
   modelResponseTimeoutMs,
+  workbenchReadyTimeoutMs,
 }) {
   const logPath = join(resultDir, 'executor.log')
   const completed = new Set()
@@ -88,6 +89,17 @@ export function createComputerUseLateEnable({
   }
   return {
     async prepare(control) {
+      // Bundled synchronization can legitimately restart an idle shared client.
+      // Establish the baseline only after those startup transactions finish.
+      await waitForValue(
+        async () => JSON.parse(await control.command('getBundledPluginUpdates', 'body')),
+        value => {
+          const names = value.marketplace?.defaultPluginNames ?? []
+          return names.length > 0 && names.every(name => value.states[name]?.status === 'ready')
+        },
+        'Bundled plugins did not finish synchronization before the computer-use baseline',
+        workbenchReadyTimeoutMs
+      )
       await assert.rejects(access(join(executorHome, 'runtime/computer-use-bridge.json')), {
         code: 'ENOENT',
       })
