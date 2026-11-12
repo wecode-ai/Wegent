@@ -40,6 +40,10 @@ const electronMocks = vi.hoisted(() => ({
   appGetPath: vi.fn(() => '/tmp'),
   appGetVersion: vi.fn(() => '0.0.0-test'),
   clipboardAvailableFormats: vi.fn(() => [] as string[]),
+  clipboardReadImage: vi.fn(() => ({
+    isEmpty: () => true,
+    toDataURL: () => '',
+  })),
   clipboardReadBuffer: vi.fn(() => Buffer.alloc(0)),
   clipboardReadText: vi.fn(() => 'native text'),
   clipboardWriteText: vi.fn(),
@@ -65,6 +69,7 @@ vi.mock('electron', () => ({
   BrowserWindow: class BrowserWindow {},
   clipboard: {
     availableFormats: electronMocks.clipboardAvailableFormats,
+    readImage: electronMocks.clipboardReadImage,
     readBuffer: electronMocks.clipboardReadBuffer,
     readText: electronMocks.clipboardReadText,
     writeText: electronMocks.clipboardWriteText,
@@ -1346,6 +1351,24 @@ describe('registerDesktopServiceCapabilities', () => {
 })
 
 describe('isolated surface clipboard capabilities', () => {
+  test('reads a native clipboard image as PNG for renderer preview normalization', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.clipboardReadImage.mockReturnValueOnce({
+      isEmpty: () => false,
+      toDataURL: () => 'data:image/png;base64,AQID',
+    })
+
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readImage', {})).resolves.toBe(
+      'data:image/png;base64,AQID'
+    )
+  })
+
+  test('reports an empty native clipboard image as unavailable', async () => {
+    const { router } = createIsolatedClipboardRouter()
+
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readImage', {})).resolves.toBeNull()
+  })
+
   test('inspects supplied workspace paths when the native clipboard is unavailable', async () => {
     const { router } = createIsolatedClipboardRouter()
     electronMocks.clipboardAvailableFormats.mockImplementationOnce(() => {
@@ -1362,6 +1385,7 @@ describe('isolated surface clipboard capabilities', () => {
   })
 
   beforeEach(() => {
+    electronMocks.clipboardReadImage.mockClear()
     electronMocks.clipboardReadText.mockClear()
     electronMocks.clipboardWriteText.mockClear()
   })

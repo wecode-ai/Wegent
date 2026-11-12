@@ -642,6 +642,10 @@ export function createElectronCapabilityRouter(
   router.register('clipboard.readWorkspacePaths', params =>
     readClipboardWorkspacePaths(stringArrayParam(params, 'fallbackPaths') ?? [])
   )
+  router.register('clipboard.readImage', () => {
+    const image = clipboard.readImage()
+    return image.isEmpty() ? null : image.toDataURL()
+  })
   router.register('clipboard.writeText', params =>
     clipboard.writeText(rawStringParam(params, 'text'))
   )
