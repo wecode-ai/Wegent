@@ -21,7 +21,7 @@ use crate::executor_manager::ExecutorManager;
 use crate::internal_callback::completion::Tables;
 use crate::responses::create::dispatch::ExecutionRequest;
 
-use crate::responses::test_mysql::{RecordingMysql, SUBTASK_ID, TASK_ID};
+use crate::responses::test_mysql::{RecordingMysql, SUBTASK_ID, TASK_ID, TASK_OWNER_ID};
 
 fn tables() -> Tables {
     Tables {
@@ -595,7 +595,7 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
                 consumer: Box::new(consumer(mysql.clone(), redis.clone())),
                 task_id: TASK_ID,
                 subtask_id: SUBTASK_ID,
-                user_id: 7,
+                user_id: TASK_OWNER_ID,
                 message_id: Some(2),
             },
         )
@@ -621,6 +621,12 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             .unwrap_or_else(|| panic!("missing chat:error in {:?}", redis.calls()));
         assert_eq!(error["data"][0]["subtask_id"], SUBTASK_ID);
         assert_eq!(error["data"][0]["type"], "EXECUTOR_DISPATCH_FAILED");
+        let status = frames
+            .iter()
+            .find(|frame| frame["event"] == "task:status")
+            .unwrap_or_else(|| panic!("missing task:status in {:?}", redis.calls()));
+        assert_eq!(status["room"], format!("user:{TASK_OWNER_ID}"));
+        assert_eq!(status["data"][0]["status"], "FAILED");
         assert!(!frames.iter().any(|frame| frame["event"] == "chat:start"));
     }
 }

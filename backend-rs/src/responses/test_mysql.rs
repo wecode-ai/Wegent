@@ -13,6 +13,7 @@ use serde_json::json;
 
 pub(super) const TASK_ID: i64 = 424_242;
 pub(super) const SUBTASK_ID: i64 = 424_243;
+pub(super) const TASK_OWNER_ID: i64 = 6501;
 
 /// Holds the first `fetch_optional` until released and signals that it was
 /// reached, so a test can stop persistence mid-step without a timer.
@@ -198,7 +199,7 @@ impl TerminalRows {
             if sql.ends_with("fixture_task") {
                 return vec![
                     ("id", Value::I64(TASK_ID)),
-                    ("user_id", Value::I64(6501)),
+                    ("user_id", Value::I64(TASK_OWNER_ID)),
                     ("kind", Value::Text("Task".into())),
                     ("name", Value::Text("test-task".into())),
                     ("namespace", Value::Text("default".into())),
@@ -215,7 +216,7 @@ impl TerminalRows {
             };
             vec![
                 ("id", Value::I64(SUBTASK_ID)),
-                ("user_id", Value::I64(6501)),
+                ("user_id", Value::I64(TASK_OWNER_ID)),
                 ("task_id", Value::I64(TASK_ID)),
                 ("team_id", Value::I64(0)),
                 ("title", Value::Text(String::new())),
