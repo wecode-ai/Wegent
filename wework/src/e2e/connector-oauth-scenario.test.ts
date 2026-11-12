@@ -110,7 +110,7 @@ test('the searched connector tool is invoked before completing the real call', a
   const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
   const modelResponse = response()
   const discovered = {
-    name: 'mcp__wegent_apps__desktop-connector-oauth__echo',
+    name: 'mcp__wegent_apps__desktop_connector_oauth__echo',
     description:
       'Echo the caller payload.\n\nexec tool declaration:\necho(args: { value: string }): Promise<unknown>',
   }
@@ -128,6 +128,65 @@ test('the searched connector tool is invoked before completing the real call', a
   expect(invocation?.input).toContain(prompt)
   expect(events(modelResponse).some(event => event.item?.type === 'message')).toBe(false)
   expect(events(modelResponse).at(-1)?.response?.output).toEqual([invocation])
+})
+
+test('the converted native connector identity progresses from discovery to invocation', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const discovered = {
+    name: 'mcp__wegent_apps__desktop_connector_oauth__echo',
+    description:
+      'Echo the caller payload.\n\nexec tool declaration:\necho(args: { value: string }): Promise<unknown>',
+  }
+  const body = {
+    ...codeModeBody(
+      'unused search script',
+      JSON.stringify({ tools: [discovered] }),
+      `${callId}-search`
+    ),
+    tools: [
+      {
+        type: 'function',
+        name: 'functions__exec',
+        parameters: { type: 'object', properties: { input: { type: 'string' } } },
+      },
+    ],
+  }
+  const modelResponse = response()
+
+  expect(await scenario.handleHttp(request(body), modelResponse, url)).toBe(true)
+
+  const invocation = itemWithType(events(modelResponse), 'function_call')
+  expect(invocation).toMatchObject({ call_id: callId, name: 'functions__exec' })
+  expect(JSON.parse(invocation?.arguments).input).toContain(discovered.name)
+  expect(JSON.parse(invocation?.arguments).input).toContain(prompt)
+  expect(scenario.diagnostics().toolRequestDiagnostics[0]).toMatchObject({
+    discoveredNamespaces: [{ name: 'wegent_apps__desktop_connector_oauth', toolNames: ['echo'] }],
+    responseMode: 'direct',
+  })
+  expect(events(modelResponse).at(-1)?.response?.output).toEqual([invocation])
+})
+
+test('a different connector echo cannot satisfy the authorized connector invocation', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const other = {
+    name: 'mcp__wegent_apps__another_connector__echo',
+    description: 'exec tool declaration:\necho(args: { value: string }): Promise<unknown>',
+  }
+  const modelResponse = response()
+  const body = codeModeBody(
+    'unused search script',
+    JSON.stringify({ tools: [other] }),
+    `${callId}-search`
+  )
+
+  expect(await scenario.handleHttp(request(body), modelResponse, url)).toBe(true)
+
+  expect(itemWithType(events(modelResponse), 'custom_tool_call')).toMatchObject({
+    call_id: `${callId}-search`,
+    name: 'exec',
+  })
+  expect(events(modelResponse).some(event => event.item?.call_id === callId)).toBe(false)
+  expect(scenario.diagnostics().toolRequestDiagnostics[0].responseMode).toBe('search')
 })
 
 test('the real connector tool result completes the checkpoint', async () => {

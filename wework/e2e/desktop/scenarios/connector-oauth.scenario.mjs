@@ -46,6 +46,8 @@ const RESUME_COMPLETION = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_RESUMED'
 const TOOL_PROMPT = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_CALL'
 const TOOL_COMPLETION = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_TOOL_COMPLETED'
 const TOOL_CALL_ID = 'connector-oauth-real-echo'
+// Native Code Mode exposes this hyphenated connector slug with underscores.
+const CONNECTOR_TOOL_NAME = `mcp__wegent_apps__${CONNECTOR_OAUTH_SLUG.replaceAll('-', '_')}__echo`
 const CONNECTOR_PLUGIN_SLUG = 'desktop-connector-oauth-plugin'
 /** `workbench.plugins_local_auth_resume_prompt` in both shipped locales. */
 const RESUME_FRAGMENTS = ['blocked by authorization', '因授权中断']
@@ -188,7 +190,7 @@ export function createDesktopScenario({
         const selection = mcpToolRequestEvents(body, {
           toolName: 'echo',
           argumentsValue: { value: TOOL_PROMPT },
-          directToolName: `mcp__wegent_apps__${CONNECTOR_OAUTH_SLUG}__echo`,
+          directToolName: CONNECTOR_TOOL_NAME,
           searchCallId: `${TOOL_CALL_ID}-search`,
           toolCallId: TOOL_CALL_ID,
         })
