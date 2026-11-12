@@ -377,6 +377,11 @@ export class DesktopRuntime {
           runtimeRoot: managedRoot,
           dataDirectory: this.options.dataDirectory,
           environment: this.options.environment,
+          onStage: event =>
+            this.startupStep(event.stage, event.phase, {
+              phaseElapsedMs: event.elapsedMs,
+              ...event.details,
+            }),
         })
       )
       if (this.lifecycleGeneration !== generation) return null
@@ -513,13 +518,18 @@ export class DesktopRuntime {
   }
 
   private async runStartupStep<Result>(step: string, task: () => Promise<Result>): Promise<Result> {
+    const startedAt = performance.now()
     this.startupStep(step, 'started')
     try {
       const result = await task()
-      this.startupStep(step, 'completed')
+      this.startupStep(step, 'completed', {
+        phaseElapsedMs: Math.round(performance.now() - startedAt),
+      })
       return result
     } catch (error) {
-      this.startupStep(step, 'failed')
+      this.startupStep(step, 'failed', {
+        phaseElapsedMs: Math.round(performance.now() - startedAt),
+      })
       throw error
     }
   }

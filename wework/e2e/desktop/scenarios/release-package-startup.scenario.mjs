@@ -3,6 +3,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { packagedComponentRoots } from '../modules/packaged-component-resources.mjs'
+import { waitForStartupAttempt } from '../modules/cold-package-startup.mjs'
 import { INSTALLED_PREPARATION_ARGUMENT } from '../../../electron/src/runtime/installed-preparation-contract.mjs'
 
 const PROFILE_NAME = 'wework-core'
@@ -332,6 +333,27 @@ export async function createDesktopScenario({
     PROFILE_NAME,
     'package.json'
   )
+  const appLogPath = join(resultDir, 'app.log')
+  const startupScenarios = {}
+  let restartDesktopApp
+  let startupAttempt = 0
+
+  const waitForShell = async control => {
+    await control.command('waitFor', '[data-testid="app-shell"]', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+  }
+  const captureStartup = async name => {
+    const metrics = await waitForStartupAttempt(appLogPath, ++startupAttempt, {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    startupScenarios[name] = metrics
+    await writeFile(
+      join(resultDir, 'release-startup-scenarios.json'),
+      `${JSON.stringify({ scenarios: startupScenarios }, null, 2)}\n`
+    )
+    return metrics
+  }
 
   return {
     usesReleasePackageRuntimeAssets: true,
@@ -360,14 +382,14 @@ export async function createDesktopScenario({
       assert.ok(status.durationMs >= 0)
     },
 
-    async prepareUserDataLaunch() {
-      await seedNativeDshProfile(electronUserDataDirectory)
+    setRestartDesktopApp(value) {
+      restartDesktopApp = value
     },
 
     async verify(control) {
-      await control.command('waitFor', '[data-testid="app-shell"]', {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
+      assert.equal(typeof restartDesktopApp, 'function', 'Startup diagnostics require restarts')
+      await waitForShell(control)
+      await captureStartup('cleanInstall')
       await control.command('navigate', 'body', { value: '/settings/about' })
       await control.command('waitFor', '[data-testid="about-commit-id"]', {
         timeoutMs: uiTimeoutMs,
@@ -399,6 +421,32 @@ export async function createDesktopScenario({
           2
         )}\n`
       )
+
+      await restartDesktopApp()
+      await waitForShell(control)
+      await captureStartup('warmRestart')
+
+      await restartDesktopApp({
+        afterStop: () => seedNativeDshProfile(electronUserDataDirectory),
+      })
+      await waitForShell(control)
+      await captureStartup('modifiedProfileRecovery')
+
+      for (const name of ['cleanInstall', 'warmRestart']) {
+        const metrics = startupScenarios[name]
+        assert.equal(
+          typeof metrics.phaseDurationsMs['component-weworkCorePlugins-verify'],
+          'number'
+        )
+        assert.equal(typeof metrics.phaseDurationsMs['core-dsh-profile-reuse'], 'number')
+      }
+      assert.equal(
+        typeof startupScenarios.modifiedProfileRecovery.phaseDurationsMs[
+          'core-dsh-profile-rebuild'
+        ],
+        'number'
+      )
+
       await verifyWindowsProfileOwnedAssets(electronUserDataDirectory)
       await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {
@@ -441,9 +489,19 @@ export async function createDesktopScenario({
     },
 
     diagnostics() {
+      const startupScenarioTimings = Object.fromEntries(
+        Object.entries(startupScenarios).map(([name, metrics]) => [
+          name,
+          {
+            mainWindowShowElapsedMs: metrics.mainWindowShowElapsedMs,
+            phaseDurationsMs: metrics.phaseDurationsMs,
+          },
+        ])
+      )
       return {
         nativeDshPluginCompatibility: true,
         seededNativeDshProfile: true,
+        startupScenarioTimings,
         hostUpdateCompression,
       }
     },
