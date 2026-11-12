@@ -64,7 +64,10 @@ describe('desktop host events', () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
     const { invokeDesktopHost } = await import('./desktopHost')
     const pending = invokeDesktopHost('secureStorage.get', { key: 'private-key' })
-    const failed = expect(pending).rejects.toThrow('transport closed')
+    const failed = expect(pending).rejects.toMatchObject({
+      name: 'DesktopHostTransportError',
+      message: 'transport closed',
+    })
     await vi.advanceTimersByTimeAsync(1_000)
     expect(debug).toHaveBeenCalledExactlyOnceWith(
       '[Wework] Electron host diagnostic ' +

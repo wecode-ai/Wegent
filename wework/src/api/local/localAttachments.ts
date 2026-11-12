@@ -9,6 +9,7 @@ export interface LocalAttachmentApi {
 
 let localAttachmentIdSeed = 0
 const FALLBACK_ATTACHMENT_CHUNK_BYTES = 384 * 1024
+const FINISH_RETRY_DELAYS_MS = [100, 250, 500]
 
 function nextLocalAttachmentId(): number {
   localAttachmentIdSeed += 1
@@ -31,6 +32,10 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + stride))
   }
   return btoa(binary)
+}
+
+function isTransientDesktopHostTransportError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'DesktopHostTransportError'
 }
 
 function createAttachmentStagingDiagnostic() {
@@ -128,9 +133,20 @@ async function saveElectronAttachment(
         diagnostic.progress(progress)
         onProgress?.(progress)
       }
-      const path = await diagnostic.invoke<string>('attachment.finish', {
-        uploadId: started.uploadId,
-      })
+      let path: string | null = null
+      for (let attempt = 0; path === null; attempt += 1) {
+        try {
+          path = await diagnostic.invoke<string>('attachment.finish', {
+            uploadId: started.uploadId,
+          })
+        } catch (error) {
+          const retryDelay = FINISH_RETRY_DELAYS_MS[attempt]
+          if (!isTransientDesktopHostTransportError(error) || retryDelay === undefined) {
+            throw error
+          }
+          await new Promise(resolve => window.setTimeout(resolve, retryDelay))
+        }
+      }
       completed = true
       return path
     } catch (error) {

@@ -62,6 +62,19 @@ describe('LocalAttachmentStore', () => {
     expect(started.chunkSize).toBe(MAX_LOCAL_ATTACHMENT_CHUNK_BYTES)
   })
 
+  test('returns the same committed path when an attachment finish response is retried', async () => {
+    const root = await temporaryDirectory()
+    const store = new LocalAttachmentStore(root)
+    const started = await store.begin('retry.txt', 1)
+    await store.append(started.uploadId, 0, 'YQ==')
+
+    const firstPath = await store.finish(started.uploadId)
+    const retriedPath = await store.finish(started.uploadId)
+
+    expect(retriedPath).toBe(firstPath)
+    await expect(readFile(retriedPath, 'utf8')).resolves.toBe('a')
+  })
+
   test('rejects offsets, oversized chunks and incomplete uploads', async () => {
     const root = await temporaryDirectory()
     const store = new LocalAttachmentStore(root)
