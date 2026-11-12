@@ -19,7 +19,9 @@ import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
 const RECONCILE_ENV = {
-  LOCAL_PLUGIN_RECONCILE_INTERVAL: '90',
+  // Loaded four-vCPU runners can spend around a minute materializing fixtures.
+  // Keep the first production timer outside that setup window.
+  LOCAL_PLUGIN_RECONCILE_INTERVAL: '120',
   LOCAL_PLUGIN_RECONCILE_JITTER: '18',
   LOCAL_HEARTBEAT_INTERVAL: '1',
 }
