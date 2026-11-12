@@ -292,6 +292,11 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
                     f"status_code={response.status_code}, "
                     f"body_preview={_to_log_preview(response.text)}"
                 )
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    media_type=response.headers.get("content-type"),
+                )
 
         # Handle terminal events - remove from RunningTaskTracker
         from shared.models.responses_api import ResponsesAPIStreamEvents

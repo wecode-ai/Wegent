@@ -157,12 +157,8 @@ impl MysqlTransaction for CapturedTransaction {
     }
 }
 
-/// `_update_task_status_sync` -> `task_store.get_task_by_states(...).first()`:
-/// the recorded reads of case `f0a9b48f-8875-436e-958a-5361a7817bc1`
-/// (`query_sequence` 80, 95, 159, 173, 174, 201, 218) are the ORM's labeled
-/// active-task projection with no `FOR UPDATE`.
 #[tokio::test]
-async fn the_task_status_read_is_the_labeled_active_task_projection_without_a_lock() {
+async fn the_task_status_read_locks_the_active_task() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
     let redis = NoRedis;
     let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
@@ -175,7 +171,12 @@ async fn the_task_status_read_is_the_labeled_active_task_projection_without_a_lo
         executor_manager: &manager,
     };
     let mut transaction = CapturedTransaction::default();
-    update_task_status_on(&ctx, &mut transaction, 426335633820493, 7).await;
+    assert!(
+        update_task_status_on(&ctx, &mut transaction, 426335633820493, 7)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     let statement = transaction
         .statements
@@ -194,7 +195,7 @@ async fn the_task_status_read_is_the_labeled_active_task_projection_without_a_lo
         "{}",
         statement.sql
     );
-    assert!(!statement.sql.contains("FOR UPDATE"), "{}", statement.sql);
+    assert!(statement.sql.contains("FOR UPDATE"), "{}", statement.sql);
     assert!(
         !statement.sql.contains("SELECT id, user_id"),
         "{}",
@@ -202,10 +203,8 @@ async fn the_task_status_read_is_the_labeled_active_task_projection_without_a_lo
     );
 }
 
-/// `_update_task_status_sync` catches and logs a store failure instead of
-/// propagating it into the request path.
 #[tokio::test]
-async fn a_failed_task_status_read_is_logged_and_swallowed() {
+async fn a_failed_task_status_read_aborts_the_transaction() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
     let redis = NoRedis;
     let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
@@ -221,23 +220,10 @@ async fn a_failed_task_status_read_is_logged_and_swallowed() {
         fail_reads: true,
         ..CapturedTransaction::default()
     };
-    update_task_status_on(&ctx, &mut transaction, 426335633820493, 7).await;
+    assert!(matches!(
+        update_task_status_on(&ctx, &mut transaction, 426335633820493, 7).await,
+        Err(brz_mysql::MysqlError::RowNotFound)
+    ));
 
     assert_eq!(transaction.statements.len(), 1);
-}
-
-/// `_update_task_status_sync`'s `try/except` covers every status read, not
-/// only the task read: a failed later read yields no value, so the caller
-/// returns before performing the task-update write. Treating the failure as an
-/// empty result (`unwrap_or_default`) is exactly what the alias repair removed.
-#[tokio::test]
-async fn a_failed_later_status_read_aborts_before_any_write() {
-    let failed: MysqlResult<Vec<brz_mysql::MysqlRow>> = Err(brz_mysql::MysqlError::RowNotFound);
-    assert!(super::read_status(failed, 426335633820493, "assistant_subtasks").is_none());
-
-    let empty: MysqlResult<Vec<brz_mysql::MysqlRow>> = Ok(Vec::new());
-    assert_eq!(
-        super::read_status(empty, 426335633820493, "assistant_subtasks").map(|rows| rows.len()),
-        Some(0)
-    );
 }

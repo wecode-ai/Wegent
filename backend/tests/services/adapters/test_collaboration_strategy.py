@@ -286,7 +286,9 @@ class TestPipelineAutoAdvance:
             patch.object(strategy, "_should_require_confirmation", return_value=False),
             patch("app.schemas.kind.Task") as mock_task_schema,
             patch("app.schemas.kind.Team") as mock_team_schema,
-            patch("app.stores.tasks.subtask_store.get_by_id", return_value=subtask),
+            patch(
+                "app.stores.tasks.subtask_store.get_basic_by_id", return_value=subtask
+            ),
             patch(
                 "app.stores.tasks.task_store.get_regular_active_task",
                 return_value=task_resource,
@@ -331,7 +333,9 @@ class TestPipelineAutoAdvance:
             patch.object(strategy, "_should_require_confirmation", return_value=False),
             patch("app.schemas.kind.Task") as mock_task_schema,
             patch("app.schemas.kind.Team") as mock_team_schema,
-            patch("app.stores.tasks.subtask_store.get_by_id", return_value=subtask),
+            patch(
+                "app.stores.tasks.subtask_store.get_basic_by_id", return_value=subtask
+            ),
             patch(
                 "app.stores.tasks.task_store.get_regular_active_task",
                 return_value=task_resource,
@@ -375,7 +379,9 @@ class TestPipelineAutoAdvance:
             patch.object(strategy, "_should_require_confirmation", return_value=False),
             patch("app.schemas.kind.Task") as mock_task_schema,
             patch("app.schemas.kind.Team") as mock_team_schema,
-            patch("app.stores.tasks.subtask_store.get_by_id", return_value=subtask),
+            patch(
+                "app.stores.tasks.subtask_store.get_basic_by_id", return_value=subtask
+            ),
             patch(
                 "app.stores.tasks.task_store.get_regular_active_task",
                 return_value=task_resource,

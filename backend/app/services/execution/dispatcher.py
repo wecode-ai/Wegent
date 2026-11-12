@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask
+from app.services.chat.storage.db import TerminalPersistenceError
 from app.services.task_status import extract_task_error
 from app.stores.tasks import subtask_store, task_store
 from shared.models import (
@@ -193,6 +194,8 @@ class ExecutionDispatcher:
                         request.task_id,
                         request.subtask_id,
                     )
+            raise
+        except TerminalPersistenceError:
             raise
         except Exception as e:
             logger.exception(

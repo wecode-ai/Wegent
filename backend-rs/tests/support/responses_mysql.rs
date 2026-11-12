@@ -84,6 +84,17 @@ impl Fixture {
             .unwrap();
     }
 
+    pub async fn seed_running_subtask(&self, task_id: i64, subtask_id: i64, user_id: i32) {
+        self.create_subtasks_table("subtasks").await;
+        self.mysql
+            .execute(
+                "INSERT INTO subtasks (id,user_id,task_id,message_id,status,progress)                  VALUES (?,?,?,1,'RUNNING',0)",
+                (subtask_id, user_id, task_id),
+            )
+            .await
+            .unwrap();
+    }
+
     pub async fn seed(&self, table: &str, task_id: i64, user_id: i32) {
         self.create_subtasks_table(table).await;
         for (id, owner, task, message, size) in [

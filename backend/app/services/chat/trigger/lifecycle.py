@@ -635,7 +635,7 @@ async def persist_completed_result(
         **update_kwargs,
         expected_status=expected_status,
     )
-    if expected_status is not None and not persisted:
+    if not persisted:
         return False
     if normalized_status == "COMPLETED":
         await _persist_standalone_workspace_path(task_id, result)

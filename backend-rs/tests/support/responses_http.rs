@@ -81,15 +81,7 @@ pub async fn assert_http_reads(
     user_id: i32,
     long_conversation: bool,
 ) {
-    // Require explicitly configured disposable services, never local dotenv defaults.
-    for name in ["DATABASE_URL", "REDIS_URL"] {
-        let url = url::Url::parse(&std::env::var(name).expect("explicit E2E service URL")).unwrap();
-        assert_eq!(
-            url.host_str(),
-            Some("127.0.0.1"),
-            "loopback fixture required"
-        );
-    }
+    require_loopback_services();
     let mut state = build_app_state().await.unwrap();
     state.mysql = mysql.clone();
     state.task_store = store;
@@ -213,6 +205,117 @@ pub async fn assert_http_reads(
     gateway_task.await.unwrap();
     api_stop.send(()).unwrap();
     api_task.await.unwrap();
+}
+
+pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64, subtask_id: i64) {
+    require_loopback_services();
+    let mut state = build_app_state().await.unwrap();
+    state.mysql = mysql.clone();
+    state.task_store = Arc::new(wegent_backend_rs::task_store::DefaultTaskStore::new(
+        mysql.clone(),
+    ));
+    let redis = state.redis.clone().expect("real Redis is required for E2E");
+    let state = Arc::new(state);
+    let application = Application::build(Arc::clone(&state)).await.unwrap();
+    let server = wegent_backend_rs::http_server::Server::bind_with_authenticator(
+        "127.0.0.1:0".parse().unwrap(),
+        application.routes,
+        AppAuthenticator::new(state.authentication_services()),
+    )
+    .await
+    .unwrap();
+    let url = format!(
+        "http://{}/api/internal/callback",
+        server.local_addr().unwrap()
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        server
+            .serve_until(async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
+    });
+    let client = brz_http::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let send = async |event_type: &str, data: Value| {
+        client
+            .post(&url)
+            .unwrap()
+            .json(&json!({
+                "event_type": event_type, "data": data,
+                "task_id": task_id, "subtask_id": subtask_id,
+            }))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    };
+    let statuses = async || {
+        let subtask: String = mysql
+            .fetch_one("SELECT status FROM subtasks WHERE id = ?", (subtask_id,))
+            .await
+            .unwrap();
+        let task: String = mysql.fetch_one(
+            "SELECT JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) FROM tasks WHERE id = ?",
+            (task_id,),
+        ).await.unwrap();
+        (task, subtask)
+    };
+    let completed = json!({
+        "response": {"output": [{"type": "message", "content": [{"type":"output_text", "text":"saved result"}]}]}
+    });
+    let marker = format!("chat:task_streaming:{task_id}");
+    redis.set(marker.as_str(), "true").await.unwrap();
+    mysql
+        .execute(
+            "ALTER TABLE tasks ADD CONSTRAINT reject_terminal_update \
+         CHECK (JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) <> 'COMPLETED')",
+            (),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(send("response.completed", completed.clone()).await, 500);
+    assert_eq!(statuses().await, ("RUNNING".into(), "RUNNING".into()));
+    assert_eq!(
+        redis
+            .get::<_, String>(marker.as_str())
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("true")
+    );
+
+    mysql
+        .execute("ALTER TABLE tasks DROP CHECK reject_terminal_update", ())
+        .await
+        .unwrap();
+    assert_eq!(send("response.completed", completed).await, 200);
+    assert_eq!(statuses().await, ("COMPLETED".into(), "COMPLETED".into()));
+    assert_eq!(redis.get::<_, String>(marker.as_str()).await.unwrap(), None);
+    assert_eq!(send("error", json!({"message": "late error"})).await, 200);
+    assert_eq!(statuses().await, ("COMPLETED".into(), "COMPLETED".into()));
+
+    stop.send(()).unwrap();
+    server.await.unwrap();
+}
+
+fn require_loopback_services() {
+    // Require explicitly configured disposable services, never local dotenv defaults.
+    for name in ["DATABASE_URL", "REDIS_URL"] {
+        let url = url::Url::parse(&std::env::var(name).expect("explicit E2E service URL")).unwrap();
+        assert_eq!(
+            url.host_str(),
+            Some("127.0.0.1"),
+            "loopback fixture required"
+        );
+    }
 }
 
 pub fn runtime_config() -> HybridConfig {

@@ -119,13 +119,18 @@ pub(crate) async fn process_execution_event(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> Result<(), FastApiError> {
+    let terminal_status = completion::terminal_status(&event.event_type);
     let Some(redis) = state.redis.as_ref() else {
-        // The source tolerates an unavailable Redis by swallowing the cache
-        // errors and still returning `ok`.
+        if terminal_status.is_some() {
+            tracing::error!(
+                task_id = event.task_id,
+                subtask_id = event.subtask_id,
+                "terminal callback requires Redis"
+            );
+            return Err(FastApiError::internal());
+        }
         return Ok(());
     };
-
-    let terminal_status = completion::terminal_status(&event.event_type);
 
     prepare_interactive_form_event(&state.interactive_form, &mut event).await;
     let mut emitter = StatusUpdatingEmitter::new(redis.to_owned(), event.task_id, event.subtask_id);
@@ -144,7 +149,7 @@ pub(crate) async fn process_execution_event(
             tables: tables(state),
             executor_manager: &state.executor_manager,
         };
-        let (final_result, user_id, auto_advance) = completion::complete_terminal_with_advance(
+        let completion = completion::complete_terminal(
             &ctx,
             event.task_id,
             event.subtask_id,
@@ -155,7 +160,16 @@ pub(crate) async fn process_execution_event(
             executor_name,
             executor_namespace,
         )
-        .await;
+        .await
+        .map_err(|_| FastApiError::internal())?;
+        let Some(completion::TerminalCompletion {
+            result: final_result,
+            user_id,
+            auto_advance,
+        }) = completion
+        else {
+            return Ok(());
+        };
         // `_update_task_status_sync` only schedules the next turn when
         // `get_auto_advance_info` produced an intent; every other completion,
         // including a non-pipeline team, stops after persisting its status.

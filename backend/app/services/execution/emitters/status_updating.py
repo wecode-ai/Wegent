@@ -466,7 +466,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         await self._cancel_pending_storage_flush_task()
         if not self._status_updated:
             await self._update_status_completed(result)
-        await self._wrapped.emit_done(task_id, subtask_id, result, **kwargs)
+        if not self._terminal_transition_lost:
+            await self._wrapped.emit_done(task_id, subtask_id, result, **kwargs)
 
     async def emit_error(
         self,
@@ -481,7 +482,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         if not self._status_updated:
             error_code = kwargs.get("error_code")
             await self._update_status_failed(error, error_code=error_code)
-        if self._terminal_event_deferred:
+        if self._terminal_event_deferred or self._terminal_transition_lost:
             return
         await self._wrapped.emit_error(task_id, subtask_id, error, **kwargs)
 
@@ -496,7 +497,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         await self._cancel_pending_storage_flush_task()
         if not self._status_updated:
             await self._update_status_cancelled()
-        await self._wrapped.emit_cancelled(task_id, subtask_id, **kwargs)
+        if not self._terminal_transition_lost:
+            await self._wrapped.emit_cancelled(task_id, subtask_id, **kwargs)
 
     async def close(self) -> None:
         """Close the wrapped emitter."""
@@ -573,7 +575,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                     self._subtask_id,
                 )
                 return final_result
-            await persist_completed_result(
+            persisted = await persist_completed_result(
                 subtask_id=self._subtask_id,
                 task_id=self._task_id,
                 status="COMPLETED",
@@ -581,6 +583,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
             )
+            if persisted is False:
+                self._terminal_transition_lost = True
+                return None
             self._status_updated = True
             logger.info(
                 f"[StatusUpdatingEmitter] Updated subtask {self._subtask_id} "
@@ -597,7 +602,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Failed to update status to COMPLETED: {e}",
                 exc_info=True,
             )
-            return result
+            raise
 
     async def _update_status_failed(
         self, error_message: str, error_code: Optional[str] = None
@@ -639,7 +644,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 executor_namespace=self._executor_namespace,
                 expected_status=self._expected_status,
             )
-            if self._expected_status is not None and persisted is False:
+            if persisted is False:
                 self._terminal_transition_lost = True
                 logger.info(
                     "[StatusUpdatingEmitter] Skipped failed transition for "
@@ -663,7 +668,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Failed to update status to FAILED: {e}",
                 exc_info=True,
             )
-            return None
+            raise
 
     async def _update_status_cancelled(self) -> Optional[Dict[str, Any]]:
         """Update subtask and task status to CANCELLED.
@@ -676,7 +681,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 self._subtask_id,
                 status="CANCELLED",
             )
-            await persist_completed_result(
+            persisted = await persist_completed_result(
                 subtask_id=self._subtask_id,
                 task_id=self._task_id,
                 status="CANCELLED",
@@ -684,6 +689,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
             )
+            if persisted is False:
+                self._terminal_transition_lost = True
+                return None
             self._status_updated = True
             logger.info(
                 f"[StatusUpdatingEmitter] Updated subtask {self._subtask_id} "
@@ -699,7 +707,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Failed to update status for cancelled: {e}",
                 exc_info=True,
             )
-            return None
+            raise
 
     async def _publish_task_completed_event(
         self,

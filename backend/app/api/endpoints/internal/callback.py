@@ -162,6 +162,8 @@ async def handle_callback(
         )
         await emitter.emit(event)
         await emitter.close()
+        if emitter.terminal_transition_lost:
+            return CallbackResponse()
 
         # Publish to callback stream channel for any active SSE consumers
         # (e.g., v1/responses with stream=True for ClaudeCode/Agno/Dify tasks)
@@ -268,6 +270,9 @@ async def handle_batch_callback(
             )
             await emitter.emit(event)
             await emitter.close()
+            if emitter.terminal_transition_lost:
+                skipped += 1
+                continue
 
             # Publish to the callback stream channel so active OpenAI
             # v1/responses SSE consumers receive the device events. Without

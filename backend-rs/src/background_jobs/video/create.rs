@@ -286,6 +286,6 @@ pub(super) async fn finish(
         None,
         None,
     )
-    .await;
+    .await?;
     Ok(())
 }

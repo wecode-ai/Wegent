@@ -163,3 +163,24 @@ async fn responses_mysql_long_conversation_exceeds_prepared_statement_limit() {
     fixture.close().await;
     result.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL 8 and Redis; run explicitly in the Backend Rust CI job"]
+async fn terminal_callback_rolls_back_retries_and_ignores_a_late_error() {
+    let fixture = fixture::Fixture::new().await;
+    let (task_id, subtask_id, user_id) = (141, 142, 7);
+    http_e2e::seed_task(&fixture.mysql, "tasks", task_id, user_id).await;
+    fixture
+        .seed_running_subtask(task_id, subtask_id, user_id)
+        .await;
+    fixture
+        .mysql
+        .execute(
+            "UPDATE tasks SET json = JSON_SET(json, '$.status.status', 'RUNNING') WHERE id = ?",
+            (task_id,),
+        )
+        .await
+        .unwrap();
+    http_e2e::assert_terminal_callback_atomic(&fixture.mysql, task_id, subtask_id).await;
+    fixture.close().await;
+}

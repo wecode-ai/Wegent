@@ -49,6 +49,7 @@ def _patch_emitters(monkeypatch, state):
             )
         ),
         close=AsyncMock(),
+        terminal_transition_lost=False,
     )
     monkeypatch.setattr(callback, "WebSocketResultEmitter", lambda **kwargs: object())
     monkeypatch.setattr(callback, "StatusUpdatingEmitter", lambda **kwargs: emitter)

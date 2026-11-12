@@ -176,27 +176,45 @@ async fn ordered_locked(
     data: &Map<String, Value>,
     event_data: &Value,
 ) -> Result<bool, String> {
-    // `_write_back_execution_event` runs inside the lock so its database
-    // awaits cannot let a completion overtake a previously received delta.
-    write_back(
-        state, runtime, user_id, device_id, task_id, event_name, data,
-    )
-    .await;
-
-    let payload = response_api_payload(data, device_id);
-    emit_response_api_event(
-        state,
+    let room = format!("{WEWORK_TASK_ROOM_PREFIX}{task_id}");
+    let raw_terminal = matches!(
         event_name,
-        payload,
-        &format!("{WEWORK_TASK_ROOM_PREFIX}{task_id}"),
-    )
-    .await?;
+        "response.completed" | "response.incomplete" | "error"
+    );
+    if !raw_terminal {
+        write_back(
+            state, runtime, user_id, device_id, task_id, event_name, data,
+        )
+        .await;
+        emit_response_api_event(
+            state,
+            event_name,
+            response_api_payload(data, device_id),
+            &room,
+        )
+        .await?;
+    }
 
     let parsed = parser::shared().parse(task_id, subtask_id, message_id, event_name, event_data);
     let Some(mut event) = parsed.map_err(|error| error.0)? else {
         return Ok(false);
     };
-    emit_event_chain(state, user_id, &mut event).await?;
+    if !emit_event_chain(state, user_id, &mut event).await? {
+        return Ok(false);
+    }
+    if raw_terminal {
+        write_back(
+            state, runtime, user_id, device_id, task_id, event_name, data,
+        )
+        .await;
+        emit_response_api_event(
+            state,
+            event_name,
+            response_api_payload(data, device_id),
+            &room,
+        )
+        .await?;
+    }
 
     let Some(redis) = state.redis.as_ref() else {
         return Ok(is_terminal(&event.event_type));
@@ -242,9 +260,9 @@ async fn emit_event_chain(
     state: &AppState,
     user_id: i64,
     event: &mut crate::internal_callback::event::ExecutionEvent,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let Some(redis) = state.redis.as_ref() else {
-        return Ok(());
+        return Ok(true);
     };
     let status = completion::terminal_status(&event.event_type);
     let mut emitter = StatusUpdatingEmitter::new(redis.to_owned(), event.task_id, event.subtask_id);
@@ -256,7 +274,7 @@ async fn emit_event_chain(
     }
     emitter.close().await;
     let Some(status) = status else {
-        return Ok(());
+        return Ok(true);
     };
 
     let ctx = completion::Completion {
@@ -266,7 +284,7 @@ async fn emit_event_chain(
         tables: crate::internal_callback::tables(state),
         executor_manager: &state.executor_manager,
     };
-    let final_result = completion::complete_terminal_event(
+    let committed = completion::complete_terminal_event(
         &ctx,
         event.task_id,
         event.subtask_id,
@@ -277,8 +295,12 @@ async fn emit_event_chain(
         None,
         None,
     )
-    .await;
-    if let Some(result) = final_result {
+    .await
+    .map_err(|error| error.to_string())?;
+    let Some(committed) = committed else {
+        return Ok(false);
+    };
+    if let Some(result) = committed.result {
         event.result = Some(result);
     }
     let result = event
@@ -296,7 +318,8 @@ async fn emit_event_chain(
     };
     emitter::emit_terminal_frames(redis, event, Some(user_id), &result, contexts.as_ref())
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    Ok(true)
 }
 
 /// `DeviceNamespace._publish_task_completed_event` plus the slot broadcast.

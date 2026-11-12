@@ -471,7 +471,7 @@ async fn finalize_executor_failure<M: Mysql, R: Redis>(
     };
     let message = "Could not dispatch execution to the executor";
     let code = "EXECUTOR_DISPATCH_FAILED";
-    let result = completion::complete_terminal_event(
+    let Ok(Some(committed)) = completion::complete_terminal_event(
         &ctx,
         task_id,
         subtask_id,
@@ -482,7 +482,11 @@ async fn finalize_executor_failure<M: Mysql, R: Redis>(
         None,
         None,
     )
-    .await;
+    .await
+    else {
+        return;
+    };
+    let result = committed.result;
     let mut event = ExecutionEvent::new(EventType::Error, task_id, subtask_id);
     event.message_id = message_id;
     event.error = Some(message.to_owned());

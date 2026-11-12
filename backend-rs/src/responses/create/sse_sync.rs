@@ -138,6 +138,14 @@ impl Failure {
         }
     }
 
+    fn terminal_persistence(message: &str) -> Self {
+        Self {
+            message: message.into(),
+            persist: false,
+            error_code: None,
+        }
+    }
+
     /// A transport failure the dispatcher's `except` branch persists as
     /// FAILED with the Source's classified error code
     /// (`ExecutionDispatcher`'s `classify_error` returns `network_error` for
@@ -592,7 +600,11 @@ async fn emit_package_event<M: Mysql, R: Redis>(
     .await
     .map_err(|error| {
         tracing::error!(task_id = event.task_id, error = ?error, "package event processing failed");
-        Failure::persisted("Package event processing failed".to_owned())
+        if completion::terminal_status(&event.event_type).is_some() {
+            Failure::terminal_persistence("Could not save the execution result")
+        } else {
+            Failure::persisted("Package event processing failed".into())
+        }
     })
 }
 
@@ -620,7 +632,7 @@ async fn complete<M: Mysql, R: Redis>(
     // `StatusUpdatingEmitter`'s terminal branch. The create flow wraps an
     // `SSEResultEmitter`, so the callback's `task:status` owner pre-read does
     // not run here.
-    let final_result = completion::complete_terminal_event(
+    let committed = completion::complete_terminal_event(
         &completion,
         event.task_id,
         event.subtask_id,
@@ -631,7 +643,14 @@ async fn complete<M: Mysql, R: Redis>(
         None,
         None,
     )
-    .await;
+    .await
+    .map_err(|_| Failure::terminal_persistence("Could not save the execution result"))?;
+    let Some(committed) = committed else {
+        return Err(Failure::terminal_persistence(
+            "The execution was already settled",
+        ));
+    };
+    let final_result = committed.result;
     // `WebSocketResultEmitter.emit`'s terminal branch for the `/chat` dispatch:
     // the event's frame (`chat:done` / `chat:error` / `chat:cancelled`) then
     // `task:status`. The OpenAPI path wraps an `SSEResultEmitter` and stops at
@@ -702,7 +721,7 @@ async fn complete_failure<M: Mysql, R: Redis>(
     // `result.error_type` from the classified error code, so the persisted
     // terminal row carries the Source's result payload instead of a NULL one.
     let result = failure_result(failure);
-    completion::complete_terminal_event(
+    let Ok(Some(committed)) = completion::complete_terminal_event(
         &completion,
         request.task_id,
         request.subtask_id,
@@ -713,7 +732,10 @@ async fn complete_failure<M: Mysql, R: Redis>(
         None,
         None,
     )
-    .await;
+    .await
+    else {
+        return;
+    };
     if ctx.forward {
         // `_trigger_ai`'s failure branch emits `chat:error` with the classified
         // error type and message id, then `task:status FAILED`.
@@ -721,7 +743,7 @@ async fn complete_failure<M: Mysql, R: Redis>(
         event.message_id = request.message_id;
         event.error = Some(failure.message.clone());
         event.error_code = failure.error_code.map(str::to_owned);
-        event.result = result.clone();
+        event.result = committed.result;
         if let Err(error) = crate::internal_callback::emitter::emit_terminal_frames(
             redis,
             &event,

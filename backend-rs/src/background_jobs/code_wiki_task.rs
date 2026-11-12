@@ -171,7 +171,7 @@ pub(super) async fn create(
                 tables: crate::internal_callback::tables(app),
                 executor_manager: &app.executor_manager,
             };
-            crate::internal_callback::completion::complete_terminal(
+            let _ = crate::internal_callback::completion::complete_terminal(
                 &ctx,
                 setup.task_id,
                 setup.assistant_subtask_id,

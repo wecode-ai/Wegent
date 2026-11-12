@@ -581,16 +581,23 @@ impl Bridge {
             if let Some(mut emitter) = self.emitter.take() {
                 emitter.close().await;
             }
-            let final_result = self
+            match self
                 .complete(status, event.result.as_ref(), event.error.as_deref(), None)
-                .await;
-            event.result = final_result;
-            // `raw_chat_stream` checks cancellation after the wrapper persisted
-            // and before it transforms the event.
-            if self.cancelled().await {
-                self.cancel().await;
-                return;
+                .await
+            {
+                Ok(Some(committed)) => event.result = committed.result,
+                Ok(None) => {
+                    self.finish_persistence_error("The execution was already settled")
+                        .await;
+                    return;
+                }
+                Err(_) => {
+                    self.finish_persistence_error("Could not save the execution result")
+                        .await;
+                    return;
+                }
             }
+            // The committed terminal event wins a concurrent cancellation.
             // A delivered terminal event is persisted inside the emitter
             // before the dispatch exits, so this stream's one inner
             // `unregister_stream` runs after the completion.
@@ -636,7 +643,14 @@ impl Bridge {
         if let Some(mut emitter) = self.emitter.take() {
             emitter.close().await;
         }
-        let _ = self.complete("CANCELLED", None, None, None).await;
+        if !matches!(
+            self.complete("CANCELLED", None, None, None).await,
+            Ok(Some(_))
+        ) {
+            self.finish_persistence_error("Could not save the cancellation")
+                .await;
+            return;
+        }
         // Cancellation is observed after the dispatch exits; the inner
         // `unregister_stream` belongs to the dispatch, not the final response
         // cleanup.
@@ -693,7 +707,7 @@ impl Bridge {
             emitter.close().await;
         }
         let failure_result = error_code.map(|code| json!({"error_type": code}));
-        let _ = self
+        let completion = self
             .complete(
                 "FAILED",
                 failure_result.as_ref(),
@@ -701,6 +715,11 @@ impl Bridge {
                 error_code,
             )
             .await;
+        if !matches!(completion, Ok(Some(_))) {
+            self.finish_persistence_error("Could not save the execution result")
+                .await;
+            return;
+        }
         // `raw_chat_stream`'s per-event cancellation read for the failed event.
         let _ = self.cancelled().await;
         self.dispatch_exit_unregister().await;
@@ -716,15 +735,29 @@ impl Bridge {
         self.finished = true;
     }
 
+    async fn finish_persistence_error(&mut self, message: &str) {
+        self.dispatch_exit_unregister().await;
+        // Keep the streamed result available after a database failure.
+        self.registered = false;
+        self.state.finish(
+            &mut self.queue,
+            "failed",
+            Some(json!({"code": "stream_error", "message": message})),
+        );
+        self.finished = true;
+    }
+
     async fn complete(
         &mut self,
         status: &str,
         result: Option<&Value>,
         error: Option<&str>,
         error_code: Option<&str>,
-    ) -> Option<Value> {
-        let (Some(redis), true) = (&self.redis, true) else {
-            return None;
+    ) -> brz_mysql::MysqlResult<Option<completion::TerminalCompletion>> {
+        let Some(redis) = &self.redis else {
+            return Err(brz_mysql::MysqlError::InvalidConfig {
+                reason: "Redis is required for execution completion".into(),
+            });
         };
         let app = self.app.upgrade();
         if app.is_none() {

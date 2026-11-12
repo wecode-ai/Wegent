@@ -612,7 +612,9 @@ class PipelineStageService:
                 return False
 
             # Get the subtask that just completed
-            subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+            subtask = task_stores.subtask_store.get_basic_by_id(
+                db, subtask_id=subtask_id
+            )
             if not subtask or subtask.status != SubtaskStatus.COMPLETED:
                 return False
 

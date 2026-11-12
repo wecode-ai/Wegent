@@ -15,6 +15,7 @@ class _RecordingEmitter:
     def __init__(self, **_kwargs) -> None:
         self.events = []
         self.closed = False
+        self.terminal_transition_lost = False
 
     async def emit(self, event) -> None:
         self.events.append(event)
@@ -56,8 +57,10 @@ def _batch_payload(subtask_id: int = 18) -> list:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_transition_lost", [False, True])
 async def test_batch_callback_publishes_events_for_openapi_streams(
     monkeypatch,
+    terminal_transition_lost,
 ):
     """Batch callbacks must reach active v1/responses SSE consumers."""
     published: list[tuple[int, str]] = []
@@ -72,7 +75,17 @@ async def test_batch_callback_publishes_events_for_openapi_streams(
         _publish,
     )
     monkeypatch.setattr(callback_module, "WebSocketResultEmitter", _RecordingEmitter)
-    monkeypatch.setattr(callback_module, "StatusUpdatingEmitter", _RecordingEmitter)
+
+    class RecordingStatusEmitter(_RecordingEmitter):
+        async def emit(self, event) -> None:
+            await super().emit(event)
+            self.terminal_transition_lost = (
+                terminal_transition_lost and event.type == "done"
+            )
+
+    monkeypatch.setattr(
+        callback_module, "StatusUpdatingEmitter", RecordingStatusEmitter
+    )
     monkeypatch.setattr(
         callback_module,
         "_get_task_status_user_id",
@@ -84,4 +97,7 @@ async def test_batch_callback_publishes_events_for_openapi_streams(
     )
 
     assert response.status == "ok"
-    assert published == [(18, "chunk"), (18, "done")]
+    expected_events = [(18, "chunk")]
+    if not terminal_transition_lost:
+        expected_events.append((18, "done"))
+    assert published == expected_events

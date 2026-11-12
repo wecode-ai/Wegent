@@ -475,7 +475,7 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
     let result =
         completion::collect_completed_result(&ctx, subtask_id, "FAILED", None, Some(message), None)
             .await;
-    completion::persist_completed_result(
+    let persisted = completion::persist_completed_result(
         &ctx,
         task_id,
         subtask_id,
@@ -486,6 +486,9 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         None,
     )
     .await;
+    if let Err(error) = persisted {
+        tracing::error!(%error, task_id, subtask_id, "request failure could not be saved");
+    }
 }
 
 /// `ExecutionDispatcher._update_subtask_to_running`

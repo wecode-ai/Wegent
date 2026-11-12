@@ -9,7 +9,7 @@
 //! part of the UPDATE: a FAILED completion without a payload collects `None`
 //! and leaves the stored value untouched. `updated_at` and `completed_at` are
 //! independent wall-clock reads, `completed_at` first (`db.py:181-184`).
-use brz_mysql::{Json, Mysql, MysqlRow, MysqlTransaction};
+use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow, MysqlTransaction};
 use brz_redis::Redis;
 use serde_json::Value;
 
@@ -73,26 +73,27 @@ fn sanitize_result_for_storage(result: &Value) -> Value {
 pub(super) async fn update_subtask_status_on<M: Mysql, R: Redis, T: MysqlTransaction>(
     ctx: &Completion<'_, M, R>,
     mysql: &mut T,
+    task_id: i64,
     subtask_id: i64,
     status: &str,
     result: Option<&Value>,
     error: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
-) -> Option<(i64, MysqlRow, Option<String>)> {
-    let row: MysqlRow = mysql
-        .fetch_optional(sql::subtask_by_id(ctx.tables), (subtask_id,))
-        .await
-        .ok()
-        .flatten()?;
-    // `SubtaskStore.get_by_id` (`sqlalchemy_subtask_store.py:321-330`)
-    // eager-loads `Subtask.contexts` with `subqueryload`, so the source issues
-    // this read even though the update never consumes it.
-    let _contexts: Vec<MysqlRow> = mysql
-        .fetch_all(sql::contexts_by_subtask(), (subtask_id,))
-        .await
-        .unwrap_or_default();
-    let owner_task_id = subtask_column::<i64>(&row, "task_id").unwrap_or(0);
+) -> MysqlResult<Option<(MysqlRow, Option<String>)>> {
+    let sql = format!("{} FOR UPDATE", sql::subtask_by_id(ctx.tables));
+    let Some(row): Option<MysqlRow> = mysql.fetch_optional(sql, (subtask_id,)).await? else {
+        return Ok(None);
+    };
+    let current_status = subtask_column::<String>(&row, "status");
+    if subtask_column::<i64>(&row, "task_id") != Some(task_id)
+        || matches!(
+            current_status.as_deref(),
+            Some("COMPLETED" | "FAILED" | "CANCELLED" | "DELETE")
+        )
+    {
+        return Ok(None);
+    }
     let existing_executor_name = subtask_column::<String>(&row, "executor_name");
     // The ORM projection labels every column `{table}_{column}`, so the stored
     // result is read by its position in that projection.
@@ -224,11 +225,10 @@ pub(super) async fn update_subtask_status_on<M: Mysql, R: Redis, T: MysqlTransac
                 .await
         }
     };
-    if let Err(failure) = outcome {
-        tracing::warn!(%failure, "callback subtask update failed");
-        return None;
+    if outcome?.rows_affected == 0 {
+        return Ok(None);
     }
-    Some((owner_task_id, row, metrics_message))
+    Ok(Some((row, metrics_message)))
 }
 
 #[cfg(test)]

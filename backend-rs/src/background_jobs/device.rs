@@ -128,7 +128,7 @@ async fn emit_timeout(state: &AppState, candidate: &Candidate) -> Result<()> {
     event.message_id = Some(candidate.message_id);
     event.error = Some("Device connection lost".to_owned());
     event.status = "FAILED".to_owned();
-    let (result, owner) = completion::complete_terminal(
+    let Some(committed) = completion::complete_terminal(
         &completion,
         candidate.task_id,
         candidate.id,
@@ -139,12 +139,15 @@ async fn emit_timeout(state: &AppState, candidate: &Candidate) -> Result<()> {
         None,
         None,
     )
-    .await;
+    .await?
+    else {
+        return Ok(());
+    };
     emitter::emit_done_frames(
         redis,
         &event,
-        owner,
-        &result.unwrap_or_else(|| json!({})),
+        committed.user_id,
+        &committed.result.unwrap_or_else(|| json!({})),
         None,
         // Error-carrying terminal frame: the Source's `emit_chat_error` has no
         // `contexts` field.

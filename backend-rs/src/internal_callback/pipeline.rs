@@ -60,7 +60,7 @@ pub(super) async fn dispatch_next(
                 tables: super::tables(state),
                 executor_manager: &state.executor_manager,
             };
-            super::completion::persist_completed_result(
+            let persisted = super::completion::persist_completed_result(
                 &ctx,
                 task_id,
                 subtask_id,
@@ -71,6 +71,14 @@ pub(super) async fn dispatch_next(
                 None,
             )
             .await;
+            match persisted {
+                Ok(Some(_)) => {}
+                Ok(None) => return Ok(()),
+                Err(error) => {
+                    tracing::error!(%error, task_id, subtask_id, "pipeline failure could not be saved");
+                    return Err(FastApiError::internal());
+                }
+            }
             if let Err(error) = super::socketio::publish_emit_in_room(
                 redis,
                 "task:status",
