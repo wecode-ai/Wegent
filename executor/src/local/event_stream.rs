@@ -247,19 +247,13 @@ impl ExecutorEventHub {
     }
 
     fn publish(&self, raw: Value) {
-        let terminal = is_terminal(&raw).then(|| raw.clone());
-        let event = {
+        let (event, backend_event) = {
             let mut state = self
                 .state
                 .lock()
                 .expect("executor event journal should not be poisoned");
             state.append(raw)
         };
-        // UI history remains bounded; durable terminal delivery retains the full payload.
-        let backend_event = terminal.map_or_else(
-            || event.clone(),
-            |raw| event_envelope(raw, event_sequence(&event).expect("event sequence")),
-        );
         if let Err(error) = self
             .terminal_events
             .lock()
@@ -302,9 +296,14 @@ impl EventJournal {
         }
     }
 
-    fn append(&mut self, raw: Value) -> Value {
+    fn append(&mut self, raw: Value) -> (Value, Value) {
         let sequence = self.take_sequence();
-        let event = bounded_event_envelope(raw, sequence);
+        let envelope = event_envelope(raw, sequence);
+        // Construct metadata once for every consumer, retaining the full
+        // terminal payload before applying the UI history budget.
+        let terminal = is_terminal(&envelope).then(|| envelope.clone());
+        let event = bounded_event_envelope(envelope);
+        let backend_event = terminal.unwrap_or_else(|| event.clone());
         let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
 
         self.events.push_back(JournalEvent {
@@ -320,7 +319,7 @@ impl EventJournal {
             self.bytes = self.bytes.saturating_sub(dropped.bytes);
             self.dropped_through = dropped.sequence;
         }
-        event
+        (event, backend_event)
     }
 
     fn recovery_event(&mut self, requested_after: u64) -> Value {
@@ -485,63 +484,41 @@ fn event_envelope(raw: Value, sequence: u64) -> Value {
     })
 }
 
-fn bounded_event_envelope(raw: Value, sequence: u64) -> Value {
-    let original_event = raw
+fn bounded_event_envelope(mut event: Value) -> Value {
+    let sequence = event_sequence(&event).expect("event sequence");
+    let original_event = event
         .get("event")
         .and_then(Value::as_str)
         .unwrap_or("executor.unknown")
         .chars()
         .take(EVENT_METADATA_MAX_CHARS)
         .collect::<String>();
-    let task_id = event_task_id(&raw).map(|task_id| {
+    let task_id = event_task_id(&event).map(|task_id| {
         task_id
             .chars()
             .take(EVENT_METADATA_MAX_CHARS)
             .collect::<String>()
     });
-    let event = event_envelope(raw, sequence);
     let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
     if bytes <= EVENT_ENVELOPE_MAX_BYTES {
         return event;
     }
-    let replacement = event_envelope(
-        json!({
-            "type": "event",
-            "event": "executor.event_lagged",
-            "payload": {
-                "reason": "event_too_large",
-                "originalEvent": original_event,
-                "originalBytes": bytes,
-                "taskId": task_id,
-                "latestSequence": sequence,
-            },
-        }),
-        sequence,
-    );
-    if serde_json::to_vec(&replacement).map_or(usize::MAX, |encoded| encoded.len())
-        <= EVENT_ENVELOPE_MAX_BYTES
-    {
-        return replacement;
-    }
-    event_envelope(
-        json!({
-            "type": "event",
-            "event": "executor.event_lagged",
-            "payload": {
-                "reason": "event_too_large",
-                "originalBytes": bytes,
-                "latestSequence": sequence,
-            },
-        }),
-        sequence,
-    )
+    event["event"] = json!("executor.event_lagged");
+    event["payload"] = json!({
+        "reason": "event_too_large",
+        "originalEvent": original_event,
+        "originalBytes": bytes,
+        "taskId": task_id,
+        "latestSequence": sequence,
+    });
+    event
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        coalescing_key, event_sequence, merge_coalesced_event, EventJournal, ExecutorEventHub,
-        EVENT_ENVELOPE_MAX_BYTES, EVENT_JOURNAL_MAX_EVENTS,
+        bounded_event_envelope, coalescing_key, event_sequence, merge_coalesced_event,
+        EventJournal, ExecutorEventHub, EVENT_ENVELOPE_MAX_BYTES, EVENT_JOURNAL_MAX_EVENTS,
     };
     use serde_json::json;
     use tokio::sync::broadcast;
@@ -684,7 +661,7 @@ mod tests {
     #[test]
     fn journal_bounds_events_and_reports_history_loss() {
         let mut journal = EventJournal::new();
-        let first = journal.append(json!({"event": "response.created", "payload": {}}));
+        let (first, _) = journal.append(json!({"event": "response.created", "payload": {}}));
         let first_sequence = event_sequence(&first).unwrap();
         for index in 0..EVENT_JOURNAL_MAX_EVENTS {
             journal.append(json!({
@@ -704,7 +681,7 @@ mod tests {
     #[test]
     fn oversized_event_becomes_a_bounded_lag_event() {
         let mut journal = EventJournal::new();
-        let event = journal.append(json!({
+        let (event, _) = journal.append(json!({
             "event": "response.block.updated",
             "payload": {
                 "taskId": "task-1",
@@ -721,7 +698,7 @@ mod tests {
     #[test]
     fn oversized_event_metadata_cannot_overflow_the_replacement() {
         let mut journal = EventJournal::new();
-        let event = journal.append(json!({
+        let (event, _) = journal.append(json!({
             "event": "e".repeat(EVENT_ENVELOPE_MAX_BYTES),
             "payload": {
                 "taskId": "t".repeat(EVENT_ENVELOPE_MAX_BYTES),
@@ -734,6 +711,22 @@ mod tests {
             serde_json::to_vec(&event).unwrap().len() <= EVENT_ENVELOPE_MAX_BYTES,
             "replacement event must respect the downstream envelope limit"
         );
+    }
+
+    #[test]
+    fn bounding_an_event_preserves_its_original_sequence_and_timestamp() {
+        for content in ["small".to_owned(), "x".repeat(EVENT_ENVELOPE_MAX_BYTES)] {
+            let envelope = json!({
+                "type":"event","protocolVersion":1,"sequence":41,
+                "emittedAt":"2000-01-01T00:00:00.001Z",
+                "event":"response.completed","payload":{"taskId":"a","data":{"value":content}}
+            });
+            let bounded = bounded_event_envelope(envelope.clone());
+            for field in ["type", "protocolVersion", "sequence", "emittedAt"] {
+                assert_eq!(bounded[field], envelope[field], "{field}");
+            }
+            assert!(serde_json::to_vec(&bounded).unwrap().len() <= EVENT_ENVELOPE_MAX_BYTES);
+        }
     }
 
     #[test]

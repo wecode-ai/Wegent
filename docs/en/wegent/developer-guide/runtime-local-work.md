@@ -381,6 +381,8 @@ sequenceDiagram
     I-->>W: Provider result
     W->>M: Persist provider result
     Note over W,M: Restore reply cache from result without another send
+    W->>R: Save seven-day receipt and reply routing
+    R-->>W: Written (retain result and retry on failure)
     W->>M: Mark sent and clear temporary delivery data
 ```
 
