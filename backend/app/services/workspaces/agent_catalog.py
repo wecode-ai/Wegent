@@ -9,10 +9,9 @@ from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
-from app.schemas.base_role import has_permission
 from app.schemas.namespace import GroupRole
 from app.services.execution.readiness_context import TeamReadinessContext
-from app.services.group_permission import get_effective_roles_in_groups
+from app.services.group_permission import check_group_permissions
 from app.services.workspaces.resource_mapping import (
     agent_values,
     owner_identity,
@@ -38,7 +37,9 @@ def map_agent_catalog(
     namespaces = list(
         {team.namespace for _, team in rows if team.namespace != "default"}
     )
-    roles = get_effective_roles_in_groups(db, user_id, namespaces)
+    editable_groups = check_group_permissions(
+        db, user_id, namespaces, GroupRole.Developer, include_namespace_entities=True
+    )
     environments = [
         str(grant.resource_id)
         for grant in workspace_resource_grants(
@@ -64,8 +65,7 @@ def map_agent_catalog(
             editable=(
                 team.user_id == user_id
                 if team.namespace == "default"
-                else team.namespace in roles
-                and has_permission(roles[team.namespace], GroupRole.Developer)
+                else editable_groups[team.namespace]
             ),
             readiness=readiness,
         )

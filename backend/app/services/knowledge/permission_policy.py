@@ -11,21 +11,24 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.namespace import GroupRole
-from app.services.group_permission import get_effective_role_in_group
+from app.services.group_permission import check_group_permission
 from app.services.knowledge.namespace_utils import is_organization_namespace
 from shared.telemetry.decorators import trace_sync
 
 RoleResolver = Callable[[Session, int, str], Optional[GroupRole]]
 
 
-def _resolve_role(
+def _check_role(
     db: Session,
     user_id: int,
     namespace_name: str,
+    required_role: GroupRole,
     role_resolver: RoleResolver | None = None,
-) -> Optional[GroupRole]:
-    resolver = role_resolver or get_effective_role_in_group
-    return resolver(db, user_id, namespace_name)
+) -> bool:
+    if role_resolver is None:
+        return check_group_permission(db, user_id, namespace_name, required_role)
+    role = role_resolver(db, user_id, namespace_name)
+    return role is not None and has_permission(role, required_role)
 
 
 @trace_sync(
@@ -50,8 +53,7 @@ def can_create_namespace_knowledge_base(
     if user.role == "admin" and is_organization_namespace(db, namespace_name):
         return True
 
-    role = _resolve_role(db, user.id, namespace_name, role_resolver)
-    return role is not None and has_permission(role, GroupRole.Developer)
+    return _check_role(db, user.id, namespace_name, GroupRole.Developer, role_resolver)
 
 
 @trace_sync(
@@ -79,14 +81,8 @@ def can_manage_namespace_knowledge_base(
     if user_role == "admin" and is_organization_namespace(db, namespace_name):
         return True
 
-    role = _resolve_role(db, user_id, namespace_name, role_resolver)
-    if role is None:
-        return False
-
-    if has_permission(role, GroupRole.Maintainer):
-        return True
-
-    return role == GroupRole.Developer and kb_owner_id == user_id
+    required = GroupRole.Developer if kb_owner_id == user_id else GroupRole.Maintainer
+    return _check_role(db, user_id, namespace_name, required, role_resolver)
 
 
 @trace_sync(
@@ -108,8 +104,7 @@ def can_manage_namespace(
     if user.role == "admin" and is_organization_namespace(db, namespace_name):
         return True
 
-    role = _resolve_role(db, user.id, namespace_name, role_resolver)
-    return role == GroupRole.Owner
+    return _check_role(db, user.id, namespace_name, GroupRole.Owner, role_resolver)
 
 
 def can_manage_accessible_knowledge_base(

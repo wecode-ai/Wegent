@@ -53,6 +53,7 @@ from app.schemas.share import (
     ShareLinkResponse,
 )
 from app.services.external_entity_resolver import get_entity_resolver
+from app.services.share.permission_facts import share_permission_scope
 from shared.telemetry.decorators import trace_sync
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
@@ -271,6 +272,7 @@ class UnifiedShareService(ABC):
     # Share Link Operations
     # =========================================================================
 
+    @share_permission_scope
     def create_share_link(
         self,
         db: Session,
@@ -414,6 +416,7 @@ class UnifiedShareService(ABC):
         )
         return self._share_link_to_response(share_link)
 
+    @share_permission_scope
     def get_share_link(
         self, db: Session, resource_id: int, user_id: int
     ) -> Optional[ShareLinkResponse]:
@@ -441,6 +444,7 @@ class UnifiedShareService(ABC):
 
         return self._share_link_to_response(share_link)
 
+    @share_permission_scope
     def delete_share_link(self, db: Session, resource_id: int, user_id: int) -> bool:
         """Deactivate share link for a resource."""
         # Validate resource and ownership
@@ -502,6 +506,7 @@ class UnifiedShareService(ABC):
     # Public Info (for share link preview)
     # =========================================================================
 
+    @share_permission_scope
     def get_share_info(self, db: Session, share_token: str) -> ShareInfoResponse:
         """Get public info about a share link (no auth required)."""
         # Decode token
@@ -570,6 +575,7 @@ class UnifiedShareService(ABC):
     # Join Operations
     # =========================================================================
 
+    @share_permission_scope
     def join_by_link(
         self,
         db: Session,
@@ -744,6 +750,7 @@ class UnifiedShareService(ABC):
     # Member Operations
     # =========================================================================
 
+    @share_permission_scope
     def get_members(
         self, db: Session, resource_id: int, user_id: int
     ) -> MemberListResponse:
@@ -859,6 +866,7 @@ class UnifiedShareService(ABC):
 
         return MemberListResponse(members=member_responses, total=len(member_responses))
 
+    @share_permission_scope
     def add_member(
         self,
         db: Session,
@@ -877,7 +885,7 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=404, detail="Resource not found")
 
         owner_id = self._get_resource_owner_id(resource)
-        has_manage = self.check_permission(
+        has_manage = owner_id == current_user_id or self.check_permission(
             db, resource_id, current_user_id, SchemaMemberRole.Maintainer
         )
 
@@ -1077,6 +1085,7 @@ class UnifiedShareService(ABC):
             "members_count": len(members_data),
         },
     )
+    @share_permission_scope
     def batch_add_members(
         self,
         db: Session,
@@ -1102,7 +1111,7 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=404, detail="Resource not found")
 
         owner_id = self._get_resource_owner_id(resource)
-        has_manage = self.check_permission(
+        has_manage = owner_id == current_user_id or self.check_permission(
             db, resource_id, current_user_id, SchemaMemberRole.Maintainer
         )
         if owner_id != current_user_id and not has_manage:
@@ -1408,6 +1417,7 @@ class UnifiedShareService(ABC):
             failed=failed,
         )
 
+    @share_permission_scope
     def update_member(
         self,
         db: Session,
@@ -1423,7 +1433,7 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=404, detail="Resource not found")
 
         owner_id = self._get_resource_owner_id(resource)
-        has_manage = self.check_permission(
+        has_manage = owner_id == current_user_id or self.check_permission(
             db, resource_id, current_user_id, SchemaMemberRole.Maintainer
         )
 
@@ -1467,6 +1477,7 @@ class UnifiedShareService(ABC):
 
         return self._member_to_response(member, user_map, db=db)
 
+    @share_permission_scope
     def remove_member(
         self,
         db: Session,
@@ -1481,7 +1492,7 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=404, detail="Resource not found")
 
         owner_id = self._get_resource_owner_id(resource)
-        has_manage = self.check_permission(
+        has_manage = owner_id == current_user_id or self.check_permission(
             db, resource_id, current_user_id, SchemaMemberRole.Maintainer
         )
 
@@ -1593,28 +1604,11 @@ class UnifiedShareService(ABC):
             .all()
         )
 
-        from collections import defaultdict
+        from app.services.share.permission_facts import check_entity_role_permission
 
-        entity_groups: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
-        for et, eid, role in entity_rows:
-            if et and eid:
-                entity_groups[et].append((eid, role))
-
-        for entity_type_str, entries in entity_groups.items():
-            resolver = get_entity_resolver(entity_type_str)
-            if not resolver:
-                continue
-            eids = [eid for eid, _ in entries]
-            matched = resolver.match_entity_bindings(db, user_id, entity_type_str, eids)
-            if not matched:
-                continue
-            role_by_eid = {eid: role for eid, role in entries}
-            for eid in matched:
-                role = role_by_eid.get(eid)
-                if role and has_permission(role, SchemaMemberRole.Maintainer.value):
-                    return False
-
-        return True
+        return not check_entity_role_permission(
+            db, user_id, entity_rows, SchemaMemberRole.Maintainer
+        )
 
     def _resolve_source_type(self, member: ResourceMember) -> str:
         """
@@ -1766,6 +1760,7 @@ class UnifiedShareService(ABC):
     # Approval Operations
     # =========================================================================
 
+    @share_permission_scope
     def get_pending_requests(
         self, db: Session, resource_id: int, user_id: int
     ) -> PendingRequestListResponse:
@@ -1776,7 +1771,7 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=404, detail="Resource not found")
 
         owner_id = self._get_resource_owner_id(resource)
-        has_manage = self.check_permission(
+        has_manage = owner_id == user_id or self.check_permission(
             db, resource_id, user_id, SchemaMemberRole.Maintainer
         )
 
@@ -1835,6 +1830,7 @@ class UnifiedShareService(ABC):
 
         return PendingRequestListResponse(requests=requests, total=len(requests))
 
+    @share_permission_scope
     def review_request(
         self,
         db: Session,
@@ -1851,7 +1847,7 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=404, detail="Resource not found")
 
         owner_id = self._get_resource_owner_id(resource)
-        has_manage = self.check_permission(
+        has_manage = owner_id == reviewer_id or self.check_permission(
             db, resource_id, reviewer_id, SchemaMemberRole.Maintainer
         )
 
@@ -2089,30 +2085,11 @@ class UnifiedShareService(ABC):
         if not entity_rows:
             return False
 
-        from collections import defaultdict
+        from app.services.share.permission_facts import check_entity_role_permission
 
-        entity_groups: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
-        for et, eid, role in entity_rows:
-            if et and eid:
-                entity_groups[et].append((eid, role))
+        return check_entity_role_permission(db, user_id, entity_rows, required_role)
 
-        for entity_type_str, entries in entity_groups.items():
-            resolver = get_entity_resolver(entity_type_str)
-            if not resolver:
-                continue
-            eids = [eid for eid, _ in entries]
-            matched = resolver.match_entity_bindings(db, user_id, entity_type_str, eids)
-            if not matched:
-                continue
-            # Build eid -> role lookup to avoid iterating all entries
-            role_by_eid = {eid: role for eid, role in entries}
-            for eid in matched:
-                role = role_by_eid.get(eid)
-                if role and has_permission(role, required_role):
-                    return True
-
-        return False
-
+    @share_permission_scope
     def get_my_permission_sources(
         self,
         db: Session,

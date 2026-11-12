@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.schemas.base_role import BaseRole
 from app.schemas.prompt_optimization import PromptChange
 from app.services.prompt_optimization import (
     apply_prompt_changes,
@@ -94,135 +93,55 @@ class TestAssembleTeamPrompt:
         assert sources[1].type == "member"
 
 
-class TestPermissionChecks:
-    @patch("app.services.prompt_optimization.get_effective_role_in_group")
-    def test_owner_can_view_and_edit(self, mock_get_role):
-        user = MagicMock()
-        user.id = 1
-        user.role = "user"
+@pytest.mark.parametrize(
+    "group_role,owner,admin,namespace,view,edit",
+    [
+        (None, True, False, "default", True, True),
+        (None, False, True, "default", True, True),
+        (None, False, False, "default", False, False),
+        ("Developer", False, False, "my-group", True, True),
+        ("Reporter", False, False, "my-group", True, False),
+        ("RestrictedAnalyst", False, False, "my-group", False, False),
+        (None, False, False, "my-group", False, False),
+        ("Maintainer", False, False, "my-group", True, True),
+        (None, True, False, "my-group", True, True),
+    ],
+)
+def test_permission_checks_use_real_group_membership(
+    test_db, test_user, group_role, owner, admin, namespace, view, edit
+):
+    from app.models.kind import Kind
+    from app.models.namespace import Namespace
+    from app.models.resource_member import ResourceMember
 
-        resource = MagicMock()
-        resource.user_id = 1
-        resource.namespace = "default"
-
-        assert can_view_prompt(None, user, resource) is True
-        assert can_edit_prompt(None, user, resource) is True
-
-    @patch("app.services.prompt_optimization.get_effective_role_in_group")
-    def test_admin_can_view_and_edit(self, mock_get_role):
-        user = MagicMock()
-        user.id = 2
-        user.role = "admin"
-
-        resource = MagicMock()
-        resource.user_id = 1
-        resource.namespace = "default"
-
-        assert can_view_prompt(None, user, resource) is True
-        assert can_edit_prompt(None, user, resource) is True
-
-    @patch("app.services.prompt_optimization.get_effective_role_in_group")
-    def test_non_owner_in_default_namespace_cannot_view_or_edit(self, mock_get_role):
-        user = MagicMock()
-        user.id = 2
-        user.role = "user"
-
-        resource = MagicMock()
-        resource.user_id = 1
-        resource.namespace = "default"
-
-        assert can_view_prompt(None, user, resource) is False
-        assert can_edit_prompt(None, user, resource) is False
-
-    @patch("app.services.prompt_optimization.get_effective_role_in_group")
-    def test_developer_can_view_and_edit(self, mock_get_role):
-        mock_get_role.return_value = BaseRole.Developer
-
-        user = MagicMock()
-        user.id = 2
-        user.role = "user"
-
-        resource = MagicMock()
-        resource.user_id = 1
-        resource.namespace = "my-group"
-
-        assert can_view_prompt(None, user, resource) is True
-        assert can_edit_prompt(None, user, resource) is True
-
-    @patch("app.services.prompt_optimization.get_effective_role_in_group")
-    def test_reporter_can_view_but_not_edit(self, mock_get_role):
-        mock_get_role.return_value = BaseRole.Reporter
-
-        user = MagicMock()
-        user.id = 2
-        user.role = "user"
-
-        resource = MagicMock()
-        resource.user_id = 1
-        resource.namespace = "my-group"
-
-        assert can_view_prompt(None, user, resource) is True
-        assert can_edit_prompt(None, user, resource) is False
-
-    @patch("app.services.prompt_optimization.get_effective_role_in_group")
-    def test_restricted_analyst_cannot_view_or_edit(self, mock_get_role):
-        mock_get_role.return_value = BaseRole.RestrictedAnalyst
-
-        user = MagicMock()
-        user.id = 2
-        user.role = "user"
-
-        resource = MagicMock()
-        resource.user_id = 1
-        resource.namespace = "my-group"
-
-        assert can_view_prompt(None, user, resource) is False
-        assert can_edit_prompt(None, user, resource) is False
-
-    @patch("app.services.prompt_optimization.get_effective_role_in_group")
-    def test_no_group_role_cannot_view_or_edit(self, mock_get_role):
-        mock_get_role.return_value = None
-
-        user = MagicMock()
-        user.id = 2
-        user.role = "user"
-
-        resource = MagicMock()
-        resource.user_id = 1
-        resource.namespace = "my-group"
-
-        assert can_view_prompt(None, user, resource) is False
-        assert can_edit_prompt(None, user, resource) is False
-
-    @patch("app.services.prompt_optimization.get_effective_role_in_group")
-    def test_maintainer_can_view_and_edit(self, mock_get_role):
-        mock_get_role.return_value = BaseRole.Maintainer
-
-        user = MagicMock()
-        user.id = 2
-        user.role = "user"
-
-        resource = MagicMock()
-        resource.user_id = 1
-        resource.namespace = "my-group"
-
-        assert can_view_prompt(None, user, resource) is True
-        assert can_edit_prompt(None, user, resource) is True
-
-    @patch("app.services.prompt_optimization.get_effective_role_in_group")
-    def test_owner_can_view_and_edit_in_group_namespace(self, mock_get_role):
-        user = MagicMock()
-        user.id = 1
-        user.role = "user"
-
-        resource = MagicMock()
-        resource.user_id = 1
-        resource.namespace = "my-group"
-
-        assert can_view_prompt(None, user, resource) is True
-        assert can_edit_prompt(None, user, resource) is True
-        # Should not need to check group role for owner
-        mock_get_role.assert_not_called()
+    test_user.role = "admin" if admin else "user"
+    resource = Kind(
+        kind="Team",
+        name="prompt-permissions",
+        namespace=namespace,
+        user_id=test_user.id if owner else 0,
+        is_active=True,
+        json={},
+    )
+    test_db.add(resource)
+    if namespace != "default":
+        group = Namespace(name=namespace, owner_user_id=0, is_active=True)
+        test_db.add(group)
+        test_db.flush()
+        if group_role:
+            test_db.add(
+                ResourceMember(
+                    resource_type="Namespace",
+                    resource_id=group.id,
+                    entity_type="user",
+                    entity_id=str(test_user.id),
+                    role=group_role,
+                    status="approved",
+                )
+            )
+    test_db.flush()
+    assert can_view_prompt(test_db, test_user, resource) is view
+    assert can_edit_prompt(test_db, test_user, resource) is edit
 
 
 class TestApplyPromptChanges:

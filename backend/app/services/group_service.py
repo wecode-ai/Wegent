@@ -7,13 +7,12 @@ from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 
 from app.core.exceptions import CustomHTTPException
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
-from app.schemas.base_role import has_permission
 from app.schemas.namespace import (
     GroupCreate,
     GroupLevel,
@@ -40,8 +39,8 @@ from app.services.group_member_helper import (
     get_user_groups_with_roles,
 )
 from app.services.group_permission import (
+    check_view_group_permission,
     get_user_role_in_group,
-    get_view_role_in_group,
 )
 
 # Maximum nesting depth for groups
@@ -116,13 +115,11 @@ def create_group(
             )
 
         # Check if user has permission to create subgroups (must be at least Maintainer)
-        user_group_role = _get_group_access_role(
-            db, parent_group, owner_user_id, user_role
+        can_create_subgroup = _has_group_access(
+            db, parent_group, owner_user_id, user_role, GroupRole.Maintainer
         )
 
-        if user_group_role is None or not has_permission(
-            user_group_role, GroupRole.Maintainer
-        ):
+        if not can_create_subgroup:
             raise HTTPException(
                 status_code=403,
                 detail=f"Insufficient permissions to create subgroup under '{parent_name}'",
@@ -256,6 +253,32 @@ def list_user_groups(
     return result
 
 
+def _response_group_roles(
+    db: Session, user_id: int, query: Query, user_role: str | None
+) -> dict[str, str]:
+    """Preserve explicit role metadata and the existing organization admin override."""
+    from app.services.group_permission import get_explicit_roles_for_group_query
+
+    organizations = {}
+    if user_role == "admin":
+        organizations = {
+            name: GroupRole.Owner.value
+            for (name,) in query.with_entities(Namespace.name)
+            .filter(Namespace.level == GroupLevel.organization.value)
+            .all()
+        }
+        query = query.filter(
+            or_(
+                Namespace.level != GroupLevel.organization.value,
+                Namespace.level.is_(None),
+            )
+        )
+    roles = get_explicit_roles_for_group_query(
+        db, user_id, query.with_entities(Namespace.name).order_by(None)
+    )
+    return {**roles, **organizations}
+
+
 def search_groups(
     db: Session,
     q: str,
@@ -298,19 +321,7 @@ def search_groups(
 
     # Filter to groups where user is a member
     if user_id is not None:
-        member_data = get_user_groups_with_roles(db, user_id)
-        role_map = {name: role for name, role in member_data}
-        if include_organization and user_role == "admin":
-            organization_names = (
-                db.query(Namespace.name)
-                .filter(
-                    Namespace.level == GroupLevel.organization.value,
-                    Namespace.is_active.is_(True),
-                )
-                .all()
-            )
-            for (name,) in organization_names:
-                role_map[name] = GroupRole.Owner.value
+        role_map = _response_group_roles(db, user_id, query, user_role)
         group_names = list(role_map)
         if not group_names:
             return [], 0
@@ -371,8 +382,8 @@ def update_group(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    access_role = _get_group_access_role(db, group, user_id, user_role)
-    if access_role != GroupRole.Owner:
+    can_update_group = _has_group_access(db, group, user_id, user_role)
+    if not can_update_group:
         raise HTTPException(
             status_code=403,
             detail="Only Owners can update group information",
@@ -444,8 +455,8 @@ def delete_group(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    group_role = _get_group_access_role(db, group, user_id, user_role)
-    if group_role != GroupRole.Owner:
+    can_delete_group = _has_group_access(db, group, user_id, user_role)
+    if not can_delete_group:
         raise HTTPException(
             status_code=403,
             detail="Only group Owner can delete the group",
@@ -544,10 +555,8 @@ def add_member(
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    inviter_group_role = _get_group_access_role(
-        db, group, invited_by_user_id, inviter_role
-    )
-    if inviter_group_role != GroupRole.Owner:
+    can_invite = _has_group_access(db, group, invited_by_user_id, inviter_role)
+    if not can_invite:
         raise HTTPException(
             status_code=403,
             detail="Only Owners can add members",
@@ -596,17 +605,19 @@ def _build_group_member_response(
     return GroupMemberResponse(**response_data)
 
 
-def _get_group_access_role(
+def _has_group_access(
     db: Session,
     group: Namespace,
     user_id: int,
     user_role: str | None = None,
-) -> GroupRole | None:
-    """Return the effective role for view and management checks."""
-    return get_view_role_in_group(
+    required_role: GroupRole = GroupRole.Owner,
+) -> bool:
+    """Evaluate management without requiring an unrelated precise role."""
+    return check_view_group_permission(
         db,
         user_id,
         group.name,
+        required_role,
         user_role=user_role,
         group_level=group.level,
     )
@@ -636,15 +647,13 @@ def _get_role_updater_role(
     updater_user_role: str | None = None,
 ) -> GroupRole:
     """Validate and return the updater's effective role for role changes."""
-    updater_role = _get_group_access_role(
-        db, group, updated_by_user_id, updater_user_role
-    )
-    if updater_role != GroupRole.Owner:
+    allowed = _has_group_access(db, group, updated_by_user_id, updater_user_role)
+    if not allowed:
         raise HTTPException(
             status_code=403,
             detail="Only Owners can update member roles",
         )
-    return updater_role
+    return GroupRole.Owner
 
 
 def _validate_member_role_change(
@@ -741,14 +750,14 @@ def remove_member(
 
     # Check permission
     # Owner can remove anyone, Maintainers can remove Developers and Reporters, users can remove themselves
-    remover_role = _get_group_access_role(
+    can_remove = removed_by_user_id == user_id or _has_group_access(
         db, group, removed_by_user_id, remover_user_role
     )
     target_role = GroupRole(member.role)
 
     # Allow self-removal
     if removed_by_user_id != user_id:
-        if remover_role != GroupRole.Owner:
+        if not can_remove:
             raise HTTPException(
                 status_code=403,
                 detail="Only Owners can remove other members",
@@ -973,20 +982,21 @@ def transfer_ownership(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    current_owner_role = _get_group_access_role(
+    can_transfer = _has_group_access(
         db, group, current_owner_user_id, current_user_role
     )
-    if current_owner_role != GroupRole.Owner:
+    if not can_transfer:
         raise HTTPException(
             status_code=403,
             detail="Only the current owner can transfer ownership",
         )
 
     # Check new owner is at least a Maintainer (including entity-derived roles)
-    from app.services.group_permission import get_effective_role_in_group
+    from app.services.group_permission import check_group_permission
 
-    new_owner_role = get_effective_role_in_group(db, new_owner_user_id, group_name)
-    if new_owner_role not in [GroupRole.Owner, GroupRole.Maintainer]:
+    if not check_group_permission(
+        db, new_owner_user_id, group_name, GroupRole.Maintainer
+    ):
         raise HTTPException(
             status_code=400,
             detail="New owner must be at least a Maintainer",
@@ -1060,10 +1070,8 @@ def invite_all_users(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    inviter_group_role = _get_group_access_role(
-        db, group, invited_by_user_id, inviter_role
-    )
-    if inviter_group_role != GroupRole.Owner:
+    can_invite = _has_group_access(db, group, invited_by_user_id, inviter_role)
+    if not can_invite:
         raise HTTPException(
             status_code=403,
             detail="Only Owners can invite users",
@@ -1141,36 +1149,14 @@ def get_child_groups(
     escaped_name = (
         parent_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     )
-    subgroups = (
-        db.query(Namespace)
-        .filter(
-            Namespace.name.like(f"{escaped_name}/%", escape="\\"),
-            Namespace.is_active.is_(True),
-        )
-        .order_by(Namespace.name.asc())
-        .all()
+    query = db.query(Namespace).filter(
+        Namespace.name.like(f"{escaped_name}/%", escape="\\"),
+        Namespace.is_active.is_(True),
     )
-
+    subgroups = query.order_by(Namespace.name.asc()).all()
     if not subgroups:
         return []
-
-    # Get user's role in each subgroup for permission filtering
-    from app.services.group_member_helper import get_user_groups_with_roles
-
-    member_data = get_user_groups_with_roles(db, user_id)
-    user_group_roles = {name: role for name, role in member_data}
-
-    if user_role == "admin":
-        organization_groups = (
-            db.query(Namespace.name)
-            .filter(
-                Namespace.level == GroupLevel.organization.value,
-                Namespace.is_active.is_(True),
-            )
-            .all()
-        )
-        for (group_name,) in organization_groups:
-            user_group_roles[group_name] = GroupRole.Owner.value
+    user_group_roles = _response_group_roles(db, user_id, query, user_role)
 
     result = []
     for group in subgroups:

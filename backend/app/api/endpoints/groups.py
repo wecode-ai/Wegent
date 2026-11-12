@@ -54,7 +54,10 @@ from app.services.group_member_helper import (
     get_group_entity_members,
     update_group_entity_member_role,
 )
-from app.services.group_permission import get_view_role_in_group
+from app.services.group_permission import (
+    check_view_group_permission,
+    get_view_role_in_group,
+)
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
@@ -148,14 +151,15 @@ def list_members(
             detail="Group not found",
         )
 
-    user_role = get_view_role_in_group(
+    is_member = check_view_group_permission(
         db,
         current_user.id,
         group_name,
+        GroupRole.RestrictedAnalyst,
         user_role=current_user.role,
         group_level=group.level,
     )
-    if user_role is None:
+    if not is_member:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not a member of this group",
@@ -230,14 +234,15 @@ def list_entity_members(
             detail="Group not found",
         )
 
-    user_role = get_view_role_in_group(
+    is_member = check_view_group_permission(
         db,
         current_user.id,
         group_name,
+        GroupRole.RestrictedAnalyst,
         user_role=current_user.role,
         group_level=group.level,
     )
-    if user_role is None:
+    if not is_member:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not a member of this group",
@@ -295,14 +300,15 @@ def add_entity_member_endpoint(
             detail="Group not found",
         )
 
-    inviter_group_role = get_view_role_in_group(
+    can_add_entity_members = check_view_group_permission(
         db,
         current_user.id,
         group_name,
+        GroupRole.Owner,
         user_role=current_user.role,
         group_level=group.level,
     )
-    if inviter_group_role != GroupRole.Owner:
+    if not can_add_entity_members:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only Owners can add entity members",
@@ -427,14 +433,15 @@ def remove_entity_member_endpoint(
             detail="Cannot remove user or namespace members via entity-members endpoint",
         )
 
-    remover_role = get_view_role_in_group(
+    can_remove_entity_member = check_view_group_permission(
         db,
         current_user.id,
         group_name,
+        GroupRole.Owner,
         user_role=current_user.role,
         group_level=group.level,
     )
-    if remover_role != GroupRole.Owner:
+    if not can_remove_entity_member:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only Owners can remove entity members",
@@ -484,14 +491,15 @@ def update_entity_member_role_endpoint(
             detail="Group not found",
         )
 
-    updater_role = get_view_role_in_group(
+    can_update_entity_member = check_view_group_permission(
         db,
         current_user.id,
         group_name,
+        GroupRole.Owner,
         user_role=current_user.role,
         group_level=group.level,
     )
-    if updater_role != GroupRole.Owner:
+    if not can_update_entity_member:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only Owners can update entity member roles",
@@ -553,14 +561,15 @@ def add_entity_members_batch_endpoint(
             detail="Group not found",
         )
 
-    inviter_group_role = get_view_role_in_group(
+    can_add_entity_members = check_view_group_permission(
         db,
         current_user.id,
         group_name,
+        GroupRole.Owner,
         user_role=current_user.role,
         group_level=group.level,
     )
-    if inviter_group_role != GroupRole.Owner:
+    if not can_add_entity_members:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only Owners can add entity members",

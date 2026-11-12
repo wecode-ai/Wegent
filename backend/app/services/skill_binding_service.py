@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.schemas.base_role import has_permission
 from app.schemas.namespace import GroupRole
 from app.schemas.skill_binding import (
     SkillBindingException,
@@ -24,7 +23,7 @@ from app.schemas.skill_binding import (
     SkillBindingSkillRef,
     SkillBindingTargetType,
 )
-from app.services.group_permission import get_effective_role_in_group
+from app.services.group_permission import check_group_permission
 from app.services.skill_resolution import get_runtime_skill_shells
 
 SKILL_BINDING_KIND = "SkillBinding"
@@ -91,8 +90,7 @@ class SkillBindingService:
             return True
 
         if skill.namespace != "default":
-            user_role = get_effective_role_in_group(db, user_id, skill.namespace)
-            if user_role and has_permission(user_role, GroupRole.Reporter):
+            if check_group_permission(db, user_id, skill.namespace, GroupRole.Reporter):
                 return True
 
         return False
@@ -162,8 +160,7 @@ class SkillBindingService:
         self, db: Session, group_namespace: str, user_id: int
     ) -> list[Kind]:
         """Return active SkillBindings available through a group."""
-        role = get_effective_role_in_group(db, user_id, group_namespace)
-        if not role or not has_permission(role, GroupRole.Reporter):
+        if not check_group_permission(db, user_id, group_namespace, GroupRole.Reporter):
             return []
 
         bindings = (
@@ -220,11 +217,44 @@ class SkillBindingService:
         self, db: Session, group_namespace: str, user_id: int
     ) -> set[int]:
         """Return active Skill ids installed in a group."""
-        role = get_effective_role_in_group(db, user_id, group_namespace)
-        if not role or not has_permission(role, GroupRole.Reporter):
+        if not check_group_permission(db, user_id, group_namespace, GroupRole.Reporter):
             return set()
         return self.list_group_skill_ids_for_authorized_namespaces(
             db, [group_namespace]
+        )
+
+    def can_resolve_skill_from_groups(
+        self, db: Session, skill: Kind, user_id: int
+    ) -> bool:
+        """Check only native access and installations of this active Skill."""
+        from sqlalchemy import Integer, cast, or_
+
+        from app.services.group_permission import check_any_group_permission
+
+        ref = Kind.json["spec"]["skillRef"]
+        bindings = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == SKILL_BINDING_KIND,
+                Kind.is_active.is_(True),
+                Kind.namespace != "default",
+                or_(
+                    cast(ref["skillId"].as_string(), Integer) == skill.id,
+                    cast(ref["skill_id"].as_string(), Integer) == skill.id,
+                ),
+            )
+            .all()
+        )
+        names = [
+            binding.namespace
+            for binding in bindings
+            if self._is_group_binding(binding, binding.namespace)
+            and self._extract_skill_id(binding) == skill.id
+        ]
+        if skill.namespace != "default":
+            names.append(skill.namespace)
+        return check_any_group_permission(
+            db, user_id, list(dict.fromkeys(names)), GroupRole.Reporter
         )
 
     def list_user_group_skill_ids(self, db: Session, user_id: int) -> set[int]:

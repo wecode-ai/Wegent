@@ -164,24 +164,28 @@ def find_skill_by_ref(
         if skill.user_id in {0, user_id}:
             return skill
 
+        from app.services.external_entity_resolver import (
+            EntityMembershipUnavailable,
+            entity_resolution_scope,
+        )
         from app.services.skill_binding_service import skill_binding_service
 
-        if skill_id in skill_binding_service.list_user_group_skill_ids(db, user_id):
-            return skill
-
-        if skill.namespace != "default" and check_group_permission(
-            db, user_id, skill.namespace, GroupRole.Reporter
-        ):
-            return skill
-
-        if skill_binding_service.can_user_access_skill(
-            db,
-            skill=skill,
-            user_id=user_id,
-        ) and skill_id in skill_binding_service.list_user_default_skill_ids(
-            db, user_id
-        ):
-            return skill
+        with entity_resolution_scope(db):
+            pending = None
+            if skill_id in skill_binding_service.list_user_default_skill_ids(
+                db, user_id
+            ):
+                try:
+                    if skill_binding_service.can_user_access_skill(
+                        db, skill=skill, user_id=user_id
+                    ):
+                        return skill
+                except EntityMembershipUnavailable as failure:
+                    pending = failure
+            if skill_binding_service.can_resolve_skill_from_groups(db, skill, user_id):
+                return skill
+            if pending is not None:
+                raise pending
         return None
 
     if is_public:

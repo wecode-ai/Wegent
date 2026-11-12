@@ -9,7 +9,7 @@ Provides Team-specific implementation of the UnifiedShareService.
 """
 
 import logging
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -19,14 +19,15 @@ from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
-from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.base_role import BaseRole
 from app.schemas.share import (
     BatchResourceMemberResponse,
     FailedMemberResponse,
     ResourceMemberResponse,
 )
 from app.services.share.base_service import UnifiedShareService
-from app.services.team_access_policy import can_use_group_teams
+from app.services.share.permission_facts import share_permission_scope
+from app.services.team_access_policy import TEAM_USE_ROLE
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
@@ -65,24 +66,28 @@ class TeamShareService(UnifiedShareService):
         if team and (team.user_id == user_id or team.user_id == 0):
             return team
 
-        # Check if user has shared access (direct user or entity fallback)
         if team:
-            from app.schemas.share import MemberRole
-
-            if self.check_permission(db, resource_id, user_id, MemberRole.Reporter):
-                return team
-            if for_use and can_use_group_teams(db, user_id, team.namespace):
+            resource_check = super().check_permission
+            if self._resolve_team_permission(
+                db,
+                resource_id,
+                user_id,
+                TEAM_USE_ROLE if for_use else BaseRole.Reporter,
+                lambda: resource_check(db, resource_id, user_id, BaseRole.Reporter),
+            ):
                 return team
 
         return None  # Return None if not authorized to prevent unauthorized access
 
     @trace_sync(span_name="team.resolve_usage", tracer_name="team.permissions")
+    @share_permission_scope
     def get_resource_for_use(
         self, db: Session, resource_id: int, user_id: int
     ) -> Optional[Kind]:
         """Resolve an agent for execution without granting configuration access."""
         return self._get_resource(db, resource_id, user_id, for_use=True)
 
+    @share_permission_scope
     def get_resource(
         self, db: Session, resource_id: int, user_id: int
     ) -> Optional[Kind]:
@@ -96,17 +101,72 @@ class TeamShareService(UnifiedShareService):
         self, db: Session, resource_id: int, user_id: int, required_role: BaseRole
     ) -> bool:
         """Check direct Team sharing plus native group Team permissions."""
-        if super().check_permission(db, resource_id, user_id, required_role):
-            return True
+        parent_check = super().check_permission
+        return self._resolve_team_permission(
+            db,
+            resource_id,
+            user_id,
+            required_role,
+            lambda: parent_check(db, resource_id, user_id, required_role),
+        )
 
-        team = self._get_active_team(db, resource_id)
-        if not team or team.namespace == "default":
+    def _remove_would_lose_manage(
+        self,
+        db: Session,
+        resource_id: int,
+        user_id: int,
+        member_to_remove: ResourceMember,
+    ) -> bool:
+        parent_check = super()._remove_would_lose_manage
+        return not self._resolve_team_permission(
+            db,
+            resource_id,
+            user_id,
+            BaseRole.Maintainer,
+            lambda: not parent_check(db, resource_id, user_id, member_to_remove),
+        )
+
+    def _resolve_team_permission(
+        self,
+        db: Session,
+        resource_id: int,
+        user_id: int,
+        required_role: BaseRole,
+        resource_grant: Callable[[], bool],
+    ) -> bool:
+        """Merge existing resource and native grants under the same external facts."""
+        from app.schemas.namespace import GroupRole
+        from app.services.external_entity_resolver import (
+            EntityMembershipUnavailable,
+            entity_resolution_scope,
+        )
+        from app.services.group_permission import check_group_permission
+
+        with entity_resolution_scope(db):
+            pending = None
+            try:
+                if resource_grant():
+                    return True
+            except EntityMembershipUnavailable as failure:
+                pending = failure
+            team = self._get_active_team(db, resource_id)
+            if team and team.namespace != "default":
+                absent = (
+                    frozenset().union(*(pending.dependencies.values()))
+                    if pending
+                    else frozenset()
+                )
+                if check_group_permission(
+                    db,
+                    user_id,
+                    team.namespace,
+                    GroupRole(required_role.value),
+                    absent=absent,
+                ):
+                    return True
+            if pending is not None:
+                raise pending
             return False
-
-        from app.services.group_permission import get_effective_role_in_group
-
-        role = get_effective_role_in_group(db, user_id, team.namespace)
-        return role is not None and has_permission(role, required_role)
 
     def _get_resource_name(self, resource: Kind) -> str:
         """Get Team display name."""
@@ -142,7 +202,7 @@ class TeamShareService(UnifiedShareService):
         if not resource:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-        has_manage = self.check_permission(
+        has_manage = resource.user_id == current_user_id or self.check_permission(
             db, resource_id, current_user_id, BaseRole.Maintainer
         )
         if resource.user_id != current_user_id and not has_manage:
@@ -216,6 +276,7 @@ class TeamShareService(UnifiedShareService):
                 detail="Team can only be authorized to child groups of its namespace",
             )
 
+    @share_permission_scope
     def add_member(
         self,
         db: Session,
@@ -247,6 +308,7 @@ class TeamShareService(UnifiedShareService):
             entity_display_name=entity_display_name,
         )
 
+    @share_permission_scope
     def batch_add_members(
         self,
         db: Session,
@@ -295,6 +357,7 @@ class TeamShareService(UnifiedShareService):
         result.failed.extend(failed)
         return result
 
+    @share_permission_scope
     def update_member(
         self,
         db: Session,

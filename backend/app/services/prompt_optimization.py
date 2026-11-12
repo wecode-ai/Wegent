@@ -9,14 +9,14 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.kind import Bot, Ghost, Team
+from app.schemas.namespace import GroupRole
 from app.schemas.prompt_optimization import (
     ApplyPromptChangesResponse,
     PromptChange,
     PromptSource,
 )
-from app.services.group_permission import get_effective_role_in_group
+from app.services.group_permission import check_group_permission
 from app.services.readers import kindReader
 from app.services.readers.kinds import KindType
 from app.stores.tasks import task_store
@@ -34,9 +34,9 @@ def can_view_prompt(db: Session, user: User, resource: Kind) -> bool:
 
     # Check group permission for non-default namespace
     if resource.namespace != "default":
-        user_role = get_effective_role_in_group(db, user.id, resource.namespace)
-        if user_role:
-            return has_permission(user_role, BaseRole.Reporter)
+        return check_group_permission(
+            db, user.id, resource.namespace, GroupRole.Reporter
+        )
 
     return False
 
@@ -53,9 +53,9 @@ def can_edit_prompt(db: Session, user: User, resource: Kind) -> bool:
 
     # Check group permission for non-default namespace
     if resource.namespace != "default":
-        user_role = get_effective_role_in_group(db, user.id, resource.namespace)
-        if user_role:
-            return has_permission(user_role, BaseRole.Developer)
+        return check_group_permission(
+            db, user.id, resource.namespace, GroupRole.Developer
+        )
 
     return False
 

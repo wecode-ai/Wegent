@@ -29,6 +29,8 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.services.external_entity_resolver import (
+    EntityFact,
+    EntityMembershipUnavailable,
     IExternalEntityResolver,
     get_entity_resolver,
 )
@@ -81,9 +83,10 @@ def _match_namespace_members(
     user_id: int,
     members: list[ResourceMember],
     user_context: Optional[dict],
-) -> set[int]:
-    """Propagate verified user/entity membership; cycles alone grant nothing."""
+) -> tuple[set[int], dict[int, frozenset[EntityFact]]]:
+    """Propagate confirmed and unresolved membership without granting cycles."""
     matched: set[int] = set()
+    unknown: dict[int, set[EntityFact]] = defaultdict(set)
     dependents: dict[int, set[int]] = defaultdict(set)
     entities: dict[str, dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
     for member in members:
@@ -99,18 +102,45 @@ def _match_namespace_members(
         resolver = get_entity_resolver(entity_type)
         if resolver is None:
             continue
-        entity_ids = resolver.match_entity_bindings(
-            db, user_id, entity_type, list(bindings), user_context
-        )
+        try:
+            entity_ids = resolver.match_entity_bindings(
+                db, user_id, entity_type, list(bindings), user_context
+            )
+        except EntityMembershipUnavailable as exc:
+            entity_ids = exc.matched_ids
+            for entity_id in exc.unknown_ids:
+                facts = exc.dependencies.get(
+                    entity_id, frozenset({(entity_type, entity_id)})
+                )
+                for namespace_id in bindings.get(entity_id, ()):
+                    unknown[namespace_id].update(facts)
         for entity_id in entity_ids:
             matched.update(bindings.get(entity_id, ()))
-    pending = list(matched)
+
+    def propagate(seeds: set[int]) -> set[int]:
+        result = set(seeds)
+        pending = list(seeds)
+        while pending:
+            for namespace_id in dependents.get(pending.pop(), ()):
+                if namespace_id not in result:
+                    result.add(namespace_id)
+                    pending.append(namespace_id)
+        return result
+
+    confirmed = propagate(matched)
+    pending = list(unknown)
     while pending:
-        for namespace_id in dependents.get(pending.pop(), ()):
-            if namespace_id not in matched:
-                matched.add(namespace_id)
+        source = pending.pop()
+        for namespace_id in dependents.get(source, ()):
+            added = unknown[source] - unknown[namespace_id]
+            if added:
+                unknown[namespace_id].update(added)
                 pending.append(namespace_id)
-    return matched
+    return confirmed, {
+        namespace_id: frozenset(facts)
+        for namespace_id, facts in unknown.items()
+        if namespace_id not in confirmed
+    }
 
 
 class NamespaceEntityResolver(IExternalEntityResolver):
@@ -158,12 +188,30 @@ class NamespaceEntityResolver(IExternalEntityResolver):
             if (namespace_id := _namespace_id(entity_id)) is not None
         }
         members = _load_namespace_members(db, user_id, set(namespace_id_map))
-        matched_ns_ids = _match_namespace_members(db, user_id, members, user_context)
+        matched_ns_ids, unknown_ns_ids = _match_namespace_members(
+            db, user_id, members, user_context
+        )
         matched = [
             entity_id
             for namespace_id, entity_id in namespace_id_map.items()
             if namespace_id in matched_ns_ids
         ]
+
+        unknown = [
+            entity_id
+            for namespace_id, entity_id in namespace_id_map.items()
+            if namespace_id in unknown_ns_ids
+        ]
+        if unknown:
+            raise EntityMembershipUnavailable(
+                unknown,
+                matched,
+                dependencies={
+                    entity_id: unknown_ns_ids[namespace_id]
+                    for namespace_id, entity_id in namespace_id_map.items()
+                    if namespace_id in unknown_ns_ids
+                },
+            )
 
         if matched:
             logger.info(

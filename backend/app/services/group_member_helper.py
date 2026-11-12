@@ -14,12 +14,13 @@ This replaces the direct usage of NamespaceMember model.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 
 from app.core.config import settings
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.schemas.namespace import GroupRole
+from app.services.external_entity_resolver import EntityMembershipUnavailable
 
 # Define epoch time for default datetime values
 EPOCH_TIME = datetime(1970, 1, 1, 0, 0, 0)
@@ -518,7 +519,14 @@ def get_group_all_members(db: Session, group_name: str) -> list[ResourceMember]:
 
 
 def iter_user_groups_with_roles(
-    db: Session, user_id: int
+    db: Session,
+    user_id: int,
+    *,
+    deduplicate: bool = True,
+    group_names: list[str] | Query | None = None,
+    unavailable_memberships: (
+        list[tuple[str, str, str, str, EntityMembershipUnavailable]] | None
+    ) = None,
 ) -> list[tuple[str, str, Optional[str], Optional[str]]]:
     """Get all group names and roles for a user, including entity paths.
 
@@ -526,32 +534,44 @@ def iter_user_groups_with_roles(
     For direct user memberships, source is ('user', user_id).
     For entity-derived memberships, source is (entity_type, entity_id).
 
-    When the same group is reached via multiple paths, the highest role wins.
+    By default the highest role wins. Set deduplicate=False to retain source
+    facts for policies that intentionally use different membership sources.
 
     Args:
         db: Database session
         user_id: User ID
+        group_names: Optional exact scope; include ancestors when inheritance is needed.
 
     Returns:
         List of tuples (group_name, role, source_entity_type, source_entity_id)
     """
     from app.schemas.base_role import get_highest_role
     from app.services.external_entity_resolver import (
+        EntityMembershipUnavailable,
         get_all_entity_types,
         get_entity_resolver,
     )
 
-    # 1) Direct user memberships
-    direct_memberships = (
-        db.query(ResourceMember)
-        .filter(
-            ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
+    selected_namespaces = (
+        db.query(Namespace.id).filter(
+            Namespace.is_active.is_(True), Namespace.name.in_(group_names)
         )
-        .all()
+        if group_names is not None
+        else None
     )
+
+    # 1) Direct user memberships
+    direct_query = db.query(ResourceMember).filter(
+        ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
+        ResourceMember.entity_type == "user",
+        ResourceMember.entity_id == str(user_id),
+        ResourceMember.status == MemberStatus.APPROVED.value,
+    )
+    if selected_namespaces is not None:
+        direct_query = direct_query.filter(
+            ResourceMember.resource_id.in_(selected_namespaces)
+        )
+    direct_memberships = direct_query.all()
 
     # Collect namespace info
     namespace_ids = [m.resource_id for m in direct_memberships]
@@ -583,26 +603,38 @@ def iter_user_groups_with_roles(
             continue
 
         # Resource visibility cannot identify which binding granted a role.
-        entity_members = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
-                ResourceMember.entity_type == entity_type,
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
+        entity_query = db.query(ResourceMember).filter(
+            ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
+            ResourceMember.entity_type == entity_type,
+            ResourceMember.status == MemberStatus.APPROVED.value,
         )
+        if selected_namespaces is not None:
+            entity_query = entity_query.filter(
+                ResourceMember.resource_id.in_(selected_namespaces)
+            )
+        entity_members = entity_query.all()
         if not entity_members:
             continue
-        matched_entity_ids = set(
-            resolver.match_entity_bindings(
-                db, user_id, entity_type, list({m.entity_id for m in entity_members})
+        failure = None
+        try:
+            matched_entity_ids = set(
+                resolver.match_entity_bindings(
+                    db,
+                    user_id,
+                    entity_type,
+                    list({m.entity_id for m in entity_members}),
+                )
             )
-        )
+        except EntityMembershipUnavailable as exc:
+            if unavailable_memberships is None:
+                raise
+            failure = exc
+            matched_entity_ids = set(exc.matched_ids)
         entity_members = [
             member
             for member in entity_members
             if member.entity_id in matched_entity_ids
+            or (failure and member.entity_id in failure.unknown_ids)
         ]
 
         entity_namespace_ids = [m.resource_id for m in entity_members]
@@ -619,10 +651,27 @@ def iter_user_groups_with_roles(
 
         for m in entity_members:
             group_name = entity_namespace_map.get(m.resource_id)
-            if group_name:
+            if not group_name:
+                continue
+            if (
+                failure
+                and m.entity_id in failure.unknown_ids
+                and unavailable_memberships is not None
+            ):
+                unavailable_memberships.append(
+                    (group_name, m.role, entity_type, m.entity_id, failure)
+                )
+            else:
                 group_entries.setdefault(group_name, []).append(
                     (m.role, entity_type, m.entity_id)
                 )
+
+    if not deduplicate:
+        return [
+            (group_name, role, src_type, src_id)
+            for group_name, entries in group_entries.items()
+            for role, src_type, src_id in entries
+        ]
 
     # Deduplicate: same group -> highest role, keep source of winning role
     result = []

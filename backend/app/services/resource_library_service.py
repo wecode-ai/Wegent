@@ -47,7 +47,7 @@ from app.services.capability_reference_service import (
 )
 from app.services.group_permission import (
     check_group_permission,
-    get_effective_roles_in_groups,
+    check_group_permissions,
 )
 from app.services.marketplace_tag_service import marketplace_tag_service
 from app.services.skill_binding_service import skill_binding_service
@@ -951,26 +951,30 @@ class ResourceLibraryService:
         page: int,
         limit: int,
     ) -> ResourceLibraryInstallList:
-        installs: list[ResourceLibraryInstall] = []
-        unique_namespaces = list(dict.fromkeys(group_namespaces))
-        effective_roles = get_effective_roles_in_groups(
-            db,
-            current_user.id,
-            unique_namespaces,
-        )
-        for group_namespace in unique_namespaces:
-            role = effective_roles.get(group_namespace)
-            if role is None or not has_permission(role, GroupRole.Reporter):
-                continue
-            installs.extend(
-                self._group_install_responses(
-                    db,
-                    group_namespace=group_namespace,
-                    user_id=current_user.id,
-                    resource_type=resource_type,
-                )
+        from app.services.external_entity_resolver import entity_resolution_scope
+
+        with entity_resolution_scope(db):
+            installs: list[ResourceLibraryInstall] = []
+            unique_namespaces = list(dict.fromkeys(group_namespaces))
+            readable = check_group_permissions(
+                db,
+                current_user.id,
+                unique_namespaces,
+                GroupRole.Reporter,
+                include_namespace_entities=True,
             )
-        return self._paginate_installs(installs, page=page, limit=limit)
+            for group_namespace in unique_namespaces:
+                if not readable[group_namespace]:
+                    continue
+                installs.extend(
+                    self._group_install_responses(
+                        db,
+                        group_namespace=group_namespace,
+                        user_id=current_user.id,
+                        resource_type=resource_type,
+                    )
+                )
+            return self._paginate_installs(installs, page=page, limit=limit)
 
     def _group_install_responses(
         self,

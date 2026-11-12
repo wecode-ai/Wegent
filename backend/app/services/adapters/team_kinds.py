@@ -93,31 +93,23 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         db: Session,
         user_id: int,
         namespaces: list[str],
-        effective_roles: Optional[dict[str, GroupRole]] = None,
+        accessible_namespaces: Optional[list[str]] = None,
     ) -> list[int]:
         """Return namespace ids that can activate Team namespace grants."""
-        group_namespaces = [
-            namespace for namespace in namespaces if namespace != "default"
-        ]
-        if not group_namespaces:
-            return []
+        group_namespaces = [name for name in namespaces if name != "default"]
+        if accessible_namespaces is None:
+            from app.services.group_permission import check_group_permissions
 
-        if effective_roles is None:
-            from app.services.group_permission import get_effective_roles_in_groups
-
-            effective_roles = get_effective_roles_in_groups(
+            decisions = check_group_permissions(
                 db,
                 user_id,
                 group_namespaces,
+                TEAM_USE_ROLE,
+                include_namespace_entities=True,
             )
-        accessible_namespaces = [
-            namespace
-            for namespace in group_namespaces
-            if (
-                (role := effective_roles.get(namespace)) is not None
-                and has_permission(role, TEAM_USE_ROLE)
-            )
-        ]
+            accessible_namespaces = [
+                name for name, allowed in decisions.items() if allowed
+            ]
         if not accessible_namespaces:
             return []
 
@@ -335,109 +327,57 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         shared_only: bool = False,
     ) -> Optional[tuple[Any, Any]]:
         """Build the deduplicated accessible-Team query shared by list views."""
-        from app.services.group_permission import get_user_group_roles
+        from app.services.external_entity_resolver import entity_resolution_scope
 
-        namespaces_to_query = []
-        effective_roles: Optional[dict[str, GroupRole]] = None
-        if scope == "personal":
-            namespaces_to_query = ["default"]
-        elif scope == "group":
-            if group_names is not None:
-                namespaces_to_query = group_names
-            elif group_name:
-                namespaces_to_query = [group_name]
+        with entity_resolution_scope(db):
+            from app.services.group_permission import (
+                check_group_permissions,
+                get_restricted_analyst_groups,
+                get_user_groups,
+            )
+
+            namespaces_to_query = []
+            if scope == "personal":
+                namespaces_to_query = ["default"]
+            elif scope == "group":
+                if group_names is not None:
+                    namespaces_to_query = group_names
+                elif group_name:
+                    namespaces_to_query = [group_name]
+                else:
+                    namespaces_to_query = get_user_groups(db, user_id)
+            elif scope == "all":
+                namespaces_to_query = ["default", *get_user_groups(db, user_id)]
             else:
-                effective_roles = get_user_group_roles(db, user_id)
-                namespaces_to_query = sorted(effective_roles)
-        elif scope == "all":
-            effective_roles = get_user_group_roles(db, user_id)
-            namespaces_to_query = ["default", *sorted(effective_roles)]
-        else:
-            raise ValueError(f"Invalid scope: {scope}")
+                raise ValueError(f"Invalid scope: {scope}")
 
-        queries = []
-        group_namespaces = [ns for ns in namespaces_to_query if ns != "default"]
-        has_default = "default" in namespaces_to_query
-        team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
-        approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
-        if group_namespaces and effective_roles is None:
-            from app.services.group_permission import get_effective_roles_in_groups
-
-            effective_roles = get_effective_roles_in_groups(
+            queries = []
+            group_namespaces = [ns for ns in namespaces_to_query if ns != "default"]
+            has_default = "default" in namespaces_to_query
+            team_resource_type_variants = [
+                ResourceType.TEAM.value,
+                ResourceType.TEAM.name,
+            ]
+            approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
+            usage = check_group_permissions(
+                db,
+                user_id,
+                group_namespaces,
+                TEAM_USE_ROLE,
+                include_namespace_entities=True,
+            )
+            restricted_group_namespaces = get_restricted_analyst_groups(
                 db, user_id, group_namespaces
             )
-        restricted_group_namespaces = {
-            namespace
-            for namespace, role in (effective_roles or {}).items()
-            if role == GroupRole.RestrictedAnalyst
-        }
-        authorized_namespace_ids = self._get_accessible_authorization_namespace_ids(
-            db,
-            user_id,
-            group_namespaces,
-            effective_roles,
-        )
-
-        if has_default:
-            own_teams_query = db.query(
-                Kind.id.label("team_id"),
-                Kind.user_id.label("team_user_id"),
-                Kind.name.label("team_name"),
-                Kind.namespace.label("team_namespace"),
-                Kind.json.label("team_json"),
-                Kind.created_at.label("team_created_at"),
-                Kind.updated_at.label("team_updated_at"),
-                literal_column("0").label("share_status"),  # Default 0 for own teams
-                literal_column(str(user_id)).label("context_user_id"),
-                literal(False).label("restricted_guest_access"),
-                literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
-                literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
-            ).filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Team",
-                Kind.namespace == "default",
-                Kind.is_active == True,
+            authorized_namespace_ids = self._get_accessible_authorization_namespace_ids(
+                db,
+                user_id,
+                group_namespaces,
+                [name for name, allowed in usage.items() if allowed],
             )
-            queries.append(own_teams_query)
 
-            if scope in ("personal", "all"):
-                shared_teams_query = (
-                    db.query(
-                        Kind.id.label("team_id"),
-                        Kind.user_id.label("team_user_id"),
-                        Kind.name.label("team_name"),
-                        Kind.namespace.label("team_namespace"),
-                        Kind.json.label("team_json"),
-                        Kind.created_at.label("team_created_at"),
-                        Kind.updated_at.label("team_updated_at"),
-                        literal_column("2").label("share_status"),  # 2 for shared teams
-                        Kind.user_id.label(
-                            "context_user_id"
-                        ),  # Use team owner, not inviter
-                        literal(False).label("restricted_guest_access"),
-                        literal(self.ACCESS_SOURCE_USER_SHARE).label("access_source"),
-                        literal(self.ACCESS_RANK_USER_SHARE).label("access_rank"),
-                    )
-                    .join(
-                        ResourceMember,
-                        (ResourceMember.resource_id == Kind.id)
-                        & (
-                            ResourceMember.resource_type.in_(
-                                team_resource_type_variants
-                            )
-                        ),
-                    )
-                    .filter(
-                        ResourceMember.entity_type == "user",
-                        ResourceMember.entity_id == str(user_id),
-                        ResourceMember.status.in_(approved_status_variants),
-                        Kind.is_active == True,
-                        Kind.kind == "Team",
-                    )
-                )
-                queries.append(shared_teams_query)
-
-                public_teams_query = db.query(
+            if has_default:
+                own_teams_query = db.query(
                     Kind.id.label("team_id"),
                     Kind.user_id.label("team_user_id"),
                     Kind.name.label("team_name"),
@@ -447,50 +387,85 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     Kind.updated_at.label("team_updated_at"),
                     literal_column("0").label(
                         "share_status"
-                    ),  # 0 for public teams (system-owned)
-                    literal_column("0").label("context_user_id"),
+                    ),  # Default 0 for own teams
+                    literal_column(str(user_id)).label("context_user_id"),
                     literal(False).label("restricted_guest_access"),
                     literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
                     literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
                 ).filter(
-                    Kind.user_id == 0,
+                    Kind.user_id == user_id,
                     Kind.kind == "Team",
                     Kind.namespace == "default",
                     Kind.is_active == True,
                 )
-                queries.append(public_teams_query)
+                queries.append(own_teams_query)
 
-        if group_namespaces:
-            group_teams_query = db.query(
-                Kind.id.label("team_id"),
-                Kind.user_id.label("team_user_id"),
-                Kind.name.label("team_name"),
-                Kind.namespace.label("team_namespace"),
-                Kind.json.label("team_json"),
-                Kind.created_at.label("team_created_at"),
-                Kind.updated_at.label("team_updated_at"),
-                literal_column("0").label("share_status"),
-                Kind.user_id.label("context_user_id"),
-                Kind.namespace.in_(restricted_group_namespaces).label(
-                    "restricted_guest_access"
-                ),
-                literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
-                literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
-            ).filter(
-                Kind.kind == "Team",
-                Kind.namespace.in_(
-                    group_namespaces
-                ),  # Use IN clause for all group namespaces
-                Kind.is_active == True,
-            )
-            queries.append(group_teams_query)
+                if scope in ("personal", "all"):
+                    shared_teams_query = (
+                        db.query(
+                            Kind.id.label("team_id"),
+                            Kind.user_id.label("team_user_id"),
+                            Kind.name.label("team_name"),
+                            Kind.namespace.label("team_namespace"),
+                            Kind.json.label("team_json"),
+                            Kind.created_at.label("team_created_at"),
+                            Kind.updated_at.label("team_updated_at"),
+                            literal_column("2").label(
+                                "share_status"
+                            ),  # 2 for shared teams
+                            Kind.user_id.label(
+                                "context_user_id"
+                            ),  # Use team owner, not inviter
+                            literal(False).label("restricted_guest_access"),
+                            literal(self.ACCESS_SOURCE_USER_SHARE).label(
+                                "access_source"
+                            ),
+                            literal(self.ACCESS_RANK_USER_SHARE).label("access_rank"),
+                        )
+                        .join(
+                            ResourceMember,
+                            (ResourceMember.resource_id == Kind.id)
+                            & (
+                                ResourceMember.resource_type.in_(
+                                    team_resource_type_variants
+                                )
+                            ),
+                        )
+                        .filter(
+                            ResourceMember.entity_type == "user",
+                            ResourceMember.entity_id == str(user_id),
+                            ResourceMember.status.in_(approved_status_variants),
+                            Kind.is_active == True,
+                            Kind.kind == "Team",
+                        )
+                    )
+                    queries.append(shared_teams_query)
 
-        if authorized_namespace_ids:
-            authorized_namespace_entity_ids = [
-                str(ns_id) for ns_id in authorized_namespace_ids
-            ]
-            authorized_team_query = (
-                db.query(
+                    public_teams_query = db.query(
+                        Kind.id.label("team_id"),
+                        Kind.user_id.label("team_user_id"),
+                        Kind.name.label("team_name"),
+                        Kind.namespace.label("team_namespace"),
+                        Kind.json.label("team_json"),
+                        Kind.created_at.label("team_created_at"),
+                        Kind.updated_at.label("team_updated_at"),
+                        literal_column("0").label(
+                            "share_status"
+                        ),  # 0 for public teams (system-owned)
+                        literal_column("0").label("context_user_id"),
+                        literal(False).label("restricted_guest_access"),
+                        literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
+                        literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
+                    ).filter(
+                        Kind.user_id == 0,
+                        Kind.kind == "Team",
+                        Kind.namespace == "default",
+                        Kind.is_active == True,
+                    )
+                    queries.append(public_teams_query)
+
+            if group_namespaces:
+                group_teams_query = db.query(
                     Kind.id.label("team_id"),
                     Kind.user_id.label("team_user_id"),
                     Kind.name.label("team_name"),
@@ -498,94 +473,126 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     Kind.json.label("team_json"),
                     Kind.created_at.label("team_created_at"),
                     Kind.updated_at.label("team_updated_at"),
-                    literal_column("2").label("share_status"),
+                    literal_column("0").label("share_status"),
                     Kind.user_id.label("context_user_id"),
-                    Namespace.name.in_(restricted_group_namespaces).label(
+                    Kind.namespace.in_(restricted_group_namespaces).label(
                         "restricted_guest_access"
                     ),
-                    literal(self.ACCESS_SOURCE_NAMESPACE_AUTHORIZATION).label(
-                        "access_source"
-                    ),
-                    literal(self.ACCESS_RANK_NAMESPACE_AUTHORIZATION).label(
-                        "access_rank"
-                    ),
-                )
-                .join(
-                    ResourceMember,
-                    (ResourceMember.resource_id == Kind.id)
-                    & ResourceMember.resource_type.in_(team_resource_type_variants),
-                )
-                # Compare numeric IDs without inheriting the connection collation.
-                .join(Namespace, ResourceMember.entity_id.cast(Integer) == Namespace.id)
-                .filter(
-                    ResourceMember.entity_type == "namespace",
-                    ResourceMember.entity_id.in_(authorized_namespace_entity_ids),
-                    ResourceMember.status.in_(approved_status_variants),
-                    Namespace.is_active.is_(True),
+                    literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
+                    literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
+                ).filter(
                     Kind.kind == "Team",
-                    Kind.is_active.is_(True),
-                    ~Kind.namespace.in_(group_namespaces),
+                    Kind.namespace.in_(
+                        group_namespaces
+                    ),  # Use IN clause for all group namespaces
+                    Kind.is_active == True,
                 )
-            )
-            queries.append(authorized_team_query)
+                queries.append(group_teams_query)
 
-        if not queries:
-            return None
-
-        if filters:
-            queries = [query.filter(*filters) for query in queries]
-
-        if len(queries) == 1:
-            combined_query = queries[0].subquery()
-        else:
-            combined_query = union_all(*queries).alias("combined_teams")
-        ranked_query = (
-            db.query(
-                combined_query.c.team_id,
-                combined_query.c.team_user_id,
-                combined_query.c.team_name,
-                combined_query.c.team_namespace,
-                combined_query.c.team_json,
-                combined_query.c.team_created_at,
-                combined_query.c.team_updated_at,
-                combined_query.c.share_status,
-                combined_query.c.context_user_id,
-                combined_query.c.restricted_guest_access,
-                combined_query.c.access_source,
-                func.row_number()
-                .over(
-                    partition_by=combined_query.c.team_id,
-                    order_by=(
-                        combined_query.c.access_rank.asc(),
-                        combined_query.c.restricted_guest_access.desc(),
-                        combined_query.c.team_updated_at.desc(),
-                        combined_query.c.team_id.desc(),
-                    ),
+            if authorized_namespace_ids:
+                authorized_namespace_entity_ids = [
+                    str(ns_id) for ns_id in authorized_namespace_ids
+                ]
+                authorized_team_query = (
+                    db.query(
+                        Kind.id.label("team_id"),
+                        Kind.user_id.label("team_user_id"),
+                        Kind.name.label("team_name"),
+                        Kind.namespace.label("team_namespace"),
+                        Kind.json.label("team_json"),
+                        Kind.created_at.label("team_created_at"),
+                        Kind.updated_at.label("team_updated_at"),
+                        literal_column("2").label("share_status"),
+                        Kind.user_id.label("context_user_id"),
+                        Namespace.name.in_(restricted_group_namespaces).label(
+                            "restricted_guest_access"
+                        ),
+                        literal(self.ACCESS_SOURCE_NAMESPACE_AUTHORIZATION).label(
+                            "access_source"
+                        ),
+                        literal(self.ACCESS_RANK_NAMESPACE_AUTHORIZATION).label(
+                            "access_rank"
+                        ),
+                    )
+                    .join(
+                        ResourceMember,
+                        (ResourceMember.resource_id == Kind.id)
+                        & ResourceMember.resource_type.in_(team_resource_type_variants),
+                    )
+                    # Compare numeric IDs without inheriting the connection collation.
+                    .join(
+                        Namespace,
+                        ResourceMember.entity_id.cast(Integer) == Namespace.id,
+                    )
+                    .filter(
+                        ResourceMember.entity_type == "namespace",
+                        ResourceMember.entity_id.in_(authorized_namespace_entity_ids),
+                        ResourceMember.status.in_(approved_status_variants),
+                        Namespace.is_active.is_(True),
+                        Kind.kind == "Team",
+                        Kind.is_active.is_(True),
+                        ~Kind.namespace.in_(group_namespaces),
+                    )
                 )
-                .label("access_row_number"),
-            )
-        ).subquery()
-        base_query = db.query(
-            ranked_query.c.team_id,
-            ranked_query.c.team_user_id,
-            ranked_query.c.team_name,
-            ranked_query.c.team_namespace,
-            ranked_query.c.team_json,
-            ranked_query.c.team_created_at,
-            ranked_query.c.team_updated_at,
-            ranked_query.c.share_status,
-            ranked_query.c.context_user_id,
-            ranked_query.c.restricted_guest_access,
-            ranked_query.c.access_source,
-        ).filter(ranked_query.c.access_row_number == 1)
-        if shared_only:
-            base_query = base_query.filter(
-                or_(
-                    ranked_query.c.team_namespace != "default",
-                    ranked_query.c.share_status == 2,
+                queries.append(authorized_team_query)
+
+            if not queries:
+                return None
+
+            if filters:
+                queries = [query.filter(*filters) for query in queries]
+
+            if len(queries) == 1:
+                combined_query = queries[0].subquery()
+            else:
+                combined_query = union_all(*queries).alias("combined_teams")
+            ranked_query = (
+                db.query(
+                    combined_query.c.team_id,
+                    combined_query.c.team_user_id,
+                    combined_query.c.team_name,
+                    combined_query.c.team_namespace,
+                    combined_query.c.team_json,
+                    combined_query.c.team_created_at,
+                    combined_query.c.team_updated_at,
+                    combined_query.c.share_status,
+                    combined_query.c.context_user_id,
+                    combined_query.c.restricted_guest_access,
+                    combined_query.c.access_source,
+                    func.row_number()
+                    .over(
+                        partition_by=combined_query.c.team_id,
+                        order_by=(
+                            combined_query.c.access_rank.asc(),
+                            combined_query.c.restricted_guest_access.desc(),
+                            combined_query.c.team_updated_at.desc(),
+                            combined_query.c.team_id.desc(),
+                        ),
+                    )
+                    .label("access_row_number"),
                 )
-            )
-        return base_query, ranked_query
+            ).subquery()
+            base_query = db.query(
+                ranked_query.c.team_id,
+                ranked_query.c.team_user_id,
+                ranked_query.c.team_name,
+                ranked_query.c.team_namespace,
+                ranked_query.c.team_json,
+                ranked_query.c.team_created_at,
+                ranked_query.c.team_updated_at,
+                ranked_query.c.share_status,
+                ranked_query.c.context_user_id,
+                ranked_query.c.restricted_guest_access,
+                ranked_query.c.access_source,
+            ).filter(ranked_query.c.access_row_number == 1)
+            if shared_only:
+                base_query = base_query.filter(
+                    or_(
+                        ranked_query.c.team_namespace != "default",
+                        ranked_query.c.share_status == 2,
+                    )
+                )
+            return base_query, ranked_query
 
     def get_recent_accessible_teams(
         self,

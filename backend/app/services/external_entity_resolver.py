@@ -15,8 +15,11 @@ The open-source core ships with no implementations. Internal deployments
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Iterator, Optional
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -27,6 +30,59 @@ logger = logging.getLogger(__name__)
 # Module-level resolver registry
 _external_entity_resolvers: dict[str, type["IExternalEntityResolver"]] = {}
 _resolver_instances: dict[str, "IExternalEntityResolver"] = {}
+ENTITY_RESOLUTION_CACHE_KEY = "external_entity_resolution_cache"
+EntityFact = tuple[str, str]
+
+
+class EntityMembershipUnavailable(HTTPException):
+    """Incomplete external facts, distinct from confirmed non-membership."""
+
+    def __init__(
+        self,
+        unknown_ids: list[str],
+        matched_ids: list[str],
+        *,
+        dependencies: dict[str, frozenset[EntityFact]] | None = None,
+    ):
+        super().__init__(
+            status_code=503,
+            detail={"status": "unknown", "department_ids": unknown_ids},
+            headers={"Retry-After": "1"},
+        )
+        self.unknown_ids = unknown_ids
+        self.matched_ids = matched_ids
+        # A derived membership holds when any of these underlying facts holds.
+        self.dependencies = dependencies or {}
+
+
+@dataclass
+class EntityResolutionContext:
+    facts: dict[str, object] = field(default_factory=dict)
+    read_only: bool = False
+
+
+def get_entity_resolution_context(db: Session) -> EntityResolutionContext | None:
+    context = db.info.get(ENTITY_RESOLUTION_CACHE_KEY)
+    return context if isinstance(context, EntityResolutionContext) else None
+
+
+@contextmanager
+def entity_resolution_scope(db: Session, *, read_only: bool = False) -> Iterator[None]:
+    """Reuse confirmed external facts only within one execution/request."""
+    existing = get_entity_resolution_context(db)
+    if existing is not None:
+        previous = existing.read_only
+        existing.read_only = previous or read_only
+        try:
+            yield
+        finally:
+            existing.read_only = previous
+        return
+    db.info[ENTITY_RESOLUTION_CACHE_KEY] = EntityResolutionContext(read_only=read_only)
+    try:
+        yield
+    finally:
+        db.info.pop(ENTITY_RESOLUTION_CACHE_KEY, None)
 
 
 def register_entity_resolver(

@@ -7,6 +7,7 @@
 from copy import deepcopy
 from typing import Any
 
+from sqlalchemy import String
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -15,7 +16,10 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.namespace import GroupRole
-from app.services.group_permission import check_group_permission, get_user_group_roles
+from app.services.group_permission import (
+    check_group_permission,
+    has_restricted_analyst_group,
+)
 
 TEAM_USE_ROLE = BaseRole.RestrictedAnalyst
 
@@ -71,40 +75,19 @@ def should_redact_team_for_user(
     if team_user_id == user_id or team_namespace == "default":
         return False
 
-    roles = get_user_group_roles(db, user_id)
-    restricted_namespaces = {
-        namespace
-        for namespace, role in roles.items()
-        if role == GroupRole.RestrictedAnalyst
-    }
-    if team_namespace in restricted_namespaces:
-        return True
-    if not restricted_namespaces:
-        return False
-
-    namespace_ids = [
-        str(row.id)
-        for row in db.query(Namespace.id)
-        .filter(
-            Namespace.name.in_(restricted_namespaces),
-            Namespace.is_active.is_(True),
-        )
-        .all()
-    ]
-    if not namespace_ids:
-        return False
-
     team_resource_types = [ResourceType.TEAM.value, ResourceType.TEAM.name]
     approved_statuses = [MemberStatus.APPROVED.value, "APPROVED"]
-    return (
-        db.query(ResourceMember.id)
+    shared_names = [
+        row[0]
+        for row in db.query(Namespace.name)
+        .join(ResourceMember, ResourceMember.entity_id == Namespace.id.cast(String))
         .filter(
+            Namespace.is_active.is_(True),
             ResourceMember.resource_id == team_id,
             ResourceMember.resource_type.in_(team_resource_types),
             ResourceMember.entity_type == "namespace",
-            ResourceMember.entity_id.in_(namespace_ids),
             ResourceMember.status.in_(approved_statuses),
         )
-        .first()
-        is not None
-    )
+        .all()
+    ]
+    return has_restricted_analyst_group(db, user_id, [team_namespace, *shared_names])
