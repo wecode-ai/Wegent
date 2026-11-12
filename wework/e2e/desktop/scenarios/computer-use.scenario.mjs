@@ -3,7 +3,7 @@ import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { verifyComputerUseHostMenu } from '../modules/computer-use-host-menu.mjs'
 import { verifyComputerUseCancellation } from '../modules/computer-use-cancellation.mjs'
-import { startComputerUseLateEnable } from '../modules/computer-use-late-enable.mjs'
+import { createComputerUseLateEnable } from '../modules/computer-use-late-enable.mjs'
 
 const PAGE_SELECTOR = '[data-testid="computer-use-settings-page"]'
 const TOGGLE_SELECTOR = '[data-testid="computer-use-enabled-toggle"]'
@@ -114,34 +114,11 @@ export async function verifyDriverCrashRecovery(control, runtime, executorHome, 
   return recovered
 }
 
-export function createDesktopScenario({
-  captureScreenshot,
-  executorHome,
-  resultDir,
-  workspacePath,
-  uiTimeoutMs,
-}) {
-  let executorBinary
-  let lateEnable
+export function createDesktopScenario(options) {
+  const { captureScreenshot, executorHome, uiTimeoutMs, workbenchReadyTimeoutMs } = options
+  const lateEnable = createComputerUseLateEnable(options)
   return {
-    setExecutorBinary(binary) {
-      executorBinary = binary
-    },
-
-    async prepareApp({ appEnvironment }) {
-      lateEnable = await startComputerUseLateEnable({
-        codexBinary: appEnvironment.CODEX_BINARY_PATH,
-        executorBinary,
-        environment: appEnvironment,
-        executorHome,
-        resultDir,
-        workspacePath,
-      })
-    },
-
-    async cleanup() {
-      await lateEnable?.close()
-    },
+    handleHttp: lateEnable.handleHttp,
 
     async verify(control) {
       await control.command('waitFor', '[data-testid="app-shell"]', {
@@ -163,6 +140,10 @@ export function createDesktopScenario({
         return
       }
 
+      await control.command('ensureLocalModelCatalogReady', 'body', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      await lateEnable.prepare(control)
       await control.command('click', TOGGLE_SELECTOR)
       await control.command('waitFor', TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await waitForAttribute(control, TOGGLE_SELECTOR, 'aria-checked', 'true', uiTimeoutMs)
@@ -178,9 +159,9 @@ export function createDesktopScenario({
       )
       if (runtime) {
         await verifyBridge(runtime)
-        await lateEnable.verify()
+        await lateEnable.verify(control, runtime)
         runtime = await verifyDriverCrashRecovery(control, runtime, executorHome, uiTimeoutMs)
-        await lateEnable.verify()
+        await lateEnable.verify(control, runtime, true)
       }
       if (runtime && nativeState.platform === 'darwin') {
         await verifyComputerUseHostMenu(control, runtime, uiTimeoutMs)
@@ -196,7 +177,7 @@ export function createDesktopScenario({
       await waitForAttribute(control, TOGGLE_SELECTOR, 'aria-checked', 'false', uiTimeoutMs)
       await waitForRuntimeRecordRemoved(executorHome, uiTimeoutMs)
       await assertBridgeStopped(runtime)
-      if (runtime) await lateEnable.verifyDisabled()
+      if (runtime) await lateEnable.verifyDisabled(control)
 
       await control.command('navigate', 'body', { value: '/' })
       await control.command('navigate', 'body', { value: '/settings/computer-use' })

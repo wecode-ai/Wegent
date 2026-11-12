@@ -78,7 +78,7 @@ function serveEnvironmentProbe(name, evidencePath, toolName) {
   })
 }
 
-export function startNativeClient({ binary, args, cwd, env, root, phase }) {
+function startNativeClient({ binary, args, cwd, env, root, phase }) {
   const child = spawn(binary, args, {
     cwd,
     env,
@@ -158,7 +158,7 @@ export function startNativeClient({ binary, args, cwd, env, root, phase }) {
   }
 }
 
-export async function initialize(client) {
+async function initialize(client) {
   const result = await client.call('initialize', {
     clientInfo: { name: 'wework_mcp_environment_e2e', version: '1' },
     capabilities: { experimentalApi: true },

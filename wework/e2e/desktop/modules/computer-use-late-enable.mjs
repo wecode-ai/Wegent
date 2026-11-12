@@ -1,110 +1,174 @@
 import assert from 'node:assert/strict'
-import { mkdir } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { initialize, startNativeClient } from './native-mcp-environment.mjs'
+import { requestExecutor } from './executor-rpc.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
+import { DEFAULT_MODEL_ID, MODEL_PROVIDER_ID } from './shared.mjs'
+import { readMcpToolOutput } from './mcp-tool-results.mjs'
+import { programmaticExecTools } from './model-tool-catalog.mjs'
+import { selectedToolCall } from './model-tool-calls.mjs'
+import {
+  assistantMessage,
+  createSse,
+  mcpToolRequestEvents,
+  readRequestBody,
+  requestContainsToolOutput,
+  responseCompleted,
+  responseCreated,
+} from './response-protocol.mjs'
 
-/** Keep one real Codex process alive across the host bridge's enable and recovery. */
-export async function startComputerUseLateEnable({
-  codexBinary,
-  executorBinary,
-  environment,
+const PREFIX = 'WEWORK_COMPUTER_LATE_ENABLE'
+const TASK_ID = 'computer-use-late-enable'
+
+/** Exercise the owning Executor's real task creation, native resume, and MCP routing. */
+export function createComputerUseLateEnable({
   executorHome,
   resultDir,
   workspacePath,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
 }) {
-  const root = join(resultDir, 'computer-use-late-enable')
-  const home = join(root, 'home')
-  await mkdir(home, { recursive: true })
-  const env = Object.fromEntries(
-    Object.entries(environment).filter(
-      ([key, value]) => /^(path|systemroot|windir|comspec|pathext)$/i.test(key) && value != null
-    )
-  )
-  Object.assign(env, { HOME: home, USERPROFILE: home, CODEX_HOME: home, CODEX_SQLITE_HOME: home })
-  assert.equal(env.WEWORK_COMPUTER_USE_BRIDGE_URL, undefined)
-  assert.equal(env.WEWORK_COMPUTER_USE_BRIDGE_TOKEN, undefined)
-  const client = startNativeClient({
-    binary: codexBinary,
-    args: ['app-server'],
-    cwd: workspacePath,
-    env,
-    root,
-    phase: 'late-enable',
-  })
-  try {
-    await initialize(client)
-  } catch (error) {
-    await client.close()
-    throw error
-  }
-  const pid = client.child.pid
+  const logPath = join(resultDir, 'executor.log')
+  const completed = new Set()
+  let phase = 'initial'
   let threadId
-  let successfulCalls = 0
-  let disabledVerified = false
+  let processId
+  let hostPid
+  let failure
+  const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+  const currentProcess = async () =>
+    [
+      ...(await readFile(logPath, 'utf8')).matchAll(
+        /codex shared app-server process starting process_id=(\d+)/g
+      ),
+    ].at(-1)?.[1]
+  const run = async (control, nextPhase, create = false) => {
+    phase = nextPhase
+    const prompt = `${PREFIX}_${phase}`
+    const result = await rpc(control, create ? 'runtime.tasks.create' : 'runtime.tasks.send', {
+      taskId: TASK_ID,
+      title: PREFIX,
+      runtime: 'codex',
+      workspacePath,
+      message: prompt,
+      ...(!create ? { threadId } : {}),
+      executionRequest: {
+        task_id: TASK_ID,
+        subtask_id: `${TASK_ID}-${phase}`,
+        prompt,
+        project_workspace_path: workspacePath,
+        new_session: create,
+        bot: [{ shell_type: 'Codex', name: 'Computer use verification' }],
+        model_config: { model_id: DEFAULT_MODEL_ID, model_provider: MODEL_PROVIDER_ID },
+      },
+    })
+    assert.equal(result.accepted, true)
+    const task = await waitForValue(
+      async () => {
+        if (failure) throw failure
+        return (await rpc(control, 'runtime.tasks.get', { taskId: TASK_ID })).task
+      },
+      value =>
+        completed.has(phase) && value?.status === 'done' && typeof value.threadId === 'string',
+      `The original Wework task did not finish ${phase}`,
+      modelResponseTimeoutMs
+    )
+    if (create) {
+      threadId = task.threadId
+      processId = await currentProcess()
+      assert.ok(processId, 'The owning Executor did not publish its shared Codex PID')
+    } else {
+      assert.equal(task.threadId, threadId, 'Continuation replaced the original Wework thread')
+      assert.equal(
+        await currentProcess(),
+        processId,
+        'Computer use restarted the shared Codex process'
+      )
+    }
+  }
   return {
-    async verify() {
-      assert.equal(client.child.exitCode, null, 'The original Codex process exited')
-      if (!threadId) {
-        const started = await client.call('thread/start', {
-          cwd: workspacePath,
-          ephemeral: true,
-          approvalPolicy: 'never',
-          sandbox: 'danger-full-access',
-          config: {
-            'mcp_servers.wework_computer.command': executorBinary,
-            'mcp_servers.wework_computer.args': [
-              'computer-use-mcp-server',
-              join(executorHome, 'runtime', 'computer-use-bridge.json'),
-            ],
-            'mcp_servers.wework_computer.startup_timeout_sec': 15,
-            'mcp_servers.wework_computer.default_tools_approval_mode': 'writes',
-          },
-        })
-        threadId = started.thread.id
-      }
-      const status = await client.call('mcpServerStatus/list', {
-        threadId,
-        serverName: 'wework_computer',
-        limit: 100,
+    async prepare(control) {
+      await assert.rejects(access(join(executorHome, 'runtime/computer-use-bridge.json')), {
+        code: 'ENOENT',
       })
-      const computer = status.data.find(server => server.name === 'wework_computer')
-      assert.ok(computer, 'Late-enabled computer MCP was not registered')
-      assert.ok(
-        Object.values(computer.tools).some(tool => tool.name === 'list_apps'),
-        'The real bridge did not publish native tools to the existing Codex process'
-      )
-      assert.equal(client.child.pid, pid, 'Enabling computer use replaced the Codex process')
-      const result = await client.call('mcpServer/tool/call', {
-        threadId,
-        server: 'wework_computer',
-        tool: 'list_apps',
-        arguments: {},
-      })
-      assert.notEqual(result.isError, true, 'The real desktop read operation failed')
-      assert.ok(result.content.length > 0, 'The real desktop operation returned no content')
-      successfulCalls += 1
+      await run(control, 'initial', true)
     },
-    async verifyDisabled() {
-      assert.ok(threadId, 'Disable verification requires the original computer tool session')
-      await assert.rejects(
-        client.call('mcpServer/tool/call', {
-          threadId,
-          server: 'wework_computer',
-          tool: 'list_apps',
-          arguments: {},
-        }),
-        /Computer use bridge record is unavailable/,
-        'Disabling computer use did not revoke the existing MCP session'
-      )
-      disabledVerified = true
+    async verify(control, record, recovered = false) {
+      hostPid = record.pid
+      await run(control, recovered ? 'recovered' : 'enabled')
     },
-    diagnostics: () => ({ processId: pid, successfulCalls, disabledVerified }),
-    async close() {
+    verifyDisabled: control => run(control, 'disabled'),
+    async handleHttp(request, response, url) {
+      if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname))
+        return false
+      const body = await readRequestBody(request)
+      if (!JSON.stringify(body.input ?? []).includes(PREFIX)) return false
       try {
-        if (threadId) await client.call('thread/unsubscribe', { threadId })
-      } finally {
-        await client.close()
+        const id = `${PREFIX}-${phase}`
+        const callId = `${id}-call`
+        let events
+        if (phase === 'initial' || requestContainsToolOutput(body, callId)) {
+          if (phase !== 'initial') {
+            const output = readMcpToolOutput(body, callId)
+            if (phase === 'disabled')
+              assert.match(
+                output,
+                /COMPUTER_TOOLS_DISABLED|Computer use bridge record is unavailable/
+              )
+            else
+              assert.match(
+                output,
+                new RegExp(`"pid"\\s*:\\s*${hostPid}\\b`),
+                'The real tool did not observe the isolated Wework host window'
+              )
+          }
+          completed.add(phase)
+          const message = assistantMessage(`${id}-complete`)
+          events = [message, responseCompleted(id, [message.item])]
+        } else if (phase === 'disabled') {
+          const tools = programmaticExecTools(body)
+          assert.equal(tools.length, 1)
+          events = [
+            ...selectedToolCall(callId, {
+              name: tools[0].name,
+              codeMode: {
+                ...tools[0],
+                input: [
+                  'const matches = ALL_TOOLS.filter(tool => tool.name.includes("wework_computer") && tool.name.endsWith("list_windows"))',
+                  'if (!matches.length) text("COMPUTER_TOOLS_DISABLED")',
+                  `else { const result = await tools[matches[0].name]({pid:${hostPid}}); text(result) }`,
+                ].join('\n'),
+              },
+            }),
+            responseCompleted(id),
+          ]
+        } else {
+          events = [
+            ...mcpToolRequestEvents(body, {
+              toolName: 'list_windows',
+              argumentsValue: { pid: hostPid },
+              directToolName: 'mcp__wework_computer__list_windows',
+              searchCallId: `${id}-search`,
+              toolCallId: callId,
+            }).events,
+            responseCompleted(id),
+          ]
+        }
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(createSse([responseCreated(id), ...events]))
+      } catch (error) {
+        failure = error
+        response.writeHead(500)
+        response.end('Computer use model fixture failed')
       }
+      return true
     },
+    diagnostics: () => ({
+      taskId: TASK_ID,
+      threadId,
+      processId,
+      completed: [...completed],
+      failure: failure?.message,
+    }),
   }
 }
