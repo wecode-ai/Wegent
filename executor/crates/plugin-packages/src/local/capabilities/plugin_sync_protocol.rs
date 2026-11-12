@@ -153,6 +153,16 @@ impl ConnectionBinding {
         }
     }
 
+    pub(super) fn invalidate(&self) {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if *active == self.instance {
+            active.clear();
+        }
+    }
+
     pub(super) fn check(&self) -> Result<(), CapabilitySyncError> {
         self.lock_active().map(drop)
     }

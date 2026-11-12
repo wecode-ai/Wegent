@@ -35,6 +35,7 @@ from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
     ChannelType,
+    TaskCallbackKey,
     runtime_local_task_callback_key,
 )
 from app.services.channels.commands import (
@@ -78,8 +79,11 @@ logger = logging.getLogger(__name__)
 
 # Redis key prefix for conversation -> task_id mapping
 CHANNEL_CONV_TASK_PREFIX = "channel:conv_task:"
+CHANNEL_CONV_TASK_RECOVERY_DISABLED_PREFIX = "channel:conv_task:no_restore:"
 # TTL for conversation-task mapping (7 days)
 CHANNEL_CONV_TASK_TTL = 7 * 24 * 60 * 60
+# Bound mirror recovery after a mirror update fails, without blocking dispatch.
+CHANNEL_CONV_TASK_RECOVERY_DISABLED_TTL = 5 * 60
 TASK_CREATED_RUNNING_NOTICE = "已创建任务，正在执行。"
 
 
@@ -298,7 +302,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _register_streaming_emitter(
         self,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         streaming_emitter: Any,
         message_context: MessageContext,
         *,
@@ -337,7 +341,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     def _prepare_streaming_emitter(
         self,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         streaming_emitter: Any,
     ) -> None:
         """Configure cross-worker content sharing before the first chunk."""
@@ -385,7 +389,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         self,
         streaming_emitter: Any,
         *,
-        task_id: int | str,
+        task_id: TaskCallbackKey,
         subtask_id: int,
         content: Optional[str],
     ) -> None:
@@ -414,6 +418,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     ) -> tuple[Optional[int], bool]:
         """Get cached task_id for a conversation and user from Redis.
 
+        When the cache entry is gone, the task is restored from the private IM
+        session mirror and the cache entry is rewritten, so an expired mapping
+        does not silently start a new conversation.
+
         Also checks conversation timeout by querying task's updated_at from database.
         If the task was updated more than IM_CHANNEL_CONVERSATION_TIMEOUT_MINUTES ago,
         returns None and sets auto_new_conversation flag.
@@ -436,7 +444,25 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         cached_task_id = await cache_manager.get(key)
 
         if cached_task_id is None:
-            return None, False
+            recovery_disabled = await cache_manager.get(
+                f"{CHANNEL_CONV_TASK_RECOVERY_DISABLED_PREFIX}"
+                f"{self._channel_type.value}:{conversation_id}:{user_id}"
+            )
+            if recovery_disabled:
+                return None, False
+            restored_task_id = await self._restore_conversation_task_id(
+                conversation_id, user_id
+            )
+            if restored_task_id is None:
+                return None, False
+            await self._set_conversation_task_id(
+                conversation_id, user_id, restored_task_id
+            )
+            self.logger.info(
+                f"[{self._channel_type.value}Handler] Restored lost conversation "
+                f"mapping for user {user_id}: task_id={restored_task_id}"
+            )
+            cached_task_id = restored_task_id
 
         task_id = int(cached_task_id)
 
@@ -452,7 +478,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     elapsed_minutes = (now - task.updated_at).total_seconds() / 60
                     if elapsed_minutes > timeout_minutes:
                         # Timeout exceeded, delete old conversation and return None
-                        await cache_manager.delete(key)
+                        await self._delete_conversation_task_id(
+                            conversation_id, user_id
+                        )
                         self.logger.info(
                             f"[{self._channel_type.value}Handler] Conversation timeout for user {user_id}: "
                             f"elapsed={elapsed_minutes:.1f}min, timeout={timeout_minutes}min"
@@ -463,10 +491,44 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         return task_id, False
 
+    async def _restore_conversation_task_id(
+        self, conversation_id: str, user_id: int
+    ) -> Optional[int]:
+        """Recover the task a private conversation was continuing.
+
+        The conversation cache entry expires after CHANNEL_CONV_TASK_TTL while
+        the private IM session lives on without a TTL, so the session mirror is
+        the last known task for this chat. The task must still exist and belong
+        to the same user before it can be resumed.
+        """
+        if not conversation_id:
+            return None
+
+        task_id = await im_session_service.get_chat_task(
+            user_id=user_id,
+            channel_type=self._channel_type.value,
+            channel_id=self._channel_id,
+            conversation_id=conversation_id,
+        )
+        if task_id is None:
+            return None
+
+        db = SessionLocal()
+        try:
+            task = task_store.get_by_id(db, task_id=task_id)
+        finally:
+            db.close()
+
+        if task is None or task.user_id != user_id:
+            return None
+        return task_id
+
     async def _set_conversation_task_id(
         self, conversation_id: str, user_id: int, task_id: int
     ) -> None:
         """Cache task_id for a conversation and user in Redis.
+
+        The private session keeps a mirror so a lost cache entry stays recoverable.
 
         Args:
             conversation_id: Channel conversation ID
@@ -477,6 +539,22 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
         key = f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
         await cache_manager.set(key, task_id, expire=CHANNEL_CONV_TASK_TTL)
+        try:
+            await im_session_service.remember_chat_task(
+                user_id=user_id,
+                channel_type=self._channel_type.value,
+                channel_id=self._channel_id,
+                conversation_id=conversation_id,
+                task_id=task_id,
+            )
+        except Exception:
+            self.logger.exception(
+                "[%sHandler] Could not mirror conversation mapping; "
+                "temporarily disabling stale recovery: user_id=%s",
+                self._channel_type.value,
+                user_id,
+            )
+            await self._disable_conversation_task_recovery(conversation_id, user_id)
 
     async def _delete_conversation_task_id(
         self, conversation_id: str, user_id: int
@@ -491,6 +569,34 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
         key = f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
         await cache_manager.delete(key)
+        try:
+            await im_session_service.forget_chat_task(
+                user_id=user_id,
+                channel_type=self._channel_type.value,
+                channel_id=self._channel_id,
+                conversation_id=conversation_id,
+            )
+        except Exception:
+            self.logger.exception(
+                "[%sHandler] Could not clear mirrored conversation mapping; "
+                "temporarily disabling stale recovery: user_id=%s",
+                self._channel_type.value,
+                user_id,
+            )
+            await self._disable_conversation_task_recovery(conversation_id, user_id)
+
+    async def _disable_conversation_task_recovery(
+        self, conversation_id: str, user_id: int
+    ) -> None:
+        """Do not restore a possibly stale mirror after a mirror write fails."""
+
+        key = (
+            f"{CHANNEL_CONV_TASK_RECOVERY_DISABLED_PREFIX}"
+            f"{self._channel_type.value}:{conversation_id}:{user_id}"
+        )
+        await cache_manager.set(
+            key, True, expire=CHANNEL_CONV_TASK_RECOVERY_DISABLED_TTL
+        )
 
     async def delete_conversation_task_id(
         self, conversation_id: str, user_id: int
@@ -996,14 +1102,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             address.device_id,
             address.local_task_id,
         )
+        if await self._reject_concurrent_runtime_quote(callback_key, message_context):
+            return False
         streaming_emitter = await self._create_private_im_runtime_streaming_emitter(
             callback_key=callback_key,
             message_context=message_context,
-        )
-        await self._register_private_im_runtime_callback(
-            callback_key=callback_key,
-            message_context=message_context,
-            streaming_emitter=streaming_emitter,
         )
         try:
             response = await runtime_work_service.send_runtime_message(
@@ -1043,7 +1146,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 ),
             )
         except (HTTPException, ValidationError):
-            await self._delete_private_im_runtime_callback(callback_key)
             self.logger.exception(
                 "[%sHandler] Active private IM runtime task is unavailable: "
                 "user_id=%s local_task_id=%s",
@@ -1051,22 +1153,44 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user.id,
                 runtime_task.get("localTaskId"),
             )
-            await self._emit_private_im_runtime_stream_error(
+            await self._fail_private_im_runtime_continuation(
+                callback_key=callback_key,
                 streaming_emitter=streaming_emitter,
-                task_id=callback_key,
                 message_context=message_context,
                 error="当前本地任务不可用,请回到 Wework 重新选择。",
             )
             return False
+        except Exception:
+            self.logger.exception(
+                "[%sHandler] Active private IM runtime task could not receive "
+                "message: user_id=%s local_task_id=%s",
+                self._channel_type.value,
+                user.id,
+                runtime_task.get("localTaskId"),
+            )
+            await self._fail_private_im_runtime_continuation(
+                callback_key=callback_key,
+                streaming_emitter=streaming_emitter,
+                message_context=message_context,
+                error="本地任务暂时无法接收消息，请稍后重试。",
+            )
+            raise
 
         if response.accepted:
+            await self._register_private_im_runtime_callback(
+                callback_key=callback_key,
+                message_context=message_context,
+                streaming_emitter=streaming_emitter,
+            )
             return True
-        await self._delete_private_im_runtime_callback(callback_key)
-        await self._emit_private_im_runtime_stream_error(
+        error = response.error or "本地任务暂时无法接收消息，请稍后重试。"
+        if response.error == "runtime task is already running":
+            error = "上一条消息仍在执行，请等当前回答完成后再发送。"
+        await self._fail_private_im_runtime_continuation(
+            callback_key=callback_key,
             streaming_emitter=streaming_emitter,
-            task_id=callback_key,
             message_context=message_context,
-            error=response.error or "本地任务暂时无法接收消息，请稍后重试。",
+            error=error,
         )
         return False
 
@@ -1083,6 +1207,52 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message_context=message_context,
             persist_without_emitter=True,
         )
+
+    async def _reject_concurrent_runtime_quote(
+        self, callback_key: str, message_context: MessageContext
+    ) -> bool:
+        """Return True when a provider-specific quoted-card follow-up must wait."""
+        return False
+
+    async def _delete_private_im_runtime_callback(self, callback_key: str) -> None:
+        """Delete only the failed stand-in turn's callback address."""
+        callback_service = self.get_callback_service()
+        if callback_service:
+            await callback_service.delete_callback_info(callback_key)
+
+    async def _fail_private_im_runtime_continuation(
+        self,
+        *,
+        callback_key: str,
+        streaming_emitter: Any,
+        message_context: MessageContext,
+        error: str,
+    ) -> None:
+        """Report a rejected turn without disturbing the callback in progress."""
+        try:
+            await self._emit_private_im_runtime_stream_error(
+                streaming_emitter=streaming_emitter,
+                task_id=callback_key,
+                message_context=message_context,
+                error=error,
+            )
+        except Exception:
+            self.logger.exception(
+                "[%sHandler] Failed to deliver rejected runtime card: %s",
+                self._channel_type.value,
+                callback_key,
+            )
+            await self.send_text_reply(message_context, error)
+        finally:
+            try:
+                if streaming_emitter and hasattr(streaming_emitter, "close"):
+                    await streaming_emitter.close()
+            except Exception:
+                self.logger.exception(
+                    "[%sHandler] Failed to close rejected runtime card: %s",
+                    self._channel_type.value,
+                    callback_key,
+                )
 
     async def _create_private_im_runtime_streaming_emitter(
         self,
@@ -1117,12 +1287,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
         await self.send_text_reply(message_context, error)
-
-    async def _delete_private_im_runtime_callback(self, callback_key: str) -> None:
-        callback_service = self.get_callback_service()
-        if not callback_service:
-            return
-        await callback_service.delete_callback_info(callback_key)
 
     def _build_private_im_message_source(
         self,
@@ -1226,15 +1390,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     initial_stream_content.strip(),
                 )
 
-        await self._register_streaming_emitter(
-            task_id=task_id,
-            streaming_emitter=streaming_emitter,
-            message_context=message_context,
-        )
-
         from app.services.chat.trigger import trigger_ai_response_unified
 
         try:
+            await self._register_streaming_emitter(
+                task_id=task_id,
+                streaming_emitter=streaming_emitter,
+                message_context=message_context,
+            )
             dispatch_result_emitter = self._select_dispatch_result_emitter(
                 task_id=task_id,
                 subtask_id=assistant_subtask.id,
@@ -1277,6 +1440,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 message_context,
                 f"任务执行失败：{exc}。任务状态已恢复，可以继续发送消息重试。",
             )
+            if streaming_emitter and hasattr(streaming_emitter, "emit_error"):
+                await streaming_emitter.emit_error(
+                    task_id=task_id,
+                    subtask_id=assistant_subtask.id,
+                    error=str(exc),
+                )
             return False
 
         if streaming_emitter:
@@ -2795,15 +2964,47 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         else:
             response_emitter = SyncResponseEmitter()
 
-        # Register streaming emitter for callback events.
-        # In HTTP_CALLBACK mode, executor events arrive via /callback rather than
-        # through the emitter passed to dispatch(). Registering the emitter here
-        # allows the callback endpoint to forward events to the same AI Card.
-        await self._register_streaming_emitter(
-            task_id=task_id,
-            streaming_emitter=streaming_emitter,
-            message_context=message_context,
-        )
+        try:
+            try:
+                # Register before dispatch so callbacks can update this card.
+                await self._register_streaming_emitter(
+                    task_id=task_id,
+                    streaming_emitter=streaming_emitter,
+                    message_context=message_context,
+                )
+            except Exception as exc:
+                self._mark_task_registration_failed(
+                    task=trigger_data["task"],
+                    assistant_subtask=trigger_data["assistant_subtask"],
+                    error_message=str(exc),
+                )
+                raise
+        except Exception as exc:
+            self.logger.exception(
+                "[%sHandler] Could not register task callback: task_id=%s",
+                self._channel_type.value,
+                task_id,
+            )
+            error = f"任务回调注册失败：{exc}"
+            delivered = False
+            if streaming_emitter and hasattr(streaming_emitter, "emit_error"):
+                try:
+                    await streaming_emitter.emit_error(
+                        task_id=task_id,
+                        subtask_id=trigger_data["assistant_subtask"].id,
+                        error=error,
+                    )
+                    delivered = True
+                except Exception:
+                    self.logger.exception(
+                        "[%sHandler] Could not deliver callback registration "
+                        "failure to the card: task_id=%s",
+                        self._channel_type.value,
+                        task_id,
+                    )
+            if not delivered:
+                await self.send_text_reply(message_context, error)
+            return None
 
         # Notify user if auto-starting new conversation due to timeout
         if auto_new_conversation:
@@ -2877,6 +3078,34 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"[{self._channel_type.value}Handler] Response timeout for task {task_id}"
             )
             return "Response timeout, please try again later"
+
+    def _mark_task_registration_failed(
+        self,
+        *,
+        task: Any,
+        assistant_subtask: Any,
+        error_message: str,
+    ) -> None:
+        """Reload detached records before persisting a registration failure."""
+
+        from app.stores.tasks import subtask_store
+
+        with SessionLocal() as db:
+            persisted_task = task_store.get_by_id(db, task_id=task.id)
+            persisted_subtask = subtask_store.get_basic_by_id(
+                db, subtask_id=assistant_subtask.id
+            )
+            if persisted_task is None or persisted_subtask is None:
+                raise LookupError(
+                    f"Cannot find task {task.id} or assistant subtask "
+                    f"{assistant_subtask.id} after callback registration failure"
+                )
+            self._mark_private_im_task_response_failed(
+                db,
+                task=persisted_task,
+                assistant_subtask=persisted_subtask,
+                error_message=error_message,
+            )
 
     def _build_chat_payload(
         self,

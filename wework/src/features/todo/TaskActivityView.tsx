@@ -1152,6 +1152,7 @@ export function TaskActivityView({
       <ChatMessage
         key={message.messageId}
         message={message}
+        members={members}
         executionTurnId={executionBinding.getTurnId(message)}
         flash={message.messageId === flashedCommentId}
         mine={
@@ -1564,6 +1565,7 @@ export function TaskActivityView({
                 <ChatMessage
                   key={message.messageId}
                   message={message}
+                  members={members}
                   executionTurnId={executionBinding.getTurnId(message)}
                   flash={message.messageId === flashedCommentId}
                   mine={

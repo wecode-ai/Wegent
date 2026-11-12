@@ -16,6 +16,7 @@ mod connections;
 mod credential_cipher;
 mod definition;
 mod execution;
+mod local_http;
 mod local_lifecycle;
 mod migrations;
 mod native_credential;

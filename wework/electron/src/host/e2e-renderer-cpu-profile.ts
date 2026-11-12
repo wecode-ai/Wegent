@@ -22,7 +22,9 @@ export function installE2ERendererCpuProfiling(
     return
   const maximum = Number(environment.WEWORK_E2E_RENDERER_CPU_PROFILE_LIMIT ?? Infinity)
   if (maximum !== Infinity && (!Number.isSafeInteger(maximum) || maximum < 1)) return
-  const progress = { sequence: 0, maximum }
+  const intervalMs = Number(environment.WEWORK_E2E_RENDERER_CPU_PROFILE_INTERVAL_MS ?? 20_000)
+  if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) return
+  const progress = { sequence: 0, maximum, intervalMs }
   let collecting = false
   contents.on('did-finish-load', () => {
     if (collecting || progress.sequence >= maximum) return
@@ -36,7 +38,7 @@ export function installE2ERendererCpuProfiling(
 async function collectProfiles(
   contents: ProfileContents,
   directory: string,
-  progress: { sequence: number; maximum: number }
+  progress: { sequence: number; maximum: number; intervalMs: number }
 ): Promise<void> {
   while (!contents.isDestroyed() && progress.sequence < progress.maximum) {
     try {
@@ -47,7 +49,7 @@ async function collectProfiles(
         recording_mode: 'record-continuously',
         trace_buffer_size_in_kb: 32768,
       })
-      await new Promise(resolve => setTimeout(resolve, 20_000))
+      await new Promise(resolve => setTimeout(resolve, progress.intervalMs))
       const file = `renderer-${contents.id}-${progress.sequence++}.trace.json`
       await contentTracing.stopRecording(join(directory, file))
       console.info('[e2e-renderer-cpu-profile]', { file, startedAt, finishedAt: Date.now() })

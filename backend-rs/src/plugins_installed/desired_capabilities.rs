@@ -192,6 +192,52 @@ where
     Ok(Value::Object(payload))
 }
 
+/// Read the account's managed plugins on the caller's primary transaction.
+/// Device overrides and object-store signing do not participate in local HTTP sync.
+pub(super) async fn build_local_plugins<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+) -> Result<Value, BuildError> {
+    let rows: Vec<InstalledKindRow> = query.fetch_all(format!(
+        "SELECT {KIND_COLUMNS} FROM kinds WHERE user_id = ? AND kind = 'InstalledPlugin' AND namespace = 'default' ORDER BY id ASC"
+    ), (user_id,)).await?;
+    let mut plugins = Vec::new();
+    for row in rows
+        .iter()
+        .filter(|row| row.is_active && is_synced_install(&row.json.0.to_value()))
+    {
+        plugins.push(plugin_payload(query, row, None, true).await?);
+    }
+    Ok(serde_json::json!({"mode":"merge", "scope":"plugins", "plugins":plugins}))
+}
+
+/// Restrict a mutation to one owned installation; full reconciliation remains
+/// responsible for discovering unrelated account changes and implicit removals.
+pub(super) async fn restrict_local_plugin<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    installed_id: i64,
+    payload: &mut Value,
+) -> Result<(), BuildError> {
+    let Some(row) = query.fetch_optional::<_,_,InstalledKindRow>(format!("SELECT {KIND_COLUMNS} FROM kinds WHERE id = ? AND user_id = ? AND kind = 'InstalledPlugin' AND namespace = 'default'"), (installed_id,user_id)).await? else {
+        return Err(brz_mysql::MysqlError::InvalidQuery{reason:"SNAPSHOT_NOT_OWNED".into()}.into());
+    };
+    let plugins = payload["plugins"]
+        .as_array_mut()
+        .expect("local plugins builder");
+    plugins.retain(|item| item["installed_plugin_id"].as_i64() == Some(installed_id));
+    let mut removed = Vec::new();
+    if plugins.is_empty() {
+        let document = row.json.0.to_value();
+        let spec = object_or_empty(document.get("spec"));
+        let source = object_or_empty(spec.get("source"));
+        removed.push(serde_json::json!({"installed_plugin_id":installed_id,"name":plugin_payload_name(&row,&document,&spec,&source),"marketplace":spec.get("marketplace").or_else(||source.get("marketplace"))}));
+    }
+    payload["scope"] = Value::String("plugin_delta".into());
+    payload["removed_plugins"] = Value::Array(removed);
+    Ok(())
+}
+
 /// Source `capability_snapshot`: the stable desired state represented by a
 /// payload. Signed download URLs and their expirations change on every build,
 /// so they are excluded before comparing two snapshots.
@@ -535,8 +581,15 @@ async fn resolve_plugin_payloads<Q: PluginQuery>(
         if seen.contains(&installed.id) {
             continue;
         }
-        payloads
-            .push(plugin_payload(query, &installed, overrides.get(&installed.id).copied()).await?);
+        payloads.push(
+            plugin_payload(
+                query,
+                &installed,
+                overrides.get(&installed.id).copied(),
+                false,
+            )
+            .await?,
+        );
         seen.push(installed.id);
     }
     Ok(payloads)
@@ -547,6 +600,7 @@ async fn plugin_payload<Q: PluginQuery>(
     query: &mut Q,
     installed: &InstalledKindRow,
     release_id_override: Option<i64>,
+    local_http: bool,
 ) -> Result<Value, BuildError> {
     let json = installed.json.0.to_value();
     let spec = object_or_empty(json.get("spec"));
@@ -583,6 +637,11 @@ async fn plugin_payload<Q: PluginQuery>(
         "version".to_string(),
         spec.get("version").cloned().unwrap_or(Value::Null),
     );
+    // Legacy uploaded/builtin manifests may omit a version. Match the existing
+    // installer default explicitly so receipts describe the same package key.
+    if local_http && payload["version"].as_str().is_none_or(str::is_empty) {
+        payload.insert("version".into(), Value::String("latest".into()));
+    }
     if let Some(cloud_plugin_id) = cloud_plugin_id(&spec, &source) {
         payload.insert("cloud_plugin_id".to_string(), Value::from(cloud_plugin_id));
     }
@@ -632,7 +691,17 @@ async fn plugin_payload<Q: PluginQuery>(
                     payload.insert("components".to_string(), components);
                 }
             }
-            let (download_path, expires_at) = presign_download(&release.storage_key)?;
+            let (download_path, expires_at) = if local_http {
+                (
+                    format!(
+                        "/api/plugins/installed/{}/download?expected_release_id={}",
+                        installed.id, release.id
+                    ),
+                    String::new(),
+                )
+            } else {
+                presign_download(&release.storage_key)?
+            };
             payload.insert("download_path".to_string(), Value::String(download_path));
             payload.insert(
                 "download_url_expires_at".to_string(),
@@ -642,7 +711,13 @@ async fn plugin_payload<Q: PluginQuery>(
         } else {
             payload.insert(
                 "download_path".to_string(),
-                Value::String(format!("/api/plugins/installed/{}/download", installed.id)),
+                Value::String(match (local_http, release_id) {
+                    (true, Some(id)) => format!(
+                        "/api/plugins/installed/{}/download?expected_release_id={id}",
+                        installed.id
+                    ),
+                    _ => format!("/api/plugins/installed/{}/download", installed.id),
+                }),
             );
         }
     }
