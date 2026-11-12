@@ -108,7 +108,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
       const projectTestId = await control.command('getAttribute', sidebarScoped('[data-testid^="collaboration-workspace-project-"]'), { value: 'data-testid' })
       const projectId = projectTestId.replace('collaboration-workspace-project-', '')
-      const issueTestId = await control.command('getAttribute', scoped('[data-testid^="cloud-todo-card-"]:not([data-testid^="cloud-todo-card-header-"]):not([data-testid^="cloud-todo-card-metadata-"]):not([data-testid^="cloud-todo-card-reference-"]):not([data-testid^="cloud-todo-card-status-"])'), { value: 'data-testid' })
+      const issueTestId = await control.command('getAttribute', scoped('button[data-testid^="cloud-todo-card-"]'), { value: 'data-testid' })
       const issueId = issueTestId.replace('cloud-todo-card-', '')
       const localProject = { id: projectId, name: PROJECT_NAME }
       await verifyCollaborationPersonalHome(control, { scoped, project: localProject, issue: { id: issueId, title: ISSUE_NAME } })
