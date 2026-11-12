@@ -229,7 +229,7 @@ test("a refresh diagnostic resolves a separate immutable source without publishi
   for (const change of [
     { VERIFICATION_SOURCE_RUN_ID: "" },
     { PUBLISH_RELEASE: "true" },
-    { VERIFICATION_CHECKPOINT: "all" },
+    { VERIFICATION_CHECKPOINT: "unregistered-checkpoint" },
     { VERIFICATION_SOURCE_RUN_ID: "../124" },
   ]) {
     assert.throws(() =>
@@ -258,6 +258,12 @@ test("retry diagnostics require an independent source and run on macOS and Windo
   const resolved = resolveUpgradeInputs(value.environment, execute);
   assert.equal(resolved.diagnostic_checkpoint, "app-update-retry");
   assert.equal(resolved.source_run_id, "124");
+  const roundtrip = resolveUpgradeInputs(
+    { ...value.environment, VERIFICATION_CHECKPOINT: "all" },
+    execute,
+  );
+  assert.equal(roundtrip.diagnostic_checkpoint, "upgrade-and-rollback");
+  assert.equal(roundtrip.source_run_id, "124");
   assert.deepEqual(
     JSON.parse(resolved.verification_matrix).include.map(
       (item) => item.platform,
@@ -267,7 +273,7 @@ test("retry diagnostics require an independent source and run on macOS and Windo
   for (const change of [
     { VERIFICATION_SOURCE_RUN_ID: "" },
     { PUBLISH_RELEASE: "true" },
-    { VERIFICATION_CHECKPOINT: "all" },
+    { VERIFICATION_CHECKPOINT: "unregistered-checkpoint" },
   ]) {
     assert.throws(() =>
       resolveUpgradeInputs({ ...value.environment, ...change }, execute),

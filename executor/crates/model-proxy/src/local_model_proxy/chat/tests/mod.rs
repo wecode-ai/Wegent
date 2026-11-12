@@ -53,3 +53,7 @@ mod cases_1;
 mod cases_2;
 
 mod custom_namespaces;
+
+mod responses_event_types;
+
+mod native_catalog_history;

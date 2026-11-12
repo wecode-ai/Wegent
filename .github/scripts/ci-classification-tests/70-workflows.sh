@@ -564,7 +564,7 @@ if [[ "$(grep -Fc "$test_archive_exclusion" "$wework_workflow")" -ne 9 ]] ||
   exit 1
 fi
 
-if [[ "$(grep -Fc 'compression-level: 6' "$wework_workflow")" -ne 9 ]] ||
+if [[ "$(grep -Fc 'compression-level: 6' "$wework_workflow")" -ne 10 ]] ||
   [[ "$(grep -Fc 'compression-level: 6' \
     "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
   printf 'Every Wework desktop diagnostics upload must compress retained evidence\n' >&2

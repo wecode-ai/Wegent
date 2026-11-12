@@ -71,7 +71,11 @@ fn shared_startup_timeout_preserves_live_turns_and_late_responses() {
 
 fn client(root: &tempfile::TempDir) -> CodexAppServerClient {
     let script = root.path().join("codex");
-    fs::write(&script, SERVER).unwrap();
+    fs::write(
+        &script,
+        wegent_executor_test_support::with_codex_bundled_catalog(SERVER),
+    )
+    .unwrap();
     let mut permissions = fs::metadata(&script).unwrap().permissions();
     permissions.set_mode(0o700);
     fs::set_permissions(&script, permissions).unwrap();
@@ -279,8 +283,8 @@ fn shared_startup_watchdog_preserves_another_thread_preparation() {
             blocked.display(), release.display()
         );
         let progress = "for active in 1 2; do\n        printf '{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-%s\",\"turnId\":\"turn-thread-%s\",\"itemId\":\"answer\",\"delta\":\"late answer\"}}\\n' \"$active\" \"$active\"\n      done\n      for active in 1 2; do";
-        fs::write(&script, SERVER.replace("thread_count=$((thread_count + 1))", &gate)
-            .replace("for active in 1 2; do", progress)).unwrap();
+        fs::write(&script, wegent_executor_test_support::with_codex_bundled_catalog(&SERVER.replace("thread_count=$((thread_count + 1))", &gate)
+            .replace("for active in 1 2; do", progress))).unwrap();
         let mut permissions = fs::metadata(&script).unwrap().permissions();
         permissions.set_mode(0o700);
         fs::set_permissions(&script, permissions).unwrap();

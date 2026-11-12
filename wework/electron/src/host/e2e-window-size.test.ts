@@ -4,6 +4,13 @@ import { setE2EWindowSize } from './e2e-window-size.js'
 
 afterEach(() => vi.useRealTimers())
 
+const setWindowSize = (
+  target: Parameters<typeof setE2EWindowSize>[0],
+  width: number,
+  height: number,
+  maximized = false
+) => setE2EWindowSize(target, width, height, maximized, 'linux')
+
 function windowFixture(maximized = false) {
   return Object.assign(new EventEmitter(), {
     getContentSize: vi.fn((): [number, number] => [1280, 720]),
@@ -24,7 +31,7 @@ function expectClean(target: ReturnType<typeof windowFixture>) {
 test('waits for native unmaximize before requesting a size and preserves the original size', async () => {
   const target = windowFixture(true)
   const finished = vi.fn()
-  const pending = setE2EWindowSize(target, 640, 800).then(finished)
+  const pending = setWindowSize(target, 640, 800).then(finished)
   expect(target.unmaximize).toHaveBeenCalledOnce()
   target.emit('resize')
   target.emit('unmaximize')
@@ -48,7 +55,7 @@ test('waits for native unmaximize before requesting a size and preserves the ori
 test('requires both requested content dimensions after an asynchronous normal-window resize', async () => {
   const target = windowFixture()
   const finished = vi.fn()
-  const pending = setE2EWindowSize(target, 1280, 1200).then(finished)
+  const pending = setWindowSize(target, 1280, 1200).then(finished)
   expect(target.unmaximize).not.toHaveBeenCalled()
   expect(target.setContentSize).toHaveBeenCalledExactlyOnceWith(1280, 1200)
   target.emit('resize')
@@ -71,7 +78,7 @@ test('supports synchronous native state changes without losing their events', as
     target.getContentSize.mockReturnValue([width, height])
     target.emit('resize')
   })
-  await expect(setE2EWindowSize(target, 640, 800)).resolves.toEqual({
+  await expect(setWindowSize(target, 640, 800)).resolves.toEqual({
     width: 1280,
     height: 720,
     maximized: true,
@@ -90,11 +97,11 @@ test.each([false, true])('roundtrips a previous window state (maximized=%s)', as
     target.getContentSize.mockReturnValue([width, height])
     target.emit('resize')
   })
-  const previous = await setE2EWindowSize(target, 1040, 760)
+  const previous = await setWindowSize(target, 1040, 760)
   expect(previous).toEqual({ width: 1272, height: 716, maximized })
   expectClean(target)
   target.setContentSize.mockClear()
-  const restored = setE2EWindowSize(target, previous.width, previous.height, previous.maximized)
+  const restored = setWindowSize(target, previous.width, previous.height, previous.maximized)
   if (maximized) {
     expect(target.maximize).toHaveBeenCalledOnce()
     expect(target.setContentSize).not.toHaveBeenCalled()
@@ -115,7 +122,7 @@ test.each([false, true])('roundtrips a previous window state (maximized=%s)', as
 test('rejects a refused maximize without accepting its previous content geometry', async () => {
   vi.useFakeTimers()
   const target = windowFixture()
-  const pending = setE2EWindowSize(target, 1280, 720, true)
+  const pending = setWindowSize(target, 1280, 720, true)
   const rejected = expect(pending).rejects.toThrow('did not restore the maximized state')
   await vi.advanceTimersByTimeAsync(5000)
   await rejected
@@ -125,7 +132,7 @@ test('rejects a refused maximize without accepting its previous content geometry
 
 test('cleans listeners when the window closes while restoring maximization', async () => {
   const target = windowFixture()
-  const pending = setE2EWindowSize(target, 1280, 720, true)
+  const pending = setWindowSize(target, 1280, 720, true)
   target.isDestroyed.mockReturnValue(true)
   target.emit('closed')
   await expect(pending).rejects.toThrow('closed while resizing')
@@ -135,7 +142,7 @@ test('cleans listeners when the window closes while restoring maximization', asy
 test('does not accept matching geometry while the native window is maximized', async () => {
   const target = windowFixture()
   const finished = vi.fn()
-  const pending = setE2EWindowSize(target, 640, 800).then(finished)
+  const pending = setWindowSize(target, 640, 800).then(finished)
   target.isMaximized.mockReturnValue(true)
   target.getContentSize.mockReturnValue([640, 800])
   target.emit('resize')
@@ -150,7 +157,7 @@ test('does not accept matching geometry while the native window is maximized', a
 test('rejects a refused native unmaximize without requesting the fixture size', async () => {
   vi.useFakeTimers()
   const target = windowFixture(true)
-  const pending = setE2EWindowSize(target, 640, 800)
+  const pending = setWindowSize(target, 640, 800)
   const rejected = expect(pending).rejects.toThrow(
     'did not leave the maximized state; actual content=1280x720, maximized=true'
   )
@@ -163,7 +170,7 @@ test('rejects a refused native unmaximize without requesting the fixture size', 
 test('rejects an unapplied size with the requested and actual native geometry', async () => {
   vi.useFakeTimers()
   const target = windowFixture()
-  const pending = setE2EWindowSize(target, 640, 800)
+  const pending = setWindowSize(target, 640, 800)
   const rejected = expect(pending).rejects.toThrow(
     'did not resize its content to 640x800; actual content=1280x720, maximized=false'
   )
@@ -176,7 +183,7 @@ test('rejects an unapplied size with the requested and actual native geometry', 
 test('rejects and cleans up when a native geometry read fails at the timeout boundary', async () => {
   vi.useFakeTimers()
   const target = windowFixture()
-  const pending = setE2EWindowSize(target, 640, 800)
+  const pending = setWindowSize(target, 640, 800)
   target.getContentSize.mockImplementation(() => {
     throw new Error('Native geometry is unavailable')
   })
@@ -190,7 +197,7 @@ test.each([false, true])(
   'rejects a window closing during native resize (maximized=%s)',
   async maximized => {
     const target = windowFixture(maximized)
-    const pending = setE2EWindowSize(target, 640, 800)
+    const pending = setWindowSize(target, 640, 800)
     target.isDestroyed.mockReturnValue(true)
     target.emit('closed')
     await expect(pending).rejects.toThrow('closed while resizing')
@@ -206,7 +213,7 @@ test.each([false, true])(
     operation.mockImplementation(() => {
       throw new Error('Native resize failed')
     })
-    await expect(setE2EWindowSize(target, 640, 800)).rejects.toThrow('Native resize failed')
+    await expect(setWindowSize(target, 640, 800)).rejects.toThrow('Native resize failed')
     expectClean(target)
   }
 )
@@ -214,7 +221,26 @@ test.each([false, true])(
 test('rejects an already destroyed window before accessing native geometry', async () => {
   const target = windowFixture()
   target.isDestroyed.mockReturnValue(true)
-  await expect(setE2EWindowSize(target, 640, 800)).rejects.toThrow('unavailable for resizing')
+  await expect(setWindowSize(target, 640, 800)).rejects.toThrow('unavailable for resizing')
   expect(target.getContentSize).not.toHaveBeenCalled()
+  expectClean(target)
+})
+
+test('macOS resizes a screen-sized restored frame even when native unmaximize is a no-op', async () => {
+  const target = windowFixture(true)
+  target.getContentSize.mockReturnValue([1024, 681])
+  target.setContentSize.mockImplementation((width: number, height: number) => {
+    target.isMaximized.mockReturnValue(false)
+    target.getContentSize.mockReturnValue([width, height])
+    target.emit('resize')
+  })
+  await expect(setE2EWindowSize(target, 1280, 1200, false, 'darwin')).resolves.toEqual({
+    width: 1024,
+    height: 681,
+    maximized: true,
+  })
+  expect(target.unmaximize).toHaveBeenCalledOnce()
+  expect(target.setContentSize).toHaveBeenCalledExactlyOnceWith(1280, 1200)
+  expect(target.isMaximized()).toBe(false)
   expectClean(target)
 })

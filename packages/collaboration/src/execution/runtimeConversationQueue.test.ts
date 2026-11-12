@@ -232,6 +232,32 @@ describe("shared PC and Web conversation queue", () => {
     queue.reconcileGuidance(new Set(["one"]));
     expect(queue.getSnapshot()).toEqual([]);
   });
+  it.each([
+    undefined,
+    { startNewSession: true, expectedThreadId: "submitted-thread" },
+    { startNewSession: false, expectedThreadId: "submitted-thread" },
+  ])("preserves the submitted session boundary: %j", (boundary) => {
+    const request = runtimeQueuedMessageRequest(
+      {
+        address: { deviceId: "device", taskId: "task" },
+        ...(boundary
+          ? {
+              startNewSession: !boundary.startNewSession,
+              expectedThreadId: "stale-context",
+            }
+          : {}),
+      },
+      { ...message("session-boundary"), ...boundary },
+    );
+
+    if (boundary) {
+      expect(request).toMatchObject(boundary);
+    } else {
+      expect(request).not.toHaveProperty("startNewSession");
+      expect(request).not.toHaveProperty("expectedThreadId");
+    }
+  });
+
   it("addresses remote and local attachments correctly and freezes the submitted model selection", () => {
     const request = runtimeQueuedMessageRequest(
       {

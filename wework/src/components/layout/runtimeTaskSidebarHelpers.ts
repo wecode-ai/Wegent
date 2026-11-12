@@ -172,10 +172,10 @@ export function getNextRuntimeSidebarTaskVisibleLimit(currentLimit: number, tota
 
 export function hasHiddenRuntimeSidebarTaskItems(
   items: RuntimeSidebarTaskItem[],
-  visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+  visibleItems: RuntimeSidebarTaskItem[]
 ) {
-  const { unpinnedItems } = partitionRuntimeSidebarTaskItems(items)
-  return unpinnedItems.length > Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)
+  const visibleUnpinnedItems = new Set(visibleItems.filter(item => !item.pinned))
+  return items.some(item => !item.pinned && !visibleUnpinnedItems.has(item))
 }
 
 export function hasExpandedRuntimeSidebarTaskItems(

@@ -305,7 +305,8 @@ mod tests {
         let native = root.path().join("codex.sh");
         fs::write(
             &native,
-            r#"#!/bin/sh
+            crate::test_env::with_codex_bundled_catalog(
+                r#"#!/bin/sh
 while IFS= read -r line; do
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   [ -n "$id" ] || continue
@@ -316,6 +317,7 @@ while IFS= read -r line; do
   esac
 done
 "#,
+            ),
         )
         .unwrap();
         fs::set_permissions(&native, fs::Permissions::from_mode(0o755)).unwrap();

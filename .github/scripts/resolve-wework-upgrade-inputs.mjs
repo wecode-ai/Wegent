@@ -5,7 +5,8 @@ import { releaseVerificationChannels } from "../../wework/scripts/lib/upgrade-ev
 
 import {
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
-  UPGRADE_SOURCE_DIAGNOSTICS,
+  UPGRADE_CHECKPOINT_GROUP,
+  isUpgradeSourceDiagnostic,
 } from "../../wework/e2e/desktop/upgrade-suite.mjs";
 import { compareVersions } from "../../wework/electron/src/runtime/upgrade-policy.mjs";
 
@@ -43,23 +44,27 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
       "A published target selection requires an existing build replay",
     );
   const requestedCheckpoint = environment.VERIFICATION_CHECKPOINT || "all";
-  const diagnosticCheckpoint =
-    requestedCheckpoint === "all" ? "" : requestedCheckpoint;
   const sourceRunId = environment.VERIFICATION_SOURCE_RUN_ID || "";
-  const requiresSource =
-    UPGRADE_SOURCE_DIAGNOSTICS.includes(diagnosticCheckpoint);
+  const diagnosticCheckpoint =
+    requestedCheckpoint === "all"
+      ? sourceRunId
+        ? UPGRADE_CHECKPOINT_GROUP
+        : ""
+      : requestedCheckpoint;
+  const requiresSource = isUpgradeSourceDiagnostic(diagnosticCheckpoint);
   if (
     (sourceRunId && !requiresSource) ||
     (requiresSource && !sourceRunId) ||
     (sourceRunId && environment.PUBLISH_RELEASE === "true")
   )
     throw new Error(
-      "A prebuilt source requires a non-publishing app-update-refresh or app-update-retry diagnostic",
+      "A prebuilt source requires a non-publishing immutable-pair diagnostic",
     );
   if (
     diagnosticCheckpoint &&
     ((!sourceRunId && environment.REPLAY !== "true") ||
-      !UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(diagnosticCheckpoint))
+      (diagnosticCheckpoint !== UPGRADE_CHECKPOINT_GROUP &&
+        !UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(diagnosticCheckpoint)))
   )
     throw new Error(
       "A diagnostic checkpoint requires an existing build replay",

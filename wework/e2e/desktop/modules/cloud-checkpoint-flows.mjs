@@ -27,6 +27,7 @@ import {
 } from './cloud-sidebar-project-flow.mjs'
 import { verifyGitCloneRecovery } from './git-clone-recovery-flow.mjs'
 import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
+import { verifyCloudHtmlFileLinkPreview } from './markdown-file-preview.mjs'
 import {
   createCloudAttachmentVerification,
   verifyCloudWorkspacePathMentions,
@@ -1015,6 +1016,13 @@ async function verifyCloudCheckpoint({
       return
     }
     case 'rendering-extensions':
+      setPhase('cloud-html-file-link-preview')
+      await verifyCloudHtmlFileLinkPreview({
+        composerSelector,
+        control,
+        projectRowSelector,
+        workspacePath,
+      })
       setPhase('cloud-tool-block-order')
       await verifyToolBlockChronologicalOrder({ composerSelector, control })
       setPhase('cloud-view-image')

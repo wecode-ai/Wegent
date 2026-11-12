@@ -560,6 +560,19 @@ async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {
       join(appBundlePath, 'Contents', 'Info.plist'),
     ])
     await runChecked('codesign', ['--force', '--deep', '--sign', '-', appBundlePath])
+  } else {
+    // Complete native first-launch assessment before the inspector startup budget.
+    const startedAt = Date.now()
+    await runChecked('/usr/sbin/spctl', [
+      '--assess',
+      '--type',
+      'execute',
+      '--verbose=4',
+      appBundlePath,
+    ])
+    console.log(
+      `[desktop-e2e] Signed application security assessment completed: elapsedMs=${Date.now() - startedAt}`
+    )
   }
   commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
   return {
