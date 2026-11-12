@@ -260,6 +260,20 @@ beforeEach(() => {
       },
       selectedModel: { name: 'original-model', type: 'runtime' },
       selectedModelOptions: { reasoning: 'high' },
+      resolveRuntimeTaskModelSelection: vi.fn(() => ({
+        selectionResolved: true,
+        taskSelection: {
+          modelName: 'original-model',
+          modelType: 'runtime' as const,
+          options: { reasoning: 'high' },
+        },
+        selectedModel: { name: 'original-model', type: 'runtime' as const },
+        activeModel: { name: 'original-model', type: 'runtime' as const },
+        selectedModelOptions: { reasoning: 'high' },
+      })),
+      setRuntimeTaskSelectedModel: vi.fn(),
+      setRuntimeTaskSelectedModelAndOptions: vi.fn(),
+      setRuntimeTaskSelectedModelOption: vi.fn(),
       models: [],
       setInputForScope: mocks.setInput,
       getInputRevisionForScope: (scope: string) => sharedRevisions.get(scope) ?? 0,
@@ -1347,6 +1361,27 @@ describe('pane continuation without composer submission', () => {
     expect(request).not.toHaveProperty('attachments')
     expect(request.message).not.toContain(codeComment.comment)
     expectDraftPreserved(result.current)
+  })
+
+  test('continues with the addressed task model when another pane owns the active selection', async () => {
+    Object.assign(mocks.context.projectChat as object, {
+      selectedModel: { name: 'active-pane-model', type: 'runtime' },
+      selectedModelOptions: { reasoning: 'low' },
+    })
+    const { result } = await renderSession()
+
+    await act(async () => expect(await result.current.sendContinuation(continuation)).toBe(true))
+
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        modelId: 'original-model',
+        modelOptions: expect.objectContaining({ reasoning: 'high' }),
+      }),
+      expect.any(Object)
+    )
+    const [request] = mocks.send.mock.calls[0]
+    expect(request.modelOptions?.reasoning).not.toBe('low')
   })
 
   test('retains a continuation queued by the original executor without consuming the draft', async () => {

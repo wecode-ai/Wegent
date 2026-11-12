@@ -1510,6 +1510,7 @@ describe('DesktopWorkbenchLayout', () => {
             address
           )
           return {
+            selectionResolved: Boolean(taskSelection),
             taskSelection,
             selectedModel: taskModel,
             activeModel: taskModel,
@@ -2862,6 +2863,19 @@ describe('DesktopWorkbenchLayout', () => {
             models: [harnessTestModel],
             selectedModel,
             selectedModelOptions: { reasoning_effort: 'high' },
+            resolveRuntimeTaskModelSelection: () => ({
+              selectionResolved: true,
+              taskSelection: selectedModel
+                ? {
+                    modelName: selectedModel.name,
+                    modelType: selectedModel.type,
+                    options: { reasoning_effort: 'high' },
+                  }
+                : null,
+              selectedModel,
+              activeModel: selectedModel,
+              selectedModelOptions: { reasoning_effort: 'high' },
+            }),
           }}
           onCancelRuntimePaneTask={onCancelRuntimePaneTask}
           onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}

@@ -198,6 +198,8 @@ export interface RuntimePaneGuidanceResult {
 }
 
 export interface RuntimeTaskModelSelectionControls {
+  /** Whether the conversation's persisted selection has been loaded, even when it has none. */
+  selectionResolved: boolean
   taskSelection: ModelSelectionConfig | null
   selectedModel: UnifiedModel | null
   activeModel: UnifiedModel | null

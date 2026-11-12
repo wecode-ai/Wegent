@@ -55,6 +55,7 @@ import {
   requiresNewConversationForModelSwitch,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
+import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
 import { findModelForSelection } from '@/features/workbench/runtimeContextUsage'
 import {
   deriveRuntimePaneStatus,
@@ -290,11 +291,7 @@ export function TemporaryChatPanel({
     ? modelControls.loading ||
       Boolean(modelControls.unavailable) ||
       (activeProviderPending && !explicitNewSession)
-    : Boolean(
-        address &&
-        !taskModelSelection?.taskSelection &&
-        (state.isBootstrapping || state.runtimeWork === null)
-      )
+    : Boolean(address && !taskModelSelection?.selectionResolved)
   const modelError = modelControls?.unavailableReason
     ? t(`standIn.errors.${modelControls.unavailableReason}`)
     : (modelControls?.error ??
@@ -317,20 +314,8 @@ export function TemporaryChatPanel({
       contextUsage: contextUsage ?? undefined,
       ...(address && taskModelSelection
         ? {
-            activeModel: taskModelSelection.activeModel,
+            ...runtimeTaskModelControlOverrides(projectChat, address, taskModelSelection),
             supportsModelProviderSwitch: taskModelSelection.supportsModelProviderSwitch,
-            selectedModel: taskModelSelection.selectedModel,
-            selectedModelOptions: taskModelSelection.selectedModelOptions,
-            setSelectedModel: (model: UnifiedModel | null) =>
-              projectChat.setRuntimeTaskSelectedModel(address, model),
-            setSelectedModelAndOptions: (model: UnifiedModel, options: ModelOptions) =>
-              projectChat.setRuntimeTaskSelectedModelAndOptions(address, model, options),
-            setSelectedModelOption: (optionId: string, value: string) =>
-              projectChat.setRuntimeTaskSelectedModelOption(address, optionId, value),
-            getSelectedModel: () =>
-              projectChat.resolveRuntimeTaskModelSelection(address).selectedModel,
-            getSelectedModelOptions: () =>
-              projectChat.resolveRuntimeTaskModelSelection(address).selectedModelOptions,
           }
         : {}),
       ...(modelControls
@@ -676,6 +661,9 @@ export function TemporaryChatPanel({
           modelOptions: taskModelSelection.selectedModelOptions,
         }
       }
+      // A bound conversation never borrows the active pane's model while its
+      // own selection is unresolved or deliberately native.
+      return {}
     }
     return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
   }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection, modelControls])

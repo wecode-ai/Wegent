@@ -61,6 +61,7 @@ describe('bound remote task model selection', () => {
     )
 
     expect(result.current.resolveRuntimeTaskModelSelection(address)).toMatchObject({
+      selectionResolved: true,
       taskSelection: selection,
       selectedModelOptions: selection.options,
       activeModel: {
@@ -70,6 +71,76 @@ describe('bound remote task model selection', () => {
         resourceUserId: 0,
       },
       selectedModel: { name: selection.modelName, type: 'public' },
+    })
+  })
+
+  it('reports an unresolved conversation instead of inventing a model', () => {
+    const store = modelStore([])
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({ userId: 7, resolveTask: () => null, modelStore: store })
+    )
+
+    expect(
+      result.current.resolveRuntimeTaskModelSelection({
+        deviceId: 'remote-device',
+        taskId: 'runtime-1',
+      })
+    ).toMatchObject({
+      selectionResolved: false,
+      taskSelection: null,
+      selectedModel: null,
+      selectedModelOptions: {},
+    })
+  })
+
+  it('treats a model chosen in the pane as resolved before the task summary arrives', () => {
+    const store = modelStore([])
+    store.selectedModelByScope = {
+      'user:7:runtime:remote-device:runtime-3': {
+        name: 'picked-model',
+        type: 'runtime',
+        provider: 'local',
+      },
+    }
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({ userId: 7, resolveTask: () => null, modelStore: store })
+    )
+
+    expect(
+      result.current.resolveRuntimeTaskModelSelection({
+        deviceId: 'remote-device',
+        taskId: 'runtime-3',
+      })
+    ).toMatchObject({
+      selectionResolved: true,
+      selectedModel: { name: 'picked-model' },
+    })
+  })
+
+  it('treats a loaded task without a Wework model as resolved to the native default', () => {
+    const store = modelStore([])
+    const unresolvedAddress = { deviceId: 'remote-device', taskId: 'runtime-2' }
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({
+        userId: 7,
+        resolveTask: target =>
+          target.taskId === unresolvedAddress.taskId
+            ? {
+                taskId: target.taskId,
+                workspacePath: '/workspace',
+                title: 'Legacy task',
+                runtime: 'codex',
+                running: false,
+              }
+            : null,
+        modelStore: store,
+      })
+    )
+
+    expect(result.current.resolveRuntimeTaskModelSelection(unresolvedAddress)).toMatchObject({
+      selectionResolved: true,
+      taskSelection: null,
+      selectedModel: null,
     })
   })
 
