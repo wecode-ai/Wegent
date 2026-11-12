@@ -197,6 +197,12 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
       }
       await assertParent()
       for (const project of projects.slice(0, 2)) {
+        await expandCollaborationSpaces(control, scoped('').trim(), uiTimeoutMs)
+        await revealCollaborationSidebarElement(
+          control,
+          scoped('[data-testid="collaboration-workspace-home-wework-local-workspace"]'),
+          uiTimeoutMs
+        )
         await control.command(
           'clickWhenEnabled',
           scoped('[data-testid="collaboration-workspace-home-wework-local-workspace"]'),
