@@ -33,10 +33,21 @@ pub(in crate::socketio) struct Effects {
     pub(in crate::socketio) changed: bool,
     pub(in crate::socketio) detail: String,
     pub(in crate::socketio) messages: Vec<super::Message>,
+    pub(in crate::socketio) settled_reply: Option<(String, i64)>,
 }
 
 impl Effects {
     pub(in crate::socketio) async fn deliver(self, state: &AppState, runtime: &SocketRuntime) {
+        if let Some((issue_id, owner)) = self.settled_reply {
+            project_chat_snapshot::publish_item_change_with_reason(
+                state,
+                runtime,
+                &issue_id,
+                owner,
+                "human_reply_accepted",
+            )
+            .await;
+        }
         for message in self.messages {
             let projected = super::Projected {
                 message: super::projected_view(&message),

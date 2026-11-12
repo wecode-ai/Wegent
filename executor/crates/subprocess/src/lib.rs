@@ -9,11 +9,15 @@ use wegent_runtime_logging::log_executor_event;
 #[cfg(windows)]
 mod windows_batch;
 #[cfg(windows)]
+mod windows_job;
+#[cfg(windows)]
 pub use windows_batch::shell_command as windows_shell_command;
 
 pub struct ProcessTreeGuard {
     #[cfg(windows)]
     pid: Option<u32>,
+    #[cfg(windows)]
+    job: Option<windows_job::WindowsJob>,
 }
 
 impl ProcessTreeGuard {
@@ -23,17 +27,73 @@ impl ProcessTreeGuard {
         Self {
             #[cfg(windows)]
             pid,
+            #[cfg(windows)]
+            job: None,
         }
     }
 
-    pub fn disarm(&mut self) {
+    /// Prepare Windows containment before a background child is spawned.
+    pub fn prepare_child(command: &mut Command) -> std::io::Result<Self> {
         #[cfg(windows)]
         {
-            self.pid = None;
+            const CREATE_SUSPENDED: u32 = 0x0000_0004;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            let job = windows_job::WindowsJob::create()?;
+            command
+                .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
+                .kill_on_drop(true);
+            Ok(Self {
+                pid: None,
+                job: Some(job),
+            })
         }
+        #[cfg(not(windows))]
+        {
+            let _ = command;
+            Ok(Self::new(None))
+        }
+    }
+
+    /// A failed assignment leaves the child suspended for its owner to reap.
+    pub fn attach_child(&mut self, child: &tokio::process::Child) -> std::io::Result<()> {
+        #[cfg(windows)]
+        {
+            self.pid = child.id();
+            if let Some(job) = &self.job {
+                job.assign_and_resume(child)?;
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = child;
+        Ok(())
+    }
+
+    pub fn disarm(&mut self) -> std::io::Result<()> {
+        #[cfg(windows)]
+        {
+            if let Some(job) = &self.job {
+                job.preserve_descendants()?;
+            }
+            self.pid = None;
+            // Successful commands may intentionally leave detached hooks running.
+            // Disable owner-exit cleanup only after success before closing the handle.
+            self.job = None;
+        }
+        Ok(())
     }
 
     pub fn terminate(&mut self) {
+        #[cfg(windows)]
+        if let Some(job) = self.job.take() {
+            if let Err(error) = job.terminate() {
+                log_executor_event(
+                    "windows process job termination failed",
+                    &[("error", error.to_string())],
+                );
+            }
+            self.pid = None;
+            return;
+        }
         #[cfg(windows)]
         if let Some(pid) = self.pid.take() {
             kill_windows_process_tree(pid);
@@ -53,17 +113,22 @@ pub fn kill_windows_process_tree(pid: u32) {
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let pid = pid.to_string();
-    let status = std::process::Command::new("taskkill")
+    let output = std::process::Command::new("taskkill")
         .args(["/PID", pid.as_str(), "/T", "/F"])
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
-        .status();
-    match status {
-        Ok(status) if !status.success() => log_executor_event(
+        .output();
+    match output {
+        Ok(output) if !output.status.success() => log_executor_event(
             "windows process tree termination failed",
-            &[("pid", pid), ("exit_status", status.to_string())],
+            &[
+                ("pid", pid),
+                ("exit_status", output.status.to_string()),
+                (
+                    "stderr",
+                    String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                ),
+            ],
         ),
         Err(error) => log_executor_event(
             "windows process tree termination failed",

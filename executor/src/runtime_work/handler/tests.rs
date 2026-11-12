@@ -12,6 +12,10 @@ mod im_callback_routing;
 #[path = "superseded_turn_tests.rs"]
 mod superseded_turn_tests;
 
+#[cfg(unix)]
+#[path = "codex_startup_tests.rs"]
+mod codex_startup_tests;
+
 #[test]
 fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
     for method in [

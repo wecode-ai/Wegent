@@ -641,6 +641,10 @@ export function createDesktopScenario({
         return true
       }
       if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
+        await assert.doesNotReject(
+          readFile(timerToolReleasePath),
+          'The native timer tool returned before its explicit release'
+        )
         timerStage = 'awaiting-final-completion'
         const stream = streamingEvents(responseId, TIMER_COMPLETION)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -673,11 +677,15 @@ export function createDesktopScenario({
       if (requestContainsTimerPrompt(body)) {
         if (timerStage === 'initial') {
           // Complete only after the running timer has been checked on both pages.
-          const releasePath = `'${timerToolReleasePath.replaceAll("'", "'\\''")}'`
+          const releasePath = `'${timerToolReleasePath.replaceAll("'", process.platform === 'win32' ? "''" : "'\\''")}'`
+          const command =
+            process.platform === 'win32'
+              ? `while (-not (Test-Path -LiteralPath ${releasePath})) { Start-Sleep -Milliseconds 50 }`
+              : `while [ ! -f ${releasePath} ]; do sleep 0.05; done`
           const tool = selectShellTool(
             body,
             workspacePath,
-            `while [ ! -f ${releasePath} ]; do sleep 0.05; done`,
+            command,
             Math.max(20_000, uiTimeoutMs * 3)
           )
           timerStage = 'awaiting-tool-output'
