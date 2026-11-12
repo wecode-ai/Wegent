@@ -17,6 +17,7 @@ const STANDARD_GROUP = '[data-testid="task-feedback-group-standard-checkbox"]'
 const FULL_TASK_GROUP = '[data-testid="task-feedback-group-full-task-checkbox"]'
 const ACTIVE_WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${ACTIVE_WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
+const SEND_BUTTON = `${ACTIVE_WORKBENCH} [data-testid="send-message-button"]`
 const TASK_PROMPT = 'FEEDBACK_ENTRY_TASK_CONTEXT'
 const TASK_COMPLETION = `${TASK_PROMPT}_COMPLETE`
 
@@ -104,6 +105,9 @@ async function verifyTaskPageContext(control, uiTimeoutMs) {
   await waitForBlankConversation(control, COMPOSER)
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await control.command('fill', COMPOSER, { value: TASK_PROMPT })
+  await control.command('waitFor', `${SEND_BUTTON}:not(:disabled)`, {
+    timeoutMs: uiTimeoutMs,
+  })
   await control.command('press', COMPOSER, { key: 'Enter' })
   await control.command('waitFor', `${ACTIVE_WORKBENCH} [data-testid="message-assistant"]`, {
     text: TASK_COMPLETION,
