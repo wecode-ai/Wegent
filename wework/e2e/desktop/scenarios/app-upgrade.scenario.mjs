@@ -47,6 +47,7 @@ import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-hando
 import { upgradeCredentials } from '../modules/upgrade-credentials.mjs'
 import { reupgradeAfterRollback } from '../modules/reupgrade-after-rollback.mjs'
 import { verifyRollbackProtection } from '../modules/rollback-protection.mjs'
+import { openAboutSettings } from '../modules/app-update-navigation.mjs'
 import {
   installPreparedSource,
   installedSourcePlugins,
@@ -184,11 +185,7 @@ export async function createDesktopScenario(options) {
       resultDir,
       inspectorPorts,
     })
-  const about = async () => {
-    await control.command('clickWhenEnabled', '[data-testid="settings-button"]')
-    await control.command('clickWhenEnabled', '[data-testid="about-menu-button"]')
-    await control.command('waitFor', '[data-testid="about-settings-page"]')
-  }
+  const about = () => openAboutSettings(control)
   const send = text => continuity.send(text, `${ANSWER} ${modelRequests + 1}`)
   return {
     usesReleasePackageRuntimeAssets: true,
