@@ -33,7 +33,11 @@ from app.schemas.shared_team import (
     TeamShareInfo,
     TeamShareResponse,
 )
-from app.services.share.token_access import hash_share_token, require_share_link_access
+from app.services.share.token_access import (
+    hash_share_token,
+    require_share_link_access,
+    share_token_lookup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +82,7 @@ class SharedTeamService:
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.token_hash == self._hash_share_token(share_token),
+                share_token_lookup(share_token),
                 ShareLink.resource_type == ResourceType.TEAM.value,
                 ShareLink.is_active.is_(True),
             )

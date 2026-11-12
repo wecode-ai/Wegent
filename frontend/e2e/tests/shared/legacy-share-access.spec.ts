@@ -64,6 +64,13 @@ test('legacy URLs require existing access while newly issued opaque shares stay 
       expect((await viewer.get(url)).status).toBe(403)
       expect((await owner.get(url)).status).toBe(200)
     }
+    // Storage compatibility never turns old-writer rows into bearer authority.
+    state('old-writer')
+    for (const url of reads) {
+      expect((await anonymous.get(url)).status).toBe(401)
+      expect((await viewer.get(url)).status).toBe(403)
+      expect((await owner.get(url)).status).toBe(200)
+    }
     expect((await anonymous.get(`/api/tasks/share/public?token=${prefix}-unrecorded`)).status).toBe(
       400
     )

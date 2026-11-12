@@ -112,11 +112,6 @@ struct TeamShareLinkRow {
     token_version: i32,
 }
 
-/// SHA-256(token) as lowercase hex, matching `share_links.token_hash`.
-fn token_hash(token: &str) -> String {
-    crate::share_access::token_hash(token)
-}
-
 /// GET /api/teams/share/info: optional session for version-aware authorization.
 #[brz_http_server::get("/api/teams/share/info", access = optional)]
 async fn get_team_share_info(
@@ -147,11 +142,16 @@ async fn team_share_info(
             "SELECT share_links.resource_id AS resource_id, \
              share_links.created_by_user_id AS created_by_user_id, \
              share_links.token_version AS token_version \
-             FROM share_links WHERE share_links.token_hash = ? \
+             FROM share_links WHERE (share_links.token_hash = ? OR \
+             (share_links.token_hash IS NULL AND share_links.token_version = 1 \
+              AND SHA2(REPLACE(REPLACE(share_links.share_token, '%2B', '+'), '%3D', '='), 256) = ?)) \
              AND share_links.resource_type = 'Team' \
              AND share_links.is_active = true \
              AND share_links.expires_at > UTC_TIMESTAMP() LIMIT 1",
-            (token_hash(share_token),),
+            (
+                crate::share_access::token_hash(share_token),
+                crate::share_access::token_hash(share_token),
+            ),
         )
         .await
         .map_err(unhandled)?;

@@ -45,16 +45,6 @@ const INSERT_SHARE_LINK_QUERY: &str = "INSERT INTO share_links \
      default_role, expires_at, created_by_user_id, is_active, created_at, updated_at) \
      VALUES ('TaskShare', ?, ?, ?, 2, false, 'Reporter', ?, ?, true, NOW(6), NOW(6))";
 
-#[cfg(test)]
-mod purpose_tests {
-    use super::INSERT_SHARE_LINK_QUERY;
-
-    #[test]
-    fn read_only_task_issuance_uses_a_separate_link_type() {
-        assert!(INSERT_SHARE_LINK_QUERY.contains("VALUES ('TaskShare'"));
-    }
-}
-
 /// `task_member_service.is_member` over `task_access_store.is_member`: the
 /// viewer owns the active task, or holds an approved membership in it.
 pub(crate) async fn is_member(
@@ -152,4 +142,14 @@ fn not_found(detail: &'static str) -> FastApiError {
 fn internal(error: &impl std::fmt::Display) -> FastApiError {
     warn!(%error, "[task_share] database error");
     FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+}
+
+#[cfg(test)]
+mod purpose_tests {
+    use super::INSERT_SHARE_LINK_QUERY;
+
+    #[test]
+    fn read_only_task_issuance_uses_a_separate_link_type() {
+        assert!(INSERT_SHARE_LINK_QUERY.contains("VALUES ('TaskShare'"));
+    }
 }

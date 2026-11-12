@@ -94,7 +94,7 @@ class ShareLink(Base):
     )
     token_hash = Column(
         String(64),
-        nullable=False,
+        nullable=True,
         unique=True,
         comment="SHA-256 hash of the share token",
     )
@@ -102,7 +102,7 @@ class ShareLink(Base):
         Integer,
         nullable=False,
         default=OPAQUE_TOKEN_VERSION,
-        server_default="2",
+        server_default="1",
         comment="1: legacy locator requiring resource access; 2: opaque bearer token",
     )
 

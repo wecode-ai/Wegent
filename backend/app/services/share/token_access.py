@@ -6,7 +6,9 @@ from typing import Optional
 from urllib.parse import unquote
 
 from fastapi import HTTPException
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.share_link import ShareLink
 from app.models.user import User
@@ -15,6 +17,23 @@ from app.models.user import User
 def hash_share_token(token: str) -> str:
     """Normalize legacy URL quoting before hashing; opaque tokens are unchanged."""
     return hashlib.sha256(unquote(token).encode("utf-8")).hexdigest()
+
+
+def share_token_lookup(token: str) -> ColumnElement[bool]:
+    """Match a persisted token, including hashless rows from old writers."""
+    digest = hash_share_token(token)
+    recorded_digest = func.sha2(
+        func.replace(func.replace(ShareLink.share_token, "%2B", "+"), "%3D", "="),
+        256,
+    )
+    return or_(
+        ShareLink.token_hash == digest,
+        and_(
+            ShareLink.token_hash.is_(None),
+            ShareLink.token_version == ShareLink.LEGACY_TOKEN_VERSION,
+            recorded_digest == digest,
+        ),
+    )
 
 
 def require_share_link_access(

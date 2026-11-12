@@ -32,15 +32,13 @@ def test_mysql_migration_backfills_decoded_legacy_hashes() -> None:
     migration.upgrade()
     upgrade_sql = output.getvalue()
     assert "ADD COLUMN token_version INTEGER NOT NULL DEFAULT '1'" in upgrade_sql
-    assert "ALTER COLUMN token_version SET DEFAULT '2'" in upgrade_sql
+    assert "SET DEFAULT '2'" not in upgrade_sql
     assert "ALTER TABLE share_links ADD COLUMN token_hash VARCHAR(64)" in upgrade_sql
     assert (
         "UPDATE share_links SET token_hash = SHA2(REPLACE(REPLACE(share_token, '%%2B', '+'), '%%3D', '='), 256) WHERE token_hash IS NULL"
         in upgrade_sql
     )
-    assert (
-        "ALTER TABLE share_links MODIFY token_hash VARCHAR(64) NOT NULL" in upgrade_sql
-    )
+    assert "MODIFY token_hash VARCHAR(64) NOT NULL" not in upgrade_sql
     assert "ALTER TABLE share_links ADD CONSTRAINT uniq_share_links_token_hash" in (
         upgrade_sql
     )

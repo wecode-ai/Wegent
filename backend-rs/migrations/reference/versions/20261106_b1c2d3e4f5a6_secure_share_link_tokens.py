@@ -22,9 +22,6 @@ def upgrade() -> None:
         "share_links",
         sa.Column("token_version", sa.Integer(), nullable=False, server_default="1"),
     )
-    op.alter_column(
-        "share_links", "token_version", existing_type=sa.Integer(), server_default="2"
-    )
     op.add_column(
         "share_links",
         sa.Column(
@@ -35,19 +32,14 @@ def upgrade() -> None:
         ),
     )
 
-    # MySQL fills NOT NULL columns without a default with an empty value for
-    # existing rows. Backfill before tightening the constraint so multiple
-    # legacy rows do not violate the unique index.
+    # Old writers omit both new fields. Keep their rows nullable and version 1:
+    # only explicit new issuance may create a version-2 bearer.
     # Legacy links stored AES ciphertext URL-quoted with `safe="/"`. The API
     # receives the decoded query value, so hash the decoded form.
     op.execute(
         "UPDATE share_links SET token_hash = SHA2(REPLACE(REPLACE(share_token, "
         "'%2B', '+'), '%3D', '='), 256) WHERE token_hash IS NULL"
     )
-    op.alter_column(
-        "share_links", "token_hash", existing_type=sa.String(64), nullable=False
-    )
-
     op.create_unique_constraint(
         "uniq_share_links_token_hash",
         "share_links",

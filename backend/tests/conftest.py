@@ -231,6 +231,17 @@ def _set_sqlite_pragma(dbapi_conn, connection_record):
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.execute("PRAGMA busy_timeout=30000")  # 30 seconds timeout
     cursor.close()
+    # SQLite unit fixtures use the same SHA-256 expression as MySQL share lookup.
+    dbapi_conn.create_function(
+        "sha2",
+        2,
+        lambda value, bits: (
+            hashlib.sha256(value.encode("utf-8")).hexdigest()
+            if value is not None and bits == 256
+            else None
+        ),
+        deterministic=True,
+    )
 
 
 # Session-scoped engine and tables - created once per test session (per worker)

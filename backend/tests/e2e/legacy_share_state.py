@@ -192,6 +192,14 @@ def main() -> None:
             )
             .all()
         )
+        if operation == "old-writer":
+            # Simulate rows written without the new fields after migration.
+            for link in links:
+                if link.token_version == 1:
+                    link.token_hash = None
+            db.commit()
+            print(json.dumps({"operation": operation}))
+            return
         if operation in ("approved", "rejected"):
             for resource in [task, *resources]:
                 member = (

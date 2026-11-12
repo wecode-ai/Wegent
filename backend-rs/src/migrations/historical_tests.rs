@@ -252,7 +252,25 @@ async fn historical_secure_share_tokens_backfill_existing_rows() -> Result<()> {
             assert_eq!(row["version"], json!(1));
             assert_eq!(row["hash"], row["expected"]);
         }
-        sql(mysql, &["INSERT INTO share_links(resource_type,resource_id,share_token,token_hash,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) VALUES ('Task',4,'opaque-new',SHA2('opaque-new',256),0,'Reporter','9999-12-31',7,1,NOW(),NOW())"]).await?;
+        // Old binaries omit both new columns. Multiple late writes must remain
+        // version-1 locators, without colliding on a default empty hash.
+        sql(mysql, &["INSERT INTO share_links(resource_type,resource_id,share_token,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) VALUES ('Task',4,'late-a%2B%3D',0,'Reporter','9999-12-31',7,1,NOW(),NOW()),('Task',5,'late-b',0,'Reporter','9999-12-31',7,1,NOW(),NOW())"]).await?;
+        assert_eq!(
+            data(mysql, "SELECT JSON_OBJECT('version',token_version,'hash',token_hash) AS data FROM share_links WHERE resource_id IN (4,5) ORDER BY id").await?,
+            vec![json!({"version": 1, "hash": null}), json!({"version": 1, "hash": null})],
+        );
+        let hash = crate::share_access::token_hash("late-a+=");
+        let row: Option<crate::share_access::TaskShareLink> = mysql
+            .fetch_optional(
+                "SELECT resource_id,created_by_user_id,token_version FROM share_links WHERE (token_hash=? OR (token_hash IS NULL AND token_version=1 AND SHA2(REPLACE(REPLACE(share_token,'%2B','+'),'%3D','='),256)=?)) AND is_active=true",
+                (hash.clone(), hash),
+            )
+            .await?;
+        let row = row.expect("late legacy writer must remain discoverable");
+        assert_eq!(row.resource_id, 4);
+        assert_eq!(row.token_version, 1);
+        assert!(crate::share_access::legacy_viewer(row.token_version, None).is_err());
+        sql(mysql, &["INSERT INTO share_links(resource_type,resource_id,share_token,token_hash,token_version,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) VALUES ('TaskShare',6,'opaque-new',SHA2('opaque-new',256),2,0,'Reporter','9999-12-31',7,1,NOW(),NOW())"]).await?;
         assert_eq!(
             data(mysql, "SELECT JSON_OBJECT('version',token_version) AS data FROM share_links WHERE share_token='opaque-new'").await?,
             vec![json!({"version": 2})],

@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.dialects.mysql import dialect
 from sqlalchemy.orm import Session
 
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
@@ -14,13 +16,21 @@ from app.services.share import (
     task_share_service,
     team_share_service,
 )
-from app.services.share.token_access import hash_share_token
+from app.services.share.token_access import hash_share_token, share_token_lookup
 from app.services.shared_task import shared_task_service
 from app.services.shared_team import shared_team_service
 from app.services.task_invite_service import task_invite_service
 from tests.services.test_secure_share_tokens import _add_task, _add_team, _add_user
 
 pytestmark = pytest.mark.unit
+
+
+def test_lookup_parameters_do_not_include_raw_share_tokens():
+    token = "opaque-token-that-must-not-appear-in-database-error-parameters"
+    query = select(ShareLink.id).where(share_token_lookup(token))
+    parameters = query.compile(dialect=dialect()).params
+    assert token not in parameters.values()
+    assert hash_share_token(token) in parameters.values()
 
 
 def _legacy(db: Session, resource, resource_type: ResourceType) -> ShareLink:
@@ -59,11 +69,15 @@ def _member(db: Session, resource, user, resource_type: ResourceType):
 
 
 @pytest.mark.parametrize("reader", ["public", "decode", "unified"])
-def test_legacy_task_requires_existing_current_permission(test_db, reader):
+@pytest.mark.parametrize("has_hash", [True, False])
+def test_legacy_task_requires_existing_current_permission(test_db, reader, has_hash):
     owner = _add_user(test_db, "legacy-owner")
     viewer = _add_user(test_db, "legacy-viewer")
     task = _add_task(test_db, owner, "legacy-task")
     link = _legacy(test_db, task, ResourceType.TASK)
+    if not has_hash:
+        link.token_hash = None
+        test_db.commit()
 
     def read(uid):
         if reader == "public":
@@ -91,12 +105,16 @@ def test_legacy_task_requires_existing_current_permission(test_db, reader):
 
 
 @pytest.mark.parametrize("operation", ["copy", "join", "invite"])
-def test_legacy_task_cannot_grant_membership(test_db, operation):
+@pytest.mark.parametrize("has_hash", [True, False])
+def test_legacy_task_cannot_grant_membership(test_db, operation, has_hash):
     owner = _add_user(test_db, "legacy-join-owner")
     outsider = _add_user(test_db, "legacy-join-outsider")
     task = _add_task(test_db, owner, "legacy-join-task")
     kind = ResourceType.TASK_INVITE if operation == "invite" else ResourceType.TASK
     link = _legacy(test_db, task, kind)
+    if not has_hash:
+        link.token_hash = None
+        test_db.commit()
     with pytest.raises(HTTPException) as error:
         if operation == "copy":
             shared_task_service.join_shared_task(
@@ -113,13 +131,17 @@ def test_legacy_task_cannot_grant_membership(test_db, operation):
 
 
 @pytest.mark.parametrize("kind", [ResourceType.TEAM, ResourceType.KNOWLEDGE_BASE])
-def test_legacy_configuration_links_require_permission(test_db, kind):
+@pytest.mark.parametrize("has_hash", [True, False])
+def test_legacy_configuration_links_require_permission(test_db, kind, has_hash):
     owner = _add_user(test_db, "legacy-config-owner")
     viewer = _add_user(test_db, "legacy-config-viewer")
     resource = _add_team(test_db, owner, "legacy-config")
     resource.kind = kind.value
     test_db.commit()
     link = _legacy(test_db, resource, kind)
+    if not has_hash:
+        link.token_hash = None
+        test_db.commit()
     service = (
         team_share_service if kind == ResourceType.TEAM else knowledge_share_service
     )
@@ -178,11 +200,14 @@ def test_new_share_preserves_legacy_url_without_leaking_new_bearer(test_db):
 
 
 @pytest.mark.parametrize("version", [1, 2, 9])
-def test_expired_tokens_and_unknown_versions_fail_closed(test_db, version):
+@pytest.mark.parametrize("has_hash", [True, False])
+def test_expired_tokens_and_unknown_versions_fail_closed(test_db, version, has_hash):
     owner = _add_user(test_db, "legacy-expiry-owner")
     task = _add_task(test_db, owner, "legacy-expiry")
     link = _legacy(test_db, task, ResourceType.TASK)
     link.token_version = version
+    if not has_hash:
+        link.token_hash = None
     link.expires_at = datetime.utcnow() - timedelta(seconds=1)
     test_db.commit()
     with pytest.raises(HTTPException) as error:
@@ -196,6 +221,18 @@ def test_expired_tokens_and_unknown_versions_fail_closed(test_db, version):
                 test_db, link.share_token, owner.id
             )
         assert error.value.status_code == 400
+
+
+@pytest.mark.parametrize("version", [2, 9])
+def test_hashless_nonlegacy_record_cannot_use_raw_token_lookup(test_db, version):
+    owner = _add_user(test_db, "hashless-nonlegacy-owner")
+    team = _add_team(test_db, owner, "hashless-nonlegacy-team")
+    link = _legacy(test_db, team, ResourceType.TEAM)
+    link.token_hash = None
+    link.token_version = version
+    test_db.commit()
+    assert shared_team_service._find_share_link(test_db, link.share_token) is None
+    assert team_share_service._find_share_link(test_db, link.share_token) is None
 
 
 @pytest.mark.parametrize("legacy", [False, True])

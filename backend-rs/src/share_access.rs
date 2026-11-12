@@ -17,7 +17,9 @@ pub(crate) struct TaskShareLink {
 const TASK_SHARE_LINK_QUERY: &str = "SELECT share_links.resource_id AS resource_id, \
      share_links.created_by_user_id AS created_by_user_id, \
      share_links.token_version AS token_version FROM share_links \
-     WHERE share_links.token_hash = ? AND \
+     WHERE (share_links.token_hash = ? OR \
+     (share_links.token_hash IS NULL AND share_links.token_version = 1 \
+      AND SHA2(REPLACE(REPLACE(share_links.share_token, '%2B', '+'), '%3D', '='), 256) = ?)) AND \
      ((share_links.resource_type = 'TaskShare' AND share_links.token_version = 2) OR \
       (share_links.resource_type = 'Task' AND share_links.token_version = 1)) \
      AND share_links.is_active = true AND share_links.expires_at > UTC_TIMESTAMP() LIMIT 1";
@@ -28,7 +30,10 @@ pub(crate) async fn find_task_share_link(
 ) -> MysqlResult<Option<TaskShareLink>> {
     state
         .mysql
-        .fetch_optional(TASK_SHARE_LINK_QUERY, (token_hash(token),))
+        .fetch_optional(
+            TASK_SHARE_LINK_QUERY,
+            (token_hash(token), token_hash(token)),
+        )
         .await
 }
 
@@ -89,6 +94,16 @@ mod tests {
     fn historical_url_quoting_preserves_plus() {
         assert_eq!(token_hash("aes%2B%3D"), token_hash("aes+="));
         assert_ne!(token_hash("aes+="), token_hash("aes ="));
+    }
+
+    #[test]
+    fn hashless_lookup_is_only_for_recorded_legacy_rows() {
+        assert!(
+            TASK_SHARE_LINK_QUERY
+                .contains("share_links.token_hash IS NULL AND share_links.token_version = 1")
+        );
+        assert!(TASK_SHARE_LINK_QUERY.contains("SHA2(REPLACE(REPLACE("));
+        assert!(!TASK_SHARE_LINK_QUERY.contains("share_links.share_token = ?"));
     }
 
     #[test]

@@ -7,8 +7,7 @@
   "upgrade": [
     {
       "sql": [
-        "ALTER TABLE share_links ADD COLUMN token_version INT NOT NULL DEFAULT 1",
-        "ALTER TABLE share_links ALTER COLUMN token_version SET DEFAULT 2"
+        "ALTER TABLE share_links ADD COLUMN token_version INT NOT NULL DEFAULT 1"
       ]
     },
     {
@@ -23,7 +22,6 @@
     },
     {
       "sql": [
-        "ALTER TABLE share_links MODIFY COLUMN token_hash VARCHAR(64) NOT NULL COMMENT 'SHA-256 hash of the share token'",
         "CREATE UNIQUE INDEX uniq_share_links_token_hash ON share_links (token_hash)"
       ]
     }

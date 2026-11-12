@@ -50,7 +50,11 @@ from app.schemas.share import (
     ShareLinkResponse,
 )
 from app.services.external_entity_resolver import get_entity_resolver
-from app.services.share.token_access import hash_share_token, require_share_link_access
+from app.services.share.token_access import (
+    hash_share_token,
+    require_share_link_access,
+    share_token_lookup,
+)
 from shared.telemetry.decorators import trace_sync
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
@@ -170,7 +174,7 @@ class UnifiedShareService(ABC):
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.token_hash == self._hash_share_token(share_token),
+                share_token_lookup(share_token),
                 ShareLink.is_active.is_(True),
             )
             .first()

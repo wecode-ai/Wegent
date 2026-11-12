@@ -34,7 +34,11 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
-from app.services.share.token_access import hash_share_token, require_share_link_access
+from app.services.share.token_access import (
+    hash_share_token,
+    require_share_link_access,
+    share_token_lookup,
+)
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 
@@ -81,7 +85,7 @@ class SharedTaskService:
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.token_hash == self._hash_share_token(share_token),
+                share_token_lookup(share_token),
                 (
                     (ShareLink.resource_type == ResourceType.TASK_SHARE.value)
                     & (ShareLink.token_version == ShareLink.OPAQUE_TOKEN_VERSION)

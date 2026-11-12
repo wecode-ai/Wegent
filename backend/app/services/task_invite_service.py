@@ -14,7 +14,11 @@ from sqlalchemy.orm import Session
 import app.stores.tasks as task_stores
 from app.core.config import settings
 from app.models.share_link import ResourceType, ShareLink
-from app.services.share.token_access import hash_share_token, require_share_link_access
+from app.services.share.token_access import (
+    hash_share_token,
+    require_share_link_access,
+    share_token_lookup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +70,7 @@ class TaskInviteService:
         invite = (
             db.query(ShareLink)
             .filter(
-                ShareLink.token_hash == self._hash_share_token(token),
+                share_token_lookup(token),
                 ShareLink.resource_type == ResourceType.TASK_INVITE.value,
                 ShareLink.is_active.is_(True),
             )
